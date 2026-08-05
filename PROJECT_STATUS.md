@@ -5,7 +5,7 @@
 
 ## 基本信息
 
-- 项目路径：`C:\Users\Administrator\Desktop\budu`
+- 项目路径（本机）：`/Users/apple/Desktop/budu OS`（原 Windows 机：`C:\Users\Administrator\Desktop\budu`）
 - 项目名称：BUDU 甜蜜运营系统（React 18 + Vite + Tailwind + Express + Upstash KV）
 - 线上正式地址：**https://budu11.vercel.app**（已上线可用）
 - GitHub 仓库：https://github.com/GPTJJ/budu （分支 `main`，Vercel 自动部署）
@@ -73,7 +73,7 @@ npx vercel env pull                 # 拉取线上环境变量
 
 ## 新会话恢复指令模板
 
-> 继续开发 C:\Users\Administrator\Desktop\budu 的 BUDU 项目。
+> 继续开发 /Users/apple/Desktop/budu OS 的 BUDU 项目。
 > 先读 PROJECT_STATUS.md 和 DEPLOY.md，再按需求继续。
 
 ## 部署流水线
@@ -83,7 +83,7 @@ npx vercel env pull                 # 拉取线上环境变量
 
 ### 方式一（推荐）：GitHub Codespaces —— 浏览器开发，笔记本零安装
 1. 笔记本浏览器登录 GitHub（GPTJJ）→ 打开 https://github.com/GPTJJ/budu → 绿色 Code 按钮 → Codespaces → Create codespace（首次自动安装依赖）
-2. 终端运行：`npm run server`（完整应用跑在 3000 端口）
+2. 终端运行：`npm run server`（完整应用跑在 3000 端口；`npm install` 已自动构建前端，无需手动 build）
 3. 点击编辑器底部 Ports 面板里的 3000 端口 → Open in Browser，即完整应用
 4. 要连线上真实数据（和家里看到的一样）：在 GitHub → 仓库 Settings → Secrets and variables → Codespaces 里配置 `KV_REST_API_URL`、`KV_REST_API_TOKEN`、`JWT_SECRET`；不配则用 Codespace 内的空本地库
 5. 改完代码直接 commit + push 到 main，Vercel 自动部署；家里台式机 `git pull` 即同步
