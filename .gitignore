@@ -15,4 +15,8 @@ tools
 npm-debug.log*
 _shot
 _*inspect*
+
+.tmp-*
 _tmp*
+.vercel
+.env*

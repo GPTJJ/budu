@@ -20,8 +20,9 @@ const DEFAULT_DB = { meta: {}, users: [], entries: {}, staff: [] }
 let cached = null
 
 function redisConfig() {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+  // 兼容两套变量名：Vercel KV 标准命名（KV_REST_API_*）与 Upstash 原生命名（UPSTASH_REDIS_REST_*）
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN
   return url && token ? { url: String(url).replace(/\/$/, ''), token } : null
 }
 

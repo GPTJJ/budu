@@ -10,11 +10,11 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DB_FILE = path.join(ROOT, 'server', 'data', 'db.json')
 const REDIS_KEY = 'budu-db'
-const url = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '')
-const token = process.env.UPSTASH_REDIS_REST_TOKEN || ''
+const url = (process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '').replace(/\/$/, '')
+const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || ''
 
 if (!url || !token) {
-  console.error('缺少环境变量 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN（在 Vercel 控制台创建 KV 存储后复制）')
+  console.error('缺少环境变量（KV_REST_API_URL / KV_REST_API_TOKEN 或 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN）')
   process.exit(1)
 }
 if (!fs.existsSync(DB_FILE)) {
