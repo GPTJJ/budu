@@ -1,0 +1,93 @@
+import { ChevronRight } from 'lucide-react'
+import Card from './Card'
+import { employeeList, storeName } from '../utils/selectors'
+import { formatMoney, rankStyle } from '../utils/format'
+
+const AVATAR_GRADIENTS = [
+  'from-budu-400 to-rose-400',
+  'from-grape-400 to-indigo-400',
+  'from-amber-400 to-orange-400',
+  'from-emerald-400 to-teal-400',
+  'from-sky-400 to-cyan-400',
+]
+
+function roiStyle(roi) {
+  if (roi >= 12) return 'bg-emerald-50 text-emerald-600'
+  if (roi >= 8) return 'bg-grape-50 text-grape-600'
+  return 'bg-amber-50 text-amber-600'
+}
+
+export default function EmployeePerformanceTable({ store }) {
+  const list = employeeList(store).slice(0, 5)
+
+  return (
+    <Card
+      title="员工绩效 TOP5"
+      subtitle={`薪资表 2026.27-31 周 · ${storeName(store)}`}
+      action={
+        <button className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600">
+          查看全部
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      }
+    >
+      <div className="-mx-2 overflow-x-auto">
+        <table className="w-full min-w-[520px] text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
+              <th className="pb-3 pl-2">排名</th>
+              <th className="pb-3">员工</th>
+              <th className="pb-3 text-right">当班营业额</th>
+              <th className="pb-3 text-right">工资</th>
+              <th className="pb-3 text-right">ROI</th>
+              <th className="pb-3 pr-2 text-right">工时</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {list.map((row, i) => (
+              <tr key={row.name} className="group transition-colors hover:bg-grape-50/40">
+                <td className="py-3 pl-2">
+                  <span
+                    className={`grid h-6 w-6 place-items-center rounded-lg text-[11px] font-bold text-white ${rankStyle(i)}`}
+                  >
+                    {i + 1}
+                  </span>
+                </td>
+                <td className="py-3">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br text-xs font-bold text-white ${AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length]}`}
+                    >
+                      {row.name[0]}
+                    </span>
+                    <div className="leading-tight">
+                      <p className="font-semibold text-slate-700 group-hover:text-budu-600">{row.name}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400">
+                        {row.storeName} · 出勤 {row.workedDays} 天
+                      </p>
+                    </div>
+                  </div>
+                </td>
+                <td className="py-3 text-right font-semibold tabular-nums text-slate-700">
+                  ¥{formatMoney(row.workedRevenue)}
+                </td>
+                <td className="py-3 text-right text-xs tabular-nums text-slate-500">
+                  ¥{formatMoney(row.salary)}
+                </td>
+                <td className="py-3 text-right">
+                  <span className={`chip ${roiStyle(row.roi)}`}>{row.roi.toFixed(1)}x</span>
+                </td>
+                <td className="py-3 pr-2 text-right text-xs tabular-nums text-slate-500">
+                  {Math.round(row.hours)}h
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-[11px] text-slate-300">
+        当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资
+      </p>
+    </Card>
+  )
+}

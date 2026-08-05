@@ -1,0 +1,134 @@
+import { ChevronDown } from 'lucide-react'
+import {
+  CartesianGrid,
+  Line,
+  ReferenceDot,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import Card from './Card'
+import { dailyRows, aggregate, storeName, monthLabel } from '../utils/selectors'
+import { formatMoney } from '../utils/format'
+
+function shortDate(d) {
+  const [m, day] = d.split('-')
+  return `${Number(m)}/${Number(day)}`
+}
+
+function TrendTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null
+  const revenue = payload.find((p) => p.dataKey === 'revenue')
+  const orders = payload.find((p) => p.dataKey === 'orders')
+  return (
+    <div className="rounded-xl border border-white/60 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
+      <p className="mb-1.5 font-bold text-slate-700">{shortDate(label)}</p>
+      <p className="flex items-center gap-1.5 text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-grape-500" />
+        营业收入：<span className="font-semibold text-slate-700">¥{formatMoney(revenue?.value ?? 0)}</span>
+      </p>
+      <p className="mt-1 flex items-center gap-1.5 text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-budu-400" />
+        订单数：<span className="font-semibold text-slate-700">{Number(orders?.value ?? 0).toLocaleString('zh-CN')} 单</span>
+      </p>
+    </div>
+  )
+}
+
+export default function RevenueTrendChart({ month, store, day }) {
+  const rows = dailyRows(month, store)
+  const agg = aggregate(month, store)
+  const data = rows.map((r) => ({ d: r.d, revenue: r.inc, orders: r.ord }))
+  const focus = day ? data.find((x) => x.d === day) : null
+  const peak = Math.max(1, ...data.map((d) => d.revenue))
+  const peakOrders = Math.max(1, ...data.map((d) => d.orders))
+
+  return (
+    <Card
+      title="营业额趋势"
+      subtitle={day ? `${monthLabel(month)} · ${storeName(store)} 聚焦 ${day}` : `${monthLabel(month)} · ${storeName(store)} 每日营业收入与订单数`}
+      action={
+        <label className="flex cursor-pointer items-center gap-1 rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-500">
+          按日
+          <ChevronDown className="h-3.5 w-3.5 text-slate-300" />
+        </label>
+      }
+    >
+      <div className="mb-4 flex items-center gap-5 text-xs text-slate-500">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-grape-500" />
+          营业收入（元）
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-budu-400" />
+          订单数（单）
+        </span>
+        <span className="ml-auto hidden rounded-lg bg-grape-50 px-2 py-1 font-semibold text-grape-600 sm:block">
+          {day ? `当日 ¥${formatMoney(focus ? focus.revenue : 0)} · ${focus ? focus.orders : 0} 单` : `月收入 ¥${formatMoney(agg.inc)} · ${agg.ord} 单`}
+        </span>
+      </div>
+
+      <div className="h-64 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1EDF5" />
+            <XAxis
+              dataKey="d"
+              tickLine={false}
+              axisLine={false}
+              tick={{ fill: '#94A3B8', fontSize: 11 }}
+              tickFormatter={shortDate}
+              minTickGap={28}
+              dy={8}
+            />
+            <YAxis
+              yAxisId="revenue"
+              domain={[0, Math.ceil((peak * 1.15) / 1000) * 1000]}
+              tickLine={false}
+              axisLine={false}
+              width={46}
+              tick={{ fill: '#94A3B8', fontSize: 11 }}
+              tickFormatter={(v) => (v >= 1000 ? `${v / 1000}k` : `${v}`)}
+            />
+            <YAxis
+              yAxisId="orders"
+              orientation="right"
+              domain={[0, Math.ceil((peakOrders * 1.15) / 10) * 10]}
+              tickLine={false}
+              axisLine={false}
+              width={40}
+              tick={{ fill: '#C4B5FD', fontSize: 11 }}
+            />
+            <Tooltip content={<TrendTooltip />} cursor={{ stroke: '#E9D5FF', strokeDasharray: '4 4' }} />
+            {focus && (
+              <ReferenceDot yAxisId="revenue" x={focus.d} y={focus.revenue} r={5} fill="#A855F7" stroke="#fff" strokeWidth={2} />
+            )}
+            <Line
+              yAxisId="revenue"
+              type="monotone"
+              dataKey="revenue"
+              name="营业收入"
+              stroke="#A855F7"
+              strokeWidth={2.5}
+              dot={false}
+              activeDot={{ r: 5, strokeWidth: 0 }}
+            />
+            <Line
+              yAxisId="orders"
+              type="monotone"
+              dataKey="orders"
+              name="订单数"
+              stroke="#F472B6"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              dot={false}
+              activeDot={{ r: 4, strokeWidth: 0 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
+  )
+}

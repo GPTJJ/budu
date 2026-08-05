@@ -1,0 +1,166 @@
+import { useState } from 'react'
+import { CalendarDays, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
+
+function pad(n) {
+  return String(n).padStart(2, '0')
+}
+
+function todayKey() {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function fmtMonth(key) {
+  const [y, m] = String(key).split('-')
+  return m ? `${y}年${m}月` : key
+}
+
+/** 生成该月日历格子（MM-DD，周一开头，前面补空） */
+function buildMonthCells(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number)
+  const total = new Date(y, m, 0).getDate()
+  const offset = (new Date(y, m - 1, 1).getDay() + 6) % 7
+  const cells = []
+  for (let i = 0; i < offset; i++) cells.push(null)
+  for (let d = 1; d <= total; d++) cells.push(`${pad(m)}-${pad(d)}`)
+  return cells
+}
+
+function shiftMonth(key, delta) {
+  const [y, m] = key.split('-').map(Number)
+  const d = new Date(y, m - 1 + delta, 1)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+}
+
+const WEEK = ['一', '二', '三', '四', '五', '六', '日']
+
+export default function CalendarPicker({ month, day, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const [viewMonth, setViewMonth] = useState(month)
+  const today = todayKey()
+
+  const toggle = () => {
+    if (!open) setViewMonth(month)
+    setOpen((v) => !v)
+  }
+
+  const cells = buildMonthCells(viewMonth)
+  const jumpToday = () => setViewMonth(today.slice(0, 7))
+
+  return (
+    <div className="relative hidden md:block">
+      <button
+        onClick={toggle}
+        className={`flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover ${
+          open ? 'ring-2 ring-budu-200' : ''
+        }`}
+      >
+        <CalendarDays className={`h-4 w-4 ${day ? 'text-grape-500' : 'text-budu-500'}`} />
+        <span className="font-semibold text-slate-600">
+          {day ? `${fmtMonth(month)} · ${day}` : fmtMonth(month)}
+        </span>
+        {day && (
+          <span className="rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-bold text-grape-600">按日</span>
+        )}
+        <ChevronDown className={`h-3.5 w-3.5 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-40 mt-2 w-[300px] rounded-3xl bg-white p-4 shadow-2xl ring-1 ring-slate-100">
+            {/* 年月切换 + 今天 */}
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => setViewMonth(shiftMonth(viewMonth, -1))}
+                className="grid h-8 w-8 place-items-center rounded-xl text-slate-400 transition hover:bg-budu-50 hover:text-budu-600"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <p className="text-sm font-bold text-slate-700">{fmtMonth(viewMonth)}</p>
+              <button
+                onClick={() => setViewMonth(shiftMonth(viewMonth, 1))}
+                className="grid h-8 w-8 place-items-center rounded-xl text-slate-400 transition hover:bg-budu-50 hover:text-budu-600"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <button
+                onClick={jumpToday}
+                className="ml-1 rounded-xl bg-budu-50 px-2.5 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+              >
+                今天
+              </button>
+            </div>
+
+            {/* 快速选择日期 */}
+            <div className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+              <Search className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+              <input
+                type="date"
+                value={day && month === viewMonth ? `${viewMonth}-${day}` : ''}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v) {
+                    onSelect(v.slice(0, 7), v.slice(5))
+                    setOpen(false)
+                  }
+                }}
+                className="w-full bg-transparent text-xs font-medium text-slate-600 outline-none"
+                aria-label="快速选择日期"
+              />
+            </div>
+
+            {/* 星期头 */}
+            <div className="mt-3 grid grid-cols-7 text-center text-[11px] font-semibold text-slate-400">
+              {WEEK.map((w) => (
+                <span key={w} className="py-1">
+                  {w}
+                </span>
+              ))}
+            </div>
+
+            {/* 日期网格 */}
+            <div className="mt-1 grid grid-cols-7 gap-y-0.5">
+              {cells.map((d, i) => {
+                if (!d) return <span key={`e${i}`} />
+                const isToday = `${viewMonth}-${d}` === today
+                const selected = day === d && month === viewMonth
+                return (
+                  <button
+                    key={d}
+                    onClick={() => {
+                      onSelect(viewMonth, d)
+                      setOpen(false)
+                    }}
+                    className={`relative mx-auto grid h-9 w-9 place-items-center rounded-xl text-[13px] font-medium transition ${
+                      selected
+                        ? 'bg-gradient-to-br from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                        : isToday
+                          ? 'text-budu-600 ring-2 ring-budu-200 hover:bg-budu-50'
+                          : 'text-slate-600 hover:bg-budu-50 hover:text-budu-600'
+                    }`}
+                  >
+                    {Number(d.slice(3))}
+                    {isToday && !selected && <span className="absolute bottom-1 h-1 w-1 rounded-full bg-budu-400" />}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* 底部：整月 */}
+            <button
+              onClick={() => {
+                onSelect(viewMonth, null)
+                setOpen(false)
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+            >
+              <CalendarRange className="h-3.5 w-3.5" />
+              查看整月（{fmtMonth(viewMonth)}）
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

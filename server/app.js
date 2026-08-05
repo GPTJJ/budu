@@ -1,0 +1,128 @@
+import express from 'express'
+import cookieParser from 'cookie-parser'
+import path from 'node:path'
+import fs from 'node:fs'
+import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import { loadDb, persist } from './store.js'
+import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const ROOT = path.join(__dirname, '..')
+const DIST = path.join(ROOT, 'dist')
+const COOKIE = 'budu_token'
+const COOKIE_MAX_AGE = 30 * 24 * 3600 * 1000
+
+export function createApp() {
+  const app = express()
+  app.use(express.json({ limit: '5mb' }))
+  app.use(cookieParser())
+
+  async function getSecret() {
+    return process.env.JWT_SECRET || (await loadDb()).meta.secret
+  }
+
+  function userPublic(u) {
+    return { id: u.id, username: u.username, role: u.role, createdAt: u.createdAt }
+  }
+
+  function setAuthCookie(res, token) {
+    res.cookie(COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: COOKIE_MAX_AGE,
+      secure: process.env.COOKIE_SECURE === '1',
+    })
+  }
+
+  async function requireAuth(req, res, next) {
+    const token = req.cookies[COOKIE]
+    const payload = token ? verifyToken(token, await getSecret()) : null
+    if (!payload || !payload.sub) return res.status(401).json({ error: '未登录或登录已过期' })
+    const user = (await loadDb()).users.find((u) => u.id === payload.sub)
+    if (!user) return res.status(401).json({ error: '账号不存在' })
+    req.user = user
+    next()
+  }
+
+  app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
+
+  // ---------- 注册（第一个用户自动成为管理员） ----------
+  app.post('/api/auth/register', async (req, res) => {
+    const username = String(req.body.username || '').trim()
+    const password = String(req.body.password || '')
+    if (username.length < 2 || username.length > 20) return res.status(400).json({ error: '用户名需为 2-20 个字符' })
+    if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' })
+    const db = await loadDb()
+    if (db.users.some((u) => u.username === username)) return res.status(409).json({ error: '用户名已存在' })
+    const user = {
+      id: crypto.randomUUID(),
+      username,
+      role: db.users.length === 0 ? 'admin' : 'member',
+      passwordHash: hashPassword(password),
+      createdAt: new Date().toISOString(),
+    }
+    db.users.push(user)
+    await persist()
+    setAuthCookie(res, signToken(user, await getSecret()))
+    res.json({ user: userPublic(user) })
+  })
+
+  // ---------- 登录 ----------
+  app.post('/api/auth/login', async (req, res) => {
+    const username = String(req.body.username || '').trim()
+    const password = String(req.body.password || '')
+    const user = (await loadDb()).users.find((u) => u.username === username)
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      return res.status(401).json({ error: '用户名或密码错误' })
+    }
+    setAuthCookie(res, signToken(user, await getSecret()))
+    res.json({ user: userPublic(user) })
+  })
+
+  // ---------- 退出 ----------
+  app.post('/api/auth/logout', (req, res) => {
+    res.clearCookie(COOKIE)
+    res.json({ ok: true })
+  })
+
+  // ---------- 当前登录用户 ----------
+  app.get('/api/auth/me', requireAuth, (req, res) => {
+    res.json({ user: userPublic(req.user) })
+  })
+
+  // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
+  app.get('/api/userdata', requireAuth, async (req, res) => {
+    const db = await loadDb()
+    res.json({ entries: db.entries, staff: db.staff })
+  })
+
+  // ---------- 共享数据：整体保存 ----------
+  app.put('/api/userdata', requireAuth, async (req, res) => {
+    const body = req.body || {}
+    const db = await loadDb()
+    if (body.entries !== undefined) {
+      if (typeof body.entries !== 'object' || Array.isArray(body.entries)) {
+        return res.status(400).json({ error: 'entries 格式错误' })
+      }
+      db.entries = body.entries
+    }
+    if (body.staff !== undefined) {
+      if (!Array.isArray(body.staff)) return res.status(400).json({ error: 'staff 格式错误' })
+      db.staff = body.staff
+    }
+    await persist()
+    res.json({ ok: true, entries: db.entries, staff: db.staff })
+  })
+
+  // ---------- 静态前端（仅本地/自建服务器模式使用；Vercel 由平台托管前端） ----------
+  app.use(express.static(DIST))
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) return next()
+    const index = path.join(DIST, 'index.html')
+    if (fs.existsSync(index)) return res.sendFile(index)
+    res.status(404).json({ error: '前端未构建，请先运行 npm run build' })
+  })
+
+  return app
+}

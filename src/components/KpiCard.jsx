@@ -1,0 +1,83 @@
+import {
+  TrendingUp,
+  ShoppingBag,
+  Wallet,
+  UtensilsCrossed,
+  BadgePercent,
+  CalendarCheck2,
+} from 'lucide-react'
+import { Area, AreaChart, ResponsiveContainer } from 'recharts'
+import { pctText } from '../utils/selectors'
+
+const CARD_STYLE = {
+  income: { label: '营业收入', gradient: 'from-budu-400 to-grape-500', color: '#A855F7', icon: TrendingUp },
+  orders: { label: '订单数', gradient: 'from-rose-400 to-budu-500', color: '#EC4899', icon: ShoppingBag },
+  avgOrder: { label: '客单价', gradient: 'from-amber-400 to-orange-500', color: '#F59E0B', icon: Wallet },
+  dish: { label: '菜品销量', gradient: 'from-emerald-400 to-teal-500', color: '#10B981', icon: UtensilsCrossed },
+  discount: { label: '优惠金额', gradient: 'from-sky-400 to-indigo-500', color: '#6366F1', icon: BadgePercent },
+  dailyAvg: { label: '日均营业额', gradient: 'from-violet-400 to-purple-600', color: '#8B5CF6', icon: CalendarCheck2 },
+}
+
+export default function KpiCard({ card }) {
+  const style = CARD_STYLE[card.key] || CARD_STYLE.income
+  const Icon = style.icon
+  const sparkData = card.spark.map((v, i) => ({ i, v }))
+  const up = card.change == null ? null : card.change >= 0
+
+  return (
+    <div className="card group p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div
+            className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${style.gradient} text-white shadow-md`}
+          >
+            <Icon className="h-5 w-5" />
+          </div>
+          <p className="truncate text-[13px] font-medium text-slate-500">{style.label}</p>
+        </div>
+        <span
+          className={`chip shrink-0 ${
+            up == null
+              ? 'bg-slate-100 text-slate-400'
+              : up
+                ? 'bg-emerald-50 text-emerald-600'
+                : 'bg-rose-50 text-rose-500'
+          }`}
+        >
+          {up == null ? '较上月 —' : `较上月 ${pctText(card.change)}`}
+        </span>
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-800">
+            {card.prefix}
+            {card.value}
+            <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>
+          </p>
+          <p className="mt-2 text-[11px] text-slate-400">{card.note}</p>
+        </div>
+        <div className="h-11 w-24 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={`spark-${card.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={style.color} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={style.color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
+                type="monotone"
+                dataKey="v"
+                stroke={style.color}
+                strokeWidth={2}
+                fill={`url(#spark-${card.key})`}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  )
+}
