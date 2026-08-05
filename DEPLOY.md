@@ -100,22 +100,28 @@ node scripts/start-public.mjs
 
 ### 第 3 步：创建 KV 数据库并配置环境变量
 
-1. Vercel 项目 → Storage → Create Database → 选择 **Upstash (KV)** → 免费档；
-2. 数据库创建后，复制 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN`；
-3. 项目 → Settings → Environment Variables 添加：
-   - `UPSTASH_REDIS_REST_URL`（KV 数据库地址）
-   - `UPSTASH_REDIS_REST_TOKEN`（KV 数据库令牌）
-   - `JWT_SECRET`（随机串：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`）
-   - `COOKIE_SECURE=1`
-4. 添加后重新 Deploy（Deployments → Redeploy）。
+方式一（推荐，已在本项目验证通过）：CLI 一条龙
+
+```bash
+npx vercel integration add upstash/upstash-kv      # 需在浏览器同意一次条款
+npx vercel integration-resource connect <资源名> <项目名> --yes   # 自动注入 KV_REST_API_* 环境变量
+```
+
+方式二：Vercel 项目 → Storage → Create Database → 选择 **Upstash (KV)** → 免费档，
+创建后项目会自动注入 `KV_REST_API_URL` / `KV_REST_API_TOKEN`（代码两者命名都兼容）。
+
+无论哪种方式，还需手动添加两个环境变量（Production）：
+- `JWT_SECRET`：随机串（`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`）
+- `COOKIE_SECURE=1`
+
+添加后重新 Deploy（Deployments → Redeploy）。
 
 ### 第 4 步：把本机数据迁移到云端（可选但建议）
 
-在本机 PowerShell 设置同样的环境变量后运行迁移脚本：
+先拉取线上环境变量再运行迁移脚本（已在本项目验证通过）：
 
 ```powershell
-$env:UPSTASH_REDIS_REST_URL='https://xxx.upstash.io'
-$env:UPSTASH_REDIS_REST_TOKEN='xxx'
+npx vercel env pull        # 生成 .env.local（含 KV_REST_API_URL / KV_REST_API_TOKEN）
 node scripts/migrate-upstash.mjs
 ```
 
@@ -135,8 +141,8 @@ node scripts/migrate-upstash.mjs
 | `PORT` | 服务端口，默认 3000 |
 | `JWT_SECRET` | 登录令牌密钥；不设置时自动生成并保存在 `server/data/db.json` |
 | `COOKIE_SECURE` | 设为 `1` 时 Cookie 仅通过 HTTPS 发送（公网部署建议开启） |
-| `UPSTASH_REDIS_REST_URL` | Upstash KV 数据库地址（Vercel 模式必填） |
-| `UPSTASH_REDIS_REST_TOKEN` | Upstash KV 数据库令牌（Vercel 模式必填） |
+| `KV_REST_API_URL` / `UPSTASH_REDIS_REST_URL` | KV 数据库地址（Vercel 连接 KV 后自动注入） |
+| `KV_REST_API_TOKEN` / `UPSTASH_REDIS_REST_TOKEN` | KV 数据库令牌（Vercel 连接 KV 后自动注入） |
 
 ## 数据与账号
 
