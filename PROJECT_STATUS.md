@@ -79,3 +79,21 @@ npx vercel env pull                 # 拉取线上环境变量
 ## 部署流水线
 
 改代码 → `git add -A && git commit -m "说明" && git push origin main` → Vercel 自动构建部署（约 1-2 分钟）→ 网址不变 https://budu11.vercel.app
+## 笔记本 / 多设备继续开发指南
+
+### 方式一（推荐）：GitHub Codespaces —— 浏览器开发，笔记本零安装
+1. 笔记本浏览器登录 GitHub（GPTJJ）→ 打开 https://github.com/GPTJJ/budu → 绿色 Code 按钮 → Codespaces → Create codespace（首次自动安装依赖）
+2. 终端运行：`npm run server`（完整应用跑在 3000 端口）
+3. 点击编辑器底部 Ports 面板里的 3000 端口 → Open in Browser，即完整应用
+4. 要连线上真实数据（和家里看到的一样）：在 GitHub → 仓库 Settings → Secrets and variables → Codespaces 里配置 `KV_REST_API_URL`、`KV_REST_API_TOKEN`、`JWT_SECRET`；不配则用 Codespace 内的空本地库
+5. 改完代码直接 commit + push 到 main，Vercel 自动部署；家里台式机 `git pull` 即同步
+
+### 方式二：笔记本本地开发
+1. 装 Node.js LTS + GitHub Desktop → 登录 GPTJJ
+2. `git clone https://github.com/GPTJJ/budu.git` → `npm install` → `npm run server` → http://localhost:3000
+3. 要连线上数据：把台式机的 `.env.local` 私密传给笔记本放进项目目录
+4. 开工前 `git pull`，收工 `git push`
+
+### 两台电脑的 Codex 会话
+- 每台电脑的 Codex 对话互不相通；新电脑开新对话第一句：“先读 PROJECT_STATUS.md 和 DEPLOY.md，继续开发 BUDU”
+- 本文件就是两台电脑共用的“存档点”，重要进度更新后随时再 push
