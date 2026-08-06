@@ -304,6 +304,32 @@ export function analysisEmployeeMonthly(monthKey) {
   return Array.isArray(list) && list.length > 0 ? list : null
 }
 
+/** 某月员工出勤/营业额统计（根据门店业绩录入实时聚合：按天去重、营业额按值班人数均摊） */
+export function entryMonthStats(monthKey) {
+  const entries = localEntries()
+  const map = new Map()
+  for (const [key, v] of Object.entries(entries)) {
+    const parts = key.split('|')
+    if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all') continue
+    if (!Array.isArray(v.staff) || v.staff.length === 0) continue
+    const inc = Number(v.inc) || 0
+    const ord = Number(v.ord) || 0
+    const share = v.staff.length
+    for (const name of v.staff) {
+      const rec = map.get(name) || { name, workedDays: 0, workedRevenue: 0, orders: 0, days: new Set() }
+      rec.workedRevenue += inc / share
+      rec.orders += ord / share
+      rec.days.add(parts[2])
+      map.set(name, rec)
+    }
+  }
+  for (const rec of map.values()) {
+    rec.workedDays = rec.days.size
+    delete rec.days
+  }
+  return map
+}
+
 /** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
 export function removeStaff(name) {
   commitStaff(localStaffList().filter((e) => e.name !== name))
@@ -322,9 +348,11 @@ export function employeeList(storeKey, monthKey = null) {
     .map((e) => ({ ...e, local: true }))
     .filter((e) => !removed.has(e.name))
   const list = [...source, ...local].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+  const entryStats = monthKey != null ? entryMonthStats(monthKey) : new Map()
   return list
     .map((e) => ({
       ...e,
+      ...(entryStats.get(e.name) || {}),
       hours: (e.baseHours || 0) + (e.otHours || 0),
       roi: e.salary > 0 ? e.workedRevenue / e.salary : 0,
     }))
