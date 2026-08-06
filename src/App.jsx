@@ -29,10 +29,7 @@ export default function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
   const [store, setStore] = useState('all')
-  const [day, setDay] = useState(() => {
-    const d = new Date()
-    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+  const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
   const [view, setView] = useState('overview')
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
