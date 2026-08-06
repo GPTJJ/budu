@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Eye, EyeOff, Loader2, Lock, LogIn, UserPlus, User } from 'lucide-react'
 import { api } from '../utils/api'
+import { useI18n } from '../i18n'
 
 /** 登录 / 注册页（第一个注册的账号自动成为管理员） */
 export default function LoginPage({ onLogin }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -44,9 +46,9 @@ export default function LoginPage({ onLogin }) {
             <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-budu-500 to-grape-500 text-xl font-black text-white shadow-lg shadow-budu-200/60">
               B
             </div>
-            <h1 className="mt-4 text-xl font-bold text-slate-800">BUDU 甜蜜运营系统</h1>
+            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('BUDU 甜蜜运营系统')}</h1>
             <p className="mt-1 text-xs text-slate-400">
-              {mode === 'login' ? '登录后查看门店经营数据（多设备共享）' : '注册团队账号，首个账号为管理员'}
+              {mode === 'login' ? t('登录后查看门店经营数据（多设备共享）') : t('注册团队账号，首个账号为管理员')}
             </p>
           </div>
 
@@ -56,7 +58,7 @@ export default function LoginPage({ onLogin }) {
               <input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="用户名"
+                placeholder={t('用户名')}
                 autoFocus
                 autoComplete="username"
                 className={inputCls}
@@ -68,7 +70,7 @@ export default function LoginPage({ onLogin }) {
                 type={showPwd ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="密码（至少 6 位）"
+                placeholder={t('密码（至少 6 位）')}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 className={inputCls}
               />
@@ -76,7 +78,7 @@ export default function LoginPage({ onLogin }) {
                 type="button"
                 onClick={() => setShowPwd((v) => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 transition hover:text-slate-500"
-                aria-label="显示或隐藏密码"
+                aria-label={t('显示或隐藏密码')}
               >
                 {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -96,22 +98,22 @@ export default function LoginPage({ onLogin }) {
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {mode === 'login' ? '登录' : '注册并登录'}
+              {mode === 'login' ? t('登录') : t('注册并登录')}
             </button>
           </form>
 
           <p className="mt-5 text-center text-xs text-slate-400">
-            {mode === 'login' ? '还没有账号？' : '已有账号？'}
+            {mode === 'login' ? t('还没有账号？') : t('已有账号？')}
             <button
               onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
               className="ml-1 font-semibold text-budu-600 transition hover:text-budu-500"
             >
-              {mode === 'login' ? '注册一个' : '去登录'}
+              {mode === 'login' ? t('注册一个') : t('去登录')}
             </button>
           </p>
         </div>
         <p className="mt-4 text-center text-[11px] text-slate-300">
-          © 2026 BUDU 甜品 · BUDU Operating System V1.0
+          {t('© 2026 BUDU 甜品 · BUDU Operating System V1.0')}
         </p>
       </div>
     </div>

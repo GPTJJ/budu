@@ -1,6 +1,7 @@
 import { Package, Wallet, Megaphone, Users, MonitorCheck, TrendingUp, AlertTriangle, Database, Sparkles, Bell } from 'lucide-react'
 import Card from './Card'
 import { notices } from '../utils/selectors'
+import { useI18n } from '../i18n'
 
 const ICON_MAP = {
   库存: Package,
@@ -17,12 +18,15 @@ const ICON_MAP = {
 }
 
 export default function NotificationPanel({ month, day }) {
-  const items = notices(month, day)
+  const { lang, t } = useI18n()
+  const items = notices(month, day, lang)
 
   return (
     <Card
-      title="重要提醒"
-      subtitle={day ? `聚焦 ${day} · 基于报表自动生成` : '基于所选月份与报表自动生成'}
+      title={t('重要提醒')}
+      subtitle={
+        day ? t('聚焦 {day} · 基于报表自动生成', { day }) : t('基于所选月份与报表自动生成')
+      }
       action={
         <span className="grid h-8 w-8 place-items-center rounded-xl bg-budu-50 text-sm font-bold text-budu-500">
           {items.length}
@@ -40,7 +44,7 @@ export default function NotificationPanel({ month, day }) {
               <div className="min-w-0 flex-1 border-b border-slate-50 pb-3.5 last:border-0 last:pb-0">
                 <div className="flex items-center gap-2">
                   <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${item.tagStyle}`}>
-                    {item.tag}
+                    {t(item.tag)}
                   </span>
                   <span className="text-[11px] text-slate-300">{item.time}</span>
                 </div>

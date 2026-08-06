@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import { pctText } from '../utils/selectors'
+import { useI18n } from '../i18n'
 
 const CARD_STYLE = {
   income: { label: '营业收入', gradient: 'from-budu-400 to-grape-500', color: '#A855F7', icon: TrendingUp },
@@ -19,6 +20,7 @@ const CARD_STYLE = {
 }
 
 export default function KpiCard({ card }) {
+  const { t } = useI18n()
   const style = CARD_STYLE[card.key] || CARD_STYLE.income
   const Icon = style.icon
   const sparkData = card.spark.map((v, i) => ({ i, v }))
@@ -33,7 +35,7 @@ export default function KpiCard({ card }) {
           >
             <Icon className="h-5 w-5" />
           </div>
-          <p className="truncate text-[13px] font-medium text-slate-500">{style.label}</p>
+          <p className="truncate text-[13px] font-medium text-slate-500">{t(card.label || style.label)}</p>
         </div>
         <span
           className={`chip shrink-0 ${
@@ -44,7 +46,7 @@ export default function KpiCard({ card }) {
                 : 'bg-rose-50 text-rose-500'
           }`}
         >
-          {up == null ? '较上月 —' : `较上月 ${pctText(card.change)}`}
+          {up == null ? t('较上月 —') : t('较上月 {pct}', { pct: pctText(card.change) })}
         </span>
       </div>
 

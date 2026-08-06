@@ -12,7 +12,10 @@ const server = await createServer({
 
 const render = async (path, props = {}) => {
   const mod = await server.ssrLoadModule(path)
-  return renderToString(React.createElement(mod.default, props))
+  const i18n = await server.ssrLoadModule('/src/i18n.jsx')
+  return renderToString(
+    React.createElement(i18n.I18nProvider, null, React.createElement(mod.default, props)),
+  )
 }
 
 try {
@@ -27,6 +30,7 @@ try {
     ['EmployeePerformanceTable', await render('/src/components/EmployeePerformanceTable.jsx', { store: 'all' }), ['员工绩效 TOP5']],
     ['ProductSalesTable', await render('/src/components/ProductSalesTable.jsx', { month: '2026-07', store: 'all' }), ['商品销售 TOP10']],
     ['NotificationPanel', await render('/src/components/NotificationPanel.jsx', { month: '2026-07', day: null }), ['重要提醒']],
+    ['SettingsPage', await render('/src/components/SettingsPage.jsx', { onBack: () => {} }), ['系统设置', '界面语言']],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

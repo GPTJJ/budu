@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react'
 import Card from './Card'
 import { employeeList, storeName } from '../utils/selectors'
 import { formatMoney, rankStyle } from '../utils/format'
+import { useI18n } from '../i18n'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -18,15 +19,16 @@ function roiStyle(roi) {
 }
 
 export default function EmployeePerformanceTable({ store }) {
+  const { t } = useI18n()
   const list = employeeList(store).slice(0, 5)
 
   return (
     <Card
-      title="员工绩效 TOP5"
-      subtitle={`薪资表 2026.27-31 周 · ${storeName(store)}`}
+      title={t('员工绩效 TOP5')}
+      subtitle={t('薪资表 2026.27-31 周 · {store}', { store: storeName(store) })}
       action={
         <button className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600">
-          查看全部
+          {t('查看全部')}
           <ChevronRight className="h-3.5 w-3.5" />
         </button>
       }
@@ -35,12 +37,12 @@ export default function EmployeePerformanceTable({ store }) {
         <table className="w-full min-w-[520px] text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
-              <th className="pb-3 pl-2">排名</th>
-              <th className="pb-3">员工</th>
-              <th className="pb-3 text-right">当班营业额</th>
-              <th className="pb-3 text-right">工资</th>
-              <th className="pb-3 text-right">ROI</th>
-              <th className="pb-3 pr-2 text-right">工时</th>
+              <th className="pb-3 pl-2">{t('排名')}</th>
+              <th className="pb-3">{t('员工')}</th>
+              <th className="pb-3 text-right">{t('当班营业额')}</th>
+              <th className="pb-3 text-right">{t('工资')}</th>
+              <th className="pb-3 text-right">{t('ROI')}</th>
+              <th className="pb-3 pr-2 text-right">{t('工时')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
@@ -63,7 +65,7 @@ export default function EmployeePerformanceTable({ store }) {
                     <div className="leading-tight">
                       <p className="font-semibold text-slate-700 group-hover:text-budu-600">{row.name}</p>
                       <p className="mt-0.5 text-[11px] text-slate-400">
-                        {row.storeName} · 出勤 {row.workedDays} 天
+                        {row.storeName} · {t('出勤 {days} 天', { days: row.workedDays })}
                       </p>
                     </div>
                   </div>
@@ -86,7 +88,7 @@ export default function EmployeePerformanceTable({ store }) {
         </table>
       </div>
       <p className="mt-3 text-[11px] text-slate-300">
-        当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资
+        {t('当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资')}
       </p>
     </Card>
   )

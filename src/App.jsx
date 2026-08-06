@@ -10,12 +10,15 @@ import ProductSalesTable from './components/ProductSalesTable'
 import NotificationPanel from './components/NotificationPanel'
 import PersonnelPage from './components/PersonnelPage'
 import StoreEntryPage from './components/StoreEntryPage'
+import SettingsPage from './components/SettingsPage'
 import { kpiCards, MONTHS } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
 import { loadUserData, resetUserData } from './utils/userData'
+import { useI18n } from './i18n'
 
 export default function App() {
+  const { lang, t } = useI18n()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [month, setMonth] = useState(MONTHS[MONTHS.length - 1].key)
   const [store, setStore] = useState('all')
@@ -55,14 +58,15 @@ export default function App() {
     setUser(null)
   }
 
-  const cards = kpiCards(month, store, day)
+  const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff-fulltime' || view === 'staff-parttime'
   const isStoreEntryView = view === 'store-entry'
+  const isSettingsView = view === 'settings'
 
   if (authLoading || !dataReady) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#F7F4FA]">
-        <p className="text-sm font-medium text-slate-400">正在加载 BUDU 系统…</p>
+        <p className="text-sm font-medium text-slate-400">{t('正在加载 BUDU 系统…')}</p>
       </div>
     )
   }
@@ -115,6 +119,8 @@ export default function App() {
             />
           ) : isStoreEntryView ? (
             <StoreEntryPage onBack={() => setView('overview')} />
+          ) : isSettingsView ? (
+            <SettingsPage onBack={() => setView('overview')} />
           ) : (
             <>
               {/* 核心 KPI 统计 */}
@@ -153,7 +159,7 @@ export default function App() {
           )}
 
           <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
-            © 2026 BUDU 甜品 · BUDU Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）
+            {t('© 2026 BUDU 甜品 · BUDU Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
           </footer>
         </main>
       </div>

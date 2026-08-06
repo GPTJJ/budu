@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CalendarDays, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
+import { useI18n, WEEK_EN } from '../i18n'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -10,9 +11,10 @@ function todayKey() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-function fmtMonth(key) {
+function fmtMonth(key, lang = 'zh') {
   const [y, m] = String(key).split('-')
-  return m ? `${y}年${m}月` : key
+  if (!m) return key
+  return lang === 'en' ? `${m}/${y}` : `${y}年${m}月`
 }
 
 /** 生成该月日历格子（MM-DD，周一开头，前面补空） */
@@ -32,12 +34,12 @@ function shiftMonth(key, delta) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
 }
 
-const WEEK = ['一', '二', '三', '四', '五', '六', '日']
-
 export default function CalendarPicker({ month, day, onSelect }) {
+  const { lang, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(month)
   const today = todayKey()
+  const WEEK = lang === 'en' ? WEEK_EN : ['一', '二', '三', '四', '五', '六', '日']
 
   const toggle = () => {
     if (!open) setViewMonth(month)
@@ -57,10 +59,12 @@ export default function CalendarPicker({ month, day, onSelect }) {
       >
         <CalendarDays className={`h-4 w-4 ${day ? 'text-grape-500' : 'text-budu-500'}`} />
         <span className="font-semibold text-slate-600">
-          {day ? `${fmtMonth(month)} · ${day}` : fmtMonth(month)}
+          {day ? `${fmtMonth(month, lang)} · ${day}` : fmtMonth(month, lang)}
         </span>
         {day && (
-          <span className="rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-bold text-grape-600">按日</span>
+          <span className="rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-bold text-grape-600">
+            {t('按日')}
+          </span>
         )}
         <ChevronDown className={`h-3.5 w-3.5 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -77,7 +81,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <p className="text-sm font-bold text-slate-700">{fmtMonth(viewMonth)}</p>
+              <p className="text-sm font-bold text-slate-700">{fmtMonth(viewMonth, lang)}</p>
               <button
                 onClick={() => setViewMonth(shiftMonth(viewMonth, 1))}
                 className="grid h-8 w-8 place-items-center rounded-xl text-slate-400 transition hover:bg-budu-50 hover:text-budu-600"
@@ -88,7 +92,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
                 onClick={jumpToday}
                 className="ml-1 rounded-xl bg-budu-50 px-2.5 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
               >
-                今天
+                {t('今天')}
               </button>
             </div>
 
@@ -106,7 +110,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
                   }
                 }}
                 className="w-full bg-transparent text-xs font-medium text-slate-600 outline-none"
-                aria-label="快速选择日期"
+                aria-label={t('快速选择日期')}
               />
             </div>
 
@@ -156,7 +160,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
               className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
             >
               <CalendarRange className="h-3.5 w-3.5" />
-              查看整月（{fmtMonth(viewMonth)}）
+              {t('查看整月（{month}）', { month: fmtMonth(viewMonth, lang) })}
             </button>
           </div>
         </>

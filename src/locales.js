@@ -1,0 +1,273 @@
+/** 中英文词典：键为中文原文，英文模式下替换为对应英文 */
+export const en = {
+  // 品牌 / 导航
+  '甜蜜治愈日常': 'Sweet daily healing',
+  '运营管理': 'Operations',
+  '首页概览': 'Overview',
+  '人员管理': 'Staff',
+  '门店经营': 'Stores',
+  '商品管理': 'Products',
+  '库存采购': 'Inventory',
+  '财务利润': 'Finance',
+  '会员营销': 'Members',
+  '数据分析': 'Analytics',
+  '系统设置': 'Settings',
+  '全职雇员': 'Full-time',
+  '兼职人员': 'Part-time',
+  '门店业绩录入': 'Store Entry',
+
+  // 通用
+  '返回首页': 'Back to Home',
+  '取消': 'Cancel',
+  '删除': 'Delete',
+  '保存': 'Save',
+  '今天': 'Today',
+  '按日': 'Daily',
+  '查看全部': 'View All',
+  '关闭': 'Close',
+
+  // App
+  '正在加载 BUDU 系统…': 'Loading BUDU system…',
+  '© 2026 BUDU 甜品 · BUDU Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）':
+    '© 2026 BUDU Desserts · BUDU Operating System V1.0 · Data: budu OS docs (Apr–Jul reports / payroll wk 27–31)',
+
+  // 顶栏
+  '下午好，{name} 👋': 'Good afternoon, {name} 👋',
+  '欢迎回来，今天也要元气满满地经营每一家门店！': 'Welcome back! Let’s run every store with full energy today!',
+  '伙伴': 'Partner',
+  '管理员': 'Admin',
+  '总部运营 · 管理员': 'HQ Operations · Admin',
+  '门店运营': 'Store Ops',
+  '打开菜单': 'Open menu',
+  '退出登录': 'Log out',
+  '确定要退出登录吗？': 'Are you sure you want to log out?',
+  '全部门店': 'All Stores',
+
+  // 登录
+  'BUDU 甜蜜运营系统': 'BUDU Sweet Operations System',
+  '登录后查看门店经营数据（多设备共享）': 'Sign in to view store data (shared across devices)',
+  '注册团队账号，首个账号为管理员': 'Register a team account; the first account becomes admin',
+  '用户名': 'Username',
+  '密码（至少 6 位）': 'Password (min 6 characters)',
+  '显示或隐藏密码': 'Show or hide password',
+  '登录': 'Sign in',
+  '注册并登录': 'Register & Sign in',
+  '还没有账号？': 'No account yet?',
+  '已有账号？': 'Already have an account?',
+  '注册一个': 'Register one',
+  '去登录': 'Sign in',
+  '© 2026 BUDU 甜品 · BUDU Operating System V1.0': '© 2026 BUDU Desserts · BUDU Operating System V1.0',
+
+  // 系统设置
+  '系统偏好': 'Preferences',
+  '管理系统偏好与显示选项': 'Manage system preferences and display options',
+  '界面语言': 'Language',
+  '切换后立即生效，并保存在本机浏览器': 'Takes effect immediately and is saved in this browser',
+  '中文': '中文',
+  'English': 'English',
+  '版本': 'Version',
+  'BUDU Operating System V1.0': 'BUDU Operating System V1.0',
+  '数据来源': 'Data source',
+  'budu OS文档（三店4-7月报表 / 薪资表27-31周）': 'budu OS docs (Apr–Jul reports / payroll wk 27–31)',
+
+  // 人员管理
+  '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
+    'Payroll wk 27–31 · Full-time {full} / Part-time {part}',
+  '· 当日值班查询中': ' · viewing daily duty',
+  '添加员工': 'Add Staff',
+  '新员工将保存到本地，并同步到值班选择等关联模块': 'New staff are saved locally and synced to duty selection',
+  '员工姓名': 'Name',
+  '请输入姓名': 'Enter name',
+  '人员类型': 'Type',
+  '所属门店': 'Store',
+  '多店支援': 'Multi-store',
+  '该员工已存在，请勿重复添加': 'This staff member already exists',
+  '确认添加': 'Add',
+  '删除员工': 'Delete Staff',
+  '删除后将从人员管理、值班选择和员工绩效中隐藏，历史业绩记录保留':
+    'Hidden from staff management, duty selection and performance; history is kept',
+  '确认删除 {name} 吗？': 'Delete {name}?',
+  '确认删除': 'Confirm Delete',
+  '删除该员工': 'Delete this staff member',
+  '工资合计': 'Total wage',
+  '当日工资': 'Daily wage',
+  '工时': 'Hours',
+  '当日工时': 'Daily hours',
+  '业绩提成': 'Commission',
+  '当日提成': 'Daily commission',
+  '当班营业额': 'Shift revenue',
+  '当日营业额': 'Daily revenue',
+  '当日值班 · {count} 家店': 'On duty · {count} stores',
+  '值班': 'On duty',
+  '当日休息': 'Off duty',
+  '当日无业绩录入': 'No duty entry',
+  'ROI = 当班营业额 / 工资': 'ROI = shift revenue / wage',
+  '暂无该类人员数据，点击右上角「添加员工」新建': 'No staff in this category; click "Add Staff"',
+  '{month}暂无薪资数据': 'No payroll data for {month}',
+  '当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月），可切换日历月份或添加本地员工':
+    'Payroll covers 2026 wk 27–31 (Jun–Aug); switch month or add local staff',
+  '本地': 'Local',
+  '全职': 'Full-time',
+  '兼职': 'Part-time',
+  '出勤 {days} 天': '{days} days worked',
+  '所选日期 {date} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩':
+    'No entries for {date}; add duty staff and sales in Store Entry first',
+
+  // 门店业绩录入
+  '选择门店、值班人员与日期，录入营业收入/订单数；保存后首页与人员管理实时联动':
+    'Select store, duty staff and date, then enter revenue/orders; saved data syncs to home and staff pages',
+  '本地录入 {count} 天': 'Local entries: {count} days',
+  '合计 {count} 天': 'Total: {count} days',
+  '门店': 'Store',
+  '值班人员': 'Duty Staff',
+  '日期': 'Date',
+  '营业收入（元）': 'Revenue (¥)',
+  '订单数（单）': 'Orders',
+  '选择值班人员': 'Select duty staff',
+  '点击姓名多选值班人员': 'Click names to select multiple',
+  '请至少填写营业收入或订单数': 'Please enter revenue or orders',
+  '已保存到本地 ✓ 值班人员：{staff}': 'Saved ✓ Duty staff: {staff}',
+  '未选择': 'None',
+  '当前录入：{month} · {store} · 选择日期自动归属对应月份':
+    'Current entry: {month} · {store} · date auto-maps to month',
+  '业绩明细': 'Entry Details',
+  '合计收入': 'Total revenue',
+  '合计订单': 'Total orders',
+  '客单价': 'Avg Order',
+  '营业收入': 'Revenue',
+  '订单数': 'Orders',
+  '来源': 'Source',
+  '操作': 'Action',
+  '本地录入': 'Local',
+  '报表': 'Report',
+  '暂无数据，请在左侧表单录入': 'No data; add via the form',
+  '录入数据保存在浏览器 localStorage 中，刷新不丢失；首页 KPI、排行、趋势与人员管理板块实时联动':
+    'Data is saved in browser localStorage and survives refresh; home KPIs, rankings, trends and staff pages stay in sync',
+
+  // 日历
+  '{y}年{m}月': '{m}/{y}',
+  '查看整月（{month}）': 'View whole month ({month})',
+  '快速选择日期': 'Quick date pick',
+
+  // KPI
+  '较上月 {pct}': 'vs last month {pct}',
+  '较上月 —': 'vs last month —',
+  '本月累计': 'Month-to-Date',
+  '日均营业额': 'Daily Avg Revenue',
+  '优惠金额': 'Discounts',
+  '菜品销量': 'Dishes Sold',
+
+  // KPI 备注
+  '当日 {day} · 环比上月同日': 'Day {day} · vs same day last month',
+  '营业 {days} 天 · 日均 ¥{money}': 'Open {days} days · daily avg ¥{money}',
+  '折前营业额 ¥{money}': 'Pre-discount ¥{money}',
+  '营业收入 / 订单量': 'Revenue / orders',
+  '菜品销售额 ¥{money}': 'Dish sales ¥{money}',
+  '优惠率 {pct}%': 'Discount rate {pct}%',
+  '{month} 整月汇总': '{month} monthly total',
+  '{month} 汇总': '{month} total',
+
+  // 门店排行
+  '门店经营排行榜': 'Store Ranking',
+  '{month} · 按营业收入排序': '{month} · by revenue',
+  '{month} · {day} 按日': '{month} · {day} daily',
+  '排名': 'Rank',
+  '环比': 'MoM',
+  '榜首': 'Top',
+  '{n} 单': '{n} orders',
+  '{n} 份': '{n} items',
+  '数据来自三店4-7月份报表；「榜首」为该月营业收入最高的门店，环比为较上月营业收入变化。':
+    'Data from Apr–Jul reports; "Top" = highest revenue store; MoM = vs previous month.',
+  '门店经营明细': 'Store Details',
+  '{store} · 覆盖 {months} 个月 × {stores} 家门店': '{store} · {months} months × {stores} stores',
+  '{count} 家门店': '{count} stores',
+  '{count} 个月': '{count} months',
+  '累计营业收入 ¥{amount}': 'Total revenue ¥{amount}',
+  '月份': 'Month',
+  '营业额': 'Turnover',
+  '订单量': 'Orders',
+
+  // 趋势图
+  '营业额趋势': 'Revenue Trend',
+  '{month} · {store} 每日营业收入与订单数': '{month} · {store} daily revenue & orders',
+  '{month} · {store} 聚焦 {day}': '{month} · {store} focus {day}',
+  '营业收入：': 'Revenue: ',
+  '订单数：': 'Orders: ',
+  '当日 ¥{inc} · {ord} 单': 'Today ¥{inc} · {ord} orders',
+  '月收入 ¥{inc} · {ord} 单': 'Month ¥{inc} · {ord} orders',
+
+  // 渠道
+  '渠道销售构成': 'Channel Mix',
+  '{month} · {store} {day} 按日': '{month} · {store} {day} daily',
+  '占比': 'Share',
+  '店内销售': 'In-store',
+  '美团外卖': 'Meituan',
+  '淘宝闪购': 'Taobao Flash',
+
+  // 员工绩效
+  '员工绩效 TOP5': 'Staff Performance TOP5',
+  '薪资表 2026.27-31 周 · {store}': 'Payroll 2026 wk 27–31 · {store}',
+  '员工': 'Staff',
+  '工资': 'Wage',
+  '当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资':
+    'Shift revenue = store revenue on worked days; ROI = shift revenue / wage',
+
+  // 商品销售
+  '商品销售 TOP10': 'Product Sales TOP10',
+  '{month} · {store} · 按销售额排序': '{month} · {store} · by sales',
+  '{count} 个菜品': '{count} items',
+  '总销量 {n} 份': 'Total {n} sold',
+  '总销售额 ¥{amount}': 'Total sales ¥{amount}',
+  '显示赠品 / 临时商品': 'Show gifts / temp items',
+  '商品': 'Product',
+  '销量': 'Sold',
+  '销售额': 'Sales',
+  '收入': 'Income',
+  '优惠': 'Discount',
+  '销售额占比': 'Share',
+  '该月份暂无菜品销售数据': 'No product data for this month',
+  '数据来自三店菜品明细报表；默认隐藏「赠品 / 临时商品」类目，可通过上方开关查看全量数据。':
+    'Data from product detail reports; gifts/temp items hidden by default; use the toggle to show all.',
+  '商品销售明细': 'Product Sales Details',
+  '收入 ¥{income} · 优惠 ¥{discount}': 'Revenue ¥{income} · Discount ¥{discount}',
+  '数据来自三店菜品明细报表；已剔除「赠品 / 临时商品」类目，点击「查看全部」可查看完整明细。':
+    'Data from product reports; gifts/temp items excluded; click "View All" for full details.',
+
+  // 提醒
+  '重要提醒': 'Alerts',
+  '聚焦 {day} · 基于报表自动生成': 'Focus {day} · auto-generated',
+  '基于所选月份与报表自动生成': 'Auto-generated from selected month & reports',
+  '库存': 'Inventory',
+  '财务': 'Finance',
+  '活动': 'Campaign',
+  '人员': 'Staff',
+  '系统': 'System',
+  '经营': 'Ops',
+  '关注': 'Watch',
+  '预警': 'Alert',
+  '增长': 'Growth',
+  '绩效': 'Performance',
+  '数据': 'Data',
+  '当日': 'Today',
+  '薪资表 27-31 周': 'Payroll wk 27–31',
+  '全部门店当日营业收入 ¥{inc}，共 {ord} 单，客单价 ¥{avg}。':
+    'All stores today: revenue ¥{inc}, {ord} orders, avg ¥{avg}.',
+  '「{name}」本月营业收入 ¥{inc}，位列三家门店第一。': '"{name}" leads all three stores with ¥{inc} this month.',
+  '「{name}」本月营业收入 ¥{inc}，为三家门店中最低，建议复盘菜单与引流。':
+    '"{name}" is lowest at ¥{inc}; review the menu and traffic.',
+  '「{name}」营业收入环比下降 {pct}%，建议关注客流与营销活动。':
+    '"{name}" revenue fell {pct}% MoM; watch traffic and campaigns.',
+  '全部门店营业收入环比增长 {pct}%（三店均值口径）。':
+    'All stores revenue grew {pct}% MoM (3-store average).',
+  '「{name}」业绩提成合计 ¥{amount}，全店最高。': '"{name}" earned the most commission: ¥{amount}.',
+  '营业数据已更新至 {month}，本月菜品销量 {dish} 份。':
+    'Data updated through {month}; {dish} dishes sold this month.',
+  'BUDU Operating System V1.0 运行正常，数据由脚本自动从报表生成。':
+    'BUDU Operating System V1.0 is running normally; data is generated from reports.',
+}
+
+/** 简单插值：{name} -> 变量值 */
+export function interpolate(template, vars) {
+  if (!vars) return template
+  return template.replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? vars[k] : `{${k}}`))
+}

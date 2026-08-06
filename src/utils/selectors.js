@@ -1,8 +1,11 @@
 import { DAILY, PRODUCTS, STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS } from '../data/reportData.js'
 import { commitEntries, commitStaff, commitRemovedStaff, getEntries, getStaff, getRemovedStaff } from './userData.js'
 import { formatMoney } from './format.js'
+import { en, interpolate } from '../locales'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
+
+const localize = (lang, key, vars) => interpolate(lang === 'en' ? en[key] || key : key, vars)
 
 export const STORE_KEYS = STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
@@ -13,11 +16,18 @@ export function storeName(key) {
   return s ? s.name : key
 }
 
-export function monthLabel(key) {
+export function monthLabel(key, lang = 'zh') {
   const m = MONTHS.find((x) => x.key === key)
-  if (m) return m.label
+  if (m) {
+    if (lang === 'en') {
+      const mm = (m.label || '').match(/(\d{1,2})月/)
+      const yy = (m.label || '').match(/(\d{4})年/)
+      return mm && yy ? `${mm[1]}/${yy[1]}` : m.label
+    }
+    return m.label
+  }
   const [y, mm] = String(key).split('-')
-  return mm ? `${y}年${mm}月` : key
+  return mm ? (lang === 'en' ? `${mm}/${y}` : `${y}年${mm}月`) : key
 }
 
 export function prevMonthKey(monthKey) {
@@ -146,7 +156,7 @@ export function dayStats(monthKey, storeKey, day) {
   return agg
 }
 
-export function kpiCards(monthKey, storeKey, day = null) {
+export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
   const agg = day ? dayStats(monthKey, storeKey, day) : aggregate(monthKey, storeKey)
   const monthAgg = aggregate(monthKey, storeKey)
   const pk = prevMonthKey(monthKey)
@@ -166,75 +176,80 @@ export function kpiCards(monthKey, storeKey, day = null) {
   return [
     {
       key: 'income',
-      label: '营业收入',
+      label: localize(lang, '营业收入'),
       value: formatMoney(agg.inc),
       unit: '元',
       prefix: '¥',
       change: pct(agg.inc, prevInc),
       note: day
-        ? `当日 ${day} · 环比上月同日`
-        : `营业 ${agg.days} 天 · 日均 ¥${formatMoney(agg.dailyAvg)}`,
+        ? localize(lang, '当日 {day} · 环比上月同日', { day })
+        : localize(lang, '营业 {days} 天 · 日均 ¥{money}', {
+            days: agg.days,
+            money: formatMoney(agg.dailyAvg),
+          }),
       spark: spark((r) => r.inc),
     },
     {
       key: 'orders',
-      label: '订单数',
+      label: localize(lang, '订单数'),
       value: fmt(agg.ord),
       unit: '单',
       prefix: '',
       change: pct(agg.ord, prevOrd),
-      note: `折前营业额 ¥${formatMoney(agg.rev)}`,
+      note: localize(lang, '折前营业额 ¥{money}', { money: formatMoney(agg.rev) }),
       spark: spark((r) => r.ord),
     },
     {
       key: 'avgOrder',
-      label: '客单价',
+      label: localize(lang, '客单价'),
       value: agg.avgOrder.toFixed(2),
       unit: '元',
       prefix: '¥',
       change: pct(agg.avgOrder, prevAvg),
-      note: '营业收入 / 订单量',
+      note: localize(lang, '营业收入 / 订单量'),
       spark: spark((r) => (r.ord ? r.inc / r.ord : 0)),
     },
     {
       key: 'dish',
-      label: '菜品销量',
+      label: localize(lang, '菜品销量'),
       value: fmt(agg.dish),
       unit: '份',
       prefix: '',
       change: pct(agg.dish, prevDish),
-      note: `菜品销售额 ¥${formatMoney(agg.dishInc)}`,
+      note: localize(lang, '菜品销售额 ¥{money}', { money: formatMoney(agg.dishInc) }),
       spark: spark((r) => r.dish),
     },
     {
       key: 'discount',
-      label: '优惠金额',
+      label: localize(lang, '优惠金额'),
       value: formatMoney(agg.dis),
       unit: '元',
       prefix: '¥',
       change: pct(agg.dis, prevDis),
-      note: `优惠率 ${(agg.rev ? ((agg.dis / agg.rev) * 100).toFixed(1) : 0)}%`,
+      note: localize(lang, '优惠率 {pct}%', {
+        pct: agg.rev ? ((agg.dis / agg.rev) * 100).toFixed(1) : 0,
+      }),
       spark: spark((r) => r.dis),
     },
     day
       ? {
           key: 'monthTotal',
-          label: '本月累计',
+          label: localize(lang, '本月累计'),
           value: formatMoney(monthAgg.inc),
           unit: '元',
           prefix: '¥',
           change: prevMonthAgg ? changePct(monthAgg.inc, prevMonthAgg.inc) : null,
-          note: `${monthLabel(monthKey)} 整月汇总`,
+          note: localize(lang, '{month} 整月汇总', { month: monthLabel(monthKey, lang) }),
           spark: spark((r) => r.inc),
         }
       : {
           key: 'dailyAvg',
-          label: '日均营业额',
+          label: localize(lang, '日均营业额'),
           value: formatMoney(agg.dailyAvg),
           unit: '元',
           prefix: '¥',
           change: pct(agg.dailyAvg, prevDaily),
-          note: `${monthLabel(monthKey)} 汇总`,
+          note: localize(lang, '{month} 汇总', { month: monthLabel(monthKey, lang) }),
           spark: spark((r) => r.inc),
         },
   ]
@@ -281,7 +296,7 @@ export function employeeList(storeKey, monthKey = null) {
 }
 
 /** 重要提醒（随所选月份动态生成） */
-export function notices(monthKey, day = null) {
+export function notices(monthKey, day = null, lang = 'zh') {
   const out = []
   if (day) {
     const aggDay = dayStats(monthKey, 'all', day)
@@ -290,8 +305,12 @@ export function notices(monthKey, day = null) {
       tagStyle: 'bg-grape-50 text-grape-600',
       bg: 'bg-grape-100',
       fg: 'text-grape-500',
-      time: `${monthLabel(monthKey)} · ${day}`,
-      text: `全部门店当日营业收入 ¥${formatMoney(aggDay.inc)}，共 ${aggDay.ord.toLocaleString('zh-CN')} 单，客单价 ¥${aggDay.avgOrder.toFixed(2)}。`,
+      time: `${monthLabel(monthKey, lang)} · ${day}`,
+      text: localize(lang, '全部门店当日营业收入 ¥{inc}，共 {ord} 单，客单价 ¥{avg}。', {
+        inc: formatMoney(aggDay.inc),
+        ord: aggDay.ord.toLocaleString('zh-CN'),
+        avg: aggDay.avgOrder.toFixed(2),
+      }),
     })
   }
   const pk = prevMonthKey(monthKey)
@@ -306,8 +325,11 @@ export function notices(monthKey, day = null) {
       tagStyle: 'bg-budu-50 text-budu-600',
       bg: 'bg-budu-100',
       fg: 'text-budu-500',
-      time: `${monthLabel(monthKey)}`,
-      text: `「${leader.name}」本月营业收入 ¥${leader.income.toLocaleString('zh-CN')}，位列三家门店第一。`,
+      time: `${monthLabel(monthKey, lang)}`,
+      text: localize(lang, '「{name}」本月营业收入 ¥{inc}，位列三家门店第一。', {
+        name: leader.name,
+        inc: leader.income.toLocaleString('zh-CN'),
+      }),
     })
     if (laggard.key !== leader.key) {
       out.push({
@@ -315,8 +337,11 @@ export function notices(monthKey, day = null) {
         tagStyle: 'bg-amber-50 text-amber-600',
         bg: 'bg-amber-100',
         fg: 'text-amber-600',
-        time: `${monthLabel(monthKey)}`,
-        text: `「${laggard.name}」本月营业收入 ¥${laggard.income.toLocaleString('zh-CN')}，为三家门店中最低，建议复盘菜单与引流。`,
+        time: `${monthLabel(monthKey, lang)}`,
+        text: localize(lang, '「{name}」本月营业收入 ¥{inc}，为三家门店中最低，建议复盘菜单与引流。', {
+          name: laggard.name,
+          inc: laggard.income.toLocaleString('zh-CN'),
+        }),
       })
     }
   }
@@ -330,8 +355,11 @@ export function notices(monthKey, day = null) {
         tagStyle: 'bg-rose-50 text-rose-500',
         bg: 'bg-rose-100',
         fg: 'text-rose-500',
-        time: `${monthLabel(pk)} → ${monthLabel(monthKey)}`,
-        text: `「${worst.name}」营业收入环比下降 ${Math.abs(worst.pct).toFixed(1)}%，建议关注客流与营销活动。`,
+        time: `${monthLabel(pk, lang)} → ${monthLabel(monthKey, lang)}`,
+        text: localize(lang, '「{name}」营业收入环比下降 {pct}%，建议关注客流与营销活动。', {
+          name: worst.name,
+          pct: Math.abs(worst.pct).toFixed(1),
+        }),
       })
     } else if (worst) {
       out.push({
@@ -339,8 +367,10 @@ export function notices(monthKey, day = null) {
         tagStyle: 'bg-emerald-50 text-emerald-600',
         bg: 'bg-emerald-100',
         fg: 'text-emerald-600',
-        time: `${monthLabel(pk)} → ${monthLabel(monthKey)}`,
-        text: `全部门店营业收入环比增长 ${changes.reduce((s, c) => s + Math.max(c.pct, 0), 0) > 0 ? '+' : ''}${worst.pct.toFixed(1)}%（三店均值口径）。`,
+        time: `${monthLabel(pk, lang)} → ${monthLabel(monthKey, lang)}`,
+        text: localize(lang, '全部门店营业收入环比增长 {pct}%（三店均值口径）。', {
+          pct: `${changes.reduce((s, c) => s + Math.max(c.pct, 0), 0) > 0 ? '+' : ''}${worst.pct.toFixed(1)}`,
+        }),
       })
     }
   }
@@ -352,8 +382,11 @@ export function notices(monthKey, day = null) {
       tagStyle: 'bg-purple-50 text-purple-600',
       bg: 'bg-purple-100',
       fg: 'text-purple-600',
-      time: '薪资表 27-31 周',
-      text: `「${topPerf.name}」业绩提成合计 ¥${(topPerf.perf + topPerf.big).toLocaleString('zh-CN')}，全店最高。`,
+      time: localize(lang, '薪资表 27-31 周'),
+      text: localize(lang, '「{name}」业绩提成合计 ¥{amount}，全店最高。', {
+        name: topPerf.name,
+        amount: (topPerf.perf + topPerf.big).toLocaleString('zh-CN'),
+      }),
     })
   }
 
@@ -363,7 +396,10 @@ export function notices(monthKey, day = null) {
     bg: 'bg-blue-100',
     fg: 'text-blue-600',
     time: 'budu OS文档',
-    text: `营业数据已更新至 ${monthLabel(MONTHS[MONTHS.length - 1].key)}，本月菜品销量 ${aggAll.dish.toLocaleString('zh-CN')} 份。`,
+    text: localize(lang, '营业数据已更新至 {month}，本月菜品销量 {dish} 份。', {
+      month: monthLabel(MONTHS[MONTHS.length - 1].key, lang),
+      dish: aggAll.dish.toLocaleString('zh-CN'),
+    }),
   })
 
   out.push({
@@ -372,7 +408,7 @@ export function notices(monthKey, day = null) {
     bg: 'bg-emerald-100',
     fg: 'text-emerald-600',
     time: 'V1.0',
-    text: 'BUDU Operating System V1.0 运行正常，数据由脚本自动从报表生成。',
+    text: localize(lang, 'BUDU Operating System V1.0 运行正常，数据由脚本自动从报表生成。'),
   })
 
   return out.slice(0, 5)

@@ -3,8 +3,10 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import Card from './Card'
 import { channelData, aggregate, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
+import { useI18n } from '../i18n'
 
 function ChannelTooltip({ active, payload }) {
+  const { t } = useI18n()
   if (!active || !payload || !payload.length) return null
   const item = payload[0]
   return (
@@ -14,9 +16,9 @@ function ChannelTooltip({ active, payload }) {
         {item.name}
       </p>
       <p className="mt-1 text-slate-500">
-        营业收入 <span className="font-bold text-slate-700">¥{formatMoney(item.value)}</span>
+        {t('营业收入')} <span className="font-bold text-slate-700">¥{formatMoney(item.value)}</span>
         <span className="ml-2">
-          占比 <span className="font-bold text-slate-700">{item.payload.pct}%</span>
+          {t('占比')} <span className="font-bold text-slate-700">{item.payload.pct}%</span>
         </span>
       </p>
     </div>
@@ -24,6 +26,7 @@ function ChannelTooltip({ active, payload }) {
 }
 
 export default function ChannelChart({ month, store, day }) {
+  const { lang, t } = useI18n()
   const data = channelData(month, store, day)
   const agg = aggregate(month, store)
   const total = data.reduce((s, x) => s + x.value, 0) || 1
@@ -31,8 +34,16 @@ export default function ChannelChart({ month, store, day }) {
 
   return (
     <Card
-      title="渠道销售构成"
-      subtitle={day ? `${monthLabel(month)} · ${storeName(store)} ${day} 按日` : `${monthLabel(month)} · ${storeName(store)}`}
+      title={t('渠道销售构成')}
+      subtitle={
+        day
+          ? t('{month} · {store} {day} 按日', {
+              month: monthLabel(month, lang),
+              store: storeName(store),
+              day,
+            })
+          : `${monthLabel(month, lang)} · ${storeName(store)}`
+      }
       action={
         <button className="grid h-8 w-8 place-items-center rounded-xl text-slate-300 transition hover:bg-slate-50 hover:text-slate-500">
           <MoreHorizontal className="h-4 w-4" />
@@ -63,7 +74,7 @@ export default function ChannelChart({ month, store, day }) {
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="text-center">
-            <p className="text-[10px] tracking-wide text-slate-400">营业收入</p>
+            <p className="text-[10px] tracking-wide text-slate-400">{t('营业收入')}</p>
             <p className="text-base font-extrabold text-slate-800">
               ¥{formatMoney(agg.inc)}
             </p>
@@ -75,7 +86,7 @@ export default function ChannelChart({ month, store, day }) {
         {withPct.map((item) => (
           <li key={item.name} className="flex items-center gap-2 text-xs">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.color }} />
-            <span className="flex-1 text-slate-500">{item.name}</span>
+            <span className="flex-1 text-slate-500">{t(item.name)}</span>
             <span className="font-semibold tabular-nums text-slate-500">
               ¥{formatMoney(item.value)}
             </span>

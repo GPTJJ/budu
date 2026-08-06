@@ -3,6 +3,7 @@ import { ChevronRight, X } from 'lucide-react'
 import Card from './Card'
 import { products, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
+import { useI18n } from '../i18n'
 
 // 菜品名称 -> 缩略图 emoji 映射
 const EMOJI_RULES = [
@@ -59,6 +60,7 @@ const isGiftLike = (name) => /赠品|临时商品/.test(name)
 
 /** 商品销售明细弹窗 */
 function ProductModal({ month, store, onClose }) {
+  const { lang, t } = useI18n()
   const [showGift, setShowGift] = useState(false)
   const all = products(month, store)
   const list = showGift ? all : all.filter((p) => !isGiftLike(p.name))
@@ -87,15 +89,18 @@ function ProductModal({ month, store, onClose }) {
         {/* 头部 */}
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">商品销售明细</h3>
+            <h3 className="text-lg font-bold text-slate-800">{t('商品销售明细')}</h3>
             <p className="mt-1 text-xs text-slate-400">
-              {monthLabel(month)} · {storeName(store)} · 按销售额排序
+              {t('{month} · {store} · 按销售额排序', {
+                month: monthLabel(month, lang),
+                store: storeName(store),
+              })}
             </p>
           </div>
           <button
             onClick={onClose}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-            aria-label="关闭"
+            aria-label={t('关闭')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -104,13 +109,15 @@ function ProductModal({ month, store, onClose }) {
         {/* 汇总 + 切换 */}
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-50 px-6 py-3">
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
-            {list.length} 个菜品
+            {t('{count} 个菜品', { count: list.length })}
           </span>
           <span className="rounded-lg bg-grape-50 px-2.5 py-1 text-xs font-semibold text-grape-600">
-            总销量 {formatNumber(Math.round(list.reduce((s, p) => s + p.sales, 0)))} 份
+            {t('总销量 {n} 份', {
+              n: formatNumber(Math.round(list.reduce((s, p) => s + p.sales, 0))),
+            })}
           </span>
           <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">
-            总销售额 ¥{formatMoney(totalAmount)}
+            {t('总销售额 ¥{amount}', { amount: formatMoney(totalAmount) })}
           </span>
           <label className="ml-auto flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-slate-500">
             <span
@@ -123,7 +130,7 @@ function ProductModal({ month, store, onClose }) {
                 className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${showGift ? 'left-[18px]' : 'left-0.5'}`}
               />
             </span>
-            显示赠品 / 临时商品
+            {t('显示赠品 / 临时商品')}
           </label>
         </div>
 
@@ -132,13 +139,13 @@ function ProductModal({ month, store, onClose }) {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white">
               <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                <th className="py-3 pr-2">排名</th>
-                <th className="py-3 pr-2">商品</th>
-                <th className="py-3 pr-2 text-right">销量</th>
-                <th className="py-3 pr-2 text-right">销售额</th>
-                <th className="py-3 pr-2 text-right">收入</th>
-                <th className="py-3 pr-2 text-right">优惠</th>
-                <th className="py-3">销售额占比</th>
+                <th className="py-3 pr-2">{t('排名')}</th>
+                <th className="py-3 pr-2">{t('商品')}</th>
+                <th className="py-3 pr-2 text-right">{t('销量')}</th>
+                <th className="py-3 pr-2 text-right">{t('销售额')}</th>
+                <th className="py-3 pr-2 text-right">{t('收入')}</th>
+                <th className="py-3 pr-2 text-right">{t('优惠')}</th>
+                <th className="py-3">{t('销售额占比')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -156,7 +163,7 @@ function ProductModal({ month, store, onClose }) {
                     </div>
                   </td>
                   <td className="py-2.5 pr-2 text-right tabular-nums text-slate-500">
-                    {formatNumber(Math.round(row.sales))} 份
+                    {t('{n} 份', { n: formatNumber(Math.round(row.sales)) })}
                   </td>
                   <td className="py-2.5 pr-2 text-right font-semibold tabular-nums text-slate-700">
                     ¥{formatMoney(row.amount)}
@@ -185,7 +192,7 @@ function ProductModal({ month, store, onClose }) {
               {list.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-sm text-slate-300">
-                    该月份暂无菜品销售数据
+                    {t('该月份暂无菜品销售数据')}
                   </td>
                 </tr>
               )}
@@ -194,7 +201,7 @@ function ProductModal({ month, store, onClose }) {
         </div>
 
         <p className="border-t border-slate-50 px-6 py-3 text-[11px] text-slate-300">
-          数据来自三店菜品明细报表；默认隐藏「赠品 / 临时商品」类目，可通过上方开关查看全量数据。
+          {t('数据来自三店菜品明细报表；默认隐藏「赠品 / 临时商品」类目，可通过上方开关查看全量数据。')}
         </p>
       </div>
     </div>
@@ -202,6 +209,7 @@ function ProductModal({ month, store, onClose }) {
 }
 
 export default function ProductSalesTable({ month, store }) {
+  const { lang, t } = useI18n()
   const [showModal, setShowModal] = useState(false)
   const all = products(month, store)
   const visible = all.filter((p) => !isGiftLike(p.name))
@@ -222,27 +230,30 @@ export default function ProductSalesTable({ month, store }) {
   return (
     <>
       <Card
-        title="商品销售 TOP10"
-        subtitle={`${monthLabel(month)} · ${storeName(store)} · 按销售额排序`}
+        title={t('商品销售 TOP10')}
+        subtitle={t('{month} · {store} · 按销售额排序', {
+          month: monthLabel(month, lang),
+          store: storeName(store),
+        })}
         action={
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600"
           >
-            查看全部
+            {t('查看全部')}
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
         }
       >
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
-            {summary.count} 个菜品
+            {t('{count} 个菜品', { count: summary.count })}
           </span>
           <span className="rounded-lg bg-grape-50 px-2.5 py-1 text-xs font-semibold text-grape-600">
-            总销量 {formatNumber(Math.round(summary.sales))} 份
+            {t('总销量 {n} 份', { n: formatNumber(Math.round(summary.sales)) })}
           </span>
           <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">
-            总销售额 ¥{formatMoney(summary.amount)}
+            {t('总销售额 ¥{amount}', { amount: formatMoney(summary.amount) })}
           </span>
         </div>
 
@@ -250,10 +261,10 @@ export default function ProductSalesTable({ month, store }) {
           <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                <th className="pb-3 pl-2">商品</th>
-                <th className="pb-3 text-right">销量</th>
-                <th className="pb-3 text-right">销售额</th>
-                <th className="pb-3 pr-2">销售额占比</th>
+                <th className="pb-3 pl-2">{t('商品')}</th>
+                <th className="pb-3 text-right">{t('销量')}</th>
+                <th className="pb-3 text-right">{t('销售额')}</th>
+                <th className="pb-3 pr-2">{t('销售额占比')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -271,13 +282,16 @@ export default function ProductSalesTable({ month, store }) {
                           {row.name}
                         </p>
                         <p className="mt-0.5 text-[11px] text-slate-400">
-                          收入 ¥{formatMoney(row.income)} · 优惠 ¥{formatMoney(row.discount)}
+                          {t('收入 ¥{income} · 优惠 ¥{discount}', {
+                            income: formatMoney(row.income),
+                            discount: formatMoney(row.discount),
+                          })}
                         </p>
                       </div>
                     </div>
                   </td>
                   <td className="py-2.5 text-right tabular-nums text-slate-500">
-                    {formatNumber(Math.round(row.sales))} 份
+                    {t('{n} 份', { n: formatNumber(Math.round(row.sales)) })}
                   </td>
                   <td className="py-2.5 text-right font-semibold tabular-nums text-slate-700">
                     ¥{formatMoney(row.amount)}
@@ -301,7 +315,7 @@ export default function ProductSalesTable({ month, store }) {
           </table>
         </div>
         <p className="mt-3 text-[11px] leading-4 text-slate-300">
-          数据来自三店菜品明细报表；已剔除「赠品 / 临时商品」类目，点击「查看全部」可查看完整明细。
+          {t('数据来自三店菜品明细报表；已剔除「赠品 / 临时商品」类目，点击「查看全部」可查看完整明细。')}
         </p>
       </Card>
 

@@ -13,6 +13,7 @@ import {
   LogOut,
   ChevronDown,
 } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -35,6 +36,7 @@ const subMenus = {
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate }) {
+  const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
 
   const toggleExpand = (key) =>
@@ -62,14 +64,14 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
           <p className="bg-gradient-to-r from-budu-500 to-grape-500 bg-clip-text text-xl font-black tracking-wide text-transparent">
             BUDU
           </p>
-          <p className="text-[11px] font-medium tracking-widest text-slate-400">甜蜜治愈日常</p>
+          <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
         </div>
       </div>
 
       {/* 菜单 */}
       <nav className="flex-1 space-y-1.5 overflow-y-auto px-4">
         <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
-          运营管理
+          {t('运营管理')}
         </p>
         {menus.map((item) => {
           const Icon = item.icon
@@ -89,7 +91,7 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
                   }`}
                 >
                   <Icon className={`h-[18px] w-[18px] ${active ? 'text-white' : 'text-slate-400 group-hover:text-budu-500'}`} />
-                  {item.label}
+                  {t(item.label)}
                   <ChevronDown
                     className={`ml-auto h-4 w-4 transition-transform duration-200 ${
                       active ? 'text-white' : 'text-slate-300'
@@ -112,7 +114,7 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
                           }`}
                         >
                           <span className={`text-[9px] ${subActive ? 'text-budu-500' : 'text-slate-300'}`}>●</span>
-                          {sub.label}
+                          {t(sub.label)}
                           {subActive && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-budu-500" />}
                         </button>
                       )
@@ -134,7 +136,7 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
               }`}
             >
               <Icon className={`h-[18px] w-[18px] ${active ? 'text-white' : 'text-slate-400 group-hover:text-budu-500'}`} />
-              {item.label}
+              {t(item.label)}
               {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white/90" />}
             </button>
           )
@@ -150,7 +152,7 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-700">Yue Gu</p>
-              <p className="truncate text-xs text-slate-400">总部运营 · 管理员</p>
+              <p className="truncate text-xs text-slate-400">{t('总部运营 · 管理员')}</p>
             </div>
             <button className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-white hover:text-budu-500">
               <LogOut className="h-4 w-4" />

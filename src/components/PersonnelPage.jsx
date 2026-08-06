@@ -14,6 +14,7 @@ import {
   STORES,
 } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
+import { useI18n } from '../i18n'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -39,6 +40,7 @@ const inputCls =
 
 /** 添加员工弹窗 */
 function AddStaffModal({ onClose, onSave }) {
+  const { t } = useI18n()
   const [name, setName] = useState('')
   const [type, setType] = useState('parttime')
   const [storeKey, setStoreKey] = useState(STORES[0].key)
@@ -55,11 +57,11 @@ function AddStaffModal({ onClose, onSave }) {
   const handleSave = () => {
     const trimmed = name.trim()
     if (!trimmed) {
-      setError('请输入员工姓名')
+      setError(t('请输入员工姓名'))
       return
     }
     if (employeeList('all').some((e) => e.name === trimmed)) {
-      setError('该员工已存在，请勿重复添加')
+      setError(t('该员工已存在，请勿重复添加'))
       return
     }
     onSave({
@@ -87,13 +89,13 @@ function AddStaffModal({ onClose, onSave }) {
       <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">添加员工</h3>
-            <p className="mt-1 text-xs text-slate-400">新员工将保存到本地，并同步到值班选择等关联模块</p>
+            <h3 className="text-lg font-bold text-slate-800">{t('添加员工')}</h3>
+            <p className="mt-1 text-xs text-slate-400">{t('新员工将保存到本地，并同步到值班选择等关联模块')}</p>
           </div>
           <button
             onClick={onClose}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-            aria-label="关闭"
+            aria-label={t('关闭')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -101,18 +103,18 @@ function AddStaffModal({ onClose, onSave }) {
 
         <div className="mt-5 space-y-4">
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-500">员工姓名</label>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('员工姓名')}</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="请输入姓名"
+              placeholder={t('请输入姓名')}
               className={inputCls}
               autoFocus
             />
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-500">人员类型</label>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('人员类型')}</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setType('fulltime')}
@@ -122,7 +124,7 @@ function AddStaffModal({ onClose, onSave }) {
                     : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
-                全职雇员
+                {t('全职雇员')}
               </button>
               <button
                 onClick={() => setType('parttime')}
@@ -132,20 +134,20 @@ function AddStaffModal({ onClose, onSave }) {
                     : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
-                兼职人员
+                {t('兼职人员')}
               </button>
             </div>
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-500">所属门店</label>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('所属门店')}</label>
             <select value={storeKey} onChange={(e) => setStoreKey(e.target.value)} className={inputCls}>
               {STORES.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
                 </option>
               ))}
-              <option value="multi">多店支援</option>
+              <option value="multi">{t('多店支援')}</option>
             </select>
           </div>
 
@@ -156,7 +158,7 @@ function AddStaffModal({ onClose, onSave }) {
             className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
-            确认添加
+            {t('确认添加')}
           </button>
         </div>
       </div>
@@ -166,6 +168,7 @@ function AddStaffModal({ onClose, onSave }) {
 
 /** 删除员工确认弹窗 */
 function ConfirmDeleteModal({ name, onClose, onConfirm }) {
+  const { t } = useI18n()
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -178,20 +181,20 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
       <div className="relative w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">删除员工</h3>
-            <p className="mt-1 text-xs text-slate-400">删除后将从人员管理、值班选择和员工绩效中隐藏，历史业绩记录保留</p>
+            <h3 className="text-lg font-bold text-slate-800">{t('删除员工')}</h3>
+            <p className="mt-1 text-xs text-slate-400">{t('删除后将从人员管理、值班选择和员工绩效中隐藏，历史业绩记录保留')}</p>
           </div>
           <button
             onClick={onClose}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-            aria-label="关闭"
+            aria-label={t('关闭')}
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <p className="mt-5 rounded-xl bg-rose-50/70 px-4 py-3 text-sm text-slate-600">
-          确认删除 <b className="text-slate-800">{name}</b> 吗？
+          {t('确认删除 {name} 吗？', { name })}
         </p>
 
         <div className="mt-5 grid grid-cols-2 gap-2.5">
@@ -199,13 +202,13 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
             onClick={onClose}
             className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
           >
-            取消
+            {t('取消')}
           </button>
           <button
             onClick={onConfirm}
             className="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-200/60 transition hover:bg-rose-600"
           >
-            确认删除
+            {t('确认删除')}
           </button>
         </div>
       </div>
@@ -214,6 +217,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
 }
 
 export default function PersonnelPage({ type, onTypeChange, onBack }) {
+  const { t } = useI18n()
   const [month, setMonth] = useState('2026-07') // 薪资主月
   const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -249,13 +253,16 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
           className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
         >
           <ArrowLeft className="h-4 w-4" />
-          返回首页
+          {t('返回首页')}
         </button>
         <div>
-          <h2 className="text-xl font-bold text-slate-800">人员管理</h2>
+          <h2 className="text-xl font-bold text-slate-800">{t('人员管理')}</h2>
           <p className="mt-0.5 text-[13px] text-slate-400">
-            薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {fulltime.length} 人 / 兼职 {parttime.length} 人
-            {day ? ` · 当日值班查询中` : ''}
+            {t('薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人', {
+              full: fulltime.length,
+              part: parttime.length,
+            })}
+            {day ? t('· 当日值班查询中') : ''}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
@@ -264,7 +271,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
             className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-budu-500 to-grape-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
-            添加员工
+            {t('添加员工')}
           </button>
           <CalendarPicker
             month={month}
@@ -287,7 +294,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
               : 'text-slate-500 hover:text-budu-600'
           }`}
         >
-          全职雇员（{fulltime.length}）
+          {t('全职雇员')}（{fulltime.length}）
         </button>
         <button
           onClick={() => onTypeChange('parttime')}
@@ -297,13 +304,15 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
               : 'text-slate-500 hover:text-budu-600'
           }`}
         >
-          兼职人员（{parttime.length}）
+          {t('兼职人员')}（{parttime.length}）
         </button>
       </div>
 
       {day && !dayHasData && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-medium text-amber-600">
-          所选日期 {month.slice(5)}-{day} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩
+          {t('所选日期 {date} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩', {
+            date: `${month.slice(5)}-${day}`,
+          })}
         </div>
       )}
 
@@ -323,7 +332,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                   <button
                     onClick={() => setPendingDelete(emp.name)}
                     className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                    title="删除该员工"
+                    title={t('删除该员工')}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -345,40 +354,40 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                               : 'bg-slate-100 text-slate-500'
                           }`}
                         >
-                          {emp.type === 'fulltime' ? '全职' : '兼职'}
+                          {emp.type === 'fulltime' ? t('全职') : t('兼职')}
                         </span>
                         {emp.local && (
                           <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
-                            本地
+                            {t('本地')}
                           </span>
                         )}
                         {day && status && (
                           <span className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                            值班
+                            {t('值班')}
                           </span>
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {emp.storeName} · 出勤 {emp.workedDays} 天
+                        {emp.storeName} · {t('出勤 {days} 天', { days: emp.workedDays })}
                       </p>
                     </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <Stat
-                      label={day ? '当日工资' : '工资合计'}
+                      label={day ? t('当日工资') : t('工资合计')}
                       value={`¥${formatMoney(day ? daySalary : emp.salary)}`}
                       accent="text-budu-600"
                     />
-                    <Stat label={day ? '当日工时' : '工时'} value={`${Math.round(day ? dayHours : emp.hours)}h`} />
+                    <Stat label={day ? t('当日工时') : t('工时')} value={`${Math.round(day ? dayHours : emp.hours)}h`} />
                     <Stat
-                      label={day ? '当日提成' : '业绩提成'}
+                      label={day ? t('当日提成') : t('业绩提成')}
                       value={`¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
                       accent="text-grape-600"
                     />
                     <Stat
-                      label={day ? '当日营业额' : '当班营业额'}
+                      label={day ? t('当日营业额') : t('当班营业额')}
                       value={`¥${formatMoney(day ? (status ? status.inc : 0) : emp.workedRevenue)}`}
                     />
                   </div>
@@ -388,21 +397,21 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                       {status ? (
                         <>
                           <span className="text-xs font-semibold text-slate-500">
-                            当日值班 · {status.stores.length} 家店
+                            {t('当日值班 · {count} 家店', { count: status.stores.length })}
                           </span>
                           <span className="text-xs font-bold tabular-nums text-emerald-600">
-                            ¥{formatMoney(status.inc)} · {Math.round(status.ord)} 单
+                            ¥{formatMoney(status.inc)} · {t('{n} 单', { n: Math.round(status.ord) })}
                           </span>
                         </>
                       ) : dayHasData ? (
-                        <span className="text-xs font-medium text-slate-400">当日休息</span>
+                        <span className="text-xs font-medium text-slate-400">{t('当日休息')}</span>
                       ) : (
-                        <span className="text-xs text-slate-300">当日无业绩录入</span>
+                        <span className="text-xs text-slate-300">{t('当日无业绩录入')}</span>
                       )}
                     </div>
                   ) : (
                     <div className="mt-3 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-300">ROI = 当班营业额 / 工资</span>
+                      <span className="text-[11px] text-slate-300">{t('ROI = 当班营业额 / 工资')}</span>
                       <span
                         className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
                           emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
@@ -419,7 +428,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
 
           {list.length === 0 && (
             <div className="card grid place-items-center py-16 text-sm text-slate-300">
-              暂无该类人员数据，点击右上角「添加员工」新建
+              {t('暂无该类人员数据，点击右上角「添加员工」新建')}
             </div>
           )}
         </>
@@ -427,9 +436,11 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
         /* 无薪资数据月份的空态 */
         <div className="card grid place-items-center py-20 text-center">
           <CalendarDays className="h-9 w-9 text-slate-200" />
-          <p className="mt-3 text-sm font-semibold text-slate-400">{monthLabel(month)}暂无薪资数据</p>
+          <p className="mt-3 text-sm font-semibold text-slate-400">
+            {t('{month}暂无薪资数据', { month: monthLabel(month) })}
+          </p>
           <p className="mt-1.5 text-xs text-slate-300">
-            当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月），可切换日历月份或添加本地员工
+            {t('当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月），可切换日历月份或添加本地员工')}
           </p>
         </div>
       )}

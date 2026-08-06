@@ -1,10 +1,12 @@
 import { MapPin, Bell, Menu, ChevronDown, LogOut } from 'lucide-react'
 import { STORES } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
+import { useI18n } from '../i18n'
 
 export default function Header({ month, store, day, onDaySelect, onMonthChange, onStoreChange, onMenuClick, user, onLogout }) {
-  const name = user?.username || '伙伴'
-  const roleText = user?.role === 'admin' ? '管理员' : '门店运营'
+  const { t } = useI18n()
+  const name = user?.username || t('伙伴')
+  const roleText = user?.role === 'admin' ? t('管理员') : t('门店运营')
   const initial = name.slice(0, 2).toUpperCase()
   return (
     <header className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/80 backdrop-blur-md">
@@ -14,16 +16,16 @@ export default function Header({ month, store, day, onDaySelect, onMonthChange, 
           <button
             onClick={onMenuClick}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card lg:hidden"
-            aria-label="打开菜单"
+            aria-label={t('打开菜单')}
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-slate-800 sm:text-xl">
-              下午好，{name} 👋
+              {t('下午好，{name} 👋', { name })}
             </h1>
             <p className="mt-0.5 truncate text-[13px] text-slate-400">
-              欢迎回来，今天也要元气满满地经营每一家门店！
+              {t('欢迎回来，今天也要元气满满地经营每一家门店！')}
             </p>
           </div>
         </div>
@@ -41,7 +43,7 @@ export default function Header({ month, store, day, onDaySelect, onMonthChange, 
               onChange={(e) => onStoreChange(e.target.value)}
               className="max-w-[120px] cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none sm:max-w-[160px]"
             >
-              <option value="all">全部门店</option>
+              <option value="all">{t('全部门店')}</option>
               {STORES.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
@@ -71,11 +73,11 @@ export default function Header({ month, store, day, onDaySelect, onMonthChange, 
           {/* 退出登录 */}
           <button
             onClick={() => {
-              if (window.confirm('确定要退出登录吗？')) onLogout()
+              if (window.confirm(t('确定要退出登录吗？'))) onLogout()
             }}
             className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-slate-400 shadow-card transition hover:text-rose-500 hover:shadow-card-hover"
-            title="退出登录"
-            aria-label="退出登录"
+            title={t('退出登录')}
+            aria-label={t('退出登录')}
           >
             <LogOut className="h-[18px] w-[18px]" />
           </button>
