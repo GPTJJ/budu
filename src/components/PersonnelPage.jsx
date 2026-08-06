@@ -217,7 +217,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
-export default function PersonnelPage({ type, onTypeChange, onBack }) {
+export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const [month, setMonth] = useState('2026-07') // 薪资主月
@@ -333,7 +333,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
               const dayPerf = onDuty ? (emp.perf + emp.big) / workDays : 0
               return (
                 <div key={emp.name} className="card relative p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
-                  {!isPublic && (
+                  {canDelete && !isPublic && (
                     <button
                       onClick={() => setPendingDelete(emp.name)}
                       className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"

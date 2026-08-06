@@ -272,6 +272,9 @@ export function createApp() {
       db.staff = body.staff
     }
     if (body.removedStaff !== undefined) {
+      if (req.user.role !== 'developer') {
+        return res.status(403).json({ error: '无权限' })
+      }
       if (!Array.isArray(body.removedStaff) || body.removedStaff.some((n) => typeof n !== 'string')) {
         return res.status(400).json({ error: 'removedStaff 格式错误' })
       }

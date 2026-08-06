@@ -134,6 +134,7 @@ export default function App() {
               type={view === 'staff-fulltime' ? 'fulltime' : 'parttime'}
               onTypeChange={(t) => setView(t === 'fulltime' ? 'staff-fulltime' : 'staff-parttime')}
               onBack={() => setView('overview')}
+              canDelete={user?.role === 'developer'}
             />
           ) : isStoreEntryView && user?.role !== 'public' ? (
             <StoreEntryPage onBack={() => setView('overview')} />
