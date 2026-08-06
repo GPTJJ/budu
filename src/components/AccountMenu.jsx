@@ -46,7 +46,7 @@ function PasswordModal({ onClose }) {
     }
     setBusy(true)
     try {
-      await api('/auth/password', { method: 'PUT', body: JSON.stringify({ oldPassword, newPassword }) })
+      await api('/auth/me', { method: 'PUT', body: JSON.stringify({ oldPassword, newPassword }) })
       setOk(t('密码修改成功'))
       setTimeout(onClose, 1200)
     } catch (err) {
@@ -145,7 +145,7 @@ function ProfileModal({ mode, user, onUserChange, onClose }) {
     }
     setBusy(true)
     try {
-      const data = await api('/auth/profile', { method: 'PUT', body: JSON.stringify(body) })
+      const data = await api('/auth/me', { method: 'PUT', body: JSON.stringify(body) })
       onUserChange(data.user)
       onClose()
     } catch (err) {

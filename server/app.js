@@ -106,6 +106,47 @@ export function createApp() {
     res.json({ user: userPublic(req.user) })
   })
 
+  // ---------- 修改用户名 / 头像 / 密码（复用 /api/auth/me，兼容 Vercel 已有函数） ----------
+  app.put('/api/auth/me', requireAuth, async (req, res) => {
+    const body = req.body || {}
+    if (body.oldPassword !== undefined || body.newPassword !== undefined) {
+      const oldPassword = String(body.oldPassword || '')
+      const newPassword = String(body.newPassword || '')
+      if (!verifyPassword(oldPassword, req.user.passwordHash)) {
+        return res.status(400).json({ error: '当前密码错误' })
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: '密码至少 6 位' })
+      }
+      req.user.passwordHash = hashPassword(newPassword)
+      await persist()
+      return res.json({ ok: true })
+    }
+    const db = await loadDb()
+    if (body.username !== undefined) {
+      const username = String(body.username || '').trim()
+      if (username.length < 2 || username.length > 20) {
+        return res.status(400).json({ error: '用户名需为 2-20 个字符' })
+      }
+      if (db.users.some((u) => u.id !== req.user.id && u.username === username)) {
+        return res.status(409).json({ error: '用户名已存在' })
+      }
+      req.user.username = username
+    }
+    if (body.avatar !== undefined) {
+      const avatar = typeof body.avatar === 'string' ? body.avatar.trim() : ''
+      if (avatar && !avatar.startsWith('data:image/')) {
+        return res.status(400).json({ error: '头像格式错误' })
+      }
+      if (avatar.length > 500000) {
+        return res.status(400).json({ error: '头像文件过大' })
+      }
+      req.user.avatar = avatar
+    }
+    await persist()
+    res.json({ user: userPublic(req.user) })
+  })
+
   // ---------- 修改用户名 / 头像 ----------
   app.put('/api/auth/profile', requireAuth, async (req, res) => {
     const body = req.body || {}
