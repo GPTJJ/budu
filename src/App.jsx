@@ -91,7 +91,7 @@ export default function App() {
   }
 
   return (
-    <PublicModeProvider isPublic={user?.role === 'public'}>
+    <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
       <div className="flex min-h-screen bg-[#F7F4FA]">
       {sidebarOpen && (
         <div

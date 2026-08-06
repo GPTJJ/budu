@@ -15,7 +15,7 @@ import {
 } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -220,6 +220,8 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
 export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hidePersonal = isPublic || isStore
   const [month, setMonth] = useState('2026-07') // 薪资主月
   const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -383,16 +385,16 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <Stat
                       label={day ? t('当日工资') : t('工资合计')}
-                      value={isPublic ? '•••' : `¥${formatMoney(day ? daySalary : emp.salary)}`}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(day ? daySalary : emp.salary)}`}
                       accent="text-budu-600"
                     />
                     <Stat
                       label={day ? t('当日工时') : t('工时')}
-                      value={isPublic ? '•••' : `${Math.round(day ? dayHours : emp.hours)}h`}
+                      value={hidePersonal ? '•••' : `${Math.round(day ? dayHours : emp.hours)}h`}
                     />
                     <Stat
                       label={day ? t('当日提成') : t('业绩提成')}
-                      value={isPublic ? '•••' : `¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
                       accent="text-grape-600"
                     />
                     <Stat
@@ -430,7 +432,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                           emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
                         }`}
                       >
-                        {isPublic ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
+                        {hidePersonal ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
                       </span>
                     </div>
                   )}

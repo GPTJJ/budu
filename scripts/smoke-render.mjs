@@ -81,6 +81,26 @@ try {
       await render('/src/components/ProductCatalogPage.jsx', { onBack: () => {} }),
       ['商品目录'],
     ],
+    [
+      'EmployeePerformanceTable store privacy',
+      await (async () => {
+        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
+        const vis = await server.ssrLoadModule('/src/visibility.jsx')
+        const mod = await server.ssrLoadModule('/src/components/EmployeePerformanceTable.jsx')
+        return renderToString(
+          React.createElement(
+            i18n.I18nProvider,
+            null,
+            React.createElement(
+              vis.PublicModeProvider,
+              { isPublic: false, isStore: true },
+              React.createElement(mod.default, { store: 'all' }),
+            ),
+          ),
+        )
+      })(),
+      ['•••'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

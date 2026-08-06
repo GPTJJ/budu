@@ -3,7 +3,7 @@ import Card from './Card'
 import { employeeList, storeName } from '../utils/selectors'
 import { formatMoney, rankStyle } from '../utils/format'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -22,6 +22,8 @@ function roiStyle(roi) {
 export default function EmployeePerformanceTable({ store }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hidePersonal = isStore
   const list = employeeList(store).slice(0, 5)
 
   return (
@@ -83,13 +85,15 @@ export default function EmployeePerformanceTable({ store }) {
                   ¥{formatMoney(row.workedRevenue)}
                 </td>
                 <td className="py-3 text-right text-xs tabular-nums text-slate-500">
-                  ¥{formatMoney(row.salary)}
+                  {hidePersonal ? '•••' : `¥${formatMoney(row.salary)}`}
                 </td>
                 <td className="py-3 text-right">
-                  <span className={`chip ${roiStyle(row.roi)}`}>{row.roi.toFixed(1)}x</span>
+                  <span className={`chip ${roiStyle(row.roi)}`}>
+                    {hidePersonal ? '•••' : `${row.roi.toFixed(1)}x`}
+                  </span>
                 </td>
                 <td className="py-3 pr-2 text-right text-xs tabular-nums text-slate-500">
-                  {Math.round(row.hours)}h
+                  {hidePersonal ? '•••' : `${Math.round(row.hours)}h`}
                 </td>
               </tr>
             ))}
