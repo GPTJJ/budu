@@ -1,6 +1,6 @@
 import { ChevronRight } from 'lucide-react'
 import Card from './Card'
-import { employeeList, storeName } from '../utils/selectors'
+import { employeeList, entryEmployeePerformance, storeName } from '../utils/selectors'
 import { formatMoney, rankStyle } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
@@ -24,12 +24,18 @@ export default function EmployeePerformanceTable({ store }) {
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isStore
-  const list = employeeList(store).slice(0, 5)
+  const entryRows = entryEmployeePerformance(store)
+  const hasEntryData = entryRows.length > 0
+  const list = (hasEntryData ? entryRows : employeeList(store)).slice(0, 5)
 
   return (
     <Card
       title={t('员工绩效 TOP5')}
-      subtitle={t('薪资表 2026.27-31 周 · {store}', { store: storeName(store) })}
+      subtitle={
+        hasEntryData
+          ? t('根据门店业绩录入实时分析')
+          : t('薪资表 2026.27-31 周 · {store}', { store: storeName(store) })
+      }
       action={
         !isPublic && (
         <button className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600">
@@ -85,15 +91,15 @@ export default function EmployeePerformanceTable({ store }) {
                   ¥{formatMoney(row.workedRevenue)}
                 </td>
                 <td className="py-3 text-right text-xs tabular-nums text-slate-500">
-                  {hidePersonal ? '•••' : `¥${formatMoney(row.salary)}`}
+                  {hidePersonal ? '•••' : hasEntryData && !row.salary ? '—' : `¥${formatMoney(row.salary)}`}
                 </td>
                 <td className="py-3 text-right">
                   <span className={`chip ${roiStyle(row.roi)}`}>
-                    {hidePersonal ? '•••' : `${row.roi.toFixed(1)}x`}
+                    {hidePersonal ? '•••' : hasEntryData && !row.salary ? '—' : `${row.roi.toFixed(1)}x`}
                   </span>
                 </td>
                 <td className="py-3 pr-2 text-right text-xs tabular-nums text-slate-500">
-                  {hidePersonal ? '•••' : `${Math.round(row.hours)}h`}
+                  {hidePersonal ? '•••' : hasEntryData && !row.hours ? '—' : `${Math.round(row.hours)}h`}
                 </td>
               </tr>
             ))}
@@ -102,7 +108,9 @@ export default function EmployeePerformanceTable({ store }) {
         </div>
       )}
       <p className="mt-3 text-[11px] text-slate-300">
-        {t('当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资')}
+        {hasEntryData
+          ? t('当班营业额 = 各店当日录入营业收入按值班人数均摊')
+          : t('当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资')}
       </p>
     </Card>
   )

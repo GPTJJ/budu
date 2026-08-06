@@ -302,6 +302,9 @@ export const en = {
 
   // 员工绩效
   '员工绩效 TOP5': 'Staff Performance TOP5',
+  '根据门店业绩录入实时分析': 'Based on daily store entries',
+  '当班营业额 = 各店当日录入营业收入按值班人数均摊':
+    'Shift revenue = daily entry revenue split equally among duty staff',
   '薪资表 2026.27-31 周 · {store}': 'Payroll 2026 wk 27–31 · {store}',
   '员工': 'Staff',
   '工资': 'Wage',

@@ -331,6 +331,45 @@ export function employeeList(storeKey, monthKey = null) {
     .sort((a, b) => b.salary - a.salary)
 }
 
+/** 员工绩效（根据每日门店业绩录入实时分析：营业额/订单按值班人数均摊） */
+export function entryEmployeePerformance(storeKey = 'all') {
+  const entries = localEntries()
+  const map = new Map()
+  for (const [key, v] of Object.entries(entries)) {
+    const parts = key.split('|')
+    if (parts.length !== 3 || parts[1] === 'all') continue
+    if (storeKey !== 'all' && parts[1] !== storeKey) continue
+    if (!Array.isArray(v.staff) || v.staff.length === 0) continue
+    const inc = Number(v.inc) || 0
+    const ord = Number(v.ord) || 0
+    const share = v.staff.length
+    for (const name of v.staff) {
+      const rec = map.get(name) || { name, workedRevenue: 0, orders: 0, workedDays: 0 }
+      rec.workedRevenue += inc / share
+      rec.orders += ord / share
+      rec.workedDays += 1
+      map.set(name, rec)
+    }
+  }
+  const infoMap = new Map(employeeList('all').map((e) => [e.name, e]))
+  return [...map.values()]
+    .map((e) => {
+      const info = infoMap.get(e.name)
+      const salary = info ? info.salary || 0 : 0
+      return {
+        ...e,
+        storeKey: info ? info.storeKey : 'multi',
+        storeName: info ? info.storeName : '多店支援',
+        salary,
+        hours: info ? (info.baseHours || 0) + (info.otHours || 0) : 0,
+        roi: e.workedRevenue > 0 && salary > 0 ? e.workedRevenue / salary : 0,
+        workedRevenue: Math.round(e.workedRevenue * 100) / 100,
+        orders: Math.round(e.orders * 100) / 100,
+      }
+    })
+    .sort((a, b) => b.workedRevenue - a.workedRevenue)
+}
+
 /** 重要提醒（随所选月份动态生成） */
 export function notices(monthKey, day = null, lang = 'zh') {
   const out = []
