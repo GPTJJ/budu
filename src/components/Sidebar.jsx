@@ -9,11 +9,11 @@ import {
   Heart,
   BarChart3,
   Settings,
-  CupSoda,
   ChevronDown,
 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import AccountMenu from './AccountMenu'
+import logoUrl from '../assets/logo.jpg'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -57,12 +57,10 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-budu-400 to-grape-500 text-white shadow-lg shadow-budu-200">
-          <CupSoda className="h-6 w-6" />
-        </div>
+        <img src={logoUrl} alt="budu" className="h-11 w-11 rounded-2xl object-cover shadow-lg shadow-budu-200" />
         <div>
           <p className="bg-gradient-to-r from-budu-500 to-grape-500 bg-clip-text text-xl font-black tracking-wide text-transparent">
-            BUDU
+            budu
           </p>
           <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
         </div>
@@ -149,7 +147,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
           <AccountMenu user={user} onUserChange={onUserChange} onLogout={onLogout} variant="sidebar" />
         </div>
         <p className="mt-3 text-center text-[10px] font-medium tracking-[0.18em] text-slate-300">
-          BUDU Operating System V1.0
+          budu Operating System V1.0
         </p>
       </div>
     </aside>

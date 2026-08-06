@@ -46,7 +46,7 @@ export default function LoginPage({ onLogin }) {
             <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-budu-500 to-grape-500 text-xl font-black text-white shadow-lg shadow-budu-200/60">
               B
             </div>
-            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('BUDU 甜蜜运营系统')}</h1>
+            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu 甜蜜运营系统')}</h1>
             <p className="mt-1 text-xs text-slate-400">
               {mode === 'login' ? t('登录后查看门店经营数据（多设备共享）') : t('注册团队账号，首个账号为管理员')}
             </p>
@@ -113,7 +113,7 @@ export default function LoginPage({ onLogin }) {
           </p>
         </div>
         <p className="mt-4 text-center text-[11px] text-slate-300">
-          {t('© 2026 BUDU 甜品 · BUDU Operating System V1.0')}
+          {t('© 2026 budu 甜品 · budu Operating System V1.0')}
         </p>
       </div>
     </div>

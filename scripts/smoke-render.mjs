@@ -20,8 +20,8 @@ const render = async (path, props = {}) => {
 
 try {
   const checks = [
-    ['App 登录门', await render('/src/App.jsx'), ['BUDU', '正在加载']],
-    ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['BUDU 甜蜜运营系统', '登录', '注册一个']],
+    ['App 登录门', await render('/src/App.jsx'), ['budu', '正在加载']],
+    ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['budu 甜蜜运营系统', '登录', '注册一个']],
     ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职雇员']],
     ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['门店业绩录入', '值班人员']],
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],

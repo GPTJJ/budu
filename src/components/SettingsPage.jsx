@@ -61,7 +61,7 @@ export default function SettingsPage({ onBack }) {
             <Server className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-[15px] font-bold text-slate-800">{t('BUDU Operating System V1.0')}</h3>
+            <h3 className="text-[15px] font-bold text-slate-800">{t('budu Operating System V1.0')}</h3>
             <p className="mt-0.5 text-xs text-slate-400">
               {t('版本')} · {t('数据来源')}
             </p>

@@ -27,9 +27,9 @@ export const en = {
   '关闭': 'Close',
 
   // App
-  '正在加载 BUDU 系统…': 'Loading BUDU system…',
-  '© 2026 BUDU 甜品 · BUDU Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）':
-    '© 2026 BUDU Desserts · BUDU Operating System V1.0 · Data: budu OS docs (Apr–Jul reports / payroll wk 27–31)',
+  '正在加载 budu 系统…': 'Loading budu system…',
+  '© 2026 budu 甜品 · budu Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）':
+    '© 2026 budu Desserts · budu Operating System V1.0 · Data: budu OS docs (Apr–Jul reports / payroll wk 27–31)',
 
   // 顶栏
   '下午好，{name} 👋': 'Good afternoon, {name} 👋',
@@ -44,7 +44,7 @@ export const en = {
   '全部门店': 'All Stores',
 
   // 登录
-  'BUDU 甜蜜运营系统': 'BUDU Sweet Operations System',
+  'budu 甜蜜运营系统': 'budu Sweet Operations System',
   '登录后查看门店经营数据（多设备共享）': 'Sign in to view store data (shared across devices)',
   '注册团队账号，首个账号为管理员': 'Register a team account; the first account becomes admin',
   '用户名': 'Username',
@@ -56,7 +56,7 @@ export const en = {
   '已有账号？': 'Already have an account?',
   '注册一个': 'Register one',
   '去登录': 'Sign in',
-  '© 2026 BUDU 甜品 · BUDU Operating System V1.0': '© 2026 BUDU Desserts · BUDU Operating System V1.0',
+  '© 2026 budu 甜品 · budu Operating System V1.0': '© 2026 budu Desserts · budu Operating System V1.0',
 
   // 系统设置
   '系统偏好': 'Preferences',
@@ -66,7 +66,7 @@ export const en = {
   '中文': '中文',
   'English': 'English',
   '版本': 'Version',
-  'BUDU Operating System V1.0': 'BUDU Operating System V1.0',
+  'budu Operating System V1.0': 'budu Operating System V1.0',
   '数据来源': 'Data source',
   'budu OS文档（三店4-7月报表 / 薪资表27-31周）': 'budu OS docs (Apr–Jul reports / payroll wk 27–31)',
 
@@ -288,8 +288,8 @@ export const en = {
   '「{name}」业绩提成合计 ¥{amount}，全店最高。': '"{name}" earned the most commission: ¥{amount}.',
   '营业数据已更新至 {month}，本月菜品销量 {dish} 份。':
     'Data updated through {month}; {dish} dishes sold this month.',
-  'BUDU Operating System V1.0 运行正常，数据由脚本自动从报表生成。':
-    'BUDU Operating System V1.0 is running normally; data is generated from reports.',
+  'budu Operating System V1.0 运行正常，数据由脚本自动从报表生成。':
+    'budu Operating System V1.0 is running normally; data is generated from reports.',
 }
 
 /** 简单插值：{name} -> 变量值 */

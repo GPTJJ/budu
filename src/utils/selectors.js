@@ -408,7 +408,7 @@ export function notices(monthKey, day = null, lang = 'zh') {
     bg: 'bg-emerald-100',
     fg: 'text-emerald-600',
     time: 'V1.0',
-    text: localize(lang, 'BUDU Operating System V1.0 运行正常，数据由脚本自动从报表生成。'),
+    text: localize(lang, 'budu Operating System V1.0 运行正常，数据由脚本自动从报表生成。'),
   })
 
   return out.slice(0, 5)

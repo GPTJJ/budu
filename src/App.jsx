@@ -68,7 +68,7 @@ export default function App() {
   if (authLoading || !dataReady) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#F7F4FA]">
-        <p className="text-sm font-medium text-slate-400">{t('正在加载 BUDU 系统…')}</p>
+        <p className="text-sm font-medium text-slate-400">{t('正在加载 budu 系统…')}</p>
       </div>
     )
   }
@@ -163,7 +163,7 @@ export default function App() {
           )}
 
           <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
-            {t('© 2026 BUDU 甜品 · BUDU Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
+            {t('© 2026 budu 甜品 · budu Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
           </footer>
         </main>
       </div>
