@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Image as ImageIcon, KeyRound, Loader2, LogOut, RefreshCw, Upload, UserRound, X } from 'lucide-react'
+import { ChevronDown, Image as ImageIcon, KeyRound, Loader2, LogOut, RefreshCw, Upload, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
@@ -264,7 +264,6 @@ export default function AccountMenu({ user, onUserChange, onLogout, variant = 'h
             <div className="my-1 h-px bg-slate-100" />
             <MenuButton icon={KeyRound} label={t('修改密码')} onClick={() => { close(); setModal('password') }} />
             <MenuButton icon={ImageIcon} label={t('修改头像')} onClick={() => { close(); setModal('avatar') }} />
-            <MenuButton icon={UserRound} label={t('修改用户名')} onClick={() => { close(); setModal('username') }} />
             <div className="my-1 h-px bg-slate-100" />
             <MenuButton icon={RefreshCw} label={t('切换账号')} onClick={handleSwitch} />
             <MenuButton icon={LogOut} label={t('退出登录')} danger onClick={handleLogout} />
