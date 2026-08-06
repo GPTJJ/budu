@@ -55,7 +55,7 @@ export default function Header({
         </div>
 
         {/* 右侧工具栏 */}
-        <div className="flex max-w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:gap-3">
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:gap-3">
           {/* 日历选择（月 / 日双模式） */}
           <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
 
