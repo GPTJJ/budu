@@ -144,7 +144,13 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       {/* 底部用户卡片 */}
       <div className="px-4 pb-5 pt-4">
         <div className="rounded-2xl bg-gradient-to-br from-budu-50 via-white to-grape-50 p-2 shadow-inner ring-1 ring-budu-100/60">
-          <AccountMenu user={user} onUserChange={onUserChange} onLogout={onLogout} variant="sidebar" />
+          <AccountMenu
+            user={user}
+            onUserChange={onUserChange}
+            onLogout={onLogout}
+            onManageAccounts={() => onNavigate('account-admin')}
+            variant="sidebar"
+          />
         </div>
         <p className="mt-3 text-center text-[10px] font-medium tracking-[0.18em] text-slate-300">
           budu Operating System V1.0

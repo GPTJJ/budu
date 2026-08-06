@@ -41,6 +41,14 @@ try {
       }),
       ['打开账号菜单'],
     ],
+    [
+      'AccountAdminPage',
+      await render('/src/components/AccountAdminPage.jsx', {
+        currentUser: { id: '1', username: 'budu', role: 'owner' },
+        onBack: () => {},
+      }),
+      ['账号管理', '已注册账号'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

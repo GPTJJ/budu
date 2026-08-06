@@ -96,6 +96,26 @@ export const en = {
   '未登录或登录已过期': 'Not signed in or session expired',
   '账号不存在': 'Account not found',
 
+  // 账号管理（最高权限）
+  '账号管理': 'Account Management',
+  '查看与管理所有已注册账号': 'View and manage all registered accounts',
+  '已注册账号': 'Registered Accounts',
+  '角色': 'Role',
+  '注册时间': 'Registered',
+  '重置密码': 'Reset Password',
+  '删除账号': 'Delete Account',
+  '当前账号': 'Current',
+  '最高权限': 'Owner',
+  '确定将「{name}」的权限改为「{role}」吗？': 'Change {name}’s role to {role}?',
+  '确定删除账号「{name}」吗？此操作不可恢复。': 'Delete account {name}? This cannot be undone.',
+  '不能修改自己的权限': 'You cannot change your own role',
+  '不能删除自己': 'You cannot delete the current account',
+  '至少保留一个最高权限账号': 'At least one Owner account must remain',
+  '重置密码：{name}': 'Reset Password: {name}',
+  '密码已重置': 'Password reset',
+  '无权限': 'No permission',
+  '角色不正确': 'Invalid role',
+
   // 人员管理
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',

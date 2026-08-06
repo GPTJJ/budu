@@ -11,6 +11,7 @@ import NotificationPanel from './components/NotificationPanel'
 import PersonnelPage from './components/PersonnelPage'
 import StoreEntryPage from './components/StoreEntryPage'
 import SettingsPage from './components/SettingsPage'
+import AccountAdminPage from './components/AccountAdminPage'
 import { kpiCards, MONTHS } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
@@ -64,6 +65,7 @@ export default function App() {
   const isStaffView = view === 'staff-fulltime' || view === 'staff-parttime'
   const isStoreEntryView = view === 'store-entry'
   const isSettingsView = view === 'settings'
+  const isAccountAdminView = view === 'account-admin'
 
   if (authLoading || !dataReady) {
     return (
@@ -125,6 +127,8 @@ export default function App() {
             <StoreEntryPage onBack={() => setView('overview')} />
           ) : isSettingsView ? (
             <SettingsPage onBack={() => setView('overview')} />
+          ) : isAccountAdminView ? (
+            <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
           ) : (
             <>
               {/* 核心 KPI 统计 */}
