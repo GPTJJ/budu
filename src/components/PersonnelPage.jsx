@@ -230,7 +230,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
   const [month, setMonth] = useState(() => todayParts().month)
-  const [day, setDay] = useState(() => todayParts().day)
+  const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
   const [staffVersion, setStaffVersion] = useState(0)
