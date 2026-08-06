@@ -40,6 +40,11 @@ node scripts/migrate-upstash.mjs    # 本地数据 → 线上 KV
 npx vercel env pull                 # 拉取线上环境变量
 ```
 
+## 开发约定（务必遵守）
+
+- 功能改动完成前必须先自测通过再交付/推送：前端 `npm run build`、SSR 冒烟 `node scripts/smoke-render.mjs`、相关接口用临时账号实测（测完恢复数据）。
+- 涉及线上部署时，部署完成后核对线上 URL 对应的接口/页面是否正常，再向用户报告完成。
+
 ## 关键文件
 
 - `server/app.js` — Express 应用（路由/鉴权/数据接口）
