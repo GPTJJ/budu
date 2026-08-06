@@ -57,7 +57,11 @@ function writeMirror() {
 /** 登录成功后拉取共享数据；首次登录自动迁移旧版本地数据 */
 export async function loadUserData() {
   const data = await api('/userdata')
-  cached = { entries: data.entries || {}, staff: Array.isArray(data.staff) ? data.staff : [] }
+  cached = {
+    entries: data.entries || {},
+    staff: Array.isArray(data.staff) ? data.staff : [],
+    removedStaff: Array.isArray(data.removedStaff) ? data.removedStaff : [],
+  }
   const legacy = readLegacy()
   let migrated = false
   if (legacy.entries && Object.keys(legacy.entries).length > 0 && Object.keys(cached.entries).length === 0) {
@@ -83,9 +87,13 @@ export function getUserData() {
   if (cached) return cached
   const mirror = readMirror()
   if (mirror) {
-    cached = { entries: mirror.entries || {}, staff: Array.isArray(mirror.staff) ? mirror.staff : [] }
+    cached = {
+      entries: mirror.entries || {},
+      staff: Array.isArray(mirror.staff) ? mirror.staff : [],
+      removedStaff: Array.isArray(mirror.removedStaff) ? mirror.removedStaff : [],
+    }
   }
-  return cached || { entries: {}, staff: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [] }
 }
 
 export function getEntries() {
@@ -114,6 +122,15 @@ export function commitEntries(entries) {
 
 export function commitStaff(staff) {
   getUserData().staff = staff
+  syncUserData()
+}
+
+export function getRemovedStaff() {
+  return Array.isArray(getUserData().removedStaff) ? getUserData().removedStaff : []
+}
+
+export function commitRemovedStaff(removedStaff) {
+  getUserData().removedStaff = removedStaff
   syncUserData()
 }
 

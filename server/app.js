@@ -94,7 +94,7 @@ export function createApp() {
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json({ entries: db.entries, staff: db.staff })
+    res.json({ entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [] })
   })
 
   // ---------- 共享数据：整体保存 ----------
@@ -111,8 +111,14 @@ export function createApp() {
       if (!Array.isArray(body.staff)) return res.status(400).json({ error: 'staff 格式错误' })
       db.staff = body.staff
     }
+    if (body.removedStaff !== undefined) {
+      if (!Array.isArray(body.removedStaff) || body.removedStaff.some((n) => typeof n !== 'string')) {
+        return res.status(400).json({ error: 'removedStaff 格式错误' })
+      }
+      db.removedStaff = body.removedStaff
+    }
     await persist()
-    res.json({ ok: true, entries: db.entries, staff: db.staff })
+    res.json({ ok: true, entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [] })
   })
 
   // ---------- 静态前端（仅本地/自建服务器模式使用；Vercel 由平台托管前端） ----------

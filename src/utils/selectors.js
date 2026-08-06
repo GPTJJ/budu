@@ -1,5 +1,5 @@
 import { DAILY, PRODUCTS, STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS } from '../data/reportData.js'
-import { commitEntries, commitStaff, getEntries, getStaff } from './userData.js'
+import { commitEntries, commitStaff, commitRemovedStaff, getEntries, getStaff, getRemovedStaff } from './userData.js'
 import { formatMoney } from './format.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
@@ -257,10 +257,19 @@ export function saveLocalStaffList(list) {
   commitStaff(list)
 }
 
+/** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
+export function removeStaff(name) {
+  commitStaff(localStaffList().filter((e) => e.name !== name))
+  commitRemovedStaff([...getRemovedStaff().filter((n) => n !== name), name])
+}
+
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
-  const source = monthKey != null ? (EMPLOYEE_MONTHLY[monthKey] || []) : EMPLOYEES
-  const local = localStaffList().map((e) => ({ ...e, local: true }))
+  const removed = new Set(getRemovedStaff())
+  const source = (monthKey != null ? (EMPLOYEE_MONTHLY[monthKey] || []) : EMPLOYEES).filter((e) => !removed.has(e.name))
+  const local = localStaffList()
+    .map((e) => ({ ...e, local: true }))
+    .filter((e) => !removed.has(e.name))
   const list = [...source, ...local].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
   return list
     .map((e) => ({

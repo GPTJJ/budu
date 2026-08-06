@@ -9,6 +9,7 @@ import {
   employeeDayStatus,
   hasLocalEntry,
   localStaffList,
+  removeStaff,
   saveLocalStaffList,
   STORES,
 } from '../utils/selectors'
@@ -163,10 +164,60 @@ function AddStaffModal({ onClose, onSave }) {
   )
 }
 
+/** 删除员工确认弹窗 */
+function ConfirmDeleteModal({ name, onClose, onConfirm }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">删除员工</h3>
+            <p className="mt-1 text-xs text-slate-400">删除后将从人员管理、值班选择和员工绩效中隐藏，历史业绩记录保留</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label="关闭"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="mt-5 rounded-xl bg-rose-50/70 px-4 py-3 text-sm text-slate-600">
+          确认删除 <b className="text-slate-800">{name}</b> 吗？
+        </p>
+
+        <div className="mt-5 grid grid-cols-2 gap-2.5">
+          <button
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-200/60 transition hover:bg-rose-600"
+          >
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function PersonnelPage({ type, onTypeChange, onBack }) {
   const [month, setMonth] = useState('2026-07') // 薪资主月
   const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null)
   const [staffVersion, setStaffVersion] = useState(0)
 
   const localStaff = localStaffList()
@@ -185,7 +236,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
   }
 
   const handleDeleteStaff = (name) => {
-    saveLocalStaffList(localStaffList().filter((e) => e.name !== name))
+    removeStaff(name)
     setStaffVersion((v) => v + 1)
   }
 
@@ -269,15 +320,13 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
               const dayPerf = onDuty ? (emp.perf + emp.big) / workDays : 0
               return (
                 <div key={emp.name} className="card relative p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
-                  {emp.local && (
-                    <button
-                      onClick={() => handleDeleteStaff(emp.name)}
-                      className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                      title="删除该员工"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => setPendingDelete(emp.name)}
+                    className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
+                    title="删除该员工"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                   <div className="flex items-center gap-3">
                     <div
                       className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br text-base font-bold text-white shadow-md ${
@@ -386,6 +435,16 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
       )}
 
       {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onSave={handleAddStaff} />}
+      {pendingDelete && (
+        <ConfirmDeleteModal
+          name={pendingDelete}
+          onClose={() => setPendingDelete(null)}
+          onConfirm={() => {
+            handleDeleteStaff(pendingDelete)
+            setPendingDelete(null)
+          }}
+        />
+      )}
     </div>
   )
 }
