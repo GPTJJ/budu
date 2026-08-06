@@ -27,6 +27,13 @@ const AVATAR_GRADIENTS = [
   'from-rose-400 to-pink-500',
 ]
 
+function todayParts() {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return { month: `${d.getFullYear()}-${mm}`, day: `${mm}-${dd}` }
+}
+
 function Stat({ label, value, accent }) {
   return (
     <div className="rounded-xl bg-slate-50/80 px-3 py-2">
@@ -222,8 +229,8 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
-  const [month, setMonth] = useState('2026-07') // 薪资主月
-  const [day, setDay] = useState(null)
+  const [month, setMonth] = useState(() => todayParts().month)
+  const [day, setDay] = useState(() => todayParts().day)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
   const [staffVersion, setStaffVersion] = useState(0)
