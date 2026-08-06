@@ -268,11 +268,16 @@ export function createApp() {
       db.entries = body.entries
     }
     if (body.staff !== undefined) {
+      const staffChanged = JSON.stringify(body.staff) !== JSON.stringify(db.staff || [])
+      if (staffChanged && req.user.role !== 'developer') {
+        return res.status(403).json({ error: '无权限' })
+      }
       if (!Array.isArray(body.staff)) return res.status(400).json({ error: 'staff 格式错误' })
       db.staff = body.staff
     }
     if (body.removedStaff !== undefined) {
-      if (req.user.role !== 'developer') {
+      const removedChanged = JSON.stringify(body.removedStaff) !== JSON.stringify(db.removedStaff || [])
+      if (removedChanged && req.user.role !== 'developer') {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.removedStaff) || body.removedStaff.some((n) => typeof n !== 'string')) {

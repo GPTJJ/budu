@@ -217,7 +217,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
-export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false }) {
+export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false, canManage = false }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
@@ -270,7 +270,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
-          {!isPublic && (
+          {canManage && !isPublic && (
             <button
               onClick={() => setShowAdd(true)}
               className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-budu-500 to-grape-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
