@@ -243,6 +243,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const fulltime = all.filter((e) => e.type === 'fulltime')
   const parttime = all.filter((e) => e.type === 'parttime')
   const list = type === 'fulltime' ? fulltime : parttime
+  const payrollComputed = all.some((e) => e.payrollComputed)
 
   const handleAddStaff = (emp) => {
     saveLocalStaffList([...localStaffList(), emp])
@@ -269,10 +270,15 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
         <div>
           <h2 className="text-xl font-bold text-slate-800">{t('人员管理')}</h2>
           <p className="mt-0.5 text-[13px] text-slate-400">
-            {t('薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人', {
-              full: fulltime.length,
-              part: parttime.length,
-            })}
+            {payrollComputed
+              ? t('薪酬按每日业绩录入自动计算 · 全职 {full} 人 / 兼职 {part} 人', {
+                  full: fulltime.length,
+                  part: parttime.length,
+                })
+              : t('薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人', {
+                  full: fulltime.length,
+                  part: parttime.length,
+                })}
             {day ? t('· 当日值班查询中') : ''}
           </p>
         </div>
@@ -336,10 +342,9 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
             {list.map((emp, i) => {
               const status = day ? employeeDayStatus(month, day, emp.name) : null
               const onDuty = Boolean(day && status)
-              const workDays = Math.max(emp.workedDays || 0, 1)
-              const daySalary = onDuty ? emp.salary / workDays : 0
-              const dayHours = onDuty ? emp.hours / workDays : 0
-              const dayPerf = onDuty ? (emp.perf + emp.big) / workDays : 0
+              const daySalary = onDuty ? status.pay : 0
+              const dayHours = onDuty ? status.hours : 0
+              const dayPerf = onDuty ? status.commission : 0
               return (
                 <div key={emp.name} className="card relative p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
                   {canDelete && !isPublic && (
@@ -462,7 +467,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
             {t('{month}暂无薪资数据', { month: monthLabel(month) })}
           </p>
           <p className="mt-1.5 text-xs text-slate-300">
-            {t('当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月），可切换日历月份或添加本地员工')}
+            {t('当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月）；已录入业绩的月份自动计算薪酬，可切换日历月份或添加本地员工')}
           </p>
         </div>
       )}

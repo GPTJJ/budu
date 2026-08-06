@@ -11,6 +11,7 @@ import {
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
+import { calcDailyPay, monthlyPayrollFromEntries } from './payroll.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -67,6 +68,10 @@ export function allMonths() {
 export function allEmployeeMonths() {
   const keys = new Set(EMPLOYEE_MONTHS)
   for (const k of Object.keys(getAnalysis().employeeMonthly || {})) keys.add(k)
+  for (const k of Object.keys(getEntries())) {
+    const m = k.split('|')[0]
+    if (m) keys.add(m)
+  }
   return [...keys].sort()
 }
 
@@ -352,6 +357,20 @@ export function entryMonthStats(monthKey) {
   return map
 }
 
+/** 某月每位员工的薪酬（根据每日业绩录入自动计算：基础工资 + 业绩阶梯提成） */
+export function entryMonthPayroll(monthKey) {
+  const map = monthlyPayrollFromEntries(localEntries(), monthKey)
+  for (const rec of map.values()) {
+    const freq = {}
+    for (const k of rec.stores) freq[k] = (freq[k] || 0) + 1
+    const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
+    rec.storeKey = top ? top[0] : 'multi'
+    rec.storeName = storeName(rec.storeKey)
+    delete rec.stores
+  }
+  return map
+}
+
 /** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
 export function removeStaff(name) {
   commitStaff(localStaffList().filter((e) => e.name !== name))
@@ -371,59 +390,110 @@ export function employeeList(storeKey, monthKey = null) {
     .filter((e) => !removed.has(e.name))
   const base = [...source, ...local]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
-  let entryStats = new Map()
   if (monthKey != null) {
-    entryStats = entryMonthStats(monthKey)
-    for (const st of entryStats.values()) {
-      const freq = {}
-      for (const k of st.stores) freq[k] = (freq[k] || 0) + 1
-      const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
-      st.storeKey = top ? top[0] : st.storeKey || 'multi'
-      st.storeName = storeName(st.storeKey)
-      delete st.stores
-    }
-    const infoMap = new Map(base.map((e) => [e.name, e]))
-    const merged = new Map(base.map((e) => [e.name, { ...e, ...(entryStats.get(e.name) || {}) }]))
-    for (const st of entryStats.values()) {
-      if (!merged.has(st.name)) {
-        const info = infoMap.get(st.name) || {
-          name: st.name,
-          type: 'parttime',
-          salary: 0,
-          baseHours: 0,
-          otHours: 0,
-          otPay: 0,
-          perf: 0,
-          big: 0,
-          workedRevenue: 0,
-          workedDays: 0,
-          achieve: 0,
-          duty: 0,
-          review: 0,
-          local: true,
+    const payroll = entryMonthPayroll(monthKey)
+    if (payroll.size > 0) {
+      // 有业绩录入的月份：出勤/营业额/工时/薪酬全部按录入自动计算
+      const infoMap = new Map(base.map((e) => [e.name, e]))
+      const merged = new Map(base.map((e) => [e.name, { ...e }]))
+      for (const st of payroll.values()) {
+        if (!merged.has(st.name)) {
+          const info = infoMap.get(st.name) || {
+            name: st.name,
+            type: 'parttime',
+            storeKey: st.storeKey,
+            storeName: st.storeName,
+            salary: 0,
+            baseHours: 0,
+            otHours: 0,
+            otPay: 0,
+            perf: 0,
+            big: 0,
+            workedRevenue: 0,
+            workedDays: 0,
+            achieve: 0,
+            duty: 0,
+            review: 0,
+            local: true,
+          }
+          merged.set(st.name, { ...info, ...st, local: true })
+        } else {
+          merged.set(st.name, { ...merged.get(st.name), ...st })
         }
-        merged.set(st.name, { ...info, ...st, local: true })
       }
+      list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+      list = list.map((e) => {
+        const pr = payroll.get(e.name)
+        return {
+          ...e,
+          workedDays: pr ? pr.workedDays : 0,
+          workedRevenue: pr ? pr.workedRevenue : 0,
+          orders: pr ? pr.orders : 0,
+          hours: pr ? pr.hours : 0,
+          salary: pr ? pr.salary : 0,
+          basePay: pr ? pr.basePay : 0,
+          commission: pr ? pr.commission : 0,
+          perf: pr ? pr.commission : 0,
+          big: 0,
+          payrollComputed: true,
+        }
+      })
+    } else {
+      // 无录入月份：沿用上传的薪资表 + 本地员工
+      const entryStats = entryMonthStats(monthKey)
+      for (const st of entryStats.values()) {
+        const freq = {}
+        for (const k of st.stores) freq[k] = (freq[k] || 0) + 1
+        const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
+        st.storeKey = top ? top[0] : st.storeKey || 'multi'
+        st.storeName = storeName(st.storeKey)
+        delete st.stores
+      }
+      const infoMap = new Map(base.map((e) => [e.name, e]))
+      const merged = new Map(base.map((e) => [e.name, { ...e, ...(entryStats.get(e.name) || {}) }]))
+      for (const st of entryStats.values()) {
+        if (!merged.has(st.name)) {
+          const info = infoMap.get(st.name) || {
+            name: st.name,
+            type: 'parttime',
+            salary: 0,
+            baseHours: 0,
+            otHours: 0,
+            otPay: 0,
+            perf: 0,
+            big: 0,
+            workedRevenue: 0,
+            workedDays: 0,
+            achieve: 0,
+            duty: 0,
+            review: 0,
+            local: true,
+          }
+          merged.set(st.name, { ...info, ...st, local: true })
+        }
+      }
+      list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
     }
-    list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
   }
   return list
     .map((e) => ({
       ...e,
-      ...(entryStats.get(e.name) || {}),
-      hours: (e.baseHours || 0) + (e.otHours || 0),
+      hours: e.payrollComputed ? e.hours : (e.baseHours || 0) + (e.otHours || 0),
       roi: e.salary > 0 ? e.workedRevenue / e.salary : 0,
     }))
     .sort((a, b) => b.salary - a.salary)
 }
 
 /** 员工绩效（根据每日门店业绩录入实时分析：营业额/订单按值班人数均摊） */
-export function entryEmployeePerformance(storeKey = 'all') {
+export function entryEmployeePerformance(storeKey = 'all', monthKey = null) {
   const entries = localEntries()
   const map = new Map()
+  const payrollMap = monthKey ? entryMonthPayroll(monthKey) : new Map()
+  const hasPayroll = monthKey != null && payrollMap.size > 0
   for (const [key, v] of Object.entries(entries)) {
     const parts = key.split('|')
     if (parts.length !== 3 || parts[1] === 'all') continue
+    if (monthKey && parts[0] !== monthKey) continue
     if (storeKey !== 'all' && parts[1] !== storeKey) continue
     if (!Array.isArray(v.staff) || v.staff.length === 0) continue
     const inc = Number(v.inc) || 0
@@ -441,13 +511,17 @@ export function entryEmployeePerformance(storeKey = 'all') {
   return [...map.values()]
     .map((e) => {
       const info = infoMap.get(e.name)
-      const salary = info ? info.salary || 0 : 0
+      const pr = payrollMap.get(e.name)
+      const salary = hasPayroll ? (pr ? pr.salary : 0) : info ? info.salary || 0 : 0
+      const hours = hasPayroll ? (pr ? pr.hours : 0) : info ? (info.baseHours || 0) + (info.otHours || 0) : 0
       return {
         ...e,
-        storeKey: info ? info.storeKey : 'multi',
-        storeName: info ? info.storeName : '多店支援',
+        workedDays: hasPayroll ? (pr ? pr.workedDays : 0) : e.workedDays,
+        storeKey: pr ? pr.storeKey : info ? info.storeKey : 'multi',
+        storeName: pr ? pr.storeName : info ? info.storeName : '多店支援',
         salary,
-        hours: info ? (info.baseHours || 0) + (info.otHours || 0) : 0,
+        hours,
+        commission: hasPayroll ? (pr ? pr.commission : 0) : 0,
         roi: e.workedRevenue > 0 && salary > 0 ? e.workedRevenue / salary : 0,
         workedRevenue: Math.round(e.workedRevenue * 100) / 100,
         orders: Math.round(e.orders * 100) / 100,
@@ -536,17 +610,25 @@ export function notices(monthKey, day = null, lang = 'zh') {
     }
   }
 
-  const topPerf = [...EMPLOYEES].sort((a, b) => b.perf + b.big - (a.perf + a.big))[0]
-  if (topPerf && topPerf.perf + topPerf.big > 0) {
+  const payrollPerf = entryMonthPayroll(monthKey)
+  let topPerf = null
+  if (payrollPerf.size > 0) {
+    const top = [...payrollPerf.values()].sort((a, b) => b.commission - a.commission)[0]
+    topPerf = top && top.commission > 0 ? { name: top.name, perfValue: top.commission } : null
+  } else {
+    const t = [...EMPLOYEES].sort((a, b) => b.perf + b.big - (a.perf + a.big))[0]
+    topPerf = t && t.perf + t.big > 0 ? { name: t.name, perfValue: t.perf + t.big } : null
+  }
+  if (topPerf) {
     out.push({
       tag: '绩效',
       tagStyle: 'bg-purple-50 text-purple-600',
       bg: 'bg-purple-100',
       fg: 'text-purple-600',
-      time: localize(lang, '薪资表 27-31 周'),
+      time: payrollPerf.size > 0 ? monthLabel(monthKey, lang) : localize(lang, '薪资表 27-31 周'),
       text: localize(lang, '「{name}」业绩提成合计 ¥{amount}，全店最高。', {
         name: topPerf.name,
-        amount: (topPerf.perf + topPerf.big).toLocaleString('zh-CN'),
+        amount: topPerf.perfValue.toLocaleString('zh-CN'),
       }),
     })
   }
@@ -647,18 +729,42 @@ export function employeeDayStatus(monthKey, day, name) {
   let inc = 0
   let ord = 0
   let count = 0
+  let hours = 0
+  let basePay = 0
+  let commission = 0
+  let pay = 0
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
     if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
     if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
-    inc += (Number(v.inc) || 0) / v.staff.length
-    ord += (Number(v.ord) || 0) / v.staff.length
+    const storeKey = parts[1]
+    const share = v.staff.length
+    const daily = calcDailyPay({
+      storeKey,
+      revenue: Number(v.inc) || 0,
+      date: `${monthKey}-${day}`,
+      staffCount: share,
+    })
+    inc += (Number(v.inc) || 0) / share
+    ord += (Number(v.ord) || 0) / share
+    hours += daily.hours
+    basePay += daily.basePay
+    commission += daily.commission
+    pay += daily.total
     count += 1
-    stores.push(parts[1])
+    stores.push(storeKey)
   }
   if (count === 0) return null
-  return { inc: Math.round(inc * 100) / 100, ord: Math.round(ord * 100) / 100, stores }
+  return {
+    inc: Math.round(inc * 100) / 100,
+    ord: Math.round(ord * 100) / 100,
+    stores,
+    hours: Math.round(hours * 100) / 100,
+    basePay: Math.round(basePay * 100) / 100,
+    commission: Math.round(commission * 100) / 100,
+    pay: Math.round(pay * 100) / 100,
+  }
 }
 
 /** 所选日期是否有本地业绩录入（任意门店） */

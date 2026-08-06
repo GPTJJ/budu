@@ -27,7 +27,7 @@ try {
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],
     ['RevenueTrendChart', await render('/src/components/RevenueTrendChart.jsx', { month: '2026-07', store: 'all', day: null }), ['营业额趋势']],
     ['ChannelChart', await render('/src/components/ChannelChart.jsx', { month: '2026-07', store: 'all', day: null }), ['渠道销售构成']],
-    ['EmployeePerformanceTable', await render('/src/components/EmployeePerformanceTable.jsx', { store: 'all' }), ['员工绩效 TOP5']],
+    ['EmployeePerformanceTable', await render('/src/components/EmployeePerformanceTable.jsx', { store: 'all', month: '2026-08' }), ['员工绩效 TOP5']],
     ['ProductSalesTable', await render('/src/components/ProductSalesTable.jsx', { month: '2026-07', store: 'all' }), ['商品销售 TOP10']],
     ['NotificationPanel', await render('/src/components/NotificationPanel.jsx', { month: '2026-07', day: null }), ['重要提醒']],
     ['SettingsPage', await render('/src/components/SettingsPage.jsx', { onBack: () => {} }), ['系统设置', '界面语言']],
@@ -100,6 +100,28 @@ try {
         )
       })(),
       ['•••'],
+    ],
+    [
+      'NotificationPanel store privacy hides commission',
+      await (async () => {
+        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
+        const vis = await server.ssrLoadModule('/src/visibility.jsx')
+        const mod = await server.ssrLoadModule('/src/components/NotificationPanel.jsx')
+        const html = renderToString(
+          React.createElement(
+            i18n.I18nProvider,
+            null,
+            React.createElement(
+              vis.PublicModeProvider,
+              { isPublic: false, isStore: true },
+              React.createElement(mod.default, { month: '2026-08', day: null }),
+            ),
+          ),
+        )
+        if (html.includes('业绩提成合计')) throw new Error('store role sees commission notice')
+        return html
+      })(),
+      ['重要提醒'],
     ],
     [
       'SettingsPage developer stores',

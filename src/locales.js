@@ -179,6 +179,8 @@ export const en = {
   '门店格式错误': 'Invalid store format',
 
   // 人员管理
+  '薪酬按每日业绩录入自动计算 · 全职 {full} 人 / 兼职 {part} 人':
+    'Payroll auto-calculated from daily entries · Full-time {full} / Part-time {part}',
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',
   '· 当日值班查询中': ' · viewing daily duty',
@@ -212,6 +214,8 @@ export const en = {
   'ROI = 当班营业额 / 工资': 'ROI = shift revenue / wage',
   '暂无该类人员数据，点击右上角「添加员工」新建': 'No staff in this category; click "Add Staff"',
   '{month}暂无薪资数据': 'No payroll data for {month}',
+  '当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月）；已录入业绩的月份自动计算薪酬，可切换日历月份或添加本地员工':
+    'Payroll covers 2026 wk 27–31 (Jun–Aug); months with entries are auto-calculated. Switch month or add staff',
   '当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月），可切换日历月份或添加本地员工':
     'Payroll covers 2026 wk 27–31 (Jun–Aug); switch month or add local staff',
   '本地': 'Local',
@@ -317,6 +321,8 @@ export const en = {
   '根据门店业绩录入实时分析': 'Based on daily store entries',
   '当班营业额 = 各店当日录入营业收入按值班人数均摊':
     'Shift revenue = daily entry revenue split equally among duty staff',
+  '当班营业额按值班人数均摊；工资/提成 = 基础时薪×工时 + 业绩阶梯提成（按录入自动计算）':
+    'Shift revenue split equally; wage/commission = base rate×hours + tiered revenue commission (auto-calculated)',
   '薪资表 2026.27-31 周 · {store}': 'Payroll 2026 wk 27–31 · {store}',
   '员工': 'Staff',
   '工资': 'Wage',

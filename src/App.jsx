@@ -181,7 +181,7 @@ export default function App() {
               {/* 底部业绩与数据模块 */}
               <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
                 <div className="xl:col-span-4">
-                  <EmployeePerformanceTable store={store} />
+                  <EmployeePerformanceTable store={store} month={month} />
                 </div>
                 <div className="xl:col-span-5">
                   <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />

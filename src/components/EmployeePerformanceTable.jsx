@@ -19,12 +19,12 @@ function roiStyle(roi) {
   return 'bg-amber-50 text-amber-600'
 }
 
-export default function EmployeePerformanceTable({ store }) {
+export default function EmployeePerformanceTable({ store, month }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isStore
-  const entryRows = entryEmployeePerformance(store)
+  const entryRows = entryEmployeePerformance(store, month)
   const hasEntryData = entryRows.length > 0
   const list = (hasEntryData ? entryRows : employeeList(store)).slice(0, 5)
 
@@ -109,7 +109,7 @@ export default function EmployeePerformanceTable({ store }) {
       )}
       <p className="mt-3 text-[11px] text-slate-300">
         {hasEntryData
-          ? t('当班营业额 = 各店当日录入营业收入按值班人数均摊')
+          ? t('当班营业额按值班人数均摊；工资/提成 = 基础时薪×工时 + 业绩阶梯提成（按录入自动计算）')
           : t('当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资')}
       </p>
     </Card>

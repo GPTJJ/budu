@@ -2,7 +2,7 @@ import { Package, Wallet, Megaphone, Users, MonitorCheck, TrendingUp, AlertTrian
 import Card from './Card'
 import { notices } from '../utils/selectors'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const ICON_MAP = {
   库存: Package,
@@ -21,7 +21,8 @@ const ICON_MAP = {
 export default function NotificationPanel({ month, day }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
-  const items = notices(month, day, lang)
+  const isStore = useStorePrivacy()
+  const items = notices(month, day, lang).filter((i) => !(isStore && i.tag === '绩效'))
 
   return (
     <Card
