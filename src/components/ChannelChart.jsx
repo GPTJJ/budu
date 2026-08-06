@@ -4,6 +4,7 @@ import Card from './Card'
 import { channelData, aggregate, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 function ChannelTooltip({ active, payload }) {
   const { t } = useI18n()
@@ -27,6 +28,7 @@ function ChannelTooltip({ active, payload }) {
 
 export default function ChannelChart({ month, store, day }) {
   const { lang, t } = useI18n()
+  const isPublic = usePublicMode()
   const data = channelData(month, store, day)
   const agg = aggregate(month, store)
   const total = data.reduce((s, x) => s + x.value, 0) || 1
@@ -45,11 +47,19 @@ export default function ChannelChart({ month, store, day }) {
           : `${monthLabel(month, lang)} · ${storeName(store)}`
       }
       action={
+        !isPublic && (
         <button className="grid h-8 w-8 place-items-center rounded-xl text-slate-300 transition hover:bg-slate-50 hover:text-slate-500">
           <MoreHorizontal className="h-4 w-4" />
         </button>
+        )
       }
     >
+      {isPublic ? (
+        <div className="grid h-52 place-items-center text-xs text-slate-300">
+          {t('对外展示模式 · 数据已隐藏')}
+        </div>
+      ) : (
+        <>
       <div className="relative mx-auto mt-1 h-52 w-52">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -94,6 +104,8 @@ export default function ChannelChart({ month, store, day }) {
           </li>
         ))}
       </ul>
+        </>
+      )}
     </Card>
   )
 }

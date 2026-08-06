@@ -106,8 +106,8 @@ export default function AccountAdminPage({ currentUser, onBack }) {
   }, [])
 
   const roleLabel = (role) => {
-    if (role === 'owner') return t('最高权限')
-    if (role === 'admin') return t('管理员')
+    if (role === 'developer') return t('开发者')
+    if (role === 'public') return t('对外展示')
     return t('门店运营')
   }
 
@@ -202,9 +202,9 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         onChange={(e) => changeRole(u, e.target.value)}
                         className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 outline-none transition focus:border-budu-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <option value="owner">{t('最高权限')}</option>
-                        <option value="admin">{t('管理员')}</option>
-                        <option value="member">{t('门店运营')}</option>
+                        <option value="developer">{t('开发者')}</option>
+                        <option value="store">{t('门店运营')}</option>
+                        <option value="public">{t('对外展示')}</option>
                       </select>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">

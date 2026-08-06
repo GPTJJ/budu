@@ -45,8 +45,8 @@ export function createApp() {
     next()
   }
 
-  function requireOwner(req, res, next) {
-    if (!req.user || req.user.role !== 'owner') {
+  function requireDeveloper(req, res, next) {
+    if (!req.user || req.user.role !== 'developer') {
       return res.status(403).json({ error: '无权限' })
     }
     next()
@@ -65,7 +65,7 @@ export function createApp() {
     const user = {
       id: crypto.randomUUID(),
       username,
-      role: db.users.length === 0 ? 'owner' : 'member',
+      role: db.users.length === 0 ? 'developer' : 'store',
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -142,14 +142,14 @@ export function createApp() {
   })
 
   // ---------- 账号管理（最高权限） ----------
-  app.get('/api/admin/users', requireAuth, requireOwner, async (req, res) => {
+  app.get('/api/admin/users', requireAuth, requireDeveloper, async (req, res) => {
     const db = await loadDb()
     res.json({ users: db.users.map(userPublic) })
   })
 
-  app.put('/api/admin/users/:id/role', requireAuth, requireOwner, async (req, res) => {
+  app.put('/api/admin/users/:id/role', requireAuth, requireDeveloper, async (req, res) => {
     const role = String(req.body.role || '')
-    if (!['member', 'admin', 'owner'].includes(role)) {
+    if (!['developer', 'store', 'public'].includes(role)) {
       return res.status(400).json({ error: '角色不正确' })
     }
     const db = await loadDb()
@@ -158,8 +158,8 @@ export function createApp() {
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能修改自己的权限' })
     }
-    const ownerCount = db.users.filter((u) => u.role === 'owner').length
-    if (target.role === 'owner' && role !== 'owner' && ownerCount <= 1) {
+    const developerCount = db.users.filter((u) => u.role === 'developer').length
+    if (target.role === 'developer' && role !== 'developer' && developerCount <= 1) {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
     target.role = role
@@ -167,7 +167,7 @@ export function createApp() {
     res.json({ user: userPublic(target) })
   })
 
-  app.put('/api/admin/users/:id/password', requireAuth, requireOwner, async (req, res) => {
+  app.put('/api/admin/users/:id/password', requireAuth, requireDeveloper, async (req, res) => {
     const newPassword = String(req.body.newPassword || '')
     if (newPassword.length < 6) {
       return res.status(400).json({ error: '密码至少 6 位' })
@@ -180,15 +180,15 @@ export function createApp() {
     res.json({ ok: true })
   })
 
-  app.delete('/api/admin/users/:id', requireAuth, requireOwner, async (req, res) => {
+  app.delete('/api/admin/users/:id', requireAuth, requireDeveloper, async (req, res) => {
     const db = await loadDb()
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能删除自己' })
     }
-    const ownerCount = db.users.filter((u) => u.role === 'owner').length
-    if (target.role === 'owner' && ownerCount <= 1) {
+    const developerCount = db.users.filter((u) => u.role === 'developer').length
+    if (target.role === 'developer' && developerCount <= 1) {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
     db.users = db.users.filter((u) => u.id !== target.id)

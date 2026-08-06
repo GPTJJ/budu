@@ -70,12 +70,17 @@ export async function loadDb() {
   if (!db) db = structuredClone(DEFAULT_DB)
   if (!db.meta || typeof db.meta !== 'object') db.meta = {}
   if (!Array.isArray(db.users)) db.users = []
-  // 账号权限迁移：至少保留一个最高权限账号，缺省时由最早注册的账号担任
-  if (db.users.length > 0 && !db.users.some((u) => u.role === 'owner')) {
+  // 三级角色迁移：owner/admin/member -> developer/store/store
+  for (const u of db.users) {
+    if (u.role === 'owner') u.role = 'developer'
+    else if (u.role === 'admin' || u.role === 'member') u.role = 'store'
+  }
+  // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任
+  if (db.users.length > 0 && !db.users.some((u) => u.role === 'developer')) {
     const first = [...db.users].sort((a, b) =>
       String(a.createdAt || '').localeCompare(String(b.createdAt || '')),
     )[0]
-    first.role = 'owner'
+    first.role = 'developer'
   }
   if (!db.entries || typeof db.entries !== 'object' || Array.isArray(db.entries)) db.entries = {}
   if (!Array.isArray(db.staff)) db.staff = []

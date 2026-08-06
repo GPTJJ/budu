@@ -49,6 +49,28 @@ try {
       }),
       ['账号管理', '已注册账号'],
     ],
+    [
+      'KpiCard public mode',
+      await (async () => {
+        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
+        const vis = await server.ssrLoadModule('/src/visibility.jsx')
+        const mod = await server.ssrLoadModule('/src/components/KpiCard.jsx')
+        return renderToString(
+          React.createElement(
+            i18n.I18nProvider,
+            null,
+            React.createElement(
+              vis.PublicModeProvider,
+              { isPublic: true },
+              React.createElement(mod.default, {
+                card: { key: 'income', prefix: '¥', value: '123', unit: '元', change: null, note: 'x', spark: [1, 2] },
+              }),
+            ),
+          ),
+        )
+      })(),
+      ['•••'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

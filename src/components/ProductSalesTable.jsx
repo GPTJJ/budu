@@ -4,6 +4,7 @@ import Card from './Card'
 import { products, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 // 菜品名称 -> 缩略图 emoji 映射
 const EMOJI_RULES = [
@@ -210,6 +211,7 @@ function ProductModal({ month, store, onClose }) {
 
 export default function ProductSalesTable({ month, store }) {
   const { lang, t } = useI18n()
+  const isPublic = usePublicMode()
   const [showModal, setShowModal] = useState(false)
   const all = products(month, store)
   const visible = all.filter((p) => !isGiftLike(p.name))
@@ -236,6 +238,7 @@ export default function ProductSalesTable({ month, store }) {
           store: storeName(store),
         })}
         action={
+          !isPublic && (
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600"
@@ -243,8 +246,15 @@ export default function ProductSalesTable({ month, store }) {
             {t('查看全部')}
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
+          )
         }
       >
+        {isPublic ? (
+          <div className="grid h-48 place-items-center text-xs text-slate-300">
+            {t('对外展示模式 · 数据已隐藏')}
+          </div>
+        ) : (
+          <>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('{count} 个菜品', { count: summary.count })}
@@ -317,6 +327,8 @@ export default function ProductSalesTable({ month, store }) {
         <p className="mt-3 text-[11px] leading-4 text-slate-300">
           {t('数据来自三店菜品明细报表；已剔除「赠品 / 临时商品」类目，点击「查看全部」可查看完整明细。')}
         </p>
+          </>
+        )}
       </Card>
 
       {showModal && <ProductModal month={month} store={store} onClose={() => setShowModal(false)} />}

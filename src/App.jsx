@@ -17,6 +17,7 @@ import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
 import { loadUserData, resetUserData } from './utils/userData'
 import { useI18n } from './i18n'
+import { PublicModeProvider } from './visibility'
 
 export default function App() {
   const { lang, t } = useI18n()
@@ -80,7 +81,8 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#F7F4FA]">
+    <PublicModeProvider isPublic={user?.role === 'public'}>
+      <div className="flex min-h-screen bg-[#F7F4FA]">
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
@@ -123,11 +125,11 @@ export default function App() {
               onTypeChange={(t) => setView(t === 'fulltime' ? 'staff-fulltime' : 'staff-parttime')}
               onBack={() => setView('overview')}
             />
-          ) : isStoreEntryView ? (
+          ) : isStoreEntryView && user?.role !== 'public' ? (
             <StoreEntryPage onBack={() => setView('overview')} />
           ) : isSettingsView ? (
             <SettingsPage onBack={() => setView('overview')} />
-          ) : isAccountAdminView ? (
+          ) : isAccountAdminView && user?.role === 'developer' ? (
             <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
           ) : (
             <>
@@ -171,6 +173,7 @@ export default function App() {
           </footer>
         </main>
       </div>
-    </div>
+      </div>
+    </PublicModeProvider>
   )
 }

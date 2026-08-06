@@ -3,6 +3,7 @@ import Card from './Card'
 import { employeeList, storeName } from '../utils/selectors'
 import { formatMoney, rankStyle } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -20,6 +21,7 @@ function roiStyle(roi) {
 
 export default function EmployeePerformanceTable({ store }) {
   const { t } = useI18n()
+  const isPublic = usePublicMode()
   const list = employeeList(store).slice(0, 5)
 
   return (
@@ -27,13 +29,20 @@ export default function EmployeePerformanceTable({ store }) {
       title={t('员工绩效 TOP5')}
       subtitle={t('薪资表 2026.27-31 周 · {store}', { store: storeName(store) })}
       action={
+        !isPublic && (
         <button className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600">
           {t('查看全部')}
           <ChevronRight className="h-3.5 w-3.5" />
         </button>
+        )
       }
     >
-      <div className="-mx-2 overflow-x-auto">
+      {isPublic ? (
+        <div className="grid h-48 place-items-center text-xs text-slate-300">
+          {t('对外展示模式 · 数据已隐藏')}
+        </div>
+      ) : (
+        <div className="-mx-2 overflow-x-auto">
         <table className="w-full min-w-[520px] text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
@@ -86,7 +95,8 @@ export default function EmployeePerformanceTable({ store }) {
             ))}
           </tbody>
         </table>
-      </div>
+        </div>
+      )}
       <p className="mt-3 text-[11px] text-slate-300">
         {t('当班营业额 = 出勤日门店营业额合计；ROI = 当班营业额 / 工资')}
       </p>

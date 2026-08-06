@@ -13,6 +13,7 @@ import Card from './Card'
 import { dailyRows, aggregate, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 function shortDate(d) {
   const [m, day] = d.split('-')
@@ -44,6 +45,7 @@ function TrendTooltip({ active, payload, label }) {
 
 export default function RevenueTrendChart({ month, store, day }) {
   const { lang, t } = useI18n()
+  const isPublic = usePublicMode()
   const rows = dailyRows(month, store)
   const agg = aggregate(month, store)
   const data = rows.map((r) => ({ d: r.d, revenue: r.inc, orders: r.ord }))
@@ -67,12 +69,20 @@ export default function RevenueTrendChart({ month, store, day }) {
             })
       }
       action={
+        !isPublic && (
         <label className="flex cursor-pointer items-center gap-1 rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-500">
           {t('按日')}
           <ChevronDown className="h-3.5 w-3.5 text-slate-300" />
         </label>
+        )
       }
     >
+      {isPublic ? (
+        <div className="grid h-64 place-items-center text-xs text-slate-300">
+          {t('对外展示模式 · 数据已隐藏')}
+        </div>
+      ) : (
+        <>
       <div className="mb-4 flex items-center gap-5 text-xs text-slate-500">
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-grape-500" />
@@ -151,6 +161,8 @@ export default function RevenueTrendChart({ month, store, day }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
+        </>
+      )}
     </Card>
   )
 }

@@ -2,6 +2,7 @@ import { Package, Wallet, Megaphone, Users, MonitorCheck, TrendingUp, AlertTrian
 import Card from './Card'
 import { notices } from '../utils/selectors'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 const ICON_MAP = {
   库存: Package,
@@ -19,6 +20,7 @@ const ICON_MAP = {
 
 export default function NotificationPanel({ month, day }) {
   const { lang, t } = useI18n()
+  const isPublic = usePublicMode()
   const items = notices(month, day, lang)
 
   return (
@@ -28,12 +30,19 @@ export default function NotificationPanel({ month, day }) {
         day ? t('聚焦 {day} · 基于报表自动生成', { day }) : t('基于所选月份与报表自动生成')
       }
       action={
+        !isPublic && (
         <span className="grid h-8 w-8 place-items-center rounded-xl bg-budu-50 text-sm font-bold text-budu-500">
           {items.length}
         </span>
+        )
       }
     >
-      <ul className="space-y-4">
+      {isPublic ? (
+        <div className="grid h-48 place-items-center text-xs text-slate-300">
+          {t('对外展示模式 · 数据已隐藏')}
+        </div>
+      ) : (
+        <ul className="space-y-4">
         {items.map((item, idx) => {
           const Icon = ICON_MAP[item.tag] || Bell
           return (
@@ -55,7 +64,8 @@ export default function NotificationPanel({ month, day }) {
             </li>
           )
         })}
-      </ul>
+        </ul>
+      )}
     </Card>
   )
 }

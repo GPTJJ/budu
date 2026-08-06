@@ -38,6 +38,7 @@ const subMenus = {
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
+  const visibleMenus = user?.role === 'public' ? menus.filter((m) => m.key !== 'store') : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))
@@ -71,7 +72,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
           {t('运营管理')}
         </p>
-        {menus.map((item) => {
+        {visibleMenus.map((item) => {
           const Icon = item.icon
           const subs = subMenus[item.key]
           const openSub = isSubmenuOpen(item.key)

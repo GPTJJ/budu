@@ -212,7 +212,11 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
   const name = user?.username || t('伙伴')
   const initial = name.slice(0, 2).toUpperCase()
   const roleText =
-    user?.role === 'owner' ? t('最高权限') : user?.role === 'admin' ? t('管理员') : t('门店运营')
+    user?.role === 'developer'
+      ? t('开发者')
+      : user?.role === 'public'
+        ? t('对外展示')
+        : t('门店运营')
   const avatar = user?.avatar
 
   const close = () => setOpen(false)
@@ -265,7 +269,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
             <div className="my-1 h-px bg-slate-100" />
             <MenuButton icon={KeyRound} label={t('修改密码')} onClick={() => { close(); setModal('password') }} />
             <MenuButton icon={ImageIcon} label={t('修改头像')} onClick={() => { close(); setModal('avatar') }} />
-            {user?.role === 'owner' && onManageAccounts && (
+            {user?.role === 'developer' && onManageAccounts && (
               <MenuButton
                 icon={Users}
                 label={t('账号管理')}

@@ -15,6 +15,7 @@ import {
 } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 const AVATAR_GRADIENTS = [
   'from-budu-400 to-rose-400',
@@ -218,6 +219,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
 
 export default function PersonnelPage({ type, onTypeChange, onBack }) {
   const { t } = useI18n()
+  const isPublic = usePublicMode()
   const [month, setMonth] = useState('2026-07') // 薪资主月
   const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -266,13 +268,15 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-budu-500 to-grape-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" />
-            {t('添加员工')}
-          </button>
+          {!isPublic && (
+            <button
+              onClick={() => setShowAdd(true)}
+              className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-budu-500 to-grape-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" />
+              {t('添加员工')}
+            </button>
+          )}
           <CalendarPicker
             month={month}
             day={day}
@@ -329,13 +333,15 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
               const dayPerf = onDuty ? (emp.perf + emp.big) / workDays : 0
               return (
                 <div key={emp.name} className="card relative p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
-                  <button
-                    onClick={() => setPendingDelete(emp.name)}
-                    className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                    title={t('删除该员工')}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {!isPublic && (
+                    <button
+                      onClick={() => setPendingDelete(emp.name)}
+                      className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
+                      title={t('删除该员工')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <div className="flex items-center gap-3">
                     <div
                       className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br text-base font-bold text-white shadow-md ${
@@ -377,18 +383,21 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <Stat
                       label={day ? t('当日工资') : t('工资合计')}
-                      value={`¥${formatMoney(day ? daySalary : emp.salary)}`}
+                      value={isPublic ? '•••' : `¥${formatMoney(day ? daySalary : emp.salary)}`}
                       accent="text-budu-600"
                     />
-                    <Stat label={day ? t('当日工时') : t('工时')} value={`${Math.round(day ? dayHours : emp.hours)}h`} />
+                    <Stat
+                      label={day ? t('当日工时') : t('工时')}
+                      value={isPublic ? '•••' : `${Math.round(day ? dayHours : emp.hours)}h`}
+                    />
                     <Stat
                       label={day ? t('当日提成') : t('业绩提成')}
-                      value={`¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
+                      value={isPublic ? '•••' : `¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
                       accent="text-grape-600"
                     />
                     <Stat
                       label={day ? t('当日营业额') : t('当班营业额')}
-                      value={`¥${formatMoney(day ? (status ? status.inc : 0) : emp.workedRevenue)}`}
+                      value={isPublic ? '•••' : `¥${formatMoney(day ? (status ? status.inc : 0) : emp.workedRevenue)}`}
                     />
                   </div>
 
@@ -399,9 +408,13 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                           <span className="text-xs font-semibold text-slate-500">
                             {t('当日值班 · {count} 家店', { count: status.stores.length })}
                           </span>
-                          <span className="text-xs font-bold tabular-nums text-emerald-600">
-                            ¥{formatMoney(status.inc)} · {t('{n} 单', { n: Math.round(status.ord) })}
-                          </span>
+                          {isPublic ? (
+                            <span className="text-xs font-bold text-slate-300">•••</span>
+                          ) : (
+                            <span className="text-xs font-bold tabular-nums text-emerald-600">
+                              ¥{formatMoney(status.inc)} · {t('{n} 单', { n: Math.round(status.ord) })}
+                            </span>
+                          )}
                         </>
                       ) : dayHasData ? (
                         <span className="text-xs font-medium text-slate-400">{t('当日休息')}</span>
@@ -417,7 +430,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
                           emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
                         }`}
                       >
-                        ROI {emp.roi.toFixed(2)}x
+                        {isPublic ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
                       </span>
                     </div>
                   )}

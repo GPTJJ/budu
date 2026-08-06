@@ -4,6 +4,7 @@ import Card from './Card'
 import { ranking, storeDetails, pctText, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber, rankStyle } from '../utils/format'
 import { useI18n } from '../i18n'
+import { usePublicMode } from '../visibility'
 
 /** 门店经营明细弹窗 */
 function StoreModal({ month, store, onClose }) {
@@ -151,6 +152,7 @@ function StoreModal({ month, store, onClose }) {
 
 export default function StoreRankingTable({ month, store, day }) {
   const { lang, t } = useI18n()
+  const isPublic = usePublicMode()
   const [showModal, setShowModal] = useState(false)
   const rows = ranking(month, store, day)
   const single = store !== 'all'
@@ -165,6 +167,7 @@ export default function StoreRankingTable({ month, store, day }) {
             : t('{month} · 按营业收入排序', { month: monthLabel(month, lang) })
         }
         action={
+          !isPublic && (
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600"
@@ -172,9 +175,15 @@ export default function StoreRankingTable({ month, store, day }) {
             {t('查看全部')}
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
+          )
         }
       >
-        <div className="-mx-2 overflow-x-auto">
+        {isPublic ? (
+          <div className="grid h-48 place-items-center text-xs text-slate-300">
+            {t('对外展示模式 · 数据已隐藏')}
+          </div>
+        ) : (
+          <div className="-mx-2 overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400">
@@ -229,7 +238,8 @@ export default function StoreRankingTable({ month, store, day }) {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        )}
       </Card>
 
       {showModal && <StoreModal month={month} store={store} onClose={() => setShowModal(false)} />}
