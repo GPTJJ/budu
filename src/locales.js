@@ -166,6 +166,18 @@ export const en = {
   '商品图片过大': 'Product image is too large',
   '已上传': 'Uploaded',
 
+  // 门店管理
+  '门店管理': 'Store Management',
+  '新增门店': 'Add Store',
+  '新增门店后将同步到首页、业绩录入与人员身份':
+    'New stores sync to the home page, store entry and staff identity',
+  '门店名称': 'Store Name',
+  '请输入门店名称': 'Please enter a store name',
+  '该门店已存在': 'This store already exists',
+  '确定删除门店「{name}」吗？': 'Delete store {name}?',
+  'stores 格式错误': 'Invalid stores format',
+  '门店格式错误': 'Invalid store format',
+
   // 人员管理
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { ArrowLeft, ImagePlus, Loader2, Package, Trash2, UploadCloud, X } from 'lucide-react'
-import { allMonths, monthLabel, products, STORES } from '../utils/selectors'
+import { allMonths, allStores, monthLabel, products } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
 import { commitProductImages, getProductImages } from '../utils/userData'
 import { useI18n } from '../i18n'
@@ -183,7 +183,7 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
           </select>
           <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
             <option value="all">{t('全部门店')}</option>
-            {STORES.map((s) => (
+            {allStores().map((s) => (
               <option key={s.key} value={s.key}>
                 {s.name}
               </option>

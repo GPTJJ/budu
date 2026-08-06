@@ -143,7 +143,7 @@ export default function App() {
           ) : isStoreEntryView && user?.role !== 'public' ? (
             <StoreEntryPage onBack={() => setView('overview')} />
           ) : isSettingsView ? (
-            <SettingsPage onBack={() => setView('overview')} />
+            <SettingsPage user={user} onBack={() => setView('overview')} />
           ) : isAccountAdminView && user?.role === 'developer' ? (
             <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
           ) : isAnalyticsView && user?.role !== 'public' ? (

@@ -11,7 +11,8 @@ import {
   localStaffList,
   removeStaff,
   saveLocalStaffList,
-  STORES,
+  allStores,
+  storeName,
 } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
@@ -51,7 +52,7 @@ function AddStaffModal({ onClose, onSave }) {
   const { t } = useI18n()
   const [name, setName] = useState('')
   const [type, setType] = useState('parttime')
-  const [storeKey, setStoreKey] = useState(STORES[0].key)
+  const [storeKey, setStoreKey] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -60,10 +61,9 @@ function AddStaffModal({ onClose, onSave }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const storeName = storeKey === 'multi' ? '多店支援' : (STORES.find((s) => s.key === storeKey) || {}).name || storeKey
-
   const handleSave = () => {
     const trimmed = name.trim()
+    const storeLabel = storeKey === 'multi' ? '多店支援' : storeName(storeKey)
     if (!trimmed) {
       setError(t('请输入员工姓名'))
       return
@@ -76,7 +76,7 @@ function AddStaffModal({ onClose, onSave }) {
       name: trimmed,
       type,
       storeKey,
-      storeName,
+      storeName: storeLabel,
       salary: 0,
       baseHours: 0,
       otHours: 0,
@@ -150,7 +150,7 @@ function AddStaffModal({ onClose, onSave }) {
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('所属门店')}</label>
             <select value={storeKey} onChange={(e) => setStoreKey(e.target.value)} className={inputCls}>
-              {STORES.map((s) => (
+              {allStores().map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
                 </option>

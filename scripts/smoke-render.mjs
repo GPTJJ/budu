@@ -101,6 +101,14 @@ try {
       })(),
       ['•••'],
     ],
+    [
+      'SettingsPage developer stores',
+      await render('/src/components/SettingsPage.jsx', {
+        user: { role: 'developer' },
+        onBack: () => {},
+      }),
+      ['门店管理', '新增门店'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

@@ -23,6 +23,7 @@ const DEFAULT_DB = {
   removedStaff: [],
   analysis: {},
   productImages: {},
+  stores: [],
 }
 
 let cached = null
@@ -97,6 +98,7 @@ export async function loadDb() {
   if (!db.productImages || typeof db.productImages !== 'object' || Array.isArray(db.productImages)) {
     db.productImages = {}
   }
+  if (!Array.isArray(db.stores)) db.stores = []
   if (!db.meta.secret && !process.env.JWT_SECRET) {
     db.meta.secret = crypto.randomBytes(32).toString('hex')
   }

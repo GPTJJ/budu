@@ -7,6 +7,7 @@ import {
   getEntries,
   getStaff,
   getRemovedStaff,
+  getStores,
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
@@ -18,9 +19,21 @@ const localize = (lang, key, vars) => interpolate(lang === 'en' ? en[key] || key
 export const STORE_KEYS = STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
 
+export function customStores() {
+  return getStores()
+}
+
+export function allStores() {
+  return [...STORES, ...customStores()]
+}
+
+export function allStoreKeys() {
+  return allStores().map((s) => s.key)
+}
+
 export function storeName(key) {
   if (key === 'all') return '全部门店'
-  const s = STORES.find((x) => x.key === key)
+  const s = allStores().find((x) => x.key === key)
   return s ? s.name : key
 }
 
@@ -83,7 +96,7 @@ export function deleteLocalEntry(monthKey, storeKey, day) {
 
 /** 某月某门店（或全部门店）的每日合并明细 */
 export function dailyRows(monthKey, storeKey) {
-  const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
+  const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   const map = new Map()
   const entries = localEntries()
   for (const k of keys) {
@@ -144,12 +157,12 @@ export function pctText(pct) {
 /** 门店经营排行（可按单店过滤） */
 export function ranking(monthKey, storeKey, day = null) {
   const rows = []
-  const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
+  const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   const pk = prevMonthKey(monthKey)
   for (const k of keys) {
     const cur = day ? dayStats(monthKey, k, day) : aggregate(monthKey, k)
     const prev = pk ? (day ? dayStats(pk, k, day) : aggregate(pk, k)) : null
-    const st = STORES.find((s) => s.key === k)
+    const st = allStores().find((s) => s.key === k)
     rows.push({
       key: k,
       name: st ? st.name : k,
@@ -316,16 +329,25 @@ export function entryMonthStats(monthKey) {
     const ord = Number(v.ord) || 0
     const share = v.staff.length
     for (const name of v.staff) {
-      const rec = map.get(name) || { name, workedDays: 0, workedRevenue: 0, orders: 0, days: new Set() }
+      const rec = map.get(name) || {
+        name,
+        workedDays: 0,
+        workedRevenue: 0,
+        orders: 0,
+        days: new Set(),
+        stores: new Set(),
+      }
       rec.workedRevenue += inc / share
       rec.orders += ord / share
       rec.days.add(parts[2])
+      rec.stores.add(parts[1])
       map.set(name, rec)
     }
   }
   for (const rec of map.values()) {
     rec.workedDays = rec.days.size
     delete rec.days
+    rec.stores = [...rec.stores]
   }
   return map
 }
@@ -347,8 +369,44 @@ export function employeeList(storeKey, monthKey = null) {
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
     .filter((e) => !removed.has(e.name))
-  const list = [...source, ...local].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
-  const entryStats = monthKey != null ? entryMonthStats(monthKey) : new Map()
+  const base = [...source, ...local]
+  let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+  let entryStats = new Map()
+  if (monthKey != null) {
+    entryStats = entryMonthStats(monthKey)
+    for (const st of entryStats.values()) {
+      const freq = {}
+      for (const k of st.stores) freq[k] = (freq[k] || 0) + 1
+      const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
+      st.storeKey = top ? top[0] : st.storeKey || 'multi'
+      st.storeName = storeName(st.storeKey)
+      delete st.stores
+    }
+    const infoMap = new Map(base.map((e) => [e.name, e]))
+    const merged = new Map(base.map((e) => [e.name, { ...e, ...(entryStats.get(e.name) || {}) }]))
+    for (const st of entryStats.values()) {
+      if (!merged.has(st.name)) {
+        const info = infoMap.get(st.name) || {
+          name: st.name,
+          type: 'parttime',
+          salary: 0,
+          baseHours: 0,
+          otHours: 0,
+          otPay: 0,
+          perf: 0,
+          big: 0,
+          workedRevenue: 0,
+          workedDays: 0,
+          achieve: 0,
+          duty: 0,
+          review: 0,
+          local: true,
+        }
+        merged.set(st.name, { ...info, ...st, local: true })
+      }
+    }
+    list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+  }
   return list
     .map((e) => ({
       ...e,
@@ -518,7 +576,7 @@ export function notices(monthKey, day = null, lang = 'zh') {
 }
 /** 菜品销售明细（按所选月份/门店合并，按销售额降序；all 表示跨店同名合并） */
 export function products(monthKey, storeKey) {
-  const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
+  const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   const map = new Map()
   for (const k of keys) {
     for (const p of (getAnalysis().products || {})[monthKey]?.[k] || (PRODUCTS[monthKey] || {})[k] || []) {
@@ -551,13 +609,13 @@ export function productSummary(monthKey, storeKey) {
 /** 门店经营明细（全部月份 x 门店，按月份倒序、收入降序） */
 export function storeDetails(storeKey) {
   const rows = []
-  const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
+  const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   for (const m of allMonths()) {
     const pk = prevMonthKey(m.key)
     for (const k of keys) {
       const agg = aggregate(m.key, k)
       const prev = pk ? aggregate(pk, k) : null
-      const st = STORES.find((s) => s.key === k)
+      const st = allStores().find((s) => s.key === k)
       rows.push({
         monthKey: m.key,
         month: m.label,

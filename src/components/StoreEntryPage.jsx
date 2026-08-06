@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Building2, CalendarDays, ChevronDown, Save, Trash2, Users } from 'lucide-react'
-import { STORES, dailyRows, monthLabel, saveLocalEntry, deleteLocalEntry, localEntries, employeeList } from '../utils/selectors'
+import { allStores, dailyRows, monthLabel, saveLocalEntry, deleteLocalEntry, localEntries, employeeList } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 
@@ -94,7 +94,7 @@ function StaffPicker({ value, onChange }) {
 
 export default function StoreEntryPage({ onBack }) {
   const { t } = useI18n()
-  const [store, setStore] = useState(STORES[0].key)
+  const [store, setStore] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
   const [staff, setStaff] = useState([])
   const [date, setDate] = useState(todayStr)
   const [inc, setInc] = useState('')
@@ -105,7 +105,7 @@ export default function StoreEntryPage({ onBack }) {
   // 日期自动归属对应月份（本地数据按 月份|门店|MM-DD 存储）
   const month = date && date.length >= 7 ? date.slice(0, 7) : '2026-07'
 
-  const storeInfo = STORES.find((s) => s.key === store)
+  const storeInfo = allStores().find((s) => s.key === store)
 
   // 与首页共用同一数据源：报表 + 本地录入自动合并，保存后实时联动
   const rows = dailyRows(month, store)
@@ -185,7 +185,7 @@ export default function StoreEntryPage({ onBack }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <Field label={t('门店')} icon={Building2}>
             <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
-              {STORES.map((s) => (
+              {allStores().map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
                 </option>

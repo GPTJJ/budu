@@ -254,6 +254,7 @@ export function createApp() {
       removedStaff: db.removedStaff || [],
       analysis: db.analysis || {},
       productImages: db.productImages || {},
+      stores: db.stores || [],
     })
   })
 
@@ -299,6 +300,29 @@ export function createApp() {
       }
       db.productImages = body.productImages
     }
+    if (body.stores !== undefined) {
+      const storesChanged = JSON.stringify(body.stores) !== JSON.stringify(db.stores || [])
+      if (storesChanged && req.user.role !== 'developer') {
+        return res.status(403).json({ error: '无权限' })
+      }
+      if (!Array.isArray(body.stores)) {
+        return res.status(400).json({ error: 'stores 格式错误' })
+      }
+      const seen = new Set()
+      for (const s of body.stores) {
+        const key = s && typeof s.key === 'string' ? s.key.trim() : ''
+        const name = s && typeof s.name === 'string' ? s.name.trim() : ''
+        if (!key || key.length > 30 || !name || name.length > 30 || seen.has(key)) {
+          return res.status(400).json({ error: '门店格式错误' })
+        }
+        seen.add(key)
+      }
+      db.stores = body.stores.map((s) => ({
+        key: String(s.key).trim(),
+        name: String(s.name).trim(),
+        district: s && typeof s.district === 'string' ? String(s.district).trim().slice(0, 50) : '',
+      }))
+    }
     await persist()
     res.json({
       ok: true,
@@ -306,6 +330,7 @@ export function createApp() {
       staff: db.staff,
       removedStaff: db.removedStaff || [],
       productImages: db.productImages || {},
+      stores: db.stores || [],
     })
   })
 
