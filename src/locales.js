@@ -70,6 +70,32 @@ export const en = {
   '数据来源': 'Data source',
   'budu OS文档（三店4-7月报表 / 薪资表27-31周）': 'budu OS docs (Apr–Jul reports / payroll wk 27–31)',
 
+  // 账号菜单
+  '打开账号菜单': 'Open account menu',
+  '修改密码': 'Change Password',
+  '修改头像': 'Change Avatar',
+  '修改用户名': 'Change Username',
+  '切换账号': 'Switch Account',
+  '确定要切换账号吗？': 'Switch account? You will be signed out.',
+  '头像预览': 'Avatar Preview',
+  '选择图片': 'Choose Image',
+  '支持从本机选择图片，自动裁剪为方形头像': 'Pick an image from this device; it is cropped to a square avatar automatically',
+  '请选择一张图片': 'Please choose an image',
+  '当前密码': 'Current Password',
+  '新密码（至少 6 位）': 'New Password (min 6 characters)',
+  '确认新密码': 'Confirm New Password',
+  '两次输入的新密码不一致': 'New passwords do not match',
+  '密码修改成功': 'Password updated',
+  '用户名需为 2-20 个字符': 'Username must be 2–20 characters',
+  '用户名已存在': 'Username already exists',
+  '当前密码错误': 'Current password is incorrect',
+  '密码至少 6 位': 'Password must be at least 6 characters',
+  '头像格式错误': 'Invalid avatar format',
+  '头像文件过大': 'Avatar file is too large',
+  '用户名或密码错误': 'Incorrect username or password',
+  '未登录或登录已过期': 'Not signed in or session expired',
+  '账号不存在': 'Account not found',
+
   // 人员管理
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',

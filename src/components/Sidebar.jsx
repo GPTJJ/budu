@@ -10,10 +10,10 @@ import {
   BarChart3,
   Settings,
   CupSoda,
-  LogOut,
   ChevronDown,
 } from 'lucide-react'
 import { useI18n } from '../i18n'
+import AccountMenu from './AccountMenu'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -35,7 +35,7 @@ const subMenus = {
   store: [{ key: 'store-entry', label: '门店业绩录入' }],
 }
 
-export default function Sidebar({ open, onClose, view, onNavigate }) {
+export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
 
@@ -145,19 +145,8 @@ export default function Sidebar({ open, onClose, view, onNavigate }) {
 
       {/* 底部用户卡片 */}
       <div className="px-4 pb-5 pt-4">
-        <div className="rounded-2xl bg-gradient-to-br from-budu-50 via-white to-grape-50 p-4 shadow-inner ring-1 ring-budu-100/60">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-budu-400 to-grape-500 text-sm font-bold text-white">
-              YG
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-700">Yue Gu</p>
-              <p className="truncate text-xs text-slate-400">{t('总部运营 · 管理员')}</p>
-            </div>
-            <button className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-white hover:text-budu-500">
-              <LogOut className="h-4 w-4" />
-            </button>
-          </div>
+        <div className="rounded-2xl bg-gradient-to-br from-budu-50 via-white to-grape-50 p-2 shadow-inner ring-1 ring-budu-100/60">
+          <AccountMenu user={user} onUserChange={onUserChange} onLogout={onLogout} variant="sidebar" />
         </div>
         <p className="mt-3 text-center text-[10px] font-medium tracking-[0.18em] text-slate-300">
           BUDU Operating System V1.0

@@ -23,7 +23,7 @@ export function createApp() {
   }
 
   function userPublic(u) {
-    return { id: u.id, username: u.username, role: u.role, createdAt: u.createdAt }
+    return { id: u.id, username: u.username, role: u.role, avatar: u.avatar || '', createdAt: u.createdAt }
   }
 
   function setAuthCookie(res, token) {
@@ -89,6 +89,49 @@ export function createApp() {
   // ---------- 当前登录用户 ----------
   app.get('/api/auth/me', requireAuth, (req, res) => {
     res.json({ user: userPublic(req.user) })
+  })
+
+  // ---------- 修改用户名 / 头像 ----------
+  app.put('/api/auth/profile', requireAuth, async (req, res) => {
+    const body = req.body || {}
+    const db = await loadDb()
+    if (body.username !== undefined) {
+      const username = String(body.username || '').trim()
+      if (username.length < 2 || username.length > 20) {
+        return res.status(400).json({ error: '用户名需为 2-20 个字符' })
+      }
+      if (db.users.some((u) => u.id !== req.user.id && u.username === username)) {
+        return res.status(409).json({ error: '用户名已存在' })
+      }
+      req.user.username = username
+    }
+    if (body.avatar !== undefined) {
+      const avatar = typeof body.avatar === 'string' ? body.avatar.trim() : ''
+      if (avatar && !avatar.startsWith('data:image/')) {
+        return res.status(400).json({ error: '头像格式错误' })
+      }
+      if (avatar.length > 500000) {
+        return res.status(400).json({ error: '头像文件过大' })
+      }
+      req.user.avatar = avatar
+    }
+    await persist()
+    res.json({ user: userPublic(req.user) })
+  })
+
+  // ---------- 修改密码 ----------
+  app.put('/api/auth/password', requireAuth, async (req, res) => {
+    const oldPassword = String(req.body.oldPassword || '')
+    const newPassword = String(req.body.newPassword || '')
+    if (!verifyPassword(oldPassword, req.user.passwordHash)) {
+      return res.status(400).json({ error: '当前密码错误' })
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: '密码至少 6 位' })
+    }
+    req.user.passwordHash = hashPassword(newPassword)
+    await persist()
+    res.json({ ok: true })
   })
 
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------

@@ -31,6 +31,16 @@ try {
     ['ProductSalesTable', await render('/src/components/ProductSalesTable.jsx', { month: '2026-07', store: 'all' }), ['商品销售 TOP10']],
     ['NotificationPanel', await render('/src/components/NotificationPanel.jsx', { month: '2026-07', day: null }), ['重要提醒']],
     ['SettingsPage', await render('/src/components/SettingsPage.jsx', { onBack: () => {} }), ['系统设置', '界面语言']],
+    [
+      'AccountMenu',
+      await render('/src/components/AccountMenu.jsx', {
+        user: { username: 'budu', role: 'admin' },
+        onUserChange: () => {},
+        onLogout: () => {},
+        variant: 'header',
+      }),
+      ['打开账号菜单'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

@@ -1,13 +1,23 @@
-import { MapPin, Bell, Menu, ChevronDown, LogOut } from 'lucide-react'
+import { MapPin, Bell, Menu, ChevronDown } from 'lucide-react'
 import { STORES } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import { useI18n } from '../i18n'
+import AccountMenu from './AccountMenu'
 
-export default function Header({ month, store, day, onDaySelect, onMonthChange, onStoreChange, onMenuClick, user, onLogout }) {
+export default function Header({
+  month,
+  store,
+  day,
+  onDaySelect,
+  onMonthChange,
+  onStoreChange,
+  onMenuClick,
+  user,
+  onLogout,
+  onUserChange,
+}) {
   const { t } = useI18n()
   const name = user?.username || t('伙伴')
-  const roleText = user?.role === 'admin' ? t('管理员') : t('门店运营')
-  const initial = name.slice(0, 2).toUpperCase()
   return (
     <header className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/80 backdrop-blur-md">
       <div className="flex items-center justify-between gap-4 px-5 py-4 lg:px-8">
@@ -59,28 +69,10 @@ export default function Header({ month, store, day, onDaySelect, onMonthChange, 
             <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
           </button>
 
-          {/* 用户头像 */}
-          <div className="hidden items-center gap-2.5 rounded-2xl bg-white py-1.5 pl-1.5 pr-4 shadow-card sm:flex">
-            <div className="grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-budu-400 to-grape-500 text-xs font-bold text-white">
-              {initial}
-            </div>
-            <div className="leading-tight">
-              <p className="text-[13px] font-semibold text-slate-700">{name}</p>
-              <p className="text-[11px] text-slate-400">{roleText}</p>
-            </div>
+          {/* 账号菜单（右上角入口） */}
+          <div className="rounded-2xl bg-white shadow-card transition hover:shadow-card-hover">
+            <AccountMenu user={user} onUserChange={onUserChange} onLogout={onLogout} variant="header" />
           </div>
-
-          {/* 退出登录 */}
-          <button
-            onClick={() => {
-              if (window.confirm(t('确定要退出登录吗？'))) onLogout()
-            }}
-            className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-slate-400 shadow-card transition hover:text-rose-500 hover:shadow-card-hover"
-            title={t('退出登录')}
-            aria-label={t('退出登录')}
-          >
-            <LogOut className="h-[18px] w-[18px]" />
-          </button>
         </div>
       </div>
     </header>

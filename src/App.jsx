@@ -58,6 +58,8 @@ export default function App() {
     setUser(null)
   }
 
+  const handleUserChange = (u) => setUser(u)
+
   const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff-fulltime' || view === 'staff-parttime'
   const isStoreEntryView = view === 'store-entry'
@@ -89,6 +91,9 @@ export default function App() {
         onClose={() => setSidebarOpen(false)}
         view={view}
         onNavigate={setView}
+        user={user}
+        onUserChange={handleUserChange}
+        onLogout={handleLogout}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -108,6 +113,7 @@ export default function App() {
           }}
           onStoreChange={setStore}
           onMenuClick={() => setSidebarOpen(true)}
+          onUserChange={handleUserChange}
         />
 
         <main className="flex-1 space-y-6 px-5 py-6 lg:px-8">

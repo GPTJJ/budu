@@ -24,7 +24,7 @@ export default function LoginPage({ onLogin }) {
       })
       onLogin(data.user)
     } catch (err) {
-      setError(err.message)
+      setError(t(err.message))
     } finally {
       setBusy(false)
     }
