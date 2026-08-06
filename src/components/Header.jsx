@@ -34,9 +34,9 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/80 backdrop-blur-md">
-      <div className="flex items-center justify-between gap-4 px-5 py-4 lg:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 sm:py-4 lg:px-8">
         {/* 问候语 */}
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             onClick={onMenuClick}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card lg:hidden"
@@ -45,17 +45,17 @@ export default function Header({
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-bold text-slate-800 sm:text-xl">
+            <h1 className="truncate text-base font-bold text-slate-800 sm:text-lg lg:text-xl">
               {t(greetingKey, { name })}
             </h1>
-            <p className="mt-0.5 truncate text-[13px] text-slate-400">
+            <p className="mt-0.5 hidden truncate text-[13px] text-slate-400 sm:block">
               {t('欢迎回来，今天也要元气满满地经营每一家门店！')}
             </p>
           </div>
         </div>
 
         {/* 右侧工具栏 */}
-        <div className="flex shrink-0 items-center gap-2.5 sm:gap-3">
+        <div className="flex max-w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:gap-3">
           {/* 日历选择（月 / 日双模式） */}
           <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
 

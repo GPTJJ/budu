@@ -182,7 +182,7 @@ export default function StoreEntryPage({ onBack }) {
 
       {/* 录入表单 */}
       <div className="card p-5">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <Field label={t('门店')} icon={Building2}>
             <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
               {STORES.map((s) => (
@@ -209,7 +209,7 @@ export default function StoreEntryPage({ onBack }) {
             <input type="number" step="1" min="0" value={ord} onChange={(e) => setOrd(e.target.value)} placeholder="0" className={inputCls} />
           </Field>
 
-          <div className="col-span-2 flex items-end md:col-span-2">
+          <div className="flex items-end sm:col-span-2">
             <button
               onClick={handleSave}
               className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"

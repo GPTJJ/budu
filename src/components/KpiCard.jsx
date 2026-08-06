@@ -58,7 +58,7 @@ export default function KpiCard({ card }) {
             <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-300">•••</p>
           ) : (
             <>
-              <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-800">
+              <p className="text-xl font-extrabold leading-none tracking-tight text-slate-800 sm:text-[26px]">
                 {card.prefix}
                 {card.value}
                 <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>

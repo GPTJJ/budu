@@ -50,7 +50,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
   const jumpToday = () => setViewMonth(today.slice(0, 7))
 
   return (
-    <div className="relative hidden md:block">
+    <div className="relative block">
       <button
         onClick={toggle}
         className={`flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover ${
@@ -72,7 +72,7 @@ export default function CalendarPicker({ month, day, onSelect }) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-40 mt-2 w-[300px] rounded-3xl bg-white p-4 shadow-2xl ring-1 ring-slate-100">
+          <div className="absolute right-0 top-full z-40 mt-2 w-[300px] max-w-[calc(100vw-2rem)] rounded-3xl bg-white p-4 shadow-2xl ring-1 ring-slate-100">
             {/* 年月切换 + 今天 */}
             <div className="flex items-center justify-between gap-2">
               <button
