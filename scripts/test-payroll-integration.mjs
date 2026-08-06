@@ -22,13 +22,13 @@ globalThis.localStorage.setItem(
       '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
       '2026-08|guanshe|07': { inc: 0, ord: 0, staff: ['隋晓'] },
       '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
-      '2026-08|chaowai|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
+      '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
     },
     staff: [],
     removedStaff: [],
     analysis: {},
     productImages: {},
-    stores: [],
+    stores: [{ key: 'store-abc', name: '北京朝外店' }],
   }),
 )
 
@@ -74,6 +74,14 @@ check('employeeList 8 月：无录入员工薪酬归零', ma, {
   perf: 0,
   workedDays: 0,
   hours: 0,
+})
+
+const zuo = month.find((e) => e.name === '左可翠')
+check('employeeList 8 月：左可翠（新增门店 key 按名称匹配朝外 11.5h）', zuo, {
+  salary: 345,
+  perf: 0,
+  hours: 11.5,
+  workedDays: 1,
 })
 
 const top = entryEmployeePerformance('all', '2026-08')

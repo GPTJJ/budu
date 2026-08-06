@@ -32,6 +32,17 @@ const cases = [
     expect: { hours: 11.5, baseRate: 30, basePay: 345, commissionRate: 0, commission: 0, total: 345 },
   },
   {
+    name: '新增门店 key（store-abc）+ 名称「北京朝外店」→ 仍按朝外 11.5h',
+    got: calcDailyPay({
+      storeKey: 'store-abc',
+      storeName: '北京朝外店',
+      revenue: 1500,
+      date: '2026-08-13',
+      staffCount: 1,
+    }),
+    expect: { hours: 11.5, baseRate: 30, basePay: 345, commissionRate: 0, commission: 0, total: 345 },
+  },
+  {
     name: '通盈周末未达标目标 5000 → 无提成',
     got: calcDailyPay({ storeKey: 'tongying', revenue: 4800, date: '2026-08-09', staffCount: 1 }),
     expect: { hours: 12, baseRate: 30, basePay: 360, commissionRate: 0, commission: 0, total: 360 },
@@ -86,9 +97,9 @@ const entries = {
   '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
   '2026-08|guanshe|07': { inc: 0, ord: 0, staff: ['隋晓'] },
   '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
-  '2026-08|chaowai|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
+  '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
 }
-const monthPay = monthlyPayrollFromEntries(entries, '2026-08')
+const monthPay = monthlyPayrollFromEntries(entries, '2026-08', { 'store-abc': '北京朝外店' })
 const monthCases = [
   {
     name: '叶芷辰 8 月：通盈 480 + 通盈 384 + 西单 360（同日两店只算 1 个出勤日）',

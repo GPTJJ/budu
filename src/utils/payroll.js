@@ -40,8 +40,28 @@ export const STORE_PAY_CONFIG = {
   guanshe: { onePersonHours: 11, target: 2000 },
 }
 
-export function storePayConfig(storeKey) {
-  return STORE_PAY_CONFIG[storeKey] || { onePersonHours: 12, target: 2000 }
+const DEFAULT_PAY_CONFIG = { onePersonHours: 12, target: 2000 }
+
+/** 门店别名：新增门店（key 自动生成）也可按门店名匹配到对应薪酬配置 */
+const STORE_ALIASES = [
+  { key: 'tongying', names: ['通盈'] },
+  { key: 'xidan', names: ['西单'] },
+  { key: 'chaowai', names: ['朝外'] },
+  { key: 'guanshe', names: ['官舍'] },
+]
+
+export function normalizeStoreKey(storeKey, storeName = '') {
+  const key = String(storeKey || '')
+  if (STORE_PAY_CONFIG[key]) return key
+  const combined = `${key} ${storeName}`
+  for (const alias of STORE_ALIASES) {
+    if (alias.names.some((n) => combined.includes(n))) return alias.key
+  }
+  return key
+}
+
+export function storePayConfig(storeKey, storeName = '') {
+  return STORE_PAY_CONFIG[normalizeStoreKey(storeKey, storeName)] || DEFAULT_PAY_CONFIG
 }
 
 const BASE_RATE = 28
@@ -50,15 +70,16 @@ const COMMISSION_STEP = 1000
 const COMMISSION_PER_STEP = 5
 
 /** 当日值班工时：1 人按门店标准工时；2 人及以上各 8h */
-export function dutyHours(storeKey, staffCount) {
-  if (Number(staffCount) <= 1) return storePayConfig(storeKey).onePersonHours
+export function dutyHours(storeKey, staffCount, storeName = '') {
+  if (Number(staffCount) <= 1) return storePayConfig(storeKey, storeName).onePersonHours
   return 8
 }
 
 /** 阶梯提成时薪（元/h）：未达当日业绩目标为 0；达到目标奖励 5 元/h，之后每增加 1000 元再加 5 元/h */
-export function commissionRate(storeKey, revenue, dateStr) {
-  const cfg = storePayConfig(storeKey)
-  const target = storeKey === 'tongying' && isHoliday(dateStr) ? cfg.holidayTarget : cfg.target
+export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
+  const normKey = normalizeStoreKey(storeKey, storeName)
+  const cfg = storePayConfig(normKey)
+  const target = normKey === 'tongying' && isHoliday(dateStr) ? cfg.holidayTarget : cfg.target
   const rev = Number(revenue) || 0
   if (rev < target) return 0
   const extra = Math.floor((rev - target) / COMMISSION_STEP)
@@ -70,11 +91,12 @@ function round2(v) {
 }
 
 /** 计算单个员工某日薪酬：基础薪资 + 业绩提成 */
-export function calcDailyPay({ storeKey, revenue, date, staffCount }) {
-  const hours = dutyHours(storeKey, staffCount)
+export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount }) {
+  const normKey = normalizeStoreKey(storeKey, storeName)
+  const hours = dutyHours(normKey, staffCount)
   const baseRate = Number(staffCount) <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
   const basePay = round2(baseRate * hours)
-  const rate = commissionRate(storeKey, revenue, date)
+  const rate = commissionRate(normKey, revenue, date)
   const commission = round2(rate * hours)
   return {
     hours,
@@ -91,7 +113,7 @@ export function calcDailyPay({ storeKey, revenue, date, staffCount }) {
  * entries 的键格式为「月份|门店Key|MM-DD」，值为 { inc, ord, staff: string[] }。
  * 返回 Map：name -> { name, workedDays, workedRevenue, orders, hours, basePay, commission, salary, stores }
  */
-export function monthlyPayrollFromEntries(entries, monthKey) {
+export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
   const map = new Map()
   let hasAny = false
   for (const [key, v] of Object.entries(entries || {})) {
@@ -104,7 +126,13 @@ export function monthlyPayrollFromEntries(entries, monthKey) {
     const inc = Number(v.inc) || 0
     const ord = Number(v.ord) || 0
     const share = v.staff.length
-    const daily = calcDailyPay({ storeKey, revenue: inc, date: `${monthKey}-${day}`, staffCount: share })
+    const daily = calcDailyPay({
+      storeKey,
+      storeName: storeNames[storeKey] || '',
+      revenue: inc,
+      date: `${monthKey}-${day}`,
+      staffCount: share,
+    })
     for (const name of v.staff) {
       const rec = map.get(name) || {
         name,

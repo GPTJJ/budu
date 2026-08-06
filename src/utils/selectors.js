@@ -359,7 +359,9 @@ export function entryMonthStats(monthKey) {
 
 /** 某月每位员工的薪酬（根据每日业绩录入自动计算：基础工资 + 业绩阶梯提成） */
 export function entryMonthPayroll(monthKey) {
-  const map = monthlyPayrollFromEntries(localEntries(), monthKey)
+  const storeNames = {}
+  for (const s of allStores()) storeNames[s.key] = s.name
+  const map = monthlyPayrollFromEntries(localEntries(), monthKey, storeNames)
   for (const rec of map.values()) {
     const freq = {}
     for (const k of rec.stores) freq[k] = (freq[k] || 0) + 1
@@ -742,6 +744,7 @@ export function employeeDayStatus(monthKey, day, name) {
     const share = v.staff.length
     const daily = calcDailyPay({
       storeKey,
+      storeName: storeName(storeKey),
       revenue: Number(v.inc) || 0,
       date: `${monthKey}-${day}`,
       staffCount: share,
