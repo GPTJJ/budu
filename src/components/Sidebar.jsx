@@ -33,13 +33,16 @@ const subMenus = {
     { key: 'staff-parttime', label: '兼职人员' },
   ],
   store: [{ key: 'store-entry', label: '门店业绩录入' }],
+  product: [{ key: 'product-catalog', label: '商品目录' }],
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
   const visibleMenus =
-    user?.role === 'public' ? menus.filter((m) => m.key !== 'store' && m.key !== 'analytics') : menus
+    user?.role === 'public'
+      ? menus.filter((m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product')
+      : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))

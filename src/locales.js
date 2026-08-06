@@ -150,6 +150,22 @@ export const en = {
   '未识别到可分析的报表数据': 'No analyzable report data detected',
   '读取文件失败': 'Failed to read file',
 
+  // 商品目录
+  '商品目录': 'Product Catalog',
+  '根据菜品销售明细，为每一款菜品提供独立展示':
+    'Independent display for every product based on sales details',
+  '上传图片': 'Upload Image',
+  '支持从本机选择图片，自动压缩保存': 'Pick an image from this device; it is compressed automatically',
+  '移除图片': 'Remove Image',
+  '确定移除该商品的图片吗？': 'Remove this product image?',
+  '商品详情': 'Product Details',
+  '商品图片已保存': 'Product image saved',
+  '暂无商品数据': 'No product data',
+  'productImages 格式错误': 'Invalid product images format',
+  '商品图片格式错误': 'Invalid product image format',
+  '商品图片过大': 'Product image is too large',
+  '已上传': 'Uploaded',
+
   // 人员管理
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',

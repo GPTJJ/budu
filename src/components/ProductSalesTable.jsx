@@ -5,6 +5,7 @@ import { products, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode } from '../visibility'
+import { getProductImages } from '../utils/userData'
 
 // 菜品名称 -> 缩略图 emoji 映射
 const EMOJI_RULES = [
@@ -60,9 +61,10 @@ const THUMB_BG = [
 const isGiftLike = (name) => /赠品|临时商品/.test(name)
 
 /** 商品销售明细弹窗 */
-function ProductModal({ month, store, onClose }) {
+function ProductModal({ month, store, onClose, onOpenProduct }) {
   const { lang, t } = useI18n()
   const [showGift, setShowGift] = useState(false)
+  const images = getProductImages()
   const all = products(month, store)
   const list = showGift ? all : all.filter((p) => !isGiftLike(p.name))
   const totalAmount = list.reduce((s, p) => s + p.amount, 0)
@@ -156,11 +158,20 @@ function ProductModal({ month, store, onClose }) {
                   <td className="py-2.5 pr-2">
                     <div className="flex items-center gap-2.5">
                       <div
-                        className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-base ${THUMB_BG[i % THUMB_BG.length]}`}
+                        className={`grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-xl text-base ${THUMB_BG[i % THUMB_BG.length]}`}
                       >
-                        {emojiFor(row.name)}
+                        {images[row.name] ? (
+                          <img src={images[row.name]} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          emojiFor(row.name)
+                        )}
                       </div>
-                      <p className="font-semibold text-slate-700">{row.name}</p>
+                      <button
+                        onClick={() => onOpenProduct && onOpenProduct(row.name)}
+                        className="font-semibold text-slate-700 transition hover:text-budu-600"
+                      >
+                        {row.name}
+                      </button>
                     </div>
                   </td>
                   <td className="py-2.5 pr-2 text-right tabular-nums text-slate-500">
@@ -209,9 +220,10 @@ function ProductModal({ month, store, onClose }) {
   )
 }
 
-export default function ProductSalesTable({ month, store }) {
+export default function ProductSalesTable({ month, store, onOpenProduct }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
+  const images = getProductImages()
   const [showModal, setShowModal] = useState(false)
   const all = products(month, store)
   const visible = all.filter((p) => !isGiftLike(p.name))
@@ -283,14 +295,21 @@ export default function ProductSalesTable({ month, store }) {
                   <td className="py-2.5 pl-2">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-lg ${THUMB_BG[i % THUMB_BG.length]}`}
+                        className={`grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl text-lg ${THUMB_BG[i % THUMB_BG.length]}`}
                       >
-                        {emojiFor(row.name)}
+                        {images[row.name] ? (
+                          <img src={images[row.name]} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          emojiFor(row.name)
+                        )}
                       </div>
                       <div className="min-w-0 leading-tight">
-                        <p className="truncate font-semibold text-slate-700 group-hover:text-budu-600">
+                        <button
+                          onClick={() => onOpenProduct && onOpenProduct(row.name)}
+                          className="block max-w-full truncate font-semibold text-slate-700 transition group-hover:text-budu-600"
+                        >
                           {row.name}
-                        </p>
+                        </button>
                         <p className="mt-0.5 text-[11px] text-slate-400">
                           {t('收入 ¥{income} · 优惠 ¥{discount}', {
                             income: formatMoney(row.income),
@@ -331,7 +350,14 @@ export default function ProductSalesTable({ month, store }) {
         )}
       </Card>
 
-      {showModal && <ProductModal month={month} store={store} onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <ProductModal
+          month={month}
+          store={store}
+          onClose={() => setShowModal(false)}
+          onOpenProduct={onOpenProduct}
+        />
+      )}
     </>
   )
 }

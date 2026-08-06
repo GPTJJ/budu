@@ -248,7 +248,13 @@ export function createApp() {
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json({ entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [], analysis: db.analysis || {} })
+    res.json({
+      entries: db.entries,
+      staff: db.staff,
+      removedStaff: db.removedStaff || [],
+      analysis: db.analysis || {},
+      productImages: db.productImages || {},
+    })
   })
 
   // ---------- 共享数据：整体保存 ----------
@@ -271,8 +277,28 @@ export function createApp() {
       }
       db.removedStaff = body.removedStaff
     }
+    if (body.productImages !== undefined) {
+      if (typeof body.productImages !== 'object' || Array.isArray(body.productImages)) {
+        return res.status(400).json({ error: 'productImages 格式错误' })
+      }
+      for (const [key, value] of Object.entries(body.productImages)) {
+        if (key.length > 100 || typeof value !== 'string' || (value && !value.startsWith('data:image/'))) {
+          return res.status(400).json({ error: '商品图片格式错误' })
+        }
+        if (value.length > 500000) {
+          return res.status(400).json({ error: '商品图片过大' })
+        }
+      }
+      db.productImages = body.productImages
+    }
     await persist()
-    res.json({ ok: true, entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [] })
+    res.json({
+      ok: true,
+      entries: db.entries,
+      staff: db.staff,
+      removedStaff: db.removedStaff || [],
+      productImages: db.productImages || {},
+    })
   })
 
   // ---------- 数据分析：上传报表并解析 ----------

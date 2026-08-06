@@ -76,6 +76,11 @@ try {
       await render('/src/components/DataAnalysisPage.jsx', { onBack: () => {} }),
       ['数据分析', '上传报表文件'],
     ],
+    [
+      'ProductCatalogPage',
+      await render('/src/components/ProductCatalogPage.jsx', { onBack: () => {} }),
+      ['商品目录'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

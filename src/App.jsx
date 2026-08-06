@@ -13,6 +13,7 @@ import StoreEntryPage from './components/StoreEntryPage'
 import SettingsPage from './components/SettingsPage'
 import AccountAdminPage from './components/AccountAdminPage'
 import DataAnalysisPage from './components/DataAnalysisPage'
+import ProductCatalogPage from './components/ProductCatalogPage'
 import { kpiCards, MONTHS } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
@@ -30,6 +31,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState(null)
 
   useEffect(() => {
     api('/auth/me')
@@ -69,6 +71,12 @@ export default function App() {
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
+  const isProductCatalogView = view === 'product-catalog'
+
+  const openProduct = (name) => {
+    setSelectedProduct(name)
+    setView('product-catalog')
+  }
 
   if (authLoading || !dataReady) {
     return (
@@ -135,6 +143,14 @@ export default function App() {
             <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
           ) : isAnalyticsView && user?.role !== 'public' ? (
             <DataAnalysisPage onBack={() => setView('overview')} />
+          ) : isProductCatalogView && user?.role !== 'public' ? (
+            <ProductCatalogPage
+              initialProduct={selectedProduct}
+              onBack={() => {
+                setSelectedProduct(null)
+                setView('overview')
+              }}
+            />
           ) : (
             <>
               {/* 核心 KPI 统计 */}
@@ -163,7 +179,7 @@ export default function App() {
                   <EmployeePerformanceTable store={store} />
                 </div>
                 <div className="xl:col-span-5">
-                  <ProductSalesTable month={month} store={store} />
+                  <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />
                 </div>
                 <div className="xl:col-span-3">
                   <NotificationPanel month={month} day={day} />

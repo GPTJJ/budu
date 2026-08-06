@@ -62,6 +62,7 @@ export async function loadUserData() {
     staff: Array.isArray(data.staff) ? data.staff : [],
     removedStaff: Array.isArray(data.removedStaff) ? data.removedStaff : [],
     analysis: data.analysis && typeof data.analysis === 'object' ? data.analysis : {},
+    productImages: data.productImages && typeof data.productImages === 'object' ? data.productImages : {},
   }
   const legacy = readLegacy()
   let migrated = false
@@ -93,9 +94,10 @@ export function getUserData() {
       staff: Array.isArray(mirror.staff) ? mirror.staff : [],
       removedStaff: Array.isArray(mirror.removedStaff) ? mirror.removedStaff : [],
       analysis: mirror.analysis && typeof mirror.analysis === 'object' ? mirror.analysis : {},
+      productImages: mirror.productImages && typeof mirror.productImages === 'object' ? mirror.productImages : {},
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {} }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {} }
 }
 
 export function getEntries() {
@@ -133,6 +135,17 @@ export function getRemovedStaff() {
 
 export function getAnalysis() {
   return getUserData().analysis && typeof getUserData().analysis === 'object' ? getUserData().analysis : {}
+}
+
+export function getProductImages() {
+  return getUserData().productImages && typeof getUserData().productImages === 'object'
+    ? getUserData().productImages
+    : {}
+}
+
+export function commitProductImages(images) {
+  getUserData().productImages = images
+  syncUserData()
 }
 
 export function commitRemovedStaff(removedStaff) {
