@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { MapPin, Bell, Menu, ChevronDown } from 'lucide-react'
 import { STORES } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
@@ -15,6 +16,22 @@ export default function Header({
 }) {
   const { t } = useI18n()
   const name = user?.username || t('伙伴')
+  const [hour, setHour] = useState(() => new Date().getHours())
+
+  useEffect(() => {
+    const id = setInterval(() => setHour(new Date().getHours()), 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const greetingKey =
+    hour >= 5 && hour < 12
+      ? '早上好，{name} 👋'
+      : hour >= 12 && hour < 14
+        ? '中午好，{name} 👋'
+        : hour >= 14 && hour < 18
+          ? '下午好，{name} 👋'
+          : '晚上好，{name} 👋'
+
   return (
     <header className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/80 backdrop-blur-md">
       <div className="flex items-center justify-between gap-4 px-5 py-4 lg:px-8">
@@ -29,7 +46,7 @@ export default function Header({
           </button>
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-slate-800 sm:text-xl">
-              {t('下午好，{name} 👋', { name })}
+              {t(greetingKey, { name })}
             </h1>
             <p className="mt-0.5 truncate text-[13px] text-slate-400">
               {t('欢迎回来，今天也要元气满满地经营每一家门店！')}

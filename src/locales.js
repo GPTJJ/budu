@@ -33,6 +33,9 @@ export const en = {
 
   // 顶栏
   '下午好，{name} 👋': 'Good afternoon, {name} 👋',
+  '早上好，{name} 👋': 'Good morning, {name} 👋',
+  '中午好，{name} 👋': 'Good noon, {name} 👋',
+  '晚上好，{name} 👋': 'Good evening, {name} 👋',
   '欢迎回来，今天也要元气满满地经营每一家门店！': 'Welcome back! Let’s run every store with full energy today!',
   '伙伴': 'Partner',
   '管理员': 'Admin',
