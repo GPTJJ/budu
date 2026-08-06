@@ -102,7 +102,6 @@ export default function App() {
           store={store}
           day={day}
           user={user}
-          onLogout={handleLogout}
           onDaySelect={(m, d) => {
             setMonth(m)
             setDay(d)
@@ -113,7 +112,6 @@ export default function App() {
           }}
           onStoreChange={setStore}
           onMenuClick={() => setSidebarOpen(true)}
-          onUserChange={handleUserChange}
         />
 
         <main className="flex-1 space-y-6 px-5 py-6 lg:px-8">

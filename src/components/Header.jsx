@@ -2,7 +2,6 @@ import { MapPin, Bell, Menu, ChevronDown } from 'lucide-react'
 import { STORES } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import { useI18n } from '../i18n'
-import AccountMenu from './AccountMenu'
 
 export default function Header({
   month,
@@ -13,8 +12,6 @@ export default function Header({
   onStoreChange,
   onMenuClick,
   user,
-  onLogout,
-  onUserChange,
 }) {
   const { t } = useI18n()
   const name = user?.username || t('伙伴')
@@ -69,10 +66,6 @@ export default function Header({
             <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
           </button>
 
-          {/* 账号菜单（右上角入口） */}
-          <div className="rounded-2xl bg-white shadow-card transition hover:shadow-card-hover">
-            <AccountMenu user={user} onUserChange={onUserChange} onLogout={onLogout} variant="header" />
-          </div>
         </div>
       </div>
     </header>
