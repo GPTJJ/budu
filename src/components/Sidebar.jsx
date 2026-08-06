@@ -38,7 +38,8 @@ const subMenus = {
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
-  const visibleMenus = user?.role === 'public' ? menus.filter((m) => m.key !== 'store') : menus
+  const visibleMenus =
+    user?.role === 'public' ? menus.filter((m) => m.key !== 'store' && m.key !== 'analytics') : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))

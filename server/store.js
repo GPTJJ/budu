@@ -15,7 +15,7 @@ const DATA_DIR = path.join(__dirname, 'data')
 const DB_FILE = path.join(DATA_DIR, 'db.json')
 const REDIS_KEY = 'budu-db'
 
-const DEFAULT_DB = { meta: {}, users: [], entries: {}, staff: [], removedStaff: [] }
+const DEFAULT_DB = { meta: {}, users: [], entries: {}, staff: [], removedStaff: [], analysis: {} }
 
 let cached = null
 
@@ -85,6 +85,7 @@ export async function loadDb() {
   if (!db.entries || typeof db.entries !== 'object' || Array.isArray(db.entries)) db.entries = {}
   if (!Array.isArray(db.staff)) db.staff = []
   if (!Array.isArray(db.removedStaff)) db.removedStaff = []
+  if (!db.analysis || typeof db.analysis !== 'object' || Array.isArray(db.analysis)) db.analysis = {}
   if (!db.meta.secret && !process.env.JWT_SECRET) {
     db.meta.secret = crypto.randomBytes(32).toString('hex')
   }

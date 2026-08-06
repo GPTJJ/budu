@@ -71,6 +71,11 @@ try {
       })(),
       ['•••'],
     ],
+    [
+      'DataAnalysisPage',
+      await render('/src/components/DataAnalysisPage.jsx', { onBack: () => {} }),
+      ['数据分析', '上传报表文件'],
+    ],
   ]
   const failures = checks.filter(([name, html, markers]) => {
     const missing = markers.filter((m) => !html.includes(m))

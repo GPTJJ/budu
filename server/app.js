@@ -6,6 +6,7 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { loadDb, persist } from './store.js'
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
+import { parseAnalysis } from './analysis.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -47,6 +48,13 @@ export function createApp() {
 
   function requireDeveloper(req, res, next) {
     if (!req.user || req.user.role !== 'developer') {
+      return res.status(403).json({ error: '无权限' })
+    }
+    next()
+  }
+
+  function requireOperational(req, res, next) {
+    if (!req.user || req.user.role === 'public') {
       return res.status(403).json({ error: '无权限' })
     }
     next()
@@ -199,7 +207,7 @@ export function createApp() {
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json({ entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [] })
+    res.json({ entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [], analysis: db.analysis || {} })
   })
 
   // ---------- 共享数据：整体保存 ----------
@@ -224,6 +232,57 @@ export function createApp() {
     }
     await persist()
     res.json({ ok: true, entries: db.entries, staff: db.staff, removedStaff: db.removedStaff || [] })
+  })
+
+  // ---------- 数据分析：上传报表并解析 ----------
+  app.post('/api/analysis/upload', requireAuth, requireOperational, async (req, res) => {
+    const body = req.body || {}
+    const name = String(body.name || '')
+    const raw = String(body.base64 || '').replace(/^data:[^;]+;base64,/, '')
+    if (!raw) return res.status(400).json({ error: '请选择文件' })
+    const buffer = Buffer.from(raw, 'base64')
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: '文件过大（最大 10MB）' })
+    }
+    const parsed = parseAnalysis(buffer, name)
+    if (!parsed) {
+      return res.status(400).json({ error: '未识别到可分析的报表数据' })
+    }
+    const db = await loadDb()
+    const cur = db.analysis || {}
+    const analysis = {
+      ...cur,
+      daily: { ...(cur.daily || {}), ...parsed.daily },
+      products: { ...(cur.products || {}), ...parsed.products },
+      employeeMonthly: { ...(cur.employeeMonthly || {}), ...parsed.employeeMonthly },
+      employees: parsed.employees || cur.employees || [],
+      months: [...new Set([...(cur.months || []), ...parsed.months])].sort(),
+      sourceFiles: [...new Set([...(cur.sourceFiles || []), ...parsed.sourceFiles])],
+      uploadedAt: new Date().toISOString(),
+    }
+    db.analysis = analysis
+    await persist()
+    const summary = {
+      months: analysis.months,
+      dailyRows: Object.values(analysis.daily || {}).reduce(
+        (s, stores) => s + Object.values(stores).reduce((a, rows) => a + rows.length, 0),
+        0,
+      ),
+      productCount: Object.values(analysis.products || {}).reduce(
+        (s, stores) => s + Object.values(stores).reduce((a, list) => a + list.length, 0),
+        0,
+      ),
+      employeeCount: (analysis.employees || []).length,
+      sourceFiles: analysis.sourceFiles,
+    }
+    res.json({ ok: true, summary })
+  })
+
+  app.delete('/api/analysis', requireAuth, requireOperational, async (req, res) => {
+    const db = await loadDb()
+    db.analysis = {}
+    await persist()
+    res.json({ ok: true })
   })
 
   // ---------- 静态前端（仅本地/自建服务器模式使用；Vercel 由平台托管前端） ----------

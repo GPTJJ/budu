@@ -61,6 +61,7 @@ export async function loadUserData() {
     entries: data.entries || {},
     staff: Array.isArray(data.staff) ? data.staff : [],
     removedStaff: Array.isArray(data.removedStaff) ? data.removedStaff : [],
+    analysis: data.analysis && typeof data.analysis === 'object' ? data.analysis : {},
   }
   const legacy = readLegacy()
   let migrated = false
@@ -91,9 +92,10 @@ export function getUserData() {
       entries: mirror.entries || {},
       staff: Array.isArray(mirror.staff) ? mirror.staff : [],
       removedStaff: Array.isArray(mirror.removedStaff) ? mirror.removedStaff : [],
+      analysis: mirror.analysis && typeof mirror.analysis === 'object' ? mirror.analysis : {},
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {} }
 }
 
 export function getEntries() {
@@ -127,6 +129,10 @@ export function commitStaff(staff) {
 
 export function getRemovedStaff() {
   return Array.isArray(getUserData().removedStaff) ? getUserData().removedStaff : []
+}
+
+export function getAnalysis() {
+  return getUserData().analysis && typeof getUserData().analysis === 'object' ? getUserData().analysis : {}
 }
 
 export function commitRemovedStaff(removedStaff) {

@@ -12,6 +12,7 @@ import PersonnelPage from './components/PersonnelPage'
 import StoreEntryPage from './components/StoreEntryPage'
 import SettingsPage from './components/SettingsPage'
 import AccountAdminPage from './components/AccountAdminPage'
+import DataAnalysisPage from './components/DataAnalysisPage'
 import { kpiCards, MONTHS } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
@@ -67,6 +68,7 @@ export default function App() {
   const isStoreEntryView = view === 'store-entry'
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
+  const isAnalyticsView = view === 'analytics'
 
   if (authLoading || !dataReady) {
     return (
@@ -131,6 +133,8 @@ export default function App() {
             <SettingsPage onBack={() => setView('overview')} />
           ) : isAccountAdminView && user?.role === 'developer' ? (
             <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
+          ) : isAnalyticsView && user?.role !== 'public' ? (
+            <DataAnalysisPage onBack={() => setView('overview')} />
           ) : (
             <>
               {/* 核心 KPI 统计 */}

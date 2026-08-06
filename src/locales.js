@@ -123,6 +123,33 @@ export const en = {
   '无权限': 'No permission',
   '角色不正确': 'Invalid role',
 
+  // 数据分析
+  '数据分析': 'Data Analysis',
+  '上传门店报表，系统自动解析并匹配到各数据模块':
+    'Upload store reports; the system parses them and maps data to each module',
+  '上传报表文件': 'Upload Report',
+  '支持 .xlsx / .xls / .csv，可上传月度营业额、菜品明细、薪资表':
+    'Supports .xlsx / .xls / .csv: monthly revenue, product details, payroll',
+  '正在分析…': 'Analyzing…',
+  '分析完成，各模块数据已更新': 'Analysis complete; module data updated',
+  '当前分析数据': 'Current Analysis Data',
+  '清除上传数据': 'Clear Uploaded Data',
+  '确定清除所有上传的分析数据吗？': 'Clear all uploaded analysis data?',
+  '已清除上传的分析数据': 'Uploaded analysis data cleared',
+  '尚未上传分析数据，当前展示内置报表': 'No uploaded data yet; showing built-in reports',
+  '覆盖月份': 'Covered Months',
+  '营业记录': 'Revenue Rows',
+  '菜品数据': 'Product Items',
+  '员工数据': 'Employee Records',
+  '来源文件': 'Source Files',
+  '自动匹配模块': 'Auto-matched Modules',
+  '首页 KPI、门店排行、营业额趋势、渠道构成、商品销售、员工绩效、人员管理':
+    'Home KPIs, store ranking, revenue trend, channel mix, product sales, staff performance, staff management',
+  '请选择文件': 'Please choose a file',
+  '文件过大（最大 10MB）': 'File is too large (max 10MB)',
+  '未识别到可分析的报表数据': 'No analyzable report data detected',
+  '读取文件失败': 'Failed to read file',
+
   // 人员管理
   '薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人':
     'Payroll wk 27–31 · Full-time {full} / Part-time {part}',

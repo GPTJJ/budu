@@ -1,5 +1,13 @@
 import { DAILY, PRODUCTS, STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS } from '../data/reportData.js'
-import { commitEntries, commitStaff, commitRemovedStaff, getEntries, getStaff, getRemovedStaff } from './userData.js'
+import {
+  commitEntries,
+  commitStaff,
+  commitRemovedStaff,
+  getAnalysis,
+  getEntries,
+  getStaff,
+  getRemovedStaff,
+} from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
 
@@ -33,6 +41,20 @@ export function monthLabel(key, lang = 'zh') {
 export function prevMonthKey(monthKey) {
   const i = MONTHS.findIndex((m) => m.key === monthKey)
   return i > 0 ? MONTHS[i - 1].key : null
+}
+
+export function allMonths() {
+  const keys = new Set(MONTHS.map((m) => m.key))
+  for (const k of getAnalysis().months || []) keys.add(k)
+  return [...keys]
+    .sort()
+    .map((key) => ({ key, label: monthLabel(key) }))
+}
+
+export function allEmployeeMonths() {
+  const keys = new Set(EMPLOYEE_MONTHS)
+  for (const k of Object.keys(getAnalysis().employeeMonthly || {})) keys.add(k)
+  return [...keys].sort()
 }
 
 const SUM_FIELDS = [
@@ -71,7 +93,7 @@ export function dailyRows(monthKey, storeKey) {
       if (!key.startsWith(prefix)) continue
       overrides.set(key.slice(prefix.length), { inc: Number(v.inc) || 0, ord: Number(v.ord) || 0 })
     }
-    for (const row of (DAILY[monthKey] || {})[k] || []) {
+    for (const row of (getAnalysis().daily || {})[monthKey]?.[k] || (DAILY[monthKey] || {})[k] || []) {
       const ov = overrides.get(row.d)
       let cur = map.get(row.d)
       if (!cur) {
@@ -272,6 +294,16 @@ export function saveLocalStaffList(list) {
   commitStaff(list)
 }
 
+export function analysisEmployees() {
+  const list = getAnalysis().employees
+  return Array.isArray(list) && list.length > 0 ? list : null
+}
+
+export function analysisEmployeeMonthly(monthKey) {
+  const list = (getAnalysis().employeeMonthly || {})[monthKey]
+  return Array.isArray(list) && list.length > 0 ? list : null
+}
+
 /** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
 export function removeStaff(name) {
   commitStaff(localStaffList().filter((e) => e.name !== name))
@@ -281,7 +313,11 @@ export function removeStaff(name) {
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
   const removed = new Set(getRemovedStaff())
-  const source = (monthKey != null ? (EMPLOYEE_MONTHLY[monthKey] || []) : EMPLOYEES).filter((e) => !removed.has(e.name))
+  const source = (
+    monthKey != null
+      ? analysisEmployeeMonthly(monthKey) || EMPLOYEE_MONTHLY[monthKey] || []
+      : analysisEmployees() || EMPLOYEES
+  ).filter((e) => !removed.has(e.name))
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
     .filter((e) => !removed.has(e.name))
@@ -397,7 +433,7 @@ export function notices(monthKey, day = null, lang = 'zh') {
     fg: 'text-blue-600',
     time: 'budu OS文档',
     text: localize(lang, '营业数据已更新至 {month}，本月菜品销量 {dish} 份。', {
-      month: monthLabel(MONTHS[MONTHS.length - 1].key, lang),
+      month: monthLabel(allMonths()[allMonths().length - 1].key, lang),
       dish: aggAll.dish.toLocaleString('zh-CN'),
     }),
   })
@@ -418,7 +454,7 @@ export function products(monthKey, storeKey) {
   const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
   const map = new Map()
   for (const k of keys) {
-    for (const p of (PRODUCTS[monthKey] || {})[k] || []) {
+    for (const p of (getAnalysis().products || {})[monthKey]?.[k] || (PRODUCTS[monthKey] || {})[k] || []) {
       let cur = map.get(p.name)
       if (!cur) {
         cur = { name: p.name, sales: 0, amount: 0, income: 0, discount: 0 }
@@ -449,7 +485,7 @@ export function productSummary(monthKey, storeKey) {
 export function storeDetails(storeKey) {
   const rows = []
   const keys = storeKey === 'all' ? STORE_KEYS : [storeKey]
-  for (const m of MONTHS) {
+  for (const m of allMonths()) {
     const pk = prevMonthKey(m.key)
     for (const k of keys) {
       const agg = aggregate(m.key, k)

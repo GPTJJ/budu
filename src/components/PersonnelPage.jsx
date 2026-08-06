@@ -4,7 +4,7 @@ import CalendarPicker from './CalendarPicker'
 import {
   employeesByType,
   employeeList,
-  EMPLOYEE_MONTHS,
+  allEmployeeMonths,
   monthLabel,
   employeeDayStatus,
   hasLocalEntry,
@@ -227,7 +227,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack }) {
   const [staffVersion, setStaffVersion] = useState(0)
 
   const localStaff = localStaffList()
-  const hasData = EMPLOYEE_MONTHS.includes(month) || localStaff.length > 0
+  const hasData = allEmployeeMonths().includes(month) || localStaff.length > 0
   const dayHasData = day ? hasLocalEntry(month, day) : false
 
   const all = hasData ? employeeList('all', month) : []
