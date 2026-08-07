@@ -13,6 +13,7 @@ import PwaInstallPrompt from './PwaInstallPrompt'
 import { kpiCards } from '../utils/selectors'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
+import ErrorBoundary from './ErrorBoundary'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
@@ -141,13 +142,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
           />
 
           <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
-            <Suspense
-              fallback={
-                <div className="grid min-h-[40vh] place-items-center text-sm font-medium text-slate-400">
-                  {t('正在加载 budu 系统…')}
-                </div>
-              }
-            >
+            <ErrorBoundary>
+              <Suspense
+                fallback={
+                  <div className="grid min-h-[40vh] place-items-center text-sm font-medium text-slate-400">
+                    {t('正在加载 budu 系统…')}
+                  </div>
+                }
+              >
               {isStaffView ? (
                 <PersonnelPage
                   type={view === 'staff-fulltime' ? 'fulltime' : 'parttime'}
@@ -228,7 +230,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   </section>
                 </>
               )}
-            </Suspense>
+              </Suspense>
+            </ErrorBoundary>
 
             <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
               {t('© 2026 budu 甜品 · budu Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
