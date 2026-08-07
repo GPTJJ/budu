@@ -1,16 +1,21 @@
-/** 库存申请实时通知（开发者账号轮询，未读状态存 localStorage） */
+/** 库存申请实时通知（未读状态存 localStorage）
+ *  调货/采购申请：开发者/店长全量可见；「隋晓」等额外账号按绑定门店全量可见；普通店员仅看自己提交的申请 */
 import { loadUserData, getInventoryRequests } from './userData'
 import { api } from './api'
 
 const SEEN_KEY = 'budu-inventory-seen-at'
 const MUTED_KEY = 'budu-alert-muted'
 const POLL_MS = 8000
+/** 额外接收全部调货/采购申请提醒的账号（按绑定门店过滤） */
+const EXTRA_REQUEST_NOTIFY_USERS = new Set(['隋晓'])
 
 let state = { unread: 0, items: [], stock: [] }
 let listeners = []
 let timer = null
 let currentUserKey = null
 let currentCanNotify = false
+let currentUserName = ''
+let currentIsRequestNotifier = false
 let currentCanSeeInvoices = false
 let initialized = false
 let lastNotifiedId = null
@@ -88,10 +93,12 @@ function compute() {
   } catch {
     /* SSR / 隐私模式忽略 */
   }
-  const reqItems = currentCanNotify
-    ? getInventoryRequests()
-        .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
-    : []
+  const reqItems =
+    currentCanNotify || currentIsRequestNotifier
+      ? getInventoryRequests()
+          .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
+          .filter((r) => currentCanNotify || currentIsRequestNotifier || r.createdBy === currentUserName)
+      : []
   const invItems = currentCanSeeInvoices
     ? currentInvoices
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
@@ -137,12 +144,14 @@ async function refresh() {
   compute()
 }
 
-/** 启动全局数据同步（所有登录账号，8 秒一次）；通知计算仅开发者/店长 */
+/** 启动全局数据同步（所有登录账号，8 秒一次） */
 export function ensurePolling(user) {
   const key = user ? user.username : null
   if (currentUserKey === key) return
   currentUserKey = key
+  currentUserName = user ? user.username : ''
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
+  currentIsRequestNotifier = Boolean(user && EXTRA_REQUEST_NOTIFY_USERS.has(user.username))
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
   currentInvoices = []
   initialized = false
