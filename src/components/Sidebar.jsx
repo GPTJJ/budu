@@ -42,6 +42,7 @@ const subMenus = {
     { key: 'inventory-transfer', label: '申请调货' },
     { key: 'inventory-purchase', label: '申请采购' },
   ],
+  finance: [{ key: 'finance-invoice', label: '发票开具' }],
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {

@@ -126,6 +126,22 @@ function serializePurchase(r) {
   }
 }
 
+function serializeInvoice(r) {
+  return {
+    id: r.id,
+    storeKey: r.storeKey,
+    titleType: r.titleType,
+    companyName: r.companyName,
+    taxNo: r.taxNo,
+    amountCents: r.amountCents.toString(),
+    category: r.category,
+    email: r.email,
+    note: r.note,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+  }
+}
+
 function storeFilter(user) {
   if (user.role === 'developer' || user.role === 'public') return null
   return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
@@ -949,6 +965,91 @@ v2Router.get('/export/profit', wrap(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', `attachment; filename="profit-${data.month || 'all'}.csv"`)
   res.send(csv)
+}))
+
+// ---------- 发票开具 ----------
+v2Router.get('/invoices/companies', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const q = String(req.query.q || '').trim()
+  const rows = await prisma.invoiceCompany.findMany({
+    where: q ? { name: { contains: q, mode: 'insensitive' } } : {},
+    orderBy: { updatedAt: 'desc' },
+    take: 50,
+  })
+  res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, taxNo: r.taxNo })) })
+}))
+
+v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user?.role !== 'developer') throw bad('无权限', 403)
+  await prisma.invoiceCompany.delete({ where: { id: req.params.id } }).catch(() => {})
+  res.json({ ok: true })
+}))
+
+v2Router.get('/invoices', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const month = String(req.query.month || '')
+  const where = { storeKey: whereStores(req.user, store || undefined) }
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split('-').map(Number)
+    where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+  }
+  const rows = await prisma.invoice.findMany({ where, orderBy: { createdAt: 'desc' }, take: 1000 })
+  res.json({ rows: rows.map(serializeInvoice) })
+}))
+
+v2Router.post('/invoices', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { storeKey, titleType, companyName, taxNo, amountCents, category, email, note } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const type = titleType === 'personal' ? 'personal' : 'company'
+  const name = type === 'company' ? String(companyName || '').trim() : ''
+  const no = type === 'company' ? String(taxNo || '').trim().slice(0, 50) : ''
+  if (type === 'company') {
+    if (!name || name.length > 100) throw bad('请填写公司名称')
+    // 学习公司税号字典，下次输入公司名自动匹配
+    await prisma.invoiceCompany.upsert({
+      where: { name },
+      update: { taxNo: no || undefined, updatedAt: new Date() },
+      create: { id: uid('ic'), name, taxNo: no },
+    })
+  }
+  const cents = Number(amountCents)
+  if (!Number.isInteger(cents) || cents <= 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
+  const mail = String(email || '').trim().slice(0, 120)
+  if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) throw bad('邮箱格式不正确')
+  await ensureStore(storeKey)
+  const row = await prisma.invoice.create({
+    data: {
+      id: uid('inv'),
+      storeKey,
+      titleType: type,
+      companyName: name,
+      taxNo: no,
+      amountCents: BigInt(cents),
+      category: String(category || '其他').trim().slice(0, 30),
+      email: mail,
+      note: String(note || '').trim().slice(0, 200),
+      createdBy: req.user.username,
+    },
+  })
+  res.json({ ok: true, invoice: serializeInvoice(row) })
+}))
+
+v2Router.delete('/invoices/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
+  if (!row) throw bad('发票记录不存在', 404)
+  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
+  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  await prisma.invoice.delete({ where: { id: row.id } })
+  res.json({ ok: true })
 }))
 
 // ---------- M3-3：会员 ----------

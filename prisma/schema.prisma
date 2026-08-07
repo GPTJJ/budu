@@ -21,6 +21,7 @@ model Store {
   purchases    PurchaseRequest[]
   waste        WasteRecord[]
   expenses     Expense[]
+  invoices     Invoice[]
   memberConsumptions MemberConsumption[]
   meituanMappings MeituanStoreMapping[]
   dailySales      DailySales[]
@@ -263,6 +264,31 @@ model Member {
   points    Int      @default(0)
   createdAt DateTime @default(now())
   consumptions MemberConsumption[]
+}
+
+model Invoice {
+  id          String   @id
+  storeKey    String
+  titleType   String   @default("company")
+  companyName String   @default("")
+  taxNo       String   @default("")
+  amountCents BigInt   @default(0)
+  category    String   @default("其他")
+  email       String   @default("")
+  note        String   @default("")
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([storeKey, createdAt])
+}
+
+model InvoiceCompany {
+  id        String   @id
+  name      String   @unique
+  taxNo     String   @default("")
+  updatedAt DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model MemberConsumption {

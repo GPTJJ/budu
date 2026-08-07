@@ -408,3 +408,12 @@ npx vercel env pull                 # 拉取线上环境变量
    官方渠道中国版权保护中心 ccopyright.com.cn，普通 30–40 个工作日，加急 3–10 个工作日（代理收费）。
 5. 待用户提供：公司全称、拟登记的软件名称/版本号；确认后 Codex 可代整理源程序 60 页 + 操作手册材料。
 6. 凭证到手后需用户提供：developerId、SignKey、accessToken、refreshToken、美团门店 ID（poiId）与门店名称。
+
+## 发票开具（2026-08-08）
+
+- 菜单：财务利润 → 发票开具（developer/manager 可见，staff/public 不可见）
+- 数据模型：`Invoice`（抬头类型 公司/个人、公司名称、税号、金额按分、品类、邮箱、门店、创建人）+ `InvoiceCompany`（公司名→税号字典，输入公司名自动匹配）
+- 迁移 `20260808050000_invoice`：新表 Invoice / InvoiceCompany，已随容器启动 `prisma migrate deploy` 自动应用
+- v2 接口：`GET/POST /v2/invoices`、`DELETE /v2/invoices/:id`、`GET /v2/invoices/companies`（搜索）、`DELETE /v2/invoices/companies/:id`（仅开发者）
+- 前端 `src/components/InvoicePage.jsx`：抬头类型切换、公司名联想下拉自动带出税号、金额/品类/邮箱表单、开票记录列表（月份/门店筛选、合计金额、删除）
+- 权限：门店绑定过滤 + 金额 BigInt 分存储 + 邮箱格式校验 + 删除限创建人或开发者
