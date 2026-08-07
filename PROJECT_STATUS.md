@@ -64,12 +64,17 @@
 - 已启动：`budu-api-1`（健康）+ `budu-nginx-1`（80/443）；Nginx 本机验证通过：
   `/api/health` 返回 ok、首页正常返回（此前修复了镜像默认站点抢占 80 端口 + 脚本可执行位）
 - 服务器环境：`.env`（DOMAIN 占位 + HTTP_ONLY=1）、`.env.production`（KV 线上密钥，未入库）
-- **待用户操作**：
-  1. 腾讯云控制台防火墙放行 TCP 80 与 443（当前公网 80 未通）
-  2. 域名 `buducandy.cn` 实名通过后，DNS 加 A 记录指向 `124.156.171.195`
-  3. 证书就绪后切 HTTPS（HTTP_ONLY=0 + deploy/certs）
+- **已完成（2026-08-07 晚）**：
+  1. 腾讯云防火墙已放行 80/443（用户控制台操作）
+  2. 域名 `buducandy.cn` DNS A 记录 → `124.156.171.195`；服务器 `.env` 已更新 DOMAIN + HTTP_ONLY=0
+  3. 证书已部署（deploy/certs/fullchain.pem + privkey.pem），HTTPS 正常
+  4. **正式网址 https://buducandy.cn 已验证上线**：HTTP 301→HTTPS、HTTPS /api/health 200、
+     首页 200（含完整 BUDU 登录页）
+- 说明：直接 IP 访问 80 在部分网络返回 502，为访问方本地代理现象（服务器本机 IP:80 返回 301 正常）；
+  域名访问不受影响
 - **待办**：GitHub Actions Secrets（TENCENT_HOST/USER/SSH_KEY/APP_DIR）配置自动部署；
-  服务器 SSH 密钥登录未生效（Actions 前需修复或改用密码方案）
+  服务器 SSH 密钥登录未生效（Actions 前需修复）；30 天观察期后 Vercel/KV 归档下线；
+  P1+ PostgreSQL/Prisma 迁移
 
 ## 当前进度存档（2026-08-07 晚）
 
@@ -83,8 +88,10 @@
 - 登录方式：`ubuntu` + 密码（详见本机 `tools/TENCENT_SERVER_NOTES.txt`，**不提交 git**）
 - 本地工具：`tools/plink.exe`、`pscp.exe`、`budu_deploy` 密钥（tools/ 已 gitignore）
 
-**下一步（阻塞项）**：用户提供腾讯云 API 密钥 → 放行 80/443 → 验证公网 → 域名 DNS/证书/HTTPS →
-GitHub Actions Secrets → 正式切换。
+**已上线**：https://buducandy.cn（腾讯云香港服务器，Docker + Nginx + HTTPS 全链路已验证）
+
+**下一步**：GitHub Actions Secrets → 自动部署；服务器 SSH 密钥登录修复；30 天观察/回滚窗口；
+之后按迁移计划进入 PostgreSQL/Prisma（P1+）。
 
 **恢复指令**：新会话先读 `PROJECT_STATUS.md` 与 `docs/RUNBOOK_TENCENT.md`，再继续腾讯云迁移或功能开发。
    - 新文件：`src/components/SchedulePage.jsx`、`src/utils/schedule.js`
