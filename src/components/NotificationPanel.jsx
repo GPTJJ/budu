@@ -21,11 +21,18 @@ const ICON_MAP = {
 // 门店运营账号隐藏与经营数据相关的提醒
 const SENSITIVE_TAGS = new Set(['经营', '财务', '增长', '绩效', '数据', '预警', '关注'])
 
-export default function NotificationPanel({ month, day }) {
+export default function NotificationPanel({ month, day, user }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
-  const items = notices(month, day, lang).filter((i) => !(isStore && SENSITIVE_TAGS.has(i.tag)))
+  const boundName = user && user.staffKey ? user.staffKey.split('::')[1] : null
+  const items = notices(month, day, lang).filter((i) => {
+    // 绩效通知：绑定员工账号只显示本人，其余敏感类按门店隐私规则隐藏
+    if (i.tag === '绩效') {
+      return boundName ? i.text.includes(boundName) : !isStore
+    }
+    return !(isStore && SENSITIVE_TAGS.has(i.tag))
+  })
 
   return (
     <Card

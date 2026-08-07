@@ -229,7 +229,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                       <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />
                     </div>
                     <div className="xl:col-span-3">
-                      <NotificationPanel month={month} day={day} />
+                      <NotificationPanel month={month} day={day} user={user} />
                     </div>
                   </section>
                 </>
