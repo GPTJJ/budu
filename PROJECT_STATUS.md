@@ -163,6 +163,9 @@ SKU/条码/供应商增强、自动备份同步 COS 与告警
 
 待用户提供：`WECHAT_WORK_WEBHOOK_URL`、`COS_SECRET_ID/KEY/BUCKET/REGION`（服务器 .env.production）
 
+部署验证（2026-08-08）：迁移 `next_batch` 已应用；items/suppliers/alerts/waste-records/expenses/profit/
+members/birthdays/transfer/purchase/stock 全部 200；profit 返回 28 行；修复利润接口开发者过滤 bug（0490400）
+
 ## 腾讯云部署进度（2026-08-07 下午）
 
 - 服务器：`124.156.171.195`（腾讯云轻量香港/OpenClaw 龙虾镜像，2核2G/40G，实例 lhins-gkqyrkst）
