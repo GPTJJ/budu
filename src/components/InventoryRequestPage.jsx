@@ -5,9 +5,11 @@ import {
   ChevronDown,
   FileDown,
   PackagePlus,
+  Pencil,
   RefreshCcw,
   ShoppingCart,
   Trash2,
+  UploadCloud,
   Truck,
   PackageCheck,
   XCircle,
@@ -29,6 +31,29 @@ const CATEGORY_STYLE = {
   product: 'bg-budu-50 text-budu-600',
   material: 'bg-emerald-50 text-emerald-600',
   other: 'bg-slate-100 text-slate-500',
+}
+
+function compressImage(file, maxSize = 220) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.82))
+      }
+      img.onerror = () => reject(new Error('图片读取失败'))
+      img.src = reader.result
+    }
+    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
 }
 
 const TRANSFER_STATUS_STYLE = {
@@ -59,6 +84,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [expectedAt, setExpectedAt] = useState('')
   const [supplierModal, setSupplierModal] = useState(false)
   const [supplierForm, setSupplierForm] = useState({ name: '', phone: '', contact: '', note: '' })
+  const [itemsMap, setItemsMap] = useState({})
+  const [optionEdit, setOptionEdit] = useState(null)
+  const [optionForm, setOptionForm] = useState({ spec: '', image: '' })
   const [productMenuOpen, setProductMenuOpen] = useState(false)
   const [productCategory, setProductCategory] = useState(PRODUCT_CATEGORIES[0])
   const [customProductName, setCustomProductName] = useState('')
@@ -95,6 +123,23 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     listTab === 'done' ? isFinished(r) : !isFinished(r),
   )
   const isDeveloper = currentUser?.role === 'developer'
+  const canManageOptions = currentUser?.role === 'developer'
+
+  const loadItems = async () => {
+    try {
+      const d = await api('/v2/items')
+      const map = {}
+      for (const it of d.rows || []) map[it.name] = it
+      setItemsMap(map)
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  useEffect(() => {
+    loadItems()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (isTransfer) return
@@ -297,6 +342,84 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setPicker({ category: picker.category, productName: '', quantity: '', note: '' })
     setSavedTip(t('已添加：{name} × {n}', { name, n: Math.floor(qty) }))
     setTimeout(() => setSavedTip(''), 1800)
+  }
+
+  const openOptionEdit = (name) => {
+    const item = itemsMap[name]
+    setOptionEdit({
+      name,
+      category: item ? item.category : MATERIAL_NAMES.includes(name) ? 'material' : 'product',
+    })
+    setOptionForm({ spec: item ? item.spec || '' : '', image: item ? item.image || '' : '' })
+  }
+
+  const saveOption = async () => {
+    setError('')
+    try {
+      let item = itemsMap[optionEdit.name]
+      if (!item) {
+        const created = await api('/v2/items', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: optionEdit.name,
+            category: optionEdit.category,
+            spec: optionForm.spec.trim(),
+            image: optionForm.image,
+          }),
+        })
+        item = created.item
+      } else {
+        await api(`/v2/items/${item.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...item, spec: optionForm.spec.trim(), image: optionForm.image }),
+        })
+      }
+      setOptionEdit(null)
+      await loadItems()
+      setVersion((v) => v + 1)
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
+
+  const OptionCard = ({ name, onSelect, selected }) => {
+    const meta = itemsMap[name]
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onSelect}
+          className={`flex w-full flex-col items-center gap-1 rounded-xl border p-2 text-center transition ${
+            selected
+              ? 'border-budu-400 bg-budu-50'
+              : 'border-slate-100 bg-white hover:border-budu-200 hover:bg-budu-50/50'
+          }`}
+        >
+          <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-gradient-to-br from-budu-50 to-grape-50 text-sm font-bold text-budu-400">
+            {meta && meta.image ? (
+              <img src={meta.image} alt={name} className="h-full w-full object-cover" />
+            ) : (
+              name[0]
+            )}
+          </span>
+          <span className="line-clamp-2 w-full text-[11px] font-semibold leading-tight text-slate-700">{name}</span>
+          {meta && meta.spec && <span className="w-full truncate text-[10px] text-slate-400">{meta.spec}</span>}
+        </button>
+        {canManageOptions && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              openOptionEdit(name)
+            }}
+            className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-md bg-white/90 text-slate-400 shadow-sm transition hover:text-budu-600"
+            aria-label={t('设置')}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -538,27 +661,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                         </div>
                       )}
 
-                      {/* 该分类下的产品 */}
-                      <div className="mt-2 max-h-52 overflow-y-auto">
-                        {categoryProducts.length > 0 ? (
-                          categoryProducts.map((n) => (
-                            <button
-                              key={n}
-                              onClick={() => {
-                                setPicker((s) => ({ ...s, productName: n }))
-                                setProductMenuOpen(false)
-                              }}
-                              className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium transition ${
-                                picker.productName === n
-                                  ? 'bg-budu-50 text-budu-700'
-                                  : 'text-slate-600 hover:bg-budu-50 hover:text-budu-600'
-                              }`}
-                            >
-                              {n}
-                            </button>
-                          ))
-                        ) : (
-                          <p className="grid place-items-center py-8 text-xs text-slate-300">
+                      {/* 该分类下的产品（小卡片） */}
+                      <div className="mt-2 grid max-h-56 grid-cols-2 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
+                        {categoryProducts.map((n) => (
+                          <OptionCard
+                            key={n}
+                            name={n}
+                            selected={picker.productName === n}
+                            onSelect={() => {
+                              setPicker((s) => ({ ...s, productName: n }))
+                              setProductMenuOpen(false)
+                            }}
+                          />
+                        ))}
+                        {categoryProducts.length === 0 && (
+                          <p className="col-span-full grid place-items-center py-8 text-xs text-slate-300">
                             {t('该分类暂无产品')}
                           </p>
                         )}
@@ -569,18 +686,18 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               </div>
             ) : (
               picker.category === 'material' ? (
-                <select
-                  value={picker.productName}
-                  onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
-                  className={`${inputCls} min-w-[180px] flex-1`}
-                >
-                  <option value="">{t('选择物料')}</option>
-                  {MATERIAL_NAMES.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
+                <div className="w-full">
+                  <div className="grid max-h-48 grid-cols-2 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-4">
+                    {MATERIAL_NAMES.map((n) => (
+                      <OptionCard
+                        key={n}
+                        name={n}
+                        selected={picker.productName === n}
+                        onSelect={() => setPicker((s) => ({ ...s, productName: n }))}
+                      />
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <input
                   value={picker.productName}
@@ -862,6 +979,75 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           )}
         </div>
       </div>
+
+      {optionEdit && canManageOptions && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setOptionEdit(null)} />
+          <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-800">{t('选项设置：{name}', { name: optionEdit.name })}</h3>
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-50 to-grape-50 text-xl font-bold text-budu-400">
+                  {optionForm.image ? (
+                    <img src={optionForm.image} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    optionEdit.name[0]
+                  )}
+                </span>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100">
+                  <UploadCloud className="h-4 w-4" />
+                  {t('上传图片')}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files && e.target.files[0]
+                      e.target.value = ''
+                      if (f) {
+                        const data = await compressImage(f)
+                        setOptionForm((s) => ({ ...s, image: data }))
+                      }
+                    }}
+                  />
+                </label>
+                {optionForm.image && (
+                  <button
+                    onClick={() => setOptionForm((s) => ({ ...s, image: '' }))}
+                    className="text-xs font-medium text-rose-400 transition hover:text-rose-500"
+                  >
+                    {t('移除图片')}
+                  </button>
+                )}
+              </div>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('规格')}</span>
+                <input
+                  value={optionForm.spec}
+                  onChange={(e) => setOptionForm((s) => ({ ...s, spec: e.target.value }))}
+                  placeholder={t('例如 8颗/盒 · 约 60g')}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+            {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => setOptionEdit(null)}
+                className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+              >
+                {t('取消')}
+              </button>
+              <button
+                onClick={saveOption}
+                className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              >
+                {t('保存')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewList && <InventoryListModal request={previewList} onClose={() => setPreviewList(null)} />}
     </div>

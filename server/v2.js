@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
+import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 
 export const v2Router = Router()
 
@@ -620,19 +621,29 @@ v2Router.get('/stock/ledger', wrap(async (req, res) => {
 // ---------- M3-1：货品档案 / 供应商 / 报损 / 缺货预警 ----------
 v2Router.get('/items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
+  // 开发者访问时自动为固定选项建档（幂等）
+  if (canWrite(req.user)) {
+    for (const name of FIXED_OPTION_NAMES) {
+      await prisma.inventoryItem.upsert({
+        where: { name },
+        update: {},
+        create: { id: uid('it'), name },
+      })
+    }
+  }
   const q = String(req.query.q || '').trim()
   const rows = await prisma.inventoryItem.findMany({
     where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
     orderBy: { name: 'asc' },
     take: 500,
   })
-  res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, unit: r.unit, spec: r.spec, barcode: r.barcode, category: r.category })) })
+  res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, unit: r.unit, spec: r.spec, barcode: r.barcode, category: r.category, image: r.image || '' })) })
 }))
 
 v2Router.post('/items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
-  const { name, unit, spec, barcode, category } = req.body || {}
+  const { name, unit, spec, barcode, category, image } = req.body || {}
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
   const exists = await prisma.inventoryItem.findUnique({ where: { name: n } })
@@ -645,6 +656,7 @@ v2Router.post('/items', wrap(async (req, res) => {
       spec: String(spec || '').trim().slice(0, 50),
       barcode: String(barcode || '').trim().slice(0, 50),
       category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+      image: String(image || '').slice(0, 600000),
     },
   })
   res.json({ ok: true, item: row })
@@ -653,7 +665,7 @@ v2Router.post('/items', wrap(async (req, res) => {
 v2Router.put('/items/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
-  const { name, unit, spec, barcode, category } = req.body || {}
+  const { name, unit, spec, barcode, category, image } = req.body || {}
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
   const dup = await prisma.inventoryItem.findFirst({ where: { name: n, id: { not: req.params.id } } })
@@ -666,6 +678,7 @@ v2Router.put('/items/:id', wrap(async (req, res) => {
       spec: String(spec || '').trim().slice(0, 50),
       barcode: String(barcode || '').trim().slice(0, 50),
       category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+      image: String(image || '').slice(0, 600000),
     },
   })
   res.json({ ok: true, item: row })

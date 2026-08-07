@@ -66,6 +66,7 @@ model InventoryItem {
   spec           String          @default("")
   barcode        String          @default("")
   category       String          @default("product")
+  image          String          @default("")
   createdAt      DateTime        @default(now())
   balances       StockBalance[]
   ledger         StockLedger[]
