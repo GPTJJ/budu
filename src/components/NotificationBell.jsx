@@ -37,7 +37,15 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
     markSeen()
     setOpen(false)
     if (onNavigate) {
-      onNavigate(item.type === 'invoice' ? 'finance-invoice' : item.type === 'transfer' ? 'inventory-transfer' : 'inventory-purchase')
+      onNavigate(
+        item.type === 'version'
+          ? 'overview'
+          : item.type === 'invoice'
+            ? 'finance-invoice'
+            : item.type === 'transfer'
+              ? 'inventory-transfer'
+              : 'inventory-purchase',
+      )
     }
   }
 
@@ -100,15 +108,35 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                     className="block w-full border-b border-slate-50 px-4 py-3 text-left transition hover:bg-budu-50/50"
                   >
                     <p className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
-                      <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
-                        {t(r.type === 'invoice' ? '开票申请' : r.type === 'transfer' ? '调货申请' : '采购申请')}
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                          r.type === 'version'
+                            ? 'bg-violet-50 text-violet-600'
+                            : r.type === 'invoice'
+                              ? 'bg-amber-50 text-amber-600'
+                              : 'bg-sky-50 text-sky-600'
+                        }`}
+                      >
+                        {t(
+                          r.type === 'version'
+                            ? '版本更新'
+                            : r.type === 'invoice'
+                              ? '开票申请'
+                              : r.type === 'transfer'
+                                ? '调货申请'
+                                : '采购申请',
+                        )}
                       </span>
-                      {r.type === 'invoice'
+                      {r.type === 'version'
+                        ? t('{version} · {date}', { version: r.version, date: r.date })
+                        : r.type === 'invoice'
                         ? t('{company} · ¥{amount}', { company: r.companyName || t('个人'), amount: yuan(r.amountCents) })
                         : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      {r.type === 'invoice'
+                      {r.type === 'version'
+                        ? (r.items && r.items[0]) || t('系统功能更新')
+                        : r.type === 'invoice'
                         ? t('{store} · {category} · {email}', {
                             store: storeLabel(r.storeKey, r.storeName),
                             category: r.category || t('其他'),
@@ -122,7 +150,10 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                           : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-300">
-                      {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
+                      {r.type === 'version'
+                        ? t('系统更新')
+                        : t('由 {name} 提交', { name: r.createdBy })}{' '}
+                      · {new Date(r.createdAt).toLocaleString()}
                     </p>
                   </button>
                 ))}
