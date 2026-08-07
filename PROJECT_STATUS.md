@@ -332,6 +332,15 @@ npx vercel env pull                 # 拉取线上环境变量
 - 登录过期处理、多用户冲突策略（当前最后保存者生效）
 - 薪酬规则参数化配置（门店目标/时薪/阶梯在界面可调）
 
+### 美团接入·凭证办理待办（2026-08-08 暂缓，用户确认后再继续）
+
+1. 用户确认公司主体（营业执照名称）与是否走品牌商入驻
+2. 启动软著申请（建议以公司名义，普通办理约 1–2 个月）
+3. 联系美团收银销售 / 400-626-0106 购买「经营数据接口」服务包
+4. 品牌商入驻 + 开通智能版业务，获取 developerId + SignKey
+5. 商家授权门店，获取 accessToken/refreshToken 与门店 poiId
+6. Codex 调整 server/meituan 为官方签名与接口规范，填服务器 .env.production 后联调
+
 ## 环境变量（Vercel 项目 gptjjs-projects/budu11 已配置）
 
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN`（Upstash KV，自动注入）
@@ -376,4 +385,26 @@ npx vercel env pull                 # 拉取线上环境变量
   meituan/dish-unmapped、meituan/dish-mappings
 - 前端：设置页「美团收银对接」卡片；首页/渠道/商品销售优先读美团数据；
   业绩录入页美团门店显示“以美团为准”提示；loadUserData 恢复 v2 申请/库存拉取并新增美团数据
-- 待用户提供：美团餐饮开放平台 app_id/app_secret 与门店授权（docs/MEITUAN_INTEGRATION.md）
+- 当前运行模式：模拟模式（未配置真实凭证，现有功能零影响）
+
+### 美团接入凭证办理进度（2026-08-08 已查明官方要求）
+
+已与官方文档核对，美团「餐饮系统-智能版（收银）」真实接入要求：
+
+1. **个人开发者不可对接收银智能版**：官方明确“目前平台暂不提供个人开发者的对接服务”，
+   且商家资质要求“需有企业营业执照”。必须走「品牌商（自研开发者）」或「服务商（SI/ISV）」入驻。
+2. 推荐路线：**品牌商（自研开发者）**（用户自有品牌连锁店）：
+   - 联系美团收银销售 / 400-626-0106 购买「经营数据接口」服务包（第三方财务/数据中台·BI，含数据报表类接口）
+   - developer.meituan.com → 控制台 → 入驻申请 → 自研开发者（品牌商）
+   - 材料：企业营业执照、经营信息、**软件著作权登记证书**（品牌商自研必须有）
+   - 审核通过后申请开通「智能版」业务（businessId=18）
+   - 在「开发者账号-账号信息」获取 **developerId + SignKey**（不是 app_id/app_secret）
+   - 商家用美团收银智能版账号通过授权链接（open-erp.meituan.com/general/auth）授权门店，
+     换取 accessToken（即 appAuthToken）+ refreshToken（30 天过期，需自动刷新）
+3. 代码侧待调整（凭证到手后做）：BUDU 现有 `MEITUAN_APP_ID/APP_SECRET + MD5` 与官方不符，
+   需改为 `developerId + SignKey + SHA1 签名 + businessId=18 + api-open-cater.meituan.com + appAuthToken`，
+   并实现 token 自动刷新。
+4. 软著：用户可以办理（个人/企业均可），但美团入驻需与营业执照主体一致，建议以公司名义申请；
+   官方渠道中国版权保护中心 ccopyright.com.cn，普通 30–40 个工作日，加急 3–10 个工作日（代理收费）。
+5. 待用户提供：公司全称、拟登记的软件名称/版本号；确认后 Codex 可代整理源程序 60 页 + 操作手册材料。
+6. 凭证到手后需用户提供：developerId、SignKey、accessToken、refreshToken、美团门店 ID（poiId）与门店名称。
