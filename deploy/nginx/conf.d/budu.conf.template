@@ -1,5 +1,5 @@
 server {
-  listen 80;
+  listen 80 default_server;
   server_name ${DOMAIN};
 
   # certbot 首次签发用（若使用腾讯云证书则无需此路径）

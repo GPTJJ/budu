@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# 移除镜像自带默认站点，避免它抢占 80 端口
+rm -f /etc/nginx/conf.d/default.conf
+
 if [ "$HTTP_ONLY" = "1" ]; then
   echo "BUDU nginx: HTTP_ONLY=1，使用纯 HTTP 配置"
   cp /etc/nginx/budu/http-only.conf /etc/nginx/conf.d/budu.conf
