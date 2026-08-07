@@ -21,7 +21,7 @@ const menus = [
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'product', label: '商品管理', icon: Package },
-  { key: 'inventory', label: '库存采购', icon: Warehouse },
+  { key: 'inventory', label: '库存调拨', icon: Warehouse },
   { key: 'finance', label: '财务利润', icon: Wallet },
   { key: 'member', label: '会员营销', icon: Heart },
   { key: 'analytics', label: '数据分析', icon: BarChart3 },
@@ -38,6 +38,10 @@ const subMenus = {
     { key: 'store-schedule', label: '门店排班' },
   ],
   product: [{ key: 'product-catalog', label: '商品目录' }],
+  inventory: [
+    { key: 'inventory-transfer', label: '申请调货' },
+    { key: 'inventory-purchase', label: '申请采购' },
+  ],
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {

@@ -92,6 +92,42 @@ function normalizeProducts(raw) {
   return out
 }
 
+/** 校验并规范化库存申请：{ type, storeKey, fromStoreKey?, productName, quantity, note?, status?, createdBy, createdAt? } */
+function normalizeInventoryRequests(raw) {
+  if (!Array.isArray(raw) || raw.length > 500) return null
+  const BAD_KEY = /^(__proto__|constructor|prototype)$/
+  const out = []
+  for (const r of raw) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return null
+    const type = String(r.type || '')
+    if (!['transfer', 'purchase'].includes(type)) return null
+    const storeKey = String(r.storeKey ?? '').trim()
+    const fromStoreKey = type === 'transfer' ? String(r.fromStoreKey ?? '').trim() : ''
+    const productName = String(r.productName ?? '').trim()
+    const note = r.note === undefined || r.note === null ? '' : String(r.note).trim().slice(0, 100)
+    const quantity = Number(r.quantity)
+    if (!storeKey || storeKey.length > 30 || BAD_KEY.test(storeKey)) return null
+    if (type === 'transfer' && (!fromStoreKey || fromStoreKey.length > 30 || BAD_KEY.test(fromStoreKey) || fromStoreKey === storeKey)) {
+      return null
+    }
+    if (!productName || productName.length > 50) return null
+    if (!Number.isFinite(quantity) || quantity < 1 || quantity > 99999) return null
+    out.push({
+      id: typeof r.id === 'string' && r.id ? r.id.slice(0, 64) : crypto.randomUUID(),
+      type,
+      storeKey,
+      ...(type === 'transfer' ? { fromStoreKey } : {}),
+      productName,
+      quantity: Math.floor(quantity),
+      note,
+      status: r.status === 'done' ? 'done' : 'pending',
+      createdBy: String(r.createdBy ?? '').trim().slice(0, 30) || 'unknown',
+      createdAt: typeof r.createdAt === 'string' && r.createdAt ? r.createdAt : new Date().toISOString(),
+    })
+  }
+  return out
+}
+
 export function createApp() {
   const app = express()
   app.use(express.json({ limit: '5mb' }))
@@ -374,6 +410,7 @@ export function createApp() {
       stores: db.stores || [],
       schedules: db.schedules || {},
       products: db.products || [],
+      inventoryRequests: db.inventoryRequests || [],
     })
   })
 
@@ -464,6 +501,17 @@ export function createApp() {
       }
       db.products = normalized
     }
+    if (body.inventoryRequests !== undefined) {
+      const requestsChanged = JSON.stringify(body.inventoryRequests) !== JSON.stringify(db.inventoryRequests || [])
+      if (requestsChanged && req.user.role === 'public') {
+        return res.status(403).json({ error: '无权限' })
+      }
+      const normalized = normalizeInventoryRequests(body.inventoryRequests)
+      if (!normalized) {
+        return res.status(400).json({ error: 'inventoryRequests 格式错误' })
+      }
+      db.inventoryRequests = normalized
+    }
     await persist()
     res.json({
       ok: true,
@@ -474,6 +522,7 @@ export function createApp() {
       stores: db.stores || [],
       schedules: db.schedules || {},
       products: db.products || [],
+      inventoryRequests: db.inventoryRequests || [],
     })
   })
 

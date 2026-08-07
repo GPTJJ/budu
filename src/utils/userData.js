@@ -66,6 +66,7 @@ export async function loadUserData() {
     stores: Array.isArray(data.stores) ? data.stores : [],
     schedules: data.schedules && typeof data.schedules === 'object' ? data.schedules : {},
     products: Array.isArray(data.products) ? data.products : [],
+    inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
   }
   const legacy = readLegacy()
   let migrated = false
@@ -101,9 +102,10 @@ export function getUserData() {
       stores: Array.isArray(mirror.stores) ? mirror.stores : [],
       schedules: mirror.schedules && typeof mirror.schedules === 'object' ? mirror.schedules : {},
       products: Array.isArray(mirror.products) ? mirror.products : [],
+      inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [] }
 }
 
 export function getEntries() {
@@ -180,6 +182,16 @@ export function getProducts() {
 
 export function commitProducts(products) {
   getUserData().products = products
+  syncUserData()
+}
+
+export function getInventoryRequests() {
+  const r = getUserData().inventoryRequests
+  return Array.isArray(r) ? r : []
+}
+
+export function commitInventoryRequests(requests) {
+  getUserData().inventoryRequests = requests
   syncUserData()
 }
 

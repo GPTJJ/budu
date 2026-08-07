@@ -22,6 +22,7 @@ const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
 const ProductCatalogPage = lazy(() => import('./ProductCatalogPage'))
+const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 
 const pageTitles = {
   'staff-fulltime': '全职雇员',
@@ -29,6 +30,8 @@ const pageTitles = {
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
   'product-catalog': '商品目录',
+  'inventory-transfer': '申请调货',
+  'inventory-purchase': '申请采购',
   analytics: '数据分析',
   settings: '系统设置',
   'account-admin': '账号管理',
@@ -54,6 +57,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
   const isProductCatalogView = view === 'product-catalog'
+  const isInventoryTransferView = view === 'inventory-transfer'
+  const isInventoryPurchaseView = view === 'inventory-purchase'
 
   const openProduct = (name) => {
     setSelectedProduct(name)
@@ -140,6 +145,18 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                     setSelectedProduct(null)
                     setView('overview')
                   }}
+                />
+              ) : isInventoryTransferView && user?.role !== 'public' ? (
+                <InventoryRequestPage
+                  type="transfer"
+                  currentUser={user}
+                  onBack={() => setView('overview')}
+                />
+              ) : isInventoryPurchaseView && user?.role !== 'public' ? (
+                <InventoryRequestPage
+                  type="purchase"
+                  currentUser={user}
+                  onBack={() => setView('overview')}
                 />
               ) : (
                 <>

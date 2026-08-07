@@ -31,6 +31,15 @@ try {
       ['账号管理', '新增账号'],
     ],
     [
+      'InventoryRequestPage',
+      await render('/src/components/InventoryRequestPage.jsx', {
+        type: 'transfer',
+        currentUser: { username: 'store1', role: 'store' },
+        onBack: () => {},
+      }),
+      ['申请调货', '提交申请'],
+    ],
+    [
       'Dashboard',
       await render('/src/components/Dashboard.jsx', {
         user: { username: 'budu', role: 'developer' },
