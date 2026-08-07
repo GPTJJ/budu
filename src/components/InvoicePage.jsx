@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, Camera, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
@@ -39,6 +39,7 @@ export default function InvoicePage({ currentUser, onBack }) {
   const [preview, setPreview] = useState('')
   const nameInputRef = useRef(null)
   const fileInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
 
   useEffect(() => {
     api('/v2/invoices/ocr-status')
@@ -253,27 +254,38 @@ export default function InvoicePage({ currentUser, onBack }) {
         </div>
 
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={ocrBusy}
-          className="mt-4 flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-budu-200 bg-budu-50/40 px-4 py-3 text-left transition hover:border-budu-400 hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {preview ? (
-            <img src={preview} alt="发票" className="h-16 w-16 rounded-xl border border-slate-100 bg-white object-contain" />
-          ) : (
-            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-budu-500 shadow-sm">
-              {ocrBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={ocrBusy}
+            className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-budu-200 bg-budu-50/40 px-4 py-3 text-left transition hover:border-budu-400 hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {preview ? (
+              <img src={preview} alt="发票" className="h-14 w-14 rounded-xl border border-slate-100 bg-white object-contain" />
+            ) : (
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-budu-500 shadow-sm">
+                {ocrBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-700">
+                {ocrBusy ? t('正在识别发票信息…') : t(preview ? '重新选择发票图片' : '从相册选择发票图片')}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">{t('JPG/PNG/WebP，不超过 8MB；识别后可手动修改')}</span>
             </span>
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold text-slate-700">
-              {ocrBusy ? t('正在识别发票信息…') : t('上传发票图片，自动识别抬头/税号/金额')}
-            </span>
-            <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持 JPG/PNG/WebP，不超过 8MB；识别后可手动修改')}</span>
-          </span>
-          {preview && !ocrBusy && <span className="text-[11px] font-medium text-budu-500">{t('点击重新上传')}</span>}
-        </button>
+          </button>
+          <button
+            type="button"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={ocrBusy}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-budu-200 bg-white px-4 py-3 text-sm font-semibold text-budu-600 transition hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Camera className="h-5 w-5" />
+            {t('拍照上传')}
+          </button>
+        </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <select value={form.storeKey} onChange={(e) => setField('storeKey', e.target.value)} className={inputCls}>
