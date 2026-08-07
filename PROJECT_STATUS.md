@@ -6,11 +6,35 @@
 ## 基本信息
 
 - 项目路径（本机）：`/Users/apple/Desktop/budu OS`（原 Windows 机：`C:\Users\Administrator\Desktop\budu`）
-- 项目名称：BUDU 甜蜜运营系统（React 18 + Vite + Tailwind + Express + Upstash KV）
-- 线上正式地址：**https://budu11.vercel.app**（已上线可用）
-- GitHub 仓库：https://github.com/GPTJJ/budu （分支 `main`，Vercel 自动部署）
+- 项目名称：BUDU 甜蜜运营系统（React 18 + Vite + Tailwind + Express + Upstash KV + PostgreSQL/Prisma）
+- 线上正式地址：**https://buducandy.cn**（腾讯云香港轻量 124.156.171.195，Docker + Nginx + HTTPS）
+- GitHub 仓库：https://github.com/GPTJJ/budu （分支 `main`，手动部署到腾讯云 /opt/budu）
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
-- 技术栈说明：本地 `npm run server` 用 JSON 文件存储；Vercel 上自动用 Upstash KV（环境变量驱动）
+- 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
+
+## 最新进度快照（2026-08-08）
+
+当前 HEAD：`af3d87e`，本地与 GitHub main 同步；腾讯云已部署至 `091aae8`（后续仅文档提交）。
+
+今日已完成并上线：
+1. **发票开具板块**（财务利润 → 发票开具）：
+   - 表单：抬头类型（公司/个人）、公司名称+税号自动匹配、金额、品类（手动）、邮箱
+   - 提交开票联动右上角铃铛（提示音），点击跳转发票页
+   - 拍照/相册上传，浏览器端自动压缩转 JPG；腾讯云 OCR 识别（标准发票 VatInvoiceOCR + 非标准版式通用文字识别回退）
+   - 记录分「待开票/已开票」双卡片；已开票按日期正序、支持精确日期查询；待开票点击一键复制开票信息
+   - 权限：除公开展示账号外所有账号可用；按绑定门店过滤
+2. **调货/采购申请提醒接收人扩展**：申请者本人 + 隋晓账号（按绑定门店全量）；其他店员仅本人申请
+3. **版本更新记录推送给所有账号**（铃铛+提示音，含公开展示）；changelog 同步机制已立为强制约定
+4. 修复：消息铃铛打开白屏（stock 字段丢失）、OCR 捕获组取值错误、PWA 旧缓存不更新（自动刷新）
+
+服务器状态：
+- 腾讯云容器 api/nginx/postgres 健康；PG 迁移 20260808050000_invoice、20260808060000_invoice_status 已应用
+- 腾讯云 OCR 已配置启用（发票识别 1000 次/月免费额度，超出约 0.15 元/次）
+
+待办/后续（用户确认后继续）：
+- 美团真实凭证：品牌商入驻 + 软著（个人开发者不可对接收银智能版，需企业资质）
+- COS 密钥/桶（备份同步）、GitHub Actions Secrets 配置
+- 发票可选加“实际开票日期”字段（用户未确认）
 
 ## 进度保存与同步约定（用户指令，所有会话必须遵守）
 
