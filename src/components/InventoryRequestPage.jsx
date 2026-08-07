@@ -16,7 +16,7 @@ import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
 import { api } from '../utils/api'
-import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
+import { PRODUCT_CATEGORIES, MATERIAL_NAMES, FIXED_BY_CATEGORY, classifyProduct } from '../utils/productCategories'
 import InventoryListModal from './InventoryListModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
@@ -72,8 +72,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const productNames = [...new Set(products(month, 'all').map((p) => p.name))].slice(0, 100)
   const filteredProducts = productNames.filter((n) => classifyProduct(n) === productCategory)
-  const categoryProducts =
-    productCategory === '散糖' ? [...new Set([...NO_CANDY_NAMES, ...filteredProducts])] : filteredProducts
+  const categoryProducts = [
+    ...new Set([...(FIXED_BY_CATEGORY[productCategory] || []), ...filteredProducts]),
+  ]
   const allRequests = getInventoryRequests().filter((r) => r.type === type)
   const sortedRequests = [...allRequests].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
@@ -537,12 +538,27 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 )}
               </div>
             ) : (
-              <input
-                value={picker.productName}
-                onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
-                placeholder={t(picker.category === 'material' ? '输入物料名称' : '输入其他名称')}
-                className={`${inputCls} min-w-[180px] flex-1`}
-              />
+              picker.category === 'material' ? (
+                <select
+                  value={picker.productName}
+                  onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
+                  className={`${inputCls} min-w-[180px] flex-1`}
+                >
+                  <option value="">{t('选择物料')}</option>
+                  {MATERIAL_NAMES.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={picker.productName}
+                  onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
+                  placeholder={t('输入其他名称')}
+                  className={`${inputCls} min-w-[180px] flex-1`}
+                />
+              )
             )}
             <input
               type="number"

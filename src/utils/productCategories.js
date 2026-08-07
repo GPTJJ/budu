@@ -18,6 +18,65 @@ export const NO_CANDY_NAMES = [
   'NO.12巧克力',
 ]
 
+export const GIFT_BOX_NAMES = ['8颗礼盒（长）', '8颗礼盒（方）', '12颗礼盒', '24颗礼盒']
+
+export const CHOCOLAT_NAMES = ['92%生巧', '榛子生巧', '柚子生巧', '茉莉花茶生巧', '抹茶生巧']
+
+export const ICE_CREAM_NAMES = [
+  '黑巧冰淇淋',
+  '草莓冰淇淋',
+  '香草冰淇淋',
+  '柚子冰淇淋',
+  '茉莉花茶冰淇淋',
+  '泰奶冰淇淋',
+  '芒果冰淇淋',
+  '海盐焦糖冰淇淋',
+  '朗姆葡萄冰淇淋',
+]
+
+export const CHOCO_BEAN_NAMES = ['原粒杏仁', '爆酸豆', '泰奶麻薯', '百香果', '青苹果益生菌', '山核桃']
+
+export const TASTING_NAMES = ['92%试吃', '榛子试吃', '柚子试吃', '茉莉花茶试吃', '抹茶试吃']
+
+export const MATERIAL_NAMES = [
+  '物料-8颗礼盒（长）',
+  '物料8颗礼盒（方）',
+  '物料12颗礼盒',
+  '物料24颗礼盒',
+  '丝带-红',
+  '丝带-蓝',
+  '手提袋',
+  '散糖袋',
+  '冰袋',
+  '巧克力豆礼盒',
+  '巧克力豆礼盒手提袋',
+  '保温袋',
+  '酒精',
+  '手套',
+  '纸巾',
+  '湿巾',
+  '背贴',
+  '胶带',
+  '糖果口味卡',
+  '生巧保存提示卡',
+  '封口贴',
+  '试吃签',
+  '冰淇淋小勺',
+  '冰淇淋碗-圆',
+  '冰淇淋碗内-方',
+  '小票打印纸',
+]
+
+export const FIXED_BY_CATEGORY = {
+  散糖: NO_CANDY_NAMES,
+  礼盒: GIFT_BOX_NAMES,
+  生巧: CHOCOLAT_NAMES,
+  冰淇淋: ICE_CREAM_NAMES,
+  巧克力豆: CHOCO_BEAN_NAMES,
+  试吃: TASTING_NAMES,
+  其他: [],
+}
+
 const RULES = [
   [/口味|冰淇淋|雪糕|甜筒|冰激凌/, '冰淇淋'],
   [/^NO\.\d/, '散糖'],
