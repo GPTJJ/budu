@@ -24,6 +24,7 @@ export default function EmployeePerformanceTable({ store, month }) {
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isStore
+  const hideBusiness = isStore
   const entryRows = entryEmployeePerformance(store, month)
   const hasEntryData = entryRows.length > 0
   const list = (hasEntryData ? entryRows : employeeList(store)).slice(0, 5)
@@ -88,7 +89,7 @@ export default function EmployeePerformanceTable({ store, month }) {
                   </div>
                 </td>
                 <td className="py-3 text-right font-semibold tabular-nums text-slate-700">
-                  ¥{formatMoney(row.workedRevenue)}
+                  {hideBusiness ? '•••' : `¥${formatMoney(row.workedRevenue)}`}
                 </td>
                 <td className="py-3 text-right text-xs tabular-nums text-slate-500">
                   {hidePersonal ? '•••' : hasEntryData && !row.salary ? '—' : `¥${formatMoney(row.salary)}`}

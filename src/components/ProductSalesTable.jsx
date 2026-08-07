@@ -4,7 +4,7 @@ import Card from './Card'
 import { products, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 import { getProductImages } from '../utils/userData'
 
 // 菜品名称 -> 缩略图 emoji 映射
@@ -223,6 +223,8 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
 export default function ProductSalesTable({ month, store, onOpenProduct }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hide = isPublic || isStore
   const images = getProductImages()
   const [showModal, setShowModal] = useState(false)
   const all = products(month, store)
@@ -250,7 +252,7 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
           store: storeName(store),
         })}
         action={
-          !isPublic && (
+          !hide && (
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600"
@@ -261,9 +263,9 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
           )
         }
       >
-        {isPublic ? (
+        {hide ? (
           <div className="grid h-48 place-items-center text-xs text-slate-300">
-            {t('对外展示模式 · 数据已隐藏')}
+            {t(isPublic ? '对外展示模式 · 数据已隐藏' : '门店运营模式 · 经营数据已隐藏')}
           </div>
         ) : (
           <>

@@ -142,6 +142,28 @@ try {
       ['重要提醒'],
     ],
     [
+      'StoreRankingTable store hides revenue',
+      await (async () => {
+        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
+        const vis = await server.ssrLoadModule('/src/visibility.jsx')
+        const mod = await server.ssrLoadModule('/src/components/StoreRankingTable.jsx')
+        const html = renderToString(
+          React.createElement(
+            i18n.I18nProvider,
+            null,
+            React.createElement(
+              vis.PublicModeProvider,
+              { isPublic: false, isStore: true },
+              React.createElement(mod.default, { month: '2026-08', store: 'all', day: null }),
+            ),
+          ),
+        )
+        if (html.includes('¥')) throw new Error('store role sees revenue in ranking')
+        return html
+      })(),
+      ['门店运营模式 · 经营数据已隐藏'],
+    ],
+    [
       'SettingsPage developer stores',
       await render('/src/components/SettingsPage.jsx', {
         user: { role: 'developer' },

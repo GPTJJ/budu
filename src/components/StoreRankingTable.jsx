@@ -4,7 +4,7 @@ import Card from './Card'
 import { ranking, storeDetails, pctText, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber, rankStyle } from '../utils/format'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 /** 门店经营明细弹窗 */
 function StoreModal({ month, store, onClose }) {
@@ -153,6 +153,8 @@ function StoreModal({ month, store, onClose }) {
 export default function StoreRankingTable({ month, store, day }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hide = isPublic || isStore
   const [showModal, setShowModal] = useState(false)
   const rows = ranking(month, store, day)
   const single = store !== 'all'
@@ -167,7 +169,7 @@ export default function StoreRankingTable({ month, store, day }) {
             : t('{month} · 按营业收入排序', { month: monthLabel(month, lang) })
         }
         action={
-          !isPublic && (
+          !hide && (
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600"
@@ -178,9 +180,9 @@ export default function StoreRankingTable({ month, store, day }) {
           )
         }
       >
-        {isPublic ? (
+        {hide ? (
           <div className="grid h-48 place-items-center text-xs text-slate-300">
-            {t('对外展示模式 · 数据已隐藏')}
+            {t(isPublic ? '对外展示模式 · 数据已隐藏' : '门店运营模式 · 经营数据已隐藏')}
           </div>
         ) : (
           <div className="-mx-2 overflow-x-auto">

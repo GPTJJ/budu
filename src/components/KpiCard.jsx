@@ -9,7 +9,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import { pctText } from '../utils/selectors'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const CARD_STYLE = {
   income: { label: '营业收入', gradient: 'from-budu-400 to-grape-500', color: '#A855F7', icon: TrendingUp },
@@ -23,6 +23,8 @@ const CARD_STYLE = {
 export default function KpiCard({ card }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hide = isPublic || isStore
   const style = CARD_STYLE[card.key] || CARD_STYLE.income
   const Icon = style.icon
   const sparkData = card.spark.map((v, i) => ({ i, v }))
@@ -48,14 +50,21 @@ export default function KpiCard({ card }) {
                 : 'bg-rose-50 text-rose-500'
           }`}
         >
-          {isPublic ? '—' : up == null ? t('较上月 —') : t('较上月 {pct}', { pct: pctText(card.change) })}
+          {hide ? '—' : up == null ? t('较上月 —') : t('较上月 {pct}', { pct: pctText(card.change) })}
         </span>
       </div>
 
       <div className="mt-3 flex items-end justify-between gap-1.5 sm:mt-4 sm:gap-2">
         <div className="min-w-0">
-          {isPublic ? (
-            <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-300">•••</p>
+          {hide ? (
+            <>
+              <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-300">•••</p>
+              {isStore && (
+                <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">
+                  {t('经营数据仅开发者可见')}
+                </p>
+              )}
+            </>
           ) : (
             <>
               <p className="truncate text-[17px] font-extrabold leading-none tracking-tight text-slate-800 sm:text-[26px]">

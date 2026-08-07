@@ -13,7 +13,7 @@ import Card from './Card'
 import { dailyRows, aggregate, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
-import { usePublicMode } from '../visibility'
+import { usePublicMode, useStorePrivacy } from '../visibility'
 
 function shortDate(d) {
   const [m, day] = d.split('-')
@@ -46,6 +46,8 @@ function TrendTooltip({ active, payload, label }) {
 export default function RevenueTrendChart({ month, store, day }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
+  const isStore = useStorePrivacy()
+  const hide = isPublic || isStore
   const rows = dailyRows(month, store)
   const agg = aggregate(month, store)
   const data = rows.map((r) => ({ d: r.d, revenue: r.inc, orders: r.ord }))
@@ -69,7 +71,7 @@ export default function RevenueTrendChart({ month, store, day }) {
             })
       }
       action={
-        !isPublic && (
+        !hide && (
         <label className="flex cursor-pointer items-center gap-1 rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-500">
           {t('按日')}
           <ChevronDown className="h-3.5 w-3.5 text-slate-300" />
@@ -77,9 +79,9 @@ export default function RevenueTrendChart({ month, store, day }) {
         )
       }
     >
-      {isPublic ? (
+      {hide ? (
         <div className="grid h-64 place-items-center text-xs text-slate-300">
-          {t('对外展示模式 · 数据已隐藏')}
+          {t(isPublic ? '对外展示模式 · 数据已隐藏' : '门店运营模式 · 经营数据已隐藏')}
         </div>
       ) : (
         <>

@@ -306,6 +306,8 @@ export const en = {
   '请填写商品名称': 'Please enter product name',
   '自定义': 'Custom',
   '确定删除该商品吗？': 'Delete this product?',
+  '门店运营模式 · 经营数据已隐藏': 'Store mode · business data hidden',
+  '经营数据仅开发者可见': 'Business data is visible to developers only',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

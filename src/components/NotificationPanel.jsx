@@ -18,11 +18,14 @@ const ICON_MAP = {
   数据: Database,
 }
 
+// 门店运营账号隐藏与经营数据相关的提醒
+const SENSITIVE_TAGS = new Set(['经营', '财务', '增长', '绩效', '数据', '预警', '关注'])
+
 export default function NotificationPanel({ month, day }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
-  const items = notices(month, day, lang).filter((i) => !(isStore && i.tag === '绩效'))
+  const items = notices(month, day, lang).filter((i) => !(isStore && SENSITIVE_TAGS.has(i.tag)))
 
   return (
     <Card
