@@ -1,5 +1,14 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, ChevronDown, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  PackagePlus,
+  RefreshCcw,
+  RotateCcw,
+  ShoppingCart,
+  Trash2,
+} from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
 import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
@@ -33,6 +42,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [customName, setCustomName] = useState('')
   const [productMenuOpen, setProductMenuOpen] = useState(false)
   const [productCategory, setProductCategory] = useState(PRODUCT_CATEGORIES[0])
+  const [listTab, setListTab] = useState('pending') // 'pending' | 'done'
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
@@ -42,7 +54,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const filteredProducts = productNames.filter((n) => classifyProduct(n) === productCategory)
   const categoryProducts =
     productCategory === '散糖' ? [...new Set([...NO_CANDY_NAMES, ...filteredProducts])] : filteredProducts
-  const requests = getInventoryRequests().filter((r) => r.type === type)
+  const allRequests = getInventoryRequests().filter((r) => r.type === type)
+  const sortedRequests = [...allRequests].sort((a, b) =>
+    String(b.createdAt).localeCompare(String(a.createdAt)),
+  )
+  const pendingCount = allRequests.filter((r) => r.status !== 'done').length
+  const doneCount = allRequests.length - pendingCount
+  const visibleRequests = sortedRequests.filter((r) => {
+    const d = (r.createdAt || '').slice(0, 10)
+    if (dateFrom && d < dateFrom) return false
+    if (dateTo && d > dateTo) return false
+    return true
+  })
+  const requests = visibleRequests.filter((r) =>
+    listTab === 'done' ? r.status === 'done' : r.status !== 'done',
+  )
   const isDeveloper = currentUser?.role === 'developer'
 
   const submit = () => {
@@ -93,6 +119,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   }
 
   const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
+
+  const setStatus = (r, status) => {
+    commitInventoryRequests(
+      getInventoryRequests().map((x) => (x.id === r.id ? { ...x, status } : x)),
+    )
+    setVersion((v) => v + 1)
+  }
 
   const addCustomStore = (side) => {
     setError('')
@@ -435,9 +468,63 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
           <h3 className="text-[15px] font-bold text-slate-800">{t('申请列表')}</h3>
-          <span className="rounded-lg bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">
-            {requests.length}
-          </span>
+          <div className="flex gap-1 rounded-xl bg-slate-50 p-1">
+            <button
+              onClick={() => setListTab('pending')}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                listTab === 'pending'
+                  ? 'bg-white text-budu-600 shadow-sm'
+                  : 'text-slate-500 hover:text-budu-600'
+              }`}
+            >
+              {t('待处理')}
+              <span className="ml-1.5 rounded-md bg-amber-50 px-1 py-0.5 text-[10px] font-bold text-amber-600">
+                {pendingCount}
+              </span>
+            </button>
+            <button
+              onClick={() => setListTab('done')}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                listTab === 'done'
+                  ? 'bg-white text-emerald-600 shadow-sm'
+                  : 'text-slate-500 hover:text-emerald-600'
+              }`}
+            >
+              {t('已处理')}
+              <span className="ml-1.5 rounded-md bg-emerald-50 px-1 py-0.5 text-[10px] font-bold text-emerald-600">
+                {doneCount}
+              </span>
+            </button>
+          </div>
+
+          {/* 日期查询 */}
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-medium text-slate-400">{t('按提交日期查询')}</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-budu-400"
+            />
+            <span className="text-[11px] text-slate-300">~</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-budu-400"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setDateFrom('')
+                  setDateTo('')
+                }}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                {t('清空日期')}
+              </button>
+            )}
+          </div>
         </div>
         <div className="divide-y divide-slate-50">
           {requests.map((r) => (
@@ -447,7 +534,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
                 }`}
               >
-                {t(r.status === 'done' ? '已完成' : '待处理')}
+                {t(r.status === 'done' ? '已处理' : '待处理')}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-700">
@@ -482,19 +569,41 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                 </p>
               </div>
-              {canDelete(r) && (
-                <button
-                  onClick={() => remove(r)}
-                  className="rounded-lg p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                  aria-label={t('删除')}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              )}
+              <div className="flex items-center gap-1">
+                {isDeveloper && r.status !== 'done' && (
+                  <button
+                    onClick={() => setStatus(r, 'done')}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-emerald-500 transition hover:bg-emerald-50"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    {t('标记已处理')}
+                  </button>
+                )}
+                {isDeveloper && r.status === 'done' && (
+                  <button
+                    onClick={() => setStatus(r, 'pending')}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {t('恢复待处理')}
+                  </button>
+                )}
+                {canDelete(r) && (
+                  <button
+                    onClick={() => remove(r)}
+                    className="rounded-lg p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
+                    aria-label={t('删除')}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {requests.length === 0 && (
-            <p className="grid place-items-center py-14 text-sm text-slate-300">{t('暂无申请，填写左侧表单提交')}</p>
+            <p className="grid place-items-center py-14 text-sm text-slate-300">
+              {t(listTab === 'done' ? '暂无已处理申请' : '暂无待处理申请')}
+            </p>
           )}
         </div>
       </div>

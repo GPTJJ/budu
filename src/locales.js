@@ -368,6 +368,13 @@ export const en = {
   '暂无新申请通知': 'No new request notifications',
   '调货申请': 'Transfer Request',
   '采购申请': 'Purchase Request',
+  '已处理': 'Processed',
+  '标记已处理': 'Mark as Processed',
+  '恢复待处理': 'Restore to Pending',
+  '按提交日期查询': 'Filter by submission date',
+  '清空日期': 'Clear Dates',
+  '暂无待处理申请': 'No pending requests',
+  '暂无已处理申请': 'No processed requests',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
