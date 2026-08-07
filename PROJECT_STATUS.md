@@ -126,6 +126,9 @@
   3. 证书已部署（deploy/certs/fullchain.pem + privkey.pem），HTTPS 正常
   4. **正式网址 https://buducandy.cn 已验证上线**：HTTP 301→HTTPS、HTTPS /api/health 200、
      首页 200（含完整 BUDU 登录页）
+  5. **库存调拨审批与库存联动已部署（2026-08-07 22:57）**：腾讯云网页远程命令构建并重启容器成功；
+     线上应用代码 `50f7332`，容器健康，公网首页与 `/api/health` 均为 200；线上“申请调货”页已确认显示
+     门店库存、库存调整、待处理/已处理及新审批流程。GitHub Actions #31 仍因 SSH Secrets 未配置而失败，本次采用手动部署。
 - 说明：直接 IP 访问 80 在部分网络返回 502，为访问方本地代理现象（服务器本机 IP:80 返回 301 正常）；
   域名访问不受影响
 - **待办**：GitHub Actions Secrets（TENCENT_HOST/USER/SSH_KEY/APP_DIR）配置自动部署；
