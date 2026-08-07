@@ -10,7 +10,7 @@ import ProductSalesTable from './ProductSalesTable'
 import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
-import { kpiCards } from '../utils/selectors'
+import { allStores, kpiCards } from '../utils/selectors'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
@@ -51,7 +51,13 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
-  const [store, setStore] = useState('all')
+  const [store, setStore] = useState(() => {
+    const list =
+      user?.role === 'developer' || user?.role === 'public'
+        ? allStores()
+        : allStores().filter((s) => (user.storeKeys || []).includes(s.key))
+    return list[0] ? list[0].key : 'all'
+  })
   const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
   const [view, setView] = useState('overview')
   const [selectedProduct, setSelectedProduct] = useState(null)
