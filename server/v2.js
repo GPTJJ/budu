@@ -824,6 +824,45 @@ v2Router.post('/alerts/test', wrap(async (req, res) => {
   res.json({ ok, configured: Boolean(process.env.WECHAT_WORK_WEBHOOK_URL) })
 }))
 
+let weatherCache = { at: 0, data: null }
+
+v2Router.get('/weather', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const now = Date.now()
+  if (weatherCache.data && now - weatherCache.at < 30 * 60 * 1000) {
+    return res.json(weatherCache.data)
+  }
+  const city = process.env.WEATHER_CITY || '北京'
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 6000)
+    const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1&lang=zh`, {
+      signal: ctrl.signal,
+    })
+    clearTimeout(timer)
+    if (!r.ok) throw new Error(String(r.status))
+    const j = await r.json()
+    const c = j.current_condition && j.current_condition[0]
+    if (!c) throw new Error('no weather data')
+    const data = {
+      ok: true,
+      city,
+      temp: c.temp_C,
+      text:
+        (c.lang_zh && c.lang_zh[0] && c.lang_zh[0].value) ||
+        (c.weatherDesc && c.weatherDesc[0] && c.weatherDesc[0].value) ||
+        '',
+      humidity: c.humidity,
+      wind: c.windspeedKmph,
+      updatedAt: new Date().toISOString(),
+    }
+    weatherCache = { at: now, data }
+    res.json(data)
+  } catch (e) {
+    res.json({ ok: false, error: '天气服务暂不可用' })
+  }
+}))
+
 // ---------- M3-3：财务（费用/利润/导出） ----------
 v2Router.get('/expenses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
