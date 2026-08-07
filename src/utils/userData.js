@@ -68,6 +68,8 @@ export async function loadUserData() {
     products: Array.isArray(data.products) ? data.products : [],
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    dailySales: {},
+    dishDaily: [],
   }
   // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
   try {
@@ -85,6 +87,75 @@ export async function loadUserData() {
       }
       cached.entries = merged
     }
+  } catch {
+    /* v2 不可用时回退 KV */
+  }
+  // v2（PostgreSQL）为申请单/库存/美团数据源
+  try {
+    const [transfers, purchases, stock, sales, dishes] = await Promise.all([
+      api('/v2/transfer-requests'),
+      api('/v2/purchase-requests'),
+      api('/v2/stock'),
+      api('/v2/daily-sales'),
+      api('/v2/dish-daily'),
+    ])
+    const reqs = []
+    for (const r of (transfers && transfers.rows) || []) {
+      reqs.push({
+        id: r.id,
+        type: 'transfer',
+        storeKey: r.storeKey,
+        fromStoreKey: r.fromStoreKey,
+        status: r.status,
+        note: r.note,
+        createdBy: r.createdBy,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        history: [],
+        items: (r.items || []).map((it) => ({
+          category: it.category,
+          productName: it.productName,
+          quantity: it.quantity,
+          note: it.note,
+          itemId: it.itemId,
+        })),
+      })
+    }
+    for (const r of (purchases && purchases.rows) || []) {
+      reqs.push({
+        id: r.id,
+        type: 'purchase',
+        storeKey: r.storeKey,
+        status: r.status === 'received' ? 'done' : r.status,
+        note: r.note,
+        createdBy: r.createdBy,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        history: [],
+        items: (r.items || []).map((it) => ({
+          category: it.category,
+          productName: it.productName,
+          quantity: it.receivedQty || it.quantity,
+          note: it.note,
+          itemId: it.itemId,
+        })),
+      })
+    }
+    cached.inventoryRequests = reqs
+    cached.inventory = ((stock && stock.rows) || []).map((r) => ({
+      storeKey: r.storeKey,
+      productName: r.name,
+      quantity: r.quantity,
+      minQty: r.minQty || 0,
+      updatedAt: r.updatedAt,
+      updatedBy: '',
+    }))
+    const salesMap = {}
+    for (const r of (sales && sales.rows) || []) {
+      salesMap[`${r.date.slice(0, 7)}|${r.storeKey}|${r.date.slice(5)}`] = r
+    }
+    cached.dailySales = salesMap
+    cached.dishDaily = (dishes && dishes.rows) || []
   } catch {
     /* v2 不可用时回退 KV */
   }
@@ -124,9 +195,11 @@ export function getUserData() {
       products: Array.isArray(mirror.products) ? mirror.products : [],
       inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
       inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
+      dailySales: mirror.dailySales && typeof mirror.dailySales === 'object' ? mirror.dailySales : {},
+      dishDaily: Array.isArray(mirror.dishDaily) ? mirror.dishDaily : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], dailySales: {}, dishDaily: [] }
 }
 
 export function getEntries() {
@@ -280,6 +353,16 @@ export function commitInventoryState(inventory, requests) {
   data.inventory = inventory
   data.inventoryRequests = requests
   syncUserData()
+}
+
+export function getDailySales() {
+  const d = getUserData().dailySales
+  return d && typeof d === 'object' ? d : {}
+}
+
+export function getDishDaily() {
+  const d = getUserData().dishDaily
+  return Array.isArray(d) ? d : []
 }
 
 export function commitRemovedStaff(removedStaff) {

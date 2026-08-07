@@ -3,6 +3,7 @@ import { ArrowLeft, Building2, CalendarDays, ChevronDown, Pencil, Save, Trash2, 
 import { allStores, dailyRows, monthLabel, saveLocalEntry, deleteLocalEntry, localEntries, employeeList } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
+import { getDailySales } from '../utils/userData'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -106,6 +107,7 @@ export default function StoreEntryPage({ onBack }) {
   const month = date && date.length >= 7 ? date.slice(0, 7) : '2026-07'
 
   const storeInfo = allStores().find((s) => s.key === store)
+  const hasMeituan = Object.keys(getDailySales()).some((k) => k.startsWith(`${month}|${store}|`))
 
   // 与首页共用同一数据源：报表 + 本地录入自动合并，保存后实时联动
   const rows = dailyRows(month, store)
@@ -188,6 +190,12 @@ export default function StoreEntryPage({ onBack }) {
           </span>
         </div>
       </div>
+
+      {hasMeituan && (
+        <p className="rounded-xl bg-sky-50 px-4 py-2.5 text-xs font-semibold text-sky-600">
+          {t('该门店营业数据以美团为准（营业额/订单自动覆盖，值班人员仍可编辑）')}
+        </p>
+      )}
 
       {/* 录入表单 */}
       <div className="card p-5">

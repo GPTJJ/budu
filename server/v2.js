@@ -3,6 +3,9 @@ import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
+import { meituanConfig, meituanReady } from './meituan/config.js'
+import { runMeituanSync, isMeituanSyncing } from './meituan/sync.js'
+import { mockMeituanDay } from './meituan/client.js'
 
 export const v2Router = Router()
 
@@ -1031,4 +1034,168 @@ v2Router.post('/members/:id/consumptions', wrap(async (req, res) => {
     return c
   })
   res.json({ ok: true, points: member.points + points, consumption: { id: row.id, storeKey: row.storeKey, date: isoDate(row.date), amountCents: row.amountCents.toString(), note: row.note } })
+}))
+
+// ---------- M4：美团收银数据 ----------
+function monthRange(month) {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ''))) return null
+  const [y, m] = String(month).split('-').map(Number)
+  return { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+}
+
+v2Router.get('/daily-sales', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const where = { storeKey: whereStores(req.user, store || undefined) }
+  const range = monthRange(req.query.month)
+  if (range) where.date = range
+  const rows = await prisma.dailySales.findMany({ where, orderBy: [{ date: 'desc' }, { storeKey: 'asc' }], take: 2000 })
+  res.json({
+    rows: rows.map((r) => ({
+      id: r.id,
+      storeKey: r.storeKey,
+      date: isoDate(r.date),
+      incCents: r.incCents.toString(),
+      ord: r.ord,
+      refundCents: r.refundCents.toString(),
+      channels: r.channels,
+      source: r.source,
+      updatedAt: r.updatedAt,
+    })),
+  })
+}))
+
+v2Router.get('/dish-daily', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const where = { storeKey: whereStores(req.user, store || undefined) }
+  const range = monthRange(req.query.month)
+  if (range) where.date = range
+  const rows = await prisma.dishDaily.findMany({ where, orderBy: [{ date: 'desc' }, { dishName: 'asc' }], take: 5000 })
+  res.json({
+    rows: rows.map((r) => ({
+      id: r.id,
+      storeKey: r.storeKey,
+      date: isoDate(r.date),
+      dishName: r.dishName,
+      productName: r.productName,
+      sales: r.sales,
+      amountCents: r.amountCents.toString(),
+    })),
+  })
+}))
+
+v2Router.get('/meituan/status', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const cfg = meituanConfig()
+  const mappings = await prisma.meituanStoreMapping.findMany({ orderBy: { createdAt: 'asc' } })
+  const logs = await prisma.meituanSyncLog.findMany({ orderBy: { createdAt: 'desc' }, take: 10 })
+  if (req.user.role !== 'developer') {
+    return res.json({
+      enabled: cfg.enabled,
+      configured: meituanReady(cfg),
+      mock: !meituanReady(cfg),
+      mappingCount: mappings.length,
+      logsCount: logs.length,
+    })
+  }
+  res.json({
+    enabled: cfg.enabled,
+    configured: meituanReady(cfg),
+    appId: cfg.appId,
+    mock: !meituanReady(cfg),
+    mappings: mappings.map((m) => ({ meituanStoreId: m.meituanStoreId, storeKey: m.storeKey, enabled: m.enabled })),
+    logs: logs.map((l) => ({
+      id: l.id,
+      meituanStoreId: l.meituanStoreId,
+      storeKey: l.storeKey,
+      day: l.day,
+      status: l.status,
+      message: l.message,
+      durationMs: l.durationMs,
+      createdAt: l.createdAt,
+    })),
+  })
+}))
+
+v2Router.put('/meituan/mappings', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  const list = Array.isArray(req.body && req.body.mappings) ? req.body.mappings : []
+  if (list.length > 100) throw bad('映射数量过多')
+  const seen = new Set()
+  for (const m of list) {
+    const id = String(m.meituanStoreId || '').trim()
+    const storeKey = String(m.storeKey || '').trim()
+    if (!id || id.length > 60 || seen.has(id)) throw bad('美团店铺ID不正确或重复')
+    if (!storeKey || storeKey.length > 30) throw bad('门店不正确')
+    seen.add(id)
+    await prisma.store.upsert({ where: { key: storeKey }, update: {}, create: { key: storeKey, name: storeKey } })
+  }
+  for (const m of list) {
+    await prisma.meituanStoreMapping.upsert({
+      where: { meituanStoreId: String(m.meituanStoreId).trim() },
+      update: { storeKey: String(m.storeKey).trim(), enabled: m.enabled !== false },
+      create: {
+        id: uid('mm'),
+        meituanStoreId: String(m.meituanStoreId).trim(),
+        storeKey: String(m.storeKey).trim(),
+        enabled: m.enabled !== false,
+      },
+    })
+  }
+  res.json({ ok: true })
+}))
+
+v2Router.post('/meituan/sync-now', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  if (isMeituanSyncing()) throw bad('同步进行中，请稍后再试')
+  const cfg = meituanConfig()
+  if (!meituanReady(cfg)) {
+    const first = await prisma.meituanStoreMapping.findFirst()
+    const today = new Date().toISOString().slice(0, 10)
+    return res.json({
+      ok: true,
+      mock: true,
+      message: '模拟模式：未配置美团凭证，未拉取/写入真实数据',
+      sample: mockMeituanDay(first ? first.storeKey : 'tongying', today),
+    })
+  }
+  res.json(await runMeituanSync())
+}))
+
+v2Router.get('/meituan/dish-unmapped', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  const groups = await prisma.dishDaily.groupBy({
+    by: ['dishName'],
+    where: { productName: '' },
+    _sum: { sales: true },
+    _count: { _all: true },
+    orderBy: { dishName: 'asc' },
+  })
+  res.json({
+    rows: groups.map((g) => ({ dishName: g.dishName, sales: g._sum.sales || 0, days: g._count._all })),
+  })
+}))
+
+v2Router.put('/meituan/dish-mappings', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  const list = Array.isArray(req.body && req.body.mappings) ? req.body.mappings : []
+  for (const m of list) {
+    const dishName = String(m.dishName || '').trim()
+    const productName = String(m.productName || '').trim()
+    if (!dishName || dishName.length > 50 || !productName || productName.length > 50) throw bad('映射内容不正确')
+    await prisma.dishMapping.upsert({
+      where: { dishName },
+      update: { productName },
+      create: { id: uid('dm'), dishName, productName },
+    })
+    await prisma.dishDaily.updateMany({ where: { dishName }, data: { productName } })
+  }
+  res.json({ ok: true })
 }))

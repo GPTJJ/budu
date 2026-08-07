@@ -366,3 +366,14 @@ npx vercel env pull                 # 拉取线上环境变量
 ### 两台电脑的 Codex 会话
 - 每台电脑的 Codex 对话互不相通；新电脑开新对话第一句：“先读 PROJECT_STATUS.md 和 DEPLOY.md，继续开发 BUDU”
 - 本文件就是两台电脑共用的“存档点”，重要进度更新后随时再 push
+
+## M4「美团餐饮收银接入」实施记录（2026-08-08）
+
+- 新迁移 `20260808030000_meituan`：MeituanStoreMapping、DailySales、DishDaily、DishMapping、MeituanSyncLog
+- 后端：server/meituan/（config/sign/client/sync），5 分钟轮询 + 首次回补 7 天（可配）；
+  冲突规则=美团覆盖营业数据、保留手工值班人员；未配置凭证时模拟模式（不写库）
+- v2 接口：daily-sales、dish-daily、meituan/status、meituan/mappings、meituan/sync-now、
+  meituan/dish-unmapped、meituan/dish-mappings
+- 前端：设置页「美团收银对接」卡片；首页/渠道/商品销售优先读美团数据；
+  业绩录入页美团门店显示“以美团为准”提示；loadUserData 恢复 v2 申请/库存拉取并新增美团数据
+- 待用户提供：美团餐饮开放平台 app_id/app_secret 与门店授权（docs/MEITUAN_INTEGRATION.md）

@@ -22,6 +22,64 @@ model Store {
   waste        WasteRecord[]
   expenses     Expense[]
   memberConsumptions MemberConsumption[]
+  meituanMappings MeituanStoreMapping[]
+  dailySales      DailySales[]
+  dishDaily       DishDaily[]
+}
+
+model MeituanStoreMapping {
+  id             String   @id
+  meituanStoreId String   @unique
+  storeKey       String
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  store          Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+}
+
+model DailySales {
+  id          String   @id
+  storeKey    String
+  date        DateTime @db.Date
+  incCents    BigInt   @default(0)
+  ord         Int      @default(0)
+  refundCents BigInt   @default(0)
+  channels    Json     @default("[]")
+  source      String   @default("meituan")
+  updatedAt   DateTime @default(now()) @updatedAt
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@unique([storeKey, date])
+}
+
+model DishDaily {
+  id          String   @id
+  storeKey    String
+  date        DateTime @db.Date
+  dishName    String
+  productName String   @default("")
+  sales       Int      @default(0)
+  amountCents BigInt   @default(0)
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@unique([storeKey, date, dishName])
+}
+
+model DishMapping {
+  id          String   @id
+  dishName    String   @unique
+  productName String
+  createdAt   DateTime @default(now())
+}
+
+model MeituanSyncLog {
+  id             String   @id
+  meituanStoreId String   @default("")
+  storeKey       String   @default("")
+  day            String   @default("")
+  status         String   @default("ok")
+  message        String   @default("")
+  durationMs     Int      @default(0)
+  createdAt      DateTime @default(now())
 }
 
 model User {
