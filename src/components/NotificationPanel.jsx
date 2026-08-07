@@ -4,7 +4,7 @@ import Card from './Card'
 import { getInventoryRequests } from '../utils/userData'
 import { storeName } from '../utils/selectors'
 import { api } from '../utils/api'
-import { CHANGELOG } from '../data/changelog'
+import { CHANGELOG as LOCAL_CHANGELOG } from '../data/changelog'
 import { useI18n } from '../i18n'
 
 const CARE_TIPS = [
@@ -20,6 +20,7 @@ export default function NotificationPanel() {
   const [tick, setTick] = useState(0)
   const [weather, setWeather] = useState(null)
   const [weatherError, setWeatherError] = useState(false)
+  const [updates, setUpdates] = useState(LOCAL_CHANGELOG.slice(0, 2))
 
   useEffect(() => {
     let alive = true
@@ -41,6 +42,23 @@ export default function NotificationPanel() {
     return () => clearInterval(id)
   }, [])
 
+  // 版本更新：服务端实时获取，发版后 8 秒内显示
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      api('/v2/changelog')
+        .then((d) => {
+          if (alive && d && Array.isArray(d.rows)) setUpdates(d.rows.slice(0, 2))
+        })
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 8000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
   const transfers = useMemo(
     () =>
       getInventoryRequests()
@@ -50,7 +68,6 @@ export default function NotificationPanel() {
     [tick],
   )
 
-  const updates = CHANGELOG.slice(0, 2)
   const tip = CARE_TIPS[new Date().getDate() % CARE_TIPS.length]
   const total = updates.length + transfers.length + 1
 

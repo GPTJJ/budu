@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
+import { CHANGELOG } from './changelog.js'
 
 export const v2Router = Router()
 
@@ -874,6 +875,11 @@ v2Router.get('/weather', wrap(async (req, res) => {
   } catch (e) {
     res.json({ ok: false, error: '天气服务暂不可用' })
   }
+}))
+
+v2Router.get('/changelog', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  res.json({ rows: CHANGELOG.slice(0, 5) })
 }))
 
 // ---------- M3-3：财务（费用/利润/导出） ----------
