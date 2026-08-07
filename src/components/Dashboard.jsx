@@ -1,0 +1,197 @@
+import { lazy, Suspense, useState } from 'react'
+import Sidebar from './Sidebar'
+import Header from './Header'
+import KpiCard from './KpiCard'
+import StoreRankingTable from './StoreRankingTable'
+import RevenueTrendChart from './RevenueTrendChart'
+import ChannelChart from './ChannelChart'
+import EmployeePerformanceTable from './EmployeePerformanceTable'
+import ProductSalesTable from './ProductSalesTable'
+import NotificationPanel from './NotificationPanel'
+import MobileBottomNav from './MobileBottomNav'
+import PwaInstallPrompt from './PwaInstallPrompt'
+import { kpiCards } from '../utils/selectors'
+import { useI18n } from '../i18n'
+import { PublicModeProvider } from '../visibility'
+
+// 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
+const PersonnelPage = lazy(() => import('./PersonnelPage'))
+const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
+const SchedulePage = lazy(() => import('./SchedulePage'))
+const SettingsPage = lazy(() => import('./SettingsPage'))
+const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
+const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
+const ProductCatalogPage = lazy(() => import('./ProductCatalogPage'))
+
+const pageTitles = {
+  'staff-fulltime': '全职雇员',
+  'staff-parttime': '兼职人员',
+  'store-entry': '门店业绩录入',
+  'store-schedule': '门店排班',
+  'product-catalog': '商品目录',
+  analytics: '数据分析',
+  settings: '系统设置',
+  'account-admin': '账号管理',
+}
+
+export default function Dashboard({ user, onLogout, onUserChange }) {
+  const { lang, t } = useI18n()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [month, setMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [store, setStore] = useState('all')
+  const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
+  const [view, setView] = useState('overview')
+  const [selectedProduct, setSelectedProduct] = useState(null)
+
+  const cards = kpiCards(month, store, day, lang)
+  const isStaffView = view === 'staff-fulltime' || view === 'staff-parttime'
+  const isStoreEntryView = view === 'store-entry'
+  const isScheduleView = view === 'store-schedule'
+  const isSettingsView = view === 'settings'
+  const isAccountAdminView = view === 'account-admin'
+  const isAnalyticsView = view === 'analytics'
+  const isProductCatalogView = view === 'product-catalog'
+
+  const openProduct = (name) => {
+    setSelectedProduct(name)
+    setView('product-catalog')
+  }
+
+  const handleNavigate = (nextView) => {
+    setView(nextView)
+    if (nextView !== 'product-catalog') setSelectedProduct(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
+      <div className="flex min-h-screen min-h-[100dvh] bg-[#F7F4FA]">
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        <Sidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          view={view}
+          onNavigate={handleNavigate}
+          user={user}
+          onUserChange={onUserChange}
+          onLogout={onLogout}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header
+            month={month}
+            store={store}
+            day={day}
+            title={view === 'overview' ? null : pageTitles[view]}
+            showOverviewTools={view === 'overview'}
+            user={user}
+            onDaySelect={(m, d) => {
+              setMonth(m)
+              setDay(d)
+            }}
+            onMonthChange={(m) => {
+              setMonth(m)
+              setDay(null)
+            }}
+            onStoreChange={setStore}
+            onMenuClick={() => setSidebarOpen(true)}
+          />
+
+          <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
+            <Suspense
+              fallback={
+                <div className="grid min-h-[40vh] place-items-center text-sm font-medium text-slate-400">
+                  {t('正在加载 budu 系统…')}
+                </div>
+              }
+            >
+              {isStaffView ? (
+                <PersonnelPage
+                  type={view === 'staff-fulltime' ? 'fulltime' : 'parttime'}
+                  onTypeChange={(x) => setView(x === 'fulltime' ? 'staff-fulltime' : 'staff-parttime')}
+                  onBack={() => setView('overview')}
+                  canDelete={user?.role === 'developer'}
+                  canManage={user?.role === 'developer'}
+                />
+              ) : isStoreEntryView && user?.role !== 'public' ? (
+                <StoreEntryPage onBack={() => setView('overview')} />
+              ) : isScheduleView && user?.role !== 'public' ? (
+                <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
+              ) : isSettingsView ? (
+                <SettingsPage user={user} onBack={() => setView('overview')} />
+              ) : isAccountAdminView && user?.role === 'developer' ? (
+                <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
+              ) : isAnalyticsView && user?.role !== 'public' ? (
+                <DataAnalysisPage onBack={() => setView('overview')} />
+              ) : isProductCatalogView && user?.role !== 'public' ? (
+                <ProductCatalogPage
+                  initialProduct={selectedProduct}
+                  canEdit={user?.role !== 'public'}
+                  onBack={() => {
+                    setSelectedProduct(null)
+                    setView('overview')
+                  }}
+                />
+              ) : (
+                <>
+                  {/* 核心 KPI 统计 */}
+                  <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3 2xl:grid-cols-6">
+                    {cards.map((card) => (
+                      <KpiCard key={card.key} card={card} />
+                    ))}
+                  </section>
+
+                  {/* 中部分析模块 */}
+                  <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                    <div className="xl:col-span-4">
+                      <StoreRankingTable month={month} store={store} day={day} />
+                    </div>
+                    <div className="xl:col-span-5">
+                      <RevenueTrendChart month={month} store={store} day={day} />
+                    </div>
+                    <div className="xl:col-span-3">
+                      <ChannelChart month={month} store={store} day={day} />
+                    </div>
+                  </section>
+
+                  {/* 底部业绩与数据模块 */}
+                  <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                    <div className="xl:col-span-4">
+                      <EmployeePerformanceTable store={store} month={month} />
+                    </div>
+                    <div className="xl:col-span-5">
+                      <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />
+                    </div>
+                    <div className="xl:col-span-3">
+                      <NotificationPanel month={month} day={day} />
+                    </div>
+                  </section>
+                </>
+              )}
+            </Suspense>
+
+            <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
+              {t('© 2026 budu 甜品 · budu Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
+            </footer>
+          </main>
+        </div>
+        <MobileBottomNav
+          view={view}
+          user={user}
+          onNavigate={handleNavigate}
+          onMore={() => setSidebarOpen(true)}
+        />
+        <PwaInstallPrompt authenticated />
+      </div>
+    </PublicModeProvider>
+  )
+}
