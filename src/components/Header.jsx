@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Bell, Menu, ChevronDown } from 'lucide-react'
+import { MapPin, Bell, Menu, ChevronDown, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import { useI18n } from '../i18n'
@@ -61,6 +61,16 @@ export default function Header({
           </div>
         </div>
 
+        {/* 刷新页面（移动端，消息铃铛左侧） */}
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
+          aria-label={t('刷新页面')}
+        >
+          <RefreshCw className="h-[18px] w-[18px]" />
+        </button>
+
         <button
           type="button"
           className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
@@ -96,6 +106,16 @@ export default function Header({
               </label>
             </>
           )}
+
+          {/* 刷新页面（桌面端，消息铃铛左侧） */}
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:grid"
+            aria-label={t('刷新页面')}
+          >
+            <RefreshCw className="h-[18px] w-[18px]" />
+          </button>
 
           {/* 消息通知 */}
           <button

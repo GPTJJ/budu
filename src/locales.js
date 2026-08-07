@@ -362,6 +362,7 @@ export const en = {
   '巧克力豆': 'Chocolate Beans',
   '试吃': 'Tasting',
   '该分类暂无产品': 'No products in this category',
+  '刷新页面': 'Refresh page',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
