@@ -42,6 +42,20 @@
 8. **商品目录支持增删改**：新增自定义商品（名称/所属门店/价格/备注），可编辑、删除；
    自定义商品与报表商品并存展示（单店视图同名覆盖报表商品），图片随改名自动迁移；
    服务端 `products` 字段带校验，公开角色禁止修改
+
+## 腾讯云部署进度（2026-08-07 下午）
+
+- 服务器：`124.156.171.195`（腾讯云轻量香港/OpenClaw 龙虾镜像，2核2G/40G，实例 lhins-gkqyrkst）
+- 已安装：Docker 29.1.3 + Compose 2.40.3；项目克隆到 `/opt/budu`
+- 已启动：`budu-api-1`（健康）+ `budu-nginx-1`（80/443）；Nginx 本机验证通过：
+  `/api/health` 返回 ok、首页正常返回（此前修复了镜像默认站点抢占 80 端口 + 脚本可执行位）
+- 服务器环境：`.env`（DOMAIN 占位 + HTTP_ONLY=1）、`.env.production`（KV 线上密钥，未入库）
+- **待用户操作**：
+  1. 腾讯云控制台防火墙放行 TCP 80 与 443（当前公网 80 未通）
+  2. 域名 `buducandy.cn` 实名通过后，DNS 加 A 记录指向 `124.156.171.195`
+  3. 证书就绪后切 HTTPS（HTTP_ONLY=0 + deploy/certs）
+- **待办**：GitHub Actions Secrets（TENCENT_HOST/USER/SSH_KEY/APP_DIR）配置自动部署；
+  服务器 SSH 密钥登录未生效（Actions 前需修复或改用密码方案）
    - 新文件：`src/components/SchedulePage.jsx`、`src/utils/schedule.js`
    - 测试：`npm run build` 通过；冒烟测试新增 SchedulePage（20 组件 SSR OK）；
      API 自测通过（保存/读取/非法数据 400）；薪酬单测与集成测试全部 OK
