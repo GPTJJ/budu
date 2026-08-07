@@ -9,11 +9,16 @@ import {
   RotateCcw,
   ShoppingCart,
   Trash2,
+  Truck,
+  PackageCheck,
+  XCircle,
 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
-import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
+import { getInventory, getInventoryRequests, commitInventoryRequests, commitInventoryState } from '../utils/userData'
+import { TRANSFER_STATUS_LABEL, transitionInventoryRequest } from '../utils/inventory'
 import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
 import InventoryListModal from './InventoryListModal'
+import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -24,6 +29,13 @@ const CATEGORY_STYLE = {
   product: 'bg-budu-50 text-budu-600',
   material: 'bg-emerald-50 text-emerald-600',
   other: 'bg-slate-100 text-slate-500',
+}
+
+const TRANSFER_STATUS_STYLE = {
+  pending: 'bg-amber-50 text-amber-600',
+  in_transit: 'bg-blue-50 text-blue-600',
+  completed: 'bg-emerald-50 text-emerald-600',
+  rejected: 'bg-rose-50 text-rose-600',
 }
 
 export default function InventoryRequestPage({ type, currentUser, onBack }) {
@@ -61,7 +73,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const sortedRequests = [...allRequests].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
-  const pendingCount = allRequests.filter((r) => r.status !== 'done').length
+  const isFinished = (request) => isTransfer
+    ? ['completed', 'rejected', 'done'].includes(request.status)
+    : request.status === 'done'
+  const pendingCount = allRequests.filter((request) => !isFinished(request)).length
   const doneCount = allRequests.length - pendingCount
   const visibleRequests = sortedRequests.filter((r) => {
     const d = (r.createdAt || '').slice(0, 10)
@@ -70,7 +85,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     return true
   })
   const requests = visibleRequests.filter((r) =>
-    listTab === 'done' ? r.status === 'done' : r.status !== 'done',
+    listTab === 'done' ? isFinished(r) : !isFinished(r),
   )
   const isDeveloper = currentUser?.role === 'developer'
 
@@ -92,6 +107,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `ir-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const createdAt = new Date().toISOString()
     commitInventoryRequests([
       ...getInventoryRequests(),
       {
@@ -105,7 +121,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         note: form.note.trim(),
         status: 'pending',
         createdBy: currentUser?.username || '',
-        createdAt: new Date().toISOString(),
+        createdAt,
+        updatedAt: createdAt,
+        history: isTransfer
+          ? [{ action: '提交调货申请', status: 'pending', operator: currentUser?.username || '', at: createdAt, note: '' }]
+          : [],
       },
     ])
     setPicked([])
@@ -128,6 +148,33 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       getInventoryRequests().map((x) => (x.id === r.id ? { ...x, status } : x)),
     )
     setVersion((v) => v + 1)
+  }
+
+  const runTransferAction = (request, action) => {
+    const confirmText = action === 'ship'
+      ? '确认库存无误，并审核通过该申请、安排发货吗？'
+      : action === 'receive'
+        ? '确认货品已经到店并验收无误吗？'
+        : '确定驳回该申请吗？'
+    if (!window.confirm(t(confirmText))) return
+    const note = action === 'reject' ? window.prompt(t('请输入驳回原因（选填）')) || '' : ''
+    setError('')
+    try {
+      const result = transitionInventoryRequest({
+        requests: getInventoryRequests(),
+        inventory: getInventory(),
+        id: request.id,
+        action,
+        actor: currentUser,
+        note,
+      })
+      commitInventoryState(result.inventory, result.requests)
+      setVersion((value) => value + 1)
+      setSavedTip(t(action === 'ship' ? '已确认发货，调出门店库存已扣减' : action === 'receive' ? '已确认收货，调入门店库存已增加' : '申请已驳回'))
+      setTimeout(() => setSavedTip(''), 2400)
+    } catch (err) {
+      setError(t(err.message))
+    }
   }
 
   const buildCurrentList = () => ({
@@ -489,6 +536,19 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
       </div>
 
+      {isTransfer && (
+        <InventoryStockPanel
+          currentUser={currentUser}
+          catalog={productNames}
+          version={version}
+          onChanged={(message) => {
+            setVersion((value) => value + 1)
+            setSavedTip(message)
+            setTimeout(() => setSavedTip(''), 2200)
+          }}
+        />
+      )}
+
       {/* 申请列表 */}
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
@@ -556,10 +616,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             <div key={r.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
               <span
                 className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
-                  r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                  isTransfer
+                    ? (r.status === 'done' ? TRANSFER_STATUS_STYLE.completed : TRANSFER_STATUS_STYLE[r.status]) || TRANSFER_STATUS_STYLE.pending
+                    : r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
                 }`}
               >
-                {t(r.status === 'done' ? '已处理' : '待处理')}
+                {t(isTransfer ? (r.status === 'done' ? '已完成' : TRANSFER_STATUS_LABEL[r.status]) || '待审核' : r.status === 'done' ? '已处理' : '待处理')}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-700">
@@ -593,6 +655,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 <p className="mt-0.5 text-[11px] text-slate-300">
                   {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                 </p>
+                {isTransfer && Array.isArray(r.history) && r.history.length > 1 && (
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    {r.history.slice(1).map((event) => `${event.action} · ${event.operator || '—'} · ${new Date(event.at).toLocaleString()}${event.note ? `（${event.note}）` : ''}`).join(' ｜ ')}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -602,7 +669,34 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   <FileDown className="h-3.5 w-3.5" />
                   {t('货品清单')}
                 </button>
-                {isDeveloper && r.status !== 'done' && (
+                {isDeveloper && isTransfer && r.status === 'pending' && (
+                  <>
+                    <button
+                      onClick={() => runTransferAction(r, 'reject')}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-500 transition hover:bg-rose-50"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      {t('驳回')}
+                    </button>
+                    <button
+                      onClick={() => runTransferAction(r, 'ship')}
+                      className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
+                    >
+                      <Truck className="h-3.5 w-3.5" />
+                      {t('审核并发货')}
+                    </button>
+                  </>
+                )}
+                {isDeveloper && isTransfer && r.status === 'in_transit' && (
+                  <button
+                    onClick={() => runTransferAction(r, 'receive')}
+                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-100"
+                  >
+                    <PackageCheck className="h-3.5 w-3.5" />
+                    {t('确认收货')}
+                  </button>
+                )}
+                {isDeveloper && !isTransfer && r.status !== 'done' && (
                   <button
                     onClick={() => setStatus(r, 'done')}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-emerald-500 transition hover:bg-emerald-50"
@@ -611,7 +705,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     {t('标记已处理')}
                   </button>
                 )}
-                {isDeveloper && r.status === 'done' && (
+                {isDeveloper && !isTransfer && r.status === 'done' && (
                   <button
                     onClick={() => setStatus(r, 'pending')}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"

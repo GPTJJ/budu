@@ -141,6 +141,25 @@ function normalizeInventoryRequests(raw) {
       items = [{ category: 'product', productName: name, quantity: Math.floor(qty) }]
     }
     const first = items[0]
+    const allowedStatuses = type === 'transfer'
+      ? new Set(['pending', 'in_transit', 'completed', 'rejected'])
+      : new Set(['pending', 'done'])
+    const rawStatus = type === 'transfer' && r.status === 'done' ? 'completed' : String(r.status || 'pending')
+    const status = allowedStatuses.has(rawStatus) ? rawStatus : 'pending'
+    const history = []
+    if (Array.isArray(r.history)) {
+      if (r.history.length > 20) return null
+      for (const event of r.history) {
+        if (!event || typeof event !== 'object' || Array.isArray(event)) return null
+        history.push({
+          action: String(event.action || '').trim().slice(0, 40),
+          status: String(event.status || '').trim().slice(0, 20),
+          operator: String(event.operator || '').trim().slice(0, 30),
+          at: String(event.at || '').slice(0, 40),
+          note: String(event.note || '').trim().slice(0, 100),
+        })
+      }
+    }
     out.push({
       id: typeof r.id === 'string' && r.id ? r.id.slice(0, 64) : crypto.randomUUID(),
       type,
@@ -152,9 +171,39 @@ function normalizeInventoryRequests(raw) {
       productName: first.productName,
       quantity: first.quantity,
       note,
-      status: r.status === 'done' ? 'done' : 'pending',
+      status,
       createdBy: String(r.createdBy ?? '').trim().slice(0, 30) || 'unknown',
       createdAt: typeof r.createdAt === 'string' && r.createdAt ? r.createdAt : new Date().toISOString(),
+      updatedAt: typeof r.updatedAt === 'string' && r.updatedAt ? r.updatedAt : '',
+      history,
+    })
+  }
+  return out
+}
+
+/** 库存台账：每个门店、每种货品仅一条非负数量记录。 */
+function normalizeInventory(raw) {
+  if (!Array.isArray(raw) || raw.length > 10000) return null
+  const BAD_KEY = /^(__proto__|constructor|prototype)$/
+  const seen = new Set()
+  const out = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null
+    const storeKey = String(row.storeKey || '').trim()
+    const productName = String(row.productName || '').trim()
+    const quantity = Number(row.quantity)
+    if (!storeKey || storeKey.length > 30 || BAD_KEY.test(storeKey)) return null
+    if (!productName || productName.length > 50 || BAD_KEY.test(productName)) return null
+    if (!Number.isFinite(quantity) || quantity < 0 || quantity > 99999999) return null
+    const key = `${storeKey}\n${productName}`
+    if (seen.has(key)) return null
+    seen.add(key)
+    out.push({
+      storeKey,
+      productName,
+      quantity: Math.round(quantity * 100) / 100,
+      updatedAt: String(row.updatedAt || '').slice(0, 40),
+      updatedBy: String(row.updatedBy || '').trim().slice(0, 30),
     })
   }
   return out
@@ -467,6 +516,7 @@ export function createApp() {
       schedules: db.schedules || {},
       products: db.products || [],
       inventoryRequests: db.inventoryRequests || [],
+      inventory: db.inventory || [],
     })
   })
 
@@ -568,6 +618,15 @@ export function createApp() {
       }
       db.inventoryRequests = normalized
     }
+    if (body.inventory !== undefined) {
+      const inventoryChanged = JSON.stringify(body.inventory) !== JSON.stringify(db.inventory || [])
+      if (inventoryChanged && req.user.role === 'public') {
+        return res.status(403).json({ error: '无权限' })
+      }
+      const normalized = normalizeInventory(body.inventory)
+      if (!normalized) return res.status(400).json({ error: 'inventory 格式错误' })
+      db.inventory = normalized
+    }
     await persist()
     res.json({
       ok: true,
@@ -579,6 +638,7 @@ export function createApp() {
       schedules: db.schedules || {},
       products: db.products || [],
       inventoryRequests: db.inventoryRequests || [],
+      inventory: db.inventory || [],
     })
   })
 

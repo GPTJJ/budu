@@ -67,6 +67,7 @@ export async function loadUserData() {
     schedules: data.schedules && typeof data.schedules === 'object' ? data.schedules : {},
     products: Array.isArray(data.products) ? data.products : [],
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
+    inventory: Array.isArray(data.inventory) ? data.inventory : [],
   }
   const legacy = readLegacy()
   let migrated = false
@@ -103,9 +104,10 @@ export function getUserData() {
       schedules: mirror.schedules && typeof mirror.schedules === 'object' ? mirror.schedules : {},
       products: Array.isArray(mirror.products) ? mirror.products : [],
       inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
+      inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [] }
 }
 
 export function getEntries() {
@@ -192,6 +194,19 @@ export function getInventoryRequests() {
 
 export function commitInventoryRequests(requests) {
   getUserData().inventoryRequests = requests
+  syncUserData()
+}
+
+export function getInventory() {
+  const rows = getUserData().inventory
+  return Array.isArray(rows) ? rows : []
+}
+
+/** 同步提交库存和申请单，保证发货/收货时两份数据一起保存。 */
+export function commitInventoryState(inventory, requests) {
+  const data = getUserData()
+  data.inventory = inventory
+  data.inventoryRequests = requests
   syncUserData()
 }
 

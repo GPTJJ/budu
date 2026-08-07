@@ -10,7 +10,8 @@
     "postinstall": "npm run build",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "test:inventory": "node scripts/test-inventory-workflow.mjs"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
