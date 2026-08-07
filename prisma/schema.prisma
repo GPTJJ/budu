@@ -276,11 +276,13 @@ model Invoice {
   category    String   @default("其他")
   email       String   @default("")
   note        String   @default("")
+  status      String   @default("pending")
   createdBy   String   @default("")
   createdAt   DateTime @default(now())
   store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@index([storeKey, createdAt])
+  @@index([storeKey, status])
 }
 
 model InvoiceCompany {

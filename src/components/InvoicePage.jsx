@@ -6,7 +6,6 @@ import { useI18n } from '../i18n'
 
 const inputCls =
   'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
-const CATEGORY_OPTIONS = ['商品', '服务', '宣传推广', '其他']
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtTime = (iso) => {
@@ -20,6 +19,7 @@ export default function InvoicePage({ currentUser, onBack }) {
   const { t } = useI18n()
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [rows, setRows] = useState([])
   const [companies, setCompanies] = useState([])
   const [form, setForm] = useState({
@@ -40,6 +40,7 @@ export default function InvoicePage({ currentUser, onBack }) {
     setError('')
     const qs = new URLSearchParams({ month })
     if (store !== 'all') qs.set('store', store)
+    if (statusFilter !== 'all') qs.set('status', statusFilter)
     try {
       const [list, cps] = await Promise.all([api(`/v2/invoices?${qs}`), api('/v2/invoices/companies')])
       setRows(list.rows || [])
@@ -52,7 +53,7 @@ export default function InvoicePage({ currentUser, onBack }) {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, store])
+  }, [month, store, statusFilter])
 
   const suggestions = useMemo(() => {
     const q = form.companyName.trim().toLowerCase()
@@ -124,6 +125,22 @@ export default function InvoicePage({ currentUser, onBack }) {
     }
   }
 
+  const toggleStatus = async (row) => {
+    setError('')
+    const next = row.status === 'done' ? 'pending' : 'done'
+    try {
+      await api(`/v2/invoices/${row.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: next }),
+      })
+      setSavedTip(t(next === 'done' ? '已标记为已开票 ✓' : '已恢复为待开票 ✓'))
+      setTimeout(() => setSavedTip(''), 2000)
+      await load()
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
+
   const totalCents = rows.reduce((s, r) => s + Number(r.amountCents || 0), 0)
 
   return (
@@ -152,6 +169,11 @@ export default function InvoicePage({ currentUser, onBack }) {
                 {s.name}
               </option>
             ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputCls}>
+            <option value="all">{t('全部状态')}</option>
+            <option value="pending">{t('待开票')}</option>
+            <option value="done">{t('已开票')}</option>
           </select>
           <span className="rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-600">
             {t('合计 ¥{amount}', { amount: yuan(totalCents) })}
@@ -235,18 +257,7 @@ export default function InvoicePage({ currentUser, onBack }) {
             <div className="hidden lg:block" />
           )}
 
-          <input
-            list="invoice-categories"
-            value={form.category}
-            onChange={(e) => setField('category', e.target.value)}
-            placeholder={t('品类（如：商品/服务）')}
-            className={inputCls}
-          />
-          <datalist id="invoice-categories">
-            {CATEGORY_OPTIONS.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
+          <input value={form.category} onChange={(e) => setField('category', e.target.value)} placeholder={t('品类（手动填写）')} className={inputCls} />
 
           <input type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder={t('收票邮箱')} className={inputCls} />
 
@@ -275,6 +286,13 @@ export default function InvoicePage({ currentUser, onBack }) {
               >
                 {t(r.titleType === 'company' ? '公司' : '个人')}
               </span>
+              <span
+                className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
+                  r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                }`}
+              >
+                {t(r.status === 'done' ? '已开票' : '待开票')}
+              </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-700">
                   {r.companyName || '—'}
@@ -285,6 +303,16 @@ export default function InvoicePage({ currentUser, onBack }) {
                 </p>
               </div>
               <span className="text-sm font-bold text-slate-800">¥{yuan(r.amountCents)}</span>
+              <button
+                onClick={() => toggleStatus(r)}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                  r.status === 'done'
+                    ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                }`}
+              >
+                {t(r.status === 'done' ? '标记待开票' : '标记已开票')}
+              </button>
               <button
                 onClick={() => remove(r.id)}
                 className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"

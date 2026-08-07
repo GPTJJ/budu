@@ -12,6 +12,8 @@ import {
 import { storeName } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
+const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 export default function NotificationBell({ variant = 'desktop', user, onNavigate }) {
   const { t } = useI18n()
   const [alerts, setAlerts] = useState(getAlerts())
@@ -34,7 +36,9 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
   const openItem = (item) => {
     markSeen()
     setOpen(false)
-    if (onNavigate) onNavigate(item.type === 'transfer' ? 'inventory-transfer' : 'inventory-purchase')
+    if (onNavigate) {
+      onNavigate(item.type === 'invoice' ? 'finance-invoice' : item.type === 'transfer' ? 'inventory-transfer' : 'inventory-purchase')
+    }
   }
 
   const storeLabel = (key, name) => name || storeName(key)
@@ -97,17 +101,25 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                   >
                     <p className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
                       <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
-                        {t(r.type === 'transfer' ? '调货申请' : '采购申请')}
+                        {t(r.type === 'invoice' ? '开票申请' : r.type === 'transfer' ? '调货申请' : '采购申请')}
                       </span>
-                      {t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
+                      {r.type === 'invoice'
+                        ? t('{company} · ¥{amount}', { company: r.companyName || t('个人'), amount: yuan(r.amountCents) })
+                        : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      {r.type === 'transfer'
-                        ? t('从 {from} 调往 {to}', {
-                            from: storeLabel(r.fromStoreKey, r.fromStoreName),
-                            to: storeLabel(r.storeKey, r.storeName),
+                      {r.type === 'invoice'
+                        ? t('{store} · {category} · {email}', {
+                            store: storeLabel(r.storeKey, r.storeName),
+                            category: r.category || t('其他'),
+                            email: r.email || '—',
                           })
-                        : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
+                        : r.type === 'transfer'
+                          ? t('从 {from} 调往 {to}', {
+                              from: storeLabel(r.fromStoreKey, r.fromStoreName),
+                              to: storeLabel(r.storeKey, r.storeName),
+                            })
+                          : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-300">
                       {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}

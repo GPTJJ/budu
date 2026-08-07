@@ -35,6 +35,10 @@ function isManager(user) {
   return Boolean(user && ['developer', 'manager'].includes(user.role))
 }
 
+function canInvoice(user) {
+  return Boolean(user && user.role !== 'public')
+}
+
 function whereStores(user, storeKeyParam) {
   if (storeKeyParam) return storeKeyParam
   if (user.role === 'developer' || user.role === 'public') return undefined
@@ -137,6 +141,7 @@ function serializeInvoice(r) {
     category: r.category,
     email: r.email,
     note: r.note,
+    status: r.status,
     createdBy: r.createdBy,
     createdAt: r.createdAt,
   }
@@ -970,7 +975,7 @@ v2Router.get('/export/profit', wrap(async (req, res) => {
 // ---------- 发票开具 ----------
 v2Router.get('/invoices/companies', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
   const q = String(req.query.q || '').trim()
   const rows = await prisma.invoiceCompany.findMany({
     where: q ? { name: { contains: q, mode: 'insensitive' } } : {},
@@ -989,22 +994,24 @@ v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {
 
 v2Router.get('/invoices', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
   const store = String(req.query.store || '')
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const month = String(req.query.month || '')
+  const status = String(req.query.status || '')
   const where = { storeKey: whereStores(req.user, store || undefined) }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
   }
+  if (status === 'pending' || status === 'done') where.status = status
   const rows = await prisma.invoice.findMany({ where, orderBy: { createdAt: 'desc' }, take: 1000 })
   res.json({ rows: rows.map(serializeInvoice) })
 }))
 
 v2Router.post('/invoices', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
   const { storeKey, titleType, companyName, taxNo, amountCents, category, email, note } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   const type = titleType === 'personal' ? 'personal' : 'company'
@@ -1035,15 +1042,28 @@ v2Router.post('/invoices', wrap(async (req, res) => {
       category: String(category || '其他').trim().slice(0, 30),
       email: mail,
       note: String(note || '').trim().slice(0, 200),
+      status: 'pending',
       createdBy: req.user.username,
     },
   })
   res.json({ ok: true, invoice: serializeInvoice(row) })
 }))
 
+v2Router.post('/invoices/:id/status', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  const status = String((req.body || {}).status || '')
+  if (status !== 'pending' && status !== 'done') throw bad('状态不正确')
+  const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
+  if (!row) throw bad('发票记录不存在', 404)
+  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
+  const updated = await prisma.invoice.update({ where: { id: row.id }, data: { status } })
+  res.json({ ok: true, invoice: serializeInvoice(updated) })
+}))
+
 v2Router.delete('/invoices/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
   const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发票记录不存在', 404)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)

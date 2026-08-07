@@ -11,9 +11,11 @@ let listeners = []
 let timer = null
 let currentUserKey = null
 let currentCanNotify = false
+let currentCanSeeInvoices = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
+let currentInvoices = []
 
 function muted() {
   try {
@@ -86,11 +88,16 @@ function compute() {
   } catch {
     /* SSR / 隐私模式忽略 */
   }
-  const items = currentCanNotify
+  const reqItems = currentCanNotify
     ? getInventoryRequests()
         .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     : []
+  const invItems = currentCanSeeInvoices
+    ? currentInvoices
+        .filter((r) => !seenAt || String(r.createdAt) > seenAt)
+        .map((r) => ({ ...r, type: 'invoice' }))
+    : []
+  const items = [...reqItems, ...invItems].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   state = { unread: items.length, items }
   notify()
 
@@ -119,6 +126,15 @@ async function refresh() {
       /* v2 不可用时忽略 */
     }
   }
+  if (currentCanSeeInvoices) {
+    try {
+      const res = await api('/v2/invoices?status=pending')
+      currentInvoices = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* v2 不可用时忽略 */
+    }
+  }
+  compute()
 }
 
 /** 启动全局数据同步（所有登录账号，8 秒一次）；通知计算仅开发者/店长 */
@@ -127,6 +143,8 @@ export function ensurePolling(user) {
   if (currentUserKey === key) return
   currentUserKey = key
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
+  currentCanSeeInvoices = Boolean(user && user.role !== 'public')
+  currentInvoices = []
   initialized = false
   lastNotifiedId = null
   if (timer) {

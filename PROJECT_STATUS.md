@@ -417,3 +417,12 @@ npx vercel env pull                 # 拉取线上环境变量
 - v2 接口：`GET/POST /v2/invoices`、`DELETE /v2/invoices/:id`、`GET /v2/invoices/companies`（搜索）、`DELETE /v2/invoices/companies/:id`（仅开发者）
 - 前端 `src/components/InvoicePage.jsx`：抬头类型切换、公司名联想下拉自动带出税号、金额/品类/邮箱表单、开票记录列表（月份/门店筛选、合计金额、删除）
 - 权限：门店绑定过滤 + 金额 BigInt 分存储 + 邮箱格式校验 + 删除限创建人或开发者
+
+### 发票开具增强（2026-08-08 v2）
+
+- 品类改为手动填写（移除下拉选项）
+- 权限开放：除公开展示账号外，所有账号（开发者/店长/店员）均可使用发票开具
+- 提交开票后联动右上角消息铃铛：8 秒轮询推送给开发者/店长（含提示音），点击跳转发票开具页
+- 记录新增状态：待开票 / 已开票；支持“全部/待开票/已开票”筛选；可一键标记已开票或恢复待开票
+- 迁移 `20260808060000_invoice_status`：Invoice 增加 status 字段 + 索引
+- 新接口：`POST /v2/invoices/:id/status`（更新开票状态）；`GET /v2/invoices` 支持 status 参数

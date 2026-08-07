@@ -197,7 +197,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   currentUser={user}
                   onBack={() => setView('overview')}
                 />
-              ) : isFinanceView && user?.role !== 'public' ? (
+              ) : isFinanceView && (user?.role === 'developer' || user?.role === 'manager') ? (
                 <FinancePage currentUser={user} onBack={() => setView('overview')} />
               ) : isInvoiceView && user?.role !== 'public' ? (
                 <InvoicePage currentUser={user} onBack={() => setView('overview')} />
