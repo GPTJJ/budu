@@ -240,8 +240,12 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const dayHasData = day ? hasLocalEntry(month, day) : false
 
   const all = hasData ? employeeList('all', month) : []
-  const fulltime = all.filter((e) => e.type === 'fulltime')
-  const parttime = all.filter((e) => e.type === 'parttime')
+  const scopedAll =
+    user?.role === 'staff' && user.staffKey
+      ? all.filter((e) => `${e.storeKey}::${e.name}` === user.staffKey)
+      : all
+  const fulltime = scopedAll.filter((e) => e.type === 'fulltime')
+  const parttime = scopedAll.filter((e) => e.type === 'parttime')
   const list = type === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
 

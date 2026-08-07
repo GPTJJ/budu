@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, KeyRound, Loader2, MapPin, Shield, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
-import { allStores, storeName } from '../utils/selectors'
-import { getStaff } from '../utils/userData'
+import { allStores, employeeList, storeName } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -297,7 +296,8 @@ function BindStoresModal({ user, onClose, onSaved }) {
 
 function BindStaffModal({ user, onClose, onSaved }) {
   const { t } = useI18n()
-  const staffList = getStaff()
+  const staffList = employeeList('all')
+  const staffOptions = [...new Map(staffList.map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
   const [staffKey, setStaffKey] = useState(user.staffKey || '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -337,7 +337,7 @@ function BindStaffModal({ user, onClose, onSaved }) {
         <div className="mt-4">
           <select value={staffKey} onChange={(e) => setStaffKey(e.target.value)} className={inputCls}>
             <option value="">{t('不绑定员工')}</option>
-            {staffList.map((s) => (
+            {staffOptions.map((s) => (
               <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>
                 {s.name}（{storeName(s.storeKey)}）
               </option>

@@ -467,9 +467,6 @@ export function createApp() {
       const sk = normalizeStaffKey(req.body.staffKey)
       if (sk === null) return res.status(400).json({ error: 'staffKey 格式错误' })
       staffKey = sk
-      if (staffKey && !(db.staff || []).some((s) => `${s.storeKey}::${s.name}` === staffKey)) {
-        return res.status(400).json({ error: '员工不存在' })
-      }
     }
     if (db.users.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
@@ -618,9 +615,6 @@ export function createApp() {
     if (req.body.staffKey !== undefined) {
       staffKey = normalizeStaffKey(req.body.staffKey)
       if (staffKey === null) return res.status(400).json({ error: 'staffKey 格式错误' })
-      if (staffKey && !(db.staff || []).some((s) => `${s.storeKey}::${s.name}` === staffKey)) {
-        return res.status(400).json({ error: '员工不存在' })
-      }
     }
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
