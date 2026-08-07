@@ -375,6 +375,13 @@ export const en = {
   '清空日期': 'Clear Dates',
   '暂无待处理申请': 'No pending requests',
   '暂无已处理申请': 'No processed requests',
+  '货品清单': 'Item List',
+  '下载清单': 'Download List',
+  '下载图片': 'Download Image',
+  '生成中…': 'Generating…',
+  '备注：{note}': 'Note: {note}',
+  '{count} 种': '{count} kinds',
+  'budu 甜蜜运营系统 · 货品清单 · 请按清单找货': 'budu OS · Item List · find goods by this list',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

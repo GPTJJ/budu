@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  FileDown,
   PackagePlus,
   RefreshCcw,
   RotateCcw,
@@ -12,6 +13,7 @@ import {
 import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
 import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
+import InventoryListModal from './InventoryListModal'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -45,6 +47,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [listTab, setListTab] = useState('pending') // 'pending' | 'done'
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [previewList, setPreviewList] = useState(null)
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
@@ -126,6 +129,19 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     )
     setVersion((v) => v + 1)
   }
+
+  const buildCurrentList = () => ({
+    type,
+    storeKey: form.storeKey,
+    fromStoreKey: form.fromStoreKey,
+    storeName: form.storeName,
+    fromStoreName: form.fromStoreName,
+    items: picked,
+    note: form.note.trim(),
+    status: 'pending',
+    createdBy: currentUser?.username || '',
+    createdAt: new Date().toISOString(),
+  })
 
   const addCustomStore = (side) => {
     setError('')
@@ -417,6 +433,15 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           <div className="mt-3">
             <p className="mb-1.5 text-[11px] font-semibold text-slate-400">
               {t('本次申请货品 {count} 种', { count: picked.length })}
+              {picked.length > 0 && (
+                <button
+                  onClick={() => setPreviewList(buildCurrentList())}
+                  className="ml-2 inline-flex items-center gap-1 rounded-lg bg-budu-50 px-2 py-0.5 text-[11px] font-semibold text-budu-600 transition hover:bg-budu-100"
+                >
+                  <FileDown className="h-3 w-3" />
+                  {t('下载清单')}
+                </button>
+              )}
             </p>
             {picked.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -570,6 +595,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 </p>
               </div>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPreviewList(r)}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-budu-600"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  {t('货品清单')}
+                </button>
                 {isDeveloper && r.status !== 'done' && (
                   <button
                     onClick={() => setStatus(r, 'done')}
@@ -607,6 +639,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           )}
         </div>
       </div>
+
+      {previewList && <InventoryListModal request={previewList} onClose={() => setPreviewList(null)} />}
     </div>
   )
 }

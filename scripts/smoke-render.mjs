@@ -40,6 +40,24 @@ try {
       ['申请调货', '提交申请', '自定义门店', '物料', '待处理', '已处理'],
     ],
     [
+      'InventoryListModal',
+      await render('/src/components/InventoryListModal.jsx', {
+        request: {
+          type: 'transfer',
+          fromStoreKey: 'tongying',
+          fromStoreName: '',
+          storeKey: 'guanshe',
+          storeName: '',
+          items: [{ category: 'product', productName: '榛子生巧', quantity: 2 }],
+          status: 'pending',
+          createdBy: 'store1',
+          createdAt: new Date().toISOString(),
+        },
+        onClose: () => {},
+      }),
+      ['货品清单', '下载图片'],
+    ],
+    [
       'Dashboard',
       await render('/src/components/Dashboard.jsx', {
         user: { username: 'budu', role: 'developer' },
