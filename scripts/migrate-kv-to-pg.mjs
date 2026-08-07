@@ -81,7 +81,7 @@ async function main() {
       await prisma.dailyEntry.upsert({
         where: { id: eid },
         update: { incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
-        create: { id: eid, storeKey, date: new Date(`${month}-${day}T00:00:00.000Z`), incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
+        create: { id: eid, storeKey, date: new Date(`${month}-${day.slice(3)}T00:00:00.000Z`), incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
       })
       counts.entries += 1
     }
