@@ -19,10 +19,11 @@ function roiStyle(roi) {
   return 'bg-amber-50 text-amber-600'
 }
 
-export default function EmployeePerformanceTable({ store, month }) {
+export default function EmployeePerformanceTable({ store, month, user }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
+  const hidden = isPublic || !user || user.role !== 'developer'
   const hidePersonal = isStore
   const hideBusiness = isStore
   const entryRows = entryEmployeePerformance(store, month)
@@ -38,7 +39,7 @@ export default function EmployeePerformanceTable({ store, month }) {
           : t('薪资表 2026.27-31 周 · {store}', { store: storeName(store) })
       }
       action={
-        !isPublic && (
+        !hidden && (
         <button className="flex items-center gap-0.5 text-xs font-medium text-budu-500 transition hover:text-budu-600">
           {t('查看全部')}
           <ChevronRight className="h-3.5 w-3.5" />
@@ -46,9 +47,9 @@ export default function EmployeePerformanceTable({ store, month }) {
         )
       }
     >
-      {isPublic ? (
+      {hidden ? (
         <div className="grid h-48 place-items-center text-xs text-slate-300">
-          {t('对外展示模式 · 数据已隐藏')}
+          {t('员工绩效仅开发者可见')}
         </div>
       ) : (
         <div className="-mx-2 overflow-x-auto">

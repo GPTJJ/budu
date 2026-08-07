@@ -491,6 +491,7 @@ export const en = {
   '选项设置：{name}': 'Option settings: {name}',
   '设置': 'Settings',
   '例如 8颗/盒 · 约 60g': 'e.g. 8 pcs/box · approx 60g',
+  '员工绩效仅开发者可见': 'Staff performance is visible to developers only',
   '报损': 'Waste',
   '报损数量': 'Waste quantity',
   '报损原因（选填）': 'Waste reason (optional)',

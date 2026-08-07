@@ -223,7 +223,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   {/* 底部业绩与数据模块 */}
                   <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
                     <div className="xl:col-span-4">
-                      <EmployeePerformanceTable store={store} month={month} />
+                      <EmployeePerformanceTable store={store} month={month} user={user} />
                     </div>
                     <div className="xl:col-span-5">
                       <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />
