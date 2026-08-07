@@ -363,6 +363,11 @@ export const en = {
   '试吃': 'Tasting',
   '该分类暂无产品': 'No products in this category',
   '刷新页面': 'Refresh page',
+  '通知': 'Notifications',
+  '全部已读': 'Mark all as read',
+  '暂无新申请通知': 'No new request notifications',
+  '调货申请': 'Transfer Request',
+  '采购申请': 'Purchase Request',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

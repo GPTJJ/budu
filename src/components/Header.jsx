@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Bell, Menu, ChevronDown, RefreshCw } from 'lucide-react'
+import { MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
+import NotificationBell from './NotificationBell'
 import { useI18n } from '../i18n'
 
 export default function Header({
@@ -14,6 +15,7 @@ export default function Header({
   onMonthChange,
   onStoreChange,
   onMenuClick,
+  onNavigate,
   user,
 }) {
   const { t } = useI18n()
@@ -71,14 +73,7 @@ export default function Header({
           <RefreshCw className="h-[18px] w-[18px]" />
         </button>
 
-        <button
-          type="button"
-          className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
-          aria-label={t('查看通知')}
-        >
-          <Bell className="h-[18px] w-[18px]" />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
-        </button>
+        <NotificationBell variant="mobile" user={user} onNavigate={onNavigate} />
 
         {/* 右侧工具栏 */}
         <div className="no-scrollbar order-3 flex w-full shrink-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 sm:gap-3 md:order-none md:w-auto md:overflow-visible md:pb-0">
@@ -117,15 +112,7 @@ export default function Header({
             <RefreshCw className="h-[18px] w-[18px]" />
           </button>
 
-          {/* 消息通知 */}
-          <button
-            type="button"
-            className="relative ml-auto hidden h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:ml-0 md:grid"
-            aria-label={t('查看通知')}
-          >
-            <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
-          </button>
+          <NotificationBell variant="desktop" user={user} onNavigate={onNavigate} />
 
         </div>
       </div>

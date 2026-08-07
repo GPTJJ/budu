@@ -99,6 +99,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             title={view === 'overview' ? null : pageTitles[view]}
             showOverviewTools={view === 'overview'}
             user={user}
+            onNavigate={handleNavigate}
             onDaySelect={(m, d) => {
               setMonth(m)
               setDay(d)
