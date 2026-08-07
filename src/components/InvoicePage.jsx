@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, Camera, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, Camera, Copy, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
@@ -242,6 +242,32 @@ export default function InvoicePage({ currentUser, onBack }) {
     }
   }
 
+  const copyRow = async (r) => {
+    const text = [
+      `${t('抬头')}：${r.companyName || '—'}`,
+      `${t('税号')}：${r.taxNo || '—'}`,
+      `${t('邮箱')}：${r.email || '—'}`,
+      `${t('金额')}：¥${yuan(r.amountCents)}`,
+      `${t('品类')}：${r.category || t('其他')}`,
+      `${t('门店')}：${storeName(r.storeKey)}`,
+      `${t('时间')}：${fmtTime(r.createdAt)}`,
+    ].join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setSavedTip(t('已复制抬头/税号/邮箱等信息 ✓'))
+    setTimeout(() => setSavedTip(''), 2000)
+  }
+
   const totalCents = rows.reduce((s, r) => s + Number(r.amountCents || 0), 0)
 
   return (
@@ -442,7 +468,17 @@ export default function InvoicePage({ currentUser, onBack }) {
         </div>
         <div className="max-h-[520px] divide-y divide-slate-50 overflow-y-auto">
           {rows.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3">
+            <div
+              key={r.id}
+              role={tab === 'pending' ? 'button' : undefined}
+              tabIndex={tab === 'pending' ? 0 : undefined}
+              onClick={tab === 'pending' ? () => copyRow(r) : undefined}
+              onKeyDown={tab === 'pending' ? (e) => e.key === 'Enter' && copyRow(r) : undefined}
+              className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 ${
+                tab === 'pending' ? 'cursor-pointer transition hover:bg-budu-50/40' : ''
+              }`}
+              title={tab === 'pending' ? t('点击复制抬头/税号/邮箱等信息') : undefined}
+            >
               <span
                 className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
                   r.titleType === 'company' ? 'bg-budu-50 text-budu-600' : 'bg-grape-50 text-grape-600'
@@ -467,8 +503,24 @@ export default function InvoicePage({ currentUser, onBack }) {
                 </p>
               </div>
               <span className="text-sm font-bold text-slate-800">¥{yuan(r.amountCents)}</span>
+              {tab === 'pending' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    copyRow(r)
+                  }}
+                  className="flex items-center gap-1 rounded-lg bg-budu-50 px-2.5 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+                  aria-label={t('复制信息')}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t('复制信息')}
+                </button>
+              )}
               <button
-                onClick={() => toggleStatus(r)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleStatus(r)
+                }}
                 className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
                   r.status === 'done'
                     ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
@@ -478,7 +530,10 @@ export default function InvoicePage({ currentUser, onBack }) {
                 {t(r.status === 'done' ? '标记待开票' : '标记已开票')}
               </button>
               <button
-                onClick={() => remove(r.id)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  remove(r.id)
+                }}
                 className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                 aria-label={t('删除')}
               >
