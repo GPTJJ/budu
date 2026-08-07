@@ -74,6 +74,57 @@ function itemRows(items) {
   })
 }
 
+function serializeTransfer(r) {
+  return {
+    id: r.id,
+    type: 'transfer',
+    storeKey: r.toStoreKey,
+    fromStoreKey: r.fromStoreKey,
+    status: r.status,
+    note: r.note,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    items: r.items.map((it) => ({
+      id: it.id,
+      itemId: it.itemId,
+      category: it.item.category || 'product',
+      productName: it.item.name,
+      quantity: it.quantity,
+      note: it.note,
+    })),
+  }
+}
+
+function serializePurchase(r) {
+  return {
+    id: r.id,
+    type: 'purchase',
+    storeKey: r.storeKey,
+    status: r.status,
+    supplier: r.supplier,
+    expectedAt: r.expectedAt,
+    note: r.note,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    items: r.items.map((it) => ({
+      id: it.id,
+      itemId: it.itemId,
+      category: it.item.category || 'product',
+      productName: it.item.name,
+      quantity: it.orderedQty,
+      receivedQty: it.receivedQty,
+      note: it.note,
+    })),
+  }
+}
+
+function storeFilter(user) {
+  if (user.role === 'developer' || user.role === 'public') return null
+  return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
+}
+
 // ---------- 业绩录入（金额按分，版本乐观锁） ----------
 v2Router.get('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
@@ -183,6 +234,31 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
   res.json({ ok: true, request: created })
 }))
 
+v2Router.get('/transfer-requests', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const sf = storeFilter(req.user)
+  const where = {}
+  if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }]
+  if (req.query.status) where.status = String(req.query.status)
+  const rows = await prisma.transferRequest.findMany({
+    where,
+    include: { items: { include: { item: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  })
+  res.json({ rows: rows.map(serializeTransfer) })
+}))
+
+v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
+  if (!t) throw bad('申请不存在', 404)
+  if (req.user.role !== 'developer' && t.createdBy !== req.user.username) throw bad('无权限', 403)
+  if (t.status !== 'pending') throw bad('仅待审核申请可删除')
+  await prisma.transferRequest.delete({ where: { id: t.id } })
+  res.json({ ok: true })
+}))
+
 async function getTransfer(id) {
   return prisma.transferRequest.findUnique({ where: { id }, include: { items: { include: { item: true } } } })
 }
@@ -273,6 +349,30 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
   res.json({ ok: true, request: created })
 }))
 
+v2Router.get('/purchase-requests', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const sf = storeFilter(req.user)
+  const where = sf ? { storeKey: sf } : {}
+  if (req.query.status) where.status = String(req.query.status)
+  const rows = await prisma.purchaseRequest.findMany({
+    where,
+    include: { items: { include: { item: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  })
+  res.json({ rows: rows.map(serializePurchase) })
+}))
+
+v2Router.delete('/purchase-requests/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id } })
+  if (!p) throw bad('申请不存在', 404)
+  if (req.user.role !== 'developer' && p.createdBy !== req.user.username) throw bad('无权限', 403)
+  if (p.status !== 'pending') throw bad('仅待处理申请可删除')
+  await prisma.purchaseRequest.delete({ where: { id: p.id } })
+  res.json({ ok: true })
+}))
+
 v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id }, include: { items: { include: { item: true } } } })
@@ -312,6 +412,48 @@ v2Router.get('/stock', wrap(async (req, res) => {
     orderBy: { item: { name: 'asc' } },
   })
   res.json({ rows: rows.map((r) => ({ storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, unit: r.item.unit, quantity: r.quantity, updatedAt: r.updatedAt })) })
+}))
+
+v2Router.post('/stock/adjust', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const { storeKey, items } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  if (!isManager(req.user)) throw bad('仅店长/开发者可调整库存', 403)
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('货品明细不正确')
+  await ensureStore(storeKey)
+  const operator = req.user.username
+  await prisma.$transaction(async (tx) => {
+    for (const it of items) {
+      const quantity = Number(it.quantity)
+      if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99999999) throw bad('盘点数量应为非负整数')
+      const item = it.itemId
+        ? await tx.inventoryItem.findUnique({ where: { id: it.itemId } })
+        : await tx.inventoryItem.upsert({
+            where: { name: String(it.name || '').trim() },
+            update: {},
+            create: { id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name: String(it.name || '').trim() },
+          })
+      if (!item) throw bad('货品不存在')
+      const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey, itemId: item.id } } })
+      const cur = bal ? bal.quantity : 0
+      await tx.stockBalance.upsert({
+        where: { storeKey_itemId: { storeKey, itemId: item.id } },
+        update: { quantity, updatedAt: new Date() },
+        create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey, itemId: item.id, quantity },
+      })
+      await tx.stockLedger.create({
+        id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        storeKey,
+        itemId: item.id,
+        change: quantity - cur,
+        balance: quantity,
+        type: 'adjust',
+        refId: 'manual',
+        operator,
+      })
+    }
+  })
+  res.json({ ok: true })
 }))
 
 v2Router.get('/stock/ledger', wrap(async (req, res) => {

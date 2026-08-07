@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { PackageOpen, Search, Settings2, Store, X } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
-import { commitInventoryState, getInventory, getInventoryRequests } from '../utils/userData'
-import { inventoryQuantity, setInventoryQuantity } from '../utils/inventory'
+import { getInventory, loadUserData } from '../utils/userData'
+import { inventoryQuantity } from '../utils/inventory'
+import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -32,12 +33,18 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
     .sort((a, b) => storeName(a.storeKey).localeCompare(storeName(b.storeKey), 'zh-CN') || a.productName.localeCompare(b.productName, 'zh-CN')),
   [inventory, storeFilter, search, version])
 
-  const save = () => {
+  const save = async () => {
     setError('')
     try {
       if (form.quantity === '') throw new Error('请填写盘点后的库存数量')
-      const next = setInventoryQuantity(inventory, form.storeKey, form.productName, form.quantity, currentUser)
-      commitInventoryState(next, getInventoryRequests())
+      await api('/v2/stock/adjust', {
+        method: 'POST',
+        body: JSON.stringify({
+          storeKey: form.storeKey,
+          items: [{ name: form.productName.trim(), quantity: Number(form.quantity) }],
+        }),
+      })
+      await loadUserData()
       setOpen(false)
       setForm((value) => ({ ...value, productName: '', quantity: '' }))
       onChanged?.(t('库存已更新'))

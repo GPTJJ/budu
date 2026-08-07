@@ -6,7 +6,6 @@ import {
   FileDown,
   PackagePlus,
   RefreshCcw,
-  RotateCcw,
   ShoppingCart,
   Trash2,
   Truck,
@@ -14,7 +13,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
-import { getInventoryRequests, commitInventoryRequests, loadUserData } from '../utils/userData'
+import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
 import { api } from '../utils/api'
 import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
@@ -90,7 +89,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   )
   const isDeveloper = currentUser?.role === 'developer'
 
-  const submit = () => {
+  const submit = async () => {
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
@@ -104,52 +103,41 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       setError(t('请先添加货品'))
       return
     }
-    const id =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `ir-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const createdAt = new Date().toISOString()
-    commitInventoryRequests([
-      ...getInventoryRequests(),
-      {
-        id,
-        type,
+    try {
+      const payload = {
         storeKey: form.storeKey,
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
-        ...(form.storeName ? { storeName: form.storeName } : {}),
-        ...(isTransfer && form.fromStoreName ? { fromStoreName: form.fromStoreName } : {}),
-        items: picked,
+        items: picked.map((it) => ({ name: it.productName, quantity: it.quantity, note: it.note })),
         note: form.note.trim(),
-        status: 'pending',
-        createdBy: currentUser?.username || '',
-        createdAt,
-        updatedAt: createdAt,
-        history: isTransfer
-          ? [{ action: '提交调货申请', status: 'pending', operator: currentUser?.username || '', at: createdAt, note: '' }]
-          : [],
-      },
-    ])
-    setPicked([])
-    setForm((s) => ({ ...s, note: '' }))
-    setVersion((v) => v + 1)
-    setSavedTip(t('已提交申请 ✓'))
-    setTimeout(() => setSavedTip(''), 2200)
+      }
+      await api(isTransfer ? '/v2/transfer-requests' : '/v2/purchase-requests', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      await loadUserData()
+      setPicked([])
+      setForm((s) => ({ ...s, note: '' }))
+      setVersion((v) => v + 1)
+      setSavedTip(t('已提交申请 ✓'))
+      setTimeout(() => setSavedTip(''), 2200)
+    } catch (err) {
+      setError(t(err.message))
+    }
   }
 
-  const remove = (r) => {
+  const remove = async (r) => {
     if (!window.confirm(t('确定删除该申请吗？'))) return
-    commitInventoryRequests(getInventoryRequests().filter((x) => x.id !== r.id))
-    setVersion((v) => v + 1)
+    setError('')
+    try {
+      await api(`/v2/${isTransfer ? 'transfer-requests' : 'purchase-requests'}/${r.id}`, { method: 'DELETE' })
+      await loadUserData()
+      setVersion((v) => v + 1)
+    } catch (err) {
+      setError(t(err.message))
+    }
   }
 
   const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
-
-  const setStatus = (r, status) => {
-    commitInventoryRequests(
-      getInventoryRequests().map((x) => (x.id === r.id ? { ...x, status } : x)),
-    )
-    setVersion((v) => v + 1)
-  }
 
   const runTransferAction = async (request, action) => {
     const confirmText = action === 'ship'
@@ -162,7 +150,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setError('')
     try {
       const path = action === 'ship' ? 'ship' : action === 'receive' ? 'receive' : 'reject'
-      await api(`/inventory/requests/${request.id}/${path}`, {
+      await api(`/v2/transfer-requests/${request.id}/${path}`, {
         method: 'POST',
         body: JSON.stringify({ note }),
       })
@@ -232,6 +220,28 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const canReceive = (r) =>
     isDeveloper || (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.storeKey))
   const canReject = canShip
+  const canReceivePurchase = (r) =>
+    isDeveloper ||
+    (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.storeKey))
+
+  const receivePurchase = async (r) => {
+    if (!window.confirm(t('确认货品已到货并入库吗？'))) return
+    setError('')
+    try {
+      await api(`/v2/purchase-requests/${r.id}/receive`, {
+        method: 'POST',
+        body: JSON.stringify({
+          items: (r.items || []).map((it) => ({ itemId: it.itemId, receivedQty: it.receivedQty || it.quantity })),
+        }),
+      })
+      await loadUserData()
+      setVersion((v) => v + 1)
+      setSavedTip(t('已收货入库 ✓'))
+      setTimeout(() => setSavedTip(''), 2400)
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
 
   const addItem = () => {
     setError('')
@@ -701,22 +711,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     {t('确认收货')}
                   </button>
                 )}
-                {!isTransfer && isDeveloper && r.status !== 'done' && (
+                {!isTransfer && r.status === 'pending' && canReceivePurchase(r) && (
                   <button
-                    onClick={() => setStatus(r, 'done')}
+                    onClick={() => receivePurchase(r)}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-emerald-500 transition hover:bg-emerald-50"
                   >
                     <Check className="h-3.5 w-3.5" />
-                    {t('标记已处理')}
-                  </button>
-                )}
-                {!isTransfer && isDeveloper && r.status === 'done' && (
-                  <button
-                    onClick={() => setStatus(r, 'pending')}
-                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    {t('恢复待处理')}
+                    {t('收货入库')}
                   </button>
                 )}
                 {canDelete(r) && (

@@ -87,7 +87,7 @@ function compute() {
   }
   const items = currentCanNotify
     ? getInventoryRequests()
-        .filter((r) => (r.status === 'pending' || r.status === 'shipped') && (!seenAt || r.createdAt > seenAt))
+        .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     : []
   state = { unread: items.length, items }

@@ -432,6 +432,9 @@ export const en = {
   '确认收货': 'Confirm Receipt',
   '已发货 ✓': 'Shipped ✓',
   '已收货 ✓': 'Received ✓',
+  '收货入库': 'Receive & Stock In',
+  '已收货入库 ✓': 'Received and stocked in ✓',
+  '确认货品已到货并入库吗？': 'Confirm goods arrived and stock them in?',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
