@@ -9,7 +9,7 @@ let state = { unread: 0, items: [] }
 let listeners = []
 let timer = null
 let currentUserKey = null
-let currentIsDeveloper = false
+let currentCanNotify = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
@@ -85,9 +85,9 @@ function compute() {
   } catch {
     /* SSR / 隐私模式忽略 */
   }
-  const items = currentIsDeveloper
+  const items = currentCanNotify
     ? getInventoryRequests()
-        .filter((r) => r.status === 'pending' && (!seenAt || r.createdAt > seenAt))
+        .filter((r) => (r.status === 'pending' || r.status === 'shipped') && (!seenAt || r.createdAt > seenAt))
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     : []
   state = { unread: items.length, items }
@@ -111,12 +111,12 @@ async function refresh() {
   compute()
 }
 
-/** 启动全局数据同步（所有登录账号，8 秒一次）；通知计算仅开发者 */
+/** 启动全局数据同步（所有登录账号，8 秒一次）；通知计算仅开发者/店长 */
 export function ensurePolling(user) {
   const key = user ? user.username : null
   if (currentUserKey === key) return
   currentUserKey = key
-  currentIsDeveloper = Boolean(user && user.role === 'developer')
+  currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
   initialized = false
   lastNotifiedId = null
   if (timer) {

@@ -144,7 +144,9 @@ function normalizeInventoryRequests(raw) {
     const allowedStatuses = type === 'transfer'
       ? new Set(['pending', 'in_transit', 'completed', 'rejected'])
       : new Set(['pending', 'done'])
-    const rawStatus = type === 'transfer' && r.status === 'done' ? 'completed' : String(r.status || 'pending')
+    // 兼容 M1 早期状态命名
+    const legacyMap = { shipped: 'in_transit', received: 'completed', done: 'completed' }
+    const rawStatus = legacyMap[r.status] || String(r.status || 'pending')
     const status = allowedStatuses.has(rawStatus) ? rawStatus : 'pending'
     const history = []
     if (Array.isArray(r.history)) {
@@ -181,7 +183,7 @@ function normalizeInventoryRequests(raw) {
   return out
 }
 
-/** 库存台账：每个门店、每种货品仅一条非负数量记录。 */
+/** 库存台账：每个门店、每种货品仅一条非负数量记录（M2 迁 PG 前的临时 KV 实现）。 */
 function normalizeInventory(raw) {
   if (!Array.isArray(raw) || raw.length > 10000) return null
   const BAD_KEY = /^(__proto__|constructor|prototype)$/
@@ -224,7 +226,14 @@ export function createApp() {
   }
 
   function userPublic(u) {
-    return { id: u.id, username: u.username, role: u.role, avatar: u.avatar || '', createdAt: u.createdAt }
+    return {
+      id: u.id,
+      username: u.username,
+      role: u.role,
+      storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
+      avatar: u.avatar || '',
+      createdAt: u.createdAt,
+    }
   }
 
   function setAuthCookie(res, token) {
@@ -260,6 +269,136 @@ export function createApp() {
     next()
   }
 
+  const ROLES = ['developer', 'manager', 'staff', 'public']
+
+  function boundStores(user) {
+    return Array.isArray(user && user.storeKeys) ? user.storeKeys : []
+  }
+
+  function canManageStore(user, storeKey) {
+    if (!user || user.role === 'public') return false
+    if (user.role === 'developer') return true
+    return boundStores(user).includes(storeKey)
+  }
+
+  function requireManager(req, res, next) {
+    if (!req.user || !['developer', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ error: '无权限' })
+    }
+    next()
+  }
+
+  function scopeInventoryRequests(bodyRequests, dbRequests, user) {
+    if (user.role === 'developer') return true
+    const allowed = new Set(boundStores(user))
+    const inScope = (r) => allowed.has(r.storeKey) || (r.type === 'transfer' && allowed.has(r.fromStoreKey))
+    const dbArr = dbRequests || []
+    const bodyArr = bodyRequests || []
+    for (const r of dbArr.filter((x) => !inScope(x))) {
+      const b = bodyArr.find((x) => x.id === r.id)
+      if (!b || JSON.stringify(b) !== JSON.stringify(r)) return false
+    }
+    for (const r of dbArr.filter((x) => inScope(x))) {
+      const b = bodyArr.find((x) => x.id === r.id)
+      if (!b) {
+        if (!(r.createdBy === user.username && r.status === 'pending')) return false
+      } else if (JSON.stringify(b) !== JSON.stringify(r)) {
+        return false
+      }
+    }
+    for (const r of bodyArr) {
+      if (!inScope(r)) return false
+      const exists = dbArr.some((x) => x.id === r.id)
+      if (!exists && !(r.createdBy === user.username && r.status === 'pending')) return false
+    }
+    return true
+  }
+
+  /** 按绑定门店过滤共享数据（developer/public 返回全量） */
+  function scopeUserData(db, user) {
+    if (!user || user.role === 'developer' || user.role === 'public') {
+      return {
+        entries: db.entries || {},
+        staff: db.staff || [],
+        removedStaff: db.removedStaff || [],
+        analysis: db.analysis || {},
+        productImages: db.productImages || {},
+        stores: db.stores || [],
+        schedules: db.schedules || {},
+        products: db.products || [],
+        inventoryRequests: db.inventoryRequests || [],
+        inventory: db.inventory || [],
+      }
+    }
+    const allowed = new Set(boundStores(user))
+    const entries = {}
+    for (const [k, v] of Object.entries(db.entries || {})) {
+      const store = k.split('|')[1]
+      if (allowed.has(store)) entries[k] = v
+    }
+    const staff = (db.staff || []).filter((s) => allowed.has(s.storeKey))
+    const schedules = {}
+    for (const [wk, sm] of Object.entries(db.schedules || {})) {
+      const o = {}
+      for (const [k, v] of Object.entries(sm)) if (allowed.has(k)) o[k] = v
+      if (Object.keys(o).length) schedules[wk] = o
+    }
+    const products = (db.products || []).filter((p) => allowed.has(p.storeKey))
+    const inventoryRequests = (db.inventoryRequests || []).filter(
+      (r) => allowed.has(r.storeKey) || (r.type === 'transfer' && allowed.has(r.fromStoreKey)),
+    )
+    const stores = (db.stores || []).filter((s) => allowed.has(s.key))
+    const inventory = (db.inventory || []).filter((row) => allowed.has(row.storeKey))
+    let analysis = {}
+    if (user.role === 'manager') {
+      const src = db.analysis || {}
+      const daily = {}
+      for (const [m, sm] of Object.entries(src.daily || {})) {
+        const o = {}
+        for (const [k, v] of Object.entries(sm)) if (allowed.has(k)) o[k] = v
+        if (Object.keys(o).length) daily[m] = o
+      }
+      const products2 = {}
+      for (const [m, sm] of Object.entries(src.products || {})) {
+        const o = {}
+        for (const [k, v] of Object.entries(sm)) if (allowed.has(k)) o[k] = v
+        if (Object.keys(o).length) products2[m] = o
+      }
+      const employeeMonthly = {}
+      for (const [m, rows] of Object.entries(src.employeeMonthly || {})) {
+        const f = (Array.isArray(rows) ? rows : []).filter((r) => allowed.has(r.storeKey))
+        if (f.length) employeeMonthly[m] = f
+      }
+      analysis = { ...src, daily, products: products2, employeeMonthly }
+    }
+    return {
+      entries,
+      staff,
+      removedStaff: db.removedStaff || [],
+      analysis,
+      productImages: db.productImages || {},
+      stores,
+      schedules,
+      products,
+      inventoryRequests,
+      inventory,
+    }
+  }
+
+  function normalizeStoreKeys(raw) {
+    if (raw === undefined || raw === null) return null
+    if (!Array.isArray(raw) || raw.length > 50) return null
+    const seen = new Set()
+    const out = []
+    for (const k of raw) {
+      const key = String(k || '').trim()
+      if (!key || key.length > 30 || seen.has(key)) return null
+      seen.add(key)
+      out.push(key)
+    }
+    return out
+  }
+
   app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
@@ -278,6 +417,7 @@ export function createApp() {
       id: crypto.randomUUID(),
       username,
       role: db.users.length === 0 ? 'developer' : 'store',
+      storeKeys: [],
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -291,15 +431,19 @@ export function createApp() {
   app.post('/api/admin/users', requireAuth, requireDeveloper, async (req, res) => {
     const username = String(req.body.username || '').trim()
     const password = String(req.body.password || '')
-    const role = String(req.body.role || 'store')
+    const role = String(req.body.role || 'staff')
     if (username.length < 2 || username.length > 20) {
       return res.status(400).json({ error: '用户名需为 2-20 个字符' })
     }
     if (password.length < 6) {
       return res.status(400).json({ error: '密码至少 6 位' })
     }
-    if (!['developer', 'store', 'public'].includes(role)) {
+    if (!ROLES.includes(role)) {
       return res.status(400).json({ error: '角色不正确' })
+    }
+    const storeKeys = req.body.storeKeys === undefined ? [] : normalizeStoreKeys(req.body.storeKeys)
+    if (storeKeys === null) {
+      return res.status(400).json({ error: 'storeKeys 格式错误' })
     }
     const db = await loadDb()
     if (db.users.some((u) => u.username === username)) {
@@ -309,6 +453,7 @@ export function createApp() {
       id: crypto.randomUUID(),
       username,
       role,
+      storeKeys,
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -432,8 +577,15 @@ export function createApp() {
 
   app.put('/api/admin/users/:id/role', requireAuth, requireDeveloper, async (req, res) => {
     const role = String(req.body.role || '')
-    if (!['developer', 'store', 'public'].includes(role)) {
+    if (!ROLES.includes(role)) {
       return res.status(400).json({ error: '角色不正确' })
+    }
+    let storeKeys = null
+    if (req.body.storeKeys !== undefined) {
+      storeKeys = normalizeStoreKeys(req.body.storeKeys)
+      if (storeKeys === null) {
+        return res.status(400).json({ error: 'storeKeys 格式错误' })
+      }
     }
     const db = await loadDb()
     const target = db.users.find((u) => u.id === req.params.id)
@@ -446,6 +598,7 @@ export function createApp() {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
     target.role = role
+    if (storeKeys !== null) target.storeKeys = storeKeys
     await persist()
     res.json({ user: userPublic(target) })
   })
@@ -480,10 +633,7 @@ export function createApp() {
   })
 
   // ---------- 自定义门店（仅追加，门店运营/开发者可用；不能改名/删除） ----------
-  app.post('/api/stores', requireAuth, async (req, res) => {
-    if (req.user.role === 'public') {
-      return res.status(403).json({ error: '无权限' })
-    }
+  app.post('/api/stores', requireAuth, requireDeveloper, async (req, res) => {
     const name = String(req.body.name || '').trim()
     const district =
       req.body.district === undefined || req.body.district === null
@@ -503,40 +653,118 @@ export function createApp() {
     res.json({ store })
   })
 
+  // ---------- 调货状态机：发货（调出门店 manager） / 确认收货（调入门店 manager） ----------
+  app.post('/api/inventory/requests/:id/ship', requireAuth, requireManager, async (req, res) => {
+    const db = await loadDb()
+    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
+    if (!r) return res.status(404).json({ error: '申请不存在' })
+    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可发货' })
+    if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可发货' })
+    if (!canManageStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
+    const at = new Date().toISOString()
+    r.status = 'in_transit'
+    r.updatedAt = at
+    r.history = [
+      ...(Array.isArray(r.history) ? r.history : []),
+      { action: '审核通过并确认发货', status: 'in_transit', operator: req.user.username, at, note: '' },
+    ]
+    await persist()
+    res.json({ ok: true, request: r })
+  })
+
+  app.post('/api/inventory/requests/:id/receive', requireAuth, requireManager, async (req, res) => {
+    const db = await loadDb()
+    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
+    if (!r) return res.status(404).json({ error: '申请不存在' })
+    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可确认收货' })
+    if (r.status !== 'in_transit') return res.status(400).json({ error: '当前状态不可收货' })
+    if (!canManageStore(req.user, r.storeKey)) return res.status(403).json({ error: '无权限' })
+    const at = new Date().toISOString()
+    r.status = 'completed'
+    r.updatedAt = at
+    r.history = [
+      ...(Array.isArray(r.history) ? r.history : []),
+      { action: '确认收货', status: 'completed', operator: req.user.username, at, note: '' },
+    ]
+    await persist()
+    res.json({ ok: true, request: r })
+  })
+
+  app.post('/api/inventory/requests/:id/reject', requireAuth, requireManager, async (req, res) => {
+    const db = await loadDb()
+    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
+    if (!r) return res.status(404).json({ error: '申请不存在' })
+    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可驳回' })
+    if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可驳回' })
+    if (!canManageStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
+    const at = new Date().toISOString()
+    r.status = 'rejected'
+    r.updatedAt = at
+    r.history = [
+      ...(Array.isArray(r.history) ? r.history : []),
+      {
+        action: '驳回申请',
+        status: 'rejected',
+        operator: req.user.username,
+        at,
+        note: String(req.body.note || '').trim().slice(0, 100),
+      },
+    ]
+    await persist()
+    res.json({ ok: true, request: r })
+  })
+
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json({
-      entries: db.entries,
-      staff: db.staff,
-      removedStaff: db.removedStaff || [],
-      analysis: db.analysis || {},
-      productImages: db.productImages || {},
-      stores: db.stores || [],
-      schedules: db.schedules || {},
-      products: db.products || [],
-      inventoryRequests: db.inventoryRequests || [],
-      inventory: db.inventory || [],
-    })
+    res.json(scopeUserData(db, req.user))
   })
 
   // ---------- 共享数据：整体保存 ----------
   app.put('/api/userdata', requireAuth, async (req, res) => {
     const body = req.body || {}
     const db = await loadDb()
+    if (req.user.role === 'public') {
+      return res.status(403).json({ error: '无权限' })
+    }
+    const allowed = new Set(boundStores(req.user))
+    const isDeveloper = req.user.role === 'developer'
+    const isManager = req.user.role === 'manager'
+
     if (body.entries !== undefined) {
       if (typeof body.entries !== 'object' || Array.isArray(body.entries)) {
         return res.status(400).json({ error: 'entries 格式错误' })
       }
-      db.entries = body.entries
+      if (isDeveloper) {
+        db.entries = body.entries
+      } else {
+        for (const k of Object.keys(body.entries)) {
+          if (!allowed.has(k.split('|')[1])) return res.status(403).json({ error: '无权限' })
+        }
+        const next = { ...(db.entries || {}) }
+        for (const k of Object.keys(next)) {
+          if (allowed.has(k.split('|')[1]) && !(k in body.entries)) delete next[k]
+        }
+        for (const [k, v] of Object.entries(body.entries)) next[k] = v
+        db.entries = next
+      }
     }
     if (body.staff !== undefined) {
       const staffChanged = JSON.stringify(body.staff) !== JSON.stringify(db.staff || [])
-      if (staffChanged && req.user.role !== 'developer') {
+      if (staffChanged && req.user.role === 'staff') {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.staff)) return res.status(400).json({ error: 'staff 格式错误' })
-      db.staff = body.staff
+      if (isManager) {
+        for (const s of body.staff) {
+          if (!allowed.has(s && s.storeKey)) return res.status(403).json({ error: '无权限' })
+        }
+        const out = (db.staff || []).filter((s) => !allowed.has(s.storeKey))
+        const inItems = body.staff.filter((s) => allowed.has(s.storeKey))
+        db.staff = [...out, ...inItems]
+      } else if (isDeveloper) {
+        db.staff = body.staff
+      }
     }
     if (body.removedStaff !== undefined) {
       const removedChanged = JSON.stringify(body.removedStaff) !== JSON.stringify(db.removedStaff || [])
@@ -587,63 +815,104 @@ export function createApp() {
     }
     if (body.schedules !== undefined) {
       const schedulesChanged = JSON.stringify(body.schedules) !== JSON.stringify(db.schedules || {})
-      if (schedulesChanged && req.user.role === 'public') {
-        return res.status(403).json({ error: '无权限' })
-      }
       const normalized = normalizeSchedules(body.schedules)
       if (!normalized) {
         return res.status(400).json({ error: 'schedules 格式错误' })
       }
-      db.schedules = normalized
+      if (isDeveloper) {
+        db.schedules = normalized
+      } else {
+        const next = structuredClone(db.schedules || {})
+        for (const [wk, sm] of Object.entries(normalized)) {
+          for (const k of Object.keys(sm)) {
+            if (!allowed.has(k)) return res.status(403).json({ error: '无权限' })
+          }
+        }
+        for (const [wk, sm] of Object.entries(next)) {
+          const bodyWk = normalized[wk]
+          for (const k of Object.keys(sm)) {
+            if (allowed.has(k)) {
+              if (bodyWk && k in bodyWk) sm[k] = bodyWk[k]
+              else delete sm[k]
+            }
+          }
+          if (bodyWk) {
+            for (const [k, v] of Object.entries(bodyWk)) sm[k] = v
+          }
+          if (Object.keys(sm).length === 0) delete next[wk]
+        }
+        // 全新周（db 中不存在）
+        for (const [wk, sm] of Object.entries(normalized)) {
+          if (!(wk in next)) {
+            const o = {}
+            for (const [k, v] of Object.entries(sm)) o[k] = v
+            next[wk] = o
+          }
+        }
+        db.schedules = next
+      }
     }
     if (body.products !== undefined) {
       const productsChanged = JSON.stringify(body.products) !== JSON.stringify(db.products || [])
-      if (productsChanged && req.user.role === 'public') {
+      if (productsChanged && req.user.role === 'staff') {
         return res.status(403).json({ error: '无权限' })
       }
       const normalized = normalizeProducts(body.products)
       if (!normalized) {
         return res.status(400).json({ error: 'products 格式错误' })
       }
-      db.products = normalized
+      if (isDeveloper) {
+        db.products = normalized
+      } else if (isManager) {
+        for (const p of normalized) {
+          if (!allowed.has(p.storeKey)) return res.status(403).json({ error: '无权限' })
+        }
+        const out = (db.products || []).filter((p) => !allowed.has(p.storeKey))
+        const inItems = normalized.filter((p) => allowed.has(p.storeKey))
+        db.products = [...out, ...inItems]
+      }
     }
     if (body.inventoryRequests !== undefined) {
       const requestsChanged = JSON.stringify(body.inventoryRequests) !== JSON.stringify(db.inventoryRequests || [])
-      if (requestsChanged && req.user.role === 'public') {
+      if (requestsChanged && !scopeInventoryRequests(body.inventoryRequests, db.inventoryRequests || [], req.user)) {
         return res.status(403).json({ error: '无权限' })
       }
       const normalized = normalizeInventoryRequests(body.inventoryRequests)
       if (!normalized) {
         return res.status(400).json({ error: 'inventoryRequests 格式错误' })
       }
-      db.inventoryRequests = normalized
+      if (isDeveloper) {
+        db.inventoryRequests = normalized
+      } else {
+        const inScope = (r) => allowed.has(r.storeKey) || (r.type === 'transfer' && allowed.has(r.fromStoreKey))
+        const out = (db.inventoryRequests || []).filter((r) => !inScope(r))
+        db.inventoryRequests = [...out, ...normalized.filter((r) => inScope(r))]
+      }
     }
     if (body.inventory !== undefined) {
       const inventoryChanged = JSON.stringify(body.inventory) !== JSON.stringify(db.inventory || [])
-      if (inventoryChanged && req.user.role === 'public') {
+      if (inventoryChanged && req.user.role === 'staff') {
         return res.status(403).json({ error: '无权限' })
       }
       const normalized = normalizeInventory(body.inventory)
       if (!normalized) return res.status(400).json({ error: 'inventory 格式错误' })
-      db.inventory = normalized
+      if (isDeveloper) {
+        db.inventory = normalized
+      } else if (isManager) {
+        for (const row of normalized) {
+          if (!allowed.has(row.storeKey)) return res.status(403).json({ error: '无权限' })
+        }
+        const out = (db.inventory || []).filter((row) => !allowed.has(row.storeKey))
+        const inItems = normalized.filter((row) => allowed.has(row.storeKey))
+        db.inventory = [...out, ...inItems]
+      }
     }
     await persist()
-    res.json({
-      ok: true,
-      entries: db.entries,
-      staff: db.staff,
-      removedStaff: db.removedStaff || [],
-      productImages: db.productImages || {},
-      stores: db.stores || [],
-      schedules: db.schedules || {},
-      products: db.products || [],
-      inventoryRequests: db.inventoryRequests || [],
-      inventory: db.inventory || [],
-    })
+    res.json({ ok: true, ...scopeUserData(db, req.user) })
   })
 
   // ---------- 数据分析：上传报表并解析 ----------
-  app.post('/api/analysis/upload', requireAuth, requireOperational, async (req, res) => {
+  app.post('/api/analysis/upload', requireAuth, requireManager, async (req, res) => {
     const body = req.body || {}
     const name = String(body.name || '')
     const raw = String(body.base64 || '').replace(/^data:[^;]+;base64,/, '')
@@ -686,7 +955,7 @@ export function createApp() {
     res.json({ ok: true, summary })
   })
 
-  app.delete('/api/analysis', requireAuth, requireOperational, async (req, res) => {
+  app.delete('/api/analysis', requireAuth, requireManager, async (req, res) => {
     const db = await loadDb()
     db.analysis = {}
     await persist()

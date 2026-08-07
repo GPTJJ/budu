@@ -14,8 +14,9 @@ import {
   XCircle,
 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
-import { getInventory, getInventoryRequests, commitInventoryRequests, commitInventoryState } from '../utils/userData'
-import { TRANSFER_STATUS_LABEL, transitionInventoryRequest } from '../utils/inventory'
+import { getInventoryRequests, commitInventoryRequests, loadUserData } from '../utils/userData'
+import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
+import { api } from '../utils/api'
 import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
 import InventoryListModal from './InventoryListModal'
 import InventoryStockPanel from './InventoryStockPanel'
@@ -150,7 +151,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setVersion((v) => v + 1)
   }
 
-  const runTransferAction = (request, action) => {
+  const runTransferAction = async (request, action) => {
     const confirmText = action === 'ship'
       ? '确认库存无误，并审核通过该申请、安排发货吗？'
       : action === 'receive'
@@ -160,15 +161,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     const note = action === 'reject' ? window.prompt(t('请输入驳回原因（选填）')) || '' : ''
     setError('')
     try {
-      const result = transitionInventoryRequest({
-        requests: getInventoryRequests(),
-        inventory: getInventory(),
-        id: request.id,
-        action,
-        actor: currentUser,
-        note,
+      const path = action === 'ship' ? 'ship' : action === 'receive' ? 'receive' : 'reject'
+      await api(`/inventory/requests/${request.id}/${path}`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
       })
-      commitInventoryState(result.inventory, result.requests)
+      await loadUserData()
       setVersion((value) => value + 1)
       setSavedTip(t(action === 'ship' ? '已确认发货，调出门店库存已扣减' : action === 'receive' ? '已确认收货，调入门店库存已增加' : '申请已驳回'))
       setTimeout(() => setSavedTip(''), 2400)
@@ -227,6 +225,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   }
 
   const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
+
+  const canShip = (r) =>
+    isDeveloper ||
+    (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.fromStoreKey))
+  const canReceive = (r) =>
+    isDeveloper || (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.storeKey))
+  const canReject = canShip
 
   const addItem = () => {
     setError('')
@@ -669,7 +674,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   <FileDown className="h-3.5 w-3.5" />
                   {t('货品清单')}
                 </button>
-                {isDeveloper && isTransfer && r.status === 'pending' && (
+                {isTransfer && r.status === 'pending' && canShip(r) && (
                   <>
                     <button
                       onClick={() => runTransferAction(r, 'reject')}
@@ -687,7 +692,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     </button>
                   </>
                 )}
-                {isDeveloper && isTransfer && r.status === 'in_transit' && (
+                {isTransfer && r.status === 'in_transit' && canReceive(r) && (
                   <button
                     onClick={() => runTransferAction(r, 'receive')}
                     className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-100"
@@ -696,7 +701,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     {t('确认收货')}
                   </button>
                 )}
-                {isDeveloper && !isTransfer && r.status !== 'done' && (
+                {!isTransfer && isDeveloper && r.status !== 'done' && (
                   <button
                     onClick={() => setStatus(r, 'done')}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-emerald-500 transition hover:bg-emerald-50"
@@ -705,7 +710,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     {t('标记已处理')}
                   </button>
                 )}
-                {isDeveloper && !isTransfer && r.status === 'done' && (
+                {!isTransfer && isDeveloper && r.status === 'done' && (
                   <button
                     onClick={() => setStatus(r, 'pending')}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"

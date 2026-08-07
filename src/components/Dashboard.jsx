@@ -39,6 +39,8 @@ const pageTitles = {
 
 export default function Dashboard({ user, onLogout, onUserChange }) {
   const { lang, t } = useI18n()
+  const needsBinding =
+    user && user.role !== 'developer' && user.role !== 'public' && (!user.storeKeys || user.storeKeys.length === 0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [month, setMonth] = useState(() => {
     const d = new Date()
@@ -63,6 +65,26 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const openProduct = (name) => {
     setSelectedProduct(name)
     setView('product-catalog')
+  }
+
+  if (needsBinding) {
+    return (
+      <div className="grid min-h-[70vh] place-items-center px-4">
+        <div className="card w-full max-w-md p-8 text-center">
+          <p className="text-4xl">🏬</p>
+          <h2 className="mt-4 text-lg font-bold text-slate-800">{t('账号尚未绑定门店')}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            {t('请联系开发者为你绑定门店后再使用；绑定后即可查看和操作本店数据')}
+          </p>
+          <button
+            onClick={onLogout}
+            className="mt-6 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+          >
+            {t('退出登录')}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const handleNavigate = (nextView) => {

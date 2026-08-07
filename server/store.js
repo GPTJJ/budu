@@ -83,10 +83,12 @@ export async function loadDb() {
   if (!db) db = structuredClone(DEFAULT_DB)
   if (!db.meta || typeof db.meta !== 'object') db.meta = {}
   if (!Array.isArray(db.users)) db.users = []
-  // 三级角色迁移：owner/admin/member -> developer/store/store
+  // 角色迁移：owner/admin/member/store -> developer/manager/staff/manager；旧 store 账号升级为 manager
   for (const u of db.users) {
     if (u.role === 'owner') u.role = 'developer'
-    else if (u.role === 'admin' || u.role === 'member') u.role = 'store'
+    else if (u.role === 'admin' || u.role === 'store') u.role = 'manager'
+    else if (u.role === 'member') u.role = 'staff'
+    if (!Array.isArray(u.storeKeys)) u.storeKeys = []
   }
   // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任
   if (db.users.length > 0 && !db.users.some((u) => u.role === 'developer')) {

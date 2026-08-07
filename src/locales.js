@@ -415,6 +415,23 @@ export const en = {
   '长按图片可保存到相册；也可用浏览器打开': 'Long-press the image to save to Photos, or open it in the browser',
   '用浏览器打开': 'Open in Browser',
   '提示音': 'Alert Sound',
+  '店员': 'Staff',
+  '店长·区域负责人': 'Store Manager / Region Head',
+  '绑定门店': 'Bind Stores',
+  '绑定门店：{name}': 'Bind stores for {name}',
+  '已绑定 {count} 家门店': '{count} stores bound',
+  '未绑定门店': 'No store bound',
+  '暂无门店，请先在系统设置新增门店': 'No stores yet; add one in Settings first',
+  '账号尚未绑定门店': 'Account has no store bound',
+  '请联系开发者为你绑定门店后再使用；绑定后即可查看和操作本店数据':
+    'Contact the developer to bind your store before using; you will then see and operate your own store data',
+  '待审核': 'Pending Review',
+  '已发货': 'Shipped',
+  '已收货': 'Received',
+  '发货': 'Ship',
+  '确认收货': 'Confirm Receipt',
+  '已发货 ✓': 'Shipped ✓',
+  '已收货 ✓': 'Received ✓',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

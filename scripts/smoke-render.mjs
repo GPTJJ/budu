@@ -31,6 +31,15 @@ try {
       ['账号管理', '新增账号'],
     ],
     [
+      'Dashboard unbound store account',
+      await render('/src/components/Dashboard.jsx', {
+        user: { username: 'staff1', role: 'staff', storeKeys: [] },
+        onLogout: () => {},
+        onUserChange: () => {},
+      }),
+      ['账号尚未绑定门店'],
+    ],
+    [
       'InventoryRequestPage',
       await render('/src/components/InventoryRequestPage.jsx', {
         type: 'transfer',

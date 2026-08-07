@@ -50,7 +50,9 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const visibleMenus =
     user?.role === 'public'
       ? menus.filter((m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product')
-      : menus
+      : user?.role === 'staff'
+        ? menus.filter((m) => ['overview', 'store', 'inventory', 'settings'].includes(m.key))
+        : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))
