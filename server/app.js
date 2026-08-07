@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { loadDb, persist } from './store.js'
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
+import { v2Router } from './v2.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -400,6 +401,7 @@ export function createApp() {
   }
 
   app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
+  app.use('/api/v2', requireAuth, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

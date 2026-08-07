@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Store {
+  key          String           @id
+  name         String           @unique
+  district     String           @default("")
+  createdAt    DateTime         @default(now())
+  staff        Staff[]
+  entries      DailyEntry[]
+  stock        StockBalance[]
+  ledger       StockLedger[]
+  transferOut  TransferRequest[] @relation("TransferFrom")
+  transferIn   TransferRequest[] @relation("TransferTo")
+  purchases    PurchaseRequest[]
+}
+
+model User {
+  id           String   @id
+  username     String   @unique
+  passwordHash String
+  role         String   @default("staff")
+  avatar       String   @default("")
+  createdAt    DateTime @default(now())
+}
+
+model Staff {
+  id       String @id
+  name     String
+  type     String @default("fulltime")
+  storeKey String
+  salary   Float  @default(0)
+  store    Store  @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([storeKey])
+}
+
+model DailyEntry {
+  id         String   @id
+  storeKey   String
+  date       DateTime @db.Date
+  incCents   BigInt   @default(0)
+  ord        Int      @default(0)
+  staffNames Json     @default("[]")
+  version    Int      @default(1)
+  updatedBy  String   @default("")
+  updatedAt  DateTime @default(now()) @updatedAt
+  store      Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@unique([storeKey, date])
+}
+
+model InventoryItem {
+  id             String          @id
+  name           String          @unique
+  unit           String          @default("")
+  spec           String          @default("")
+  barcode        String          @default("")
+  category       String          @default("product")
+  createdAt      DateTime        @default(now())
+  balances       StockBalance[]
+  ledger         StockLedger[]
+  transferItems  TransferItem[]
+  purchaseItems  PurchaseItem[]
+}
+
+model StockBalance {
+  id        String   @id
+  storeKey  String
+  itemId    String
+  quantity  Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt
+  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([storeKey, itemId])
+}
+
+model StockLedger {
+  id        String   @id
+  storeKey  String
+  itemId    String
+  change    Int
+  balance   Int
+  type      String
+  refId     String   @default("")
+  note      String   @default("")
+  operator  String   @default("")
+  createdAt DateTime @default(now())
+  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([storeKey, itemId, createdAt])
+}
+
+model TransferRequest {
+  id           String         @id
+  fromStoreKey String
+  toStoreKey   String
+  status       String         @default("pending")
+  note         String         @default("")
+  createdBy    String         @default("")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now())
+  items        TransferItem[]
+  fromStore    Store          @relation("TransferFrom", fields: [fromStoreKey], references: [key])
+  toStore      Store          @relation("TransferTo", fields: [toStoreKey], references: [key])
+
+  @@index([fromStoreKey, status])
+  @@index([toStoreKey, status])
+}
+
+model TransferItem {
+  id        String          @id
+  requestId String
+  itemId    String
+  quantity  Int
+  note      String          @default("")
+  request   TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item      InventoryItem   @relation(fields: [itemId], references: [id])
+}
+
+model PurchaseRequest {
+  id         String          @id
+  storeKey   String
+  status     String          @default("pending")
+  supplier   String          @default("")
+  expectedAt DateTime?
+  note       String          @default("")
+  createdBy  String          @default("")
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @default(now())
+  items      PurchaseItem[]
+  store      Store           @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([storeKey, status])
+}
+
+model PurchaseItem {
+  id          String          @id
+  requestId   String
+  itemId      String
+  orderedQty  Int
+  receivedQty Int             @default(0)
+  note        String          @default("")
+  request     PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item        InventoryItem   @relation(fields: [itemId], references: [id])
+}

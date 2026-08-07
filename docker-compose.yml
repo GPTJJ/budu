@@ -1,10 +1,28 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-budu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-budu_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-budu}
+    volumes:
+      - budu_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budu} -d ${POSTGRES_DB:-budu}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
     image: budu-api:latest
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env.production
     volumes:
@@ -31,3 +49,4 @@ services:
 volumes:
   budu_data:
   nginx_logs:
+  budu_pgdata:
