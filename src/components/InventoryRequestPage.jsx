@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, Check, ChevronDown, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
-import { PRODUCT_CATEGORIES, classifyProduct } from '../utils/productCategories'
+import { PRODUCT_CATEGORIES, NO_CANDY_NAMES, classifyProduct } from '../utils/productCategories'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -40,6 +40,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const productNames = [...new Set(products(month, 'all').map((p) => p.name))].slice(0, 100)
   const filteredProducts = productNames.filter((n) => classifyProduct(n) === productCategory)
+  const categoryProducts =
+    productCategory === '散糖' ? [...new Set([...NO_CANDY_NAMES, ...filteredProducts])] : filteredProducts
   const requests = getInventoryRequests().filter((r) => r.type === type)
   const isDeveloper = currentUser?.role === 'developer'
 
@@ -319,8 +321,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
                       {/* 该分类下的产品 */}
                       <div className="mt-2 max-h-52 overflow-y-auto">
-                        {filteredProducts.length > 0 ? (
-                          filteredProducts.map((n) => (
+                        {categoryProducts.length > 0 ? (
+                          categoryProducts.map((n) => (
                             <button
                               key={n}
                               onClick={() => {
