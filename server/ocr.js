@@ -81,7 +81,8 @@ export async function extractInvoiceFromBase64(imageBase64) {
   try {
     resp = await client.VatInvoiceOCR({ ImageBase64: raw })
   } catch (err) {
-    const e = new Error(`发票识别失败：${err.message || '腾讯云 OCR 调用异常'}`)
+    const code = err && err.code ? `（${err.code}）` : ''
+    const e = new Error(`发票识别失败${code}：${(err && err.message) || '腾讯云 OCR 调用异常'}`)
     e.status = 502
     throw e
   }
