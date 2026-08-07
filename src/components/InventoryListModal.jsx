@@ -15,6 +15,7 @@ export default function InventoryListModal({ request, onClose }) {
   const { t } = useI18n()
   const cardRef = useRef(null)
   const [busy, setBusy] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState(null)
   const isTransfer = request.type === 'transfer'
   const items = request.items || []
   const storeLabel = (key, name) => name || allStores().find((s) => s.key === key)?.name || key
@@ -25,9 +26,31 @@ export default function InventoryListModal({ request, onClose }) {
     setBusy(true)
     try {
       const dataUrl = await toPng(cardRef.current, { pixelRatio: 2, cacheBust: true })
+      const fileName = `${t('货品清单')}-${(request.createdAt || new Date().toISOString()).slice(0, 10)}.png`
+      const isTouch =
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1
+
+      if (isTouch) {
+        // 移动端：优先调起系统分享（可“存储图像”或发微信）
+        try {
+          const blob = await (await fetch(dataUrl)).blob()
+          const file = new File([blob], fileName, { type: 'image/png' })
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: t('货品清单') })
+            return
+          }
+        } catch {
+          /* 用户取消或系统不支持，继续走长按保存 */
+        }
+        // 兜底：弹出图片，长按保存到相册
+        setPreviewUrl(dataUrl)
+        return
+      }
+
+      // 桌面端：直接下载
       const a = document.createElement('a')
       a.href = dataUrl
-      a.download = `${t('货品清单')}-${(request.createdAt || new Date().toISOString()).slice(0, 10)}.png`
+      a.download = fileName
       a.click()
     } catch {
       /* 截图失败时提示用户手动截图 */
@@ -37,7 +60,8 @@ export default function InventoryListModal({ request, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+    <>
+      <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         {/* 可下载的清单卡片 */}
@@ -112,6 +136,39 @@ export default function InventoryListModal({ request, onClose }) {
           </button>
         </div>
       </div>
-    </div>
+      </div>
+
+      {/* 移动端长按保存预览 */}
+      {previewUrl && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/85 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white p-4 shadow-2xl">
+            <img src={previewUrl} alt={t('货品清单')} className="w-full rounded-2xl" />
+            <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+              {t('长按图片可保存到相册；也可用浏览器打开')}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => {
+                  const a = document.createElement('a')
+                  a.href = previewUrl
+                  a.target = '_blank'
+                  a.rel = 'noopener'
+                  a.click()
+                }}
+                className="flex-1 rounded-xl bg-budu-50 px-4 py-2.5 text-sm font-semibold text-budu-600 transition hover:bg-budu-100"
+              >
+                {t('用浏览器打开')}
+              </button>
+              <button
+                onClick={() => setPreviewUrl(null)}
+                className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+              >
+                {t('关闭')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
