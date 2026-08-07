@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { ArrowLeft, Check, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
-import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
+import { getInventoryRequests, commitInventoryRequests, getStores, commitStores } from '../utils/userData'
+import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -18,6 +19,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   })
   const [picker, setPicker] = useState({ productName: '', quantity: '', note: '' })
   const [picked, setPicked] = useState([])
+  const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
+  const [customName, setCustomName] = useState('')
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
@@ -31,6 +34,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
+      return
+    }
+    if (form.fromStoreKey === '__custom__' || form.storeKey === '__custom__') {
+      setError(t('请先完成自定义门店添加'))
       return
     }
     if (picked.length === 0) {
@@ -69,6 +76,31 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   }
 
   const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
+
+  const addCustomStore = async (side) => {
+    setError('')
+    const name = customName.trim()
+    if (!name) {
+      setError(t('请输入门店名称'))
+      return
+    }
+    if (allStores().some((s) => s.name === name)) {
+      setError(t('该门店已存在'))
+      return
+    }
+    try {
+      const data = await api('/stores', { method: 'POST', body: JSON.stringify({ name }) })
+      commitStores([...getStores(), data.store])
+      setVersion((v) => v + 1)
+      setForm((s) => ({ ...s, [side]: data.store.key }))
+      setCustomSide(null)
+      setCustomName('')
+      setSavedTip(t('已添加门店：{name}', { name: data.store.name }))
+      setTimeout(() => setSavedTip(''), 1800)
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
 
   const addItem = () => {
     setError('')
@@ -131,7 +163,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('调出门店')}</span>
               <select
                 value={form.fromStoreKey}
-                onChange={(e) => setForm((s) => ({ ...s, fromStoreKey: e.target.value }))}
+                onChange={(e) => {
+                  setForm((s) => ({ ...s, fromStoreKey: e.target.value }))
+                  setCustomSide(e.target.value === '__custom__' ? 'fromStoreKey' : null)
+                }}
                 className={inputCls}
               >
                 {stores.map((s) => (
@@ -139,7 +174,24 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     {s.name}
                   </option>
                 ))}
+                <option value="__custom__">＋ {t('自定义门店')}</option>
               </select>
+              {customSide === 'fromStoreKey' && (
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder={t('输入新门店名称')}
+                    className={inputCls}
+                  />
+                  <button
+                    onClick={() => addCustomStore('fromStoreKey')}
+                    className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
+                  >
+                    {t('添加门店')}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <div>
@@ -148,7 +200,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             </span>
             <select
               value={form.storeKey}
-              onChange={(e) => setForm((s) => ({ ...s, storeKey: e.target.value }))}
+              onChange={(e) => {
+                setForm((s) => ({ ...s, storeKey: e.target.value }))
+                setCustomSide(e.target.value === '__custom__' ? 'storeKey' : null)
+              }}
               className={inputCls}
             >
               {stores.map((s) => (
@@ -156,7 +211,24 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   {s.name}
                 </option>
               ))}
+              <option value="__custom__">＋ {t('自定义门店')}</option>
             </select>
+            {customSide === 'storeKey' && (
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder={t('输入新门店名称')}
+                  className={inputCls}
+                />
+                <button
+                  onClick={() => addCustomStore('storeKey')}
+                  className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
+                >
+                  {t('添加门店')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

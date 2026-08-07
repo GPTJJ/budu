@@ -420,6 +420,30 @@ export function createApp() {
     res.json({ ok: true })
   })
 
+  // ---------- 自定义门店（仅追加，门店运营/开发者可用；不能改名/删除） ----------
+  app.post('/api/stores', requireAuth, async (req, res) => {
+    if (req.user.role === 'public') {
+      return res.status(403).json({ error: '无权限' })
+    }
+    const name = String(req.body.name || '').trim()
+    const district =
+      req.body.district === undefined || req.body.district === null
+        ? ''
+        : String(req.body.district).trim().slice(0, 50)
+    if (!name || name.length > 30) {
+      return res.status(400).json({ error: '门店名称需为 1-30 个字符' })
+    }
+    const db = await loadDb()
+    const stores = Array.isArray(db.stores) ? db.stores : []
+    if (stores.some((s) => s.name === name)) {
+      return res.status(409).json({ error: '该门店已存在' })
+    }
+    const store = { key: `store-${Date.now().toString(36)}`, name, district }
+    db.stores = [...stores, store]
+    await persist()
+    res.json({ store })
+  })
+
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()

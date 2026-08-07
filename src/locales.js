@@ -345,6 +345,11 @@ export const en = {
   '已添加：{name} × {n}': 'Added: {name} × {n}',
   '请先添加货品': 'Add items first',
   '尚未添加货品，选好产品后点“添加到申请列表”': 'No items yet; pick a product and click "Add to Request List"',
+  '自定义门店': 'Custom Store',
+  '输入新门店名称': 'Enter new store name',
+  '添加门店': 'Add Store',
+  '已添加门店：{name}': 'Store added: {name}',
+  '请先完成自定义门店添加': 'Finish adding the custom store first',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

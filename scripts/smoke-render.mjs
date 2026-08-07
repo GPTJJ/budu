@@ -37,7 +37,7 @@ try {
         currentUser: { username: 'store1', role: 'store' },
         onBack: () => {},
       }),
-      ['申请调货', '提交申请'],
+      ['申请调货', '提交申请', '自定义门店'],
     ],
     [
       'Dashboard',
