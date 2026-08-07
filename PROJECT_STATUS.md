@@ -462,3 +462,6 @@ npx vercel env pull                 # 拉取线上环境变量
   源文件上限放宽至 25MB；服务端 dataURL 校验放宽为任意 image/*；识别失败提示更明确
 - 追加修复：PWA 缓存升级（shell v6）+ 新 Service Worker 接管时自动刷新页面，
   避免手机一直运行旧版导致“图片数据格式不正确”；服务端识别 HEIC 原图并给出针对性提示
+- 根因修复：放宽 dataURL 正则时把捕获组从 2 个减到 1 个，但取值仍用 m[2]（应为 m[1]），
+  导致所有 OCR 上传返回 500 “Cannot read properties of undefined (reading 'replace')”；
+  已改为 m[1] 并上线验证：模拟发票识别 200、浏览器上传流程无报错
