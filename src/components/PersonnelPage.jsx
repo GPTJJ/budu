@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
-import { getWeekDays } from '../utils/schedule'
+import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
   employeeList,
@@ -508,6 +508,11 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
               const periodPerf = onDuty ? status.commission : 0
               const periodRevenue = onDuty ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
+              const periodText = weekStart
+                ? `${Number(weekStart.slice(5, 7))}.${Number(weekStart.slice(8, 10))} - ${Number(weekDays[6].date.slice(5, 7))}.${Number(weekDays[6].date.slice(8, 10))}`
+                : day
+                  ? `${Number(day.slice(0, 2))}.${Number(day.slice(3, 5))}`
+                  : monthLabel(month)
               return (
                 <div
                   key={emp.name}
@@ -562,6 +567,11 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                         {emp.storeName} · {t('出勤 {days} 天', { days: emp.workedDays })}
                       </p>
                     </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
+                    <span className="text-[10px] font-bold text-budu-600">{periodText}</span>
+                    {weekStart && <span className="text-[10px] text-slate-400">{t('第 {n} 周', { n: isoWeek(weekStart) })}</span>}
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
