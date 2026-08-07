@@ -12,9 +12,36 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：本地 `npm run server` 用 JSON 文件存储；Vercel 上自动用 Upstash KV（环境变量驱动）
 
-## 最新进度快照（2026-08-06）
+## 最新进度快照（2026-08-07）
 
-当前远端 HEAD：`6a9507a`（朝外店工时修复），本地与 GitHub 同步，Vercel 已部署。
+当前远端 HEAD：`9a48a5c`（新增 Upstash 只读脚本），本地与 GitHub 同步。
+
+今日已完成：
+1. **架构评审**（用户授权角色：首席架构师，未改业务代码）：输出《架构分析报告》`docs/ARCHITECTURE_ANALYSIS.md` 与《分阶段迁移计划》`docs/MIGRATION_PLAN.md`（P0–P9，约 6–9 周；目标：PostgreSQL+Prisma、RBAC、日志/安全链、Docker/Nginx/HTTPS/腾讯云、GitHub Actions、企业微信预留）
+2. **腾讯云迁移启动（网址优先，P5 前置）**：用户确认“先把网址的问题解决，把 BUDU 迁到腾讯云”
+3. 新增部署全套物料（未改业务逻辑）：
+   - `Dockerfile`（node:22-alpine 多阶段，非 root 运行，含健康检查）
+   - `docker-compose.yml`（api + nginx，持久卷、restart、健康依赖）
+   - `deploy/nginx/`（entrypoint 按 HTTP_ONLY 生成 HTTP/HTTPS 配置；HTTPS 模板含 HSTS、gzip、安全头、/api 反代）
+   - `.env.example`（全部变量注释；预留 DATABASE_URL 与 WECHAT_WORK_*）
+   - `.github/workflows/deploy.yml` + `scripts/deploy-remote.sh`（推送 main → SSH → compose 构建重启 → 健康检查 → 失败自动回滚）
+   - `scripts/backup-kv.mjs`（只读备份，优先用只读令牌，不打印密钥）
+   - `docs/RUNBOOK_TENCENT.md`（开通清单、初始化、首次部署、证书、Secrets、备份恢复、回滚、FAQ）
+4. 本地验证：`npm run build` 通过；服务 `/api/health` 返回 200
+5. 迁移基线备份：`backups/kv-snapshot-20260807063154.json`（3 用户 / 1 员工 / 20 个业绩 key / 1 门店；**含 meta.secret，未提交 git，注意保管**）
+
+决策：
+- 迁移期数据继续用 **Upstash KV**（零数据迁移、可随时 DNS 切回 Vercel）；PostgreSQL 在 P1–P2 再迁
+- 服务器 `JWT_SECRET` 暂留空，自动沿用 KV 中 `meta.secret`，现有登录不失效
+
+待用户提供（拿到即可完成部署）：
+- 正式域名 + 是否已 ICP 备案（决定大陆/香港服务器）
+- 腾讯云服务器公网 IP + SSH 登录方式
+- SSL 证书（腾讯云免费证书或 Let's Encrypt）
+
+## 历史进度快照（2026-08-06）
+
+当时远端 HEAD：`6a9507a`（朝外店工时修复），本地与 GitHub 同步，Vercel 已部署。
 
 今日已完成：
 1. 多设备开发指南（PROJECT_STATUS + DEPLOY，Codespaces / 本地开发两种方式）
@@ -130,6 +157,8 @@ npx vercel env pull                 # 拉取线上环境变量
 ## 部署流水线
 
 改代码 → `git add -A && git commit -m "说明" && git push origin main` → Vercel 自动构建部署（约 1-2 分钟）→ 网址不变 https://budu11.vercel.app
+
+腾讯云迁移期：部署流程 `docs/RUNBOOK_TENCENT.md`；GitHub Actions 推送 main 后自动部署到腾讯云（配置好 Secrets 后生效），DNS 未切换前 Vercel 仍是线上正式环境。
 ## 笔记本 / 多设备继续开发指南
 
 ### 方式一（推荐）：GitHub Codespaces —— 浏览器开发，笔记本零安装

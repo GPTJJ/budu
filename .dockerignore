@@ -1,0 +1,16 @@
+node_modules
+dist
+tools
+server/data
+backups
+docs
+deploy/certs
+_shot
+_inspect*
+.tmp-*
+_tmp*
+.vercel
+.git
+.env*
+!.env.example
+*.local

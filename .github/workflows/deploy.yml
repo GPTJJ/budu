@@ -1,0 +1,41 @@
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - "PROJECT_STATUS.md"
+      - ".tmp-*"
+      - "_inspect*"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-tencent
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 SSH 密钥
+        env:
+          SSH_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+          SSH_HOST: ${{ secrets.TENCENT_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 远程部署（失败自动回滚）
+        env:
+          SSH_HOST: ${{ secrets.TENCENT_HOST }}
+          SSH_USER: ${{ secrets.TENCENT_USER }}
+          APP_DIR: ${{ secrets.TENCENT_APP_DIR }}
+        run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA"

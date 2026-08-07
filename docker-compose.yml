@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: budu-api:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - budu_data:/app/server/data
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      HTTP_ONLY: ${HTTP_ONLY:-0}
+    volumes:
+      - ./deploy/nginx/entrypoint.sh:/docker-entrypoint.d/40-budu-conf.sh:ro
+      - ./deploy/nginx/conf.d:/etc/nginx/budu:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - nginx_logs:/var/log/nginx
+
+volumes:
+  budu_data:
+  nginx_logs:
