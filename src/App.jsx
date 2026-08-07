@@ -77,6 +77,16 @@ export default function App() {
   const isAnalyticsView = view === 'analytics'
   const isProductCatalogView = view === 'product-catalog'
   const isScheduleView = view === 'store-schedule'
+  const pageTitles = {
+    'staff-fulltime': '全职雇员',
+    'staff-parttime': '兼职人员',
+    'store-entry': '门店业绩录入',
+    'store-schedule': '门店排班',
+    'product-catalog': '商品目录',
+    analytics: '数据分析',
+    settings: '系统设置',
+    'account-admin': '账号管理',
+  }
 
   const openProduct = (name) => {
     setSelectedProduct(name)
@@ -120,6 +130,8 @@ export default function App() {
           month={month}
           store={store}
           day={day}
+          title={view === 'overview' ? null : pageTitles[view]}
+          showOverviewTools={view === 'overview'}
           user={user}
           onDaySelect={(m, d) => {
             setMonth(m)
@@ -133,7 +145,7 @@ export default function App() {
           onMenuClick={() => setSidebarOpen(true)}
         />
 
-        <main className="flex-1 space-y-6 px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
+        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-6 px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
           {isStaffView ? (
             <PersonnelPage
               type={view === 'staff-fulltime' ? 'fulltime' : 'parttime'}

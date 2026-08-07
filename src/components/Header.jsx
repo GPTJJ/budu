@@ -8,6 +8,8 @@ export default function Header({
   month,
   store,
   day,
+  title,
+  showOverviewTools = false,
   onDaySelect,
   onMonthChange,
   onStoreChange,
@@ -46,36 +48,42 @@ export default function Header({
           </button>
           <div className="min-w-0">
             <h1 className="truncate text-base font-bold text-slate-800 sm:text-lg lg:text-xl">
-              {t(greetingKey, { name })}
+              {title ? t(title) : t(greetingKey, { name })}
             </h1>
-            <p className="mt-0.5 hidden truncate text-[13px] text-slate-400 sm:block">
-              {t('欢迎回来，今天也要元气满满地经营每一家门店！')}
-            </p>
+            {!title && (
+              <p className="mt-0.5 hidden truncate text-[13px] text-slate-400 sm:block">
+                {t('欢迎回来，今天也要元气满满地经营每一家门店！')}
+              </p>
+            )}
           </div>
         </div>
 
         {/* 右侧工具栏 */}
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:gap-3">
-          {/* 日历选择（月 / 日双模式） */}
-          <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
+          {showOverviewTools && (
+            <>
+              {/* 日历选择（月 / 日双模式） */}
+              <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
 
-          {/* 门店选择 */}
-          <label className="flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover">
-            <MapPin className="h-4 w-4 text-grape-500" />
-            <select
-              value={store}
-              onChange={(e) => onStoreChange(e.target.value)}
-              className="max-w-[120px] cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none sm:max-w-[160px]"
-            >
-              <option value="all">{t('全部门店')}</option>
-              {allStores().map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="h-3.5 w-3.5 text-slate-300" />
-          </label>
+              {/* 门店选择 */}
+              <label className="flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover">
+                <MapPin className="h-4 w-4 text-grape-500" />
+                <select
+                  value={store}
+                  onChange={(e) => onStoreChange(e.target.value)}
+                  className="max-w-[120px] cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none sm:max-w-[160px]"
+                >
+                  <option value="all">{t('全部门店')}</option>
+                  {allStores().map((s) => (
+                    <option key={s.key} value={s.key}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-300" />
+              </label>
+            </>
+          )}
 
           {/* 消息通知 */}
           <button className="relative grid h-11 w-11 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500">
