@@ -56,6 +56,23 @@
   3. 证书就绪后切 HTTPS（HTTP_ONLY=0 + deploy/certs）
 - **待办**：GitHub Actions Secrets（TENCENT_HOST/USER/SSH_KEY/APP_DIR）配置自动部署；
   服务器 SSH 密钥登录未生效（Actions 前需修复或改用密码方案）
+
+## 当前进度存档（2026-08-07 晚）
+
+**已交付功能**：架构分析报告 + 迁移计划（docs/）、腾讯云部署全套物料（Docker/Nginx/GitHub Actions/RUNBOOK）、
+门店排班（按周/按门店/早班晚班通班）、商品目录增删改、首页头部只显示概览工具 + 布局优化；
+全部已推送到 GitHub（当前 main HEAD `61ee63a`），Vercel 线上 https://budu11.vercel.app 保持可用。
+
+**腾讯云服务器**：`124.156.171.195`（香港轻量 2核2G，实例 lhins-gkqyrkst，OpenClaw 龙虾镜像）
+- Docker 29.1.3 + Compose 2.40.3 已装；`/opt/budu` 已部署并运行（api healthy + nginx）
+- 服务器本机 `/api/health` 通过；公网 80/443 未放行（等 API 密钥或用户控制台操作）
+- 登录方式：`ubuntu` + 密码（详见本机 `tools/TENCENT_SERVER_NOTES.txt`，**不提交 git**）
+- 本地工具：`tools/plink.exe`、`pscp.exe`、`budu_deploy` 密钥（tools/ 已 gitignore）
+
+**下一步（阻塞项）**：用户提供腾讯云 API 密钥 → 放行 80/443 → 验证公网 → 域名 DNS/证书/HTTPS →
+GitHub Actions Secrets → 正式切换。
+
+**恢复指令**：新会话先读 `PROJECT_STATUS.md` 与 `docs/RUNBOOK_TENCENT.md`，再继续腾讯云迁移或功能开发。
    - 新文件：`src/components/SchedulePage.jsx`、`src/utils/schedule.js`
    - 测试：`npm run build` 通过；冒烟测试新增 SchedulePage（20 组件 SSR OK）；
      API 自测通过（保存/读取/非法数据 400）；薪酬单测与集成测试全部 OK
