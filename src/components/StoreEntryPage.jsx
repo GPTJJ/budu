@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Building2, CalendarDays, ChevronDown, Save, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarDays, ChevronDown, Pencil, Save, Trash2, Users } from 'lucide-react'
 import { allStores, dailyRows, monthLabel, saveLocalEntry, deleteLocalEntry, localEntries, employeeList } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
@@ -153,6 +153,15 @@ export default function StoreEntryPage({ onBack }) {
     setVersion((v) => v + 1)
   }
 
+  const handleEdit = (r) => {
+    setDate(`${month}-${r.d}`)
+    setInc(String(r.inc))
+    setOrd(String(r.ord))
+    const entry = localEntries()[`${month}|${store}|${r.d}`]
+    setStaff(entry && Array.isArray(entry.staff) ? entry.staff : [])
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   return (
     <div className="space-y-6">
       {/* 页面头部 */}
@@ -301,13 +310,22 @@ export default function StoreEntryPage({ onBack }) {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {r.local && (
-                        <button
-                          onClick={() => handleDelete(r.d)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 transition hover:bg-rose-50 hover:text-rose-500"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          {t('删除')}
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => handleEdit(r)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50 hover:text-budu-600"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            {t('修改')}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(r.d)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 transition hover:bg-rose-50 hover:text-rose-500"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {t('删除')}
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

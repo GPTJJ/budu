@@ -398,6 +398,7 @@ export const en = {
   '暂无新申请通知': 'No new request notifications',
   '调货申请': 'Transfer Request',
   '采购申请': 'Purchase Request',
+  '修改': 'Edit',
   '已处理': 'Processed',
   '标记已处理': 'Mark as Processed',
   '恢复待处理': 'Restore to Pending',
