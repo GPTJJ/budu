@@ -1,5 +1,7 @@
-/** 发票图片 OCR：调用腾讯云「增值税发票识别」提取抬头/税号/金额
+/** 图片文字 OCR：优先「增值税发票识别」，非标准版式自动回退「通用印刷体识别」，
+ *  从照片文字中匹配抬头/税号/金额，并结合系统开票公司字典互相补齐
  *  未配置 TENCENT_OCR_SECRET_ID/KEY 时返回 501，前端可继续手动填写 */
+import { prisma } from './pg.js'
 
 export function ocrConfigured() {
   return Boolean(process.env.TENCENT_OCR_SECRET_ID && process.env.TENCENT_OCR_SECRET_KEY)
@@ -19,6 +21,104 @@ function parseAmount(text) {
     .replace(/[￥¥,\s]/g, '')
     .match(/\d+(\.\d{1,2})?/)
   return m ? Number(m[0]) : null
+}
+
+/** 从通用 OCR 文本中匹配抬头/税号/金额/日期（纯函数，便于测试） */
+export function parseGeneralText(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const joined = lines.join('\n')
+
+  let taxNo = ''
+  const taxPatterns = [
+    /(?:统一社会信用代码|纳税人识别号|税号|信用代码)[:：]?\s*([0-9A-Za-z]{15,20})/i,
+    /(?:^|\n)\s*([0-9A-Z]{18})\s*(?:\n|$)/,
+    /\b([0-9A-Z]{18})\b/,
+  ]
+  for (const p of taxPatterns) {
+    const m = joined.match(p)
+    if (m) {
+      taxNo = m[1].toUpperCase()
+      break
+    }
+  }
+
+  let companyName = ''
+  const namePatterns = [
+    /(?:发票抬头|开票抬头|抬头|公司名称|抬头名称|购买方名称|购买方|单位名称|开票名称)[:：]?\s*([^\n]{2,50})/i,
+  ]
+  for (const p of namePatterns) {
+    const m = joined.match(p)
+    if (m && !/税号|识别号|信用代码/.test(m[1])) {
+      companyName = m[1].replace(/[，。、\s]+$/, '').trim()
+      break
+    }
+  }
+  if (!companyName) {
+    const cand = lines.find(
+      (l) =>
+        l.length >= 4 &&
+        l.length <= 40 &&
+        /(公司|企业|集团|工作室|中心|厂|商行|事务所|经营部)/.test(l) &&
+        !/税号|识别号|信用代码|电话|地址|银行|发票号码/.test(l),
+    )
+    if (cand) companyName = cand.replace(/^(?:开票)?(?:抬头|名称|单位|公司名称)[:：]\s*/, '').trim()
+  }
+  if (!companyName && taxNo) {
+    const idx = lines.findIndex((l) => l.includes(taxNo))
+    if (idx > 0 && lines[idx - 1].length <= 40 && !/税号|识别号|信用代码/.test(lines[idx - 1])) {
+      companyName = lines[idx - 1]
+    }
+  }
+
+  let amountYuan = null
+  const amountPatterns = [
+    /(?:价税合计|合计金额|合计|金额|总计|应收|实收|小写金额)[:：]?[¥￥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
+    /[¥￥]\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/,
+  ]
+  for (const p of amountPatterns) {
+    const m = joined.match(p)
+    if (m) {
+      const v = Number(m[1].replace(/,/g, ''))
+      if (!Number.isNaN(v)) {
+        amountYuan = v
+        break
+      }
+    }
+  }
+
+  let date = ''
+  const dm = joined.match(/(\d{4})[年./-](\d{1,2})[月./-](\d{1,2})日?/)
+  if (dm) date = `${dm[1]}-${dm[2].padStart(2, '0')}-${dm[3].padStart(2, '0')}`
+
+  return {
+    titleType: taxNo || companyName ? 'company' : 'personal',
+    companyName,
+    taxNo,
+    amountYuan,
+    date,
+  }
+}
+
+/** 结合系统开票公司字典：公司名 ↔ 税号 互相补齐 */
+async function matchCompany(extracted) {
+  const out = { ...extracted }
+  try {
+    if (out.companyName && !out.taxNo) {
+      const hit = await prisma.invoiceCompany.findUnique({ where: { name: out.companyName } })
+      if (hit && hit.taxNo) out.taxNo = hit.taxNo
+    }
+    if (!out.companyName && out.taxNo) {
+      const hit = await prisma.invoiceCompany.findFirst({ where: { taxNo: out.taxNo }, take: 1 })
+      if (hit && hit.name) out.companyName = hit.name
+    }
+  } catch {
+    /* 字典查询失败不影响识别结果 */
+  }
+  out.titleType = out.taxNo || out.companyName ? 'company' : 'personal'
+  return out
 }
 
 /** 将腾讯云 VatInvoiceOCR 返回的 Name/Value 数组映射为表单字段（纯函数，便于测试） */
@@ -91,15 +191,37 @@ export async function extractInvoiceFromBase64(imageBase64) {
   try {
     resp = await client.VatInvoiceOCR({ ImageBase64: raw })
   } catch (err) {
-    const code = err && err.code ? `（${err.code}）` : ''
-    const e = new Error(`发票识别失败${code}：${(err && err.message) || '腾讯云 OCR 调用异常'}`)
-    e.status = 502
-    throw e
+    resp = null
   }
   const infos = (resp && (resp.VatInvoiceInfos || resp.vatInvoiceInfos)) || []
-  const extracted = mapVatInfos(infos)
+  let extracted = mapVatInfos(infos)
+  const enough = Boolean(extracted.companyName && extracted.taxNo && extracted.amountYuan != null)
+  if (!enough) {
+    // 非标准发票/收据/对账单照片：回退到通用印刷体识别，再从文字中匹配
+    let general
+    try {
+      general = await client.GeneralBasicOCR({ ImageBase64: raw })
+    } catch (err) {
+      const code = err && err.code ? `（${err.code}）` : ''
+      const e = new Error(`文字识别失败${code}：${(err && err.message) || '腾讯云 OCR 调用异常'}`)
+      e.status = 502
+      throw e
+    }
+    const text = ((general && (general.TextDetections || general.textDetections)) || [])
+      .map((t) => t.DetectedText || t.detectedText || '')
+      .join('\n')
+    const parsed = parseGeneralText(text)
+    extracted = {
+      titleType: extracted.titleType || parsed.titleType,
+      companyName: extracted.companyName || parsed.companyName,
+      taxNo: extracted.taxNo || parsed.taxNo,
+      amountYuan: extracted.amountYuan != null ? extracted.amountYuan : parsed.amountYuan,
+      date: extracted.date || parsed.date,
+    }
+  }
+  extracted = await matchCompany(extracted)
   if (!extracted.companyName && !extracted.taxNo && extracted.amountYuan == null) {
-    const e = new Error('未识别到发票关键信息，请确认图片清晰、发票完整（已自动转 JPG，可重新拍一张）')
+    const e = new Error('未识别到抬头/税号/金额，请确认照片文字清晰完整')
     e.status = 422
     throw e
   }

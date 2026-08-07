@@ -300,9 +300,9 @@ export default function InvoicePage({ currentUser, onBack }) {
             )}
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-slate-700">
-                {ocrBusy ? t('正在识别发票信息…') : t(preview ? '重新选择发票图片' : '从相册选择发票图片')}
+                {ocrBusy ? t('正在识别照片文字…') : t(preview ? '重新选择图片' : '从相册选择图片/发票照片')}
               </span>
-              <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持拍照/相册图片，自动压缩为 JPG 识别；识别后可手动修改')}</span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持发票/收据/对账单等照片，自动匹配抬头税号金额')}</span>
             </span>
           </button>
           <button
