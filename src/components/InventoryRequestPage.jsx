@@ -61,6 +61,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [supplierForm, setSupplierForm] = useState({ name: '', phone: '', contact: '', note: '' })
   const [productMenuOpen, setProductMenuOpen] = useState(false)
   const [productCategory, setProductCategory] = useState(PRODUCT_CATEGORIES[0])
+  const [customProductName, setCustomProductName] = useState('')
   const [listTab, setListTab] = useState('pending') // 'pending' | 'done'
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -507,6 +508,35 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                           </button>
                         ))}
                       </div>
+
+                      {productCategory === '其他' && (
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={customProductName}
+                            onChange={(e) => setCustomProductName(e.target.value)}
+                            placeholder={t('自定义其他内容')}
+                            className={`${inputCls} flex-1`}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && customProductName.trim()) {
+                                setPicker((s) => ({ ...s, productName: customProductName.trim() }))
+                                setCustomProductName('')
+                                setProductMenuOpen(false)
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={() => {
+                              if (!customProductName.trim()) return
+                              setPicker((s) => ({ ...s, productName: customProductName.trim() }))
+                              setCustomProductName('')
+                              setProductMenuOpen(false)
+                            }}
+                            className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
+                          >
+                            {t('使用')}
+                          </button>
+                        </div>
+                      )}
 
                       {/* 该分类下的产品 */}
                       <div className="mt-2 max-h-52 overflow-y-auto">

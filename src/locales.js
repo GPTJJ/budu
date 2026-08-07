@@ -486,6 +486,8 @@ export const en = {
   '预计到货日期': 'Expected Arrival',
   '供应商已添加': 'Supplier added',
   '选择物料': 'Select Material',
+  '自定义其他内容': 'Custom other content',
+  '使用': 'Use',
   '报损': 'Waste',
   '报损数量': 'Waste quantity',
   '报损原因（选填）': 'Waste reason (optional)',
