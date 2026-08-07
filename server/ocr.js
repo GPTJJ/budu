@@ -54,6 +54,7 @@ export async function extractInvoiceFromBase64(imageBase64) {
   let raw = String(imageBase64 || '')
   const m = raw.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i)
   if (m) raw = m[2]
+  console.log('[ocr-debug]', JSON.stringify({ inType: typeof imageBase64, rawType: typeof raw, rawLen: raw ? raw.length : -1, matched: !!m, m2Type: m ? typeof m[2] : null }))
   raw = raw.replace(/\s+/g, '')
   if (!raw || !/^[A-Za-z0-9+/=]+$/.test(raw)) {
     const e = new Error('图片数据无法读取，请重新拍摄或从相册选择')
