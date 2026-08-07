@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Bell, RefreshCw } from 'lucide-react'
-import { getAlerts, subscribe, ensurePolling, markSeen } from '../utils/inventoryAlerts'
+import {
+  getAlerts,
+  subscribe,
+  ensurePolling,
+  markSeen,
+  unlockAudio,
+  isAlertMuted,
+  setAlertMuted,
+} from '../utils/inventoryAlerts'
 import { storeName } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
@@ -8,10 +16,16 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
   const { t } = useI18n()
   const [alerts, setAlerts] = useState(getAlerts())
   const [open, setOpen] = useState(false)
+  const [muted, setMuted] = useState(isAlertMuted())
 
   useEffect(() => {
     ensurePolling(user)
-    return subscribe(setAlerts)
+    const unsub = subscribe(setAlerts)
+    window.addEventListener('pointerdown', unlockAudio, { once: true })
+    return () => {
+      unsub()
+      window.removeEventListener('pointerdown', unlockAudio)
+    }
   }, [user?.username, user?.role])
 
   const isDesktop = variant === 'desktop'
@@ -103,6 +117,29 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
               ) : (
                 <p className="grid place-items-center py-10 text-xs text-slate-300">{t('暂无新申请通知')}</p>
               )}
+            </div>
+
+            {/* 提示音开关 */}
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
+              <span className="text-xs font-medium text-slate-500">{t('提示音')}</span>
+              <button
+                onClick={() => {
+                  const next = !muted
+                  setMuted(next)
+                  setAlertMuted(next)
+                  if (!next) unlockAudio()
+                }}
+                className={`relative h-5 w-9 rounded-full transition-colors ${
+                  muted ? 'bg-slate-200' : 'bg-budu-400'
+                }`}
+                aria-label={t(muted ? '关闭' : '开启')}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                    muted ? 'left-0.5' : 'left-[18px]'
+                  }`}
+                />
+              </button>
             </div>
           </div>
         </>

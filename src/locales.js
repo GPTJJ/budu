@@ -384,6 +384,7 @@ export const en = {
   'budu 甜蜜运营系统 · 货品清单 · 请按清单找货': 'budu OS · Item List · find goods by this list',
   '长按图片可保存到相册；也可用浏览器打开': 'Long-press the image to save to Photos, or open it in the browser',
   '用浏览器打开': 'Open in Browser',
+  '提示音': 'Alert Sound',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

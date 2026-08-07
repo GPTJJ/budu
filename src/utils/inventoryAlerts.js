@@ -2,12 +2,76 @@
 import { loadUserData, getInventoryRequests } from './userData'
 
 const SEEN_KEY = 'budu-inventory-seen-at'
+const MUTED_KEY = 'budu-alert-muted'
 const POLL_MS = 8000
 
 let state = { unread: 0, items: [] }
 let listeners = []
 let timer = null
 let currentUserKey = null
+let initialized = false
+let lastNotifiedId = null
+let audioCtx = null
+
+function muted() {
+  try {
+    return localStorage.getItem(MUTED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** 首次用户点击后解锁音频（浏览器自动播放策略） */
+export function unlockAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    audioCtx = audioCtx || new Ctx()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+  } catch {
+    /* 忽略 */
+  }
+}
+
+export function isAlertMuted() {
+  return muted()
+}
+
+export function setAlertMuted(value) {
+  try {
+    localStorage.setItem(MUTED_KEY, value ? '1' : '0')
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 短提示音（三连音） */
+function playChime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    const ctx = audioCtx || new Ctx()
+    audioCtx = ctx
+    if (ctx.state === 'suspended') ctx.resume()
+    const now = ctx.currentTime
+    ;[880, 1174.66, 1567.98].forEach((freq, i) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const t = now + i * 0.12
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0.0001, t)
+      gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(t)
+      osc.stop(t + 0.55)
+    })
+  } catch {
+    /* 忽略音频异常 */
+  }
+}
 
 function notify() {
   for (const fn of listeners) fn(state)
@@ -25,6 +89,14 @@ function compute() {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   state = { unread: items.length, items }
   notify()
+
+  // 新申请到达时播放提示音（首次加载不响，避免旧申请轰炸）
+  const topId = items[0] ? items[0].id : null
+  if (initialized && topId && topId !== lastNotifiedId && state.unread > 0 && !muted()) {
+    playChime()
+  }
+  lastNotifiedId = topId
+  initialized = true
 }
 
 async function refresh() {
@@ -41,6 +113,8 @@ export function ensurePolling(user) {
   const key = user && user.role === 'developer' ? user.username : null
   if (currentUserKey === key) return
   currentUserKey = key
+  initialized = false
+  lastNotifiedId = null
   if (timer) {
     clearInterval(timer)
     timer = null
