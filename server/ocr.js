@@ -6,11 +6,13 @@ export function ocrConfigured() {
 }
 
 const FIELD_PATTERNS = {
-  companyName: [/发票抬头/i, /购买方名称/i, /购买方信息/i, /购买方/i, /名称/i],
+  companyName: [/发票抬头/i, /购买方名称/i, /购买方信息/i, /购买方纳税人名称/i, /名称/i],
   taxNo: [/购买方识别号/i, /纳税人识别号/i, /购买方税号/i, /税号/i, /统一社会信用代码/i, /信用代码/i],
   amount: [/价税合计\(小写\)/i, /价税合计/i, /合计金额\(小写\)/i, /小写金额/i],
   date: [/开票日期/i],
 }
+
+const NAME_EXCLUDE = [/识别号/i, /税号/i, /号码/i, /账号/i, /开户行/i, /地址/i, /电话/i]
 
 function parseAmount(text) {
   const m = String(text || '')
@@ -22,14 +24,14 @@ function parseAmount(text) {
 /** 将腾讯云 VatInvoiceOCR 返回的 Name/Value 数组映射为表单字段（纯函数，便于测试） */
 export function mapVatInfos(infos) {
   const rows = Array.isArray(infos) ? infos : []
-  const get = (patterns) => {
+  const get = (patterns, exclude = []) => {
     for (const p of patterns) {
-      const hit = rows.find((r) => p.test(String(r.Name || '')))
+      const hit = rows.find((r) => p.test(String(r.Name || '')) && !exclude.some((x) => x.test(String(r.Name || ''))))
       if (hit && String(hit.Value || '').trim()) return String(hit.Value).trim()
     }
     return ''
   }
-  const companyName = get(FIELD_PATTERNS.companyName)
+  const companyName = get(FIELD_PATTERNS.companyName, NAME_EXCLUDE)
   const taxNo = get(FIELD_PATTERNS.taxNo)
   const amountText = get(FIELD_PATTERNS.amount)
   const date = get(FIELD_PATTERNS.date)
