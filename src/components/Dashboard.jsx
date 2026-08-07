@@ -52,10 +52,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
   const [store, setStore] = useState(() => {
-    const list =
-      user?.role === 'developer' || user?.role === 'public'
-        ? allStores()
-        : allStores().filter((s) => (user.storeKeys || []).includes(s.key))
+    if (user?.role === 'developer' || user?.role === 'public') return 'all'
+    const list = allStores().filter((s) => (user.storeKeys || []).includes(s.key))
     return list[0] ? list[0].key : 'all'
   })
   const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看

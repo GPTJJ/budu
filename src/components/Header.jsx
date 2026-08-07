@@ -94,6 +94,9 @@ export default function Header({
                   onChange={(e) => onStoreChange(e.target.value)}
                   className="max-w-[120px] cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none sm:max-w-[160px]"
                 >
+                  {(user?.role === 'developer' || user?.role === 'public') && (
+                    <option value="all">{t('全部门店')}</option>
+                  )}
                   {visibleStores.map((s) => (
                     <option key={s.key} value={s.key}>
                       {s.name}
