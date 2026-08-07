@@ -103,6 +103,13 @@ function normalizeInventoryRequests(raw) {
     if (!['transfer', 'purchase'].includes(type)) return null
     const storeKey = String(r.storeKey ?? '').trim()
     const fromStoreKey = type === 'transfer' ? String(r.fromStoreKey ?? '').trim() : ''
+    const storeName = r.storeName === undefined || r.storeName === null ? '' : String(r.storeName).trim().slice(0, 30)
+    const fromStoreName =
+      type === 'transfer'
+        ? r.fromStoreName === undefined || r.fromStoreName === null
+          ? ''
+          : String(r.fromStoreName).trim().slice(0, 30)
+        : ''
     const note = r.note === undefined || r.note === null ? '' : String(r.note).trim().slice(0, 100)
     if (!storeKey || storeKey.length > 30 || BAD_KEY.test(storeKey)) return null
     if (type === 'transfer' && (!fromStoreKey || fromStoreKey.length > 30 || BAD_KEY.test(fromStoreKey) || fromStoreKey === storeKey)) {
@@ -119,9 +126,10 @@ function normalizeInventoryRequests(raw) {
         const name = String(it.productName ?? '').trim()
         const qty = Number(it.quantity)
         const itNote = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
+        const category = ['product', 'material', 'other'].includes(it.category) ? it.category : 'product'
         if (!name || name.length > 50) return null
         if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
-        const item = { productName: name, quantity: Math.floor(qty) }
+        const item = { category, productName: name, quantity: Math.floor(qty) }
         if (itNote) item.note = itNote
         items.push(item)
       }
@@ -130,7 +138,7 @@ function normalizeInventoryRequests(raw) {
       const qty = Number(r.quantity)
       if (!name || name.length > 50) return null
       if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
-      items = [{ productName: name, quantity: Math.floor(qty) }]
+      items = [{ category: 'product', productName: name, quantity: Math.floor(qty) }]
     }
     const first = items[0]
     out.push({
@@ -138,6 +146,8 @@ function normalizeInventoryRequests(raw) {
       type,
       storeKey,
       ...(type === 'transfer' ? { fromStoreKey } : {}),
+      ...(storeName ? { storeName } : {}),
+      ...(type === 'transfer' && fromStoreName ? { fromStoreName } : {}),
       items,
       productName: first.productName,
       quantity: first.quantity,

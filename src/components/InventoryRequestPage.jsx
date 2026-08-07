@@ -1,12 +1,18 @@
 import { useState } from 'react'
 import { ArrowLeft, Check, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
-import { getInventoryRequests, commitInventoryRequests, getStores, commitStores } from '../utils/userData'
-import { api } from '../utils/api'
+import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
 import { useI18n } from '../i18n'
 
 const inputCls =
   'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+
+const CATEGORY_LABEL = { product: '产品', material: '物料', other: '其他' }
+const CATEGORY_STYLE = {
+  product: 'bg-budu-50 text-budu-600',
+  material: 'bg-emerald-50 text-emerald-600',
+  other: 'bg-slate-100 text-slate-500',
+}
 
 export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const { t } = useI18n()
@@ -15,10 +21,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [form, setForm] = useState({
     fromStoreKey: stores[0] ? stores[0].key : '',
     storeKey: stores[1] ? stores[1].key : stores[0] ? stores[0].key : '',
+    fromStoreName: '',
+    storeName: '',
     note: '',
   })
-  const [picker, setPicker] = useState({ productName: '', quantity: '', note: '' })
+  const [picker, setPicker] = useState({ category: 'product', productName: '', quantity: '', note: '' })
   const [picked, setPicked] = useState([])
+  const [tempStores, setTempStores] = useState([])
   const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
   const [customName, setCustomName] = useState('')
   const [error, setError] = useState('')
@@ -55,6 +64,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         type,
         storeKey: form.storeKey,
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
+        ...(form.storeName ? { storeName: form.storeName } : {}),
+        ...(isTransfer && form.fromStoreName ? { fromStoreName: form.fromStoreName } : {}),
         items: picked,
         note: form.note.trim(),
         status: 'pending',
@@ -77,30 +88,43 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
   const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
 
-  const addCustomStore = async (side) => {
+  const addCustomStore = (side) => {
     setError('')
     const name = customName.trim()
     if (!name) {
       setError(t('请输入门店名称'))
       return
     }
-    if (allStores().some((s) => s.name === name)) {
+    if ([...stores, ...tempStores].some((s) => s.name === name)) {
       setError(t('该门店已存在'))
       return
     }
-    try {
-      const data = await api('/stores', { method: 'POST', body: JSON.stringify({ name }) })
-      commitStores([...getStores(), data.store])
-      setVersion((v) => v + 1)
-      setForm((s) => ({ ...s, [side]: data.store.key }))
-      setCustomSide(null)
-      setCustomName('')
-      setSavedTip(t('已添加门店：{name}', { name: data.store.name }))
-      setTimeout(() => setSavedTip(''), 1800)
-    } catch (err) {
-      setError(t(err.message))
-    }
+    const key = `custom-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const temp = { key, name }
+    setTempStores((list) => [...list, temp])
+    setForm((s) => ({
+      ...s,
+      [side]: key,
+      [side === 'fromStoreKey' ? 'fromStoreName' : 'storeName']: name,
+    }))
+    setCustomSide(null)
+    setCustomName('')
+    setSavedTip(t('已添加门店：{name}', { name }))
+    setTimeout(() => setSavedTip(''), 1800)
   }
+
+  const selectStore = (side, key) => {
+    const temp = tempStores.find((s) => s.key === key)
+    const nameField = side === 'fromStoreKey' ? 'fromStoreName' : 'storeName'
+    setForm((s) => ({
+      ...s,
+      [side]: key,
+      [nameField]: temp ? temp.name : '',
+    }))
+    setCustomSide(key === '__custom__' ? side : null)
+  }
+
+  const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
 
   const addItem = () => {
     setError('')
@@ -116,9 +140,14 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     }
     setPicked((list) => [
       ...list,
-      { productName: name, quantity: Math.floor(qty), note: picker.note.trim() },
+      {
+        category: picker.category,
+        productName: name,
+        quantity: Math.floor(qty),
+        note: picker.note.trim(),
+      },
     ])
-    setPicker({ productName: '', quantity: '', note: '' })
+    setPicker({ category: picker.category, productName: '', quantity: '', note: '' })
     setSavedTip(t('已添加：{name} × {n}', { name, n: Math.floor(qty) }))
     setTimeout(() => setSavedTip(''), 1800)
   }
@@ -163,13 +192,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('调出门店')}</span>
               <select
                 value={form.fromStoreKey}
-                onChange={(e) => {
-                  setForm((s) => ({ ...s, fromStoreKey: e.target.value }))
-                  setCustomSide(e.target.value === '__custom__' ? 'fromStoreKey' : null)
-                }}
+                onChange={(e) => selectStore('fromStoreKey', e.target.value)}
                 className={inputCls}
               >
-                {stores.map((s) => (
+                {[...stores, ...tempStores].map((s) => (
                   <option key={s.key} value={s.key}>
                     {s.name}
                   </option>
@@ -200,13 +226,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             </span>
             <select
               value={form.storeKey}
-              onChange={(e) => {
-                setForm((s) => ({ ...s, storeKey: e.target.value }))
-                setCustomSide(e.target.value === '__custom__' ? 'storeKey' : null)
-              }}
+              onChange={(e) => selectStore('storeKey', e.target.value)}
               className={inputCls}
             >
-              {stores.map((s) => (
+              {[...stores, ...tempStores].map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
                 </option>
@@ -235,19 +258,43 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         {/* 挑选货品：选一个 → 添加到本次申请列表 → 再选下一个 */}
         <div className="mt-5 rounded-2xl bg-slate-50/70 p-4">
           <p className="mb-2 text-xs font-semibold text-slate-500">{t('挑选货品')}</p>
+          <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+            {['product', 'material', 'other'].map((c) => (
+              <button
+                key={c}
+                onClick={() => setPicker((s) => ({ ...s, category: c, productName: '' }))}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+                  picker.category === c
+                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                    : 'bg-white text-slate-500 ring-1 ring-slate-100 hover:text-budu-600'
+                }`}
+              >
+                {t(CATEGORY_LABEL[c])}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={picker.productName}
-              onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
-              className={`${inputCls} min-w-[180px] flex-1`}
-            >
-              <option value="">{t('选择产品')}</option>
-              {productNames.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            {picker.category === 'product' ? (
+              <select
+                value={picker.productName}
+                onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
+                className={`${inputCls} min-w-[180px] flex-1`}
+              >
+                <option value="">{t('选择产品')}</option>
+                {productNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={picker.productName}
+                onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
+                placeholder={t(picker.category === 'material' ? '输入物料名称' : '输入其他名称')}
+                className={`${inputCls} min-w-[180px] flex-1`}
+              />
+            )}
             <input
               type="number"
               min="1"
@@ -284,6 +331,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     key={idx}
                     className="group inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
                   >
+                    <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
+                      {t(CATEGORY_LABEL[it.category] || '产品')}
+                    </span>
                     {it.productName} × {it.quantity}
                     {it.note ? `（${it.note}）` : ''}
                     <button
@@ -346,8 +396,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   {(r.items || [{ productName: r.productName, quantity: r.quantity }]).map((it, idx) => (
                     <span
                       key={idx}
-                      className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[11px] font-semibold text-budu-600"
+                      className="inline-flex items-center gap-1 rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"
                     >
+                      <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
+                        {t(CATEGORY_LABEL[it.category] || '产品')}
+                      </span>
                       {it.productName} × {it.quantity}
                       {it.note ? `（${it.note}）` : ''}
                     </span>
@@ -356,11 +409,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   {isTransfer
                     ? t('从 {from} 调往 {to}', {
-                        from: stores.find((s) => s.key === r.fromStoreKey)?.name || r.fromStoreKey,
-                        to: stores.find((s) => s.key === r.storeKey)?.name || r.storeKey,
+                        from: storeDisplay(r.fromStoreKey, r.fromStoreName),
+                        to: storeDisplay(r.storeKey, r.storeName),
                       })
                     : t('采购至 {store}', {
-                        store: stores.find((s) => s.key === r.storeKey)?.name || r.storeKey,
+                        store: storeDisplay(r.storeKey, r.storeName),
                       })}
                   {r.note ? ` · ${r.note}` : ''}
                 </p>

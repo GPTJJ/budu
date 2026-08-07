@@ -350,6 +350,11 @@ export const en = {
   '添加门店': 'Add Store',
   '已添加门店：{name}': 'Store added: {name}',
   '请先完成自定义门店添加': 'Finish adding the custom store first',
+  '产品': 'Product',
+  '物料': 'Material',
+  '其他': 'Other',
+  '输入物料名称': 'Enter material name',
+  '输入其他名称': 'Enter other name',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
