@@ -61,7 +61,7 @@
 
 **已交付功能**：架构分析报告 + 迁移计划（docs/）、腾讯云部署全套物料（Docker/Nginx/GitHub Actions/RUNBOOK）、
 门店排班（按周/按门店/早班晚班通班）、商品目录增删改、首页头部只显示概览工具 + 布局优化；
-全部已推送到 GitHub（当前 main HEAD `61ee63a`），Vercel 线上 https://budu11.vercel.app 保持可用。
+全部已推送到 GitHub（当前 main HEAD `360c32d`），Vercel 线上 https://budu11.vercel.app 保持可用。
 
 **腾讯云服务器**：`124.156.171.195`（香港轻量 2核2G，实例 lhins-gkqyrkst，OpenClaw 龙虾镜像）
 - Docker 29.1.3 + Compose 2.40.3 已装；`/opt/budu` 已部署并运行（api healthy + nginx）
