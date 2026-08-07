@@ -93,12 +93,9 @@ function compute() {
   } catch {
     /* SSR / 隐私模式忽略 */
   }
-  const reqItems =
-    currentCanNotify || currentIsRequestNotifier
-      ? getInventoryRequests()
-          .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
-          .filter((r) => currentCanNotify || currentIsRequestNotifier || r.createdBy === currentUserName)
-      : []
+  const reqItems = getInventoryRequests()
+    .filter((r) => (r.status === 'pending' || r.status === 'in_transit') && (!seenAt || r.createdAt > seenAt))
+    .filter((r) => currentCanNotify || currentIsRequestNotifier || r.createdBy === currentUserName)
   const invItems = currentCanSeeInvoices
     ? currentInvoices
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
