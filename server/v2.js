@@ -318,6 +318,10 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
     },
     include: { items: { include: { item: true } } },
   })
+  sendWechatMarkdown(
+    '新调货申请',
+    `**${created.fromStoreKey}** → **${created.toStoreKey}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出门店店长尽快审核发货。`,
+  ).catch(() => {})
   res.json({ ok: true, request: created })
 }))
 

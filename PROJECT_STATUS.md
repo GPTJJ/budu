@@ -166,6 +166,8 @@ SKU/条码/供应商增强、自动备份同步 COS 与告警
 部署验证（2026-08-08）：迁移 `next_batch` 已应用；items/suppliers/alerts/waste-records/expenses/profit/
 members/birthdays/transfer/purchase/stock 全部 200；profit 返回 28 行；修复利润接口开发者过滤 bug（0490400）
 
+更新：新调货申请提交后推送企业微信「新调货申请」提醒（待审核）；企微 Webhook 已配置并测试通过
+
 ## 腾讯云部署进度（2026-08-07 下午）
 
 - 服务器：`124.156.171.195`（腾讯云轻量香港/OpenClaw 龙虾镜像，2核2G/40G，实例 lhins-gkqyrkst）
