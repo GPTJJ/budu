@@ -361,6 +361,10 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!isManager(req.user) || !canStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
   const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'in_transit', updatedAt: new Date() } })
+  sendWechatMarkdown(
+    '调货已发货',
+    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
+  ).catch(() => {})
   res.json({ ok: true, request: updated })
 }))
 
@@ -410,6 +414,10 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
   })
   maybeAlertLowStock(t.fromStoreKey).catch(() => {})
   maybeAlertLowStock(t.toStoreKey).catch(() => {})
+  sendWechatMarkdown(
+    '调货已收货',
+    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 确认人 **${operator}**\n库存已自动增减并写入流水。`,
+  ).catch(() => {})
   res.json({ ok: true })
 }))
 
@@ -444,6 +452,10 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
     },
     include: { items: { include: { item: true } } },
   })
+  sendWechatMarkdown(
+    '新采购申请',
+    `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplier ? ` · 供应商 **${created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
+  ).catch(() => {})
   res.json({ ok: true, request: created })
 }))
 
@@ -497,6 +509,10 @@ v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
     await tx.purchaseRequest.update({ where: { id: p.id }, data: { status: 'received', updatedAt: new Date() } })
   })
   maybeAlertLowStock(p.storeKey).catch(() => {})
+  sendWechatMarkdown(
+    '采购已入库',
+    `门店 **${p.storeKey}**\n货品 **${p.items.length}** 种已按实收数量入库 · 操作人 **${operator}**`,
+  ).catch(() => {})
   res.json({ ok: true })
 }))
 
