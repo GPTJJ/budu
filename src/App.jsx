@@ -167,6 +167,7 @@ export default function App() {
           ) : isProductCatalogView && user?.role !== 'public' ? (
             <ProductCatalogPage
               initialProduct={selectedProduct}
+              canEdit={user?.role !== 'public'}
               onBack={() => {
                 setSelectedProduct(null)
                 setView('overview')

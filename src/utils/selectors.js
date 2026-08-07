@@ -8,6 +8,7 @@ import {
   getStaff,
   getRemovedStaff,
   getStores,
+  getProducts,
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
@@ -674,6 +675,24 @@ export function products(monthKey, storeKey) {
       cur.income += p.income
       cur.discount += p.discount
     }
+  }
+  // 自定义商品：按门店独立展示；单店视图下同名商品覆盖报表商品
+  for (const p of getProducts()) {
+    if (storeKey !== 'all' && p.storeKey !== storeKey) continue
+    const key = storeKey === 'all' ? `${p.storeKey}::${p.name}` : p.name
+    map.set(key, {
+      id: p.id,
+      name: p.name,
+      storeKey: p.storeKey,
+      storeName: storeName(p.storeKey),
+      price: p.price || 0,
+      note: p.note || '',
+      sales: 0,
+      amount: 0,
+      income: 0,
+      discount: 0,
+      custom: true,
+    })
   }
   return [...map.values()].sort((a, b) => b.amount - a.amount)
 }

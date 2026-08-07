@@ -294,6 +294,19 @@ export const en = {
   '周六': 'Sat',
   '周日': 'Sun',
 
+  // 商品目录管理
+  '新增商品': 'Add Product',
+  '编辑商品': 'Edit Product',
+  '删除商品': 'Delete Product',
+  '商品名称': 'Product Name',
+  '例如 榛子生巧': 'e.g. Hazelnut Chocolat',
+  '所属门店': 'Store',
+  '价格（元）': 'Price (¥)',
+  '选填': 'Optional',
+  '请填写商品名称': 'Please enter product name',
+  '自定义': 'Custom',
+  '确定删除该商品吗？': 'Delete this product?',
+
   // 日历
   '{y}年{m}月': '{m}/{y}',
   '查看整月（{month}）': 'View whole month ({month})',

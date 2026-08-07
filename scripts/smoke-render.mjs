@@ -79,8 +79,8 @@ try {
     ],
     [
       'ProductCatalogPage',
-      await render('/src/components/ProductCatalogPage.jsx', { onBack: () => {} }),
-      ['商品目录'],
+      await render('/src/components/ProductCatalogPage.jsx', { onBack: () => {}, canEdit: true }),
+      ['商品目录', '新增商品'],
     ],
     [
       'EmployeePerformanceTable store privacy',

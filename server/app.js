@@ -63,6 +63,35 @@ function normalizeSchedules(raw) {
   return out
 }
 
+/** 校验并规范化自定义商品：{ id?, name, storeKey, price?, note?, createdAt?, updatedAt? } */
+function normalizeProducts(raw) {
+  if (!Array.isArray(raw) || raw.length > 500) return null
+  const out = []
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return null
+    const name = String(p.name ?? '').trim()
+    const storeKey = String(p.storeKey ?? '').trim()
+    const note = p.note === undefined || p.note === null ? '' : String(p.note).trim().slice(0, 100)
+    if (!name || name.length > 30) return null
+    if (!storeKey || storeKey.length > 30 || /^(__proto__|constructor|prototype)$/.test(storeKey)) return null
+    let price = 0
+    if (p.price !== undefined && p.price !== null && p.price !== '') {
+      price = Number(p.price)
+      if (!Number.isFinite(price) || price < 0 || price > 999999) return null
+    }
+    out.push({
+      id: typeof p.id === 'string' && p.id ? p.id.slice(0, 64) : crypto.randomUUID(),
+      name,
+      storeKey,
+      price,
+      note,
+      createdAt: typeof p.createdAt === 'string' && p.createdAt ? p.createdAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+  }
+  return out
+}
+
 export function createApp() {
   const app = express()
   app.use(express.json({ limit: '5mb' }))
@@ -305,6 +334,7 @@ export function createApp() {
       productImages: db.productImages || {},
       stores: db.stores || [],
       schedules: db.schedules || {},
+      products: db.products || [],
     })
   })
 
@@ -384,6 +414,17 @@ export function createApp() {
       }
       db.schedules = normalized
     }
+    if (body.products !== undefined) {
+      const productsChanged = JSON.stringify(body.products) !== JSON.stringify(db.products || [])
+      if (productsChanged && req.user.role === 'public') {
+        return res.status(403).json({ error: '无权限' })
+      }
+      const normalized = normalizeProducts(body.products)
+      if (!normalized) {
+        return res.status(400).json({ error: 'products 格式错误' })
+      }
+      db.products = normalized
+    }
     await persist()
     res.json({
       ok: true,
@@ -393,6 +434,7 @@ export function createApp() {
       productImages: db.productImages || {},
       stores: db.stores || [],
       schedules: db.schedules || {},
+      products: db.products || [],
     })
   })
 

@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
-import { ArrowLeft, ImagePlus, Loader2, Package, Trash2, UploadCloud, X } from 'lucide-react'
+import { ArrowLeft, Check, ImagePlus, Loader2, Package, Pencil, Plus, Trash2, UploadCloud, X } from 'lucide-react'
 import { allMonths, allStores, monthLabel, products } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
-import { commitProductImages, getProductImages } from '../utils/userData'
+import { commitProductImages, commitProducts, getProductImages, getProducts } from '../utils/userData'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -31,7 +31,115 @@ function resizeImage(file, maxSize = 512) {
   })
 }
 
-function ProductDetailModal({ product, image, onClose, onSaveImage, onRemoveImage, busy }) {
+function ProductEditorModal({ initial, stores, onClose, onSave }) {
+  const { t } = useI18n()
+  const [form, setForm] = useState({
+    name: initial?.name || '',
+    storeKey: initial?.storeKey || (stores[0] ? stores[0].key : ''),
+    price: initial ? String(initial.price ?? '') : '',
+    note: initial?.note || '',
+  })
+  const [error, setError] = useState('')
+
+  const submit = () => {
+    const name = form.name.trim()
+    if (!name) {
+      setError(t('请填写商品名称'))
+      return
+    }
+    onSave({
+      name,
+      storeKey: form.storeKey,
+      price: form.price === '' ? '' : Number(form.price) || 0,
+      note: form.note.trim(),
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <h3 className="text-lg font-bold text-slate-800">{initial ? t('编辑商品') : t('新增商品')}</h3>
+          <button
+            onClick={onClose}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label={t('关闭')}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('商品名称')}</span>
+            <input
+              value={form.name}
+              onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
+              placeholder={t('例如 榛子生巧')}
+              className={inputCls}
+              autoFocus
+            />
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('所属门店')}</span>
+            <select
+              value={form.storeKey}
+              onChange={(e) => setForm((s) => ({ ...s, storeKey: e.target.value }))}
+              className={inputCls}
+            >
+              {stores.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('价格（元）')}</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.price}
+              onChange={(e) => setForm((s) => ({ ...s, price: e.target.value }))}
+              placeholder="0.00"
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('备注')}</span>
+            <input
+              value={form.note}
+              onChange={(e) => setForm((s) => ({ ...s, note: e.target.value }))}
+              placeholder={t('选填')}
+              className={inputCls}
+            />
+          </div>
+          {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
+        </div>
+
+        <div className="mt-5 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+          >
+            {t('取消')}
+          </button>
+          <button
+            onClick={submit}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+          >
+            <Check className="h-4 w-4" />
+            {t('保存')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProductDetailModal({ product, image, canEdit, onClose, onSaveImage, onRemoveImage, onEdit, onDelete, busy }) {
   const { t } = useI18n()
   const fileRef = useRef(null)
   return (
@@ -116,13 +224,32 @@ function ProductDetailModal({ product, image, onClose, onSaveImage, onRemoveImag
             )}
           </div>
           <p className="text-center text-xs text-slate-400">{t('支持从本机选择图片，自动压缩保存')}</p>
+
+          {product.custom && canEdit && (
+            <div className="flex w-full gap-2.5">
+              <button
+                onClick={onEdit}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-50 px-4 py-2 text-sm font-semibold text-budu-600 transition hover:bg-budu-100"
+              >
+                <Pencil className="h-4 w-4" />
+                {t('编辑商品')}
+              </button>
+              <button
+                onClick={onDelete}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-500 transition hover:bg-rose-100"
+              >
+                <Trash2 className="h-4 w-4" />
+                {t('删除商品')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
-export default function ProductCatalogPage({ initialProduct = null, onBack }) {
+export default function ProductCatalogPage({ initialProduct = null, onBack, canEdit = false }) {
   const { lang, t } = useI18n()
   const [month, setMonth] = useState(() => {
     const months = allMonths()
@@ -130,6 +257,7 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
   })
   const [store, setStore] = useState('all')
   const [selectedName, setSelectedName] = useState(initialProduct)
+  const [editing, setEditing] = useState(null)
   const [version, setVersion] = useState(0)
   const [busy, setBusy] = useState(false)
   const images = getProductImages()
@@ -156,6 +284,49 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
     setVersion((v) => v + 1)
   }
 
+  const saveProduct = (data) => {
+    if (editing) {
+      const next = getProducts().map((p) =>
+        p.id === editing.id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p,
+      )
+      if (editing.name !== data.name) {
+        const imgs = { ...images }
+        if (imgs[editing.name]) {
+          imgs[data.name] = imgs[editing.name]
+          delete imgs[editing.name]
+        }
+        commitProductImages(imgs)
+      }
+      commitProducts(next)
+    } else {
+      const id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      commitProducts([
+        ...getProducts(),
+        {
+          id,
+          ...data,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ])
+    }
+    setEditing(null)
+    setVersion((v) => v + 1)
+  }
+
+  const deleteProduct = (p) => {
+    if (!window.confirm(t('确定删除该商品吗？'))) return
+    commitProducts(getProducts().filter((x) => x.id !== p.id))
+    const imgs = { ...images }
+    delete imgs[p.name]
+    commitProductImages(imgs)
+    setSelectedName(null)
+    setVersion((v) => v + 1)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-4">
@@ -174,6 +345,15 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
           <p className="mt-0.5 text-[13px] text-slate-400">{t('根据菜品销售明细，为每一款菜品提供独立展示')}</p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
+          {canEdit && (
+            <button
+              onClick={() => setEditing({})}
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" />
+              {t('新增商品')}
+            </button>
+          )}
           <select value={month} onChange={(e) => setMonth(e.target.value)} className={inputCls}>
             {allMonths().map((m) => (
               <option key={m.key} value={m.key}>
@@ -215,6 +395,14 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
                 <p className="mt-1.5 w-full text-[11px] text-slate-400">
                   {t('销量')} {formatNumber(Math.round(p.sales))} · ¥{formatMoney(p.amount)}
                 </p>
+                {p.custom && (
+                  <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-semibold text-grape-600">
+                    <Package className="h-3 w-3" />
+                    {t('自定义')}
+                    {p.storeName && ` · ${p.storeName}`}
+                    {p.price > 0 && ` · ¥${formatMoney(p.price)}`}
+                  </span>
+                )}
                 {img && (
                   <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600">
                     <ImagePlus className="h-3 w-3" />
@@ -233,10 +421,28 @@ export default function ProductCatalogPage({ initialProduct = null, onBack }) {
         <ProductDetailModal
           product={selected}
           image={images[selected.name]}
+          canEdit={canEdit}
           busy={busy}
           onClose={() => setSelectedName(null)}
           onSaveImage={saveImage}
           onRemoveImage={removeImage}
+          onEdit={() => {
+            const p = getProducts().find((x) => x.id === selected.id)
+            if (p) {
+              setSelectedName(null)
+              setEditing(p)
+            }
+          }}
+          onDelete={() => deleteProduct(selected)}
+        />
+      )}
+
+      {editing && (
+        <ProductEditorModal
+          initial={editing.id ? editing : null}
+          stores={allStores()}
+          onClose={() => setEditing(null)}
+          onSave={saveProduct}
         />
       )}
     </div>

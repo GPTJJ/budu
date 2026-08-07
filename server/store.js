@@ -25,6 +25,7 @@ const DEFAULT_DB = {
   productImages: {},
   stores: [],
   schedules: {},
+  products: [],
 }
 
 let cached = null
@@ -101,6 +102,7 @@ export async function loadDb() {
   }
   if (!Array.isArray(db.stores)) db.stores = []
   if (!db.schedules || typeof db.schedules !== 'object' || Array.isArray(db.schedules)) db.schedules = {}
+  if (!Array.isArray(db.products)) db.products = []
   if (!db.meta.secret && !process.env.JWT_SECRET) {
     db.meta.secret = crypto.randomBytes(32).toString('hex')
   }
