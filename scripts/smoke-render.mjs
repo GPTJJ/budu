@@ -24,6 +24,7 @@ try {
     ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['budu 甜蜜运营系统', '登录', '注册一个']],
     ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职雇员']],
     ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['门店业绩录入', '值班人员']],
+    ['SchedulePage', await render('/src/components/SchedulePage.jsx', { onBack: () => {}, canEdit: true }), ['门店排班', '周排班表', '添加排班']],
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],
     ['RevenueTrendChart', await render('/src/components/RevenueTrendChart.jsx', { month: '2026-07', store: 'all', day: null }), ['营业额趋势']],
     ['ChannelChart', await render('/src/components/ChannelChart.jsx', { month: '2026-07', store: 'all', day: null }), ['渠道销售构成']],

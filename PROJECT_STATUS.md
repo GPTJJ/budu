@@ -29,6 +29,16 @@
    - `docs/RUNBOOK_TENCENT.md`（开通清单、初始化、首次部署、证书、Secrets、备份恢复、回滚、FAQ）
 4. 本地验证：`npm run build` 通过；服务 `/api/health` 返回 200
 5. 迁移基线备份：`backups/kv-snapshot-20260807063154.json`（3 用户 / 1 员工 / 20 个业绩 key / 1 门店；**含 meta.secret，未提交 git，注意保管**）
+6. **门店排班功能（新需求，已开发完成）**：
+   - 菜单：门店经营 → 新增「门店排班」子菜单
+   - 按周排班：默认定位本周（周一起始），支持上一周/下一周/本周切换，显示第几周与周范围
+   - 按门店切换：内置三店 + 开发者自定义门店全部可选
+   - 七天排班表：每天可添加/删除员工排班（员工姓名 + 班次时间 + 备注，姓名支持从员工名单快捷选择）
+   - 数据存储：服务端共享数据新增 `schedules` 字段（周一起始日期 → 门店 key → 日期 → 班次数组），
+     校验/规范化在 `server/app.js`，公开角色禁止修改；保存后所有登录账号实时同步
+   - 新文件：`src/components/SchedulePage.jsx`、`src/utils/schedule.js`
+   - 测试：`npm run build` 通过；冒烟测试新增 SchedulePage（20 组件 SSR OK）；
+     API 自测通过（保存/读取/非法数据 400）；薪酬单测与集成测试全部 OK
 
 决策：
 - 迁移期数据继续用 **Upstash KV**（零数据迁移、可随时 DNS 切回 Vercel）；PostgreSQL 在 P1–P2 再迁

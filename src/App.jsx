@@ -14,6 +14,7 @@ import SettingsPage from './components/SettingsPage'
 import AccountAdminPage from './components/AccountAdminPage'
 import DataAnalysisPage from './components/DataAnalysisPage'
 import ProductCatalogPage from './components/ProductCatalogPage'
+import SchedulePage from './components/SchedulePage'
 import { kpiCards } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
@@ -75,6 +76,7 @@ export default function App() {
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
   const isProductCatalogView = view === 'product-catalog'
+  const isScheduleView = view === 'store-schedule'
 
   const openProduct = (name) => {
     setSelectedProduct(name)
@@ -142,6 +144,8 @@ export default function App() {
             />
           ) : isStoreEntryView && user?.role !== 'public' ? (
             <StoreEntryPage onBack={() => setView('overview')} />
+          ) : isScheduleView && user?.role !== 'public' ? (
+            <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
           ) : isSettingsView ? (
             <SettingsPage user={user} onBack={() => setView('overview')} />
           ) : isAccountAdminView && user?.role === 'developer' ? (

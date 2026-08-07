@@ -64,6 +64,7 @@ export async function loadUserData() {
     analysis: data.analysis && typeof data.analysis === 'object' ? data.analysis : {},
     productImages: data.productImages && typeof data.productImages === 'object' ? data.productImages : {},
     stores: Array.isArray(data.stores) ? data.stores : [],
+    schedules: data.schedules && typeof data.schedules === 'object' ? data.schedules : {},
   }
   const legacy = readLegacy()
   let migrated = false
@@ -97,9 +98,10 @@ export function getUserData() {
       analysis: mirror.analysis && typeof mirror.analysis === 'object' ? mirror.analysis : {},
       productImages: mirror.productImages && typeof mirror.productImages === 'object' ? mirror.productImages : {},
       stores: Array.isArray(mirror.stores) ? mirror.stores : [],
+      schedules: mirror.schedules && typeof mirror.schedules === 'object' ? mirror.schedules : {},
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {} }
 }
 
 export function getEntries() {
@@ -156,6 +158,16 @@ export function getStores() {
 
 export function commitStores(stores) {
   getUserData().stores = stores
+  syncUserData()
+}
+
+export function getSchedules() {
+  const d = getUserData().schedules
+  return d && typeof d === 'object' ? d : {}
+}
+
+export function commitSchedules(schedules) {
+  getUserData().schedules = schedules
   syncUserData()
 }
 

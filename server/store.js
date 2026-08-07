@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.join(__dirname, 'data')
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data')
 const DB_FILE = path.join(DATA_DIR, 'db.json')
 const REDIS_KEY = 'budu-db'
 
@@ -24,6 +24,7 @@ const DEFAULT_DB = {
   analysis: {},
   productImages: {},
   stores: [],
+  schedules: {},
 }
 
 let cached = null
@@ -99,6 +100,7 @@ export async function loadDb() {
     db.productImages = {}
   }
   if (!Array.isArray(db.stores)) db.stores = []
+  if (!db.schedules || typeof db.schedules !== 'object' || Array.isArray(db.schedules)) db.schedules = {}
   if (!db.meta.secret && !process.env.JWT_SECRET) {
     db.meta.secret = crypto.randomBytes(32).toString('hex')
   }

@@ -14,6 +14,55 @@ const DIST = path.join(ROOT, 'dist')
 const COOKIE = 'budu_token'
 const COOKIE_MAX_AGE = 30 * 24 * 3600 * 1000
 
+/** 校验并规范化排班数据结构：schedules[周一起始日期][门店key][日期] = [{staff, time?, note?}] */
+function normalizeSchedules(raw) {
+  const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+  const BAD_KEY = /^(__proto__|constructor|prototype)$/
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+
+  const out = {}
+  const weeks = Object.entries(raw)
+  if (weeks.length > 520) return null
+  for (const [weekStart, stores] of weeks) {
+    if (BAD_KEY.test(weekStart) || !WEEK_RE.test(weekStart)) return null
+    if (!stores || typeof stores !== 'object' || Array.isArray(stores)) return null
+
+    const storeOut = {}
+    const storeEntries = Object.entries(stores)
+    if (storeEntries.length > 200) return null
+    for (const [storeKey, days] of storeEntries) {
+      if (BAD_KEY.test(storeKey) || !storeKey.trim() || storeKey.length > 30) return null
+      if (!days || typeof days !== 'object' || Array.isArray(days)) return null
+
+      const daysOut = {}
+      const dayEntries = Object.entries(days)
+      if (dayEntries.length > 7) return null
+      for (const [date, shifts] of dayEntries) {
+        if (BAD_KEY.test(date) || !DATE_RE.test(date)) return null
+        if (!Array.isArray(shifts) || shifts.length > 50) return null
+
+        const shiftsOut = []
+        for (const s of shifts) {
+          if (!s || typeof s !== 'object' || Array.isArray(s)) return null
+          const staff = String(s.staff ?? '').trim()
+          const time = s.time === undefined || s.time === null ? '' : String(s.time).trim().slice(0, 30)
+          const note = s.note === undefined || s.note === null ? '' : String(s.note).trim().slice(0, 100)
+          if (!staff || staff.length > 30) return null
+          const item = { staff }
+          if (time) item.time = time
+          if (note) item.note = note
+          shiftsOut.push(item)
+        }
+        daysOut[date] = shiftsOut
+      }
+      storeOut[storeKey] = daysOut
+    }
+    out[weekStart] = storeOut
+  }
+  return out
+}
+
 export function createApp() {
   const app = express()
   app.use(express.json({ limit: '5mb' }))
@@ -255,6 +304,7 @@ export function createApp() {
       analysis: db.analysis || {},
       productImages: db.productImages || {},
       stores: db.stores || [],
+      schedules: db.schedules || {},
     })
   })
 
@@ -323,6 +373,17 @@ export function createApp() {
         district: s && typeof s.district === 'string' ? String(s.district).trim().slice(0, 50) : '',
       }))
     }
+    if (body.schedules !== undefined) {
+      const schedulesChanged = JSON.stringify(body.schedules) !== JSON.stringify(db.schedules || {})
+      if (schedulesChanged && req.user.role === 'public') {
+        return res.status(403).json({ error: '无权限' })
+      }
+      const normalized = normalizeSchedules(body.schedules)
+      if (!normalized) {
+        return res.status(400).json({ error: 'schedules 格式错误' })
+      }
+      db.schedules = normalized
+    }
     await persist()
     res.json({
       ok: true,
@@ -331,6 +392,7 @@ export function createApp() {
       removedStaff: db.removedStaff || [],
       productImages: db.productImages || {},
       stores: db.stores || [],
+      schedules: db.schedules || {},
     })
   })
 

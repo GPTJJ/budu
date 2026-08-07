@@ -10,6 +10,7 @@ import {
   BarChart3,
   Settings,
   ChevronDown,
+  CalendarClock,
 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import AccountMenu from './AccountMenu'
@@ -32,7 +33,10 @@ const subMenus = {
     { key: 'staff-fulltime', label: '全职雇员' },
     { key: 'staff-parttime', label: '兼职人员' },
   ],
-  store: [{ key: 'store-entry', label: '门店业绩录入' }],
+  store: [
+    { key: 'store-entry', label: '门店业绩录入' },
+    { key: 'store-schedule', label: '门店排班' },
+  ],
   product: [{ key: 'product-catalog', label: '商品目录' }],
 }
 

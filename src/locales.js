@@ -256,6 +256,41 @@ export const en = {
   '录入数据保存在浏览器 localStorage 中，刷新不丢失；首页 KPI、排行、趋势与人员管理板块实时联动':
     'Data is saved in browser localStorage and survives refresh; home KPIs, rankings, trends and staff pages stay in sync',
 
+  // 门店排班
+  '门店排班': 'Store Schedule',
+  '按周为各个门店安排值班人员与班次，保存后所有登录账号实时同步':
+    'Plan weekly staff shifts per store; saved schedules sync to all accounts',
+  '周排班表': 'Weekly Schedule',
+  '本周': 'This Week',
+  '上一周': 'Previous week',
+  '下一周': 'Next week',
+  '第 {n} 周': 'Week {n}',
+  '共 {n} 个班次': '{n} shifts total',
+  '添加排班': 'Add Shift',
+  '添加员工排班': 'Add Staff Shift',
+  '员工姓名': 'Staff Name',
+  '输入或选择员工姓名': 'Type or select staff name',
+  '班次时间': 'Shift Time',
+  '例如 08:00-16:00 或 早班': 'e.g. 08:00-16:00 or morning',
+  '备注': 'Note',
+  '选填，例如 主理/备货': 'Optional, e.g. lead / restock',
+  '请填写员工姓名': 'Please enter staff name',
+  '确认添加': 'Add',
+  '取消': 'Cancel',
+  '暂无排班': 'No shifts yet',
+  '已保存 ✓': 'Saved ✓',
+  '只读模式': 'Read-only',
+  '{n} 人': '{n} staff',
+  '排班保存后自动同步到云端，所有登录账号实时可见；可与门店业绩录入中的值班人员互相参照':
+    'Schedules sync to the cloud and are visible to all accounts; cross-reference with duty staff in Store Entry',
+  '周一': 'Mon',
+  '周二': 'Tue',
+  '周三': 'Wed',
+  '周四': 'Thu',
+  '周五': 'Fri',
+  '周六': 'Sat',
+  '周日': 'Sun',
+
   // 日历
   '{y}年{m}月': '{m}/{y}',
   '查看整月（{month}）': 'View whole month ({month})',
