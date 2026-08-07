@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, CalendarDays, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import {
   employeesByType,
@@ -7,6 +7,7 @@ import {
   allEmployeeMonths,
   monthLabel,
   employeeDayStatus,
+  employeeDailyPayDetail,
   hasLocalEntry,
   localStaffList,
   removeStaff,
@@ -224,6 +225,119 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
+function DailyPayModal({ emp, initialDate, hidePersonal, onClose }) {
+  const { t } = useI18n()
+  const [date, setDate] = useState(initialDate || new Date().toISOString().slice(0, 10))
+  const [y, m, d] = String(date).split('-')
+  const detail = employeeDailyPayDetail(y, m, d, emp.name)
+
+  const download = () => {
+    if (!detail) return
+    const lines = [
+      'BUDU 员工工资明细',
+      `员工：${emp.name}`,
+      `日期：${date}`,
+      '',
+      '门店\t营业额(元)\t订单\t工时(h)\t基础时薪\t基础工资(元)\t提成时薪\t提成(元)\t当日工资(元)',
+      ...detail.rows.map((r) =>
+        [r.storeName, r.revenue.toFixed(2), r.orders, r.hours, r.baseRate.toFixed(1), r.basePay.toFixed(2), r.commissionRate.toFixed(1), r.commission.toFixed(2), r.total.toFixed(2)].join('\t'),
+      ),
+      '',
+      ['合计', '', '', detail.totals.hours, '', detail.totals.basePay.toFixed(2), '', detail.totals.commission.toFixed(2), detail.totals.pay.toFixed(2)].join('\t'),
+      '',
+      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算。',
+    ]
+    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/plain;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `工资明细-${emp.name}-${date}.txt`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t('每日工资明细')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('选择日期查看当日工资组成')}</p>
+          </div>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="ml-auto rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 outline-none focus:border-budu-400"
+          />
+          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {hidePersonal ? (
+          <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
+        ) : !detail ? (
+          <p className="grid place-items-center py-16 text-sm text-slate-300">{t('当日无业绩录入')}</p>
+        ) : (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
+                    <th className="py-2 pr-2">{t('门店')}</th>
+                    <th className="py-2 pr-2 text-right">{t('营业额')}</th>
+                    <th className="py-2 pr-2 text-right">{t('订单')}</th>
+                    <th className="py-2 pr-2 text-right">{t('工时')}</th>
+                    <th className="py-2 pr-2 text-right">{t('基础时薪')}</th>
+                    <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
+                    <th className="py-2 pr-2 text-right">{t('提成时薪')}</th>
+                    <th className="py-2 pr-2 text-right">{t('提成')}</th>
+                    <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {detail.rows.map((r) => (
+                    <tr key={r.storeKey}>
+                      <td className="py-2 pr-2 font-semibold text-slate-700">{r.storeName}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.revenue.toFixed(2)}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{r.orders}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{r.hours}h</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-500">¥{r.baseRate.toFixed(1)}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.basePay.toFixed(2)}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-500">¥{r.commissionRate.toFixed(1)}</td>
+                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.commission.toFixed(2)}</td>
+                      <td className="py-2 pr-2 text-right font-bold tabular-nums text-budu-600">¥{r.total.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-budu-50/40 font-bold">
+                    <td className="py-2 pr-2 text-slate-700">{t('合计')}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{detail.totals.inc.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{detail.totals.ord}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{detail.totals.hours}h</td>
+                    <td className="py-2 pr-2 text-right text-slate-300">—</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{detail.totals.basePay.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right text-slate-300">—</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{detail.totals.commission.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{detail.totals.pay.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button
+              onClick={download}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            >
+              <Download className="h-4 w-4" />
+              {t('下载文档')}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false, canManage = false, user }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
@@ -233,6 +347,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const [day, setDay] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [detailEmp, setDetailEmp] = useState(null)
   const [staffVersion, setStaffVersion] = useState(0)
 
   const localStaff = localStaffList()
@@ -355,10 +470,17 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
               const dayHours = onDuty ? status.hours : 0
               const dayPerf = onDuty ? status.commission : 0
               return (
-                <div key={emp.name} className="card relative p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
+                <div
+                  key={emp.name}
+                  onClick={() => setDetailEmp(emp)}
+                  className="card relative cursor-pointer p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
+                >
                   {canDelete && !isPublic && (
                     <button
-                      onClick={() => setPendingDelete(emp.name)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPendingDelete(emp.name)
+                      }}
                       className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                       title={t('删除该员工')}
                     >
@@ -490,6 +612,14 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
             handleDeleteStaff(pendingDelete)
             setPendingDelete(null)
           }}
+        />
+      )}
+      {detailEmp && (
+        <DailyPayModal
+          emp={detailEmp}
+          initialDate={day ? `${month}-${day}` : undefined}
+          hidePersonal={hidePersonal}
+          onClose={() => setDetailEmp(null)}
         />
       )}
     </div>

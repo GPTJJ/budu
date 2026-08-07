@@ -789,6 +789,65 @@ export function employeeDayStatus(monthKey, day, name) {
   }
 }
 
+/** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载 */
+export function employeeDailyPayDetail(monthKey, day, name) {
+  if (!day) return null
+  const entries = localEntries()
+  const rows = []
+  let inc = 0
+  let ord = 0
+  let hours = 0
+  let basePay = 0
+  let commission = 0
+  let pay = 0
+  for (const [k, v] of Object.entries(entries)) {
+    const parts = k.split('|')
+    if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
+    if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
+    const storeKey = parts[1]
+    const share = v.staff.length
+    const daily = calcDailyPay({
+      storeKey,
+      storeName: storeName(storeKey),
+      revenue: Number(v.inc) || 0,
+      date: `${monthKey}-${day}`,
+      staffCount: share,
+    })
+    const revShare = (Number(v.inc) || 0) / share
+    const ordShare = (Number(v.ord) || 0) / share
+    rows.push({
+      storeKey,
+      storeName: storeName(storeKey),
+      revenue: Math.round(revShare * 100) / 100,
+      orders: Math.round(ordShare * 100) / 100,
+      hours: daily.hours,
+      baseRate: daily.baseRate,
+      basePay: daily.basePay,
+      commissionRate: daily.commissionRate,
+      commission: daily.commission,
+      total: daily.total,
+    })
+    inc += revShare
+    ord += ordShare
+    hours += daily.hours
+    basePay += daily.basePay
+    commission += daily.commission
+    pay += daily.total
+  }
+  if (rows.length === 0) return null
+  return {
+    rows,
+    totals: {
+      inc: Math.round(inc * 100) / 100,
+      ord: Math.round(ord * 100) / 100,
+      hours: Math.round(hours * 100) / 100,
+      basePay: Math.round(basePay * 100) / 100,
+      commission: Math.round(commission * 100) / 100,
+      pay: Math.round(pay * 100) / 100,
+    },
+  }
+}
+
 /** 所选日期是否有本地业绩录入（任意门店） */
 export function hasLocalEntry(monthKey, day) {
   if (!day) return false
