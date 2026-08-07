@@ -441,3 +441,11 @@ npx vercel env pull                 # 拉取线上环境变量
 - 根因：`inventoryAlerts.js` 轮询末尾的 compute() 重建 state 时丢失了 `stock` 字段，
   渲染铃铛“库存预警”区 `alerts.stock.length` 读到 undefined 崩溃
 - 修复：`state = { ...state, unread, items }` 保留 stock；已上线验证铃铛正常显示“开票申请”提醒
+
+### 发票 OCR 上线配置（2026-08-08）
+
+- 腾讯云 OCR 密钥已配置到服务器 `.env.production`（TENCENT_OCR_SECRET_ID/KEY/REGION=ap-guangzhou），不入 git
+- 排障记录：依次遇到“服务未开通→资源包耗尽→服务未开通”，最终确认需在文字识别控制台开通服务并打开后付费开关；账号为老客户时免费资源包按每月 1 日发放，当月新开通可能需按量付费
+- 已实测：模拟发票经线上 `/v2/invoices/ocr` 识别成功，正确提取税号/金额/日期（200）；真实发票可提取公司名称
+- 加固：抬头匹配排除“识别号/税号/账号/开户行”等字段，防止税号误填公司名称；OCR 错误信息附带腾讯云错误码便于诊断
+- 计费：增值税发票识别 1000 次/月免费额度优先抵扣，超出按量约 0.15 元/次
