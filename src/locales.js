@@ -337,6 +337,14 @@ export const en = {
   '至少添加一种货品': 'Add at least one item',
   '请填写第 {n} 行的商品名称': 'Enter product name on line {n}',
   '请填写第 {n} 行的数量': 'Enter quantity on line {n}',
+  '挑选货品': 'Pick Items',
+  '选择产品': 'Select Product',
+  '请选择产品': 'Please select a product',
+  '添加到申请列表': 'Add to Request List',
+  '本次申请货品 {count} 种': '{count} items in this request',
+  '已添加：{name} × {n}': 'Added: {name} × {n}',
+  '请先添加货品': 'Add items first',
+  '尚未添加货品，选好产品后点“添加到申请列表”': 'No items yet; pick a product and click "Add to Request List"',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

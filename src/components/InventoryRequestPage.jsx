@@ -14,9 +14,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [form, setForm] = useState({
     fromStoreKey: stores[0] ? stores[0].key : '',
     storeKey: stores[1] ? stores[1].key : stores[0] ? stores[0].key : '',
-    items: [{ productName: '', quantity: '', note: '' }],
     note: '',
   })
+  const [picker, setPicker] = useState({ productName: '', quantity: '', note: '' })
+  const [picked, setPicked] = useState([])
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
@@ -32,24 +33,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       setError(t('调出门店和调入门店不能相同'))
       return
     }
-    const items = form.items
-      .map((it) => ({ ...it, productName: it.productName.trim(), quantity: it.quantity.trim() }))
-      .filter((it) => it.productName || it.quantity || it.note.trim())
-    if (items.length === 0) {
-      setError(t('至少添加一种货品'))
+    if (picked.length === 0) {
+      setError(t('请先添加货品'))
       return
-    }
-    for (let i = 0; i < items.length; i += 1) {
-      if (!items[i].productName) {
-        setError(t('请填写第 {n} 行的商品名称', { n: i + 1 }))
-        return
-      }
-      const qty = Number(items[i].quantity)
-      if (!qty || qty < 1 || !Number.isFinite(qty)) {
-        setError(t('请填写第 {n} 行的数量', { n: i + 1 }))
-        return
-      }
-      items[i].quantity = Math.floor(qty)
     }
     const id =
       typeof crypto !== 'undefined' && crypto.randomUUID
@@ -62,14 +48,15 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         type,
         storeKey: form.storeKey,
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
-        items,
+        items: picked,
         note: form.note.trim(),
         status: 'pending',
         createdBy: currentUser?.username || '',
         createdAt: new Date().toISOString(),
       },
     ])
-    setForm((s) => ({ ...s, items: [{ productName: '', quantity: '', note: '' }], note: '' }))
+    setPicked([])
+    setForm((s) => ({ ...s, note: '' }))
     setVersion((v) => v + 1)
     setSavedTip(t('已提交申请 ✓'))
     setTimeout(() => setSavedTip(''), 2200)
@@ -82,6 +69,27 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   }
 
   const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
+
+  const addItem = () => {
+    setError('')
+    const name = picker.productName.trim()
+    const qty = Number(picker.quantity)
+    if (!name) {
+      setError(t('请选择产品'))
+      return
+    }
+    if (!qty || qty < 1 || !Number.isFinite(qty)) {
+      setError(t('请填写有效数量'))
+      return
+    }
+    setPicked((list) => [
+      ...list,
+      { productName: name, quantity: Math.floor(qty), note: picker.note.trim() },
+    ])
+    setPicker({ productName: '', quantity: '', note: '' })
+    setSavedTip(t('已添加：{name} × {n}', { name, n: Math.floor(qty) }))
+    setTimeout(() => setSavedTip(''), 1800)
+  }
 
   return (
     <div className="space-y-6">
@@ -152,78 +160,74 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           </div>
         </div>
 
-        {/* 货品明细（支持多行） */}
-        <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">{t('货品明细')}</span>
-            <button
-              onClick={() =>
-                setForm((s) => ({ ...s, items: [...s.items, { productName: '', quantity: '', note: '' }] }))
-              }
-              className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+        {/* 挑选货品：选一个 → 添加到本次申请列表 → 再选下一个 */}
+        <div className="mt-5 rounded-2xl bg-slate-50/70 p-4">
+          <p className="mb-2 text-xs font-semibold text-slate-500">{t('挑选货品')}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={picker.productName}
+              onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
+              className={`${inputCls} min-w-[180px] flex-1`}
             >
-              + {t('添加一行')}
+              <option value="">{t('选择产品')}</option>
+              {productNames.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={picker.quantity}
+              onChange={(e) => setPicker((s) => ({ ...s, quantity: e.target.value }))}
+              placeholder={t('数量')}
+              className={`${inputCls} w-24`}
+            />
+            <input
+              value={picker.note}
+              onChange={(e) => setPicker((s) => ({ ...s, note: e.target.value }))}
+              placeholder={t('备注')}
+              className={`${inputCls} min-w-[100px] flex-1`}
+            />
+            <button
+              onClick={addItem}
+              className="flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-budu-200/60 transition hover:bg-budu-600"
+            >
+              <PackagePlus className="h-4 w-4" />
+              {t('添加到申请列表')}
             </button>
           </div>
-          <div className="space-y-2">
-            {form.items.map((row, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-50/70 p-2.5">
-                <span className="w-6 text-center text-[11px] font-bold text-slate-400">{i + 1}</span>
-                <input
-                  list="budu-inventory-products"
-                  value={row.productName}
-                  onChange={(e) => {
-                    const next = [...form.items]
-                    next[i] = { ...next[i], productName: e.target.value }
-                    setForm((s) => ({ ...s, items: next }))
-                  }}
-                  placeholder={t('商品名称')}
-                  className={`${inputCls} min-w-[160px] flex-1`}
-                />
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={row.quantity}
-                  onChange={(e) => {
-                    const next = [...form.items]
-                    next[i] = { ...next[i], quantity: e.target.value }
-                    setForm((s) => ({ ...s, items: next }))
-                  }}
-                  placeholder={t('数量')}
-                  className={`${inputCls} w-24`}
-                />
-                <input
-                  value={row.note}
-                  onChange={(e) => {
-                    const next = [...form.items]
-                    next[i] = { ...next[i], note: e.target.value }
-                    setForm((s) => ({ ...s, items: next }))
-                  }}
-                  placeholder={t('备注')}
-                  className={`${inputCls} min-w-[100px] flex-1`}
-                />
-                <button
-                  onClick={() =>
-                    setForm((s) => ({
-                      ...s,
-                      items: s.items.filter((_, idx) => idx !== i),
-                    }))
-                  }
-                  disabled={form.items.length === 1}
-                  className="rounded-lg p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label={t('删除')}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+
+          {/* 本次申请已选货品 */}
+          <div className="mt-3">
+            <p className="mb-1.5 text-[11px] font-semibold text-slate-400">
+              {t('本次申请货品 {count} 种', { count: picked.length })}
+            </p>
+            {picked.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {picked.map((it, idx) => (
+                  <span
+                    key={idx}
+                    className="group inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
+                  >
+                    {it.productName} × {it.quantity}
+                    {it.note ? `（${it.note}）` : ''}
+                    <button
+                      onClick={() => setPicked((list) => list.filter((_, i) => i !== idx))}
+                      className="text-slate-300 transition hover:text-rose-500"
+                      aria-label={t('删除')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
               </div>
-            ))}
+            ) : (
+              <p className="text-[11px] text-slate-300">{t('尚未添加货品，选好产品后点“添加到申请列表”')}</p>
+            )}
           </div>
-          <datalist id="budu-inventory-products">
-            {productNames.map((n) => (
-              <option key={n} value={n} />
-            ))}
-          </datalist>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
