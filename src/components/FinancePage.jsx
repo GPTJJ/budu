@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Download, Plus, Trash2, Wallet } from 'lucide-react'
-import { allStores } from '../utils/selectors'
+import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
@@ -166,7 +166,7 @@ export default function FinancePage({ currentUser, onBack }) {
                   {i + 1}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-slate-700">{r.storeKey}</p>
+                  <p className="text-sm font-semibold text-slate-700">{storeName(r.storeKey)}</p>
                   <p className="text-[11px] text-slate-400">
                     {t('收入 ¥{a} · 费用 ¥{b}', { a: yuan(r.incCents), b: yuan(r.expenseCents) })}
                   </p>
@@ -188,7 +188,7 @@ export default function FinancePage({ currentUser, onBack }) {
               <div key={r.id} className="flex items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-700">
-                    {t(r.category)} · {r.storeKey} · {r.date}
+                    {t(r.category)} · {storeName(r.storeKey)} · {r.date}
                   </p>
                   {r.note && <p className="mt-0.5 text-[11px] text-slate-400">{r.note}</p>}
                 </div>
