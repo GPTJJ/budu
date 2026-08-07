@@ -73,7 +73,7 @@ export async function loadUserData() {
   try {
     const v2 = await api('/v2/daily-entries')
     if (v2 && Array.isArray(v2.rows) && v2.rows.length > 0) {
-      const merged = { ...cached.entries }
+      const merged = {}
       for (const row of v2.rows) {
         const key = `${row.date.slice(0, 7)}|${row.storeKey}|${row.date.slice(5)}`
         merged[key] = {
@@ -154,6 +154,7 @@ export async function commitEntries(entries) {
   syncUserData()
   // 同步写入 PostgreSQL（单条 upsert + 乐观锁），避免整库覆盖
   const changed = Object.keys(entries).filter((k) => JSON.stringify(entries[k]) !== JSON.stringify(prev[k]))
+  const removed = Object.keys(prev).filter((k) => !(k in entries))
   for (const k of changed) {
     const parts = k.split('|')
     if (parts.length !== 3) continue
@@ -182,6 +183,19 @@ export async function commitEntries(entries) {
         }
         console.warn('业绩版本冲突，已加载最新数据')
       }
+    }
+  }
+  for (const k of removed) {
+    const parts = k.split('|')
+    if (parts.length !== 3) continue
+    const [month, storeKey, day] = parts
+    try {
+      await api('/v2/daily-entries', {
+        method: 'DELETE',
+        body: JSON.stringify({ storeKey, date: `${month}-${day.slice(3)}` }),
+      })
+    } catch (err) {
+      console.warn('业绩删除同步失败：', err.message)
     }
   }
   writeMirror()

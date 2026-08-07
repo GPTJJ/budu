@@ -291,6 +291,16 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   })
 }))
 
+v2Router.delete('/daily-entries', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const { storeKey, date } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  if (req.user.role === 'public') throw bad('无权限', 403)
+  const d = dateOnly(date)
+  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d } })
+  res.json({ ok: true, deleted: result.count })
+}))
+
 // ---------- 调货 ----------
 v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
