@@ -19,6 +19,9 @@ model Store {
   transferOut  TransferRequest[] @relation("TransferFrom")
   transferIn   TransferRequest[] @relation("TransferTo")
   purchases    PurchaseRequest[]
+  waste        WasteRecord[]
+  expenses     Expense[]
+  memberConsumptions MemberConsumption[]
 }
 
 model User {
@@ -68,6 +71,7 @@ model InventoryItem {
   ledger         StockLedger[]
   transferItems  TransferItem[]
   purchaseItems  PurchaseItem[]
+  waste          WasteRecord[]
 }
 
 model StockBalance {
@@ -75,6 +79,7 @@ model StockBalance {
   storeKey  String
   itemId    String
   quantity  Int      @default(0)
+  minQty    Int      @default(0)
   updatedAt DateTime @default(now()) @updatedAt
   store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
   item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -131,6 +136,7 @@ model PurchaseRequest {
   storeKey   String
   status     String          @default("pending")
   supplier   String          @default("")
+  supplierId String?
   expectedAt DateTime?
   note       String          @default("")
   createdBy  String          @default("")
@@ -138,8 +144,80 @@ model PurchaseRequest {
   updatedAt  DateTime        @default(now())
   items      PurchaseItem[]
   store      Store           @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  supplierRef Supplier?      @relation(fields: [supplierId], references: [id])
 
   @@index([storeKey, status])
+}
+
+model Supplier {
+  id        String           @id
+  name      String           @unique
+  phone     String           @default("")
+  contact   String           @default("")
+  note      String           @default("")
+  createdAt DateTime         @default(now())
+  purchases PurchaseRequest[]
+}
+
+model WasteRecord {
+  id        String   @id
+  storeKey  String
+  itemId    String
+  quantity  Int
+  reason    String   @default("")
+  operator  String   @default("")
+  createdAt DateTime @default(now())
+  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model AlertLog {
+  id        String   @id
+  storeKey  String
+  itemId    String
+  day       String
+  createdAt DateTime @default(now())
+
+  @@unique([storeKey, itemId, day])
+}
+
+model Expense {
+  id          String   @id
+  storeKey    String
+  date        DateTime @db.Date
+  category    String   @default("其他")
+  amountCents BigInt   @default(0)
+  note        String   @default("")
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([storeKey, date])
+}
+
+model Member {
+  id        String   @id
+  name      String
+  phone     String   @unique
+  birthday  DateTime?
+  level     Int      @default(0)
+  points    Int      @default(0)
+  createdAt DateTime @default(now())
+  consumptions MemberConsumption[]
+}
+
+model MemberConsumption {
+  id         String   @id
+  memberId   String
+  storeKey   String
+  date       DateTime @db.Date
+  amountCents BigInt  @default(0)
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+  member     Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  store      Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([memberId, date])
 }
 
 model PurchaseItem {

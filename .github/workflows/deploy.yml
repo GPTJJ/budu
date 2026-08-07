@@ -39,3 +39,13 @@ jobs:
           SSH_USER: ${{ secrets.TENCENT_USER }}
           APP_DIR: ${{ secrets.TENCENT_APP_DIR }}
         run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA"
+
+      - name: 部署失败企业微信通知
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.WECHAT_WORK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$WEBHOOK" ]; then
+            curl -s -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
+              -d "{\"msgtype\":\"markdown\",\"markdown\":{\"content\":\"## BUDU 部署失败\\ncommit: $GITHUB_SHA\\n查看 Actions 日志确认原因\"}}"
+          fi

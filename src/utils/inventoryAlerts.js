@@ -1,11 +1,12 @@
 /** 库存申请实时通知（开发者账号轮询，未读状态存 localStorage） */
 import { loadUserData, getInventoryRequests } from './userData'
+import { api } from './api'
 
 const SEEN_KEY = 'budu-inventory-seen-at'
 const MUTED_KEY = 'budu-alert-muted'
 const POLL_MS = 8000
 
-let state = { unread: 0, items: [] }
+let state = { unread: 0, items: [], stock: [] }
 let listeners = []
 let timer = null
 let currentUserKey = null
@@ -109,6 +110,15 @@ async function refresh() {
     /* 网络异常时保留当前状态 */
   }
   compute()
+  if (currentCanNotify) {
+    try {
+      const res = await api('/v2/stock/alerts')
+      state = { ...state, stock: Array.isArray(res.rows) ? res.rows : [] }
+      notify()
+    } catch {
+      /* v2 不可用时忽略 */
+    }
+  }
 }
 
 /** 启动全局数据同步（所有登录账号，8 秒一次）；通知计算仅开发者/店长 */

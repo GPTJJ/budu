@@ -148,6 +148,21 @@ SKU/条码/供应商增强、自动备份同步 COS 与告警
 - 前端申请单/库存切 v2：提交走 v2 创建、发货/驳回/收货走 v2、采购改为「收货入库」（按实收入库）、
   删除走 v2；库存面板改为 v2 盘点调整；loadUserData 以 v2 为申请单/库存权威源（KV 回退）
 
+## M3「SKU/供应商+预警 / COS 备份告警 / 财务会员 MVP」实施记录（2026-08-08）
+
+已完成并待部署验证：
+- 新迁移 `20260808010000_next_batch`：Supplier、WasteRecord、AlertLog、Expense、Member、
+  MemberConsumption；StockBalance.minQty（安全库存）；PurchaseRequest.supplierId
+- v2 新接口：货品档案增改查（unit/spec/barcode/category）、供应商增改查、
+  报损（事务扣库存+流水+记录）、缺货预警查询、企微测试、费用增删查、
+  门店利润（日/月+排名）、利润 CSV 导出、会员增查/消费/积分/生日名单
+- 前端：库存面板（盘点+安全库存+报损+货品档案+流水筛选+低库存高亮）、采购表单（供应商+预计到货）、
+  铃铛新增库存预警类目、财务利润页、会员营销页、设置页企微测试按钮
+- 备份：脚本支持 COS 上传（cos-nodejs-sdk-v5，未配置则跳过）+ 备份失败企微告警；
+  Actions 部署失败企微通知步骤
+
+待用户提供：`WECHAT_WORK_WEBHOOK_URL`、`COS_SECRET_ID/KEY/BUCKET/REGION`（服务器 .env.production）
+
 ## 腾讯云部署进度（2026-08-07 下午）
 
 - 服务器：`124.156.171.195`（腾讯云轻量香港/OpenClaw 龙虾镜像，2核2G/40G，实例 lhins-gkqyrkst）

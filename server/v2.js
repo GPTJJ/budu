@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
+import { sendWechatMarkdown } from './wechat-alert.js'
 
 export const v2Router = Router()
 
@@ -123,6 +124,90 @@ function serializePurchase(r) {
 function storeFilter(user) {
   if (user.role === 'developer' || user.role === 'public') return null
   return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
+}
+
+function canWrite(user) {
+  return Boolean(user && ['developer', 'manager'].includes(user.role))
+}
+
+const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+async function maybeAlertLowStock(storeKey) {
+  try {
+    const day = new Date().toISOString().slice(0, 10)
+    const rows = await prisma.stockBalance.findMany({
+      where: { storeKey, minQty: { gt: 0 } },
+      include: { item: true },
+    })
+    for (const r of rows.filter((x) => x.quantity <= x.minQty)) {
+      const exists = await prisma.alertLog.findUnique({
+        where: { storeKey_itemId_day: { storeKey: r.storeKey, itemId: r.itemId, day } },
+      })
+      if (exists) continue
+      await prisma.alertLog.create({
+        data: { id: uid('al'), storeKey: r.storeKey, itemId: r.itemId, day },
+      })
+      await sendWechatMarkdown(
+        '库存预警',
+        `门店 **${r.storeKey}** 的「${r.item.name}」当前库存 **${r.quantity}**，已低于安全库存 **${r.minQty}**`,
+      )
+    }
+  } catch (e) {
+    console.error('[alert]', e.message)
+  }
+}
+
+async function computeProfit(user, month, store) {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw bad('月份格式应为 YYYY-MM')
+  if (store && !canStore(user, store)) throw bad('无权限', 403)
+  const sf = storeFilter(user)
+  const storeWhere = store ? store : sf
+  const [y, m] = month.split('-').map(Number)
+  const start = new Date(Date.UTC(y, m - 1, 1))
+  const end = new Date(Date.UTC(y, m, 1))
+  const entries = await prisma.dailyEntry.findMany({ where: { storeKey: storeWhere, date: { gte: start, lt: end } } })
+  const expenses = await prisma.expense.findMany({ where: { storeKey: storeWhere, date: { gte: start, lt: end } } })
+  const dayMap = new Map()
+  const monthMap = new Map()
+  for (const e of entries) {
+    const d = isoDate(e.date)
+    const k = `${e.storeKey}|${d}`
+    const item = dayMap.get(k) || { storeKey: e.storeKey, date: d, incCents: 0n, expenseCents: 0n }
+    item.incCents += e.incCents
+    dayMap.set(k, item)
+    const mm = monthMap.get(e.storeKey) || { storeKey: e.storeKey, incCents: 0n, expenseCents: 0n }
+    mm.incCents += e.incCents
+    monthMap.set(e.storeKey, mm)
+  }
+  for (const e of expenses) {
+    const d = isoDate(e.date)
+    const k = `${e.storeKey}|${d}`
+    const item = dayMap.get(k) || { storeKey: e.storeKey, date: d, incCents: 0n, expenseCents: 0n }
+    item.expenseCents += e.amountCents
+    dayMap.set(k, item)
+    const mm = monthMap.get(e.storeKey) || { storeKey: e.storeKey, incCents: 0n, expenseCents: 0n }
+    mm.expenseCents += e.amountCents
+    monthMap.set(e.storeKey, mm)
+  }
+  const toNum = (v) => v.toString()
+  const rows = [...dayMap.values()]
+    .sort((a, b) => a.date.localeCompare(b.date) || a.storeKey.localeCompare(b.storeKey))
+    .map((r) => ({
+      storeKey: r.storeKey,
+      date: r.date,
+      incCents: toNum(r.incCents),
+      expenseCents: toNum(r.expenseCents),
+      profitCents: toNum(r.incCents - r.expenseCents),
+    }))
+  const monthly = [...monthMap.values()]
+    .map((r) => ({
+      storeKey: r.storeKey,
+      incCents: toNum(r.incCents),
+      expenseCents: toNum(r.expenseCents),
+      profitCents: toNum(r.incCents - r.expenseCents),
+    }))
+    .sort((a, b) => Number(b.profitCents) - Number(a.profitCents))
+  return { month, rows, monthly }
 }
 
 // ---------- 业绩录入（金额按分，版本乐观锁） ----------
@@ -317,21 +402,28 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
     }
     await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
   })
+  maybeAlertLowStock(t.fromStoreKey).catch(() => {})
+  maybeAlertLowStock(t.toStoreKey).catch(() => {})
   res.json({ ok: true })
 }))
 
 // ---------- 采购 ----------
 v2Router.post('/purchase-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  const { storeKey, items, supplier, expectedAt, note } = req.body || {}
+  const { storeKey, items, supplier, supplierId, expectedAt, note } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   const rows = itemRows(items)
+  if (supplierId) {
+    const s = await prisma.supplier.findUnique({ where: { id: supplierId } })
+    if (!s) throw bad('供应商不存在')
+  }
   await ensureStore(storeKey)
   const created = await prisma.purchaseRequest.create({
     data: {
       id: `pr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       storeKey,
       supplier: String(supplier || '').trim().slice(0, 50),
+      supplierId: supplierId || null,
       expectedAt: expectedAt ? new Date(expectedAt) : null,
       note: String(note || '').trim().slice(0, 200),
       createdBy: req.user.username,
@@ -398,6 +490,7 @@ v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
     }
     await tx.purchaseRequest.update({ where: { id: p.id }, data: { status: 'received', updatedAt: new Date() } })
   })
+  maybeAlertLowStock(p.storeKey).catch(() => {})
   res.json({ ok: true })
 }))
 
@@ -411,7 +504,7 @@ v2Router.get('/stock', wrap(async (req, res) => {
     include: { item: true },
     orderBy: { item: { name: 'asc' } },
   })
-  res.json({ rows: rows.map((r) => ({ storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, unit: r.item.unit, quantity: r.quantity, updatedAt: r.updatedAt })) })
+  res.json({ rows: rows.map((r) => ({ storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, unit: r.item.unit, quantity: r.quantity, minQty: r.minQty, updatedAt: r.updatedAt })) })
 }))
 
 v2Router.post('/stock/adjust', wrap(async (req, res) => {
@@ -426,6 +519,9 @@ v2Router.post('/stock/adjust', wrap(async (req, res) => {
     for (const it of items) {
       const quantity = Number(it.quantity)
       if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99999999) throw bad('盘点数量应为非负整数')
+      const nextMin = it.minQty === undefined || it.minQty === null || it.minQty === ''
+        ? undefined
+        : Math.max(0, Math.min(999999, Number(it.minQty) || 0))
       const item = it.itemId
         ? await tx.inventoryItem.findUnique({ where: { id: it.itemId } })
         : await tx.inventoryItem.upsert({
@@ -438,8 +534,8 @@ v2Router.post('/stock/adjust', wrap(async (req, res) => {
       const cur = bal ? bal.quantity : 0
       await tx.stockBalance.upsert({
         where: { storeKey_itemId: { storeKey, itemId: item.id } },
-        update: { quantity, updatedAt: new Date() },
-        create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey, itemId: item.id, quantity },
+        update: { quantity, ...(nextMin !== undefined ? { minQty: nextMin } : {}), updatedAt: new Date() },
+        create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey, itemId: item.id, quantity, minQty: nextMin ?? 0 },
       })
       await tx.stockLedger.create({
         id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -453,6 +549,7 @@ v2Router.post('/stock/adjust', wrap(async (req, res) => {
       })
     }
   })
+  maybeAlertLowStock(storeKey).catch(() => {})
   res.json({ ok: true })
 }))
 
@@ -461,6 +558,7 @@ v2Router.get('/stock/ledger', wrap(async (req, res) => {
   const store = String(req.query.store || '')
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const where = { storeKey: whereStores(req.user, store || undefined) }
+  if (req.query.type) where.type = String(req.query.type)
   const from = req.query.from ? new Date(`${req.query.from}T00:00:00.000Z`) : null
   const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999Z`) : null
   if (from || to) where.createdAt = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) }
@@ -485,4 +583,336 @@ v2Router.get('/stock/ledger', wrap(async (req, res) => {
       createdAt: r.createdAt,
     })),
   })
+}))
+
+// ---------- M3-1：货品档案 / 供应商 / 报损 / 缺货预警 ----------
+v2Router.get('/items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const q = String(req.query.q || '').trim()
+  const rows = await prisma.inventoryItem.findMany({
+    where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
+    orderBy: { name: 'asc' },
+    take: 500,
+  })
+  res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, unit: r.unit, spec: r.spec, barcode: r.barcode, category: r.category })) })
+}))
+
+v2Router.post('/items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, unit, spec, barcode, category } = req.body || {}
+  const n = String(name || '').trim()
+  if (!n || n.length > 50) throw bad('货品名称不正确')
+  const exists = await prisma.inventoryItem.findUnique({ where: { name: n } })
+  if (exists) throw bad('货品已存在', 409)
+  const row = await prisma.inventoryItem.create({
+    data: {
+      id: uid('it'),
+      name: n,
+      unit: String(unit || '').trim().slice(0, 20),
+      spec: String(spec || '').trim().slice(0, 50),
+      barcode: String(barcode || '').trim().slice(0, 50),
+      category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+    },
+  })
+  res.json({ ok: true, item: row })
+}))
+
+v2Router.put('/items/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, unit, spec, barcode, category } = req.body || {}
+  const n = String(name || '').trim()
+  if (!n || n.length > 50) throw bad('货品名称不正确')
+  const dup = await prisma.inventoryItem.findFirst({ where: { name: n, id: { not: req.params.id } } })
+  if (dup) throw bad('货品名称已存在', 409)
+  const row = await prisma.inventoryItem.update({
+    where: { id: req.params.id },
+    data: {
+      name: n,
+      unit: String(unit || '').trim().slice(0, 20),
+      spec: String(spec || '').trim().slice(0, 50),
+      barcode: String(barcode || '').trim().slice(0, 50),
+      category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+    },
+  })
+  res.json({ ok: true, item: row })
+}))
+
+v2Router.get('/suppliers', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const rows = await prisma.supplier.findMany({ orderBy: { name: 'asc' }, take: 500 })
+  res.json({ rows })
+}))
+
+v2Router.post('/suppliers', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, phone, contact, note } = req.body || {}
+  const n = String(name || '').trim()
+  if (!n || n.length > 50) throw bad('供应商名称不正确')
+  const exists = await prisma.supplier.findUnique({ where: { name: n } })
+  if (exists) throw bad('供应商已存在', 409)
+  const row = await prisma.supplier.create({
+    data: {
+      id: uid('sp'),
+      name: n,
+      phone: String(phone || '').trim().slice(0, 30),
+      contact: String(contact || '').trim().slice(0, 30),
+      note: String(note || '').trim().slice(0, 200),
+    },
+  })
+  res.json({ ok: true, supplier: row })
+}))
+
+v2Router.put('/suppliers/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, phone, contact, note } = req.body || {}
+  const n = String(name || '').trim()
+  if (!n || n.length > 50) throw bad('供应商名称不正确')
+  const row = await prisma.supplier.update({
+    where: { id: req.params.id },
+    data: {
+      name: n,
+      phone: String(phone || '').trim().slice(0, 30),
+      contact: String(contact || '').trim().slice(0, 30),
+      note: String(note || '').trim().slice(0, 200),
+    },
+  })
+  res.json({ ok: true, supplier: row })
+}))
+
+v2Router.post('/stock/waste', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const { storeKey, items } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  if (!isManager(req.user)) throw bad('仅店长/开发者可报损', 403)
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('货品明细不正确')
+  await ensureStore(storeKey)
+  const operator = req.user.username
+  const records = []
+  await prisma.$transaction(async (tx) => {
+    for (const it of items) {
+      const quantity = Number(it.quantity)
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('报损数量应为正整数')
+      const reason = String(it.reason || '').trim().slice(0, 100)
+      const item = it.itemId
+        ? await tx.inventoryItem.findUnique({ where: { id: it.itemId } })
+        : await tx.inventoryItem.upsert({
+            where: { name: String(it.name || '').trim() },
+            update: {},
+            create: { id: uid('it'), name: String(it.name || '').trim() },
+          })
+      if (!item) throw bad('货品不存在')
+      const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey, itemId: item.id } } })
+      const cur = bal ? bal.quantity : 0
+      if (cur < quantity) {
+        const e = new Error(`「${item.name}」库存不足（当前 ${cur}）`)
+        e.status = 400
+        throw e
+      }
+      await tx.stockBalance.update({
+        where: { storeKey_itemId: { storeKey, itemId: item.id } },
+        data: { quantity: cur - quantity, updatedAt: new Date() },
+      })
+      await tx.stockLedger.create({ id: uid('sl'), storeKey, itemId: item.id, change: -quantity, balance: cur - quantity, type: 'waste', refId: `waste-${Date.now().toString(36)}`, operator })
+      const wr = await tx.wasteRecord.create({ data: { id: uid('wr'), storeKey, itemId: item.id, quantity, reason, operator } })
+      records.push({ id: wr.id, storeKey, itemId: item.id, name: item.name, quantity, reason, operator })
+    }
+  })
+  maybeAlertLowStock(storeKey).catch(() => {})
+  res.json({ ok: true, records })
+}))
+
+v2Router.get('/stock/alerts', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const rows = await prisma.stockBalance.findMany({
+    where: { storeKey: whereStores(req.user, store || undefined), minQty: { gt: 0 } },
+    include: { item: true },
+    orderBy: { storeKey: 'asc' },
+  })
+  res.json({
+    rows: rows.filter((r) => r.quantity <= r.minQty).map((r) => ({
+      storeKey: r.storeKey,
+      itemId: r.itemId,
+      name: r.item.name,
+      quantity: r.quantity,
+      minQty: r.minQty,
+    })),
+  })
+}))
+
+v2Router.get('/waste-records', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const rows = await prisma.wasteRecord.findMany({
+    where: { storeKey: whereStores(req.user, store || undefined) },
+    include: { item: true },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  })
+  res.json({ rows: rows.map((r) => ({ id: r.id, storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, quantity: r.quantity, reason: r.reason, operator: r.operator, createdAt: r.createdAt })) })
+}))
+
+// ---------- M3-2：企微告警测试 ----------
+v2Router.post('/alerts/test', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  const ok = await sendWechatMarkdown('BUDU 告警测试', '这是一条测试消息，企微告警通道正常 ✅')
+  res.json({ ok, configured: Boolean(process.env.WECHAT_WORK_WEBHOOK_URL) })
+}))
+
+// ---------- M3-3：财务（费用/利润/导出） ----------
+v2Router.get('/expenses', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const store = String(req.query.store || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const month = String(req.query.month || '')
+  const where = { storeKey: whereStores(req.user, store || undefined) }
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split('-').map(Number)
+    where.date = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+  }
+  const rows = await prisma.expense.findMany({ where, orderBy: [{ date: 'desc' }, { createdAt: 'desc' }], take: 1000 })
+  res.json({ rows: rows.map((r) => ({ id: r.id, storeKey: r.storeKey, date: isoDate(r.date), category: r.category, amountCents: r.amountCents.toString(), note: r.note, createdBy: r.createdBy })) })
+}))
+
+v2Router.post('/expenses', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { storeKey, date, category, amountCents, note } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const cents = Number(amountCents)
+  if (!Number.isInteger(cents) || cents < 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
+  await ensureStore(storeKey)
+  const row = await prisma.expense.create({
+    data: {
+      id: uid('ex'),
+      storeKey,
+      date: dateOnly(date),
+      category: String(category || '其他').trim().slice(0, 20),
+      amountCents: BigInt(cents),
+      note: String(note || '').trim().slice(0, 200),
+      createdBy: req.user.username,
+    },
+  })
+  res.json({ ok: true, expense: { id: row.id, storeKey: row.storeKey, date: isoDate(row.date), category: row.category, amountCents: row.amountCents.toString(), note: row.note, createdBy: row.createdBy } })
+}))
+
+v2Router.delete('/expenses/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const row = await prisma.expense.findUnique({ where: { id: req.params.id } })
+  if (!row) throw bad('费用不存在', 404)
+  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  await prisma.expense.delete({ where: { id: row.id } })
+  res.json({ ok: true })
+}))
+
+v2Router.get('/profit', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  res.json(await computeProfit(req.user, String(req.query.month || ''), String(req.query.store || '')))
+}))
+
+v2Router.get('/export/profit', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const data = await computeProfit(req.user, String(req.query.month || ''), String(req.query.store || ''))
+  const header = '门店,日期,营业收入(元),费用(元),利润(元)'
+  const lines = (data.rows || []).map((r) => `${r.storeKey},${r.date},${(Number(r.incCents) / 100).toFixed(2)},${(Number(r.expenseCents) / 100).toFixed(2)},${(Number(r.profitCents) / 100).toFixed(2)}`)
+  const csv = `\uFEFF${[header, ...lines].join('\n')}`
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="profit-${data.month || 'all'}.csv"`)
+  res.send(csv)
+}))
+
+// ---------- M3-3：会员 ----------
+v2Router.get('/members', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const q = String(req.query.q || '').trim()
+  const rows = await prisma.member.findMany({
+    where: q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : undefined,
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  })
+  res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, birthday: r.birthday ? isoDate(r.birthday) : null, level: r.level, points: r.points, createdAt: r.createdAt })) })
+}))
+
+v2Router.get('/members/birthdays', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const month = String(req.query.month || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
+  const mm = Number(month.split('-')[1])
+  const all = await prisma.member.findMany({ where: { birthday: { not: null } }, take: 2000 })
+  res.json({ rows: all.filter((m) => m.birthday && m.birthday.getUTCMonth() + 1 === mm).map((r) => ({ id: r.id, name: r.name, phone: r.phone, birthday: isoDate(r.birthday), level: r.level, points: r.points })) })
+}))
+
+v2Router.post('/members', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, phone, birthday } = req.body || {}
+  const n = String(name || '').trim()
+  const p = String(phone || '').trim()
+  if (!n || n.length > 30) throw bad('会员姓名不正确')
+  if (!/^1\d{10}$/.test(p)) throw bad('手机号应为 11 位')
+  const exists = await prisma.member.findUnique({ where: { phone: p } })
+  if (exists) throw bad('该手机号已建档', 409)
+  const row = await prisma.member.create({
+    data: { id: uid('mb'), name: n, phone: p, birthday: birthday ? dateOnly(birthday) : null },
+  })
+  res.json({ ok: true, member: { id: row.id, name: row.name, phone: row.phone, birthday: row.birthday ? isoDate(row.birthday) : null, level: row.level, points: row.points } })
+}))
+
+v2Router.put('/members/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { name, birthday, level } = req.body || {}
+  const row = await prisma.member.update({
+    where: { id: req.params.id },
+    data: {
+      ...(name !== undefined ? { name: String(name).trim().slice(0, 30) } : {}),
+      ...(birthday !== undefined ? { birthday: birthday ? dateOnly(birthday) : null } : {}),
+      ...(level !== undefined ? { level: Math.max(0, Math.min(9, Number(level) || 0)) } : {}),
+    },
+  })
+  res.json({ ok: true, member: { id: row.id, name: row.name, phone: row.phone, birthday: row.birthday ? isoDate(row.birthday) : null, level: row.level, points: row.points } })
+}))
+
+v2Router.get('/members/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const row = await prisma.member.findUnique({ where: { id: req.params.id }, include: { consumptions: { orderBy: { date: 'desc' }, take: 200 } } })
+  if (!row) throw bad('会员不存在', 404)
+  res.json({
+    member: { id: row.id, name: row.name, phone: row.phone, birthday: row.birthday ? isoDate(row.birthday) : null, level: row.level, points: row.points },
+    consumptions: row.consumptions.map((c) => ({ id: c.id, storeKey: c.storeKey, date: isoDate(c.date), amountCents: c.amountCents.toString(), note: c.note, createdAt: c.createdAt })),
+  })
+}))
+
+v2Router.post('/members/:id/consumptions', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const { storeKey, date, amountCents, note } = req.body || {}
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const cents = Number(amountCents)
+  if (!Number.isInteger(cents) || cents < 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
+  await ensureStore(storeKey)
+  const member = await prisma.member.findUnique({ where: { id: req.params.id } })
+  if (!member) throw bad('会员不存在', 404)
+  const points = Math.floor(cents / 100)
+  const row = await prisma.$transaction(async (tx) => {
+    const c = await tx.memberConsumption.create({
+      data: { id: uid('mc'), memberId: member.id, storeKey, date: dateOnly(date), amountCents: BigInt(cents), note: String(note || '').trim().slice(0, 200) },
+    })
+    await tx.member.update({ where: { id: member.id }, data: { points: member.points + points } })
+    return c
+  })
+  res.json({ ok: true, points: member.points + points, consumption: { id: row.id, storeKey: row.storeKey, date: isoDate(row.date), amountCents: row.amountCents.toString(), note: row.note } })
 }))

@@ -23,6 +23,8 @@ const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
 const ProductCatalogPage = lazy(() => import('./ProductCatalogPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
+const FinancePage = lazy(() => import('./FinancePage'))
+const MemberPage = lazy(() => import('./MemberPage'))
 
 const pageTitles = {
   'staff-fulltime': '全职雇员',
@@ -32,6 +34,8 @@ const pageTitles = {
   'product-catalog': '商品目录',
   'inventory-transfer': '申请调货',
   'inventory-purchase': '申请采购',
+  finance: '财务利润',
+  member: '会员营销',
   analytics: '数据分析',
   settings: '系统设置',
   'account-admin': '账号管理',
@@ -61,6 +65,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isProductCatalogView = view === 'product-catalog'
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
+  const isFinanceView = view === 'finance'
+  const isMemberView = view === 'member'
 
   const openProduct = (name) => {
     setSelectedProduct(name)
@@ -181,6 +187,10 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   currentUser={user}
                   onBack={() => setView('overview')}
                 />
+              ) : isFinanceView && user?.role !== 'public' ? (
+                <FinancePage currentUser={user} onBack={() => setView('overview')} />
+              ) : isMemberView && user?.role !== 'public' ? (
+                <MemberPage currentUser={user} onBack={() => setView('overview')} />
               ) : (
                 <>
                   {/* 核心 KPI 统计 */}

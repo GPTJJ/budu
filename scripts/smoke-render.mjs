@@ -67,6 +67,22 @@ try {
       ['货品清单', '下载图片'],
     ],
     [
+      'FinancePage',
+      await render('/src/components/FinancePage.jsx', {
+        currentUser: { username: 'budu', role: 'developer' },
+        onBack: () => {},
+      }),
+      ['财务利润', '费用录入'],
+    ],
+    [
+      'MemberPage',
+      await render('/src/components/MemberPage.jsx', {
+        currentUser: { username: 'budu', role: 'developer' },
+        onBack: () => {},
+      }),
+      ['会员营销', '会员列表'],
+    ],
+    [
       'Dashboard',
       await render('/src/components/Dashboard.jsx', {
         user: { username: 'budu', role: 'developer' },

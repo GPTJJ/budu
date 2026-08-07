@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   Check,
@@ -54,6 +54,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [tempStores, setTempStores] = useState([])
   const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
   const [customName, setCustomName] = useState('')
+  const [suppliers, setSuppliers] = useState([])
+  const [supplierId, setSupplierId] = useState('')
+  const [expectedAt, setExpectedAt] = useState('')
+  const [supplierModal, setSupplierModal] = useState(false)
+  const [supplierForm, setSupplierForm] = useState({ name: '', phone: '', contact: '', note: '' })
   const [productMenuOpen, setProductMenuOpen] = useState(false)
   const [productCategory, setProductCategory] = useState(PRODUCT_CATEGORIES[0])
   const [listTab, setListTab] = useState('pending') // 'pending' | 'done'
@@ -89,6 +94,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   )
   const isDeveloper = currentUser?.role === 'developer'
 
+  useEffect(() => {
+    if (isTransfer) return
+    api('/v2/suppliers')
+      .then((d) => setSuppliers(d.rows || []))
+      .catch(() => {})
+  }, [isTransfer])
+
   const submit = async () => {
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
@@ -107,6 +119,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       const payload = {
         storeKey: form.storeKey,
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
+        ...(isTransfer ? {} : { supplierId: supplierId || undefined, expectedAt: expectedAt || undefined }),
         items: picked.map((it) => ({ name: it.productName, quantity: it.quantity, note: it.note })),
         note: form.note.trim(),
       }
@@ -243,6 +256,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     }
   }
 
+  const addSupplier = async () => {
+    setError('')
+    try {
+      const res = await api('/v2/suppliers', { method: 'POST', body: JSON.stringify(supplierForm) })
+      setSuppliers((list) => [...list, res.supplier])
+      setSupplierId(res.supplier.id)
+      setSupplierForm({ name: '', phone: '', contact: '', note: '' })
+      setSupplierModal(false)
+      setSavedTip(t('供应商已添加'))
+      setTimeout(() => setSavedTip(''), 1800)
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
+
   const addItem = () => {
     setError('')
     const name = picker.productName.trim()
@@ -371,6 +399,55 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             )}
           </div>
         </div>
+
+        {!isTransfer && (
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('供应商')}</span>
+              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
+                <option value="">{t('未指定')}</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => setSupplierModal(true)}
+                className="mt-1 text-xs font-semibold text-budu-500 transition hover:text-budu-600"
+              >
+                ＋ {t('新增供应商')}
+              </button>
+            </div>
+            <div>
+              <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('预计到货日期')}</span>
+              <input type="date" value={expectedAt} onChange={(e) => setExpectedAt(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+        )}
+
+        {!isTransfer && supplierModal && (
+          <div className="fixed inset-0 z-[85] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSupplierModal(false)} />
+            <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+              <h3 className="text-lg font-bold text-slate-800">{t('新增供应商')}</h3>
+              <div className="mt-4 space-y-2">
+                <input value={supplierForm.name} onChange={(e) => setSupplierForm((s) => ({ ...s, name: e.target.value }))} placeholder={t('供应商名称')} className={inputCls} />
+                <input value={supplierForm.phone} onChange={(e) => setSupplierForm((s) => ({ ...s, phone: e.target.value }))} placeholder={t('电话')} className={inputCls} />
+                <input value={supplierForm.contact} onChange={(e) => setSupplierForm((s) => ({ ...s, contact: e.target.value }))} placeholder={t('联系人')} className={inputCls} />
+                <input value={supplierForm.note} onChange={(e) => setSupplierForm((s) => ({ ...s, note: e.target.value }))} placeholder={t('备注')} className={inputCls} />
+              </div>
+              <div className="mt-4 flex gap-2">
+                <button onClick={() => setSupplierModal(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
+                  {t('取消')}
+                </button>
+                <button onClick={addSupplier} className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+                  {t('保存')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 挑选货品：选一个 → 添加到本次申请列表 → 再选下一个 */}
         <div className="mt-5 rounded-2xl bg-slate-50/70 p-4">

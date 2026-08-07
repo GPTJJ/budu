@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { ArrowLeft, Database, Languages, MapPin, Plus, Server, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Database, Languages, MapPin, Plus, Server, Trash2 } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { api } from '../utils/api'
 import { commitStores, getStores } from '../utils/userData'
 import { allStores } from '../utils/selectors'
 
@@ -9,6 +10,7 @@ export default function SettingsPage({ user, onBack }) {
   const [storeName, setStoreName] = useState('')
   const [storeError, setStoreError] = useState('')
   const [version, setVersion] = useState(0)
+  const [alertTip, setAlertTip] = useState('')
   const isDeveloper = user?.role === 'developer'
   const customStores = getStores()
 
@@ -33,6 +35,16 @@ export default function SettingsPage({ user, onBack }) {
     if (!window.confirm(t('确定删除门店「{name}」吗？', { name }))) return
     commitStores(customStores.filter((s) => s.key !== key))
     setVersion((v) => v + 1)
+  }
+
+  const sendTestAlert = async () => {
+    setAlertTip('')
+    try {
+      const res = await api('/v2/alerts/test', { method: 'POST', body: JSON.stringify({}) })
+      setAlertTip(res.configured ? t('测试消息已发送 ✓') : t('未配置 Webhook，仅返回站内状态'))
+    } catch (err) {
+      setAlertTip(t(err.message))
+    }
   }
 
   return (
@@ -85,6 +97,29 @@ export default function SettingsPage({ user, onBack }) {
           </button>
         </div>
       </div>
+
+      {isDeveloper && (
+        <div className="card p-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md">
+              <Bell className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-[15px] font-bold text-slate-800">{t('企业微信告警')}</h3>
+              <p className="mt-0.5 text-xs text-slate-400">{t('配置 WECHAT_WORK_WEBHOOK_URL 后，库存/备份异常会推送到群')}</p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              onClick={sendTestAlert}
+              className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-600"
+            >
+              {t('发送测试消息')}
+            </button>
+            {alertTip && <span className="text-xs font-medium text-slate-500">{alertTip}</span>}
+          </div>
+        </div>
+      )}
 
       {isDeveloper && (
         <div className="card p-6">

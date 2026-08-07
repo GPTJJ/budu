@@ -88,7 +88,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
             </div>
 
             <div className="max-h-80 overflow-y-auto">
-              {alerts.items.length > 0 ? (
+              {alerts.items.length > 0 &&
                 alerts.items.map((r) => (
                   <button
                     key={r.id}
@@ -113,8 +113,29 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                       {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                     </p>
                   </button>
-                ))
-              ) : (
+                ))}
+              {alerts.stock.length > 0 && (
+                <>
+                  <p className="px-4 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-rose-400">
+                    {t('库存预警')}
+                  </p>
+                  {alerts.stock.map((s) => (
+                    <div
+                      key={`${s.storeKey}-${s.itemId}`}
+                      className="flex items-center justify-between gap-2 border-b border-slate-50 px-4 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-semibold text-slate-700">{s.name}</p>
+                        <p className="text-[11px] text-slate-400">{s.storeKey}</p>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold text-rose-500">
+                        {s.quantity} / {t('阈值 {n}', { n: s.minQty })}
+                      </span>
+                    </div>
+                  ))}
+                </>
+              )}
+              {alerts.items.length === 0 && alerts.stock.length === 0 && (
                 <p className="grid place-items-center py-10 text-xs text-slate-300">{t('暂无新申请通知')}</p>
               )}
             </div>
