@@ -60,6 +60,10 @@
    后端 `POST /api/auth/register` 仅首个账号可注册（空库引导），其余返回 403；
    新增 `POST /api/admin/users`（开发者专用，用户名/密码/角色校验齐全）；
    账号管理页新增「新增账号」弹窗；接口测试/构建/冒烟全部通过
+10. **网页提速**：移除单文件打包（vite-plugin-singlefile），改为常规分包：
+    入口 HTML 从 1.03MB 降至 0.58KB；JS（gzip 234KB）/CSS（gzip 7KB）带 hash 长期缓存
+    （Cache-Control immutable），HTML 每次重校验；Nginx 补 gzip_vary；
+    首次打开更快、之后秒开（后续可再按页面懒加载进一步缩小首屏）
 
 ## 腾讯云部署进度（2026-08-07 下午）
 

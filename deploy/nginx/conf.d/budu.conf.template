@@ -26,6 +26,7 @@ server {
 
   client_max_body_size 12m;
   gzip on;
+  gzip_vary on;
   gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;

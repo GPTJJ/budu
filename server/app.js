@@ -524,11 +524,27 @@ export function createApp() {
   })
 
   // ---------- 静态前端（仅本地/自建服务器模式使用；Vercel 由平台托管前端） ----------
-  app.use(express.static(DIST))
+  app.use(
+    express.static(DIST, {
+      index: false,
+      setHeaders(res, filePath) {
+        const rel = path.relative(DIST, filePath)
+        // 带 hash 的构建产物可长期缓存；入口 HTML 每次重新校验，保证发版后及时更新
+        if (rel.startsWith(`assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        } else {
+          res.setHeader('Cache-Control', 'no-cache')
+        }
+      },
+    }),
+  )
   app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next()
     const index = path.join(DIST, 'index.html')
-    if (fs.existsSync(index)) return res.sendFile(index)
+    if (fs.existsSync(index)) {
+      res.setHeader('Cache-Control', 'no-cache')
+      return res.sendFile(index)
+    }
     res.status(404).json({ error: '前端未构建，请先运行 npm run build' })
   })
 
