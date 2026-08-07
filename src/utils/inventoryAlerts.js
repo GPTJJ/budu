@@ -98,7 +98,7 @@ function compute() {
         .map((r) => ({ ...r, type: 'invoice' }))
     : []
   const items = [...reqItems, ...invItems].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-  state = { unread: items.length, items }
+  state = { ...state, unread: items.length, items }
   notify()
 
   // 新申请到达时播放提示音（首次加载不响，避免旧申请轰炸）
