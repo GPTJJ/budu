@@ -11,3 +11,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </I18nProvider>
   </React.StrictMode>,
 )
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // PWA 安装能力不应影响主系统启动。
+    })
+  })
+}

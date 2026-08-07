@@ -5,9 +5,22 @@
 @layer base {
   html {
     @apply scroll-smooth;
+    min-height: 100%;
+    background: #f7f4fa;
   }
   body {
     @apply bg-[#F7F4FA] font-sans text-slate-700 antialiased;
+    min-height: 100%;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+  }
+  #root {
+    min-height: 100%;
+  }
+  button,
+  a,
+  select {
+    touch-action: manipulation;
   }
   ::-webkit-scrollbar {
     width: 6px;
@@ -30,5 +43,38 @@
   }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .card {
+    border-radius: 1.25rem;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+    user-select: none;
+  }
+
+  input,
+  textarea {
+    user-select: text;
   }
 }

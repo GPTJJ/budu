@@ -15,6 +15,8 @@ import AccountAdminPage from './components/AccountAdminPage'
 import DataAnalysisPage from './components/DataAnalysisPage'
 import ProductCatalogPage from './components/ProductCatalogPage'
 import SchedulePage from './components/SchedulePage'
+import MobileBottomNav from './components/MobileBottomNav'
+import PwaInstallPrompt from './components/PwaInstallPrompt'
 import { kpiCards } from './utils/selectors'
 import LoginPage from './components/LoginPage'
 import { api } from './utils/api'
@@ -93,9 +95,15 @@ export default function App() {
     setView('product-catalog')
   }
 
+  const handleNavigate = (nextView) => {
+    setView(nextView)
+    if (nextView !== 'product-catalog') setSelectedProduct(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   if (authLoading || !dataReady) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[#F7F4FA]">
+      <div className="grid min-h-screen min-h-[100dvh] place-items-center bg-[#F7F4FA]">
         <p className="text-sm font-medium text-slate-400">{t('正在加载 budu 系统…')}</p>
       </div>
     )
@@ -107,7 +115,7 @@ export default function App() {
 
   return (
     <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
-      <div className="flex min-h-screen bg-[#F7F4FA]">
+      <div className="flex min-h-screen min-h-[100dvh] bg-[#F7F4FA]">
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
@@ -119,7 +127,7 @@ export default function App() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         view={view}
-        onNavigate={setView}
+        onNavigate={handleNavigate}
         user={user}
         onUserChange={handleUserChange}
         onLogout={handleLogout}
@@ -145,7 +153,7 @@ export default function App() {
           onMenuClick={() => setSidebarOpen(true)}
         />
 
-        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-6 px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
+        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
           {isStaffView ? (
             <PersonnelPage
               type={view === 'staff-fulltime' ? 'fulltime' : 'parttime'}
@@ -176,7 +184,7 @@ export default function App() {
           ) : (
             <>
               {/* 核心 KPI 统计 */}
-              <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+              <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3 2xl:grid-cols-6">
                 {cards.map((card) => (
                   <KpiCard key={card.key} card={card} />
                 ))}
@@ -215,6 +223,13 @@ export default function App() {
           </footer>
         </main>
       </div>
+      <MobileBottomNav
+        view={view}
+        user={user}
+        onNavigate={handleNavigate}
+        onMore={() => setSidebarOpen(true)}
+      />
+      <PwaInstallPrompt authenticated />
       </div>
     </PublicModeProvider>
   )

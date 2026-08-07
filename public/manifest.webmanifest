@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "budu 甜蜜运营系统",
+  "short_name": "budu",
+  "description": "budu 甜品门店经营、排班、商品与数据管理",
+  "lang": "zh-CN",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#F7F4FA",
+  "theme_color": "#D9508B",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

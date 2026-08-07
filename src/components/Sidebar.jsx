@@ -63,6 +63,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col bg-white/90 backdrop-blur transition-transform duration-300 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 lg:bg-white ${
         open ? 'translate-x-0' : '-translate-x-full'
       }`}
+      style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 pb-6 pt-7">
@@ -91,7 +92,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
               <div key={item.key}>
                 <button
                   onClick={() => toggleExpand(item.key)}
-                  className={`group flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
+                  className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
                     active
                       ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
                       : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
@@ -114,7 +115,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
                         <button
                           key={sub.key}
                           onClick={() => handleNavigate(sub.key)}
-                          className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-all ${
+                          className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-all ${
                             subActive
                               ? 'bg-gradient-to-r from-budu-100 to-grape-100 text-budu-700 shadow-sm'
                               : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
@@ -136,7 +137,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
             <button
               key={item.key}
               onClick={() => handleNavigate(item.key)}
-              className={`group flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
+              className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
                 active
                   ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'

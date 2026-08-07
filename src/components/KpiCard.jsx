@@ -29,18 +29,18 @@ export default function KpiCard({ card }) {
   const up = card.change == null ? null : card.change >= 0
 
   return (
-    <div className="card group p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover">
+    <div className="card group min-w-0 p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${style.gradient} text-white shadow-md`}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${style.gradient} text-white shadow-md sm:h-10 sm:w-10`}
           >
             <Icon className="h-5 w-5" />
           </div>
           <p className="truncate text-[13px] font-medium text-slate-500">{t(card.label || style.label)}</p>
         </div>
         <span
-          className={`chip shrink-0 ${
+          className={`chip hidden shrink-0 sm:inline-flex ${
             up == null
               ? 'bg-slate-100 text-slate-400'
               : up
@@ -52,22 +52,22 @@ export default function KpiCard({ card }) {
         </span>
       </div>
 
-      <div className="mt-4 flex items-end justify-between gap-2">
+      <div className="mt-3 flex items-end justify-between gap-1.5 sm:mt-4 sm:gap-2">
         <div className="min-w-0">
           {isPublic ? (
             <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-300">•••</p>
           ) : (
             <>
-              <p className="text-xl font-extrabold leading-none tracking-tight text-slate-800 sm:text-[26px]">
+              <p className="truncate text-[17px] font-extrabold leading-none tracking-tight text-slate-800 sm:text-[26px]">
                 {card.prefix}
                 {card.value}
                 <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>
               </p>
-              <p className="mt-2 text-[11px] text-slate-400">{card.note}</p>
+              <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">{card.note}</p>
             </>
           )}
         </div>
-        <div className="h-11 w-24 shrink-0">
+        <div className="h-9 w-12 shrink-0 sm:h-11 sm:w-24">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
               <defs>

@@ -35,19 +35,22 @@ export default function Header({
           : '晚上好，{name} 👋'
 
   return (
-    <header className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/80 backdrop-blur-md">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 sm:py-4 lg:px-8">
+    <header
+      className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/88 backdrop-blur-xl"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-4 lg:px-8">
         {/* 问候语 */}
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             onClick={onMenuClick}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card lg:hidden"
+            className="hidden h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card sm:grid lg:hidden"
             aria-label={t('打开菜单')}
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
-            <h1 className="truncate text-base font-bold text-slate-800 sm:text-lg lg:text-xl">
+            <h1 className="truncate text-[17px] font-bold text-slate-800 sm:text-lg lg:text-xl">
               {title ? t(title) : t(greetingKey, { name })}
             </h1>
             {!title && (
@@ -58,15 +61,24 @@ export default function Header({
           </div>
         </div>
 
+        <button
+          type="button"
+          className="relative grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
+          aria-label={t('查看通知')}
+        >
+          <Bell className="h-[18px] w-[18px]" />
+          <span className="absolute right-2 top-2 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
+        </button>
+
         {/* 右侧工具栏 */}
-        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2 sm:gap-3">
+        <div className="no-scrollbar order-3 flex w-full shrink-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 sm:gap-3 md:order-none md:w-auto md:overflow-visible md:pb-0">
           {showOverviewTools && (
             <>
               {/* 日历选择（月 / 日双模式） */}
               <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
 
               {/* 门店选择 */}
-              <label className="flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover">
+              <label className="flex shrink-0 items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover">
                 <MapPin className="h-4 w-4 text-grape-500" />
                 <select
                   value={store}
@@ -86,7 +98,11 @@ export default function Header({
           )}
 
           {/* 消息通知 */}
-          <button className="relative grid h-11 w-11 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500">
+          <button
+            type="button"
+            className="relative ml-auto hidden h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:ml-0 md:grid"
+            aria-label={t('查看通知')}
+          >
             <Bell className="h-[18px] w-[18px]" />
             <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full border-2 border-white bg-rose-500" />
           </button>

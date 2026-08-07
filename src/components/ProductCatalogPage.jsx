@@ -344,24 +344,24 @@ export default function ProductCatalogPage({ initialProduct = null, onBack, canE
           </h2>
           <p className="mt-0.5 text-[13px] text-slate-400">{t('根据菜品销售明细，为每一款菜品提供独立展示')}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2.5">
+        <div className="flex w-full flex-wrap items-center gap-2.5 sm:ml-auto sm:w-auto sm:flex-nowrap">
           {canEdit && (
             <button
               onClick={() => setEditing({})}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 sm:flex-none"
             >
               <Plus className="h-4 w-4" />
               {t('新增商品')}
             </button>
           )}
-          <select value={month} onChange={(e) => setMonth(e.target.value)} className={inputCls}>
+          <select value={month} onChange={(e) => setMonth(e.target.value)} className={`${inputCls} min-w-0 flex-1 sm:w-auto`}>
             {allMonths().map((m) => (
               <option key={m.key} value={m.key}>
                 {monthLabel(m.key, lang)}
               </option>
             ))}
           </select>
-          <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
+          <select value={store} onChange={(e) => setStore(e.target.value)} className={`${inputCls} min-w-0 flex-1 sm:w-auto`}>
             <option value="all">{t('全部门店')}</option>
             {allStores().map((s) => (
               <option key={s.key} value={s.key}>
@@ -373,16 +373,16 @@ export default function ProductCatalogPage({ initialProduct = null, onBack, canE
       </div>
 
       {list.length > 0 ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4 2xl:grid-cols-5">
           {list.map((p) => {
             const img = images[p.name]
             return (
               <button
                 key={p.name}
                 onClick={() => setSelectedName(p.name)}
-                className="card group flex flex-col items-center p-4 text-center transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"
+                className="card group flex min-w-0 flex-col items-center p-3 text-center transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-4"
               >
-                <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-50 to-grape-50 shadow-inner">
+                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-50 to-grape-50 shadow-inner sm:h-24 sm:w-24">
                   {img ? (
                     <img src={img} alt={p.name} className="h-full w-full object-cover" />
                   ) : (

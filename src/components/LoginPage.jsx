@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
+import PwaInstallPrompt from './PwaInstallPrompt'
 
 /** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
@@ -33,9 +34,12 @@ export default function LoginPage({ onLogin }) {
     'w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-10 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[#F7F4FA] px-4">
+    <div
+      className="grid min-h-screen min-h-[100dvh] place-items-center bg-[#F7F4FA] px-3 py-6 sm:px-4"
+      style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+    >
       <div className="w-full max-w-sm">
-        <div className="card p-8">
+        <div className="card p-6 sm:p-8">
           <div className="flex flex-col items-center text-center">
             <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-budu-500 to-grape-500 text-xl font-black text-white shadow-lg shadow-budu-200/60">
               B
@@ -100,6 +104,7 @@ export default function LoginPage({ onLogin }) {
           {t('© 2026 budu 甜品 · budu Operating System V1.0')}
         </p>
       </div>
+      <PwaInstallPrompt />
     </div>
   )
 }
