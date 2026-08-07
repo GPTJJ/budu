@@ -330,6 +330,13 @@ export const en = {
   '调出门店和调入门店不能相同': 'Source and destination stores must be different',
   '已提交申请 ✓': 'Request submitted ✓',
   '确定删除该申请吗？': 'Delete this request?',
+  '货品明细': 'Item Details',
+  '添加一行': 'Add Line',
+  '整单备注（选填）': 'Order note (optional)',
+  '{count} 种货品': '{count} items',
+  '至少添加一种货品': 'Add at least one item',
+  '请填写第 {n} 行的商品名称': 'Enter product name on line {n}',
+  '请填写第 {n} 行的数量': 'Enter quantity on line {n}',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',

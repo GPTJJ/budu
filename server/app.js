@@ -103,22 +103,44 @@ function normalizeInventoryRequests(raw) {
     if (!['transfer', 'purchase'].includes(type)) return null
     const storeKey = String(r.storeKey ?? '').trim()
     const fromStoreKey = type === 'transfer' ? String(r.fromStoreKey ?? '').trim() : ''
-    const productName = String(r.productName ?? '').trim()
     const note = r.note === undefined || r.note === null ? '' : String(r.note).trim().slice(0, 100)
-    const quantity = Number(r.quantity)
     if (!storeKey || storeKey.length > 30 || BAD_KEY.test(storeKey)) return null
     if (type === 'transfer' && (!fromStoreKey || fromStoreKey.length > 30 || BAD_KEY.test(fromStoreKey) || fromStoreKey === storeKey)) {
       return null
     }
-    if (!productName || productName.length > 50) return null
-    if (!Number.isFinite(quantity) || quantity < 1 || quantity > 99999) return null
+
+    // 货品明细：优先 items 多行结构，兼容旧的单行 productName/quantity
+    let items = null
+    if (Array.isArray(r.items) && r.items.length > 0) {
+      if (r.items.length > 50) return null
+      items = []
+      for (const it of r.items) {
+        if (!it || typeof it !== 'object' || Array.isArray(it)) return null
+        const name = String(it.productName ?? '').trim()
+        const qty = Number(it.quantity)
+        const itNote = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
+        if (!name || name.length > 50) return null
+        if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
+        const item = { productName: name, quantity: Math.floor(qty) }
+        if (itNote) item.note = itNote
+        items.push(item)
+      }
+    } else {
+      const name = String(r.productName ?? '').trim()
+      const qty = Number(r.quantity)
+      if (!name || name.length > 50) return null
+      if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
+      items = [{ productName: name, quantity: Math.floor(qty) }]
+    }
+    const first = items[0]
     out.push({
       id: typeof r.id === 'string' && r.id ? r.id.slice(0, 64) : crypto.randomUUID(),
       type,
       storeKey,
       ...(type === 'transfer' ? { fromStoreKey } : {}),
-      productName,
-      quantity: Math.floor(quantity),
+      items,
+      productName: first.productName,
+      quantity: first.quantity,
       note,
       status: r.status === 'done' ? 'done' : 'pending',
       createdBy: String(r.createdBy ?? '').trim().slice(0, 30) || 'unknown',

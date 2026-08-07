@@ -14,8 +14,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [form, setForm] = useState({
     fromStoreKey: stores[0] ? stores[0].key : '',
     storeKey: stores[1] ? stores[1].key : stores[0] ? stores[0].key : '',
-    productName: '',
-    quantity: '',
+    items: [{ productName: '', quantity: '', note: '' }],
     note: '',
   })
   const [error, setError] = useState('')
@@ -29,18 +28,28 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
   const submit = () => {
     setError('')
-    if (!form.productName.trim()) {
-      setError(t('请填写商品名称'))
-      return
-    }
-    const qty = Number(form.quantity)
-    if (!qty || qty < 1 || !Number.isFinite(qty)) {
-      setError(t('请填写有效数量'))
-      return
-    }
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
       return
+    }
+    const items = form.items
+      .map((it) => ({ ...it, productName: it.productName.trim(), quantity: it.quantity.trim() }))
+      .filter((it) => it.productName || it.quantity || it.note.trim())
+    if (items.length === 0) {
+      setError(t('至少添加一种货品'))
+      return
+    }
+    for (let i = 0; i < items.length; i += 1) {
+      if (!items[i].productName) {
+        setError(t('请填写第 {n} 行的商品名称', { n: i + 1 }))
+        return
+      }
+      const qty = Number(items[i].quantity)
+      if (!qty || qty < 1 || !Number.isFinite(qty)) {
+        setError(t('请填写第 {n} 行的数量', { n: i + 1 }))
+        return
+      }
+      items[i].quantity = Math.floor(qty)
     }
     const id =
       typeof crypto !== 'undefined' && crypto.randomUUID
@@ -53,15 +62,14 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         type,
         storeKey: form.storeKey,
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
-        productName: form.productName.trim(),
-        quantity: Math.floor(qty),
+        items,
         note: form.note.trim(),
         status: 'pending',
         createdBy: currentUser?.username || '',
         createdAt: new Date().toISOString(),
       },
     ])
-    setForm((s) => ({ ...s, productName: '', quantity: '', note: '' }))
+    setForm((s) => ({ ...s, items: [{ productName: '', quantity: '', note: '' }], note: '' }))
     setVersion((v) => v + 1)
     setSavedTip(t('已提交申请 ✓'))
     setTimeout(() => setSavedTip(''), 2200)
@@ -109,7 +117,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
       {/* 申请表单 */}
       <div className="card p-5">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {isTransfer && (
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('调出门店')}</span>
@@ -142,51 +150,96 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               ))}
             </select>
           </div>
-          <div>
-            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('商品名称')}</span>
-            <input
-              list="budu-inventory-products"
-              value={form.productName}
-              onChange={(e) => setForm((s) => ({ ...s, productName: e.target.value }))}
-              placeholder={t('输入或选择商品')}
-              className={inputCls}
-            />
-            <datalist id="budu-inventory-products">
-              {productNames.map((n) => (
-                <option key={n} value={n} />
-              ))}
-            </datalist>
-          </div>
-          <div>
-            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('数量')}</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={form.quantity}
-              onChange={(e) => setForm((s) => ({ ...s, quantity: e.target.value }))}
-              placeholder="0"
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('备注')}</span>
-            <input
-              value={form.note}
-              onChange={(e) => setForm((s) => ({ ...s, note: e.target.value }))}
-              placeholder={t('选填')}
-              className={inputCls}
-            />
-          </div>
-          <div className="flex items-end">
+        </div>
+
+        {/* 货品明细（支持多行） */}
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500">{t('货品明细')}</span>
             <button
-              onClick={submit}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              onClick={() =>
+                setForm((s) => ({ ...s, items: [...s.items, { productName: '', quantity: '', note: '' }] }))
+              }
+              className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
             >
-              <PackagePlus className="h-4 w-4" />
-              {t('提交申请')}
+              + {t('添加一行')}
             </button>
           </div>
+          <div className="space-y-2">
+            {form.items.map((row, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-50/70 p-2.5">
+                <span className="w-6 text-center text-[11px] font-bold text-slate-400">{i + 1}</span>
+                <input
+                  list="budu-inventory-products"
+                  value={row.productName}
+                  onChange={(e) => {
+                    const next = [...form.items]
+                    next[i] = { ...next[i], productName: e.target.value }
+                    setForm((s) => ({ ...s, items: next }))
+                  }}
+                  placeholder={t('商品名称')}
+                  className={`${inputCls} min-w-[160px] flex-1`}
+                />
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={row.quantity}
+                  onChange={(e) => {
+                    const next = [...form.items]
+                    next[i] = { ...next[i], quantity: e.target.value }
+                    setForm((s) => ({ ...s, items: next }))
+                  }}
+                  placeholder={t('数量')}
+                  className={`${inputCls} w-24`}
+                />
+                <input
+                  value={row.note}
+                  onChange={(e) => {
+                    const next = [...form.items]
+                    next[i] = { ...next[i], note: e.target.value }
+                    setForm((s) => ({ ...s, items: next }))
+                  }}
+                  placeholder={t('备注')}
+                  className={`${inputCls} min-w-[100px] flex-1`}
+                />
+                <button
+                  onClick={() =>
+                    setForm((s) => ({
+                      ...s,
+                      items: s.items.filter((_, idx) => idx !== i),
+                    }))
+                  }
+                  disabled={form.items.length === 1}
+                  className="rounded-lg p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label={t('删除')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <datalist id="budu-inventory-products">
+            {productNames.map((n) => (
+              <option key={n} value={n} />
+            ))}
+          </datalist>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <input
+            value={form.note}
+            onChange={(e) => setForm((s) => ({ ...s, note: e.target.value }))}
+            placeholder={t('整单备注（选填）')}
+            className={`${inputCls} max-w-md flex-1`}
+          />
+          <button
+            onClick={submit}
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+          >
+            <PackagePlus className="h-4 w-4" />
+            {t('提交申请')}
+          </button>
         </div>
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
       </div>
@@ -211,8 +264,19 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-700">
-                  {r.productName} × {r.quantity}
+                  {t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                 </p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(r.items || [{ productName: r.productName, quantity: r.quantity }]).map((it, idx) => (
+                    <span
+                      key={idx}
+                      className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[11px] font-semibold text-budu-600"
+                    >
+                      {it.productName} × {it.quantity}
+                      {it.note ? `（${it.note}）` : ''}
+                    </span>
+                  ))}
+                </div>
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   {isTransfer
                     ? t('从 {from} 调往 {to}', {
