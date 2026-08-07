@@ -36,6 +36,7 @@
    - 七天排班表：每天可添加/删除员工排班（员工姓名 + 班次时间 + 备注，姓名支持从员工名单快捷选择）
    - 数据存储：服务端共享数据新增 `schedules` 字段（周一起始日期 → 门店 key → 日期 → 班次数组），
      校验/规范化在 `server/app.js`，公开角色禁止修改；保存后所有登录账号实时同步
+   - 班次时间改为下拉选项：早班 / 晚班 / 通班（数据字段仍为 time，历史数据兼容）
    - 新文件：`src/components/SchedulePage.jsx`、`src/utils/schedule.js`
    - 测试：`npm run build` 通过；冒烟测试新增 SchedulePage（20 组件 SSR OK）；
      API 自测通过（保存/读取/非法数据 400）；薪酬单测与集成测试全部 OK

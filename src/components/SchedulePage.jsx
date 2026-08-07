@@ -296,12 +296,16 @@ export default function SchedulePage({ onBack, canEdit = true }) {
 
               <div>
                 <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('班次时间')}</span>
-                <input
+                <select
                   value={draft.time}
                   onChange={(e) => setDraft((s) => ({ ...s, time: e.target.value }))}
-                  placeholder={t('例如 08:00-16:00 或 早班')}
                   className={inputCls}
-                />
+                >
+                  <option value="">{t('选择班次')}</option>
+                  <option value="早班">{t('早班')}</option>
+                  <option value="晚班">{t('晚班')}</option>
+                  <option value="通班">{t('通班')}</option>
+                </select>
               </div>
 
               <div>
