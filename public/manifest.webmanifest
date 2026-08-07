@@ -9,8 +9,8 @@
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait-primary",
-  "background_color": "#F7F4FA",
-  "theme_color": "#D9508B",
+  "background_color": "#F3F7FF",
+  "theme_color": "#1769E8",
   "icons": [
     {
       "src": "/app-icon-capybara-192.png",
