@@ -54,20 +54,28 @@ export async function extractInvoiceFromBase64(imageBase64) {
   let raw = String(imageBase64 || '')
   const m = raw.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i)
   if (m) raw = m[2]
-  if (!raw || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) {
-    const e = new Error('图片数据格式不正确')
+  raw = raw.replace(/\s+/g, '')
+  if (!raw || !/^[A-Za-z0-9+/=]+$/.test(raw)) {
+    const e = new Error('图片数据无法读取，请重新拍摄或从相册选择')
     e.status = 400
     throw e
   }
   const buf = Buffer.from(raw, 'base64')
   if (buf.length === 0) {
-    const e = new Error('图片内容为空')
+    const e = new Error('图片内容为空，请重新选择图片')
     e.status = 400
     throw e
   }
   if (buf.length > 8 * 1024 * 1024) {
     const e = new Error('图片不能超过 8MB')
     e.status = 400
+    throw e
+  }
+  const ftyp = buf.subarray(4, 12).toString('latin1')
+  const brand = buf.subarray(8, 12).toString('latin1')
+  if (ftyp.includes('ftyp') && /heic|heif|mif1/i.test(brand)) {
+    const e = new Error('检测到手机 HEIC 原图，请下拉刷新页面后重试（新版会自动转换为 JPG）')
+    e.status = 415
     throw e
   }
   const { ocr } = await import('tencentcloud-sdk-nodejs-ocr')
