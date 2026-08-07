@@ -232,6 +232,7 @@ export function createApp() {
       username: u.username,
       role: u.role,
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
+      staffKey: u.staffKey || '',
       avatar: u.avatar || '',
       createdAt: u.createdAt,
     }
@@ -337,7 +338,13 @@ export function createApp() {
       const store = k.split('|')[1]
       if (allowed.has(store)) entries[k] = v
     }
-    const staff = (db.staff || []).filter((s) => allowed.has(s.storeKey))
+    let staff = (db.staff || []).filter((s) => allowed.has(s.storeKey))
+    // 绑定员工的店员：只能看到本人档案
+    if (user.role === 'staff' && user.staffKey) {
+      staff = staff.filter((s) => `${s.storeKey}::${s.name}` === user.staffKey)
+    } else if (user.role === 'staff') {
+      staff = []
+    }
     const schedules = {}
     for (const [wk, sm] of Object.entries(db.schedules || {})) {
       const o = {}
@@ -400,6 +407,13 @@ export function createApp() {
     return out
   }
 
+  function normalizeStaffKey(raw) {
+    const key = String(raw || '').trim()
+    if (!key) return ''
+    if (key.length > 80 || !key.includes('::')) return null
+    return key
+  }
+
   app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
   app.use('/api/v2', requireAuth, v2Router)
 
@@ -448,6 +462,15 @@ export function createApp() {
       return res.status(400).json({ error: 'storeKeys 格式错误' })
     }
     const db = await loadDb()
+    let staffKey = ''
+    if (req.body.staffKey !== undefined) {
+      const sk = normalizeStaffKey(req.body.staffKey)
+      if (sk === null) return res.status(400).json({ error: 'staffKey 格式错误' })
+      staffKey = sk
+      if (staffKey && !(db.staff || []).some((s) => `${s.storeKey}::${s.name}` === staffKey)) {
+        return res.status(400).json({ error: '员工不存在' })
+      }
+    }
     if (db.users.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
@@ -456,6 +479,7 @@ export function createApp() {
       username,
       role,
       storeKeys,
+      staffKey,
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -590,6 +614,14 @@ export function createApp() {
       }
     }
     const db = await loadDb()
+    let staffKey = null
+    if (req.body.staffKey !== undefined) {
+      staffKey = normalizeStaffKey(req.body.staffKey)
+      if (staffKey === null) return res.status(400).json({ error: 'staffKey 格式错误' })
+      if (staffKey && !(db.staff || []).some((s) => `${s.storeKey}::${s.name}` === staffKey)) {
+        return res.status(400).json({ error: '员工不存在' })
+      }
+    }
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
@@ -601,6 +633,7 @@ export function createApp() {
     }
     target.role = role
     if (storeKeys !== null) target.storeKeys = storeKeys
+    if (staffKey !== null) target.staffKey = staffKey
     await persist()
     res.json({ user: userPublic(target) })
   })

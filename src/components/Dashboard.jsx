@@ -155,6 +155,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   onBack={() => setView('overview')}
                   canDelete={user?.role === 'developer'}
                   canManage={user?.role === 'developer'}
+                  user={user}
                 />
               ) : isStoreEntryView && user?.role !== 'public' ? (
                 <StoreEntryPage onBack={() => setView('overview')} />

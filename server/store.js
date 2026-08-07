@@ -89,6 +89,7 @@ export async function loadDb() {
     else if (u.role === 'admin' || u.role === 'store') u.role = 'manager'
     else if (u.role === 'member') u.role = 'staff'
     if (!Array.isArray(u.storeKeys)) u.storeKeys = []
+    if (!u.staffKey) u.staffKey = ''
   }
   // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任
   if (db.users.length > 0 && !db.users.some((u) => u.role === 'developer')) {

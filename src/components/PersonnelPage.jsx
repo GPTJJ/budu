@@ -224,7 +224,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
-export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false, canManage = false }) {
+export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false, canManage = false, user }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
@@ -258,6 +258,11 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
 
   return (
     <div className="space-y-6">
+      {user?.role === 'staff' && (
+        <p className="rounded-xl bg-budu-50 px-4 py-2.5 text-xs font-semibold text-budu-600">
+          {t('当前账号仅可查看本人信息')}
+        </p>
+      )}
       {/* 页面头部 */}
       <div className="flex flex-wrap items-center gap-4">
         <button
