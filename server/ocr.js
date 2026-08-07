@@ -52,7 +52,7 @@ export async function extractInvoiceFromBase64(imageBase64) {
     throw e
   }
   let raw = String(imageBase64 || '')
-  const m = raw.match(/^data:image\/(png|jpe?g|webp|bmp);base64,(.+)$/i)
+  const m = raw.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i)
   if (m) raw = m[2]
   if (!raw || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) {
     const e = new Error('图片数据格式不正确')
@@ -91,7 +91,7 @@ export async function extractInvoiceFromBase64(imageBase64) {
   const infos = (resp && (resp.VatInvoiceInfos || resp.vatInvoiceInfos)) || []
   const extracted = mapVatInfos(infos)
   if (!extracted.companyName && !extracted.taxNo && extracted.amountYuan == null) {
-    const e = new Error('未识别到发票关键信息，请确认上传的是清晰完整的发票图片')
+    const e = new Error('未识别到发票关键信息，请确认图片清晰、发票完整（已自动转 JPG，可重新拍一张）')
     e.status = 422
     throw e
   }

@@ -15,6 +15,34 @@ const fmtTime = (iso) => {
   return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('图片读取失败'))
+    img.src = src
+  })
+}
+
+/** 手机拍照图片统一压缩并转为 JPEG：解决 HEIC 不支持、图片过大、方向异常等问题 */
+async function normalizeInvoiceImage(dataUrl, fileType) {
+  const plain = /^image\/(jpe?g|png|webp|bmp)$/i.test(fileType || '')
+  if (plain && dataUrl.length < 1.5 * 1024 * 1024) return dataUrl
+  const img = await loadImage(dataUrl)
+  const maxSide = 2000
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
+  const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale))
+  const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(img, 0, 0, w, h)
+  return canvas.toDataURL('image/jpeg', 0.86)
+}
+
 export default function InvoicePage({ currentUser, onBack }) {
   const { t } = useI18n()
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
@@ -134,17 +162,18 @@ export default function InvoicePage({ currentUser, onBack }) {
       setError(t('请上传图片文件'))
       return
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setError(t('图片不能超过 8MB'))
+    if (file.size > 25 * 1024 * 1024) {
+      setError(t('图片不能超过 25MB'))
       return
     }
     const reader = new FileReader()
     reader.onload = async () => {
-      const dataUrl = String(reader.result || '')
-      setPreview(dataUrl)
+      const original = String(reader.result || '')
+      setPreview(original)
       setOcrBusy(true)
       setError('')
       try {
+        const dataUrl = await normalizeInvoiceImage(original, file.type)
         const d = await api('/v2/invoices/ocr', {
           method: 'POST',
           body: JSON.stringify({ imageBase64: dataUrl }),
@@ -273,7 +302,7 @@ export default function InvoicePage({ currentUser, onBack }) {
               <span className="block text-sm font-semibold text-slate-700">
                 {ocrBusy ? t('正在识别发票信息…') : t(preview ? '重新选择发票图片' : '从相册选择发票图片')}
               </span>
-              <span className="mt-0.5 block text-[11px] text-slate-400">{t('JPG/PNG/WebP，不超过 8MB；识别后可手动修改')}</span>
+              <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持拍照/相册图片，自动压缩为 JPG 识别；识别后可手动修改')}</span>
             </span>
           </button>
           <button
