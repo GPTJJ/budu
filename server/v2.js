@@ -790,6 +790,32 @@ v2Router.get('/waste-records', wrap(async (req, res) => {
   res.json({ rows: rows.map((r) => ({ id: r.id, storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, quantity: r.quantity, reason: r.reason, operator: r.operator, createdAt: r.createdAt })) })
 }))
 
+// 员工名单镜像：KV 员工（人员管理）→ PostgreSQL Staff 表（开发者/店长可写）
+v2Router.put('/staff', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canWrite(req.user)) throw bad('无权限', 403)
+  const list = Array.isArray(req.body && req.body.staff) ? req.body.staff : []
+  if (list.length > 2000) throw bad('员工数量过多')
+  const allowed = req.user.role === 'developer' ? null : req.user.storeKeys || []
+  await prisma.$transaction(async (tx) => {
+    await tx.staff.deleteMany({ where: allowed ? { storeKey: { in: allowed } } : {} })
+    for (const s of list) {
+      const name = String(s.name || '').trim()
+      const storeKey = String(s.storeKey || '').trim()
+      if (!name || name.length > 30 || !storeKey || storeKey.length > 30) throw bad('员工数据不正确')
+      if (allowed && !allowed.includes(storeKey)) throw bad('无权限', 403)
+      await tx.store.upsert({ where: { key: storeKey }, update: {}, create: { key: storeKey, name: storeKey } })
+      const id = `st-${storeKey}-${name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
+      await tx.staff.upsert({
+        where: { id },
+        update: { name, type: s.type || 'fulltime', salary: Number(s.salary) || 0 },
+        create: { id, name, type: s.type || 'fulltime', storeKey, salary: Number(s.salary) || 0 },
+      })
+    }
+  })
+  res.json({ ok: true, count: list.length })
+}))
+
 // ---------- M3-2：企微告警测试 ----------
 v2Router.post('/alerts/test', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)

@@ -201,9 +201,14 @@ export async function commitEntries(entries) {
   writeMirror()
 }
 
-export function commitStaff(staff) {
+export async function commitStaff(staff) {
   getUserData().staff = staff
   syncUserData()
+  try {
+    await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff }) })
+  } catch {
+    /* PostgreSQL 不可用时仅同步 KV */
+  }
 }
 
 export function getRemovedStaff() {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, KeyRound, Loader2, MapPin, Shield, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores, employeeList, storeName } from '../utils/selectors'
+import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -407,6 +408,15 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     }
   }
 
+  const openStaffBind = async (u) => {
+    try {
+      await loadUserData()
+    } catch {
+      /* 忽略刷新失败 */
+    }
+    setStaffBindTarget(u)
+  }
+
   const deleteUser = async (u) => {
     if (!window.confirm(t('确定删除账号「{name}」吗？此操作不可恢复。', { name: u.username }))) return
     setError('')
@@ -528,7 +538,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         )}
                         {u.role === 'staff' && (
                           <button
-                            onClick={() => setStaffBindTarget(u)}
+                            onClick={() => openStaffBind(u)}
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
                           >
                             <Users className="h-3.5 w-3.5" />
