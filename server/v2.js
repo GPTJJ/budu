@@ -161,12 +161,14 @@ async function computeProfit(user, month, store) {
   if (!/^\d{4}-\d{2}$/.test(month)) throw bad('月份格式应为 YYYY-MM')
   if (store && !canStore(user, store)) throw bad('无权限', 403)
   const sf = storeFilter(user)
-  const storeWhere = store ? store : sf
   const [y, m] = month.split('-').map(Number)
   const start = new Date(Date.UTC(y, m - 1, 1))
   const end = new Date(Date.UTC(y, m, 1))
-  const entries = await prisma.dailyEntry.findMany({ where: { storeKey: storeWhere, date: { gte: start, lt: end } } })
-  const expenses = await prisma.expense.findMany({ where: { storeKey: storeWhere, date: { gte: start, lt: end } } })
+  const where = { date: { gte: start, lt: end } }
+  if (store) where.storeKey = store
+  else if (sf) where.storeKey = sf
+  const entries = await prisma.dailyEntry.findMany({ where })
+  const expenses = await prisma.expense.findMany({ where })
   const dayMap = new Map()
   const monthMap = new Map()
   for (const e of entries) {
