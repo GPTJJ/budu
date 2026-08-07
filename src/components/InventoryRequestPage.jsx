@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
+import { ArrowLeft, Check, ChevronDown, PackagePlus, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react'
 import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, commitInventoryRequests } from '../utils/userData'
+import { PRODUCT_CATEGORIES, classifyProduct } from '../utils/productCategories'
 import { useI18n } from '../i18n'
 
 const inputCls =
@@ -30,12 +31,15 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [tempStores, setTempStores] = useState([])
   const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
   const [customName, setCustomName] = useState('')
+  const [productMenuOpen, setProductMenuOpen] = useState(false)
+  const [productCategory, setProductCategory] = useState(PRODUCT_CATEGORIES[0])
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
 
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const productNames = [...new Set(products(month, 'all').map((p) => p.name))].slice(0, 100)
+  const filteredProducts = productNames.filter((n) => classifyProduct(n) === productCategory)
   const requests = getInventoryRequests().filter((r) => r.type === type)
   const isDeveloper = currentUser?.role === 'developer'
 
@@ -262,7 +266,10 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             {['product', 'material', 'other'].map((c) => (
               <button
                 key={c}
-                onClick={() => setPicker((s) => ({ ...s, category: c, productName: '' }))}
+                onClick={() => {
+                  setPicker((s) => ({ ...s, category: c, productName: '' }))
+                  setProductMenuOpen(false)
+                }}
                 className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                   picker.category === c
                     ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
@@ -275,18 +282,70 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {picker.category === 'product' ? (
-              <select
-                value={picker.productName}
-                onChange={(e) => setPicker((s) => ({ ...s, productName: e.target.value }))}
-                className={`${inputCls} min-w-[180px] flex-1`}
-              >
-                <option value="">{t('选择产品')}</option>
-                {productNames.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
+              <div className="relative min-w-[180px] flex-1">
+                <button
+                  type="button"
+                  onClick={() => setProductMenuOpen((v) => !v)}
+                  className={`${inputCls} flex items-center justify-between gap-2 text-left`}
+                >
+                  <span className={picker.productName ? 'text-slate-700' : 'text-slate-400'}>
+                    {picker.productName || t('选择产品')}
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-slate-300 transition-transform ${productMenuOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                {productMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setProductMenuOpen(false)} />
+                    <div className="absolute left-0 top-full z-40 mt-1 w-[340px] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-2xl sm:w-[440px]">
+                      {/* 二级菜单：产品分类 */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {PRODUCT_CATEGORIES.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setProductCategory(c)}
+                            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+                              productCategory === c
+                                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                                : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                            }`}
+                          >
+                            {t(c)}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 该分类下的产品 */}
+                      <div className="mt-2 max-h-52 overflow-y-auto">
+                        {filteredProducts.length > 0 ? (
+                          filteredProducts.map((n) => (
+                            <button
+                              key={n}
+                              onClick={() => {
+                                setPicker((s) => ({ ...s, productName: n }))
+                                setProductMenuOpen(false)
+                              }}
+                              className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium transition ${
+                                picker.productName === n
+                                  ? 'bg-budu-50 text-budu-700'
+                                  : 'text-slate-600 hover:bg-budu-50 hover:text-budu-600'
+                              }`}
+                            >
+                              {n}
+                            </button>
+                          ))
+                        ) : (
+                          <p className="grid place-items-center py-8 text-xs text-slate-300">
+                            {t('该分类暂无产品')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <input
                 value={picker.productName}

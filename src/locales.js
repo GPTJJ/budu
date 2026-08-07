@@ -355,6 +355,13 @@ export const en = {
   '其他': 'Other',
   '输入物料名称': 'Enter material name',
   '输入其他名称': 'Enter other name',
+  '散糖': 'Candy',
+  '礼盒': 'Gift Box',
+  '生巧': 'Chocolat',
+  '冰淇淋': 'Ice Cream',
+  '巧克力豆': 'Chocolate Beans',
+  '试吃': 'Tasting',
+  '该分类暂无产品': 'No products in this category',
 
   // 账号注册关闭 / 开发者创建
   '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
