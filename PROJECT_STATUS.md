@@ -127,6 +127,21 @@
 
 待办：M2「库存后端化 + PostgreSQL」（Prisma、库存/申请/业绩迁 PG、事务化收发货、ETL 对账、前端 v2 切换）
 
+## M2「库存后端化 + PostgreSQL」实施记录（2026-08-08）
+
+已完成并上线验证：
+- PostgreSQL 16（docker-compose 新增 postgres 服务 + 数据卷）+ Prisma 6
+- 首批表：Store/User/Staff/DailyEntry/InventoryItem/StockBalance/StockLedger/
+  TransferRequest+Item/PurchaseRequest+Item；金额按分(BigInt)、DailyEntry 唯一约束+版本乐观锁
+- v2 API：业绩读取/单条 upsert（409 冲突返回最新）、调货创建/发货/驳回/收货（事务扣增库存+流水）、
+  采购创建/收货入库（实收差异）、库存余额与流水查询；权限按绑定门店过滤
+- KV→PG 迁移脚本（幂等，--dry-run/--reconcile）：已迁移 2 门店/3 用户/1 员工/28 条业绩，对账一致
+- 前端业绩：读取以 PG 为权威源，保存走 v2 upsert（带版本冲突回退），KV 保留为兼容层
+- 每日 pg_dump 备份脚本（保留 7 天，scripts/backup-pg.sh）
+
+剩余（后续批次）：库存/申请单前端切 v2（当前申请单与库存台账仍走 KV）、盘点/报损/预警、
+SKU/条码/供应商增强、自动备份同步 COS 与告警
+
 ## 腾讯云部署进度（2026-08-07 下午）
 
 - 服务器：`124.156.171.195`（腾讯云轻量香港/OpenClaw 龙虾镜像，2核2G/40G，实例 lhins-gkqyrkst）

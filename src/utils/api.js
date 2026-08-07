@@ -14,6 +14,7 @@ export async function api(path, options = {}) {
   if (!res.ok) {
     const err = new Error((data && data.error) || `请求失败（${res.status}）`)
     err.status = res.status
+    err.data = data
     throw err
   }
   return data

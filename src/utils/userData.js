@@ -69,6 +69,25 @@ export async function loadUserData() {
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
   }
+  // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
+  try {
+    const v2 = await api('/v2/daily-entries')
+    if (v2 && Array.isArray(v2.rows) && v2.rows.length > 0) {
+      const merged = { ...cached.entries }
+      for (const row of v2.rows) {
+        const key = `${row.date.slice(0, 7)}|${row.storeKey}|${row.date.slice(5)}`
+        merged[key] = {
+          inc: Number(row.incCents) / 100,
+          ord: row.ord,
+          staff: Array.isArray(row.staffNames) ? row.staffNames : [],
+          v2version: row.version,
+        }
+      }
+      cached.entries = merged
+    }
+  } catch {
+    /* v2 不可用时回退 KV */
+  }
   const legacy = readLegacy()
   let migrated = false
   if (legacy.entries && Object.keys(legacy.entries).length > 0 && Object.keys(cached.entries).length === 0) {
@@ -129,9 +148,43 @@ function syncUserData() {
   }, 250)
 }
 
-export function commitEntries(entries) {
+export async function commitEntries(entries) {
+  const prev = { ...(getUserData().entries || {}) }
   getUserData().entries = entries
   syncUserData()
+  // 同步写入 PostgreSQL（单条 upsert + 乐观锁），避免整库覆盖
+  const changed = Object.keys(entries).filter((k) => JSON.stringify(entries[k]) !== JSON.stringify(prev[k]))
+  for (const k of changed) {
+    const parts = k.split('|')
+    if (parts.length !== 3) continue
+    const [month, storeKey, day] = parts
+    const v = entries[k]
+    try {
+      const res = await api('/v2/daily-entries', {
+        method: 'PUT',
+        body: JSON.stringify({
+          storeKey,
+          date: `${month}-${day.slice(3)}`,
+          incCents: Math.round((Number(v.inc) || 0) * 100),
+          ord: Number(v.ord) || 0,
+          staffNames: Array.isArray(v.staff) ? v.staff : [],
+          version: v.v2version,
+        }),
+      })
+      if (res && res.row) entries[k] = { ...v, v2version: res.row.version }
+    } catch (err) {
+      if (err.status === 409 && err.data && err.data.latest) {
+        entries[k] = {
+          inc: Number(err.data.latest.incCents) / 100,
+          ord: err.data.latest.ord,
+          staff: Array.isArray(err.data.latest.staffNames) ? err.data.latest.staffNames : [],
+          v2version: err.data.latest.version,
+        }
+        console.warn('业绩版本冲突，已加载最新数据')
+      }
+    }
+  }
+  writeMirror()
 }
 
 export function commitStaff(staff) {
