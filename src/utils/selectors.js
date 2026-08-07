@@ -848,6 +848,43 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   }
 }
 
+/** 员工在指定日期区间（如自然周）的汇总薪酬 */
+export function employeeWeekStatus(monthKey, dateList, name) {
+  let workedDays = 0
+  let hours = 0
+  let basePay = 0
+  let commission = 0
+  let pay = 0
+  let inc = 0
+  let ord = 0
+  const stores = new Set()
+  for (const fullDate of dateList) {
+    const day = String(fullDate).slice(5)
+    const st = employeeDayStatus(monthKey, day, name)
+    if (!st) continue
+    workedDays += 1
+    hours += st.hours
+    basePay += st.basePay
+    commission += st.commission
+    pay += st.pay
+    inc += st.inc
+    ord += st.ord
+    ;(st.stores || []).forEach((s) => stores.add(s))
+  }
+  if (workedDays === 0) return null
+  const r2 = (v) => Math.round(v * 100) / 100
+  return {
+    workedDays,
+    hours: r2(hours),
+    basePay: r2(basePay),
+    commission: r2(commission),
+    pay: r2(pay),
+    inc: r2(inc),
+    ord: r2(ord),
+    stores: [...stores],
+  }
+}
+
 /** 所选日期是否有本地业绩录入（任意门店） */
 export function hasLocalEntry(monthKey, day) {
   if (!day) return false

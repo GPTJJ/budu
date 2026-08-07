@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
+import { getWeekDays } from '../utils/schedule'
 import {
   employeesByType,
   employeeList,
@@ -8,6 +9,7 @@ import {
   monthLabel,
   employeeDayStatus,
   employeeDailyPayDetail,
+  employeeWeekStatus,
   hasLocalEntry,
   localStaffList,
   removeStaff,
@@ -225,32 +227,57 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
-function DailyPayModal({ emp, initialDate, hidePersonal, onClose }) {
+function DailyPayModal({ emp, month, hidePersonal, onClose }) {
   const { t } = useI18n()
-  const [date, setDate] = useState(initialDate || new Date().toISOString().slice(0, 10))
-  const [y, m, d] = String(date).split('-')
-  const detail = employeeDailyPayDetail(y, m, d, emp.name)
+  const [y, m] = String(month).split('-').map(Number)
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const dayRows = []
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const dd = `${String(d).padStart(2, '0')}`
+    const detail = employeeDailyPayDetail(month, `${String(m).padStart(2, '0')}-${dd}`, emp.name)
+    dayRows.push({
+      day: dd,
+      revenue: detail ? detail.totals.inc : 0,
+      orders: detail ? detail.totals.ord : 0,
+      hours: detail ? detail.totals.hours : 0,
+      basePay: detail ? detail.totals.basePay : 0,
+      commission: detail ? detail.totals.commission : 0,
+      pay: detail ? detail.totals.pay : 0,
+      hasData: Boolean(detail),
+      stores: detail ? detail.rows.map((r) => r.storeName).join('、') : '',
+    })
+  }
+  const totals = dayRows.reduce(
+    (s, r) => ({
+      revenue: s.revenue + r.revenue,
+      orders: s.orders + r.orders,
+      hours: s.hours + r.hours,
+      basePay: s.basePay + r.basePay,
+      commission: s.commission + r.commission,
+      pay: s.pay + r.pay,
+    }),
+    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, pay: 0 },
+  )
 
   const download = () => {
-    if (!detail) return
     const lines = [
       'BUDU 员工工资明细',
       `员工：${emp.name}`,
-      `日期：${date}`,
+      `月份：${month}`,
       '',
-      '门店\t营业额(元)\t订单\t工时(h)\t基础时薪\t基础工资(元)\t提成时薪\t提成(元)\t当日工资(元)',
-      ...detail.rows.map((r) =>
-        [r.storeName, r.revenue.toFixed(2), r.orders, r.hours, r.baseRate.toFixed(1), r.basePay.toFixed(2), r.commissionRate.toFixed(1), r.commission.toFixed(2), r.total.toFixed(2)].join('\t'),
+      '日期\t营业额(元)\t订单\t工时(h)\t基础工资(元)\t提成(元)\t当日工资(元)',
+      ...dayRows.map((r) =>
+        [r.day, r.revenue.toFixed(2), r.orders, r.hours, r.basePay.toFixed(2), r.commission.toFixed(2), r.pay.toFixed(2)].join('\t'),
       ),
       '',
-      ['合计', '', '', detail.totals.hours, '', detail.totals.basePay.toFixed(2), '', detail.totals.commission.toFixed(2), detail.totals.pay.toFixed(2)].join('\t'),
+      ['合计', totals.revenue.toFixed(2), totals.orders, totals.hours, totals.basePay.toFixed(2), totals.commission.toFixed(2), totals.pay.toFixed(2)].join('\t'),
       '',
-      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算。',
+      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计 0。',
     ]
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `工资明细-${emp.name}-${date}.txt`
+    a.download = `工资明细-${emp.name}-${month}.txt`
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   }
@@ -261,65 +288,56 @@ function DailyPayModal({ emp, initialDate, hidePersonal, onClose }) {
       <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t('每日工资明细')}</h3>
-            <p className="mt-0.5 text-xs text-slate-400">{t('选择日期查看当日工资组成')}</p>
+            <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t('当月每日工资明细')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('{month} · 按日期正序排列', { month })}</p>
           </div>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="ml-auto rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 outline-none focus:border-budu-400"
-          />
-          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400">
+          <button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {hidePersonal ? (
           <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
-        ) : !detail ? (
-          <p className="grid place-items-center py-16 text-sm text-slate-300">{t('当日无业绩录入')}</p>
         ) : (
           <>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead>
+            <div className="mt-4 max-h-[52vh] overflow-y-auto">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
-                    <th className="py-2 pr-2">{t('门店')}</th>
+                    <th className="py-2 pr-2">{t('日期')}</th>
                     <th className="py-2 pr-2 text-right">{t('营业额')}</th>
                     <th className="py-2 pr-2 text-right">{t('订单')}</th>
                     <th className="py-2 pr-2 text-right">{t('工时')}</th>
-                    <th className="py-2 pr-2 text-right">{t('基础时薪')}</th>
                     <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
-                    <th className="py-2 pr-2 text-right">{t('提成时薪')}</th>
                     <th className="py-2 pr-2 text-right">{t('提成')}</th>
                     <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {detail.rows.map((r) => (
-                    <tr key={r.storeKey}>
-                      <td className="py-2 pr-2 font-semibold text-slate-700">{r.storeName}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.revenue.toFixed(2)}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{r.orders}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{r.hours}h</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-500">¥{r.baseRate.toFixed(1)}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.basePay.toFixed(2)}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-500">¥{r.commissionRate.toFixed(1)}</td>
-                      <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{r.commission.toFixed(2)}</td>
-                      <td className="py-2 pr-2 text-right font-bold tabular-nums text-budu-600">¥{r.total.toFixed(2)}</td>
+                  {dayRows.map((r) => (
+                    <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
+                      <td className="py-1.5 pr-2 font-semibold text-slate-700">
+                        {r.day}
+                        {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.revenue.toFixed(2)}` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? r.orders : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.basePay.toFixed(2)}` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.commission.toFixed(2)}` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right font-bold tabular-nums text-budu-600">
+                        {r.hasData ? `¥${r.pay.toFixed(2)}` : '—'}
+                      </td>
                     </tr>
                   ))}
                   <tr className="bg-budu-50/40 font-bold">
                     <td className="py-2 pr-2 text-slate-700">{t('合计')}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">¥{detail.totals.inc.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{detail.totals.ord}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{detail.totals.hours}h</td>
-                    <td className="py-2 pr-2 text-right text-slate-300">—</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{detail.totals.basePay.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right text-slate-300">—</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{detail.totals.commission.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{detail.totals.pay.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.revenue.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.orders}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.hours}h</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.basePay.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -345,6 +363,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const hidePersonal = isPublic || isStore
   const [month, setMonth] = useState(() => todayParts().month)
   const [day, setDay] = useState(null)
+  const [weekStart, setWeekStart] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
@@ -353,6 +372,8 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const localStaff = localStaffList()
   const hasData = allEmployeeMonths().includes(month) || localStaff.length > 0
   const dayHasData = day ? hasLocalEntry(month, day) : false
+  const weekDays = weekStart ? getWeekDays(weekStart) : null
+  const weekLabel = weekDays ? `${weekStart} ~ ${weekDays[6].date}` : ''
 
   const all = hasData ? employeeList('all', month) : []
   const scopedAll =
@@ -403,7 +424,11 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                   full: fulltime.length,
                   part: parttime.length,
                 })}
-            {day ? t('· 当日值班查询中') : ''}
+            {weekStart
+              ? t('· 查看整周 {range}', { range: weekLabel })
+              : day
+                ? t('· 当日值班查询中')
+                : ''}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
@@ -422,6 +447,12 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
             onSelect={(m, d) => {
               setMonth(m)
               setDay(d)
+              if (d) setWeekStart(null)
+            }}
+            onWeekSelect={(ws) => {
+              setMonth(ws.slice(0, 7))
+              setDay(null)
+              setWeekStart(ws)
             }}
           />
         </div>
@@ -464,11 +495,19 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
           {/* 员工卡片 */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {list.map((emp, i) => {
-              const status = day ? employeeDayStatus(month, day, emp.name) : null
-              const onDuty = Boolean(day && status)
-              const daySalary = onDuty ? status.pay : 0
-              const dayHours = onDuty ? status.hours : 0
-              const dayPerf = onDuty ? status.commission : 0
+              const status = weekStart
+                ? weekDays
+                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name)
+                  : null
+                : day
+                  ? employeeDayStatus(month, day, emp.name)
+                  : null
+              const onDuty = Boolean((day || weekStart) && status)
+              const periodSalary = onDuty ? status.pay : 0
+              const periodHours = onDuty ? status.hours : 0
+              const periodPerf = onDuty ? status.commission : 0
+              const periodRevenue = onDuty ? status.inc : 0
+              const periodStores = onDuty && status.stores ? status.stores.length : 0
               return (
                 <div
                   key={emp.name}
@@ -512,7 +551,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                             {t('本地')}
                           </span>
                         )}
-                        {day && status && (
+                        {(day || weekStart) && status && (
                           <span className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
                             {t('值班')}
@@ -527,31 +566,34 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <Stat
-                      label={day ? t('当日工资') : t('工资合计')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(day ? daySalary : emp.salary)}`}
+                      label={weekStart ? t('周工资') : day ? t('当日工资') : t('工资合计')}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodSalary : emp.salary)}`}
                       accent="text-budu-600"
                     />
                     <Stat
-                      label={day ? t('当日工时') : t('工时')}
-                      value={hidePersonal ? '•••' : `${Math.round(day ? dayHours : emp.hours)}h`}
+                      label={weekStart ? t('周工时') : day ? t('当日工时') : t('工时')}
+                      value={hidePersonal ? '•••' : `${Math.round(weekStart || day ? periodHours : emp.hours)}h`}
                     />
                     <Stat
-                      label={day ? t('当日提成') : t('业绩提成')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(day ? dayPerf : emp.perf + emp.big)}`}
+                      label={weekStart ? t('周提成') : day ? t('当日提成') : t('业绩提成')}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`}
                       accent="text-grape-600"
                     />
                     <Stat
-                      label={day ? t('当日营业额') : t('当班营业额')}
-                      value={isPublic ? '•••' : `¥${formatMoney(day ? (status ? status.inc : 0) : emp.workedRevenue)}`}
+                      label={weekStart ? t('周营业额') : day ? t('当日营业额') : t('当班营业额')}
+                      value={isPublic ? '•••' : `¥${formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue)}`}
                     />
                   </div>
 
-                  {day ? (
+                  {day || weekStart ? (
                     <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2">
                       {status ? (
                         <>
                           <span className="text-xs font-semibold text-slate-500">
-                            {t('当日值班 · {count} 家店', { count: status.stores.length })}
+                            {t(weekStart ? '本周值班 · {count} 天 · {stores} 家店' : '当日值班 · {count} 家店', {
+                              count: weekStart ? status.workedDays : periodStores,
+                              stores: periodStores,
+                            })}
                           </span>
                           {isPublic ? (
                             <span className="text-xs font-bold text-slate-300">•••</span>
@@ -561,7 +603,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                             </span>
                           )}
                         </>
-                      ) : dayHasData ? (
+                      ) : day && dayHasData ? (
                         <span className="text-xs font-medium text-slate-400">{t('当日休息')}</span>
                       ) : (
                         <span className="text-xs text-slate-300">{t('当日无业绩录入')}</span>
@@ -617,7 +659,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
       {detailEmp && (
         <DailyPayModal
           emp={detailEmp}
-          initialDate={day ? `${month}-${day}` : undefined}
+          month={month}
           hidePersonal={hidePersonal}
           onClose={() => setDetailEmp(null)}
         />

@@ -34,7 +34,15 @@ function shiftMonth(key, delta) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
 }
 
-export default function CalendarPicker({ month, day, onSelect }) {
+function mondayOf(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const diff = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - diff)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
   const { lang, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(month)
@@ -151,17 +159,32 @@ export default function CalendarPicker({ month, day, onSelect }) {
               })}
             </div>
 
-            {/* 底部：整月 */}
-            <button
-              onClick={() => {
-                onSelect(viewMonth, null)
-                setOpen(false)
-              }}
-              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
-            >
-              <CalendarRange className="h-3.5 w-3.5" />
-              {t('查看整月（{month}）', { month: fmtMonth(viewMonth, lang) })}
-            </button>
+            {/* 底部：整周 / 整月 */}
+            <div className="mt-3 flex gap-1.5">
+              {onWeekSelect && (
+                <button
+                  onClick={() => {
+                    const base = day ? `${viewMonth}-${day}` : today
+                    onWeekSelect(mondayOf(base))
+                    setOpen(false)
+                  }}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+                >
+                  <CalendarRange className="h-3.5 w-3.5" />
+                  {t('查看整周')}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  onSelect(viewMonth, null)
+                  setOpen(false)
+                }}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+              >
+                <CalendarRange className="h-3.5 w-3.5" />
+                {t('查看整月（{month}）', { month: fmtMonth(viewMonth, lang) })}
+              </button>
+            </div>
           </div>
         </>
       )}
