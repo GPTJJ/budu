@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, KeyRound, Loader2, Shield, Trash2, Users, X } from 'lucide-react'
+import { ArrowLeft, KeyRound, Loader2, Shield, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
@@ -81,12 +81,116 @@ function ResetPasswordModal({ user, onClose }) {
   )
 }
 
+function CreateUserModal({ onClose, onCreated }) {
+  const { t } = useI18n()
+  const [form, setForm] = useState({ username: '', password: '', role: 'store' })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setError('')
+    if (!form.username.trim() || form.password.length < 6) {
+      setError(t('请填写用户名和至少 6 位密码'))
+      return
+    }
+    setBusy(true)
+    try {
+      await api('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: form.username.trim(),
+          password: form.password,
+          role: form.role,
+        }),
+      })
+      onCreated()
+      onClose()
+    } catch (err) {
+      setError(t(err.message))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <h3 className="text-lg font-bold text-slate-800">{t('创建账号')}</h3>
+          <button
+            onClick={onClose}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label={t('关闭')}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('用户名')}</span>
+            <input
+              value={form.username}
+              onChange={(e) => setForm((s) => ({ ...s, username: e.target.value }))}
+              placeholder={t('2-20 个字符')}
+              className={inputCls}
+              autoFocus
+            />
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('初始密码')}</span>
+            <input
+              type="text"
+              value={form.password}
+              onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
+              placeholder={t('至少 6 位，创建后建议提醒对方修改')}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('角色')}</span>
+            <select
+              value={form.role}
+              onChange={(e) => setForm((s) => ({ ...s, role: e.target.value }))}
+              className={inputCls}
+            >
+              <option value="store">{t('门店运营')}</option>
+              <option value="public">{t('对外展示')}</option>
+              <option value="developer">{t('开发者')}</option>
+            </select>
+          </div>
+          {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
+        </div>
+
+        <div className="mt-5 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+          >
+            {t('取消')}
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t('创建')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AccountAdminPage({ currentUser, onBack }) {
   const { t } = useI18n()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [resetTarget, setResetTarget] = useState(null)
+  const [createOpen, setCreateOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -152,6 +256,13 @@ export default function AccountAdminPage({ currentUser, onBack }) {
           </h2>
           <p className="mt-0.5 text-[13px] text-slate-400">{t('查看与管理所有已注册账号')}</p>
         </div>
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="ml-auto flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+        >
+          <UserPlus className="h-4 w-4" />
+          {t('新增账号')}
+        </button>
       </div>
 
       <div className="card overflow-hidden">
@@ -245,6 +356,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
       </div>
 
       {resetTarget && <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />}
+      {createOpen && <CreateUserModal onClose={() => setCreateOpen(false)} onCreated={load} />}
     </div>
   )
 }

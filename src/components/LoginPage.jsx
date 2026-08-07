@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import { Eye, EyeOff, Loader2, Lock, LogIn, UserPlus, User } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
-/** 登录 / 注册页（第一个注册的账号自动成为管理员） */
+/** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
   const { t } = useI18n()
-  const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPwd, setShowPwd] = useState(false)
@@ -18,7 +17,7 @@ export default function LoginPage({ onLogin }) {
     setError('')
     setBusy(true)
     try {
-      const data = await api(`/auth/${mode}`, {
+      const data = await api('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username: username.trim(), password }),
       })
@@ -28,11 +27,6 @@ export default function LoginPage({ onLogin }) {
     } finally {
       setBusy(false)
     }
-  }
-
-  const switchMode = (m) => {
-    setMode(m)
-    setError('')
   }
 
   const inputCls =
@@ -47,9 +41,7 @@ export default function LoginPage({ onLogin }) {
               B
             </div>
             <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu 甜蜜运营系统')}</h1>
-            <p className="mt-1 text-xs text-slate-400">
-              {mode === 'login' ? t('登录后查看门店经营数据（多设备共享）') : t('注册团队账号，首个账号为管理员')}
-            </p>
+            <p className="mt-1 text-xs text-slate-400">{t('登录后查看门店经营数据（多设备共享）')}</p>
           </div>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -71,7 +63,7 @@ export default function LoginPage({ onLogin }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t('密码（至少 6 位）')}
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                autoComplete="current-password"
                 className={inputCls}
               />
               <button
@@ -93,23 +85,15 @@ export default function LoginPage({ onLogin }) {
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : mode === 'login' ? (
-                <LogIn className="h-4 w-4" />
               ) : (
-                <UserPlus className="h-4 w-4" />
+                <LogIn className="h-4 w-4" />
               )}
-              {mode === 'login' ? t('登录') : t('注册并登录')}
+              {t('登录')}
             </button>
           </form>
 
           <p className="mt-5 text-center text-xs text-slate-400">
-            {mode === 'login' ? t('还没有账号？') : t('已有账号？')}
-            <button
-              onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
-              className="ml-1 font-semibold text-budu-600 transition hover:text-budu-500"
-            >
-              {mode === 'login' ? t('注册一个') : t('去登录')}
-            </button>
+            {t('新账号由开发者创建，如需开通请联系管理员')}
           </p>
         </div>
         <p className="mt-4 text-center text-[11px] text-slate-300">

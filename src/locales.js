@@ -307,6 +307,17 @@ export const en = {
   '自定义': 'Custom',
   '确定删除该商品吗？': 'Delete this product?',
 
+  // 账号注册关闭 / 开发者创建
+  '注册已关闭，新账号请联系开发者创建': 'Registration is closed; contact the developer to create an account',
+  '新账号由开发者创建，如需开通请联系管理员': 'New accounts are created by the developer; contact the admin to get one',
+  '新增账号': 'Add Account',
+  '创建账号': 'Create Account',
+  '初始密码': 'Initial Password',
+  '创建': 'Create',
+  '2-20 个字符': '2-20 characters',
+  '至少 6 位，创建后建议提醒对方修改': 'At least 6 chars; remind the user to change it later',
+  '请填写用户名和至少 6 位密码': 'Enter username and a password of at least 6 characters',
+
   // 日历
   '{y}年{m}月': '{m}/{y}',
   '查看整月（{month}）': 'View whole month ({month})',

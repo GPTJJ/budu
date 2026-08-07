@@ -147,6 +147,10 @@ export function createApp() {
     if (username.length < 2 || username.length > 20) return res.status(400).json({ error: '用户名需为 2-20 个字符' })
     if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' })
     const db = await loadDb()
+    // 自助注册已关闭：仅当系统还没有任何账号时允许注册（首个开发者引导）
+    if (db.users.length > 0) {
+      return res.status(403).json({ error: '注册已关闭，新账号请联系开发者创建' })
+    }
     if (db.users.some((u) => u.username === username)) return res.status(409).json({ error: '用户名已存在' })
     const user = {
       id: crypto.randomUUID(),
@@ -158,6 +162,36 @@ export function createApp() {
     db.users.push(user)
     await persist()
     setAuthCookie(res, signToken(user, await getSecret()))
+    res.json({ user: userPublic(user) })
+  })
+
+  // ---------- 创建账号（仅开发者） ----------
+  app.post('/api/admin/users', requireAuth, requireDeveloper, async (req, res) => {
+    const username = String(req.body.username || '').trim()
+    const password = String(req.body.password || '')
+    const role = String(req.body.role || 'store')
+    if (username.length < 2 || username.length > 20) {
+      return res.status(400).json({ error: '用户名需为 2-20 个字符' })
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: '密码至少 6 位' })
+    }
+    if (!['developer', 'store', 'public'].includes(role)) {
+      return res.status(400).json({ error: '角色不正确' })
+    }
+    const db = await loadDb()
+    if (db.users.some((u) => u.username === username)) {
+      return res.status(409).json({ error: '用户名已存在' })
+    }
+    const user = {
+      id: crypto.randomUUID(),
+      username,
+      role,
+      passwordHash: hashPassword(password),
+      createdAt: new Date().toISOString(),
+    }
+    db.users.push(user)
+    await persist()
     res.json({ user: userPublic(user) })
   })
 
