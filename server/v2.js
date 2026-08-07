@@ -1014,10 +1014,15 @@ v2Router.get('/invoices', wrap(async (req, res) => {
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const month = String(req.query.month || '')
   const status = String(req.query.status || '')
+  const date = String(req.query.date || '')
   const where = { storeKey: whereStores(req.user, store || undefined) }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const d = new Date(`${date}T00:00:00.000Z`)
+    where.createdAt = { gte: d, lt: new Date(d.getTime() + 86400000) }
   }
   if (status === 'pending' || status === 'done') where.status = status
   const rows = await prisma.invoice.findMany({ where, orderBy: { createdAt: 'desc' }, take: 1000 })

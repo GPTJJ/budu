@@ -47,8 +47,10 @@ export default function InvoicePage({ currentUser, onBack }) {
   const { t } = useI18n()
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [rows, setRows] = useState([])
+  const [tab, setTab] = useState('pending')
+  const [dateFilter, setDateFilter] = useState('')
+  const [pendingRows, setPendingRows] = useState([])
+  const [doneRows, setDoneRows] = useState([])
   const [companies, setCompanies] = useState([])
   const [form, setForm] = useState({
     storeKey: allStores()[0]?.key || '',
@@ -77,12 +79,21 @@ export default function InvoicePage({ currentUser, onBack }) {
 
   const load = async () => {
     setError('')
-    const qs = new URLSearchParams({ month })
-    if (store !== 'all') qs.set('store', store)
-    if (statusFilter !== 'all') qs.set('status', statusFilter)
+    const base = new URLSearchParams({ month })
+    if (store !== 'all') base.set('store', store)
+    const pendingQs = new URLSearchParams(base)
+    pendingQs.set('status', 'pending')
+    const doneQs = new URLSearchParams(base)
+    doneQs.set('status', 'done')
+    if (dateFilter) doneQs.set('date', dateFilter)
     try {
-      const [list, cps] = await Promise.all([api(`/v2/invoices?${qs}`), api('/v2/invoices/companies')])
-      setRows(list.rows || [])
+      const [pd, dn, cps] = await Promise.all([
+        api(`/v2/invoices?${pendingQs}`),
+        api(`/v2/invoices?${doneQs}`),
+        api('/v2/invoices/companies'),
+      ])
+      setPendingRows(pd.rows || [])
+      setDoneRows(dn.rows || [])
       setCompanies(cps.rows || [])
     } catch (err) {
       setError(t(err.message))
@@ -92,7 +103,14 @@ export default function InvoicePage({ currentUser, onBack }) {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, store, statusFilter])
+  }, [month, store, dateFilter])
+
+  const rows = useMemo(() => {
+    if (tab === 'done') {
+      return [...doneRows].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    }
+    return pendingRows
+  }, [tab, pendingRows, doneRows])
 
   const suggestions = useMemo(() => {
     const q = form.companyName.trim().toLowerCase()
@@ -253,11 +271,9 @@ export default function InvoicePage({ currentUser, onBack }) {
               </option>
             ))}
           </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputCls}>
-            <option value="all">{t('全部状态')}</option>
-            <option value="pending">{t('待开票')}</option>
-            <option value="done">{t('已开票')}</option>
-          </select>
+          {tab === 'done' && (
+            <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={inputCls} />
+          )}
           <span className="rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-600">
             {t('合计 ¥{amount}', { amount: yuan(totalCents) })}
           </span>
@@ -399,9 +415,30 @@ export default function InvoicePage({ currentUser, onBack }) {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
           <h3 className="text-[15px] font-bold text-slate-800">{t('开票记录')}</h3>
-          <span className="rounded-lg bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">{rows.length}</span>
+          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setTab('pending')}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                tab === 'pending' ? 'bg-white text-budu-600 shadow' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              {t('待开票')}
+              <span className="ml-1 text-[10px] opacity-70">{pendingRows.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('done')}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                tab === 'done' ? 'bg-white text-emerald-600 shadow' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              {t('已开票')}
+              <span className="ml-1 text-[10px] opacity-70">{doneRows.length}</span>
+            </button>
+          </div>
         </div>
         <div className="max-h-[520px] divide-y divide-slate-50 overflow-y-auto">
           {rows.map((r) => (
@@ -449,7 +486,11 @@ export default function InvoicePage({ currentUser, onBack }) {
               </button>
             </div>
           ))}
-          {rows.length === 0 && <p className="grid place-items-center py-10 text-xs text-slate-300">{t('本月暂无开票记录')}</p>}
+          {rows.length === 0 && (
+            <p className="grid place-items-center py-10 text-xs text-slate-300">
+              {t(tab === 'done' ? '暂无已开票记录' : '暂无待开票记录')}
+            </p>
+          )}
         </div>
       </div>
     </div>
