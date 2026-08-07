@@ -96,6 +96,11 @@ export function createApp() {
   const app = express()
   app.use(express.json({ limit: '5mb' }))
   app.use(cookieParser())
+  // 所有 API 响应禁止缓存（登录态/业务数据是动态的，CDN 只缓存静态资源）
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store')
+    next()
+  })
 
   async function getSecret() {
     return process.env.JWT_SECRET || (await loadDb()).meta.secret

@@ -64,6 +64,9 @@
     入口 HTML 从 1.03MB 降至 0.58KB；JS（gzip 234KB）/CSS（gzip 7KB）带 hash 长期缓存
     （Cache-Control immutable），HTML 每次重校验；Nginx 补 gzip_vary；
     首次打开更快、之后秒开（后续可再按页面懒加载进一步缩小首屏）
+11. **加速/CDN 准备**：所有 `/api` 响应已加 `Cache-Control: no-store`（防 CDN 缓存动态数据）；
+    输出《CDN_TENCENT.md》方案：未备案 → 轻量优选流量包（推荐）；
+    备案后可切腾讯云 CDN/EdgeOne 大陆节点（规则已定义：/api 不缓存、静态 1 年、HTML 不缓存）
 
 ## 腾讯云部署进度（2026-08-07 下午）
 
