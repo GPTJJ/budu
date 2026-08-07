@@ -434,3 +434,10 @@ npx vercel env pull                 # 拉取线上环境变量
 - 新接口：`GET /v2/invoices/ocr-status`、`POST /v2/invoices/ocr`
 - 环境变量：`TENCENT_OCR_SECRET_ID/KEY/REGION`（子账号密钥，授权 QcloudOCRFullAccess）；未配置时页面提示“OCR 未配置”，仍可手动填写
 - 依赖：新增 tencentcloud-sdk-nodejs-ocr
+
+### 消息铃铛崩溃修复（2026-08-08 网页实测发现）
+
+- 实测发现：点开右上角铃铛时整页白屏（ErrorBoundary “页面加载出错了”）
+- 根因：`inventoryAlerts.js` 轮询末尾的 compute() 重建 state 时丢失了 `stock` 字段，
+  渲染铃铛“库存预警”区 `alerts.stock.length` 读到 undefined 崩溃
+- 修复：`state = { ...state, unread, items }` 保留 stock；已上线验证铃铛正常显示“开票申请”提醒
