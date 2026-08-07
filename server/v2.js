@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
+import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { meituanConfig, meituanReady } from './meituan/config.js'
@@ -983,6 +984,20 @@ v2Router.get('/invoices/companies', wrap(async (req, res) => {
     take: 50,
   })
   res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, taxNo: r.taxNo })) })
+}))
+
+v2Router.get('/invoices/ocr-status', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  res.json({ ok: true, configured: ocrConfigured() })
+}))
+
+v2Router.post('/invoices/ocr', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  const { imageBase64 } = req.body || {}
+  const result = await extractInvoiceFromBase64(String(imageBase64 || ''))
+  res.json({ ok: true, extracted: result.extracted })
 }))
 
 v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {

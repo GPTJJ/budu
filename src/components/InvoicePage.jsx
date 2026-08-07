@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, Plus, Receipt, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
@@ -34,7 +34,17 @@ export default function InvoicePage({ currentUser, onBack }) {
   const [focused, setFocused] = useState(false)
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
+  const [ocrReady, setOcrReady] = useState(null)
+  const [ocrBusy, setOcrBusy] = useState(false)
+  const [preview, setPreview] = useState('')
   const nameInputRef = useRef(null)
+  const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    api('/v2/invoices/ocr-status')
+      .then((d) => setOcrReady(Boolean(d && d.configured)))
+      .catch(() => setOcrReady(false))
+  }, [])
 
   const load = async () => {
     setError('')
@@ -115,6 +125,49 @@ export default function InvoicePage({ currentUser, onBack }) {
     }
   }
 
+  const handleFile = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError(t('请上传图片文件'))
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError(t('图片不能超过 8MB'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const dataUrl = String(reader.result || '')
+      setPreview(dataUrl)
+      setOcrBusy(true)
+      setError('')
+      try {
+        const d = await api('/v2/invoices/ocr', {
+          method: 'POST',
+          body: JSON.stringify({ imageBase64: dataUrl }),
+        })
+        const ex = d.extracted || {}
+        setForm((s) => ({
+          ...s,
+          titleType: ex.titleType || s.titleType,
+          companyName: ex.companyName || s.companyName,
+          taxNo: ex.taxNo || s.taxNo,
+          amount: ex.amountYuan != null ? String(ex.amountYuan) : s.amount,
+        }))
+        setSavedTip(t('识别成功，信息已自动填入，请核对后提交'))
+        setTimeout(() => setSavedTip(''), 3000)
+      } catch (err) {
+        setError(t(err.message))
+      } finally {
+        setOcrBusy(false)
+      }
+    }
+    reader.onerror = () => setError(t('图片读取失败'))
+    reader.readAsDataURL(file)
+  }
+
   const remove = async (id) => {
     if (!window.confirm(t('确定删除该发票记录吗？'))) return
     try {
@@ -185,10 +238,43 @@ export default function InvoicePage({ currentUser, onBack }) {
       {error && <p className="rounded-xl bg-rose-50 px-4 py-2 text-xs font-medium text-rose-500">{error}</p>}
 
       <div className="card p-5">
-        <h3 className="flex items-center gap-2 text-[15px] font-bold text-slate-800">
-          <Building2 className="h-4 w-4 text-budu-500" />
-          {t('新增开票申请')}
-        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="flex items-center gap-2 text-[15px] font-bold text-slate-800">
+            <Building2 className="h-4 w-4 text-budu-500" />
+            {t('新增开票申请')}
+          </h3>
+          <span
+            className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
+              ocrReady ? 'bg-emerald-50 text-emerald-600' : ocrReady === false ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-400'
+            }`}
+          >
+            {t(ocrReady ? 'OCR 已启用' : ocrReady === false ? 'OCR 未配置（可手动填写）' : 'OCR 状态检测中…')}
+          </span>
+        </div>
+
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={ocrBusy}
+          className="mt-4 flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-budu-200 bg-budu-50/40 px-4 py-3 text-left transition hover:border-budu-400 hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {preview ? (
+            <img src={preview} alt="发票" className="h-16 w-16 rounded-xl border border-slate-100 bg-white object-contain" />
+          ) : (
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white text-budu-500 shadow-sm">
+              {ocrBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-slate-700">
+              {ocrBusy ? t('正在识别发票信息…') : t('上传发票图片，自动识别抬头/税号/金额')}
+            </span>
+            <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持 JPG/PNG/WebP，不超过 8MB；识别后可手动修改')}</span>
+          </span>
+          {preview && !ocrBusy && <span className="text-[11px] font-medium text-budu-500">{t('点击重新上传')}</span>}
+        </button>
+
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <select value={form.storeKey} onChange={(e) => setField('storeKey', e.target.value)} className={inputCls}>
             {allStores().map((s) => (

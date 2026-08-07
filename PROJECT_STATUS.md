@@ -426,3 +426,11 @@ npx vercel env pull                 # 拉取线上环境变量
 - 记录新增状态：待开票 / 已开票；支持“全部/待开票/已开票”筛选；可一键标记已开票或恢复待开票
 - 迁移 `20260808060000_invoice_status`：Invoice 增加 status 字段 + 索引
 - 新接口：`POST /v2/invoices/:id/status`（更新开票状态）；`GET /v2/invoices` 支持 status 参数
+
+### 发票图片 OCR（2026-08-08）
+
+- 发票开具页支持上传本地图片（JPG/PNG/WebP ≤8MB），自动识别发票抬头/税号/金额并填入表单
+- 后端 `server/ocr.js`：腾讯云 OCR「增值税发票识别」VatInvoiceOCR，字段映射为纯函数 `mapVatInfos`（单测 scripts/test-ocr-map.mjs）
+- 新接口：`GET /v2/invoices/ocr-status`、`POST /v2/invoices/ocr`
+- 环境变量：`TENCENT_OCR_SECRET_ID/KEY/REGION`（子账号密钥，授权 QcloudOCRFullAccess）；未配置时页面提示“OCR 未配置”，仍可手动填写
+- 依赖：新增 tencentcloud-sdk-nodejs-ocr
