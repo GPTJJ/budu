@@ -196,7 +196,7 @@ export default function StoreMailingPage({ onBack }) {
                 <textarea
                   value={remark}
                   onChange={(e) => setRemark(e.target.value)}
-                  placeholder="选填，例如：工作日送达、冰袋数量等"
+                  placeholder="商品信息及数量，顾客指定时间"
                   rows={2}
                   className={`${fieldCls} min-h-[56px] resize-none`}
                 />
