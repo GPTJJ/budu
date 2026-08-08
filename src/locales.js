@@ -57,9 +57,6 @@ export const en = {
 
   // App
   '正在加载 budu 系统…': 'Loading budu system…',
-  '© 2026 budu 甜品 · budu Operating System V1.0 · 数据来源：budu OS文档（三店4-7月报表 / 薪资表27-31周）':
-    '© 2026 budu Desserts · budu Operating System V1.0 · Data: budu OS docs (Apr–Jul reports / payroll wk 27–31)',
-
   // 顶栏
   '下午好，{name} 👋': 'Good afternoon, {name} 👋',
   '早上好，{name} 👋': 'Good morning, {name} 👋',
