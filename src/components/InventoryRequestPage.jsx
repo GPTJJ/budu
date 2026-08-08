@@ -95,6 +95,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [previewList, setPreviewList] = useState(null)
+  const [expandedIds, setExpandedIds] = useState(new Set())
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
@@ -952,18 +953,43 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   {t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {(r.items || [{ productName: r.productName, quantity: r.quantity }]).map((it, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"
-                    >
-                      <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
-                        {t(CATEGORY_LABEL[it.category] || '产品')}
-                      </span>
-                      {it.productName} × {it.quantity}
-                      {it.note ? `（${it.note}）` : ''}
-                    </span>
-                  ))}
+                  {(() => {
+                    const itemList = r.items || [{ productName: r.productName, quantity: r.quantity }]
+                    const showAll = expandedIds.has(r.id)
+                    const visible = showAll ? itemList : itemList.slice(0, 5)
+                    return (
+                      <>
+                        {visible.map((it, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"
+                          >
+                            <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
+                              {t(CATEGORY_LABEL[it.category] || '产品')}
+                            </span>
+                            <span className="min-w-0 truncate">{it.productName}</span>
+                            <span className="shrink-0">× {it.quantity}</span>
+                            {it.note && <span className="shrink-0 text-[10px] text-slate-400">（{it.note}）</span>}
+                          </span>
+                        ))}
+                        {itemList.length > 5 && (
+                          <button
+                            onClick={() =>
+                              setExpandedIds((s) => {
+                                const next = new Set(s)
+                                if (showAll) next.delete(r.id)
+                                else next.add(r.id)
+                                return next
+                              })
+                            }
+                            className="inline-flex shrink-0 items-center rounded-md bg-budu-50 px-2 py-0.5 text-[11px] font-bold text-budu-600 transition hover:bg-budu-100"
+                          >
+                            {showAll ? t('收起') : `+${itemList.length - 5}`}
+                          </button>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   {isTransfer

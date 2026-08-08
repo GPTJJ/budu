@@ -65,7 +65,8 @@ export default function InventoryListModal({ request, onClose }) {
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         {/* 可下载的清单卡片 */}
-        <div ref={cardRef} className="min-w-0 bg-white px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div ref={cardRef} className="min-w-0 bg-white px-6 py-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
               <p className="bg-gradient-to-r from-budu-500 to-grape-500 bg-clip-text text-lg font-black tracking-wide text-transparent">
@@ -99,15 +100,15 @@ export default function InventoryListModal({ request, onClose }) {
           <div className="mt-3 divide-y divide-slate-50 rounded-2xl border border-slate-100">
             {items.map((it, idx) => (
               <div key={idx} className="flex items-center gap-2 px-3 py-2.5">
-                <span className="w-5 text-center text-[11px] font-bold text-slate-300">{idx + 1}</span>
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
+                <span className="w-5 shrink-0 text-center text-[11px] font-bold text-slate-300">{idx + 1}</span>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
                   {t(CATEGORY_LABEL[it.category] || '产品')}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-700">
                   {it.productName}
                 </span>
                 <span className="shrink-0 text-[13px] font-bold text-slate-700">× {it.quantity}</span>
-                {it.note && <span className="shrink-0 text-[10px] text-slate-400">（{it.note}）</span>}
+                {it.note && <span className="min-w-0 max-w-[90px] truncate text-[10px] text-slate-400">（{it.note}）</span>}
               </div>
             ))}
           </div>
@@ -115,6 +116,7 @@ export default function InventoryListModal({ request, onClose }) {
           <p className="mt-3 text-center text-[10px] text-slate-300">
             {t('budu 甜蜜运营系统 · 货品清单 · 请按清单找货')}
           </p>
+          </div>
         </div>
 
         {/* 操作按钮（不进入下载图片） */}
@@ -142,7 +144,7 @@ export default function InventoryListModal({ request, onClose }) {
       {previewUrl && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/85 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white p-4 shadow-2xl">
-            <img src={previewUrl} alt={t('货品清单')} className="w-full rounded-2xl" />
+            <img src={previewUrl} alt={t('货品清单')} className="max-h-[62vh] w-full rounded-2xl object-contain" />
             <p className="mt-3 text-center text-xs leading-5 text-slate-500">
               {t('长按图片可保存到相册；也可用浏览器打开')}
             </p>

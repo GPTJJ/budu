@@ -413,12 +413,41 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!t) throw bad('申请不存在', 404)
   if (!isManager(req.user) || !canStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'in_transit', updatedAt: new Date() } })
+  const operator = req.user.username
+  // 发货即扣减调出门店库存（与既有规则一致：库存不足禁止发货），收货时只增加调入库存
+  await prisma.$transaction(async (tx) => {
+    for (const row of t.items) {
+      const outKey = { storeKey: t.fromStoreKey, itemId: row.itemId }
+      const out = await tx.stockBalance.findUnique({ where: { storeKey_itemId: outKey } })
+      const outQty = out ? out.quantity : 0
+      if (outQty < row.quantity) {
+        const e = new Error(`「${row.item.name}」调出门店库存不足（当前 ${outQty}）`)
+        e.status = 400
+        throw e
+      }
+      await tx.stockBalance.update({
+        where: { storeKey_itemId: outKey },
+        data: { quantity: outQty - row.quantity, updatedAt: new Date() },
+      })
+      await tx.stockLedger.create({
+        id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        storeKey: t.fromStoreKey,
+        itemId: row.itemId,
+        change: -row.quantity,
+        balance: outQty - row.quantity,
+        type: 'transfer_out',
+        refId: t.id,
+        operator,
+      })
+    }
+    await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'in_transit', updatedAt: new Date() } })
+  })
+  maybeAlertLowStock(t.fromStoreKey).catch(() => {})
   sendWechatMarkdown(
     '调货已发货',
     `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
   ).catch(() => {})
-  res.json({ ok: true, request: updated })
+  res.json({ ok: true })
 }))
 
 v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
@@ -440,19 +469,7 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
   const operator = req.user.username
   await prisma.$transaction(async (tx) => {
     for (const row of t.items) {
-      const outKey = { storeKey: t.fromStoreKey, itemId: row.itemId }
       const inKey = { storeKey: t.toStoreKey, itemId: row.itemId }
-      const out = await tx.stockBalance.findUnique({ where: { storeKey_itemId: outKey } })
-      const outQty = out ? out.quantity : 0
-      if (outQty < row.quantity) {
-        const e = new Error(`「${row.item.name}」调出门店库存不足（当前 ${outQty}）`)
-        e.status = 400
-        throw e
-      }
-      await tx.stockBalance.update({
-        where: { storeKey_itemId: outKey },
-        data: { quantity: outQty - row.quantity, updatedAt: new Date() },
-      })
       const inRow = await tx.stockBalance.findUnique({ where: { storeKey_itemId: inKey } })
       const inQty = inRow ? inRow.quantity : 0
       await tx.stockBalance.upsert({
@@ -460,12 +477,10 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
         update: { quantity: inQty + row.quantity, updatedAt: new Date() },
         create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: t.toStoreKey, itemId: row.itemId, quantity: row.quantity },
       })
-      await tx.stockLedger.create({ id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: t.fromStoreKey, itemId: row.itemId, change: -row.quantity, balance: outQty - row.quantity, type: 'transfer_out', refId: t.id, operator })
       await tx.stockLedger.create({ id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: t.toStoreKey, itemId: row.itemId, change: row.quantity, balance: inQty + row.quantity, type: 'transfer_in', refId: t.id, operator })
     }
     await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
   })
-  maybeAlertLowStock(t.fromStoreKey).catch(() => {})
   maybeAlertLowStock(t.toStoreKey).catch(() => {})
   sendWechatMarkdown(
     '调货已收货',
