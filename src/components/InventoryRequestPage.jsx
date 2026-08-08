@@ -75,6 +75,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     note: '',
   })
   const [picker, setPicker] = useState({ category: 'product', productName: '', quantity: '', note: '' })
+  const [selectedNames, setSelectedNames] = useState([])
   const [picked, setPicked] = useState([])
   const [tempStores, setTempStores] = useState([])
   const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
@@ -320,27 +321,46 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
   const addItem = () => {
     setError('')
-    const name = picker.productName.trim()
     const qty = Number(picker.quantity)
-    if (!name) {
-      setError(t('请选择产品'))
-      return
-    }
     if (!qty || qty < 1 || !Number.isFinite(qty)) {
       setError(t('请填写有效数量'))
       return
     }
-    setPicked((list) => [
-      ...list,
-      {
-        category: picker.category,
-        productName: name,
-        quantity: Math.floor(qty),
-        note: picker.note.trim(),
-      },
-    ])
-    setPicker({ category: picker.category, productName: '', quantity: '', note: '' })
-    setSavedTip(t('已添加：{name} × {n}', { name, n: Math.floor(qty) }))
+    if (picker.category === 'other') {
+      const name = picker.productName.trim()
+      if (!name) {
+        setError(t('请选择产品'))
+        return
+      }
+      setPicked((list) => [
+        ...list,
+        {
+          category: 'other',
+          productName: name,
+          quantity: Math.floor(qty),
+          note: picker.note.trim(),
+        },
+      ])
+      setPicker((s) => ({ ...s, productName: '', quantity: '', note: '' }))
+      setSavedTip(t('已添加：{name} × {n}', { name, n: Math.floor(qty) }))
+      setTimeout(() => setSavedTip(''), 1800)
+      return
+    }
+    if (selectedNames.length === 0) {
+      setError(t('请选择产品'))
+      return
+    }
+    const rows = selectedNames.map((name) => ({
+      // 产品与物料可混合多选，按名称自动归类
+      category: MATERIAL_NAMES.includes(name) ? 'material' : 'product',
+      productName: name,
+      quantity: Math.floor(qty),
+      note: picker.note.trim(),
+    }))
+    setPicked((list) => [...list, ...rows])
+    setSelectedNames([])
+    setPicker((s) => ({ ...s, quantity: '', note: '' }))
+    setSavedTip(t('已添加 {n} 种货品', { n: rows.length }))
     setTimeout(() => setSavedTip(''), 1800)
   }
 
@@ -405,6 +425,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           <span className="line-clamp-2 w-full text-[11px] font-semibold leading-tight text-slate-700">{name}</span>
           {meta && meta.spec && <span className="w-full truncate text-[10px] text-slate-400">{meta.spec}</span>}
         </button>
+        {selected && (
+          <span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-budu-500 text-white shadow-md">
+            <Check className="h-3 w-3" />
+          </span>
+        )}
         {canManageOptions && (
           <button
             type="button"
@@ -590,11 +615,14 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
                     : 'bg-white text-slate-500 ring-1 ring-slate-100 hover:text-budu-600'
                 }`}
-              >
-                {t(CATEGORY_LABEL[c])}
-              </button>
-            ))}
-          </div>
+                >
+                  {t(CATEGORY_LABEL[c])}
+                  {c !== 'other' && selectedNames.length > 0 && (
+                    <span className="ml-1 rounded-md bg-white/25 px-1 text-[10px] font-bold">{selectedNames.length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
           <div className="flex flex-wrap items-center gap-2">
             {picker.category === 'product' ? (
               <div className="relative min-w-[180px] flex-1">
@@ -604,7 +632,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   className={`${inputCls} flex items-center justify-between gap-2 text-left`}
                 >
                   <span className={picker.productName ? 'text-slate-700' : 'text-slate-400'}>
-                    {picker.productName || t('选择产品')}
+                    {selectedNames.length > 0
+                      ? t('已选 {n} 项', { n: selectedNames.length })
+                      : picker.productName || t('选择产品')}
                   </span>
                   <ChevronDown
                     className={`h-4 w-4 shrink-0 text-slate-300 transition-transform ${productMenuOpen ? 'rotate-180' : ''}`}
@@ -641,18 +671,16 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                             className={`${inputCls} flex-1`}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && customProductName.trim()) {
-                                setPicker((s) => ({ ...s, productName: customProductName.trim() }))
+                                setSelectedNames((s) => [...new Set([...s, customProductName.trim()])])
                                 setCustomProductName('')
-                                setProductMenuOpen(false)
                               }
                             }}
                           />
                           <button
                             onClick={() => {
                               if (!customProductName.trim()) return
-                              setPicker((s) => ({ ...s, productName: customProductName.trim() }))
+                              setSelectedNames((s) => [...new Set([...s, customProductName.trim()])])
                               setCustomProductName('')
-                              setProductMenuOpen(false)
                             }}
                             className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
                           >
@@ -667,10 +695,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                           <OptionCard
                             key={n}
                             name={n}
-                            selected={picker.productName === n}
+                            selected={selectedNames.includes(n)}
                             onSelect={() => {
-                              setPicker((s) => ({ ...s, productName: n }))
-                              setProductMenuOpen(false)
+                              setSelectedNames((s) =>
+                                s.includes(n) ? s.filter((x) => x !== n) : [...s, n],
+                              )
                             }}
                           />
                         ))}
@@ -679,6 +708,29 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                             {t('该分类暂无产品')}
                           </p>
                         )}
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                        <span className="text-[11px] font-semibold text-slate-400">
+                          {selectedNames.length > 0
+                            ? t('已选 {n} 项，可继续勾选或直接确定', { n: selectedNames.length })
+                            : t('可多选后统一填写数量')}
+                        </span>
+                        <div className="flex gap-1.5">
+                          {selectedNames.length > 0 && (
+                            <button
+                              onClick={() => setSelectedNames([])}
+                              className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-200"
+                            >
+                              {t('清空')}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setProductMenuOpen(false)}
+                            className="rounded-lg bg-budu-500 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-budu-600"
+                          >
+                            {t('确定')}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -692,10 +744,27 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                       <OptionCard
                         key={n}
                         name={n}
-                        selected={picker.productName === n}
-                        onSelect={() => setPicker((s) => ({ ...s, productName: n }))}
+                        selected={selectedNames.includes(n)}
+                        onSelect={() =>
+                          setSelectedNames((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n]))
+                        }
                       />
                     ))}
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2 text-[11px] font-semibold text-slate-400">
+                    <span>
+                      {selectedNames.length > 0
+                        ? t('已选 {n} 项，可继续勾选其他物料', { n: selectedNames.length })
+                        : t('可多选物料后统一填写数量')}
+                    </span>
+                    {selectedNames.length > 0 && (
+                      <button
+                        onClick={() => setSelectedNames([])}
+                        className="rounded-lg bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500 ring-1 ring-slate-100 transition hover:text-rose-500"
+                      >
+                        {t('清空')}
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (
