@@ -11,6 +11,7 @@ import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import { allStores, kpiCards } from '../utils/selectors'
+import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
@@ -60,6 +61,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
   const [view, setView] = useState('overview')
   const [selectedProduct, setSelectedProduct] = useState(null)
+  const [pageKey, setPageKey] = useState(0)
 
   const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff'
@@ -106,6 +108,16 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  /** 局部刷新：先拉取最新共享数据，再重挂载当前页面组件（Header/Sidebar 保持不动） */
+  const handleRefresh = async () => {
+    try {
+      await loadUserData()
+    } catch {
+      /* 网络异常时仍重挂载当前页，页面会读取本地缓存 */
+    }
+    setPageKey((v) => v + 1)
+  }
+
   return (
     <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
       <div className="flex min-h-screen min-h-[100dvh] bg-[#F7F4FA]">
@@ -145,10 +157,11 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
+            onRefresh={handleRefresh}
           />
 
           <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
-            <ErrorBoundary>
+            <ErrorBoundary key={`${view}-${pageKey}`}>
               <Suspense
                 fallback={
                   <div className="grid min-h-[40vh] place-items-center text-sm font-medium text-slate-400">

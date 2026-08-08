@@ -16,10 +16,12 @@ export default function Header({
   onStoreChange,
   onMenuClick,
   onNavigate,
+  onRefresh,
   user,
 }) {
   const { t } = useI18n()
   const name = user?.username || t('伙伴')
+  const [refreshing, setRefreshing] = useState(false)
   const visibleStores =
     user?.role === 'developer' || user?.role === 'public'
       ? allStores()
@@ -39,6 +41,12 @@ export default function Header({
         : hour >= 14 && hour < 18
           ? '下午好，{name} 👋'
           : '晚上好，{name} 👋'
+
+  const handleRefresh = () => {
+    if (!onRefresh || refreshing) return
+    setRefreshing(true)
+    Promise.resolve(onRefresh()).finally(() => setRefreshing(false))
+  }
 
   return (
     <header
@@ -70,11 +78,11 @@ export default function Header({
         {/* 刷新页面（移动端，消息铃铛左侧） */}
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={handleRefresh}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
           aria-label={t('刷新页面')}
         >
-          <RefreshCw className="h-[18px] w-[18px]" />
+          <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />
         </button>
 
         <NotificationBell variant="mobile" user={user} onNavigate={onNavigate} />
@@ -111,11 +119,11 @@ export default function Header({
           {/* 刷新页面（桌面端，消息铃铛左侧） */}
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={handleRefresh}
             className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:grid"
             aria-label={t('刷新页面')}
           >
-            <RefreshCw className="h-[18px] w-[18px]" />
+            <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />
           </button>
 
           <NotificationBell variant="desktop" user={user} onNavigate={onNavigate} />
