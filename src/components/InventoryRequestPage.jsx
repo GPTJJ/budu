@@ -24,8 +24,7 @@ import InventoryListModal from './InventoryListModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 const CATEGORY_LABEL = { product: '产品', material: '物料', other: '其他' }
 const CATEGORY_STYLE = {
@@ -427,7 +426,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               : 'border-slate-100 bg-white hover:border-budu-200 hover:bg-budu-50/50'
           }`}
         >
-          <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-gradient-to-br from-budu-50 to-grape-50 text-sm font-bold text-budu-400">
+          <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-budu-50 text-sm font-bold text-budu-600">
             {meta && meta.image ? (
               <img src={meta.image} alt={name} className="h-full w-full object-cover" />
             ) : (
@@ -475,7 +474,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             {isTransfer ? (
               <RefreshCcw className="h-5 w-5 text-budu-500" />
             ) : (
-              <ShoppingCart className="h-5 w-5 text-grape-500" />
+              <ShoppingCart className="h-5 w-5 text-budu-500" />
             )}
             {t(isTransfer ? '申请调货' : '申请采购')}
           </h2>
@@ -591,7 +590,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         {!isTransfer && supplierModal && (
           <div className="fixed inset-0 z-[85] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSupplierModal(false)} />
-            <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
               <h3 className="text-lg font-bold text-slate-800">{t('新增供应商')}</h3>
               <div className="mt-4 space-y-2">
                 <input value={supplierForm.name} onChange={(e) => setSupplierForm((s) => ({ ...s, name: e.target.value }))} placeholder={t('供应商名称')} className={inputCls} />
@@ -603,7 +602,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 <button onClick={() => setSupplierModal(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
                   {t('取消')}
                 </button>
-                <button onClick={addSupplier} className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+                <button onClick={addSupplier} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
                   {t('保存')}
                 </button>
               </div>
@@ -624,7 +623,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 }}
                 className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                   picker.category === c
-                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                    ? 'bg-budu-500 text-white shadow-sm/60'
                     : 'bg-white text-slate-500 ring-1 ring-slate-100 hover:text-budu-600'
                 }`}
                 >
@@ -656,7 +655,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 {productMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setProductMenuOpen(false)} />
-                    <div className="absolute left-0 top-full z-40 mt-1 w-[340px] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-2xl sm:w-[440px]">
+                    <div className="absolute left-0 top-full z-40 mt-1 w-[340px] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-lg sm:w-[440px]">
                       {/* 二级菜单：产品分类 */}
                       <div className="flex flex-wrap gap-1.5">
                         {PRODUCT_CATEGORIES.map((c) => (
@@ -665,7 +664,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                             onClick={() => setProductCategory(c)}
                             className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                               productCategory === c
-                                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                                ? 'bg-budu-500 text-white shadow-sm/60'
                                 : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                             }`}
                           >
@@ -805,7 +804,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
             />
             <button
               onClick={addItem}
-              className="flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-budu-200/60 transition hover:bg-budu-600"
+              className="flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm/60 transition hover:bg-budu-600"
             >
               <PackagePlus className="h-4 w-4" />
               {t('添加到申请列表')}
@@ -863,7 +862,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           />
           <button
             onClick={submit}
-            className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             <PackagePlus className="h-4 w-4" />
             {t('提交申请')}
@@ -1089,11 +1088,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       {optionEdit && canManageOptions && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setOptionEdit(null)} />
-          <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
             <h3 className="text-lg font-bold text-slate-800">{t('选项设置：{name}', { name: optionEdit.name })}</h3>
             <div className="mt-4 space-y-3">
               <div className="flex items-center gap-3">
-                <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-50 to-grape-50 text-xl font-bold text-budu-400">
+                <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl bg-budu-50 text-xl font-bold text-budu-600">
                   {optionForm.image ? (
                     <img src={optionForm.image} alt="" className="h-full w-full object-cover" />
                   ) : (
@@ -1146,7 +1145,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               </button>
               <button
                 onClick={saveOption}
-                className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+                className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
                 {t('保存')}
               </button>

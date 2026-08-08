@@ -92,7 +92,7 @@ export default function DataAnalysisPage({ onBack }) {
         </button>
         <div>
           <h2 className="flex items-center gap-2 text-xl font-bold text-slate-800">
-            <Database className="h-5 w-5 text-grape-500" />
+            <Database className="h-5 w-5 text-budu-500" />
             {t('数据分析')}
           </h2>
           <p className="mt-0.5 text-[13px] text-slate-400">{t('上传门店报表，系统自动解析并匹配到各数据模块')}</p>
@@ -115,9 +115,9 @@ export default function DataAnalysisPage({ onBack }) {
           className="flex w-full flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-budu-200 bg-budu-50/40 px-6 py-10 transition hover:border-budu-400 hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? (
-            <Loader2 className="h-8 w-8 animate-spin text-budu-400" />
+            <Loader2 className="h-8 w-8 animate-spin text-budu-600" />
           ) : (
-            <UploadCloud className="h-8 w-8 text-budu-400" />
+            <UploadCloud className="h-8 w-8 text-budu-600" />
           )}
           <span className="text-sm font-semibold text-budu-600">
             {busy ? t('正在分析…') : t('上传报表文件')}
@@ -141,8 +141,8 @@ export default function DataAnalysisPage({ onBack }) {
               <p className="text-[10px] font-semibold text-budu-500">{t('覆盖月份')}</p>
               <p className="mt-0.5 text-sm font-bold text-slate-700">{summary.months.length}</p>
             </div>
-            <div className="rounded-xl bg-grape-50/70 px-4 py-3">
-              <p className="text-[10px] font-semibold text-grape-500">{t('营业记录')}</p>
+            <div className="rounded-xl bg-budu-50/70 px-4 py-3">
+              <p className="text-[10px] font-semibold text-budu-500">{t('营业记录')}</p>
               <p className="mt-0.5 text-sm font-bold text-slate-700">{summary.dailyRows}</p>
             </div>
             <div className="rounded-xl bg-amber-50/70 px-4 py-3">

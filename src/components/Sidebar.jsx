@@ -64,16 +64,16 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col bg-white/90 backdrop-blur transition-transform duration-300 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 lg:bg-white ${
+      className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white/95 backdrop-blur transition-transform duration-300 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 lg:bg-white ${
         open ? 'translate-x-0' : '-translate-x-full'
       }`}
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-        <img src={logoUrl} alt="budu" className="h-11 w-11 rounded-2xl object-cover shadow-lg shadow-budu-200" />
+        <img src={logoUrl} alt="budu" className="h-11 w-11 rounded-2xl object-cover shadow-sm" />
         <div>
-          <p className="bg-gradient-to-r from-budu-500 to-grape-500 bg-clip-text text-xl font-black tracking-wide text-transparent">
+          <p className="text-xl font-bold tracking-wide text-slate-900">
             budu
           </p>
           <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
@@ -82,7 +82,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
 
       {/* 菜单 */}
       <nav className="flex-1 space-y-1.5 overflow-y-auto px-4">
-        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-300">
+        <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
           {t('运营管理')}
         </p>
         {visibleMenus.map((item) => {
@@ -96,33 +96,33 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
               <div key={item.key}>
                 <button
                   onClick={() => toggleExpand(item.key)}
-                  className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
+                  className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition ${
                     active
-                      ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
-                      : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                      ? 'bg-budu-50 text-budu-700'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
-                  <Icon className={`h-[18px] w-[18px] ${active ? 'text-white' : 'text-slate-400 group-hover:text-budu-500'}`} />
+                  <Icon className={`h-[18px] w-[18px] ${active ? 'text-budu-600' : 'text-slate-400 group-hover:text-budu-500'}`} />
                   {t(item.label)}
                   <ChevronDown
                     className={`ml-auto h-4 w-4 transition-transform duration-200 ${
-                      active ? 'text-white' : 'text-slate-300'
+                      active ? 'text-budu-600' : 'text-slate-300'
                     } ${openSub ? 'rotate-180' : ''}`}
                   />
                 </button>
 
                 {openSub && (
-                  <div className="ml-[18px] mt-1 space-y-1 border-l-2 border-budu-100 pl-3">
+                  <div className="ml-[18px] mt-1 space-y-1 border-l-2 border-slate-200/80 pl-3">
                     {subs.map((sub) => {
                       const subActive = view === sub.key
                       return (
                         <button
                           key={sub.key}
                           onClick={() => handleNavigate(sub.key)}
-                          className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-all ${
+                          className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition ${
                             subActive
-                              ? 'bg-gradient-to-r from-budu-100 to-grape-100 text-budu-700 shadow-sm'
-                              : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                              ? 'bg-budu-50 text-budu-700'
+                              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
                           }`}
                         >
                           <span className={`text-[9px] ${subActive ? 'text-budu-500' : 'text-slate-300'}`}>●</span>
@@ -141,15 +141,15 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
             <button
               key={item.key}
               onClick={() => handleNavigate(item.key)}
-              className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-all ${
+              className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition ${
                 active
-                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
-                  : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                      ? 'bg-budu-50 text-budu-700'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
-              <Icon className={`h-[18px] w-[18px] ${active ? 'text-white' : 'text-slate-400 group-hover:text-budu-500'}`} />
+              <Icon className={`h-[18px] w-[18px] ${active ? 'text-budu-600' : 'text-slate-400 group-hover:text-budu-500'}`} />
               {t(item.label)}
-              {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white/90" />}
+              {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-budu-500" />}
             </button>
           )
         })}
@@ -157,7 +157,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
 
       {/* 底部用户卡片 */}
       <div className="px-4 pb-5 pt-4">
-        <div className="rounded-2xl bg-gradient-to-br from-budu-50 via-white to-grape-50 p-2 shadow-inner ring-1 ring-budu-100/60">
+        <div className="rounded-xl bg-slate-50/80 p-2 ring-1 ring-slate-200/70">
           <AccountMenu
             user={user}
             onUserChange={onUserChange}

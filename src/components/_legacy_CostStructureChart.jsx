@@ -7,7 +7,7 @@ function CostTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null
   const item = payload[0]
   return (
-    <div className="rounded-xl border border-white/60 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
+    <div className="rounded-xl border border-slate-200/70 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
       <p className="flex items-center gap-1.5 font-semibold text-slate-700">
         <span className="h-2 w-2 rounded-full" style={{ background: item.payload.color }} />
         {item.name}
@@ -60,7 +60,7 @@ export default function CostStructureChart() {
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="text-center">
             <p className="text-[10px] tracking-wide text-slate-400">本月总成本</p>
-            <p className="text-lg font-extrabold text-slate-800">¥78.4 万</p>
+            <p className="text-lg font-bold text-slate-800">¥78.4 万</p>
           </div>
         </div>
       </div>

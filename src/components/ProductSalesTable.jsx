@@ -47,7 +47,7 @@ function emojiFor(name) {
 
 const THUMB_BG = [
   'bg-budu-50',
-  'bg-grape-50',
+  'bg-violet-50',
   'bg-rose-50',
   'bg-amber-50',
   'bg-orange-50',
@@ -88,7 +88,7 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
 
       {/* 弹窗 */}
-      <div className="relative flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="relative flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
         {/* 头部 */}
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
@@ -114,7 +114,7 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('{count} 个菜品', { count: list.length })}
           </span>
-          <span className="rounded-lg bg-grape-50 px-2.5 py-1 text-xs font-semibold text-grape-600">
+          <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('总销量 {n} 份', {
               n: formatNumber(Math.round(list.reduce((s, p) => s + p.sales, 0))),
             })}
@@ -130,7 +130,7 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
               className={`relative h-5 w-9 rounded-full transition-colors ${showGift ? 'bg-budu-400' : 'bg-slate-200'}`}
             >
               <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${showGift ? 'left-[18px]' : 'left-0.5'}`}
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${showGift ? 'left-[18px]' : 'left-0.5'}`}
               />
             </span>
             {t('显示赠品 / 临时商品')}
@@ -153,7 +153,7 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {list.map((row, i) => (
-                <tr key={row.name} className="transition-colors hover:bg-budu-50/40">
+                <tr key={row.name} className="transition-colors hover:bg-slate-50">
                   <td className="py-2.5 pr-2 text-xs font-bold text-slate-400">{i + 1}</td>
                   <td className="py-2.5 pr-2">
                     <div className="flex items-center gap-2.5">
@@ -190,7 +190,7 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-budu-400 to-grape-500"
+                          className="h-full rounded-full bg-budu-400"
                           style={{ width: `${(row.amount / maxAmount) * 100}%` }}
                         />
                       </div>
@@ -273,7 +273,7 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('{count} 个菜品', { count: summary.count })}
           </span>
-          <span className="rounded-lg bg-grape-50 px-2.5 py-1 text-xs font-semibold text-grape-600">
+          <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('总销量 {n} 份', { n: formatNumber(Math.round(summary.sales)) })}
           </span>
           <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">
@@ -293,7 +293,7 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {rows.map((row, i) => (
-                <tr key={row.name} className="group transition-colors hover:bg-budu-50/40">
+                <tr key={row.name} className="group transition-colors hover:bg-slate-50">
                   <td className="py-2.5 pl-2">
                     <div className="flex items-center gap-3">
                       <div
@@ -331,7 +331,7 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-budu-400 to-grape-500"
+                          className="h-full rounded-full bg-budu-400"
                           style={{ width: `${(row.amount / maxAmount) * 100}%` }}
                         />
                       </div>

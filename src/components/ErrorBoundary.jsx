@@ -40,7 +40,7 @@ export default class ErrorBoundary extends Component {
     if (!this.state.error) return this.props.children
     return (
       <div className="grid min-h-[70vh] place-items-center px-4">
-        <div className="card w-full max-w-md p-8 text-center">
+        <div className="card w-full max-w-md p-8 text-center" role="alert">
           <p className="text-4xl">😵</p>
           <h2 className="mt-4 text-lg font-bold text-slate-800">页面加载出错了</h2>
           <p className="mt-2 text-sm leading-6 text-slate-400">
@@ -48,7 +48,7 @@ export default class ErrorBoundary extends Component {
           </p>
           <button
             onClick={this.handleReload}
-            className="mt-6 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            className="btn-primary mt-6 px-6 py-2.5"
           >
             刷新页面
           </button>

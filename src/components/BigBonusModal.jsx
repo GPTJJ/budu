@@ -5,8 +5,7 @@ import { normalizeImage } from '../utils/image'
 import { storeName } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function BigBonusModal({ emp, currentUser, onClose }) {
@@ -124,7 +123,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="relative flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-6 pb-4">
           <div>
             <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">
@@ -167,7 +166,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
             </div>
             <div className="rounded-xl bg-amber-50/70 px-3 py-2">
               <p className="text-[10px] font-semibold text-amber-600">{t('自动计算奖金')}</p>
-              <p className="mt-0.5 text-lg font-black tabular-nums text-amber-600">¥{yuan(bonusCents)}</p>
+              <p className="mt-0.5 text-lg font-bold tabular-nums text-amber-600">¥{yuan(bonusCents)}</p>
             </div>
           </div>
 
@@ -205,7 +204,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
           <button
             onClick={save}
             disabled={busy}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95 disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95 disabled:opacity-60"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             {t('记录大单奖')}

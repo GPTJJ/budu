@@ -14,14 +14,13 @@ function todayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 function Field({ label, icon: Icon, children }) {
   return (
     <div className="block">
       <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-        {Icon && <Icon className="h-3.5 w-3.5 text-budu-400" />}
+        {Icon && <Icon className="h-3.5 w-3.5 text-budu-600" />}
         {label}
       </span>
       {children}
@@ -62,7 +61,7 @@ function StaffPicker({ value, onChange }) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-2xl border border-slate-100 bg-white p-2 shadow-2xl">
+          <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-2xl border border-slate-100 bg-white p-2 shadow-lg">
             <p className="px-2 py-1.5 text-[11px] font-semibold text-slate-300">{t('点击姓名多选值班人员')}</p>
             {sorted.map((emp) => {
               const checked = value.includes(emp.name)
@@ -229,7 +228,7 @@ export default function StoreEntryPage({ onBack }) {
           <div className="flex items-end sm:col-span-2">
             <button
               onClick={handleSave}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Save className="h-4 w-4" />
               {t('保存')}
@@ -287,7 +286,7 @@ export default function StoreEntryPage({ onBack }) {
                 const entry = localEntries()[`${month}|${store}|${r.d}`]
                 const staffNames = entry && Array.isArray(entry.staff) ? entry.staff : []
                 return (
-                  <tr key={r.d} className="border-t border-slate-50 transition hover:bg-budu-50/40">
+                  <tr key={r.d} className="border-t border-slate-50 transition hover:bg-slate-50">
                     <td className="px-5 py-3 font-medium text-slate-700">{r.d}</td>
                     <td className="px-4 py-3">
                       {staffNames.length > 0 ? (
@@ -307,7 +306,7 @@ export default function StoreEntryPage({ onBack }) {
                     <td className="px-4 py-3 tabular-nums text-slate-600">¥{r.ord > 0 ? (r.inc / r.ord).toFixed(2) : '0.00'}</td>
                     <td className="px-4 py-3">
                       {r.local ? (
-                        <span className="rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-bold text-grape-600">
+                        <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
                           {t('本地录入')}
                         </span>
                       ) : (

@@ -50,7 +50,7 @@ export default function Header({
 
   return (
     <header
-      className="sticky top-0 z-20 border-b border-white/60 bg-[#F7F4FA]/88 backdrop-blur-xl"
+      className="sticky top-0 z-20 border-b border-slate-200/70 bg-canvas/88 backdrop-blur-xl"
       style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-4 lg:px-8">
@@ -58,13 +58,13 @@ export default function Header({
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             onClick={onMenuClick}
-            className="hidden h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card sm:grid lg:hidden"
+            className="hidden h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm sm:grid lg:hidden"
             aria-label={t('打开菜单')}
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
-            <h1 className="truncate text-[17px] font-bold text-slate-800 sm:text-lg lg:text-xl">
+            <h1 className="truncate text-[17px] font-semibold text-slate-900 sm:text-lg lg:text-xl">
               {title ? t(title) : t(greetingKey, { name })}
             </h1>
             {!title && (
@@ -79,7 +79,7 @@ export default function Header({
         <button
           type="button"
           onClick={handleRefresh}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition active:scale-95 md:hidden"
           aria-label={t('刷新页面')}
         >
           <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />
@@ -95,8 +95,8 @@ export default function Header({
               <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
 
               {/* 门店选择 */}
-              <label className="flex shrink-0 items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover">
-                <MapPin className="h-4 w-4 text-grape-500" />
+              <label className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-200/70 bg-white/80 px-3 py-2 text-sm shadow-sm transition hover:border-slate-300">
+                <MapPin className="h-4 w-4 text-budu-500" />
                 <select
                   value={store}
                   onChange={(e) => onStoreChange(e.target.value)}
@@ -120,7 +120,7 @@ export default function Header({
           <button
             type="button"
             onClick={handleRefresh}
-            className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:grid"
+            className="hidden h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-budu-500 md:grid"
             aria-label={t('刷新页面')}
           >
             <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />

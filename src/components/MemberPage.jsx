@@ -4,8 +4,7 @@ import { allStores } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function MemberPage({ currentUser, onBack }) {
@@ -95,7 +94,7 @@ export default function MemberPage({ currentUser, onBack }) {
           </h2>
           <p className="mt-0.5 text-[13px] text-slate-400">{t('会员档案、消费记录与积分')}</p>
         </div>
-        <button onClick={() => setAddOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+        <button onClick={() => setAddOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
           <Plus className="h-4 w-4" />
           {t('新增会员')}
         </button>
@@ -130,8 +129,8 @@ export default function MemberPage({ currentUser, onBack }) {
         </div>
         <div className="divide-y divide-slate-50">
           {members.map((m) => (
-            <button key={m.id} onClick={() => openDetail(m.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-budu-50/40">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-budu-400 to-grape-500 text-sm font-bold text-white">
+            <button key={m.id} onClick={() => openDetail(m.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-slate-50">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-500 text-sm font-bold text-white">
                 {m.name.slice(0, 1)}
               </span>
               <div className="min-w-0 flex-1">
@@ -151,7 +150,7 @@ export default function MemberPage({ currentUser, onBack }) {
       {addOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setAddOpen(false)} />
-          <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
             <h3 className="text-lg font-bold text-slate-800">{t('新增会员')}</h3>
             <div className="mt-4 space-y-2">
               <input value={form.name} onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))} placeholder={t('姓名')} className={inputCls} />
@@ -162,7 +161,7 @@ export default function MemberPage({ currentUser, onBack }) {
               <button onClick={() => setAddOpen(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
                 {t('取消')}
               </button>
-              <button onClick={addMember} className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+              <button onClick={addMember} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
                 {t('保存')}
               </button>
             </div>
@@ -173,7 +172,7 @@ export default function MemberPage({ currentUser, onBack }) {
       {detail && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setDetail(null)} />
-          <div className="relative max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="relative max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-bold text-slate-800">{detail.member.name}</h3>

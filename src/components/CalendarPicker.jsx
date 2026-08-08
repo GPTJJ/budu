@@ -72,12 +72,12 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
           open ? 'ring-2 ring-budu-200' : ''
         }`}
       >
-        <CalendarDays className={`h-4 w-4 ${day ? 'text-grape-500' : 'text-budu-500'}`} />
+        <CalendarDays className={`h-4 w-4 ${day ? 'text-budu-500' : 'text-budu-500'}`} />
         <span className="font-semibold text-slate-600">
           {day ? `${fmtMonth(month, lang)} · ${day}` : fmtMonth(month, lang)}
         </span>
         {day && (
-          <span className="rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-bold text-grape-600">
+          <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
             {t('按日')}
           </span>
         )}
@@ -87,7 +87,7 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="fixed left-3 right-3 top-[calc(7rem+env(safe-area-inset-top))] z-40 mx-auto w-auto max-w-[340px] rounded-3xl bg-white p-4 shadow-2xl ring-1 ring-slate-100 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[300px]">
+          <div className="fixed left-3 right-3 top-[calc(7rem+env(safe-area-inset-top))] z-40 mx-auto w-auto max-w-[340px] rounded-2xl bg-white p-4 shadow-lg ring-1 ring-slate-100 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[300px]">
             {/* 年月切换 + 今天 */}
             <div className="flex items-center justify-between gap-2">
               <button
@@ -158,7 +158,7 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
                     }}
                     className={`relative mx-auto grid h-9 w-9 place-items-center rounded-xl text-[13px] font-medium transition ${
                       selected
-                        ? 'bg-gradient-to-br from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
+                        ? 'bg-budu-500 text-white shadow-sm/60'
                         : isToday
                           ? 'text-budu-600 ring-2 ring-budu-200 hover:bg-budu-50'
                           : isMakeupDay

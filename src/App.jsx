@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import LoginPage from './components/LoginPage'
+import { AppLoading } from './components/LoadingSkeleton'
 import { api } from './utils/api'
 import { loadUserData, resetUserData } from './utils/userData'
 import { useI18n } from './i18n'
@@ -44,11 +45,7 @@ export default function App() {
   }
 
   if (authLoading || !dataReady) {
-    return (
-      <div className="grid min-h-screen min-h-[100dvh] place-items-center bg-[#F7F4FA]">
-        <p className="text-sm font-medium text-slate-400">{t('正在加载 budu 系统…')}</p>
-      </div>
-    )
+    return <AppLoading />
   }
 
   if (!user) {
@@ -57,11 +54,7 @@ export default function App() {
 
   return (
     <Suspense
-      fallback={
-        <div className="grid min-h-screen min-h-[100dvh] place-items-center bg-[#F7F4FA]">
-          <p className="text-sm font-medium text-slate-400">{t('正在加载 budu 系统…')}</p>
-        </div>
-      }
+      fallback={<AppLoading />}
     >
       <Dashboard user={user} onLogout={handleLogout} onUserChange={(u) => setUser(u)} />
     </Suspense>

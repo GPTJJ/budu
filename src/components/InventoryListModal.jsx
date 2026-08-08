@@ -119,7 +119,7 @@ export default function InventoryListModal({ request, onClose }) {
     <>
       <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
         {exportOpen ? (
           /* Excel 导出预览 */
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
@@ -196,7 +196,7 @@ export default function InventoryListModal({ request, onClose }) {
           <div ref={cardRef} className="min-w-0 bg-white px-6 py-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
-              <p className="bg-gradient-to-r from-budu-500 to-grape-500 bg-clip-text text-lg font-black tracking-wide text-transparent">
+              <p className="text-lg font-bold tracking-wide text-budu-600">
                 budu · {t('货品清单')}
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
@@ -258,7 +258,7 @@ export default function InventoryListModal({ request, onClose }) {
             </button>
             <button
               onClick={exportExcel}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Download className="h-4 w-4" />
               {t('导出 Excel')}
@@ -276,14 +276,14 @@ export default function InventoryListModal({ request, onClose }) {
             <button
               onClick={download}
               disabled={busy}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
             >
               <Download className="h-4 w-4" />
               {busy ? t('生成中…') : t('下载图片')}
             </button>
             <button
               onClick={() => setExportOpen(true)}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <FileSpreadsheet className="h-4 w-4" />
               {t('导出表格')}
@@ -296,7 +296,7 @@ export default function InventoryListModal({ request, onClose }) {
       {/* 移动端长按保存预览 */}
       {previewUrl && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/85 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white p-4 shadow-2xl">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white p-4 shadow-lg">
             <img src={previewUrl} alt={t('货品清单')} className="max-h-[62vh] w-full rounded-2xl object-contain" />
             <p className="mt-3 text-center text-xs leading-5 text-slate-500">
               {t('长按图片可保存到相册；也可用浏览器打开')}

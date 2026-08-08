@@ -12,15 +12,15 @@ import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const CARD_STYLE = {
-  income: { label: '营业收入', gradient: 'from-budu-400 to-grape-500', color: '#A855F7', icon: TrendingUp },
-  orders: { label: '订单数', gradient: 'from-rose-400 to-budu-500', color: '#EC4899', icon: ShoppingBag },
-  avgOrder: { label: '客单价', gradient: 'from-amber-400 to-orange-500', color: '#F59E0B', icon: Wallet },
-  dish: { label: '菜品销量', gradient: 'from-emerald-400 to-teal-500', color: '#10B981', icon: UtensilsCrossed },
-  discount: { label: '优惠金额', gradient: 'from-sky-400 to-indigo-500', color: '#6366F1', icon: BadgePercent },
-  dailyAvg: { label: '日均营业额', gradient: 'from-violet-400 to-purple-600', color: '#8B5CF6', icon: CalendarCheck2 },
+  income: { label: '营业收入', iconBg: 'bg-budu-500', color: '#BC4F7E', icon: TrendingUp },
+  orders: { label: '订单数', iconBg: 'bg-slate-500', color: '#64748B', icon: ShoppingBag },
+  avgOrder: { label: '客单价', iconBg: 'bg-amber-500', color: '#D97706', icon: Wallet },
+  dish: { label: '菜品销量', iconBg: 'bg-emerald-500', color: '#059669', icon: UtensilsCrossed },
+  discount: { label: '优惠金额', iconBg: 'bg-sky-500', color: '#0284C7', icon: BadgePercent },
+  dailyAvg: { label: '日均营业额', iconBg: 'bg-violet-500', color: '#7C3AED', icon: CalendarCheck2 },
 }
 
-export default function KpiCard({ card }) {
+export default function KpiCard({ card, featured = false }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
@@ -31,15 +31,21 @@ export default function KpiCard({ card }) {
   const up = card.change == null ? null : card.change >= 0
 
   return (
-    <div className="card group min-w-0 p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-5">
+    <div
+      className={`card group min-w-0 p-3.5 transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-5 ${
+        featured ? 'col-span-2 xl:col-span-1' : ''
+      }`}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${style.gradient} text-white shadow-md sm:h-10 sm:w-10`}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${style.iconBg} text-white shadow-sm sm:h-10 sm:w-10`}
           >
             <Icon className="h-5 w-5" />
           </div>
-          <p className="truncate text-[13px] font-medium text-slate-500">{t(card.label || style.label)}</p>
+          <p className={`truncate font-medium text-slate-500 ${featured ? 'text-sm' : 'text-[13px]'}`}>
+            {t(card.label || style.label)}
+          </p>
         </div>
         <span
           className={`chip hidden shrink-0 sm:inline-flex ${
@@ -58,7 +64,7 @@ export default function KpiCard({ card }) {
         <div className="min-w-0">
           {hide ? (
             <>
-              <p className="text-[26px] font-extrabold leading-none tracking-tight text-slate-300">•••</p>
+              <p className="text-[26px] font-semibold leading-none tracking-tight text-slate-300">•••</p>
               {isStore && (
                 <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">
                   {t('经营数据仅开发者可见')}
@@ -67,7 +73,11 @@ export default function KpiCard({ card }) {
             </>
           ) : (
             <>
-              <p className="truncate text-[17px] font-extrabold leading-none tracking-tight text-slate-800 sm:text-[26px]">
+              <p
+                className={`truncate font-semibold leading-none tracking-tight tabular-nums text-slate-800 ${
+                  featured ? 'text-[22px] sm:text-[30px]' : 'text-[17px] sm:text-[26px]'
+                }`}
+              >
                 {card.prefix}
                 {card.value}
                 <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>

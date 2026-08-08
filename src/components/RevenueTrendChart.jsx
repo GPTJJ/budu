@@ -26,10 +26,10 @@ function TrendTooltip({ active, payload, label }) {
   const revenue = payload.find((p) => p.dataKey === 'revenue')
   const orders = payload.find((p) => p.dataKey === 'orders')
   return (
-    <div className="rounded-xl border border-white/60 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
+    <div className="rounded-xl border border-slate-200/70 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
       <p className="mb-1.5 font-bold text-slate-700">{shortDate(label)}</p>
       <p className="flex items-center gap-1.5 text-slate-500">
-        <span className="h-2 w-2 rounded-full bg-grape-500" />
+    <span className="h-2 w-2 rounded-full bg-budu-500" />
         {t('营业收入：')}<span className="font-semibold text-slate-700">¥{formatMoney(revenue?.value ?? 0)}</span>
       </p>
       <p className="mt-1 flex items-center gap-1.5 text-slate-500">
@@ -87,14 +87,14 @@ export default function RevenueTrendChart({ month, store, day }) {
         <>
       <div className="mb-4 flex items-center gap-5 text-xs text-slate-500">
         <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-grape-500" />
+    <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
           {t('营业收入（元）')}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-budu-400" />
           {t('订单数（单）')}
         </span>
-        <span className="ml-auto hidden rounded-lg bg-grape-50 px-2 py-1 font-semibold text-grape-600 sm:block">
+    <span className="ml-auto hidden rounded-lg bg-slate-100 px-2 py-1 font-semibold text-slate-600 sm:block">
           {day
             ? t('当日 ¥{inc} · {ord} 单', {
                 inc: formatMoney(focus ? focus.revenue : 0),
@@ -106,8 +106,8 @@ export default function RevenueTrendChart({ month, store, day }) {
 
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1EDF5" />
+          <LineChart data={data} margin={{ top: 6, right: 4, left: 4, bottom: 0 }} isAnimationActive={false}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EEEEF0" />
             <XAxis
               dataKey="d"
               tickLine={false}
@@ -133,18 +133,18 @@ export default function RevenueTrendChart({ month, store, day }) {
               tickLine={false}
               axisLine={false}
               width={40}
-              tick={{ fill: '#C4B5FD', fontSize: 11 }}
+              tick={{ fill: '#94A3B8', fontSize: 11 }}
             />
-            <Tooltip content={<TrendTooltip />} cursor={{ stroke: '#E9D5FF', strokeDasharray: '4 4' }} />
+            <Tooltip content={<TrendTooltip />} cursor={{ stroke: '#E2E8F0', strokeDasharray: '4 4' }} />
             {focus && (
-              <ReferenceDot yAxisId="revenue" x={focus.d} y={focus.revenue} r={5} fill="#A855F7" stroke="#fff" strokeWidth={2} />
+              <ReferenceDot yAxisId="revenue" x={focus.d} y={focus.revenue} r={5} fill="#BC4F7E" stroke="#fff" strokeWidth={2} />
             )}
             <Line
               yAxisId="revenue"
               type="monotone"
               dataKey="revenue"
               name={t('营业收入')}
-              stroke="#A855F7"
+              stroke="#BC4F7E"
               strokeWidth={2.5}
               dot={false}
               activeDot={{ r: 5, strokeWidth: 0 }}
@@ -154,7 +154,7 @@ export default function RevenueTrendChart({ month, store, day }) {
               type="monotone"
               dataKey="orders"
               name={t('订单数')}
-              stroke="#F472B6"
+              stroke="#94A3B8"
               strokeWidth={2}
               strokeDasharray="6 4"
               dot={false}

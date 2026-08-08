@@ -6,16 +6,16 @@ import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const AVATAR_GRADIENTS = [
-  'from-budu-400 to-rose-400',
-  'from-grape-400 to-indigo-400',
-  'from-amber-400 to-orange-400',
-  'from-emerald-400 to-teal-400',
-  'from-sky-400 to-cyan-400',
+  'bg-budu-100',
+  'bg-violet-100',
+  'bg-amber-100',
+  'bg-emerald-100',
+  'bg-sky-100',
 ]
 
 function roiStyle(roi) {
   if (roi >= 12) return 'bg-emerald-50 text-emerald-600'
-  if (roi >= 8) return 'bg-grape-50 text-grape-600'
+  if (roi >= 8) return 'bg-budu-50 text-budu-600'
   return 'bg-amber-50 text-amber-600'
 }
 
@@ -66,7 +66,7 @@ export default function EmployeePerformanceTable({ store, month, user }) {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {list.map((row, i) => (
-              <tr key={row.name} className="group transition-colors hover:bg-grape-50/40">
+              <tr key={row.name} className="group transition-colors hover:bg-slate-50">
                 <td className="py-3 pl-2">
                   <span
                     className={`grid h-6 w-6 place-items-center rounded-lg text-[11px] font-bold text-white ${rankStyle(i)}`}
@@ -77,7 +77,7 @@ export default function EmployeePerformanceTable({ store, month, user }) {
                 <td className="py-3">
                   <div className="flex items-center gap-2.5">
                     <span
-                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br text-xs font-bold text-white ${AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length]}`}
+      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold ${AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length]}`}
                     >
                       {row.name[0]}
                     </span>

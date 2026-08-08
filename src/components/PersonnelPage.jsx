@@ -24,13 +24,13 @@ import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const AVATAR_GRADIENTS = [
-  'from-budu-400 to-rose-400',
-  'from-grape-400 to-indigo-400',
-  'from-amber-400 to-orange-400',
-  'from-emerald-400 to-teal-400',
-  'from-sky-400 to-cyan-400',
-  'from-violet-400 to-purple-500',
-  'from-rose-400 to-pink-500',
+  'bg-budu-100',
+  'bg-violet-100',
+  'bg-amber-100',
+  'bg-emerald-100',
+  'bg-sky-100',
+  'bg-violet-100',
+  'bg-rose-100',
 ]
 
 function todayParts() {
@@ -49,8 +49,7 @@ function Stat({ label, value, accent }) {
   )
 }
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 /** 添加员工弹窗 */
 function AddStaffModal({ onClose, onSave }) {
@@ -99,7 +98,7 @@ function AddStaffModal({ onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('添加员工')}</h3>
@@ -133,7 +132,7 @@ function AddStaffModal({ onClose, onSave }) {
                 onClick={() => setType('fulltime')}
                 className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
                   type === 'fulltime'
-                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                    ? 'bg-budu-500 text-white shadow-md'
                     : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
@@ -143,7 +142,7 @@ function AddStaffModal({ onClose, onSave }) {
                 onClick={() => setType('parttime')}
                 className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
                   type === 'parttime'
-                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                    ? 'bg-budu-500 text-white shadow-md'
                     : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
@@ -168,7 +167,7 @@ function AddStaffModal({ onClose, onSave }) {
 
           <button
             onClick={handleSave}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" />
             {t('确认添加')}
@@ -191,7 +190,7 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('删除员工')}</h3>
@@ -289,7 +288,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex flex-wrap items-center gap-3">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t('当月每日工资明细')}</h3>
@@ -304,7 +303,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
           <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
         ) : (
           <>
-            <div className="mt-4 max-h-[52vh] overflow-y-auto">
+            <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
               <table className="w-full min-w-[560px] text-left text-sm">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
@@ -353,7 +352,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
             </div>
             <button
               onClick={download}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Download className="h-4 w-4" />
               {t('下载文档')}
@@ -454,7 +453,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {canManage && !isPublic && (
             <button
               onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-budu-500 to-grape-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              className="flex items-center gap-1.5 rounded-2xl bg-budu-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Plus className="h-4 w-4" />
               {t('添加员工')}
@@ -480,7 +479,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       {/* 类型切换 */}
       <div className="space-y-2.5">
         <div className="inline-flex rounded-2xl bg-white p-1.5 shadow-card">
-          <span className="rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-5 py-2 text-sm font-semibold text-white shadow-md">
+          <span className="rounded-xl bg-budu-500 px-5 py-2 text-sm font-semibold text-white shadow-md">
             {t('雇员')}（{scopedAll.length}）
           </span>
         </div>
@@ -489,9 +488,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {user?.role === 'developer' && (
               <button
                 onClick={() => setFilter('all')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
                   filter === 'all'
-                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                    ? 'bg-budu-500 text-white shadow-md'
                     : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
@@ -500,9 +499,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             )}
             <button
               onClick={() => setFilter('fulltime')}
-              className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
                 filter === 'fulltime'
-                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                  ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
@@ -510,9 +509,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             </button>
             <button
               onClick={() => setFilter('parttime')}
-              className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
                 filter === 'parttime'
-                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                  ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
@@ -522,7 +521,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {user?.role === 'developer' && (
             <button
               onClick={() => setShowExport(true)}
-              className="ml-auto flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+              className="ml-auto flex items-center gap-1.5 rounded-2xl bg-emerald-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <FileSpreadsheet className="h-4 w-4" />
               {t('导出表格')}
@@ -570,7 +569,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                 <div
                   key={emp.name}
                   onClick={() => setDetailEmp(emp)}
-                  className="card relative cursor-pointer p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
+                  className="card relative cursor-pointer p-5 transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
                 >
                   {canDelete && !isPublic && (
                     <button
@@ -586,7 +585,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   )}
                   <div className="flex items-center gap-3">
                     <div
-                      className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br text-base font-bold text-white shadow-md ${
+                      className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-base font-bold shadow-sm ${
                         AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length]
                       }`}
                     >
@@ -598,7 +597,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                             emp.type === 'fulltime'
-                              ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white'
+                              ? 'bg-budu-500 text-white'
                               : 'bg-slate-100 text-slate-500'
                           }`}
                         >
@@ -640,7 +639,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <Stat
                       label={t('业绩提成')}
                       value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`}
-                      accent="text-grape-600"
+                      accent="text-budu-600"
                     />
                     <Stat
                       label={t('大单奖')}
@@ -660,7 +659,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         e.stopPropagation()
                         setBigBonusEmp(emp)
                       }}
-                      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:shadow active:scale-95"
+                      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:shadow active:scale-95"
                     >
                       <Award className="h-3.5 w-3.5" />
                       {t('大单奖')}

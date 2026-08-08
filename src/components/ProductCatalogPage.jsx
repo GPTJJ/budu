@@ -5,8 +5,7 @@ import { formatMoney, formatNumber } from '../utils/format'
 import { commitProductImages, commitProducts, getProductImages, getProducts } from '../utils/userData'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 function resizeImage(file, maxSize = 512) {
   return new Promise((resolve, reject) => {
@@ -58,7 +57,7 @@ function ProductEditorModal({ initial, stores, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <h3 className="text-lg font-bold text-slate-800">{initial ? t('编辑商品') : t('新增商品')}</h3>
           <button
@@ -128,7 +127,7 @@ function ProductEditorModal({ initial, stores, onClose, onSave }) {
           </button>
           <button
             onClick={submit}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             <Check className="h-4 w-4" />
             {t('保存')}
@@ -145,7 +144,7 @@ function ProductDetailModal({ product, image, canEdit, onClose, onSaveImage, onR
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <h3 className="text-lg font-bold text-slate-800">{t('商品详情')}</h3>
           <button
@@ -158,7 +157,7 @@ function ProductDetailModal({ product, image, canEdit, onClose, onSaveImage, onR
         </div>
 
         <div className="mt-5 flex flex-col items-center gap-4">
-          <div className="grid h-44 w-44 place-items-center overflow-hidden rounded-3xl bg-gradient-to-br from-budu-50 to-grape-50 shadow-inner">
+          <div className="grid h-44 w-44 place-items-center overflow-hidden rounded-2xl bg-budu-50 shadow-inner">
             {image ? (
               <img src={image} alt={product.name} className="h-full w-full object-cover" />
             ) : (
@@ -177,8 +176,8 @@ function ProductDetailModal({ product, image, canEdit, onClose, onSaveImage, onR
                 {formatNumber(Math.round(product.sales))}
               </p>
             </div>
-            <div className="rounded-xl bg-grape-50/70 px-4 py-3 text-center">
-              <p className="text-[10px] font-semibold text-grape-500">{t('销售额')}</p>
+            <div className="rounded-xl bg-budu-50/70 px-4 py-3 text-center">
+              <p className="text-[10px] font-semibold text-budu-500">{t('销售额')}</p>
               <p className="mt-0.5 text-base font-bold text-slate-700">¥{formatMoney(product.amount)}</p>
             </div>
             <div className="rounded-xl bg-amber-50/70 px-4 py-3 text-center">
@@ -348,7 +347,7 @@ export default function ProductCatalogPage({ initialProduct = null, onBack, canE
           {canEdit && (
             <button
               onClick={() => setEditing({})}
-              className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 sm:flex-none"
+              className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 sm:flex-none"
             >
               <Plus className="h-4 w-4" />
               {t('新增商品')}
@@ -380,9 +379,9 @@ export default function ProductCatalogPage({ initialProduct = null, onBack, canE
               <button
                 key={p.name}
                 onClick={() => setSelectedName(p.name)}
-                className="card group flex min-w-0 flex-col items-center p-3 text-center transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-4"
+    className="card group flex min-w-0 flex-col items-center p-3 text-center transition duration-200 hover:-translate-y-0.5 hover:shadow-card-hover sm:p-4"
               >
-                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-50 to-grape-50 shadow-inner sm:h-24 sm:w-24">
+                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-2xl bg-budu-50 shadow-inner sm:h-24 sm:w-24">
                   {img ? (
                     <img src={img} alt={p.name} className="h-full w-full object-cover" />
                   ) : (
@@ -396,7 +395,7 @@ export default function ProductCatalogPage({ initialProduct = null, onBack, canE
                   {t('销量')} {formatNumber(Math.round(p.sales))} · ¥{formatMoney(p.amount)}
                 </p>
                 {p.custom && (
-                  <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-grape-50 px-1.5 py-0.5 text-[10px] font-semibold text-grape-600">
+                  <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-semibold text-budu-600">
                     <Package className="h-3 w-3" />
                     {t('自定义')}
                     {p.storeName && ` · ${p.storeName}`}

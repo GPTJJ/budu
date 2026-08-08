@@ -56,8 +56,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
         onClick={() => setOpen((v) => !v)}
         className={
           isDesktop
-            ? 'hidden h-11 w-11 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition hover:shadow-card-hover hover:text-budu-500 md:grid'
-            : 'relative grid h-10 w-10 place-items-center rounded-2xl bg-white text-slate-500 shadow-card transition active:scale-95 md:hidden'
+            ? 'hidden h-11 w-11 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-budu-500 md:grid'
+            : 'relative grid h-10 w-10 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition active:scale-95 md:hidden'
         }
         aria-label={t('查看通知')}
       >
@@ -73,7 +73,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className={`absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl ${
+            className={`absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-lg ${
               isDesktop ? 'w-80' : 'w-[calc(100vw-3rem)] max-w-80'
             }`}
           >
@@ -178,7 +178,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                 aria-label={t(muted ? '关闭' : '开启')}
               >
                 <span
-                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${
                     muted ? 'left-0.5' : 'left-[18px]'
                   }`}
                 />

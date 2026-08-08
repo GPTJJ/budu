@@ -10,6 +10,7 @@ import ProductSalesTable from './ProductSalesTable'
 import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
+import PageLoading from './LoadingSkeleton'
 import { allStores, kpiCards } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
@@ -93,7 +94,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
           </p>
           <button
             onClick={onLogout}
-            className="mt-6 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+            className="mt-6 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             {t('退出登录')}
           </button>
@@ -120,7 +121,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   return (
     <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
-      <div className="flex min-h-screen min-h-[100dvh] bg-[#F7F4FA]">
+      <div className="flex min-h-screen min-h-[100dvh] bg-canvas">
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
@@ -163,11 +164,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
           <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
             <ErrorBoundary key={`${view}-${pageKey}`}>
               <Suspense
-                fallback={
-                  <div className="grid min-h-[40vh] place-items-center text-sm font-medium text-slate-400">
-                    {t('正在加载 budu 系统…')}
-                  </div>
-                }
+                fallback={<PageLoading />}
               >
               {isStaffView ? (
                 <PersonnelPage
@@ -217,8 +214,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <>
                   {/* 核心 KPI 统计 */}
                   <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3 2xl:grid-cols-6">
-                    {cards.map((card) => (
-                      <KpiCard key={card.key} card={card} />
+                    {cards.map((card, i) => (
+                      <KpiCard key={card.key} card={card} featured={i === 0} />
                     ))}
                   </section>
 

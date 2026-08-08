@@ -3,15 +3,14 @@ import { ChevronDown, Image as ImageIcon, KeyRound, Loader2, LogOut, RefreshCw, 
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 function ModalShell({ title, onClose, children }) {
   const { t } = useI18n()
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <h3 className="text-lg font-bold text-slate-800">{title}</h3>
           <button
@@ -85,7 +84,7 @@ function PasswordModal({ onClose }) {
         <button
           onClick={submit}
           disabled={busy || !oldPassword || newPassword.length < 6 || !confirm}
-          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
           {t('保存')}
@@ -159,7 +158,7 @@ function ProfileModal({ mode, user, onUserChange, onClose }) {
     <ModalShell title={mode === 'avatar' ? t('修改头像') : t('修改用户名')} onClose={onClose}>
       {mode === 'avatar' ? (
         <div className="flex flex-col items-center gap-3">
-          <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-budu-400 to-grape-500 text-2xl font-bold text-white shadow-lg">
+          <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-budu-500 text-2xl font-bold text-white shadow-lg">
             {avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" /> : initial}
           </div>
           <label className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-budu-50 px-4 py-2 text-sm font-semibold text-budu-600 transition hover:bg-budu-100">
@@ -182,7 +181,7 @@ function ProfileModal({ mode, user, onUserChange, onClose }) {
       <button
         onClick={submit}
         disabled={busy}
-        className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy && <Loader2 className="h-4 w-4 animate-spin" />}
         {t('保存')}
@@ -242,7 +241,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
         className="flex w-full items-center gap-2.5 rounded-2xl p-1.5 text-left transition hover:bg-slate-50"
         aria-label={t('打开账号菜单')}
       >
-        <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-budu-400 to-grape-500 text-sm font-bold text-white shadow-md">
+        <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-2xl bg-budu-500 text-sm font-bold text-white shadow-md">
           {avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" /> : initial}
         </span>
         <span className="hidden min-w-0 flex-1 text-left sm:block">
@@ -258,7 +257,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
           <div
-            className={`absolute z-50 w-56 overflow-hidden rounded-2xl border border-slate-100 bg-white p-1.5 shadow-2xl ${
+            className={`absolute z-50 w-56 overflow-hidden rounded-2xl border border-slate-100 bg-white p-1.5 shadow-lg ${
               variant === 'sidebar' ? 'bottom-full left-0 mb-2' : 'right-0 top-full mt-2'
             }`}
           >

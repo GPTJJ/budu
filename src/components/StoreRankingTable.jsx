@@ -36,7 +36,7 @@ function StoreModal({ month, store, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
         {/* 头部 */}
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
@@ -63,7 +63,7 @@ function StoreModal({ month, store, onClose }) {
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('{count} 家门店', { count: storeCount })}
           </span>
-          <span className="rounded-lg bg-grape-50 px-2.5 py-1 text-xs font-semibold text-grape-600">
+          <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('{count} 个月', { count: monthCount })}
           </span>
           <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">
@@ -91,7 +91,7 @@ function StoreModal({ month, store, onClose }) {
               {rows.map((r) => {
                 const top = r.inc >= (monthMax.get(r.monthKey) || 0)
                 return (
-                  <tr key={`${r.monthKey}-${r.key}`} className="transition-colors hover:bg-budu-50/40">
+                  <tr key={`${r.monthKey}-${r.key}`} className="transition-colors hover:bg-slate-50">
                     <td className="py-2.5 pr-2 font-semibold text-slate-500">{r.month}</td>
                     <td className="py-2.5 pr-2">
                       <div className="flex items-center gap-2">
@@ -199,7 +199,7 @@ export default function StoreRankingTable({ month, store, day }) {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {rows.map((row, i) => (
-                <tr key={row.key} className="group transition-colors hover:bg-budu-50/40">
+                <tr key={row.key} className="group transition-colors hover:bg-slate-50">
                   <td className="py-3 pl-2">
                     <span
                       className={`grid h-6 w-6 place-items-center rounded-lg text-[11px] font-bold text-white ${rankStyle(i)}`}

@@ -66,13 +66,13 @@ export default function PwaInstallPrompt({ authenticated = false }) {
 
   return (
     <aside
-      className={`fixed left-3 right-3 z-[60] mx-auto max-w-md rounded-2xl border border-white/80 bg-white/95 p-3 shadow-2xl shadow-grape-200/40 backdrop-blur-xl ${
+      className={`fixed left-3 right-3 z-[60] mx-auto max-w-md rounded-2xl border border-slate-200/70 bg-white/95 p-3 shadow-lg shadow-slate-200/60 backdrop-blur-xl ${
         authenticated ? 'bottom-[calc(5.2rem+env(safe-area-inset-bottom))] lg:bottom-6' : 'bottom-[calc(1rem+env(safe-area-inset-bottom))]'
       }`}
       aria-label={t('安装 budu 应用')}
     >
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-500 text-white shadow-sm">
           {showIosTip ? <Share className="h-5 w-5" /> : <Download className="h-5 w-5" />}
         </div>
         <div className="min-w-0 flex-1">

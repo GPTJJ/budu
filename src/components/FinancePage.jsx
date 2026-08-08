@@ -4,8 +4,7 @@ import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 const CATEGORIES = ['房租', '人工', '水电', '原料', '平台佣金', '其他']
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -144,7 +143,7 @@ export default function FinancePage({ currentUser, onBack }) {
           </select>
           <input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm((s) => ({ ...s, amount: e.target.value }))} placeholder={t('金额（元）')} className={inputCls} />
           <input value={form.note} onChange={(e) => setForm((s) => ({ ...s, note: e.target.value }))} placeholder={t('备注（选填）')} className={`${inputCls} md:col-span-2`} />
-          <button onClick={submit} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+          <button onClick={submit} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
             <Plus className="h-4 w-4" />
             {t('录入费用')}
           </button>
@@ -171,7 +170,7 @@ export default function FinancePage({ currentUser, onBack }) {
                     {t('收入 ¥{a} · 费用 ¥{b}', { a: yuan(r.incCents), b: yuan(r.expenseCents) })}
                   </p>
                 </div>
-                <span className={`text-sm font-black ${Number(r.profitCents) >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>¥{yuan(r.profitCents)}</span>
+                <span className={`text-sm font-bold ${Number(r.profitCents) >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>¥{yuan(r.profitCents)}</span>
               </div>
             ))}
             {profit.monthly.length === 0 && <p className="grid place-items-center py-10 text-xs text-slate-300">{t('暂无利润数据')}</p>}

@@ -5,8 +5,7 @@ import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 import { normalizeImage } from '../utils/image'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtTime = (iso) => {
@@ -345,7 +344,7 @@ export default function InvoicePage({ currentUser, onBack }) {
               type="button"
               onClick={() => setField('titleType', 'company')}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                form.titleType === 'company' ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
+                form.titleType === 'company' ? 'bg-budu-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
               }`}
             >
               <Building2 className="h-4 w-4" />
@@ -355,7 +354,7 @@ export default function InvoicePage({ currentUser, onBack }) {
               type="button"
               onClick={() => setField('titleType', 'personal')}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                form.titleType === 'personal' ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
+                form.titleType === 'personal' ? 'bg-budu-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
               }`}
             >
               <User className="h-4 w-4" />
@@ -405,7 +404,7 @@ export default function InvoicePage({ currentUser, onBack }) {
 
           <button
             onClick={submit}
-            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95"
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95"
           >
             <Plus className="h-4 w-4" />
             {t('提交开票')}
@@ -448,13 +447,13 @@ export default function InvoicePage({ currentUser, onBack }) {
               onClick={tab === 'pending' ? () => copyRow(r) : undefined}
               onKeyDown={tab === 'pending' ? (e) => e.key === 'Enter' && copyRow(r) : undefined}
               className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 ${
-                tab === 'pending' ? 'cursor-pointer transition hover:bg-budu-50/40' : ''
+                tab === 'pending' ? 'cursor-pointer transition hover:bg-slate-50' : ''
               }`}
               title={tab === 'pending' ? t('点击复制抬头/税号/邮箱等信息') : undefined}
             >
               <span
                 className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
-                  r.titleType === 'company' ? 'bg-budu-50 text-budu-600' : 'bg-grape-50 text-grape-600'
+                  r.titleType === 'company' ? 'bg-budu-50 text-budu-600' : 'bg-budu-50 text-budu-600'
                 }`}
               >
                 {t(r.titleType === 'company' ? '公司' : '个人')}

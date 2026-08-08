@@ -6,14 +6,22 @@ import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
+const SOFT_COLORS = {
+  店内销售: '#BC4F7E',
+  美团外卖: '#64748B',
+  淘宝闪购: '#D97706',
+}
+
+const colorFor = (name) => SOFT_COLORS[name] || '#94A3B8'
+
 function ChannelTooltip({ active, payload }) {
   const { t } = useI18n()
   if (!active || !payload || !payload.length) return null
   const item = payload[0]
   return (
-    <div className="rounded-xl border border-white/60 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
+    <div className="rounded-xl border border-slate-200/70 bg-white/95 px-3.5 py-2.5 text-xs shadow-card backdrop-blur">
       <p className="flex items-center gap-1.5 font-semibold text-slate-700">
-        <span className="h-2 w-2 rounded-full" style={{ background: item.payload.color }} />
+        <span className="h-2 w-2 rounded-full" style={{ background: item.payload.displayColor }} />
         {item.name}
       </p>
       <p className="mt-1 text-slate-500">
@@ -34,7 +42,7 @@ export default function ChannelChart({ month, store, day }) {
   const data = channelData(month, store, day)
   const agg = aggregate(month, store)
   const total = data.reduce((s, x) => s + x.value, 0) || 1
-  const withPct = data.map((x) => ({ ...x, pct: ((x.value / total) * 100).toFixed(1) }))
+  const withPct = data.map((x) => ({ ...x, pct: ((x.value / total) * 100).toFixed(1), displayColor: colorFor(x.name) }))
 
   return (
     <Card
@@ -64,7 +72,7 @@ export default function ChannelChart({ month, store, day }) {
         <>
       <div className="relative mx-auto mt-1 h-52 w-52">
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          <PieChart isAnimationActive={false}>
             <Pie
               data={withPct}
               dataKey="value"
@@ -78,7 +86,7 @@ export default function ChannelChart({ month, store, day }) {
               strokeWidth={0}
             >
               {withPct.map((item) => (
-                <Cell key={item.name} fill={item.color} />
+                <Cell key={item.name} fill={item.displayColor} />
               ))}
             </Pie>
             <Tooltip content={<ChannelTooltip />} />
@@ -87,7 +95,7 @@ export default function ChannelChart({ month, store, day }) {
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="text-center">
             <p className="text-[10px] tracking-wide text-slate-400">{t('营业收入')}</p>
-            <p className="text-base font-extrabold text-slate-800">
+            <p className="text-base font-bold text-slate-800">
               ¥{formatMoney(agg.inc)}
             </p>
           </div>
@@ -97,7 +105,7 @@ export default function ChannelChart({ month, store, day }) {
       <ul className="mt-5 space-y-2">
         {withPct.map((item) => (
           <li key={item.name} className="flex items-center gap-2 text-xs">
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.color }} />
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.displayColor }} />
             <span className="flex-1 text-slate-500">{t(item.name)}</span>
             <span className="font-semibold tabular-nums text-slate-500">
               ¥{formatMoney(item.value)}

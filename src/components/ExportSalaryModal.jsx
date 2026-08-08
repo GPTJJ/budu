@@ -5,8 +5,7 @@ import { getWeekDays } from '../utils/schedule'
 import { employeeDailyPayDetail } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -225,7 +224,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('导出表格')}</h3>
@@ -246,7 +245,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
                 <button
                   onClick={() => setPreviewTab('detail')}
-                  className={`rounded-lg px-3 py-1.5 transition-all ${
+                  className={`rounded-lg px-3 py-1.5 transition ${
                     previewTab === 'detail' ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-500'
                   }`}
                 >
@@ -254,7 +253,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
                 </button>
                 <button
                   onClick={() => setPreviewTab('summary')}
-                  className={`rounded-lg px-3 py-1.5 transition-all ${
+                  className={`rounded-lg px-3 py-1.5 transition ${
                     previewTab === 'summary' ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-500'
                   }`}
                 >
@@ -279,7 +278,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               </button>
               <button
                 onClick={() => downloadRows(preview)}
-                className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
                 <Download className="h-4 w-4" />
                 {t('导出 Excel')}
@@ -344,7 +343,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
                   <span
                     className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                       emp.type === 'fulltime'
-                        ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white'
+                        ? 'bg-budu-500 text-white'
                         : 'bg-slate-100 text-slate-500'
                     }`}
                   >
@@ -365,14 +364,14 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
             </button>
             <button
               onClick={handlePreview}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-200/60 transition hover:opacity-90"
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Eye className="h-4 w-4" />
               {t('预览')}
             </button>
             <button
               onClick={handleExport}
-              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Download className="h-4 w-4" />
               {t('导出 Excel')}

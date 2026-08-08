@@ -14,8 +14,7 @@ import { getSchedules, commitSchedules } from '../utils/userData'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 export default function SchedulePage({ onBack, canEdit = true }) {
   const { t } = useI18n()
@@ -163,7 +162,7 @@ export default function SchedulePage({ onBack, canEdit = true }) {
               onClick={() => setStoreKey(s.key)}
               className={`rounded-xl px-3 py-2 text-[13px] font-semibold transition ${
                 s.key === storeKey
-                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
+                  ? 'bg-budu-500 text-white shadow-sm'
                   : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
@@ -199,7 +198,7 @@ export default function SchedulePage({ onBack, canEdit = true }) {
                 <div key={d.date} className={`flex min-h-[280px] flex-col ${isToday ? 'bg-budu-50/50' : ''}`}>
                   <div className={`border-b px-3 py-3 text-center ${isToday ? 'border-budu-100' : 'border-slate-100'}`}>
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{t(d.label)}</p>
-                    <p className={`mt-0.5 text-lg font-black ${isToday ? 'text-budu-600' : 'text-slate-700'}`}>{d.day}</p>
+                    <p className={`mt-0.5 text-lg font-bold ${isToday ? 'text-budu-600' : 'text-slate-700'}`}>{d.day}</p>
                     {shifts.length > 0 && (
                       <span className="mt-1 inline-block rounded-md bg-budu-100 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
                         {t('{n} 人', { n: shifts.length })}
@@ -258,7 +257,7 @@ export default function SchedulePage({ onBack, canEdit = true }) {
           onClick={() => setEditingDate(null)}
         >
           <div
-            className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl"
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
@@ -330,7 +329,7 @@ export default function SchedulePage({ onBack, canEdit = true }) {
               </button>
               <button
                 onClick={confirmAdd}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
                 <Check className="h-4 w-4" />
                 {t('确认添加')}

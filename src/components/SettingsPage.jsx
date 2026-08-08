@@ -5,8 +5,7 @@ import { api } from '../utils/api'
 import { commitStores, getStores } from '../utils/userData'
 import { allStores } from '../utils/selectors'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input'
 
 export default function SettingsPage({ user, onBack }) {
   const { lang, setLang, t } = useI18n()
@@ -139,7 +138,7 @@ export default function SettingsPage({ user, onBack }) {
 
       <div className="card p-6">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-budu-400 to-grape-500 text-white shadow-md">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
             <Languages className="h-5 w-5" />
           </div>
           <div>
@@ -153,7 +152,7 @@ export default function SettingsPage({ user, onBack }) {
             onClick={() => setLang('zh')}
             className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
               lang === 'zh'
-                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
+                ? 'bg-budu-500 text-white shadow-sm'
                 : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
             }`}
           >
@@ -163,7 +162,7 @@ export default function SettingsPage({ user, onBack }) {
             onClick={() => setLang('en')}
             className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
               lang === 'en'
-                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-lg shadow-budu-200/60'
+                ? 'bg-budu-500 text-white shadow-sm'
                 : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
             }`}
           >
@@ -175,7 +174,7 @@ export default function SettingsPage({ user, onBack }) {
       {isDeveloper && (
         <div className="card p-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-500 text-white shadow-md">
               <Bell className="h-5 w-5" />
             </div>
             <div>
@@ -198,7 +197,7 @@ export default function SettingsPage({ user, onBack }) {
       {isDeveloper && (
         <div className="card p-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-500 text-white shadow-md">
               <Bell className="h-5 w-5" />
             </div>
             <div>
@@ -304,7 +303,7 @@ export default function SettingsPage({ user, onBack }) {
       {isDeveloper && (
         <div className="card p-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-400 to-rose-500 text-white shadow-md">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-500 text-white shadow-md">
               <MapPin className="h-5 w-5" />
             </div>
             <div>
@@ -318,11 +317,11 @@ export default function SettingsPage({ user, onBack }) {
               value={storeName}
               onChange={(e) => setStoreName(e.target.value)}
               placeholder={t('门店名称')}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100 sm:max-w-xs"
+              className="input sm:max-w-xs"
             />
             <button
               onClick={addStore}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
               <Plus className="h-4 w-4" />
               {t('新增门店')}
@@ -337,7 +336,7 @@ export default function SettingsPage({ user, onBack }) {
                   key={s.key}
                   className="flex items-center gap-3 rounded-xl bg-slate-50/80 px-4 py-2.5 text-sm"
                 >
-                  <MapPin className="h-4 w-4 shrink-0 text-budu-400" />
+                  <MapPin className="h-4 w-4 shrink-0 text-budu-600" />
                   <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">{s.name}</span>
                   <button
                     onClick={() => removeStore(s.key, s.name)}
@@ -355,7 +354,7 @@ export default function SettingsPage({ user, onBack }) {
 
       <div className="card p-6">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-grape-400 to-budu-500 text-white shadow-md">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
             <Server className="h-5 w-5" />
           </div>
           <div>
@@ -366,7 +365,7 @@ export default function SettingsPage({ user, onBack }) {
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2 rounded-2xl bg-slate-50/80 px-4 py-3 text-xs text-slate-500">
-          <Database className="h-4 w-4 shrink-0 text-budu-400" />
+          <Database className="h-4 w-4 shrink-0 text-budu-600" />
           {t('budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
         </div>
       </div>

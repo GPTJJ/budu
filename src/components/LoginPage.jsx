@@ -30,18 +30,17 @@ export default function LoginPage({ onLogin }) {
     }
   }
 
-  const inputCls =
-    'w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-10 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+  const inputCls = 'input py-2.5 pl-10 pr-10'
 
   return (
     <div
-      className="grid min-h-screen min-h-[100dvh] place-items-center bg-[#F7F4FA] px-3 py-6 sm:px-4"
+      className="grid min-h-screen min-h-[100dvh] place-items-center bg-canvas px-3 py-6 sm:px-4"
       style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
     >
       <div className="w-full max-w-sm">
         <div className="card p-6 sm:p-8">
           <div className="flex flex-col items-center text-center">
-            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-budu-500 to-grape-500 text-xl font-black text-white shadow-lg shadow-budu-200/60">
+            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-budu-500 text-xl font-bold text-white shadow-sm">
               B
             </div>
             <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu 甜蜜运营系统')}</h1>
@@ -85,7 +84,7 @@ export default function LoginPage({ onLogin }) {
             <button
               type="submit"
               disabled={busy || !username.trim() || password.length < 6}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn-primary w-full px-4 py-2.5 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

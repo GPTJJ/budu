@@ -6,8 +6,7 @@ import { inventoryQuantity } from '../utils/inventory'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
-const inputCls =
-  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+const inputCls = 'input py-2.5'
 
 const CATEGORIES = ['product', 'material', 'other']
 
@@ -22,7 +21,7 @@ function ModalShell({ title, subtitle, onClose, children }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center sm:p-4">
       <button className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} aria-label={t('关闭')} />
-      <div className="relative max-h-[88vh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
+      <div className="relative max-h-[88vh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-lg sm:max-w-lg sm:rounded-2xl sm:p-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{title}</h3>
@@ -202,7 +201,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
             return (
               <div key={`${row.storeKey}-${row.productName}`} className={`grid gap-1 px-4 py-3 sm:grid-cols-[1fr_1.4fr_0.5fr_1fr] sm:items-center ${low ? 'bg-rose-50/50' : ''}`}>
                 <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                  <Store className="h-3.5 w-3.5 text-budu-400" />
+                  <Store className="h-3.5 w-3.5 text-budu-600" />
                   {storeName(row.storeKey)}
                 </span>
                 <span className="flex items-center gap-1.5 text-xs text-slate-600">
@@ -214,7 +213,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
                     </span>
                   )}
                 </span>
-                <span className={`text-base font-black sm:text-right ${low ? 'text-rose-600' : 'text-slate-800'}`}>{row.quantity}</span>
+                <span className={`text-base font-bold sm:text-right ${low ? 'text-rose-600' : 'text-slate-800'}`}>{row.quantity}</span>
                 <span className="text-[10px] text-slate-400 sm:text-right">
                   {row.minQty > 0 ? `${t('阈值 {n}', { n: row.minQty })} · ` : ''}
                   {formatTime(row.updatedAt)}
@@ -261,7 +260,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
             <button onClick={() => setOpen(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
               {t('取消')}
             </button>
-            <button onClick={saveAdjust} className="flex-1 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white">
+            <button onClick={saveAdjust} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
               {t('保存库存')}
             </button>
           </div>
