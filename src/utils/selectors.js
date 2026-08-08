@@ -16,6 +16,7 @@ import {
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
 import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
+import { APP_VERSION } from '../version'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -704,8 +705,10 @@ export function notices(monthKey, day = null, lang = 'zh') {
     tagStyle: 'bg-emerald-50 text-emerald-600',
     bg: 'bg-emerald-100',
     fg: 'text-emerald-600',
-    time: 'V1.0',
-    text: localize(lang, 'budu Operating System V1.0 运行正常，数据由脚本自动从报表生成。'),
+    time: APP_VERSION,
+    text: localize(lang, 'budu Operating System {version} 运行正常，数据由脚本自动从报表生成。', {
+      version: APP_VERSION,
+    }),
   })
 
   return out.slice(0, 5)

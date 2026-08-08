@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Bell, Database, Languages, MapPin, Plus, Server, Trash2 } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
 import { commitStores, getStores } from '../utils/userData'
 import { allStores } from '../utils/selectors'
@@ -358,7 +359,9 @@ export default function SettingsPage({ user, onBack }) {
             <Server className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-[15px] font-bold text-slate-800">{t('budu Operating System V1.0')}</h3>
+            <h3 className="text-[15px] font-bold text-slate-800">
+              {t('budu Operating System {version}', { version: APP_VERSION })}
+            </h3>
             <p className="mt-0.5 text-xs text-slate-400">
               {t('版本')} · {t('数据来源')}
             </p>

@@ -1,6 +1,16 @@
 /** 系统版本更新记录（仅存档，不再推送到重要提醒/铃铛） */
 export const CHANGELOG = [
   {
+    version: 'V1.35',
+    date: '2026-08-09',
+    releasedAt: '2026-08-09T06:00:00.000Z',
+    items: [
+      '门店邮寄页新增门店二维码卡片',
+      '系统名称更新为 budu Operating System运营系统',
+      '页脚版本号改为随每次更新自动递增显示',
+    ],
+  },
+  {
     version: 'V1.34',
     date: '2026-08-09',
     releasedAt: '2026-08-09T05:00:00.000Z',

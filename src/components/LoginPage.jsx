@@ -3,6 +3,7 @@ import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 import PwaInstallPrompt from './PwaInstallPrompt'
+import { APP_VERSION } from '../version'
 
 /** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
@@ -100,7 +101,7 @@ export default function LoginPage({ onLogin }) {
           </p>
         </div>
         <p className="mt-4 text-center text-[11px] text-slate-300">
-          {t('© 2026 budu 甜品 · budu Operating System V1.0')}
+          {t('© 2026 budu 甜品 · budu Operating System {version}', { version: APP_VERSION })}
         </p>
       </div>
       <PwaInstallPrompt />

@@ -85,7 +85,7 @@ export const en = {
   '已有账号？': 'Already have an account?',
   '注册一个': 'Register one',
   '去登录': 'Sign in',
-  '© 2026 budu 甜品 · budu Operating System V1.0': '© 2026 budu Desserts · budu Operating System V1.0',
+  '© 2026 budu 甜品 · budu Operating System {version}': '© 2026 budu Desserts · budu Operating System {version}',
 
   // 系统设置
   '系统偏好': 'Preferences',
@@ -95,7 +95,7 @@ export const en = {
   '中文': '中文',
   'English': 'English',
   '版本': 'Version',
-  'budu Operating System V1.0': 'budu Operating System V1.0',
+  'budu Operating System {version}': 'budu Operating System {version}',
   '数据来源': 'Data source',
   'budu OS文档（三店4-7月报表 / 薪资表27-31周）': 'budu OS docs (Apr–Jul reports / payroll wk 27–31)',
 
@@ -700,8 +700,8 @@ export const en = {
   '「{name}」业绩提成合计 ¥{amount}，全店最高。': '"{name}" earned the most commission: ¥{amount}.',
   '营业数据已更新至 {month}，本月菜品销量 {dish} 份。':
     'Data updated through {month}; {dish} dishes sold this month.',
-  'budu Operating System V1.0 运行正常，数据由脚本自动从报表生成。':
-    'budu Operating System V1.0 is running normally; data is generated from reports.',
+  'budu Operating System {version} 运行正常，数据由脚本自动从报表生成。':
+    'budu Operating System {version} is running normally; data is generated from reports.',
 }
 
 /** 简单插值：{name} -> 变量值 */

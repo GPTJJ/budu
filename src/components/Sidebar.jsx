@@ -15,6 +15,7 @@ import {
 import { useI18n } from '../i18n'
 import AccountMenu from './AccountMenu'
 import logoUrl from '../assets/logo.jpg'
+import { APP_VERSION } from '../version'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -168,7 +169,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
           />
         </div>
         <p className="mt-3 text-center text-[10px] font-medium tracking-[0.18em] text-slate-300">
-          budu Operating System V1.0
+          budu Operating System {APP_VERSION}
         </p>
       </div>
     </aside>

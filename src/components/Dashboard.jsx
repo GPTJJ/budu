@@ -11,6 +11,7 @@ import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import PageLoading from './LoadingSkeleton'
+import { APP_VERSION } from '../version'
 import { allStores, kpiCards } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
@@ -255,7 +256,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             </ErrorBoundary>
 
             <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
-              {t('© 2026 budu 甜品 · budu Operating System V1.0')}
+              {t('© 2026 budu 甜品 · budu Operating System {version}', { version: APP_VERSION })}
             </footer>
           </main>
         </div>
