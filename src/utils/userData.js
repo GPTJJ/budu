@@ -167,6 +167,7 @@ export async function loadUserData() {
         amountCents: Number(r.amountCents) || 0,
         bonusCents: Number(r.bonusCents) || 0,
       }))
+      console.log('[bb-debug] cached rows =', cached.bigBonuses.length, JSON.stringify(cached.bigBonuses[0] || null))
     } catch {
       cached.bigBonuses = Array.isArray(cached.bigBonuses) ? cached.bigBonuses : []
     }

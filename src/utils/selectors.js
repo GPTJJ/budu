@@ -31,6 +31,7 @@ function bigBonusesByName(name) {
 
 /** 员工某日大单奖（元） */
 export function bigBonusYuanOn(name, dateStr) {
+  console.log('[bb-debug] query', name, dateStr, 'rows=', getBigBonuses().length, JSON.stringify(getBigBonuses()[0] || null))
   const cents = bigBonusesByName(name)
     .filter((r) => String(r.date || '') === dateStr)
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
