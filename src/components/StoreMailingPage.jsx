@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { ArrowLeft, Check, Copy, FileSpreadsheet, PackageCheck, Send } from 'lucide-react'
+import { ArrowLeft, Check, Copy, FileSpreadsheet, PackageCheck, Plus, Send } from 'lucide-react'
 import { api } from '../utils/api'
 import qrUrl from '../assets/mailing-qr.jpg'
 
@@ -72,6 +72,7 @@ export default function StoreMailingPage({ onBack }) {
   const [method, setMethod] = useState(saved?.method || '顺丰邮寄')
   const [postage, setPostage] = useState(saved?.postage || '包邮')
   const [fee, setFee] = useState(saved?.fee || '标准件18¥')
+  const [wechatFee, setWechatFee] = useState(saved?.wechatFee || false)
   const [address, setAddress] = useState(saved?.address || '')
   const [recipient, setRecipient] = useState(saved?.recipient || '')
   const [phone, setPhone] = useState(saved?.phone || '')
@@ -90,11 +91,14 @@ export default function StoreMailingPage({ onBack }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ method, postage, fee, address, recipient, phone, remark }))
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ method, postage, fee, wechatFee, address, recipient, phone, remark }),
+      )
     } catch {
       /* 隐私模式等场景忽略 */
     }
-  }, [method, postage, fee, address, recipient, phone, remark])
+  }, [method, postage, fee, wechatFee, address, recipient, phone, remark])
 
   useEffect(() => {
     if (!copied) return undefined
@@ -242,6 +246,24 @@ export default function StoreMailingPage({ onBack }) {
           <OptionGroup label="运费" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
           {method === '顺丰邮寄' && postage === '不包邮' && (
             <OptionGroup label="运费选项" options={['标准件18¥', '生鲜航运30¥']} value={fee} onChange={setFee} />
+          )}
+          {method === '同城闪送' && postage === '不包邮' && (
+            <div>
+              <p className="mb-2 text-sm font-medium text-slate-600">费用</p>
+              <button
+                type="button"
+                onClick={() => setWechatFee((v) => !v)}
+                aria-pressed={wechatFee}
+                className={`flex w-full items-center justify-between gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                  wechatFee
+                    ? 'border-budu-200 bg-budu-50 text-budu-700'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span>添加微信支付费用</span>
+                {wechatFee ? <Check className="h-4 w-4 text-budu-600" /> : <Plus className="h-4 w-4 text-slate-400" />}
+              </button>
+            </div>
           )}
 
           <div className="space-y-4 border-t border-slate-100 pt-5">
