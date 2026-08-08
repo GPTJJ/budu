@@ -22,6 +22,7 @@ model Store {
   waste        WasteRecord[]
   expenses     Expense[]
   invoices     Invoice[]
+  bigBonuses   BigOrderBonus[]
   memberConsumptions MemberConsumption[]
   meituanMappings MeituanStoreMapping[]
   dailySales      DailySales[]
@@ -291,6 +292,22 @@ model InvoiceCompany {
   taxNo     String   @default("")
   updatedAt DateTime @default(now())
   createdAt DateTime @default(now())
+}
+
+model BigOrderBonus {
+  id          String   @id
+  staffKey    String
+  staffName   String
+  storeKey    String
+  amountCents BigInt   @default(0)
+  bonusCents  BigInt   @default(0)
+  receipt     String   @default("")
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+
+  @@index([staffKey, createdAt])
+  @@index([storeKey, createdAt])
 }
 
 model MemberConsumption {

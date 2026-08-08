@@ -148,6 +148,20 @@ function serializeInvoice(r) {
   }
 }
 
+function serializeBigBonus(r) {
+  return {
+    id: r.id,
+    staffKey: r.staffKey,
+    staffName: r.staffName,
+    storeKey: r.storeKey,
+    amountCents: r.amountCents.toString(),
+    bonusCents: r.bonusCents.toString(),
+    receipt: r.receipt,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+  }
+}
+
 function storeFilter(user) {
   if (user.role === 'developer' || user.role === 'public') return null
   return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
@@ -1089,6 +1103,64 @@ v2Router.delete('/invoices/:id', wrap(async (req, res) => {
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.invoice.delete({ where: { id: row.id } })
+  res.json({ ok: true })
+}))
+
+// ---------- 大单奖 ----------
+v2Router.get('/big-bonuses', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  const store = String(req.query.store || '')
+  const staffKey = String(req.query.staffKey || '')
+  const month = String(req.query.month || '')
+  if (store && !canStore(req.user, store)) throw bad('无权限', 403)
+  const where = { storeKey: whereStores(req.user, store || undefined) }
+  if (staffKey) where.staffKey = staffKey
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    const [y, m] = month.split('-').map(Number)
+    where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+  }
+  const rows = await prisma.bigOrderBonus.findMany({ where, orderBy: { createdAt: 'desc' }, take: 500 })
+  res.json({ rows: rows.map(serializeBigBonus) })
+}))
+
+v2Router.post('/big-bonuses', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  const { staffName, storeKey, amountCents, receipt } = req.body || {}
+  const name = String(staffName || '').trim()
+  if (!name || name.length > 30) throw bad('员工姓名不正确')
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const cents = Number(amountCents)
+  if (!Number.isInteger(cents) || cents <= 0 || cents > 999999999999) throw bad('订单金额不正确（单位：分）')
+  const receiptStr = String(receipt || '').trim()
+  if (receiptStr && !/^data:image\/[a-z0-9.+-]+;base64,/i.test(receiptStr)) throw bad('小票图片格式不正确')
+  if (receiptStr.length > 10 * 1024 * 1024) throw bad('小票图片过大（最大约 7MB）')
+  const bonusCents = Math.round(cents * 0.05)
+  await ensureStore(storeKey)
+  const row = await prisma.bigOrderBonus.create({
+    data: {
+      id: uid('bb'),
+      staffKey: `${storeKey}::${name}`,
+      staffName: name,
+      storeKey,
+      amountCents: BigInt(cents),
+      bonusCents: BigInt(bonusCents),
+      receipt: receiptStr.slice(0, 10 * 1024 * 1024),
+      createdBy: req.user.username,
+    },
+  })
+  res.json({ ok: true, bonus: serializeBigBonus(row) })
+}))
+
+v2Router.delete('/big-bonuses/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  const row = await prisma.bigOrderBonus.findUnique({ where: { id: req.params.id } })
+  if (!row) throw bad('大单奖记录不存在', 404)
+  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
+  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  await prisma.bigOrderBonus.delete({ where: { id: row.id } })
   res.json({ ok: true })
 }))
 

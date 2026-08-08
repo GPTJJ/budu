@@ -3,6 +3,7 @@ import { ArrowLeft, Building2, Camera, Copy, ImageUp, Loader2, Plus, Receipt, Tr
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
+import { normalizeImage } from '../utils/image'
 
 const inputCls =
   'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
@@ -13,34 +14,6 @@ const fmtTime = (iso) => {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return String(iso)
   return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('图片读取失败'))
-    img.src = src
-  })
-}
-
-/** 手机拍照图片统一压缩并转为 JPEG：解决 HEIC 不支持、图片过大、方向异常等问题 */
-async function normalizeInvoiceImage(dataUrl, fileType) {
-  const plain = /^image\/(jpe?g|png|webp|bmp)$/i.test(fileType || '')
-  if (plain && dataUrl.length < 1.5 * 1024 * 1024) return dataUrl
-  const img = await loadImage(dataUrl)
-  const maxSide = 2000
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
-  const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale))
-  const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale))
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, w, h)
-  ctx.drawImage(img, 0, 0, w, h)
-  return canvas.toDataURL('image/jpeg', 0.86)
 }
 
 export default function InvoicePage({ currentUser, onBack }) {
@@ -191,7 +164,7 @@ export default function InvoicePage({ currentUser, onBack }) {
       setOcrBusy(true)
       setError('')
       try {
-        const dataUrl = await normalizeInvoiceImage(original, file.type)
+        const dataUrl = await normalizeImage(original, file.type)
         const d = await api('/v2/invoices/ocr', {
           method: 'POST',
           body: JSON.stringify({ imageBase64: dataUrl }),

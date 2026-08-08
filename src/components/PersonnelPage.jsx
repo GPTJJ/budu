@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Award, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
+import BigBonusModal from './BigBonusModal'
 import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
@@ -366,6 +367,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const [weekStart, setWeekStart] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [bigBonusEmp, setBigBonusEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
   const [staffVersion, setStaffVersion] = useState(0)
 
@@ -513,6 +515,8 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                 : day
                   ? `${Number(day.slice(0, 2))}.${Number(day.slice(3, 5))}`
                   : monthLabel(month)
+              const canBigBonus =
+                user?.role !== 'public' && (user?.role !== 'staff' || user.staffKey === `${emp.storeKey}::${emp.name}`)
               return (
                 <div
                   key={emp.name}
@@ -595,6 +599,19 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                     />
                   </div>
 
+                  {canBigBonus && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setBigBonusEmp(emp)
+                      }}
+                      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:shadow active:scale-95"
+                    >
+                      <Award className="h-3.5 w-3.5" />
+                      {t('大单奖')}
+                    </button>
+                  )}
+
                   {day || weekStart ? (
                     <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2">
                       {status ? (
@@ -674,6 +691,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
           onClose={() => setDetailEmp(null)}
         />
       )}
+      {bigBonusEmp && <BigBonusModal emp={bigBonusEmp} currentUser={user} onClose={() => setBigBonusEmp(null)} />}
     </div>
   )
 }
