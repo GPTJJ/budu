@@ -8,6 +8,7 @@ import { loadDb, persist } from './store.js'
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
+import { normalizeItemCategory } from './productCategories.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -127,9 +128,9 @@ function normalizeInventoryRequests(raw) {
         const name = String(it.productName ?? '').trim()
         const qty = Number(it.quantity)
         const itNote = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
-        const category = ['product', 'material', 'other'].includes(it.category) ? it.category : 'product'
         if (!name || name.length > 50) return null
         if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
+        const category = normalizeItemCategory(name, it.category)
         const item = { category, productName: name, quantity: Math.floor(qty) }
         if (itNote) item.note = itNote
         items.push(item)
@@ -139,7 +140,7 @@ function normalizeInventoryRequests(raw) {
       const qty = Number(r.quantity)
       if (!name || name.length > 50) return null
       if (!Number.isFinite(qty) || qty < 1 || qty > 99999) return null
-      items = [{ category: 'product', productName: name, quantity: Math.floor(qty) }]
+      items = [{ category: normalizeItemCategory(name, 'product'), productName: name, quantity: Math.floor(qty) }]
     }
     const first = items[0]
     const allowedStatuses = type === 'transfer'

@@ -4,6 +4,7 @@ import { sendWechatMarkdown } from './wechat-alert.js'
 import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
+import { normalizeItemCategory } from './productCategories.js'
 import { meituanConfig, meituanReady } from './meituan/config.js'
 import { runMeituanSync, isMeituanSyncing } from './meituan/sync.js'
 import { mockMeituanDay } from './meituan/client.js'
@@ -66,22 +67,30 @@ async function ensureStore(storeKey, name) {
 async function upsertItem(name, category = 'product') {
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
-  return prisma.inventoryItem.upsert({
-    where: { name: n },
-    update: {},
-    create: { id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name: n, category },
+  const norm = normalizeItemCategory(n, category)
+  const existing = await prisma.inventoryItem.findUnique({ where: { name: n } })
+  if (existing) {
+    // 历史错误修复：固定物料被存成 product 时自动纠正为 material；其他手动品类保留
+    if (existing.category === 'product' && norm === 'material') {
+      return prisma.inventoryItem.update({ where: { id: existing.id }, data: { category: 'material' } })
+    }
+    return existing
+  }
+  return prisma.inventoryItem.create({
+    data: { id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name: n, category: norm },
   })
 }
 
-function itemRows(items) {
+export function itemRows(items) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('请至少添加一种货品（最多 50 种）')
   return items.map((it) => {
     const name = String(it.name || it.productName || '').trim()
     const quantity = Number(it.quantity)
     const note = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
+    const category = normalizeItemCategory(name, it.category)
     if (!name || name.length > 50) throw bad('货品名称不正确')
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('数量应为 1-999999 的整数')
-    return { name, quantity, note }
+    return { name, quantity, note, category }
   })
 }
 
@@ -99,7 +108,7 @@ function serializeTransfer(r) {
     items: r.items.map((it) => ({
       id: it.id,
       itemId: it.itemId,
-      category: it.item.category || 'product',
+      category: normalizeItemCategory(it.item.name, it.item.category),
       productName: it.item.name,
       quantity: it.quantity,
       note: it.note,
@@ -122,7 +131,7 @@ function serializePurchase(r) {
     items: r.items.map((it) => ({
       id: it.id,
       itemId: it.itemId,
-      category: it.item.category || 'product',
+      category: normalizeItemCategory(it.item.name, it.item.category),
       productName: it.item.name,
       quantity: it.orderedQty,
       receivedQty: it.receivedQty,

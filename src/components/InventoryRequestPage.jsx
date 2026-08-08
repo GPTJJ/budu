@@ -19,6 +19,7 @@ import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
 import { api } from '../utils/api'
 import { PRODUCT_CATEGORIES, MATERIAL_NAMES, FIXED_BY_CATEGORY, classifyProduct } from '../utils/productCategories'
+import { resolveItemCategory } from '../utils/itemCategory'
 import InventoryListModal from './InventoryListModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
@@ -169,7 +170,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         ...(isTransfer ? { toStoreKey: form.storeKey } : { storeKey: form.storeKey }),
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
         ...(isTransfer ? {} : { supplierId: supplierId || undefined, expectedAt: expectedAt || undefined }),
-        items: picked.map((it) => ({ name: it.productName, quantity: it.quantity, note: it.note })),
+        items: picked.map((it) => ({
+          name: it.productName,
+          quantity: it.quantity,
+          note: it.note,
+          category: resolveItemCategory(it.productName, it.category),
+        })),
         note: form.note.trim(),
       }
       await api(isTransfer ? '/v2/transfer-requests' : '/v2/purchase-requests', {
@@ -353,7 +359,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     }
     const rows = selectedNames.map((name) => ({
       // 产品与物料可混合多选，按名称自动归类
-      category: MATERIAL_NAMES.includes(name) ? 'material' : 'product',
+      category: resolveItemCategory(name, itemsMap[name]?.category),
       productName: name,
       quantity: Math.floor(qty),
       note: picker.note.trim(),
@@ -369,7 +375,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     const item = itemsMap[name]
     setOptionEdit({
       name,
-      category: item ? item.category : MATERIAL_NAMES.includes(name) ? 'material' : 'product',
+      category: resolveItemCategory(name, item ? item.category : undefined),
     })
     setOptionForm({ spec: item ? item.spec || '' : '', image: item ? item.image || '' : '' })
   }
@@ -822,8 +828,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                     key={idx}
                     className="group inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
                   >
-                    <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
-                      {t(CATEGORY_LABEL[it.category] || '产品')}
+                    <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[resolveItemCategory(it.productName, it.category)] || CATEGORY_STYLE.product}`}>
+                      {t(CATEGORY_LABEL[resolveItemCategory(it.productName, it.category)])}
                     </span>
                     {it.productName} × {it.quantity}
                     {it.note ? `（${it.note}）` : ''}
@@ -964,8 +970,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                             key={idx}
                             className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600"
                           >
-                            <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product}`}>
-                              {t(CATEGORY_LABEL[it.category] || '产品')}
+                            <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[resolveItemCategory(it.productName, it.category)] || CATEGORY_STYLE.product}`}>
+                              {t(CATEGORY_LABEL[resolveItemCategory(it.productName, it.category)])}
                             </span>
                             <span className="min-w-0 truncate">{it.productName}</span>
                             <span className="shrink-0">× {it.quantity}</span>
