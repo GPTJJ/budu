@@ -15,7 +15,7 @@ import {
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
-import { calcDailyPay, monthlyPayrollFromEntries } from './payroll.js'
+import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -484,11 +484,11 @@ export function employeeList(storeKey, monthKey = null) {
           workedRevenue: pr ? pr.workedRevenue : 0,
           orders: pr ? pr.orders : 0,
           hours: pr ? pr.hours : 0,
-          salary: pr ? pr.salary + bigBonusYuanMonth(e.name, monthKey) : 0,
+  salary: pr ? pr.salary + (isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey)) : 0,
           basePay: pr ? pr.basePay : 0,
           commission: pr ? pr.commission : 0,
           perf: pr ? pr.commission : 0,
-          big: bigBonusYuanMonth(e.name, monthKey),
+  big: isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey),
           payrollComputed: true,
         }
       })
@@ -837,7 +837,7 @@ export function employeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
-  const bigBonus = bigBonusYuanOn(name, fullDateOf(monthKey, day))
+  const bigBonus = isNoPayStaff(name) ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -899,6 +899,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
     const storeKey = parts[1]
     const share = v.staff.length
+    const noPay = isNoPayStaff(name)
     const daily = calcDailyPay({
       storeKey,
       storeName: storeName(storeKey),
@@ -924,9 +925,9 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     inc += revShare
     ord += ordShare
     hours += daily.hours
-    basePay += daily.basePay
-    commission += daily.commission
-    pay += daily.total
+    basePay += noPay ? 0 : daily.basePay
+    commission += noPay ? 0 : daily.commission
+    pay += noPay ? 0 : daily.total
   }
   if (rows.length === 0) return null
   let assignedCents = 0
@@ -944,6 +945,26 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     rows[0].total = Math.round((rows[0].total + extra) * 100) / 100
   }
   const bigBonus = Math.round((bonusTotalCents / 100) * 100) / 100
+  if (isNoPayStaff(name)) {
+    for (const row of rows) {
+      row.basePay = 0
+      row.commission = 0
+      row.bigBonus = 0
+      row.total = 0
+    }
+    return {
+      rows,
+      totals: {
+        inc: Math.round(inc * 100) / 100,
+        ord: Math.round(ord * 100) / 100,
+        hours: Math.round(hours * 100) / 100,
+        basePay: 0,
+        commission: 0,
+        bigBonus: 0,
+        pay: 0,
+      },
+    }
+  }
   return {
     rows,
     totals: {

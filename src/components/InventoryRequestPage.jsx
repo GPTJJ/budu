@@ -164,7 +164,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     }
     try {
       const payload = {
-        storeKey: form.storeKey,
+        ...(isTransfer ? { toStoreKey: form.storeKey } : { storeKey: form.storeKey }),
         ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
         ...(isTransfer ? {} : { supplierId: supplierId || undefined, expectedAt: expectedAt || undefined }),
         items: picked.map((it) => ({ name: it.productName, quantity: it.quantity, note: it.note })),

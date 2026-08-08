@@ -346,7 +346,8 @@ v2Router.delete('/daily-entries', wrap(async (req, res) => {
 // ---------- 调货 ----------
 v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  const { fromStoreKey, toStoreKey, items, note } = req.body || {}
+  const { fromStoreKey, items, note } = req.body || {}
+  const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '')
   if (!canStore(req.user, fromStoreKey)) throw bad('无权限', 403)
   if (!fromStoreKey || !toStoreKey || fromStoreKey === toStoreKey) throw bad('调出/调入门店不正确')
   const rows = itemRows(items)

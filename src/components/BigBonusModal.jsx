@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Award, ImageUp, Loader2, Plus, Trash2, X } from 'lucide-react'
+import { Award, Camera, ImageUp, Loader2, Plus, Trash2, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { normalizeImage } from '../utils/image'
 import { storeName } from '../utils/selectors'
@@ -21,6 +21,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
   const [error, setError] = useState('')
   const [tip, setTip] = useState('')
   const fileRef = useRef(null)
+  const cameraRef = useRef(null)
 
   const staffKey = `${emp.storeKey}::${emp.name}`
 
@@ -173,22 +174,31 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('上传小票（选填）')}</label>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
+              onClick={() => cameraRef.current?.click()}
               className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-amber-200 bg-amber-50/40 px-4 py-3 text-left transition hover:border-amber-400 hover:bg-amber-50"
             >
               {preview ? (
                 <img src={preview} alt="小票" className="h-14 w-14 rounded-xl border border-slate-100 bg-white object-contain" />
               ) : (
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-amber-500 shadow-sm">
-                  <ImageUp className="h-5 w-5" />
+                  <Camera className="h-5 w-5" />
                 </span>
               )}
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-slate-700">{t(preview ? '重新上传小票' : '点击上传小票图片')}</span>
-                <span className="mt-0.5 block text-[11px] text-slate-400">{t('JPG/PNG/WebP，自动压缩；识别后可留档查看')}</span>
+                <span className="block text-sm font-semibold text-slate-700">{t(preview ? '重新拍照上传' : '拍照上传小票')}</span>
+                <span className="mt-0.5 block text-[11px] text-slate-400">{t('直接调起相机拍摄小票，自动压缩留档')}</span>
               </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-slate-400 transition hover:text-amber-600"
+            >
+              <ImageUp className="h-3.5 w-3.5" />
+              {t('从相册选择')}
             </button>
           </div>
 
