@@ -376,6 +376,13 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
   const [pendingDelete, setPendingDelete] = useState(null)
   const [bigBonusEmp, setBigBonusEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
+  const [syncTick, setSyncTick] = useState(0)
+
+  // 与全局 8 秒数据同步保持一致：大单奖/业绩等新增后自动刷新卡片
+  useEffect(() => {
+    const id = setInterval(() => setSyncTick((v) => v + 1), 8000)
+    return () => clearInterval(id)
+  }, [])
   const [staffVersion, setStaffVersion] = useState(0)
 
   const localStaff = localStaffList()
@@ -502,7 +509,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
       {hasData ? (
         <>
           {/* 员工卡片 */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-sync-tick={syncTick}>
             {list.map((emp, i) => {
               const status = weekStart
                 ? weekDays
