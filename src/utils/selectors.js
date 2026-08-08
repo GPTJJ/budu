@@ -849,7 +849,7 @@ export function employeeDayStatus(monthKey, day, name) {
       storeKey,
       storeName: storeName(storeKey),
       revenue: Number(v.inc) || 0,
-      date: `${monthKey}-${day}`,
+      date: fullDateOf(monthKey, day),
       staffCount: share,
     })
     inc += (Number(v.inc) || 0) / share
@@ -904,7 +904,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       storeKey,
       storeName: storeName(storeKey),
       revenue: Number(v.inc) || 0,
-      date: `${monthKey}-${day}`,
+      date: fullDateOf(monthKey, day),
       staffCount: share,
     })
     const revShare = (Number(v.inc) || 0) / share
