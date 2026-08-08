@@ -192,7 +192,7 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
               {onWeekSelect && (
                 <button
                   onClick={() => {
-                    const base = day ? `${viewMonth}-${day}` : today
+                    const base = day ? `${viewMonth}-${day}` : `${viewMonth}-01`
                     onWeekSelect(mondayOf(base))
                     setOpen(false)
                   }}
