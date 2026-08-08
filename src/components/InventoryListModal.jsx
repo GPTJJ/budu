@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { Download, X } from 'lucide-react'
+import { Download, FileSpreadsheet, X } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { toPng } from 'html-to-image'
 import { allStores } from '../utils/selectors'
 import { useI18n } from '../i18n'
@@ -16,10 +17,20 @@ export default function InventoryListModal({ request, onClose }) {
   const cardRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [previewUrl, setPreviewUrl] = useState(null)
+  const [exportOpen, setExportOpen] = useState(false)
   const isTransfer = request.type === 'transfer'
   const items = request.items || []
   const storeLabel = (key, name) => name || allStores().find((s) => s.key === key)?.name || key
   const submittedAt = request.createdAt ? new Date(request.createdAt).toLocaleString() : new Date().toLocaleString()
+  const totalQty = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+  const typeLabel = t(isTransfer ? '调货申请' : '采购申请')
+  const statusLabel = t(request.status === 'done' ? '已处理' : '待处理')
+  const storeLine = isTransfer
+    ? t('从 {from} 调往 {to}', {
+        from: storeLabel(request.fromStoreKey, request.fromStoreName),
+        to: storeLabel(request.storeKey, request.storeName),
+      })
+    : t('采购至 {store}', { store: storeLabel(request.storeKey, request.storeName) })
 
   const download = async () => {
     if (!cardRef.current || busy) return
@@ -59,13 +70,101 @@ export default function InventoryListModal({ request, onClose }) {
     }
   }
 
+  const exportExcel = () => {
+    const rows = [
+      ['budu · 货品清单'],
+      [`${t('申请类型')}：${typeLabel} · ${t('状态')}：${statusLabel}`],
+      [storeLine],
+      [`${t('由 {name} 提交', { name: request.createdBy || '—' })} · ${submittedAt}`],
+    ]
+    if (request.note) rows.push([`${t('备注：{note}', { note: request.note })}`])
+    rows.push([])
+    rows.push([t('序号'), t('分类'), t('货品名称'), t('数量'), t('备注')])
+    for (const [idx, it] of items.entries()) {
+      rows.push([
+        idx + 1,
+        t(CATEGORY_LABEL[it.category] || '产品'),
+        it.productName,
+        it.quantity,
+        it.note || '',
+      ])
+    }
+    rows.push([t('合计'), t('共 {n} 种', { n: items.length }), '', totalQty, ''])
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 34 }, { wch: 10 }, { wch: 28 }]
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, t('货品清单'))
+    const date = (request.createdAt || new Date().toISOString()).slice(0, 10).replaceAll('-', '')
+    XLSX.writeFile(wb, `budu${t('货品清单')}_${date}.xlsx`)
+    onClose()
+  }
+
   return (
     <>
       <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-        {/* 可下载的清单卡片 */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {exportOpen ? (
+          /* Excel 导出预览 */
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+            <div className="space-y-1 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3 text-[12px] leading-5 text-slate-500">
+              <p>
+                <span className="font-semibold text-slate-600">{t('申请类型')}</span>：{typeLabel}
+                {' · '}
+                <span className="font-semibold text-slate-600">{t('状态')}</span>：{statusLabel}
+              </p>
+              <p>{storeLine}</p>
+              <p>
+                {t('由 {name} 提交', { name: request.createdBy || '—' })} · {submittedAt}
+              </p>
+              {request.note && <p>{t('备注：{note}', { note: request.note })}</p>}
+            </div>
+
+            <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full whitespace-nowrap text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-400">
+                    <th className="px-3 py-2 font-semibold">{t('序号')}</th>
+                    <th className="px-3 py-2 font-semibold">{t('分类')}</th>
+                    <th className="px-3 py-2 font-semibold">{t('货品名称')}</th>
+                    <th className="px-3 py-2 font-semibold">{t('数量')}</th>
+                    <th className="px-3 py-2 font-semibold">{t('备注')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {items.map((it, idx) => (
+                    <tr key={idx} className="text-slate-600">
+                      <td className="px-3 py-2 font-bold text-slate-300">{idx + 1}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                            CATEGORY_STYLE[it.category] || CATEGORY_STYLE.product
+                          }`}
+                        >
+                          {t(CATEGORY_LABEL[it.category] || '产品')}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-slate-700">{it.productName}</td>
+                      <td className="px-3 py-2 font-bold tabular-nums text-slate-700">× {it.quantity}</td>
+                      <td className="px-3 py-2 text-slate-400">{it.note}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-budu-50/40 font-bold text-slate-700">
+                    <td className="px-3 py-2">{t('合计')}</td>
+                    <td className="px-3 py-2">{t('共 {n} 种', { n: items.length })}</td>
+                    <td />
+                    <td className="px-3 py-2 tabular-nums">× {totalQty}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-center text-[10px] text-slate-300">{t('预览导出内容，确认后下载')}</p>
+          </div>
+        ) : (
+          /* 可下载的清单卡片 */
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <div ref={cardRef} className="min-w-0 bg-white px-6 py-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
@@ -117,26 +216,52 @@ export default function InventoryListModal({ request, onClose }) {
             {t('budu 甜蜜运营系统 · 货品清单 · 请按清单找货')}
           </p>
           </div>
-        </div>
+          </div>
+        )}
 
         {/* 操作按钮（不进入下载图片） */}
-        <div className="flex gap-2 border-t border-slate-100 px-5 py-4">
-          <button
-            onClick={onClose}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
-          >
-            <X className="h-4 w-4" />
-            {t('关闭')}
-          </button>
-          <button
-            onClick={download}
-            disabled={busy}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:opacity-50"
-          >
-            <Download className="h-4 w-4" />
-            {busy ? t('生成中…') : t('下载图片')}
-          </button>
-        </div>
+        {exportOpen ? (
+          <div className="flex gap-2 border-t border-slate-100 px-5 py-4">
+            <button
+              onClick={() => setExportOpen(false)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+            >
+              {t('返回修改')}
+            </button>
+            <button
+              onClick={exportExcel}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+            >
+              <Download className="h-4 w-4" />
+              {t('导出 Excel')}
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 border-t border-slate-100 px-5 py-4">
+            <button
+              onClick={onClose}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+            >
+              <X className="h-4 w-4" />
+              {t('关闭')}
+            </button>
+            <button
+              onClick={download}
+              disabled={busy}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-budu-200/60 transition hover:opacity-90 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              {busy ? t('生成中…') : t('下载图片')}
+            </button>
+            <button
+              onClick={() => setExportOpen(true)}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {t('导出表格')}
+            </button>
+          </div>
+        )}
       </div>
       </div>
 

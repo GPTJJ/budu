@@ -1017,7 +1017,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                   className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-budu-600"
                 >
                   <FileDown className="h-3.5 w-3.5" />
-                  {t('货品清单')}
+                  {t('导出表格')}
                 </button>
                 {isTransfer && r.status === 'pending' && canShip(r) && (
                   <>
