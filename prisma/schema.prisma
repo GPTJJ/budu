@@ -335,3 +335,20 @@ model PurchaseItem {
   request     PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   item        InventoryItem   @relation(fields: [itemId], references: [id])
 }
+
+model MailingRecord {
+  id        String   @id
+  method    String
+  postage   String
+  fee       String?
+  address   String
+  recipient String
+  phone     String
+  remark    String   @default("")
+  status    String   @default("pending")
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  shippedAt DateTime?
+
+  @@index([status, createdAt])
+}

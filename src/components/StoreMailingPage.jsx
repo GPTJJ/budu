@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, Copy } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { ArrowLeft, Check, Copy, FileSpreadsheet, PackageCheck, Send } from 'lucide-react'
+import { api } from '../utils/api'
 import qrUrl from '../assets/mailing-qr.jpg'
 
 const STORAGE_KEY = 'budu-store-mailing'
@@ -75,6 +77,16 @@ export default function StoreMailingPage({ onBack }) {
   const [phone, setPhone] = useState(saved?.phone || '')
   const [remark, setRemark] = useState(saved?.remark || '')
   const [copied, setCopied] = useState('')
+  const [records, setRecords] = useState([])
+  const [recordsLoading, setRecordsLoading] = useState(true)
+  const [recordsError, setRecordsError] = useState('')
+  const [activeTab, setActiveTab] = useState('pending')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [submitTip, setSubmitTip] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [shippingId, setShippingId] = useState('')
+  const [exportDone, setExportDone] = useState(false)
 
   useEffect(() => {
     try {
@@ -101,6 +113,111 @@ export default function StoreMailingPage({ onBack }) {
     const ok = await copyText(lines.join('\n'))
     if (ok) setCopied('all')
   }
+
+  const loadRecords = async () => {
+    try {
+      setRecordsLoading(true)
+      const data = await api('/v2/mailing-records')
+      setRecords(Array.isArray(data.rows) ? data.rows : [])
+      setRecordsError('')
+    } catch (e) {
+      setRecordsError(e.message || '加载发件记录失败')
+    } finally {
+      setRecordsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadRecords()
+  }, [])
+
+  const showTip = (text) => {
+    setSubmitTip(text)
+    setTimeout(() => setSubmitTip(''), 2500)
+  }
+
+  const handleSubmit = async () => {
+    if (!address.trim() || !recipient.trim() || !phone.trim()) {
+      showTip('请先填写收件地址、收件人、联系方式')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await api('/v2/mailing-records', {
+        method: 'POST',
+        body: JSON.stringify({ method, postage, fee, address, recipient, phone, remark }),
+      })
+      showTip('已提交发件单 ✓')
+      await loadRecords()
+    } catch (e) {
+      showTip(e.message || '提交失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const markShipped = async (id) => {
+    setShippingId(id)
+    try {
+      await api(`/v2/mailing-records/${id}/ship`, { method: 'POST' })
+      await loadRecords()
+    } catch (e) {
+      showTip(e.message || '操作失败')
+    } finally {
+      setShippingId('')
+    }
+  }
+
+  const inRange = (iso) => {
+    if (!fromDate && !toDate) return true
+    const d = iso ? iso.slice(0, 10) : ''
+    if (fromDate && d < fromDate) return false
+    if (toDate && d > toDate) return false
+    return true
+  }
+
+  const pendingRecords = records.filter((r) => r.status === 'pending' && inRange(r.createdAt))
+  const shippedRecords = records.filter((r) => r.status === 'shipped' && inRange(r.createdAt))
+  const visibleRecords = activeTab === 'pending' ? pendingRecords : shippedRecords
+
+  const fmtTime = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+
+  const handleExport = () => {
+    if (visibleRecords.length === 0) {
+      showTip('当前筛选范围内暂无记录')
+      return
+    }
+    const header = ['提交时间', '状态', '邮寄方式', '运费', '运费选项', '收件地址', '收件人', '联系方式', '备注']
+    const body = visibleRecords.map((r) => [
+      fmtTime(r.createdAt),
+      r.status === 'shipped' ? '已发货' : '待发货',
+      r.method,
+      r.postage,
+      r.fee || '',
+      r.address,
+      r.recipient,
+      r.phone,
+      r.remark || '',
+    ])
+    const ws = XLSX.utils.aoa_to_sheet([header, ...body])
+    ws['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 14 }, { wch: 24 }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '发件记录')
+    const f = `${(fromDate || 'all').replace(/-/g, '')}-${(toDate || 'all').replace(/-/g, '')}`
+    XLSX.writeFile(wb, `budu发件记录_${f}.xlsx`)
+    setExportDone(true)
+    setTimeout(() => setExportDone(false), 2000)
+  }
+
+  const tabCls = (tab) =>
+    `rounded-lg px-3 py-1.5 transition ${
+      activeTab === tab ? 'bg-white text-budu-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+    }`
 
   const fieldCls = 'input'
 
@@ -218,6 +335,21 @@ export default function StoreMailingPage({ onBack }) {
             {copied === 'all' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
             {copied === 'all' ? '已复制全部收件信息' : '一键复制全部收件信息'}
           </button>
+          <button type="button" onClick={handleSubmit} disabled={submitting} className="btn-primary w-full py-2.5">
+            <Send className="h-4 w-4" />
+            {submitting ? '提交中…' : '提交'}
+          </button>
+          {submitTip && (
+            <p
+              className={`text-center text-xs font-medium ${
+                submitTip.includes('请先') || submitTip.includes('失败') || submitTip.includes('操作') || submitTip.includes('暂无')
+                  ? 'text-rose-500'
+                  : 'text-emerald-600'
+              }`}
+            >
+              {submitTip}
+            </p>
+          )}
         </div>
       </div>
         <aside className="card h-fit p-5 text-center lg:w-64">
@@ -225,6 +357,80 @@ export default function StoreMailingPage({ onBack }) {
           <img src={qrUrl} alt="门店二维码" className="mx-auto mt-3 w-48 rounded-xl sm:w-56" />
           <p className="mt-2 text-xs text-slate-400">扫码</p>
         </aside>
+      </div>
+
+      {/* 发件记录 */}
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
+          <h3 className="text-[15px] font-semibold text-slate-900">发件记录</h3>
+          <span className="rounded-lg bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+            待发货 {pendingRecords.length} 条
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-medium">
+              <button type="button" onClick={() => setActiveTab('pending')} className={tabCls('pending')}>
+                待发货（{pendingRecords.length}）
+              </button>
+              <button type="button" onClick={() => setActiveTab('shipped')} className={tabCls('shipped')}>
+                已发货（{shippedRecords.length}）
+              </button>
+            </div>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="input w-auto" aria-label="开始日期" />
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="input w-auto" aria-label="结束日期" />
+            <button type="button" onClick={handleExport} disabled={visibleRecords.length === 0} className="btn-secondary px-3 py-2">
+              {exportDone ? <Check className="h-4 w-4 text-emerald-600" /> : <FileSpreadsheet className="h-4 w-4" />}
+              {exportDone ? '已导出' : '导出 Excel'}
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[480px] overflow-y-auto">
+          {recordsLoading ? (
+            <div className="empty-state py-12">加载中…</div>
+          ) : recordsError ? (
+            <div className="empty-state py-12">{recordsError}</div>
+          ) : visibleRecords.length === 0 ? (
+            <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
+          ) : (
+            visibleRecords.map((r) => (
+              <div key={r.id} className="flex flex-col gap-2 border-b border-slate-50 px-5 py-3 sm:flex-row sm:items-center sm:gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13px] font-semibold text-slate-700">{r.recipient}</span>
+                    <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
+                      {r.method} · {r.postage}
+                      {r.fee ? ` · ${r.fee}` : ''}
+                    </span>
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                        r.status === 'shipped' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                      }`}
+                    >
+                      {r.status === 'shipped' ? '已发货' : '待发货'}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-slate-500">{r.address}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    {r.phone}
+                    {r.remark ? ` · ${r.remark}` : ''} · 提交于 {fmtTime(r.createdAt)}
+                  </p>
+                </div>
+                {r.status === 'pending' ? (
+                  <button
+                    type="button"
+                    onClick={() => markShipped(r.id)}
+                    disabled={shippingId === r.id}
+                    className="btn-primary shrink-0 px-3 py-2 text-xs"
+                  >
+                    <PackageCheck className="h-4 w-4" />
+                    {shippingId === r.id ? '处理中…' : '已发货'}
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[11px] text-slate-300">发货于 {fmtTime(r.shippedAt)}</span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   )

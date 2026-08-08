@@ -41,6 +41,10 @@ function canInvoice(user) {
   return Boolean(user && user.role !== 'public')
 }
 
+function canMailing(user) {
+  return Boolean(user && user.role !== 'public')
+}
+
 function whereStores(user, storeKeyParam) {
   if (storeKeyParam) return storeKeyParam
   if (user.role === 'developer' || user.role === 'public') return undefined
@@ -154,6 +158,23 @@ function serializeInvoice(r) {
     status: r.status,
     createdBy: r.createdBy,
     createdAt: r.createdAt,
+  }
+}
+
+function serializeMailingRecord(r) {
+  return {
+    id: r.id,
+    method: r.method,
+    postage: r.postage,
+    fee: r.fee,
+    address: r.address,
+    recipient: r.recipient,
+    phone: r.phone,
+    remark: r.remark,
+    status: r.status,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+    shippedAt: r.shippedAt,
   }
 }
 
@@ -1090,6 +1111,70 @@ v2Router.delete('/invoices/:id', wrap(async (req, res) => {
   if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.invoice.delete({ where: { id: row.id } })
   res.json({ ok: true })
+}))
+
+// ---------- 门店邮寄发件记录 ----------
+v2Router.get('/mailing-records', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canMailing(req.user)) throw bad('无权限', 403)
+  const status = String(req.query.status || '')
+  const from = String(req.query.from || '')
+  const to = String(req.query.to || '')
+  const where = {}
+  if (status === 'pending' || status === 'shipped') where.status = status
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from) || /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    where.createdAt = {}
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from)) where.createdAt.gte = new Date(`${from}T00:00:00.000Z`)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) where.createdAt.lt = new Date(`${to}T00:00:00.000Z`)
+    if (where.createdAt.lt) where.createdAt.lt = new Date(where.createdAt.lt.getTime() + 86400000)
+  }
+  const rows = await prisma.mailingRecord.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 2000 })
+  res.json({ rows: rows.map(serializeMailingRecord) })
+}))
+
+v2Router.post('/mailing-records', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canMailing(req.user)) throw bad('无权限', 403)
+  const { method, postage, fee, address, recipient, phone, remark } = req.body || {}
+  const m = String(method || '').trim()
+  const p = String(postage || '').trim()
+  if (m !== '顺丰邮寄' && m !== '同城闪送') throw bad('邮寄方式不正确')
+  if (p !== '包邮' && p !== '不包邮') throw bad('运费选项不正确')
+  const f = String(fee || '').trim()
+  if (f && f !== '标准件18¥' && f !== '生鲜航运30¥') throw bad('运费选项不正确')
+  const addr = String(address || '').trim()
+  const name = String(recipient || '').trim()
+  const tel = String(phone || '').trim()
+  if (!addr || !name || !tel) throw bad('请填写收件地址、收件人、联系方式')
+  if (addr.length > 200 || name.length > 50 || tel.length > 30) throw bad('收件信息长度不正确')
+  const row = await prisma.mailingRecord.create({
+    data: {
+      id: uid('mlr'),
+      method: m,
+      postage: p,
+      fee: f || null,
+      address: addr,
+      recipient: name,
+      phone: tel,
+      remark: String(remark || '').trim().slice(0, 200),
+      status: 'pending',
+      createdBy: req.user.username,
+    },
+  })
+  res.json({ ok: true, record: serializeMailingRecord(row) })
+}))
+
+v2Router.post('/mailing-records/:id/ship', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canMailing(req.user)) throw bad('无权限', 403)
+  const row = await prisma.mailingRecord.findUnique({ where: { id: req.params.id } })
+  if (!row) throw bad('发件记录不存在', 404)
+  if (row.status !== 'pending') throw bad('该记录已发货', 409)
+  const updated = await prisma.mailingRecord.update({
+    where: { id: row.id },
+    data: { status: 'shipped', shippedAt: new Date() },
+  })
+  res.json({ ok: true, record: serializeMailingRecord(updated) })
 }))
 
 // ---------- 大单奖 ----------
