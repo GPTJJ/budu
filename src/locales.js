@@ -14,6 +14,8 @@ export const en = {
   '系统设置': 'Settings',
   '全部': 'All',
   '全部雇员': 'All Staff',
+  '雇员': 'Employees',
+  '全职人员': 'Full-time',
   '全职雇员': 'Full-time',
   '兼职人员': 'Part-time',
   '门店业绩录入': 'Store Entry',

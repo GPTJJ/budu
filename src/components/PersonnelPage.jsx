@@ -364,11 +364,12 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
   )
 }
 
-export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = false, canManage = false, user }) {
+export default function PersonnelPage({ onBack, canDelete = false, canManage = false, user }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
+  const [filter, setFilter] = useState(() => (user?.role === 'developer' ? 'all' : 'fulltime'))
   const [month, setMonth] = useState(() => todayParts().month)
   const [day, setDay] = useState(null)
   const [weekStart, setWeekStart] = useState(null)
@@ -398,7 +399,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
       : all
   const fulltime = scopedAll.filter((e) => e.type === 'fulltime')
   const parttime = scopedAll.filter((e) => e.type === 'parttime')
-  const list = type === 'all' ? scopedAll : type === 'fulltime' ? fulltime : parttime
+  const list = filter === 'all' ? scopedAll : filter === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
 
   const handleAddStaff = (emp) => {
@@ -475,39 +476,46 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
       </div>
 
       {/* 类型切换 */}
-      <div className="inline-flex rounded-2xl bg-white p-1.5 shadow-card">
-        {user?.role === 'developer' && (
+      <div className="space-y-2.5">
+        <div className="inline-flex rounded-2xl bg-white p-1.5 shadow-card">
+          <span className="rounded-xl bg-gradient-to-r from-budu-500 to-grape-500 px-5 py-2 text-sm font-semibold text-white shadow-md">
+            {t('雇员')}（{scopedAll.length}）
+          </span>
+        </div>
+        <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
+          {user?.role === 'developer' && (
+            <button
+              onClick={() => setFilter('all')}
+              className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                filter === 'all'
+                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                  : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+              }`}
+            >
+              {t('全部')}（{scopedAll.length}）
+            </button>
+          )}
           <button
-            onClick={() => onTypeChange('all')}
-            className={`rounded-xl px-5 py-2 text-sm font-semibold transition-all ${
-              type === 'all'
+            onClick={() => setFilter('fulltime')}
+            className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+              filter === 'fulltime'
                 ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
-                : 'text-slate-500 hover:text-budu-600'
+                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
             }`}
           >
-            {t('全部')}（{scopedAll.length}）
+            {t('全职人员')}（{fulltime.length}）
           </button>
-        )}
-        <button
-          onClick={() => onTypeChange('fulltime')}
-          className={`rounded-xl px-5 py-2 text-sm font-semibold transition-all ${
-            type === 'fulltime'
-              ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
-              : 'text-slate-500 hover:text-budu-600'
-          }`}
-        >
-          {t('全职雇员')}（{fulltime.length}）
-        </button>
-        <button
-          onClick={() => onTypeChange('parttime')}
-          className={`rounded-xl px-5 py-2 text-sm font-semibold transition-all ${
-            type === 'parttime'
-              ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
-              : 'text-slate-500 hover:text-budu-600'
-          }`}
-        >
-          {t('兼职人员')}（{parttime.length}）
-        </button>
+          <button
+            onClick={() => setFilter('parttime')}
+            className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+              filter === 'parttime'
+                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+            }`}
+          >
+            {t('兼职人员')}（{parttime.length}）
+          </button>
+        </div>
       </div>
 
       {day && !dayHasData && (

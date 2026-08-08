@@ -29,9 +29,7 @@ const InvoicePage = lazy(() => import('./InvoicePage'))
 const MemberPage = lazy(() => import('./MemberPage'))
 
 const pageTitles = {
-  'staff-all': '全部雇员',
-  'staff-fulltime': '全职雇员',
-  'staff-parttime': '兼职人员',
+  staff: '雇员',
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
   'product-catalog': '商品目录',
@@ -64,7 +62,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [selectedProduct, setSelectedProduct] = useState(null)
 
   const cards = kpiCards(month, store, day, lang)
-  const isStaffView = view === 'staff-all' || view === 'staff-fulltime' || view === 'staff-parttime'
+  const isStaffView = view === 'staff'
   const isStoreEntryView = view === 'store-entry'
   const isScheduleView = view === 'store-schedule'
   const isSettingsView = view === 'settings'
@@ -160,10 +158,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               >
               {isStaffView ? (
                 <PersonnelPage
-                  type={view === 'staff-all' ? 'all' : view === 'staff-fulltime' ? 'fulltime' : 'parttime'}
-                  onTypeChange={(x) =>
-                    setView(x === 'all' ? 'staff-all' : x === 'fulltime' ? 'staff-fulltime' : 'staff-parttime')
-                  }
                   onBack={() => setView('overview')}
                   canDelete={user?.role === 'developer'}
                   canManage={user?.role === 'developer'}

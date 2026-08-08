@@ -29,10 +29,7 @@ const menus = [
 ]
 
 const subMenus = {
-  staff: [
-    { key: 'staff-fulltime', label: '全职雇员' },
-    { key: 'staff-parttime', label: '兼职人员' },
-  ],
+  staff: [{ key: 'staff', label: '雇员' }],
   store: [
     { key: 'store-entry', label: '门店业绩录入' },
     { key: 'store-schedule', label: '门店排班' },
@@ -58,7 +55,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))
 
-  const isSubmenuOpen = (key) => expandedKeys[key] || (view && view.startsWith(`${key}-`))
+  const isSubmenuOpen = (key) => expandedKeys[key] || (view && (view === key || view.startsWith(`${key}-`)))
 
   const handleNavigate = (key) => {
     onNavigate(key)

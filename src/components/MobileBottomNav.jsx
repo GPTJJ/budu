@@ -15,8 +15,7 @@ export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
   const items = isPublic
     ? [
         { key: 'overview', label: '首页', icon: LayoutDashboard },
-        { key: 'staff-fulltime', label: '全职', icon: Users },
-        { key: 'staff-parttime', label: '兼职', icon: CalendarDays },
+        { key: 'staff', label: '雇员', icon: Users },
         { key: 'settings', label: '设置', icon: Settings },
       ]
     : [
