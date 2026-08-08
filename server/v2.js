@@ -407,7 +407,8 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
   if (!t) throw bad('申请不存在', 404)
   if (req.user.role !== 'developer' && t.createdBy !== req.user.username) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('仅待审核申请可删除')
+  const canDeleteRejected = t.status === 'rejected' && req.user.role === 'developer'
+  if (t.status !== 'pending' && !canDeleteRejected) throw bad('仅待审核或已驳回申请可删除')
   await prisma.transferRequest.delete({ where: { id: t.id } })
   res.json({ ok: true })
 }))
@@ -513,7 +514,8 @@ v2Router.delete('/purchase-requests/:id', wrap(async (req, res) => {
   const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id } })
   if (!p) throw bad('申请不存在', 404)
   if (req.user.role !== 'developer' && p.createdBy !== req.user.username) throw bad('无权限', 403)
-  if (p.status !== 'pending') throw bad('仅待处理申请可删除')
+  const canDeleteRejected = p.status === 'rejected' && req.user.role === 'developer'
+  if (p.status !== 'pending' && !canDeleteRejected) throw bad('仅待处理或已驳回申请可删除')
   await prisma.purchaseRequest.delete({ where: { id: p.id } })
   res.json({ ok: true })
 }))

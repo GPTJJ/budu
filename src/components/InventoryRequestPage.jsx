@@ -205,7 +205,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     }
   }
 
-  const canDelete = (r) => isDeveloper || r.createdBy === currentUser?.username
+  // 待审核：开发者或申请人可删；已驳回：仅开发者可删；其他状态不可删
+  const canDelete = (r) => {
+    if (r.status === 'pending') return isDeveloper || r.createdBy === currentUser?.username
+    if (r.status === 'rejected') return isDeveloper
+    return false
+  }
 
   const runTransferAction = async (request, action) => {
     const confirmText = action === 'ship'
