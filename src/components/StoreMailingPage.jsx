@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, Copy } from 'lucide-react'
+import qrUrl from '../assets/mailing-qr.jpg'
 
 const STORAGE_KEY = 'budu-store-mailing'
 
@@ -104,7 +105,7 @@ export default function StoreMailingPage({ onBack }) {
   const fieldCls = 'input'
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4">
+    <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -117,6 +118,7 @@ export default function StoreMailingPage({ onBack }) {
         <p className="text-sm text-slate-400">填写内容自动保存在本机，便于下次直接复制</p>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
       <div className="card p-5 sm:p-6">
         <div className="space-y-6">
           <OptionGroup label="邮寄方式" options={['顺丰邮寄', '同城闪送']} value={method} onChange={setMethod} />
@@ -217,6 +219,12 @@ export default function StoreMailingPage({ onBack }) {
             {copied === 'all' ? '已复制全部收件信息' : '一键复制全部收件信息'}
           </button>
         </div>
+      </div>
+        <aside className="card h-fit p-5 text-center lg:w-64">
+          <p className="text-sm font-semibold text-slate-700">门店二维码</p>
+          <img src={qrUrl} alt="门店二维码" className="mx-auto mt-3 w-48 rounded-xl sm:w-56" />
+          <p className="mt-2 text-xs text-slate-400">扫码</p>
+        </aside>
       </div>
     </div>
   )
