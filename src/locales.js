@@ -18,6 +18,15 @@ export const en = {
   '全职人员': 'Full-time',
   '全职雇员': 'Full-time',
   '兼职人员': 'Part-time',
+  '导出表格': 'Export Table',
+  '选择日期区间，导出员工薪酬信息': 'Select a date range to export employee payroll',
+  '开始日期': 'Start Date',
+  '结束日期': 'End Date',
+  '请选择开始和结束日期': 'Please select both start and end dates',
+  '开始日期不能晚于结束日期': 'Start date cannot be later than end date',
+  '所选日期区间暂无薪酬数据': 'No payroll data in the selected range',
+  '导出 Excel': 'Export Excel',
+  '默认区间：{start} ~ {end}': 'Default range: {start} ~ {end}',
   '门店业绩录入': 'Store Entry',
 
   // 通用

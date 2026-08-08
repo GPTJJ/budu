@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Award, CalendarDays, Download, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Award, CalendarDays, Download, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
+import ExportSalaryModal from './ExportSalaryModal'
 import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
@@ -377,6 +378,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const [pendingDelete, setPendingDelete] = useState(null)
   const [bigBonusEmp, setBigBonusEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
+  const [showExport, setShowExport] = useState(false)
   const [syncTick, setSyncTick] = useState(0)
 
   // 与全局 8 秒数据同步保持一致：大单奖/业绩等新增后自动刷新卡片
@@ -482,39 +484,50 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {t('雇员')}（{scopedAll.length}）
           </span>
         </div>
-        <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
-          {user?.role === 'developer' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
+            {user?.role === 'developer' && (
+              <button
+                onClick={() => setFilter('all')}
+                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                  filter === 'all'
+                    ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                    : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                }`}
+              >
+                {t('全部')}（{scopedAll.length}）
+              </button>
+            )}
             <button
-              onClick={() => setFilter('all')}
+              onClick={() => setFilter('fulltime')}
               className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
-                filter === 'all'
+                filter === 'fulltime'
                   ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              {t('全部')}（{scopedAll.length}）
+              {t('全职人员')}（{fulltime.length}）
+            </button>
+            <button
+              onClick={() => setFilter('parttime')}
+              className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
+                filter === 'parttime'
+                  ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                  : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+              }`}
+            >
+              {t('兼职人员')}（{parttime.length}）
+            </button>
+          </div>
+          {user?.role === 'developer' && (
+            <button
+              onClick={() => setShowExport(true)}
+              className="ml-auto flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {t('导出表格')}
             </button>
           )}
-          <button
-            onClick={() => setFilter('fulltime')}
-            className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
-              filter === 'fulltime'
-                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
-                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
-            }`}
-          >
-            {t('全职人员')}（{fulltime.length}）
-          </button>
-          <button
-            onClick={() => setFilter('parttime')}
-            className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition-all ${
-              filter === 'parttime'
-                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
-                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
-            }`}
-          >
-            {t('兼职人员')}（{parttime.length}）
-          </button>
         </div>
       </div>
 
@@ -723,6 +736,15 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             handleDeleteStaff(pendingDelete)
             setPendingDelete(null)
           }}
+        />
+      )}
+      {showExport && (
+        <ExportSalaryModal
+          employees={list}
+          month={month}
+          day={day}
+          weekStart={weekStart}
+          onClose={() => setShowExport(false)}
         />
       )}
       {detailEmp && (
