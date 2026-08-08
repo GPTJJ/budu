@@ -68,18 +68,20 @@ export default function StoreMailingPage({ onBack }) {
   const saved = loadSaved()
   const [method, setMethod] = useState(saved?.method || '顺丰邮寄')
   const [postage, setPostage] = useState(saved?.postage || '包邮')
+  const [fee, setFee] = useState(saved?.fee || '标准件18¥')
   const [address, setAddress] = useState(saved?.address || '')
   const [recipient, setRecipient] = useState(saved?.recipient || '')
   const [phone, setPhone] = useState(saved?.phone || '')
+  const [remark, setRemark] = useState(saved?.remark || '')
   const [copied, setCopied] = useState('')
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ method, postage, address, recipient, phone }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ method, postage, fee, address, recipient, phone, remark }))
     } catch {
       /* 隐私模式等场景忽略 */
     }
-  }, [method, postage, address, recipient, phone])
+  }, [method, postage, fee, address, recipient, phone, remark])
 
   useEffect(() => {
     if (!copied) return undefined
@@ -94,6 +96,7 @@ export default function StoreMailingPage({ onBack }) {
 
   const copyAll = async () => {
     const lines = [`收件地址：${address}`, `收件人：${recipient}`, `联系方式：${phone}`]
+    if (remark) lines.push(`备注：${remark}`)
     const ok = await copyText(lines.join('\n'))
     if (ok) setCopied('all')
   }
@@ -118,6 +121,9 @@ export default function StoreMailingPage({ onBack }) {
         <div className="space-y-6">
           <OptionGroup label="邮寄方式" options={['顺丰邮寄', '同城闪送']} value={method} onChange={setMethod} />
           <OptionGroup label="运费" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
+          {method === '顺丰邮寄' && postage === '不包邮' && (
+            <OptionGroup label="运费选项" options={['标准件18¥', '生鲜航运30¥']} value={fee} onChange={setFee} />
+          )}
 
           <div className="space-y-4 border-t border-slate-100 pt-5">
             <p className="text-sm font-medium text-slate-600">收件信息</p>
@@ -180,6 +186,27 @@ export default function StoreMailingPage({ onBack }) {
                   aria-label="复制联系方式"
                 >
                   {copied === 'phone' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-[13px] font-medium text-slate-500">备注</label>
+              <div className="flex gap-2">
+                <textarea
+                  value={remark}
+                  onChange={(e) => setRemark(e.target.value)}
+                  placeholder="选填，例如：工作日送达、冰袋数量等"
+                  rows={2}
+                  className={`${fieldCls} min-h-[56px] resize-none`}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCopy('remark', remark)}
+                  className="btn-secondary h-10 shrink-0 px-3"
+                  aria-label="复制备注"
+                >
+                  {copied === 'remark' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
                 </button>
               </div>
             </div>
