@@ -154,6 +154,7 @@ function serializeBigBonus(r) {
     staffKey: r.staffKey,
     staffName: r.staffName,
     storeKey: r.storeKey,
+    date: isoDate(r.date),
     amountCents: r.amountCents.toString(),
     bonusCents: r.bonusCents.toString(),
     receipt: r.receipt,
@@ -1118,7 +1119,7 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
   if (staffKey) where.staffKey = staffKey
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
-    where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
+    where.date = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
   }
   const rows = await prisma.bigOrderBonus.findMany({ where, orderBy: { createdAt: 'desc' }, take: 500 })
   res.json({ rows: rows.map(serializeBigBonus) })
@@ -1127,7 +1128,7 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
 v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canInvoice(req.user)) throw bad('无权限', 403)
-  const { staffName, storeKey, amountCents, receipt } = req.body || {}
+  const { staffName, storeKey, amountCents, receipt, date } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 30) throw bad('员工姓名不正确')
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
@@ -1138,12 +1139,14 @@ v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (receiptStr.length > 10 * 1024 * 1024) throw bad('小票图片过大（最大约 7MB）')
   const bonusCents = Math.round(cents * 0.05)
   await ensureStore(storeKey)
+  const bonusDate = date ? dateOnly(date) : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z')
   const row = await prisma.bigOrderBonus.create({
     data: {
       id: uid('bb'),
       staffKey: `${storeKey}::${name}`,
       staffName: name,
       storeKey,
+      date: bonusDate,
       amountCents: BigInt(cents),
       bonusCents: BigInt(bonusCents),
       receipt: receiptStr.slice(0, 10 * 1024 * 1024),

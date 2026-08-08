@@ -243,6 +243,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
       hours: detail ? detail.totals.hours : 0,
       basePay: detail ? detail.totals.basePay : 0,
       commission: detail ? detail.totals.commission : 0,
+      bigBonus: detail ? detail.totals.bigBonus : 0,
       pay: detail ? detail.totals.pay : 0,
       hasData: Boolean(detail),
       stores: detail ? detail.rows.map((r) => r.storeName).join('、') : '',
@@ -255,9 +256,10 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
       hours: s.hours + r.hours,
       basePay: s.basePay + r.basePay,
       commission: s.commission + r.commission,
+      bigBonus: s.bigBonus + r.bigBonus,
       pay: s.pay + r.pay,
     }),
-    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, pay: 0 },
+    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, bigBonus: 0, pay: 0 },
   )
 
   const download = () => {
@@ -266,14 +268,14 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
       `员工：${emp.name}`,
       `月份：${month}`,
       '',
-      '日期\t营业额(元)\t订单\t工时(h)\t基础工资(元)\t提成(元)\t当日工资(元)',
+      '日期\t营业额(元)\t订单\t工时(h)\t基础工资(元)\t提成(元)\t大单奖(元)\t当日工资(元)',
       ...dayRows.map((r) =>
-        [r.day, r.revenue.toFixed(2), r.orders, r.hours, r.basePay.toFixed(2), r.commission.toFixed(2), r.pay.toFixed(2)].join('\t'),
+        [r.day, r.revenue.toFixed(2), r.orders, r.hours, r.basePay.toFixed(2), r.commission.toFixed(2), r.bigBonus.toFixed(2), r.pay.toFixed(2)].join('\t'),
       ),
       '',
-      ['合计', totals.revenue.toFixed(2), totals.orders, totals.hours, totals.basePay.toFixed(2), totals.commission.toFixed(2), totals.pay.toFixed(2)].join('\t'),
+      ['合计', totals.revenue.toFixed(2), totals.orders, totals.hours, totals.basePay.toFixed(2), totals.commission.toFixed(2), totals.bigBonus.toFixed(2), totals.pay.toFixed(2)].join('\t'),
       '',
-      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计 0。',
+      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；大单奖=订单金额×5%；当日工资=基础工资+提成+大单奖；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计 0。',
     ]
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
@@ -311,6 +313,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
                     <th className="py-2 pr-2 text-right">{t('工时')}</th>
                     <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
                     <th className="py-2 pr-2 text-right">{t('提成')}</th>
+                    <th className="py-2 pr-2 text-right">{t('大单奖')}</th>
                     <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
                   </tr>
                 </thead>
@@ -326,6 +329,9 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.basePay.toFixed(2)}` : '—'}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.commission.toFixed(2)}` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">
+                        {r.hasData && r.bigBonus > 0 ? `¥${r.bigBonus.toFixed(2)}` : '—'}
+                      </td>
                       <td className="py-1.5 pr-2 text-right font-bold tabular-nums text-budu-600">
                         {r.hasData ? `¥${r.pay.toFixed(2)}` : '—'}
                       </td>
@@ -338,6 +344,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.hours}h</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.basePay.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.bigBonus.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
                   </tr>
                 </tbody>
@@ -508,6 +515,8 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
               const periodSalary = onDuty ? status.pay : 0
               const periodHours = onDuty ? status.hours : 0
               const periodPerf = onDuty ? status.commission : 0
+              const periodBase = onDuty ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
+              const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
               const periodRevenue = onDuty ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
               const periodText = weekStart
@@ -585,18 +594,24 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
                       accent="text-budu-600"
                     />
                     <Stat
-                      label={weekStart ? t('周工时') : day ? t('当日工时') : t('工时')}
-                      value={hidePersonal ? '•••' : `${Math.round(weekStart || day ? periodHours : emp.hours)}h`}
+                      label={t('基础工资')}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBase)}`}
                     />
                     <Stat
-                      label={weekStart ? t('周提成') : day ? t('当日提成') : t('业绩提成')}
+                      label={t('业绩提成')}
                       value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`}
                       accent="text-grape-600"
                     />
                     <Stat
-                      label={weekStart ? t('周营业额') : day ? t('当日营业额') : t('当班营业额')}
-                      value={isPublic ? '•••' : `¥${formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue)}`}
+                      label={t('大单奖')}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`}
+                      accent="text-amber-600"
                     />
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
+                    <span>{t('工时 {h}h', { h: Math.round(weekStart || day ? periodHours : emp.hours) })}</span>
+                    <span>{isPublic ? '•••' : t('营业额 ¥{amount}', { amount: formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue) })}</span>
                   </div>
 
                   {canBigBonus && (

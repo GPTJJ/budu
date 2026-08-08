@@ -13,6 +13,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
   const { t } = useI18n()
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [receipt, setReceipt] = useState('')
   const [preview, setPreview] = useState('')
   const [rows, setRows] = useState([])
@@ -90,11 +91,13 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
         body: JSON.stringify({
           staffName: emp.name,
           storeKey: emp.storeKey,
+          date,
           amountCents: cents,
           receipt,
         }),
       })
       setAmount('')
+      setDate(new Date().toISOString().slice(0, 10))
       setReceipt('')
       setPreview('')
       setTip(t('大单奖已记录 ✓'))
@@ -145,6 +148,10 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
           {error && <p className="rounded-xl bg-rose-50 px-4 py-2 text-xs font-medium text-rose-500">{error}</p>}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('大单日期')}</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+            </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('订单金额（元）')}</label>
               <input
@@ -221,7 +228,7 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
                       })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-400">
-                      {new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false })} · {r.createdBy}
+                      {r.date} · {new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false })} · {r.createdBy}
                     </p>
                   </div>
                   {canDelete && (

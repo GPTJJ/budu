@@ -70,6 +70,7 @@ export async function loadUserData() {
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
     dailySales: {},
     dishDaily: [],
+    bigBonuses: [],
   }
   // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
   try {
@@ -156,6 +157,19 @@ export async function loadUserData() {
     }
     cached.dailySales = salesMap
     cached.dishDaily = (dishes && dishes.rows) || []
+    try {
+      const bb = await api('/v2/big-bonuses')
+      cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
+        id: r.id,
+        staffKey: r.staffKey,
+        storeKey: r.storeKey,
+        date: String(r.date || '').slice(0, 10),
+        amountCents: Number(r.amountCents) || 0,
+        bonusCents: Number(r.bonusCents) || 0,
+      }))
+    } catch {
+      cached.bigBonuses = Array.isArray(cached.bigBonuses) ? cached.bigBonuses : []
+    }
   } catch {
     /* v2 不可用时回退 KV */
   }
@@ -334,6 +348,11 @@ export function commitProducts(products) {
 
 export function getInventoryRequests() {
   const r = getUserData().inventoryRequests
+  return Array.isArray(r) ? r : []
+}
+
+export function getBigBonuses() {
+  const r = getUserData().bigBonuses
   return Array.isArray(r) ? r : []
 }
 

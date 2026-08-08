@@ -11,6 +11,7 @@ import {
   getProducts,
   getDailySales,
   getDishDaily,
+  getBigBonuses,
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
@@ -22,6 +23,27 @@ const localize = (lang, key, vars) => interpolate(lang === 'en' ? en[key] || key
 
 export const STORE_KEYS = STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
+
+function bigBonusesByName(name) {
+  const rows = getBigBonuses()
+  return Array.isArray(rows) ? rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`)) : []
+}
+
+/** 员工某日大单奖（元） */
+export function bigBonusYuanOn(name, dateStr) {
+  const cents = bigBonusesByName(name)
+    .filter((r) => String(r.date || '') === dateStr)
+    .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
+  return Math.round((cents / 100) * 100) / 100
+}
+
+/** 员工某月大单奖（元） */
+export function bigBonusYuanMonth(name, monthKey) {
+  const cents = bigBonusesByName(name)
+    .filter((r) => String(r.date || '').startsWith(monthKey))
+    .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
+  return Math.round((cents / 100) * 100) / 100
+}
 
 export function customStores() {
   return getStores()
@@ -456,11 +478,11 @@ export function employeeList(storeKey, monthKey = null) {
           workedRevenue: pr ? pr.workedRevenue : 0,
           orders: pr ? pr.orders : 0,
           hours: pr ? pr.hours : 0,
-          salary: pr ? pr.salary : 0,
+          salary: pr ? pr.salary + bigBonusYuanMonth(e.name, monthKey) : 0,
           basePay: pr ? pr.basePay : 0,
           commission: pr ? pr.commission : 0,
           perf: pr ? pr.commission : 0,
-          big: 0,
+          big: bigBonusYuanMonth(e.name, monthKey),
           payrollComputed: true,
         }
       })
@@ -809,6 +831,7 @@ export function employeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
+  const bigBonus = bigBonusYuanOn(name, `${monthKey}-${day}`)
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -840,7 +863,8 @@ export function employeeDayStatus(monthKey, day, name) {
     hours: Math.round(hours * 100) / 100,
     basePay: Math.round(basePay * 100) / 100,
     commission: Math.round(commission * 100) / 100,
-    pay: Math.round(pay * 100) / 100,
+    bigBonus,
+    pay: Math.round((basePay + commission + bigBonus) * 100) / 100,
   }
 }
 
@@ -855,6 +879,14 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
+  const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === `${monthKey}-${day}`)
+  const bonusByStore = new Map()
+  let bonusTotalCents = 0
+  for (const r of dayBonuses) {
+    const c = Number(r.bonusCents) || 0
+    bonusTotalCents += c
+    bonusByStore.set(r.storeKey, (bonusByStore.get(r.storeKey) || 0) + c)
+  }
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
     if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
@@ -880,6 +912,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       basePay: daily.basePay,
       commissionRate: daily.commissionRate,
       commission: daily.commission,
+      bigBonus: 0,
       total: daily.total,
     })
     inc += revShare
@@ -890,6 +923,21 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     pay += daily.total
   }
   if (rows.length === 0) return null
+  let assignedCents = 0
+  for (const row of rows) {
+    const c = bonusByStore.get(row.storeKey) || 0
+    if (c > 0) {
+      row.bigBonus = Math.round((c / 100) * 100) / 100
+      row.total = Math.round((row.total + row.bigBonus) * 100) / 100
+      assignedCents += c
+    }
+  }
+  if (assignedCents < bonusTotalCents) {
+    const extra = Math.round(((bonusTotalCents - assignedCents) / 100) * 100) / 100
+    rows[0].bigBonus = Math.round((rows[0].bigBonus + extra) * 100) / 100
+    rows[0].total = Math.round((rows[0].total + extra) * 100) / 100
+  }
+  const bigBonus = Math.round((bonusTotalCents / 100) * 100) / 100
   return {
     rows,
     totals: {
@@ -898,7 +946,8 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       hours: Math.round(hours * 100) / 100,
       basePay: Math.round(basePay * 100) / 100,
       commission: Math.round(commission * 100) / 100,
-      pay: Math.round(pay * 100) / 100,
+      bigBonus,
+      pay: Math.round((basePay + commission + bigBonus) * 100) / 100,
     },
   }
 }
@@ -921,7 +970,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     hours += st.hours
     basePay += st.basePay
     commission += st.commission
-    pay += st.pay
+    bigBonus += st.bigBonus || 0
     inc += st.inc
     ord += st.ord
     ;(st.stores || []).forEach((s) => stores.add(s))
@@ -933,7 +982,8 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     hours: r2(hours),
     basePay: r2(basePay),
     commission: r2(commission),
-    pay: r2(pay),
+    bigBonus: r2(bigBonus),
+    pay: r2(basePay + commission + bigBonus),
     inc: r2(inc),
     ord: r2(ord),
     stores: [...stores],

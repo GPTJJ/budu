@@ -299,6 +299,7 @@ model BigOrderBonus {
   staffKey    String
   staffName   String
   storeKey    String
+  date        DateTime @db.Date
   amountCents BigInt   @default(0)
   bonusCents  BigInt   @default(0)
   receipt     String   @default("")
