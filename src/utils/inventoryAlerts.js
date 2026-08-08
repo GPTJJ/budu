@@ -21,7 +21,6 @@ let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
 let currentInvoices = []
-let currentVersions = []
 
 function muted() {
   try {
@@ -102,10 +101,7 @@ function compute() {
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
         .map((r) => ({ ...r, type: 'invoice' }))
     : []
-  const versionItems = currentVersions
-    .filter((r) => !seenAt || String(r.createdAt) > seenAt)
-    .map((r) => ({ ...r, type: 'version' }))
-  const items = [...reqItems, ...invItems, ...versionItems].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const items = [...reqItems, ...invItems].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   state = { ...state, unread: items.length, items }
   notify()
 
@@ -141,18 +137,6 @@ async function refresh() {
     } catch {
       /* v2 不可用时忽略 */
     }
-  }
-  try {
-    const res = await api('/v2/changelog')
-    currentVersions = (Array.isArray(res.rows) ? res.rows : []).slice(0, 2).map((v) => ({
-      id: `ver-${v.version}`,
-      version: v.version,
-      date: v.date,
-      items: Array.isArray(v.items) ? v.items : [],
-      createdAt: v.releasedAt || `${String(v.date || '')}T00:00:00.000Z`,
-    }))
-  } catch {
-    /* v2 不可用时忽略 */
   }
   compute()
 }

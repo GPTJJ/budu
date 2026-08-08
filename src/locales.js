@@ -432,7 +432,7 @@ export const en = {
   '{month} · 按日期正序排列': '{month} · sorted by date',
   '日期': 'Date',
   '版本更新': 'Version Updates',
-  '版本更新 · 库存调拨 · 今日天气': 'Updates · Transfers · Weather',
+  '库存调拨 · 今日天气': 'Transfers · Weather',
   '暂无待处理调拨': 'No pending transfers',
   '今日天气': 'Today Weather',
   '天气加载中…': 'Loading weather…',

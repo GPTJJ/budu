@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CloudSun, Megaphone, Truck } from 'lucide-react'
+import { CloudSun, Truck } from 'lucide-react'
 import Card from './Card'
 import { getInventoryRequests } from '../utils/userData'
 import { storeName } from '../utils/selectors'
 import { api } from '../utils/api'
-import { CHANGELOG as LOCAL_CHANGELOG } from '../data/changelog'
 import { useI18n } from '../i18n'
 
 const CARE_TIPS = [
@@ -20,7 +19,6 @@ export default function NotificationPanel() {
   const [tick, setTick] = useState(0)
   const [weather, setWeather] = useState(null)
   const [weatherError, setWeatherError] = useState(false)
-  const [updates, setUpdates] = useState(LOCAL_CHANGELOG.slice(0, 2))
 
   useEffect(() => {
     let alive = true
@@ -42,23 +40,6 @@ export default function NotificationPanel() {
     return () => clearInterval(id)
   }, [])
 
-  // 版本更新：服务端实时获取，发版后 8 秒内显示
-  useEffect(() => {
-    let alive = true
-    const load = () =>
-      api('/v2/changelog')
-        .then((d) => {
-          if (alive && d && Array.isArray(d.rows)) setUpdates(d.rows.slice(0, 2))
-        })
-        .catch(() => {})
-    load()
-    const id = setInterval(load, 8000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [])
-
   const transfers = useMemo(
     () =>
       getInventoryRequests()
@@ -69,12 +50,12 @@ export default function NotificationPanel() {
   )
 
   const tip = CARE_TIPS[new Date().getDate() % CARE_TIPS.length]
-  const total = updates.length + transfers.length + 1
+  const total = transfers.length + 1
 
   return (
     <Card
       title={t('重要提醒')}
-      subtitle={t('版本更新 · 库存调拨 · 今日天气')}
+      subtitle={t('库存调拨 · 今日天气')}
       action={
         <span className="grid h-8 w-8 place-items-center rounded-xl bg-budu-50 text-sm font-bold text-budu-500">
           {total}
@@ -82,31 +63,6 @@ export default function NotificationPanel() {
       }
     >
       <ul className="space-y-4">
-        {/* 版本更新 */}
-        {updates.map((v) => (
-          <li key={v.version} className="flex gap-3">
-            <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-100 text-budu-600">
-              <Megaphone className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1 border-b border-slate-50 pb-3.5 last:border-0 last:pb-0">
-              <div className="flex items-center gap-2">
-                <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
-                  {t('版本更新')}
-                </span>
-                <span className="text-[11px] font-bold text-slate-600">{v.version}</span>
-                <span className="text-[11px] text-slate-300">{v.date}</span>
-              </div>
-              <ul className="mt-1.5 space-y-0.5">
-                {v.items.map((item, idx) => (
-                  <li key={idx} className="text-[13px] leading-5 text-slate-600">
-                    · {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </li>
-        ))}
-
         {/* 库存调拨 */}
         {transfers.map((r) => (
           <li key={r.id} className="flex gap-3">
