@@ -64,7 +64,7 @@ async function ensureStore(storeKey, name) {
   })
 }
 
-async function upsertItem(name, category = 'product') {
+export async function upsertItem(name, category = 'product') {
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
   const norm = normalizeItemCategory(n, category)
