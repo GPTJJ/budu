@@ -1,6 +1,7 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* ci: 验证自动部署链路 */
 
 @layer base {
   html {
