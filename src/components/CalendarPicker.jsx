@@ -12,6 +12,12 @@ function todayKey() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** 日历格是 MM-DD，统一转成完整日期 YYYY-MM-DD（兼容不带月份的 DD） */
+function fullDateOf(monthKey, day) {
+  const d = String(day || '')
+  return d.includes('-') ? `${monthKey}-${d.slice(3)}` : `${monthKey}-${d}`
+}
+
 function fmtMonth(key, lang = 'zh') {
   const [y, m] = String(key).split('-')
   if (!m) return key
@@ -136,8 +142,8 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
             <div className="mt-1 grid grid-cols-7 gap-y-0.5">
               {cells.map((d, i) => {
                 if (!d) return <span key={`e${i}`} />
-                const full = `${viewMonth}-${d}`
-                const isToday = full === today
+                const full = fullDateOf(viewMonth, d)
+                const isToday = fullDateOf(viewMonth, d) === today
                 const selected = day === d && month === viewMonth
                 const isHolidayDay = HOLIDAYS_2026.has(full)
                 const isMakeupDay = WORKDAYS_2026.has(full)
@@ -192,7 +198,7 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
               {onWeekSelect && (
                 <button
                   onClick={() => {
-                    const base = day ? `${viewMonth}-${day}` : `${viewMonth}-01`
+                    const base = fullDateOf(viewMonth, day || '01')
                     onWeekSelect(mondayOf(base))
                     setOpen(false)
                   }}
