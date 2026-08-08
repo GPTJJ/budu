@@ -12,6 +12,8 @@ export const en = {
   '会员营销': 'Members',
   '数据分析': 'Analytics',
   '系统设置': 'Settings',
+  '全部': 'All',
+  '全部雇员': 'All Staff',
   '全职雇员': 'Full-time',
   '兼职人员': 'Part-time',
   '门店业绩录入': 'Store Entry',

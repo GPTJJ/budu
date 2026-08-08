@@ -398,7 +398,7 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
       : all
   const fulltime = scopedAll.filter((e) => e.type === 'fulltime')
   const parttime = scopedAll.filter((e) => e.type === 'parttime')
-  const list = type === 'fulltime' ? fulltime : parttime
+  const list = type === 'all' ? scopedAll : type === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
 
   const handleAddStaff = (emp) => {
@@ -476,6 +476,18 @@ export default function PersonnelPage({ type, onTypeChange, onBack, canDelete = 
 
       {/* 类型切换 */}
       <div className="inline-flex rounded-2xl bg-white p-1.5 shadow-card">
+        {user?.role === 'developer' && (
+          <button
+            onClick={() => onTypeChange('all')}
+            className={`rounded-xl px-5 py-2 text-sm font-semibold transition-all ${
+              type === 'all'
+                ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white shadow-md'
+                : 'text-slate-500 hover:text-budu-600'
+            }`}
+          >
+            {t('全部')}（{scopedAll.length}）
+          </button>
+        )}
         <button
           onClick={() => onTypeChange('fulltime')}
           className={`rounded-xl px-5 py-2 text-sm font-semibold transition-all ${
