@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CalendarDays, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { useI18n, WEEK_EN } from '../i18n'
+import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -135,8 +136,13 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
             <div className="mt-1 grid grid-cols-7 gap-y-0.5">
               {cells.map((d, i) => {
                 if (!d) return <span key={`e${i}`} />
-                const isToday = `${viewMonth}-${d}` === today
+                const full = `${viewMonth}-${d}`
+                const isToday = full === today
                 const selected = day === d && month === viewMonth
+                const isHolidayDay = HOLIDAYS_2026.has(full)
+                const isMakeupDay = WORKDAYS_2026.has(full)
+                const dow = new Date(`${full}T00:00:00`).getDay()
+                const isWeekendDay = !isHolidayDay && !isMakeupDay && (dow === 0 || dow === 6)
                 return (
                   <button
                     key={d}
@@ -149,14 +155,36 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
                         ? 'bg-gradient-to-br from-budu-500 to-grape-500 text-white shadow-md shadow-budu-200/60'
                         : isToday
                           ? 'text-budu-600 ring-2 ring-budu-200 hover:bg-budu-50'
-                          : 'text-slate-600 hover:bg-budu-50 hover:text-budu-600'
+                          : isMakeupDay
+                            ? 'text-emerald-600 hover:bg-emerald-50'
+                            : isHolidayDay || isWeekendDay
+                              ? 'text-rose-500 hover:bg-rose-50'
+                              : 'text-slate-600 hover:bg-budu-50 hover:text-budu-600'
                     }`}
                   >
                     {Number(d.slice(3))}
                     {isToday && !selected && <span className="absolute bottom-1 h-1 w-1 rounded-full bg-budu-400" />}
+                    {isHolidayDay && (
+                      <span className="absolute right-0.5 top-0 text-[8px] font-bold text-rose-400">假</span>
+                    )}
+                    {isMakeupDay && (
+                      <span className="absolute right-0.5 top-0 text-[8px] font-bold text-emerald-500">班</span>
+                    )}
                   </button>
                 )
               })}
+            </div>
+
+            {/* 周末 / 法定节假日 / 调休上班图例 */}
+            <div className="mt-2 flex items-center justify-center gap-4 text-[10px] font-medium text-slate-400">
+              <span className="flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                {t('周末 / 节假日')}
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                {t('调休上班')}
+              </span>
             </div>
 
             {/* 底部：整周 / 整月 */}

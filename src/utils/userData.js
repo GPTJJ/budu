@@ -211,9 +211,10 @@ export function getUserData() {
       inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
       dailySales: mirror.dailySales && typeof mirror.dailySales === 'object' ? mirror.dailySales : {},
       dishDaily: Array.isArray(mirror.dishDaily) ? mirror.dishDaily : [],
+      bigBonuses: Array.isArray(mirror.bigBonuses) ? mirror.bigBonuses : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], dailySales: {}, dishDaily: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], dailySales: {}, dishDaily: [], bigBonuses: [] }
 }
 
 export function getEntries() {

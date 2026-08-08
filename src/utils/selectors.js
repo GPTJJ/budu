@@ -830,6 +830,7 @@ export function employeesByType(type, monthKey = null) {
 export function employeeDayStatus(monthKey, day, name) {
   if (!day) return null
   const entries = localEntries()
+  const noPay = isNoPayStaff(name)
   let inc = 0
   let ord = 0
   let count = 0
@@ -837,7 +838,7 @@ export function employeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
-  const bigBonus = isNoPayStaff(name) ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
+  const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -855,9 +856,9 @@ export function employeeDayStatus(monthKey, day, name) {
     inc += (Number(v.inc) || 0) / share
     ord += (Number(v.ord) || 0) / share
     hours += daily.hours
-    basePay += daily.basePay
-    commission += daily.commission
-    pay += daily.total
+    basePay += noPay ? 0 : daily.basePay
+    commission += noPay ? 0 : daily.commission
+    pay += noPay ? 0 : daily.total
     count += 1
     stores.push(storeKey)
   }
@@ -985,13 +986,14 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   let hours = 0
   let basePay = 0
   let commission = 0
-  let pay = 0
+  let bigBonus = 0
   let inc = 0
   let ord = 0
   const stores = new Set()
   for (const fullDate of dateList) {
-    const day = String(fullDate).slice(5)
-    const st = employeeDayStatus(monthKey, day, name)
+    const dateStr = String(fullDate)
+    // 自然周可能跨月（如 8.31-9.6），按每个日期的真实月份查业绩
+    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name)
     if (!st) continue
     workedDays += 1
     hours += st.hours
