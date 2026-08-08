@@ -65,6 +65,8 @@ const TRANSFER_STATUS_STYLE = {
 
 export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const { t } = useI18n()
+  /** 门店库存版块暂隐藏（后续再开发）；恢复时改为 true 即可 */
+  const SHOW_STOCK_PANEL = false
   const isTransfer = type === 'transfer'
   const stores = allStores()
   const [form, setForm] = useState({
@@ -871,7 +873,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
       </div>
 
-      {isTransfer && (
+      {isTransfer && SHOW_STOCK_PANEL && (
         <InventoryStockPanel
           currentUser={currentUser}
           catalog={productNames}
