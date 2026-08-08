@@ -218,7 +218,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       })
       await loadUserData()
       setVersion((value) => value + 1)
-      setSavedTip(t(action === 'ship' ? '已确认发货，调出门店库存已扣减' : action === 'receive' ? '已确认收货，调入门店库存已增加' : '申请已驳回'))
+      setSavedTip(t(action === 'ship' ? '已确认发货，申请已完成' : action === 'receive' ? '已确认收货，申请已完成' : '申请已驳回'))
       setTimeout(() => setSavedTip(''), 2400)
     } catch (err) {
       setError(t(err.message))
@@ -1033,11 +1033,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                       className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
                     >
                       <Truck className="h-3.5 w-3.5" />
-                      {t('审核并发货')}
+                      {t('确认发货')}
                     </button>
                   </>
                 )}
-                {isTransfer && r.status === 'in_transit' && canReceive(r) && (
+                {isTransfer && (r.status === 'pending' || r.status === 'in_transit') && canReceive(r) && (
                   <button
                     onClick={() => runTransferAction(r, 'receive')}
                     className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-100"
