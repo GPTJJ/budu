@@ -27,6 +27,11 @@ export const en = {
   '所选日期区间暂无薪酬数据': 'No payroll data in the selected range',
   '导出 Excel': 'Export Excel',
   '默认区间：{start} ~ {end}': 'Default range: {start} ~ {end}',
+  '选择人员': 'Select Employees',
+  '已选 {n}/{total}': '{n}/{total} selected',
+  '全选': 'Select All',
+  '清空': 'Clear',
+  '请至少选择一名员工': 'Please select at least one employee',
   '门店业绩录入': 'Store Entry',
 
   // 通用

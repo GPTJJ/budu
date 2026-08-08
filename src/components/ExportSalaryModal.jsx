@@ -114,6 +114,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
 
   const [startDate, setStartDate] = useState(defaults.start)
   const [endDate, setEndDate] = useState(defaults.end)
+  const [selected, setSelected] = useState(() => new Set(employees.map((e) => e.name)))
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -131,7 +132,12 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
       setError(t('开始日期不能晚于结束日期'))
       return
     }
-    const { detailRows, summaryRows } = buildRows(employees, startDate, endDate)
+    if (selected.size === 0) {
+      setError(t('请至少选择一名员工'))
+      return
+    }
+    const selectedEmployees = employees.filter((e) => selected.has(e.name))
+    const { detailRows, summaryRows } = buildRows(selectedEmployees, startDate, endDate)
     if (detailRows.length === 0) {
       setError(t('所选日期区间暂无薪酬数据'))
       return
@@ -155,10 +161,20 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     onClose()
   }
 
+  const toggleEmployee = (name) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+    setError('')
+  }
+
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+      <div className="relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('导出表格')}</h3>
@@ -185,6 +201,62 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
           <p className="rounded-xl bg-budu-50/60 px-3 py-2 text-xs text-budu-600">
             {t('默认区间：{start} ~ {end}', { start: defaults.start, end: defaults.end })}
           </p>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label className="text-xs font-semibold text-slate-500">
+                {t('选择人员')}
+                <span className="ml-1.5 font-normal text-slate-400">
+                  {t('已选 {n}/{total}', { n: selected.size, total: employees.length })}
+                </span>
+              </label>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    setSelected(new Set(employees.map((e) => e.name)))
+                    setError('')
+                  }}
+                  className="rounded-lg bg-budu-50 px-2 py-1 text-[11px] font-semibold text-budu-600 transition hover:bg-budu-100"
+                >
+                  {t('全选')}
+                </button>
+                <button
+                  onClick={() => {
+                    setSelected(new Set())
+                    setError('')
+                  }}
+                  className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-200"
+                >
+                  {t('清空')}
+                </button>
+              </div>
+            </div>
+            <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-white p-2">
+              {employees.map((emp) => (
+                <label
+                  key={emp.name}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-budu-50/60"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(emp.name)}
+                    onChange={() => toggleEmployee(emp.name)}
+                    className="h-4 w-4 shrink-0 accent-budu-500"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-700">{emp.name}</span>
+                  <span
+                    className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                      emp.type === 'fulltime'
+                        ? 'bg-gradient-to-r from-budu-500 to-grape-500 text-white'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {emp.type === 'fulltime' ? t('全职') : t('兼职')}
+                  </span>
+                  <span className="shrink-0 max-w-24 truncate text-[11px] text-slate-400">{emp.storeName}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
           <div className="grid grid-cols-2 gap-2.5">
             <button
