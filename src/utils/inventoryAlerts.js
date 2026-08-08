@@ -17,10 +17,12 @@ let currentCanNotify = false
 let currentUserName = ''
 let currentIsRequestNotifier = false
 let currentCanSeeInvoices = false
+let currentCanSeeMailings = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
 let currentInvoices = []
+let currentMailings = []
 
 function muted() {
   try {
@@ -101,7 +103,14 @@ function compute() {
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
         .map((r) => ({ ...r, type: 'invoice' }))
     : []
-  const items = [...reqItems, ...invItems].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const mailItems = currentCanSeeMailings
+    ? currentMailings
+        .filter((r) => !seenAt || String(r.createdAt) > seenAt)
+        .map((r) => ({ ...r, type: 'mailing' }))
+    : []
+  const items = [...reqItems, ...invItems, ...mailItems].sort((a, b) =>
+    String(b.createdAt).localeCompare(String(a.createdAt)),
+  )
   state = { ...state, unread: items.length, items }
   notify()
 
@@ -138,6 +147,14 @@ async function refresh() {
       /* v2 不可用时忽略 */
     }
   }
+  if (currentCanSeeMailings) {
+    try {
+      const res = await api('/v2/mailing-records?status=pending')
+      currentMailings = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* v2 不可用时忽略 */
+    }
+  }
   compute()
 }
 
@@ -150,7 +167,9 @@ export function ensurePolling(user) {
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
   currentIsRequestNotifier = Boolean(user && EXTRA_REQUEST_NOTIFY_USERS.has(user.username))
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
+  currentCanSeeMailings = Boolean(user && user.role === 'developer')
   currentInvoices = []
+  currentMailings = []
   initialized = false
   lastNotifiedId = null
   if (timer) {
