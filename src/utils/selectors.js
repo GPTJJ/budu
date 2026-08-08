@@ -24,6 +24,12 @@ const localize = (lang, key, vars) => interpolate(lang === 'en' ? en[key] || key
 export const STORE_KEYS = STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
 
+/** day 可能为 '07' 或 '08-07'，统一转成完整日期 YYYY-MM-DD */
+function fullDateOf(monthKey, day) {
+  const d = String(day || '')
+  return d.includes('-') ? `${monthKey}-${d.slice(3)}` : `${monthKey}-${d}`
+}
+
 function bigBonusesByName(name) {
   const rows = getBigBonuses()
   return Array.isArray(rows) ? rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`)) : []
@@ -31,7 +37,6 @@ function bigBonusesByName(name) {
 
 /** 员工某日大单奖（元） */
 export function bigBonusYuanOn(name, dateStr) {
-  console.log('[bb-debug] query', name, dateStr, 'rows=', getBigBonuses().length, JSON.stringify(getBigBonuses()[0] || null))
   const cents = bigBonusesByName(name)
     .filter((r) => String(r.date || '') === dateStr)
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
@@ -832,7 +837,7 @@ export function employeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
-  const bigBonus = bigBonusYuanOn(name, `${monthKey}-${day}`)
+  const bigBonus = bigBonusYuanOn(name, fullDateOf(monthKey, day))
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -880,7 +885,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let pay = 0
-  const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === `${monthKey}-${day}`)
+  const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
   const bonusByStore = new Map()
   let bonusTotalCents = 0
   for (const r of dayBonuses) {

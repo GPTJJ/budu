@@ -126,11 +126,12 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
     const inc = Number(v.inc) || 0
     const ord = Number(v.ord) || 0
     const share = v.staff.length
+    const fullDate = String(day).includes('-') ? `${monthKey}-${String(day).slice(3)}` : `${monthKey}-${day}`
     const daily = calcDailyPay({
       storeKey,
       storeName: storeNames[storeKey] || '',
       revenue: inc,
-      date: `${monthKey}-${day}`,
+      date: fullDate,
       staffCount: share,
     })
     for (const name of v.staff) {
