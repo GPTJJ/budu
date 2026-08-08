@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CloudSun, Truck } from 'lucide-react'
+import { CloudSun, Sparkles, Truck } from 'lucide-react'
 import Card from './Card'
 import { getInventoryRequests } from '../utils/userData'
 import { storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
+import { CHANGELOG } from '../data/changelog'
 
 const CARE_TIPS = [
   '记得多喝水，保持好状态',
@@ -50,12 +51,13 @@ export default function NotificationPanel() {
   )
 
   const tip = CARE_TIPS[new Date().getDate() % CARE_TIPS.length]
-  const total = transfers.length + 1
+  const latest = CHANGELOG[0]
+  const total = transfers.length + 2
 
   return (
     <Card
       title={t('重要提醒')}
-      subtitle={t('库存调拨 · 今日天气')}
+      subtitle={`${t('版本更新')} · ${t('库存调拨')} · ${t('今日天气')}`}
       action={
         <span className="grid h-8 w-8 place-items-center rounded-xl bg-budu-50 text-sm font-bold text-budu-500">
           {total}
@@ -63,6 +65,32 @@ export default function NotificationPanel() {
       }
     >
       <ul className="space-y-4">
+        {/* 版本更新（只展示，不推送到铃铛） */}
+        {latest && (
+          <li className="flex gap-3">
+            <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-100 text-budu-600">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1 border-b border-slate-50 pb-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
+                  {t('版本更新')}
+                </span>
+                <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
+                  {latest.version} · {latest.date}
+                </span>
+              </div>
+              <div className="mt-1.5 space-y-1">
+                {(latest.items || []).map((it, idx) => (
+                  <p key={idx} className="text-[13px] leading-5 text-slate-600">
+                    · {it}
+                  </p>
+                ))}
+              </div>
+            </div>
+          </li>
+        )}
+
         {/* 库存调拨 */}
         {transfers.map((r) => (
           <li key={r.id} className="flex gap-3">
