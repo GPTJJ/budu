@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, X } from 'lucide-react'
+import { Download, Eye, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getWeekDays } from '../utils/schedule'
 import { employeeDailyPayDetail } from '../utils/selectors'
@@ -18,6 +18,36 @@ function toDateStr(d) {
 
 function r2(v) {
   return Math.round((Number(v) || 0) * 100) / 100
+}
+
+function PreviewTable({ rows }) {
+  const cols = rows[0] ? Object.keys(rows[0]) : []
+  return (
+    <div className="max-h-64 overflow-auto rounded-xl border border-slate-100">
+      <table className="w-full whitespace-nowrap text-left text-xs">
+        <thead className="sticky top-0 bg-slate-50">
+          <tr>
+            {cols.map((c) => (
+              <th key={c} className="px-3 py-2 font-semibold text-slate-500">
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50">
+          {rows.map((row, i) => (
+            <tr key={i} className="text-slate-600">
+              {cols.map((c) => (
+                <td key={c} className="px-3 py-1.5 tabular-nums">
+                  {row[c]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 /** 按起止日期逐日生成明细与汇总行（口径与工资明细弹窗一致） */
@@ -116,6 +146,8 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
   const [endDate, setEndDate] = useState(defaults.end)
   const [selected, setSelected] = useState(() => new Set(employees.map((e) => e.name)))
   const [error, setError] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [previewTab, setPreviewTab] = useState('detail')
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -123,25 +155,30 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const handleExport = () => {
+  const runBuild = () => {
     if (!startDate || !endDate) {
       setError(t('请选择开始和结束日期'))
-      return
+      return null
     }
     if (startDate > endDate) {
       setError(t('开始日期不能晚于结束日期'))
-      return
+      return null
     }
     if (selected.size === 0) {
       setError(t('请至少选择一名员工'))
-      return
+      return null
     }
     const selectedEmployees = employees.filter((e) => selected.has(e.name))
     const { detailRows, summaryRows } = buildRows(selectedEmployees, startDate, endDate)
     if (detailRows.length === 0) {
       setError(t('所选日期区间暂无薪酬数据'))
-      return
+      return null
     }
+    return { detailRows, summaryRows }
+  }
+
+  const downloadRows = (rows) => {
+    const { detailRows, summaryRows } = rows
     const wb = XLSX.utils.book_new()
     const wsDetail = XLSX.utils.json_to_sheet(detailRows)
     const wsSummary = XLSX.utils.json_to_sheet(summaryRows)
@@ -159,6 +196,20 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     const fileEnd = endDate.replaceAll('-', '')
     XLSX.writeFile(wb, `budu薪酬导出_${fileStart}-${fileEnd}.xlsx`)
     onClose()
+  }
+
+  const handlePreview = () => {
+    const rows = runBuild()
+    if (rows) {
+      setPreview(rows)
+      setPreviewTab('detail')
+      setError('')
+    }
+  }
+
+  const handleExport = () => {
+    const rows = runBuild()
+    if (rows) downloadRows(rows)
   }
 
   const toggleEmployee = (name) => {
@@ -189,7 +240,54 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
           </button>
         </div>
 
-        <div className="mt-5 space-y-4">
+        {preview ? (
+          <div className="mt-5 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+                <button
+                  onClick={() => setPreviewTab('detail')}
+                  className={`rounded-lg px-3 py-1.5 transition-all ${
+                    previewTab === 'detail' ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  {t('薪酬明细')}（{preview.detailRows.length}）
+                </button>
+                <button
+                  onClick={() => setPreviewTab('summary')}
+                  className={`rounded-lg px-3 py-1.5 transition-all ${
+                    previewTab === 'summary' ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  {t('薪酬汇总')}（{preview.summaryRows.length}）
+                </button>
+              </div>
+              <span className="text-xs text-slate-400">
+                {t('预览导出内容，确认后下载')}
+              </span>
+            </div>
+            {previewTab === 'detail' ? (
+              <PreviewTable rows={preview.detailRows} />
+            ) : (
+              <PreviewTable rows={preview.summaryRows} />
+            )}
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                onClick={() => setPreview(null)}
+                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
+              >
+                {t('返回修改')}
+              </button>
+              <button
+                onClick={() => downloadRows(preview)}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-200/60 transition hover:opacity-90"
+              >
+                <Download className="h-4 w-4" />
+                {t('导出 Excel')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('开始日期')}</label>
             <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setError('') }} className={inputCls} />
@@ -258,12 +356,19 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
             </div>
           </div>
           {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-3 gap-2.5">
             <button
               onClick={onClose}
               className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
             >
               {t('取消')}
+            </button>
+            <button
+              onClick={handlePreview}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-200/60 transition hover:opacity-90"
+            >
+              <Eye className="h-4 w-4" />
+              {t('预览')}
             </button>
             <button
               onClick={handleExport}
@@ -273,7 +378,8 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               {t('导出 Excel')}
             </button>
           </div>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -32,6 +32,11 @@ export const en = {
   '全选': 'Select All',
   '清空': 'Clear',
   '请至少选择一名员工': 'Please select at least one employee',
+  '预览': 'Preview',
+  '薪酬明细': 'Payroll Details',
+  '薪酬汇总': 'Payroll Summary',
+  '返回修改': 'Back to Edit',
+  '预览导出内容，确认后下载': 'Preview the export content before downloading',
   '门店业绩录入': 'Store Entry',
 
   // 通用
