@@ -43,7 +43,7 @@ export default function LoginPage({ onLogin }) {
             <div className="grid h-14 w-14 place-items-center rounded-2xl bg-budu-500 text-xl font-bold text-white shadow-sm">
               B
             </div>
-            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu 甜蜜运营系统')}</h1>
+            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu Operating System运营系统')}</h1>
             <p className="mt-1 text-xs text-slate-400">{t('登录后查看门店经营数据（多设备共享）')}</p>
           </div>
 

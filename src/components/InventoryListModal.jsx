@@ -241,7 +241,7 @@ export default function InventoryListModal({ request, onClose }) {
           </div>
 
           <p className="mt-3 text-center text-[10px] text-slate-300">
-            {t('budu 甜蜜运营系统 · 货品清单 · 请按清单找货')}
+              {t('budu Operating System运营系统 · 货品清单 · 请按清单找货')}
           </p>
           </div>
           </div>

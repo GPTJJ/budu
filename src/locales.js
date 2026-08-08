@@ -76,7 +76,7 @@ export const en = {
   '全部门店': 'All Stores',
 
   // 登录
-  'budu 甜蜜运营系统': 'budu Sweet Operations System',
+  'budu Operating System运营系统': 'budu Operating System',
   '登录后查看门店经营数据（多设备共享）': 'Sign in to view store data (shared across devices)',
   '注册团队账号，首个账号为管理员': 'Register a team account; the first account becomes admin',
   '用户名': 'Username',
@@ -480,7 +480,7 @@ export const en = {
   '生成中…': 'Generating…',
   '备注：{note}': 'Note: {note}',
   '{count} 种': '{count} kinds',
-  'budu 甜蜜运营系统 · 货品清单 · 请按清单找货': 'budu OS · Item List · find goods by this list',
+  'budu Operating System运营系统 · 货品清单 · 请按清单找货': 'budu OS · Item List · find goods by this list',
   '长按图片可保存到相册；也可用浏览器打开': 'Long-press the image to save to Photos, or open it in the browser',
   '用浏览器打开': 'Open in Browser',
   '提示音': 'Alert Sound',
