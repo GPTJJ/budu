@@ -21,6 +21,7 @@ import ErrorBoundary from './ErrorBoundary'
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
 const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
 const SchedulePage = lazy(() => import('./SchedulePage'))
+const StoreMailingPage = lazy(() => import('./StoreMailingPage'))
 const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
@@ -34,6 +35,7 @@ const pageTitles = {
   staff: '雇员',
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
+  'store-mailing': '门店邮寄',
   'product-catalog': '商品目录',
   'inventory-transfer': '申请调货',
   'inventory-purchase': '申请采购',
@@ -68,6 +70,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isStaffView = view === 'staff'
   const isStoreEntryView = view === 'store-entry'
   const isScheduleView = view === 'store-schedule'
+  const isMailingView = view === 'store-mailing'
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
@@ -177,6 +180,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <StoreEntryPage onBack={() => setView('overview')} />
               ) : isScheduleView && user?.role !== 'public' ? (
                 <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
+              ) : isMailingView && user?.role !== 'public' ? (
+                <StoreMailingPage onBack={() => setView('overview')} />
               ) : isSettingsView ? (
                 <SettingsPage user={user} onBack={() => setView('overview')} />
               ) : isAccountAdminView && user?.role === 'developer' ? (

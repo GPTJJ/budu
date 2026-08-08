@@ -33,6 +33,7 @@ const subMenus = {
   store: [
     { key: 'store-entry', label: '门店业绩录入' },
     { key: 'store-schedule', label: '门店排班' },
+    { key: 'store-mailing', label: '门店邮寄' },
   ],
   product: [{ key: 'product-catalog', label: '商品目录' }],
   inventory: [

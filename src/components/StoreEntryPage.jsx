@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Building2, CalendarDays, ChevronDown, Pencil, Save, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarDays, ChevronDown, FileSpreadsheet, Pencil, Save, Trash2, Users } from 'lucide-react'
 import { allStores, dailyRows, monthLabel, saveLocalEntry, deleteLocalEntry, localEntries, employeeList } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { getDailySales } from '../utils/userData'
+import StoreEntryExportModal from './StoreEntryExportModal'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -101,6 +102,7 @@ export default function StoreEntryPage({ onBack }) {
   const [ord, setOrd] = useState('')
   const [version, setVersion] = useState(0)
   const [savedTip, setSavedTip] = useState('')
+  const [exportOpen, setExportOpen] = useState(false)
 
   // 日期自动归属对应月份（本地数据按 月份|门店|MM-DD 存储）
   const month = date && date.length >= 7 ? date.slice(0, 7) : '2026-07'
@@ -181,6 +183,13 @@ export default function StoreEntryPage({ onBack }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setExportOpen(true)}
+            className="btn-secondary px-3 py-2"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-budu-600" />
+            {t('表格导出')}
+          </button>
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('本地录入 {count} 天', { count: summary.localCount })}
           </span>
@@ -353,6 +362,14 @@ export default function StoreEntryPage({ onBack }) {
       <p className="text-center text-[11px] text-slate-300">
         {t('录入数据保存在浏览器 localStorage 中，刷新不丢失；首页 KPI、排行、趋势与人员管理板块实时联动')}
       </p>
+
+      {exportOpen && (
+        <StoreEntryExportModal
+          storeKey={store}
+          storeName={storeInfo ? storeInfo.name : ''}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </div>
   )
 }
