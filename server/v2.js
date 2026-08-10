@@ -378,7 +378,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { fromStoreKey, items, note } = req.body || {}
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '')
-  if (!canStore(req.user, fromStoreKey)) throw bad('无权限', 403)
+  if (req.user?.role === 'public') throw bad('无权限', 403)
   if (!fromStoreKey || !toStoreKey || fromStoreKey === toStoreKey) throw bad('调出/调入门店不正确')
   const rows = itemRows(items)
   await ensureStore(fromStoreKey)
@@ -410,9 +410,10 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
 
 v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user?.role === 'public') throw bad('无权限', 403)
   const sf = storeFilter(req.user)
   const where = {}
-  if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }]
+  if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }, { createdBy: req.user.username }]
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.transferRequest.findMany({
     where,

@@ -50,7 +50,9 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const visibleMenus =
     user?.role === 'public'
       ? [
-          ...menus.filter((m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product'),
+          ...menus.filter(
+            (m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product' && m.key !== 'inventory',
+          ),
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
       : user?.role === 'staff'
