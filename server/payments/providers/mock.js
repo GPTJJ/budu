@@ -31,7 +31,9 @@ export class MockPaymentProvider extends PaymentProvider {
     const delayMs = Math.min(30000, Math.max(20, Number(options.callbackDelayMs) || 1000))
     const providerTradeNo = payment.providerTradeNo || `MOCK${payment.paymentNo}`
     const base = { ...payment, providerTradeNo }
-    const metadata = { mockScenario: scenario }
+    // The complete code is consumed in memory only. Never return it in
+    // metadata because provider metadata is persisted with the payment.
+    const metadata = { mockScenario: scenario, authCodeReceived: Boolean(options.authCode) }
 
     if (scenario === 'success') return { providerTradeNo, metadata, callbacks: [event(base, 'success')] }
     if (scenario === 'failed') return { providerTradeNo, metadata, callbacks: [event(base, 'failed', { failureCode: 'MOCK_FAILED', failureMessage: '模拟支付失败' })] }

@@ -8,6 +8,48 @@
     import '/src/index.css'
 
     const userId = new URLSearchParams(location.search).get('user') || 'user-test'
+    const params = new URLSearchParams(location.search)
+    const scannedCodes = (params.get('codes') || '134567890123456789').split(',')
+    const cameraMode = params.get('camera') || 'ok'
+    const scanDelay = Number(params.get('scanDelay') || 20)
+    const duplicateScan = params.get('duplicate') === '1'
+    let scanIndex = 0
+    window.__paymentRequestCount = 0
+    window.__cameraTrackStops = 0
+    window.__cameraStarts = 0
+
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { configurable: true, get() { return this.__srcObject || null }, set(value) { this.__srcObject = value } })
+    HTMLMediaElement.prototype.play = async function () {}
+    HTMLMediaElement.prototype.pause = function () {}
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          window.__cameraStarts += 1
+          if (cameraMode === 'denied') { const error = new Error('denied'); error.name = 'NotAllowedError'; throw error }
+          if (cameraMode === 'missing') { const error = new Error('missing'); error.name = 'NotFoundError'; throw error }
+          const track = { stop() { window.__cameraTrackStops += 1 } }
+          return { getTracks: () => [track], getVideoTracks: () => [track] }
+        },
+      },
+    })
+    const scannerDecoderFactory = async () => {
+      let timer = 0
+      let stopped = false
+      return {
+        async start({ onResult }) {
+          const code = scannedCodes[Math.min(scanIndex, scannedCodes.length - 1)]
+          scanIndex += 1
+          timer = window.setTimeout(() => {
+            if (stopped) return
+            onResult(code)
+            if (duplicateScan) onResult(code)
+          }, scanDelay)
+          return { stop() { stopped = true; window.clearTimeout(timer) } }
+        },
+        stop() { stopped = true; window.clearTimeout(timer) },
+      }
+    }
     const products = [
       { productId: 'p-1', name: '卡皮巴拉布丁', sku: 'BUDU-001', barcode: '690000000001', posCategory: '布丁', salePriceCents: '7200', costPriceCents: '2300', unit: '份', image: '', isActive: true, trackInventory: false, sortOrder: 1, version: 1 },
       { productId: 'p-2', name: '草莓奶油蛋糕', sku: 'BUDU-002', barcode: '690000000002', posCategory: '蛋糕', salePriceCents: '3800', costPriceCents: '1200', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 2, version: 1 },
@@ -30,14 +72,19 @@
       if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order: { ...order, payments: payment ? [payment] : [] } })
       if (order && path === `/api/v2/pos/orders/${order.id}/payments`) {
         const body = JSON.parse(options.body)
-        payment = { id: `payment-${userId}`, paymentNo: `PAY-${userId}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: 'success', merchantTradeNo: `MT-${userId}`, providerTradeNo: `MOCK-${userId}`, provider: 'mock', callbackCount: 1 }
-        order = { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
+        window.__paymentRequestCount += 1
+        if (['wechat', 'alipay'].includes(body.channel) && !body.authCode) return json({ error: '请扫描有效的顾客付款码' }, 400)
+        const failed = String(body.authCode || '').startsWith('FAIL')
+        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
+        order = failed
+          ? { ...order, status: 'pending_payment', paymentStatus: 'failed', paymentMethod: null, payments: [payment] }
+          : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
         return json({ ok: true, payment, order }, 201)
       }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
-    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys: ['test-store'] }, onExit: () => {} }))
+    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys: ['test-store'] }, onExit: () => {}, scannerDecoderFactory }))
   </script></body>
 </html>

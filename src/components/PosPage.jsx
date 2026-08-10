@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Banknote, Check, ChevronDown, Minus, Package, Plus, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
+import CameraScanner from './CameraScanner'
 import {
   clearPosTransaction,
   cartTotalCents,
@@ -26,7 +27,7 @@ function allowedStores(user) {
   return stores.filter((store) => allowed.has(store.key))
 }
 
-export default function PosPage({ user, onExit }) {
+export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const stores = useMemo(() => allowedStores(user), [user])
   const [storeId, setStoreId] = useState(() => {
     const saved = getSelectedPosStore(user.id)
@@ -45,6 +46,7 @@ export default function PosPage({ user, onExit }) {
   const [submitting, setSubmitting] = useState(false)
   const [paying, setPaying] = useState('')
   const [queryingPayment, setQueryingPayment] = useState(false)
+  const [scannerChannel, setScannerChannel] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -70,6 +72,7 @@ export default function PosPage({ user, onExit }) {
     setCheckoutKeyState(session.checkoutKey)
     setOrder(null)
     setPayment(null)
+    setScannerChannel('')
     setError('')
     const restoreId = session.successOrderId || session.pendingOrderId
     if (!restoreId) {
@@ -177,8 +180,12 @@ export default function PosPage({ user, onExit }) {
     }
   }
 
-  const completePayment = async (paymentMethod) => {
+  const completePayment = async (paymentMethod, authCode = '') => {
     if (!order || paying) return
+    if (['wechat', 'alipay'].includes(paymentMethod) && !authCode) {
+      setError('请先扫描顾客付款码')
+      return
+    }
     setPaying(paymentMethod)
     setError('')
     try {
@@ -187,6 +194,7 @@ export default function PosPage({ user, onExit }) {
         body: JSON.stringify({
           channel: paymentMethod,
           requestKey: `${order.id}:${paymentMethod}:${createCheckoutKey()}`,
+          ...(authCode ? { authCode } : {}),
         }),
       })
       setOrder(data.order)
@@ -209,6 +217,19 @@ export default function PosPage({ user, onExit }) {
     } finally {
       setPaying('')
     }
+  }
+
+  const startPayment = (paymentMethod) => {
+    if (paying) return
+    setError('')
+    if (paymentMethod === 'cash') completePayment(paymentMethod)
+    else setScannerChannel(paymentMethod)
+  }
+
+  const acceptScannedCode = (authCode) => {
+    const paymentMethod = scannerChannel
+    setScannerChannel('')
+    if (paymentMethod) completePayment(paymentMethod, authCode)
   }
 
   const queryCurrentPayment = async () => {
@@ -240,6 +261,7 @@ export default function PosPage({ user, onExit }) {
     setCart({})
     setOrder(null)
     setPayment(null)
+    setScannerChannel('')
     setCheckoutKeyState('')
     setQuery('')
     setCategory('全部')
@@ -256,23 +278,26 @@ export default function PosPage({ user, onExit }) {
 
   if (stage === 'payment' && order) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-        <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
-          <button onClick={() => setStage('ordering')} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
-          <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">模拟支付 · 不调用真实支付接口</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
-          {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
-          {payment && !['success'].includes(payment.status) && (
-            <button disabled={queryingPayment} onClick={queryCurrentPayment} className="mx-auto mt-4 block rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-              {queryingPayment ? '查询中…' : '查询支付结果'}
-            </button>
-          )}
-          <div className="mt-8 grid grid-cols-3 gap-4">
-            <button disabled={Boolean(paying)} onClick={() => completePayment('wechat')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-6 font-bold text-emerald-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'wechat' ? '处理中…' : '微信支付'}</button>
-            <button disabled={Boolean(paying)} onClick={() => completePayment('alipay')} className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-6 font-bold text-sky-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'alipay' ? '处理中…' : '支付宝'}</button>
-            <button disabled={Boolean(paying)} onClick={() => completePayment('cash')} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-6 font-bold text-amber-700 disabled:opacity-50"><Banknote className="mx-auto mb-3 h-8 w-8" />{paying === 'cash' ? '处理中…' : '现金'}</button>
+      <>
+        <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
+          <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
+            <button onClick={() => { setScannerChannel(''); setStage('ordering') }} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
+            <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">扫码模拟支付 · 不调用真实支付接口</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
+            {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
+            {payment && !['success'].includes(payment.status) && (
+              <button disabled={queryingPayment} onClick={queryCurrentPayment} className="mx-auto mt-4 block rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                {queryingPayment ? '查询中…' : '查询支付结果'}
+              </button>
+            )}
+            <div className="mt-8 grid grid-cols-3 gap-4">
+              <button disabled={Boolean(paying)} onClick={() => startPayment('wechat')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-6 font-bold text-emerald-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'wechat' ? '处理中…' : '微信扫码'}</button>
+              <button disabled={Boolean(paying)} onClick={() => startPayment('alipay')} className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-6 font-bold text-sky-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'alipay' ? '处理中…' : '支付宝扫码'}</button>
+              <button disabled={Boolean(paying)} onClick={() => startPayment('cash')} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-6 font-bold text-amber-700 disabled:opacity-50"><Banknote className="mx-auto mb-3 h-8 w-8" />{paying === 'cash' ? '处理中…' : '现金'}</button>
+            </div>
           </div>
         </div>
-      </div>
+        {scannerChannel && <CameraScanner channel={scannerChannel} onDetected={acceptScannedCode} onCancel={() => setScannerChannel('')} decoderFactory={scannerDecoderFactory} />}
+      </>
     )
   }
 

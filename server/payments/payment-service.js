@@ -118,6 +118,7 @@ export class PaymentService {
       response = await provider.createPayment(payment, {
         scenario: input.scenario,
         callbackDelayMs: input.callbackDelayMs,
+        authCode: input.authCode,
       })
     } catch (error) {
       await this.handleCallback(providerName, {

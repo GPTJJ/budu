@@ -172,3 +172,20 @@ test('延迟回调最终成功，Mock 验签拒绝非法通知', async () => {
   assert.equal(done.order.status, 'completed')
   await assert.rejects(() => new MockPaymentProvider().verifyCallback({ paymentNo: 'x' }), /验签失败/)
 })
+
+test('扫码付款码只传给 Provider 内存，不进入支付持久化字段', async () => {
+  const db = new MemoryPrisma()
+  let receivedAuthCode = ''
+  class CapturingMockProvider extends MockPaymentProvider {
+    async createPayment(payment, options) {
+      receivedAuthCode = options.authCode
+      return super.createPayment(payment, options)
+    }
+  }
+  const service = new PaymentService(db, new Map([['mock', new CapturingMockProvider()]]))
+  const authCode = '134567890123456789'
+  const result = await service.createPayment({ orderId: 'order-1', channel: 'wechat', requestKey: 'request-camera-code', scenario: 'success', authCode })
+  assert.equal(receivedAuthCode, authCode)
+  assert.equal(result.payment.providerMetadata.authCodeReceived, true)
+  assert.equal(JSON.stringify(result.payment, (_, value) => typeof value === 'bigint' ? value.toString() : value).includes(authCode), false)
+})

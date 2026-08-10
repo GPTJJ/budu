@@ -33,6 +33,15 @@ function canReadOrder(user, order) {
   return user.role === 'developer' || order.cashierId === user.id
 }
 
+function paymentAuthCode(body, channel) {
+  if (!['wechat', 'alipay'].includes(channel)) return ''
+  const authCode = String(body?.authCode ?? '').trim()
+  if (authCode.length < 6 || authCode.length > 512 || /[\u0000-\u001f\u007f]/.test(authCode)) {
+    throw httpError('请扫描有效的顾客付款码')
+  }
+  return authCode
+}
+
 const orderInclude = () => ({
   store: true,
   items: { orderBy: { id: 'asc' } },
@@ -146,13 +155,15 @@ posRouter.post('/pos/orders/:id/payments', wrap(async (req, res) => {
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  const channel = String(req.body?.channel || '')
   const result = await paymentService.createPayment({
     orderId: current.id,
-    channel: req.body?.channel,
+    channel,
     requestKey: req.body?.requestKey,
     provider: 'mock',
     scenario: req.body?.mockScenario || 'success',
     callbackDelayMs: req.body?.callbackDelayMs,
+    authCode: paymentAuthCode(req.body, channel),
   })
   res.status(result.reused ? 200 : 201).json({
     ok: true,

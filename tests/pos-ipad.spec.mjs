@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test'
 
+async function enterPayment(page, url) {
+  await page.goto(url)
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+}
+
 test('iPad 横屏三栏、快速加购、购物车和搜索', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=layout-user')
   await expect(page.getByRole('heading', { name: '当前订单' })).toBeVisible()
@@ -56,4 +63,59 @@ test('两个员工浏览器上下文的购物车互不串单', async ({ browser 
   await expect(pageB.getByText('合计 · 2 件', { exact: true })).toBeVisible()
   await contextA.close()
   await contextB.close()
+})
+
+test('iPad 横屏扫码窗口、连续识别与同码防重复提交', async ({ page }) => {
+  const authCode = '134567890123456789'
+  await enterPayment(page, `/tests/pos-harness.html?user=scanner-layout&codes=${authCode}&duplicate=1`)
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '微信付款码扫码' })
+  await expect(dialog).toBeVisible()
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+  const scannerBox = await dialog.locator(':scope > div').boundingBox()
+  expect(viewport).toEqual({ width: 1024, height: 768 })
+  expect(scannerBox.width).toBeLessThanOrEqual(992)
+  expect(scannerBox.height).toBeLessThanOrEqual(736)
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(1)
+  expect(await page.evaluate(() => window.__cameraTrackStops)).toBeGreaterThan(0)
+  expect(await page.evaluate((code) => JSON.stringify(sessionStorage).includes(code), authCode)).toBe(false)
+})
+
+test('相机权限拒绝时显示中文提示并可取消', async ({ page }) => {
+  await enterPayment(page, '/tests/pos-harness.html?user=camera-denied&camera=denied')
+  await page.getByRole('button', { name: '支付宝扫码', exact: true }).click()
+  await expect(page.getByText(/相机权限被拒绝/)).toBeVisible()
+  await page.getByRole('button', { name: '重新扫码', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__cameraStarts)).toBe(2)
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('扫码时切后台会释放相机，返回后重新扫码', async ({ page }) => {
+  await enterPayment(page, '/tests/pos-harness.html?user=camera-background&scanDelay=800')
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect(page.getByText(/页面已进入后台，摄像头已关闭/)).toBeVisible()
+  expect(await page.evaluate(() => window.__cameraTrackStops)).toBeGreaterThan(0)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.getByRole('button', { name: '重新扫码', exact: true }).click()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.__cameraStarts)).toBe(2)
+})
+
+test('模拟支付失败后可重新扫描新付款码', async ({ page }) => {
+  await enterPayment(page, '/tests/pos-harness.html?user=camera-retry&codes=FAIL00000001,134567890123456789')
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByText('模拟支付失败，请重新扫码', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(2)
 })
