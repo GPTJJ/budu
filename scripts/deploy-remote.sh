@@ -28,6 +28,11 @@ echo "==> 部署目标：$USER@$HOST:$APP_DIR（$SHA）"
 PREV="$(run_remote "cat .current-sha 2>/dev/null || true")"
 echo "==> 当前线上版本：${PREV:-（无记录）}"
 
+BACKUP_NAME="predeploy-${SHA}-$(date -u +%Y%m%dT%H%M%SZ).sql"
+echo "==> 迁移前备份 PostgreSQL：backups/pg/$BACKUP_NAME"
+run_remote "mkdir -p backups/pg && docker compose exec -T postgres sh -lc 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"' > 'backups/pg/$BACKUP_NAME' && test -s 'backups/pg/$BACKUP_NAME'"
+echo "==> PostgreSQL 备份完成"
+
 echo "==> 拉取 GitHub 最新代码（网络波动时最多重试 4 次）..."
 FETCHED=0
 for attempt in 1 2 3 4; do
