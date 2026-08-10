@@ -27,7 +27,6 @@ const StoreMailingPage = lazy(() => import('./StoreMailingPage'))
 const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
-const ProductCatalogPage = lazy(() => import('./ProductCatalogPage'))
 const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
 const PosPage = lazy(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
@@ -41,7 +40,6 @@ const pageTitles = {
   'store-schedule': '门店排班',
   'store-mailing': '门店邮寄',
   'store-pos': 'POS 点单',
-  'product-catalog': '商品目录',
   'product-center': '商品中心',
   'inventory-transfer': '申请调货',
   'inventory-purchase': '申请采购',
@@ -71,7 +69,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [view, setView] = useState(() => (
     user?.role !== 'public' && typeof window !== 'undefined' && window.location.hash === '#pos' ? 'store-pos' : 'overview'
   ))
-  const [selectedProduct, setSelectedProduct] = useState(null)
   const [pageKey, setPageKey] = useState(0)
 
   const cards = kpiCards(month, store, day, lang)
@@ -83,18 +80,12 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
-  const isProductCatalogView = view === 'product-catalog'
   const isProductCenterView = view === 'product-center'
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
   const isMemberView = view === 'member'
-
-  const openProduct = (name) => {
-    setSelectedProduct(name)
-    setView('product-catalog')
-  }
 
   if (needsBinding) {
     return (
@@ -118,7 +109,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const handleNavigate = (nextView) => {
     setView(nextView)
-    if (nextView !== 'product-catalog') setSelectedProduct(null)
     if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
     else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -219,15 +209,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
               ) : isAnalyticsView && user?.role !== 'public' ? (
                 <DataAnalysisPage onBack={() => setView('overview')} />
-              ) : isProductCatalogView && user?.role !== 'public' ? (
-                <ProductCatalogPage
-                  initialProduct={selectedProduct}
-                  canEdit={user?.role !== 'public'}
-                  onBack={() => {
-                    setSelectedProduct(null)
-                    setView('overview')
-                  }}
-                />
               ) : isInventoryTransferView && user?.role !== 'public' ? (
                 <InventoryRequestPage
                   type="transfer"
@@ -274,7 +255,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                       <EmployeePerformanceTable store={store} month={month} user={user} />
                     </div>
                     <div className="xl:col-span-5">
-                      <ProductSalesTable month={month} store={store} onOpenProduct={openProduct} />
+                    <ProductSalesTable month={month} store={store} />
                     </div>
                     <div className="xl:col-span-3">
                       <NotificationPanel month={month} day={day} user={user} />

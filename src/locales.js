@@ -177,8 +177,7 @@ export const en = {
   '未识别到可分析的报表数据': 'No analyzable report data detected',
   '读取文件失败': 'Failed to read file',
 
-  // 商品目录
-  '商品目录': 'Product Catalog',
+  // 商品中心
   '商品中心': 'Product Center',
   '根据菜品销售明细，为每一款菜品提供独立展示':
     'Independent display for every product based on sales details',
@@ -322,7 +321,6 @@ export const en = {
   '周六': 'Sat',
   '周日': 'Sun',
 
-  // 商品目录管理
   '新增商品': 'Add Product',
   '编辑商品': 'Edit Product',
   '删除商品': 'Delete Product',

@@ -3,7 +3,6 @@ import {
   CalendarDays,
   LayoutDashboard,
   Menu,
-  Package,
   Settings,
   Users,
 } from 'lucide-react'
@@ -22,7 +21,6 @@ export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
         { key: 'overview', label: '首页', icon: LayoutDashboard },
         { key: 'store-entry', label: '录入', icon: BarChart3 },
         { key: 'store-schedule', label: '排班', icon: CalendarDays },
-        { key: 'product-catalog', label: '商品', icon: Package },
       ]
 
   const quickKeys = new Set(items.map((item) => item.key))

@@ -166,12 +166,16 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
                           emojiFor(row.name)
                         )}
                       </div>
-                      <button
-                        onClick={() => onOpenProduct && onOpenProduct(row.name)}
-                        className="font-semibold text-slate-700 transition hover:text-budu-600"
-                      >
-                        {row.name}
-                      </button>
+                      {onOpenProduct ? (
+                        <button
+                          onClick={() => onOpenProduct(row.name)}
+                          className="font-semibold text-slate-700 transition hover:text-budu-600"
+                        >
+                          {row.name}
+                        </button>
+                      ) : (
+                        <span className="font-semibold text-slate-700">{row.name}</span>
+                      )}
                     </div>
                   </td>
                   <td className="py-2.5 pr-2 text-right tabular-nums text-slate-500">
@@ -306,12 +310,16 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
                         )}
                       </div>
                       <div className="min-w-0 leading-tight">
-                        <button
-                          onClick={() => onOpenProduct && onOpenProduct(row.name)}
-                          className="block max-w-full truncate font-semibold text-slate-700 transition group-hover:text-budu-600"
-                        >
-                          {row.name}
-                        </button>
+                        {onOpenProduct ? (
+                          <button
+                            onClick={() => onOpenProduct(row.name)}
+                            className="block max-w-full truncate font-semibold text-slate-700 transition group-hover:text-budu-600"
+                          >
+                            {row.name}
+                          </button>
+                        ) : (
+                          <span className="block max-w-full truncate font-semibold text-slate-700">{row.name}</span>
+                        )}
                         <p className="mt-0.5 text-[11px] text-slate-400">
                           {t('收入 ¥{income} · 优惠 ¥{discount}', {
                             income: formatMoney(row.income),
