@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  ArrowLeft, Building2, CalendarDays, CheckCircle2, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
+  ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
 } from 'lucide-react'
 import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry, employeeList } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
 import { loadUserData } from '../utils/userData'
+import { dutyHours } from '../utils/payroll'
 import { useI18n } from '../i18n'
 import StoreEntryExportModal from './StoreEntryExportModal'
 
@@ -33,6 +34,48 @@ function Field({ label, icon: Icon, children }) {
         {label}
       </span>
       {children}
+    </div>
+  )
+}
+
+function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative max-w-md">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        className={`${inputCls} flex min-h-[38px] w-full items-center gap-1 text-left`}
+      >
+        <Users className="h-4 w-4 shrink-0 text-budu-600" />
+        <span className="flex-1 truncate text-sm">{selectedIds.length === 0 ? '选择值班人员（可多选）' : `已选 ${selectedIds.length} 人`}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-40 mt-1 max-h-72 w-full overflow-y-auto rounded-2xl border border-slate-100 bg-white p-2 shadow-lg">
+            <p className="px-2 py-1.5 text-[11px] font-semibold text-slate-300">点击姓名多选值班人员</p>
+            {employees.map((emp) => {
+              const id = staffIdFor(emp.storeKey || storeKey, emp.name)
+              const checked = selectedIds.includes(id)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onToggle(emp, id)}
+                  className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${checked ? 'bg-budu-50' : 'hover:bg-slate-50'}`}
+                >
+                  <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] font-bold ${checked ? 'border-budu-500 bg-budu-500 text-white' : 'border-slate-200 text-transparent'}`}>✓</span>
+                  <span className="font-semibold text-slate-700">{emp.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -138,32 +181,7 @@ export default function StoreEntryPage({ user, onBack }) {
     }
   }
 
-  const updateHours = (index, value) => {
-    setStaffRows((current) => current.map((row, i) => (
-      i === index ? { ...row, actualHours: Math.max(0, Math.min(24, Number(value) || 0)) } : row
-    )))
-  }
-
-  const addStaff = (staff) => {
-    if (!staff || staffRows.some((row) => row.staffId === staffIdFor(staff.storeKey || store, staff.name))) return
-    setStaffRows((current) => [...current, {
-      staffId: staffIdFor(staff.storeKey || store, staff.name),
-      staffName: staff.name,
-      scheduledStartTime: '',
-      scheduledEndTime: '',
-      actualStartTime: '',
-      actualEndTime: '',
-      breakMinutes: 0,
-      actualHours: 0,
-      attendanceStatus: 'normal',
-    }])
-  }
-
-  const saveStaff = async () => {
-    if (staffRows.length === 0) {
-      tip(t('请至少添加一名实际值班人员'), false)
-      return
-    }
+  const persistStaff = async (nextRows) => {
     setSaving('staff')
     setError('')
     try {
@@ -172,42 +190,7 @@ export default function StoreEntryPage({ user, onBack }) {
         body: JSON.stringify({
           storeKey: store,
           date,
-          items: staffRows.map((row) => ({
-            staffId: row.staffId,
-            staffName: row.staffName,
-            scheduledStartTime: row.scheduledStartTime,
-            scheduledEndTime: row.scheduledEndTime,
-            actualStartTime: row.actualStartTime,
-            actualEndTime: row.actualEndTime,
-            breakMinutes: row.breakMinutes,
-            actualHours: row.actualHours,
-            attendanceStatus: row.attendanceStatus,
-          })),
-          reason: '实际值班确认',
-        }),
-      })
-      await refreshAll()
-      await loadOverview()
-      tip(t('值班人员已保存 ✓'))
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSaving('')
-    }
-  }
-
-  const removeStaff = async (index) => {
-    const next = staffRows.filter((_, i) => i !== index)
-    setStaffRows(next)
-    setSaving('staff')
-    setError('')
-    try {
-      await api('/v2/daily-staff', {
-        method: 'PUT',
-        body: JSON.stringify({
-          storeKey: store,
-          date,
-          items: next.map((row) => ({
+          items: nextRows.map((row) => ({
             staffId: row.staffId,
             staffName: row.staffName,
             scheduledStartTime: row.scheduledStartTime,
@@ -218,18 +201,39 @@ export default function StoreEntryPage({ user, onBack }) {
             actualHours: row.actualHours,
             attendanceStatus: 'normal',
           })),
-          reason: '移除值班人员',
+          reason: '值班人员选择',
         }),
       })
       await refreshAll()
       await loadOverview()
-      tip(t('值班人员已移除 ✓'))
+      tip(t('值班人员已保存 ✓'))
     } catch (e) {
       setError(e.message)
       await loadOverview()
     } finally {
       setSaving('')
     }
+  }
+
+  const toggleStaff = (emp, id) => {
+    const exists = staffRows.some((row) => row.staffId === id)
+    const nextRows = exists
+      ? staffRows.filter((row) => row.staffId !== id)
+      : [...staffRows, {
+        staffId: id,
+        staffName: emp.name,
+        scheduledStartTime: '',
+        scheduledEndTime: '',
+        actualStartTime: '',
+        actualEndTime: '',
+        breakMinutes: 0,
+        actualHours: 0,
+        attendanceStatus: 'normal',
+      }]
+    const hours = dutyHours(store, nextRows.length, storeInfo?.name)
+    const withHours = nextRows.map((row) => ({ ...row, actualHours: hours }))
+    setStaffRows(withHours)
+    persistStaff(withHours)
   }
 
   const confirmEntry = async () => {
@@ -293,9 +297,22 @@ export default function StoreEntryPage({ user, onBack }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleDelete = (d) => {
+  const handleDelete = async (d) => {
+    if (!window.confirm(t('确定删除该日业绩吗？删除后不可恢复'))) return
     deleteLocalEntry(month, store, d)
-    setVersion((v) => v + 1)
+    setError('')
+    try {
+      await api('/v2/daily-entries', {
+        method: 'DELETE',
+        body: JSON.stringify({ storeKey: store, date: `${month}-${d.slice(3)}` }),
+      })
+      await refreshAll()
+      await loadOverview()
+      tip(t('当日业绩已删除 ✓'))
+    } catch (e) {
+      setError(e.message)
+      await refreshAll()
+    }
   }
 
   const statusBadge = () => {
@@ -323,8 +340,6 @@ export default function StoreEntryPage({ user, onBack }) {
     ['现金', pos.byChannel.cash],
     ['其他', pos.byChannel.other],
   ] : []
-
-  const totalActualHours = staffRows.reduce((sum, row) => sum + (Number(row.actualHours) || 0), 0)
 
   return (
     <div className="space-y-6">
@@ -416,42 +431,26 @@ export default function StoreEntryPage({ user, onBack }) {
       <section className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-[15px] font-bold text-slate-800">今日值班</h3>
-          <span className="rounded-lg bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">总实际工时 {totalActualHours.toFixed(2)} 小时</span>
-          <div className="ml-auto flex items-center gap-2">
-            <select value="" onChange={(e) => { const emp = allEmployees.find((item) => item.name === e.target.value); addStaff(emp); e.target.value = '' }} disabled={!canEditStaff} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none disabled:opacity-50">
-              <option value="">+ 添加值班人员</option>
-              {allEmployees.filter((emp) => !staffRows.some((row) => row.staffName === emp.name)).map((emp) => <option key={emp.name} value={emp.name}>{emp.name}</option>)}
-            </select>
-            <button onClick={saveStaff} disabled={saving === 'staff' || !canEditStaff} className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Users className="mr-1 inline h-4 w-4" />{saving === 'staff' ? '保存中…' : '保存值班'}</button>
-          </div>
+          {saving === 'staff' && <span className="text-xs text-slate-400">保存中…</span>}
         </div>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 text-xs text-slate-400">
-                <th className="px-3 py-2.5 font-semibold">员工</th>
-                <th className="px-3 py-2.5 font-semibold">计划班次</th>
-                <th className="px-3 py-2.5 font-semibold">实际工时</th>
-                <th className="px-3 py-2.5 text-right font-semibold">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {staffRows.length === 0 ? (
-                <tr><td colSpan="4" className="px-3 py-10 text-center text-sm text-slate-300">暂无值班人员，请从右上角添加</td></tr>
-              ) : staffRows.map((row, index) => (
-                <tr key={row.staffId} className="border-t border-slate-50">
-                  <td className="px-3 py-2.5 font-semibold text-slate-700">{row.staffName}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-500">{row.scheduledStartTime && row.scheduledEndTime ? `${row.scheduledStartTime}-${row.scheduledEndTime}` : '—'}</td>
-                  <td className="px-3 py-2.5">
-                    <input type="number" step="0.01" min="0" max="24" value={row.actualHours} onChange={(e) => updateHours(index, e.target.value)} disabled={!canEditStaff} className="h-9 w-24 rounded-lg border border-slate-200 px-2 text-sm tabular-nums outline-none focus:border-budu-400 disabled:opacity-50" />
-                  </td>
-                  <td className="px-3 py-2.5 text-right">
-                    <button onClick={() => removeStaff(index)} disabled={!canEditStaff || saving === 'staff'} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 hover:bg-rose-50 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" />{saving === 'staff' ? '移除中…' : '移除'}</button>
-                  </td>
-                </tr>
+        <div className="mt-4">
+          <StaffMultiSelect
+            employees={allEmployees}
+            selectedIds={staffRows.map((row) => row.staffId)}
+            storeKey={store}
+            onToggle={toggleStaff}
+            disabled={!canEditStaff}
+          />
+          {staffRows.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {staffRows.map((row) => (
+                <span key={row.staffId} className="inline-flex items-center gap-1.5 rounded-full bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-700">
+                  {row.staffName}
+                  <b className="tabular-nums text-budu-600">{Number(row.actualHours).toFixed(1)}h</b>
+                </span>
               ))}
-            </tbody>
-          </table>
+            </div>
+          )}
         </div>
       </section>
 
