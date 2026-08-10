@@ -7,6 +7,13 @@ HOST="$1"
 USER="$2"
 APP_DIR="$3"
 SHA="$4"
+PRODUCTION_HOST="124.156.171.195"
+
+if [ "$HOST" != "$PRODUCTION_HOST" ]; then
+  echo "==> 拒绝部署：当前 GitHub Secret 不是香港生产服务器"
+  echo "==> 预期目标：$PRODUCTION_HOST"
+  exit 1
+fi
 
 SSH_ARGS=(ssh -o BatchMode=yes -o ConnectTimeout=15)
 SCP_ARGS=(scp -o BatchMode=yes -o ConnectTimeout=15)
