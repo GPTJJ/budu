@@ -28,7 +28,7 @@ function canStore(user, storeId) {
 async function ensureStore(key) {
   const existing = await prisma.store.findUnique({ where: { key } })
   if (existing) return existing
-  return prisma.store.create({ data: { id: key, key, name: key, district: '' } })
+  return prisma.store.create({ data: { key, name: key, district: '' } })
 }
 
 function dateOnly(value) {
