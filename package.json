@@ -12,6 +12,9 @@
     "server": "node server/index.js",
     "start": "node server/index.js",
     "test:inventory": "node scripts/test-inventory-workflow.mjs",
+    "test:pos": "node --test scripts/test-pos-core.mjs",
+    "test:pos:browser": "playwright test tests/pos-ipad.spec.mjs",
+    "test:ssr": "node scripts/smoke-render.mjs",
     "migrate:pg": "node scripts/migrate-kv-to-pg.mjs",
     "reconcile:pg": "node scripts/migrate-kv-to-pg.mjs --reconcile"
   },
@@ -31,6 +34,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",

@@ -28,6 +28,8 @@ const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
 const ProductCatalogPage = lazy(() => import('./ProductCatalogPage'))
+const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
+const PosPage = lazy(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const FinancePage = lazy(() => import('./FinancePage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
@@ -38,7 +40,9 @@ const pageTitles = {
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
   'store-mailing': '门店邮寄',
+  'store-pos': 'POS 点单',
   'product-catalog': '商品目录',
+  'product-center': '商品中心',
   'inventory-transfer': '申请调货',
   'inventory-purchase': '申请采购',
   finance: '财务利润',
@@ -64,7 +68,9 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return list[0] ? list[0].key : 'all'
   })
   const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
-  const [view, setView] = useState('overview')
+  const [view, setView] = useState(() => (
+    user?.role !== 'public' && typeof window !== 'undefined' && window.location.hash === '#pos' ? 'store-pos' : 'overview'
+  ))
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [pageKey, setPageKey] = useState(0)
 
@@ -73,10 +79,12 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isStoreEntryView = view === 'store-entry'
   const isScheduleView = view === 'store-schedule'
   const isMailingView = view === 'store-mailing'
+  const isPosView = view === 'store-pos'
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
   const isAnalyticsView = view === 'analytics'
   const isProductCatalogView = view === 'product-catalog'
+  const isProductCenterView = view === 'product-center'
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
   const isFinanceView = view === 'finance'
@@ -111,7 +119,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const handleNavigate = (nextView) => {
     setView(nextView)
     if (nextView !== 'product-catalog') setSelectedProduct(null)
+    if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
+    else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const exitPos = () => {
+    setView('overview')
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
   }
 
   /** 局部刷新：先拉取最新共享数据，再重挂载当前页面组件（Header/Sidebar 保持不动） */
@@ -122,6 +137,18 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
       /* 网络异常时仍重挂载当前页，页面会读取本地缓存 */
     }
     setPageKey((v) => v + 1)
+  }
+
+  if (isPosView && user?.role !== 'public') {
+    return (
+      <PublicModeProvider isPublic={false} isStore={false}>
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoading />}>
+            <PosPage user={user} onExit={exitPos} />
+          </Suspense>
+        </ErrorBoundary>
+      </PublicModeProvider>
+    )
   }
 
   return (
@@ -184,6 +211,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
               ) : isMailingView && user?.role !== 'public' ? (
                 <StoreMailingPage onBack={() => setView('overview')} />
+              ) : isProductCenterView && ['developer', 'manager'].includes(user?.role) ? (
+                <ProductCenterPage onBack={() => setView('overview')} />
               ) : isSettingsView ? (
                 <SettingsPage user={user} onBack={() => setView('overview')} />
               ) : isAccountAdminView && user?.role === 'developer' ? (

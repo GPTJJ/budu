@@ -8,22 +8,23 @@ datasource db {
 }
 
 model Store {
-  key          String           @id
-  name         String           @unique
-  district     String           @default("")
-  createdAt    DateTime         @default(now())
-  staff        Staff[]
-  entries      DailyEntry[]
-  stock        StockBalance[]
-  ledger       StockLedger[]
-  transferOut  TransferRequest[] @relation("TransferFrom")
-  transferIn   TransferRequest[] @relation("TransferTo")
-  purchases    PurchaseRequest[]
-  waste        WasteRecord[]
-  expenses     Expense[]
-  invoices     Invoice[]
-  bigBonuses   BigOrderBonus[]
+  key                String              @id
+  name               String              @unique
+  district           String              @default("")
+  createdAt          DateTime            @default(now())
+  staff              Staff[]
+  entries            DailyEntry[]
+  stock              StockBalance[]
+  ledger             StockLedger[]
+  transferOut        TransferRequest[]   @relation("TransferFrom")
+  transferIn         TransferRequest[]   @relation("TransferTo")
+  purchases          PurchaseRequest[]
+  waste              WasteRecord[]
+  expenses           Expense[]
+  invoices           Invoice[]
+  bigBonuses         BigOrderBonus[]
   memberConsumptions MemberConsumption[]
+  orders             Order[]
 }
 
 model User {
@@ -62,46 +63,103 @@ model DailyEntry {
 }
 
 model InventoryItem {
-  id             String          @id
-  name           String          @unique
-  unit           String          @default("")
-  spec           String          @default("")
-  barcode        String          @default("")
-  category       String          @default("product")
-  image          String          @default("")
-  createdAt      DateTime        @default(now())
+  id             String         @id
+  name           String         @unique
+  unit           String         @default("")
+  spec           String         @default("")
+  barcode        String         @default("")
+  category       String         @default("product")
+  image          String         @default("")
+  sku            String?        @unique
+  posCategory    String         @default("")
+  salePriceCents BigInt?
+  costPriceCents BigInt?
+  isActive       Boolean        @default(false)
+  trackInventory Boolean        @default(false)
+  sortOrder      Int            @default(0)
+  version        Int            @default(1)
+  updatedAt      DateTime       @default(now()) @updatedAt
+  createdAt      DateTime       @default(now())
   balances       StockBalance[]
   ledger         StockLedger[]
   transferItems  TransferItem[]
   purchaseItems  PurchaseItem[]
   waste          WasteRecord[]
+  orderItems     OrderItem[]
+}
+
+model Order {
+  id                  String      @id
+  orderNo             String      @unique @map("order_no")
+  storeId             String      @map("store_id")
+  cashierId           String      @map("cashier_id")
+  cashierNameSnapshot String      @default("") @map("cashier_name_snapshot")
+  subtotal            BigInt      @default(0)
+  discountAmount      BigInt      @default(0) @map("discount_amount")
+  payableAmount       BigInt      @default(0) @map("payable_amount")
+  status              String      @default("pending")
+  paymentStatus       String      @default("unpaid") @map("payment_status")
+  paymentMethod       String?     @map("payment_method")
+  paymentMode         String      @default("mock") @map("payment_mode")
+  checkoutKey         String      @unique @map("checkout_key")
+  cartHash            String      @map("cart_hash")
+  version             Int         @default(1)
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at")
+  completedAt         DateTime?   @map("completed_at")
+  store               Store       @relation(fields: [storeId], references: [key], onDelete: Restrict)
+  items               OrderItem[]
+
+  @@index([storeId, createdAt])
+  @@index([cashierId, createdAt])
+  @@index([status, paymentStatus])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                  String        @id
+  orderId             String        @map("order_id")
+  productId           String        @map("product_id")
+  productNameSnapshot String        @map("product_name_snapshot")
+  skuSnapshot         String        @map("sku_snapshot")
+  unitSnapshot        String        @default("") @map("unit_snapshot")
+  unitPrice           BigInt        @map("unit_price")
+  costPriceSnapshot   BigInt        @map("cost_price_snapshot")
+  quantity            Int
+  lineAmount          BigInt        @map("line_amount")
+  order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
 }
 
 model StockBalance {
-  id        String   @id
+  id        String        @id
   storeKey  String
   itemId    String
-  quantity  Int      @default(0)
-  minQty    Int      @default(0)
-  updatedAt DateTime @default(now()) @updatedAt
-  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  quantity  Int           @default(0)
+  minQty    Int           @default(0)
+  updatedAt DateTime      @default(now()) @updatedAt
+  store     Store         @relation(fields: [storeKey], references: [key], onDelete: Cascade)
   item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@unique([storeKey, itemId])
 }
 
 model StockLedger {
-  id        String   @id
+  id        String        @id
   storeKey  String
   itemId    String
   change    Int
   balance   Int
   type      String
-  refId     String   @default("")
-  note      String   @default("")
-  operator  String   @default("")
-  createdAt DateTime @default(now())
-  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  refId     String        @default("")
+  note      String        @default("")
+  operator  String        @default("")
+  createdAt DateTime      @default(now())
+  store     Store         @relation(fields: [storeKey], references: [key], onDelete: Cascade)
   item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([storeKey, itemId, createdAt])
@@ -135,42 +193,42 @@ model TransferItem {
 }
 
 model PurchaseRequest {
-  id         String          @id
-  storeKey   String
-  status     String          @default("pending")
-  supplier   String          @default("")
-  supplierId String?
-  expectedAt DateTime?
-  note       String          @default("")
-  createdBy  String          @default("")
-  createdAt  DateTime        @default(now())
-  updatedAt  DateTime        @default(now())
-  items      PurchaseItem[]
-  store      Store           @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  id          String         @id
+  storeKey    String
+  status      String         @default("pending")
+  supplier    String         @default("")
+  supplierId  String?
+  expectedAt  DateTime?
+  note        String         @default("")
+  createdBy   String         @default("")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @default(now())
+  items       PurchaseItem[]
+  store       Store          @relation(fields: [storeKey], references: [key], onDelete: Cascade)
   supplierRef Supplier?      @relation(fields: [supplierId], references: [id])
 
   @@index([storeKey, status])
 }
 
 model Supplier {
-  id        String           @id
-  name      String           @unique
-  phone     String           @default("")
-  contact   String           @default("")
-  note      String           @default("")
-  createdAt DateTime         @default(now())
+  id        String            @id
+  name      String            @unique
+  phone     String            @default("")
+  contact   String            @default("")
+  note      String            @default("")
+  createdAt DateTime          @default(now())
   purchases PurchaseRequest[]
 }
 
 model WasteRecord {
-  id        String   @id
+  id        String        @id
   storeKey  String
   itemId    String
   quantity  Int
-  reason    String   @default("")
-  operator  String   @default("")
-  createdAt DateTime @default(now())
-  store     Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  reason    String        @default("")
+  operator  String        @default("")
+  createdAt DateTime      @default(now())
+  store     Store         @relation(fields: [storeKey], references: [key], onDelete: Cascade)
   item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
 
@@ -199,13 +257,13 @@ model Expense {
 }
 
 model Member {
-  id        String   @id
-  name      String
-  phone     String   @unique
-  birthday  DateTime?
-  level     Int      @default(0)
-  points    Int      @default(0)
-  createdAt DateTime @default(now())
+  id           String              @id
+  name         String
+  phone        String              @unique
+  birthday     DateTime?
+  level        Int                 @default(0)
+  points       Int                 @default(0)
+  createdAt    DateTime            @default(now())
   consumptions MemberConsumption[]
 }
 
@@ -254,15 +312,15 @@ model BigOrderBonus {
 }
 
 model MemberConsumption {
-  id         String   @id
-  memberId   String
-  storeKey   String
-  date       DateTime @db.Date
-  amountCents BigInt  @default(0)
-  note       String   @default("")
-  createdAt  DateTime @default(now())
-  member     Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  store      Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  id          String   @id
+  memberId    String
+  storeKey    String
+  date        DateTime @db.Date
+  amountCents BigInt   @default(0)
+  note        String   @default("")
+  createdAt   DateTime @default(now())
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@index([memberId, date])
 }
@@ -279,17 +337,17 @@ model PurchaseItem {
 }
 
 model MailingRecord {
-  id        String   @id
+  id        String    @id
   method    String
   postage   String
   fee       String?
   address   String
   recipient String
   phone     String
-  remark    String   @default("")
-  status    String   @default("pending")
-  createdBy String   @default("")
-  createdAt DateTime @default(now())
+  remark    String    @default("")
+  status    String    @default("pending")
+  createdBy String    @default("")
+  createdAt DateTime  @default(now())
   shippedAt DateTime?
 
   @@index([status, createdAt])

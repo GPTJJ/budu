@@ -35,8 +35,12 @@ const subMenus = {
     { key: 'store-entry', label: '门店业绩录入' },
     { key: 'store-schedule', label: '门店排班' },
     { key: 'store-mailing', label: '门店邮寄' },
+    { key: 'store-pos', label: 'POS 点单' },
   ],
-  product: [{ key: 'product-catalog', label: '商品目录' }],
+  product: [
+    { key: 'product-catalog', label: '商品目录' },
+    { key: 'product-center', label: '商品中心' },
+  ],
   inventory: [
     { key: 'inventory-transfer', label: '申请调货' },
     { key: 'inventory-purchase', label: '申请采购' },

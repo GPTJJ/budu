@@ -2,6 +2,8 @@
 node_modules
 dist
 dist-ssr
+test-results/
+playwright-report/
 *.local
 
 # 运行数据与密钥（包含用户账号、密码哈希、JWT 密钥，切勿上传）

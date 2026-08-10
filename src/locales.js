@@ -6,6 +6,7 @@ export const en = {
   '首页概览': 'Overview',
   '人员管理': 'Staff',
   '门店经营': 'Stores',
+  'POS 点单': 'POS Ordering',
   '商品管理': 'Products',
   '库存采购': 'Inventory',
   '财务利润': 'Finance',
@@ -178,6 +179,7 @@ export const en = {
 
   // 商品目录
   '商品目录': 'Product Catalog',
+  '商品中心': 'Product Center',
   '根据菜品销售明细，为每一款菜品提供独立展示':
     'Independent display for every product based on sales details',
   '上传图片': 'Upload Image',

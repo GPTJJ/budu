@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><title>BUDU POS iPad Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PosPage from '/src/components/PosPage.jsx'
+    import '/src/index.css'
+
+    const userId = new URLSearchParams(location.search).get('user') || 'user-test'
+    const products = [
+      { productId: 'p-1', name: '卡皮巴拉布丁', sku: 'BUDU-001', barcode: '690000000001', posCategory: '布丁', salePriceCents: '7200', costPriceCents: '2300', unit: '份', image: '', isActive: true, trackInventory: false, sortOrder: 1, version: 1 },
+      { productId: 'p-2', name: '草莓奶油蛋糕', sku: 'BUDU-002', barcode: '690000000002', posCategory: '蛋糕', salePriceCents: '3800', costPriceCents: '1200', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 2, version: 1 },
+      { productId: 'p-3', name: '蓝莓酸奶杯', sku: 'BUDU-003', barcode: '', posCategory: '饮品', salePriceCents: '2600', costPriceCents: '900', unit: '杯', image: '', isActive: true, trackInventory: false, sortOrder: 3, version: 1 },
+    ]
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: [{ key: 'test-store', name: '测试门店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
+    let order = JSON.parse(sessionStorage.getItem('__budu-pos-test-order') || 'null')
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/pos/products') return json({ rows: products })
+      if (path === '/api/v2/pos/orders' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        const payable = body.items.reduce((sum, item) => sum + Number(products.find((p) => p.productId === item.productId).salePriceCents) * item.quantity, 0)
+        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(payable), discountAmount: '0', payableAmount: String(payable), status: 'pending', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', items: body.items }
+        sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
+        return json({ ok: true, order }, 201)
+      }
+      if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order })
+      if (order && path === `/api/v2/pos/orders/${order.id}/complete`) {
+        order = { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: JSON.parse(options.body).paymentMethod, completedAt: new Date().toISOString() }
+        sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
+        return json({ ok: true, order })
+      }
+      return json({ error: `未模拟接口 ${path}` }, 404)
+    }
+    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys: ['test-store'] }, onExit: () => {} }))
+  </script></body>
+</html>
