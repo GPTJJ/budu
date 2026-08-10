@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Menu,
   Settings,
+  ShoppingCart,
   Users,
 } from 'lucide-react'
 import { useI18n } from '../i18n'
@@ -21,6 +22,7 @@ export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
         { key: 'overview', label: '首页', icon: LayoutDashboard },
         { key: 'store-entry', label: '录入', icon: BarChart3 },
         { key: 'store-schedule', label: '排班', icon: CalendarDays },
+        { key: 'store-pos', label: 'POS点单', icon: ShoppingCart },
       ]
 
   const quickKeys = new Set(items.map((item) => item.key))

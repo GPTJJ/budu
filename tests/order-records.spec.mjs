@@ -80,3 +80,11 @@ test('部分退款按商品退指定数量', async ({ page }) => {
   await expect(detail.getByText('退款记录', { exact: true })).toBeVisible()
   await expect(detail.getByText(/卡皮巴拉布丁×1/)).toBeVisible()
 })
+
+test('手机底部导航包含 POS点单并可跳转', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/tests/mobile-nav-harness.html')
+  await expect(page.getByRole('button', { name: 'POS点单', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'POS点单', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__navigated)).toEqual(['store-pos'])
+})

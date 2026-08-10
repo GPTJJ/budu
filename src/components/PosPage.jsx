@@ -49,7 +49,21 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [scannerChannel, setScannerChannel] = useState('')
   const [posConfig, setPosConfig] = useState(null)
   const [cashConfirm, setCashConfirm] = useState(false)
+  const [cartOpen, setCartOpen] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width: 1024px)').matches
+      : true
+  ))
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const onChange = () => setIsDesktop(mq.matches)
+    mq.addEventListener?.('change', onChange)
+    setIsDesktop(mq.matches)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -355,7 +369,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 )}
               </div>
             )}
-            <div className="mt-8 grid grid-cols-3 gap-4">
+            <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
               {channelButton('wechat', '微信扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-emerald-200 bg-emerald-50 text-emerald-700')}
               {channelButton('alipay', '支付宝扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-sky-200 bg-sky-50 text-sky-700')}
               {channelButton('cash', '现金收款', <Banknote className="mx-auto mb-3 h-8 w-8" />, 'border-amber-200 bg-amber-50 text-amber-700')}
@@ -391,30 +405,80 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   return (
-    <div className="h-screen h-[100dvh] overflow-hidden bg-slate-100 text-slate-800" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', touchAction: 'manipulation' }}>
-      <div className="grid h-full min-w-[820px]" style={{ gridTemplateColumns: 'clamp(104px, 12vw, 148px) minmax(360px, 1fr) clamp(286px, 29vw, 360px)' }}>
-        <aside className="flex min-h-0 flex-col border-r border-slate-200 bg-white">
-          <div className="flex h-[76px] shrink-0 items-center border-b border-slate-100 px-3"><button onClick={onExit} className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button><strong className="ml-2 text-lg text-budu-600">POS</strong></div>
-          <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`w-full rounded-xl px-2 py-3 text-left text-sm font-semibold transition ${category === item ? 'bg-budu-500 text-white shadow-md shadow-budu-100' : 'text-slate-500 hover:bg-slate-100'}`}>{item}</button>)}</nav>
-        </aside>
+    <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-800" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', touchAction: 'manipulation' }}>
+      <header className="flex h-[60px] shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 lg:h-[72px] lg:px-4">
+        <button onClick={onExit} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button>
+        <strong className="hidden text-lg text-budu-600 sm:block">POS</strong>
+        <label className="relative min-w-0 flex-1">
+          <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className="w-full rounded-2xl bg-slate-100 py-3 pl-11 pr-4 text-sm outline-none ring-budu-200 focus:ring-2" />
+        </label>
+        <label className="relative shrink-0">
+          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-11 max-w-[170px] appearance-none rounded-2xl border border-slate-200 bg-white pl-3 pr-8 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        </label>
+      </header>
 
-        <main className="flex min-h-0 min-w-0 flex-col">
-          <header className="flex h-[76px] shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4">
-            <label className="relative min-w-0 flex-1"><Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className="w-full rounded-2xl bg-slate-100 py-3 pl-11 pr-4 text-sm outline-none ring-budu-200 focus:ring-2" /></label>
-            <label className="relative shrink-0"><select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-11 max-w-[200px] appearance-none rounded-2xl border border-slate-200 bg-white pl-4 pr-10 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /></label>
-          </header>
-          {error && <div className="mx-4 mt-3 shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{error}</div>}
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {loadingProducts ? <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div> : visibleProducts.length === 0 ? <div className="grid h-full place-items-center text-center text-slate-400"><div><Package className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm">暂无符合条件的上架商品</p></div></div> : <div className="grid grid-cols-2 gap-3 xl:grid-cols-3 2xl:grid-cols-4">{visibleProducts.map((product) => { const quantity = Number(cart[product.productId] || 0); return <button key={product.productId} onClick={() => changeQuantity(product.productId, 1)} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition active:scale-[0.98] active:border-budu-400"><div className="aspect-[4/3] bg-slate-100">{product.image ? <img src={product.image} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><Package className="h-9 w-9 text-slate-300" /></div>}</div>{quantity > 0 && <span className="absolute right-2 top-2 grid min-w-7 place-items-center rounded-full bg-budu-500 px-2 py-1 text-xs font-bold text-white shadow">{quantity}</span>}<div className="p-3"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><div className="mt-2 flex items-end justify-between"><span className="text-base font-black text-budu-600">{formatCents(product.salePriceCents)}</span><span className="text-[11px] text-slate-400">/{product.unit}</span></div></div></button> })}</div>}
+      <div className="flex min-h-0 flex-1">
+        {isDesktop && <aside className="flex min-h-0 w-[148px] shrink-0 flex-col border-r border-slate-200 bg-white xl:w-[164px]">
+          <div className="flex h-[72px] shrink-0 items-center border-b border-slate-100 px-3"><strong className="text-lg text-budu-600">POS</strong></div>
+          <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`w-full rounded-xl px-2 py-3 text-left text-sm font-semibold transition ${category === item ? 'bg-budu-500 text-white shadow-md shadow-budu-100' : 'text-slate-500 hover:bg-slate-100'}`}>{item}</button>)}</nav>
+        </aside>}
+
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {!isDesktop && <div className="flex shrink-0 gap-2 overflow-x-auto px-3 py-2" aria-label="商品分类">
+            {categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold transition ${category === item ? 'border-budu-400 bg-budu-500 text-white' : 'border-slate-200 bg-white text-slate-500'}`}>{item}</button>)}
+          </div>}
+          {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-4">
+            {loadingProducts ? <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div> : visibleProducts.length === 0 ? <div className="grid h-full place-items-center text-center text-slate-400"><div><Package className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm">暂无符合条件的上架商品</p></div></div> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">{visibleProducts.map((product) => { const quantity = Number(cart[product.productId] || 0); return <button key={product.productId} onClick={() => changeQuantity(product.productId, 1)} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition active:scale-[0.98] active:border-budu-400"><div className="aspect-[4/3] bg-slate-100">{product.image ? <img src={product.image} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><Package className="h-9 w-9 text-slate-300" /></div>}</div>{quantity > 0 && <span className="absolute right-2 top-2 grid min-w-7 place-items-center rounded-full bg-budu-500 px-2 py-1 text-xs font-bold text-white shadow">{quantity}</span>}<div className="p-3"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><div className="mt-2 flex items-end justify-between"><span className="text-base font-black text-budu-600">{formatCents(product.salePriceCents)}</span><span className="text-[11px] text-slate-400">/{product.unit}</span></div></div></button> })}</div>}
           </div>
         </main>
 
-        <aside className="flex min-h-0 flex-col border-l border-slate-200 bg-white">
-          <div className="flex h-[76px] shrink-0 items-center border-b border-slate-100 px-5"><ShoppingCart className="h-5 w-5 text-budu-600" /><h2 className="ml-2 font-bold">当前订单</h2><span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span><button onClick={clearCart} disabled={!cartCount} className="ml-auto text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button></div>
+        {isDesktop && <aside className="flex min-h-0 w-[300px] shrink-0 flex-col border-l border-slate-200 bg-white xl:w-[340px]">
+          <div className="flex h-[72px] shrink-0 items-center border-b border-slate-100 px-5"><ShoppingCart className="h-5 w-5 text-budu-600" /><h2 className="ml-2 font-bold">当前订单</h2><span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span><button onClick={clearCart} disabled={!cartCount} className="ml-auto text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button></div>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(({ product, quantity }) => <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}</p></div><button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div><div className="mt-3 flex items-center"><strong className="text-sm text-budu-600">{formatCents(BigInt(product.salePriceCents) * BigInt(quantity))}</strong><div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white"><button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button><span className="w-9 text-center text-sm font-bold">{quantity}</span><button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button></div></div></div>)}</div>
           <div className="shrink-0 border-t border-slate-100 bg-white p-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}><div className="mb-4 flex items-end justify-between"><div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div><p className="text-xs text-slate-400">优惠 ¥0.00</p></div><button onClick={checkout} disabled={!cartCount || submitting} className="w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button></div>
-        </aside>
+        </aside>}
       </div>
+
+      {!isDesktop && <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-2" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} aria-label="结算栏">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setCartOpen(true)} disabled={!cartCount} className="relative grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-slate-100 text-slate-600 disabled:opacity-40" aria-label="打开购物车">
+            <ShoppingCart className="h-6 w-6" />
+            {cartCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{cartCount}</span>}
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-slate-400">合计 · {cartCount} 件</p>
+            <p className="truncate text-lg font-black text-slate-900">{formatCents(cartTotal)}</p>
+          </div>
+          <button onClick={checkout} disabled={!cartCount || submitting} className="shrink-0 rounded-2xl bg-budu-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
+        </div>
+      </div>}
+
+      {!isDesktop && cartOpen && (
+        <div className="fixed inset-0 z-[90]" role="dialog" aria-modal="true" aria-label="购物车">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setCartOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-3xl bg-white shadow-2xl" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4">
+              <ShoppingCart className="h-5 w-5 text-budu-600" />
+              <h2 className="ml-2 font-bold">当前订单</h2>
+              <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span>
+              <button onClick={() => setCartOpen(false)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="关闭"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+              {cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(({ product, quantity }) => <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}</p></div><button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div><div className="mt-3 flex items-center"><strong className="text-sm text-budu-600">{formatCents(BigInt(product.salePriceCents) * BigInt(quantity))}</strong><div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white"><button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button><span className="w-9 text-center text-sm font-bold">{quantity}</span><button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button></div></div></div>)}
+            </div>
+            <div className="shrink-0 border-t border-slate-100 p-4">
+              <div className="mb-3 flex items-end justify-between">
+                <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
+                <button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>
+              </div>
+              <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting} className="w-full rounded-2xl bg-budu-500 py-3.5 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
