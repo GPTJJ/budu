@@ -148,6 +148,22 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
   res.json({ ok: true, total, rows: rows.map(serializeOrder) })
 }))
 
+posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (req.user.role !== 'developer') throw httpError('仅开发者可删除订单', 403)
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!order) throw httpError('订单不存在', 404)
+  await prisma.$transaction(async (tx) => {
+    await tx.paymentLog.deleteMany({ where: { orderId: order.id } })
+    await tx.refund.deleteMany({ where: { orderId: order.id } })
+    await tx.payment.deleteMany({ where: { orderId: order.id } })
+    await tx.orderItem.deleteMany({ where: { orderId: order.id } })
+    await tx.order.delete({ where: { id: order.id } })
+  })
+  res.json({ ok: true })
+}))
+
 posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)

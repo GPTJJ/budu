@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import * as XLSX from 'xlsx'
 
 test('订单记录页展示列表、筛选、明细与导出', async ({ page }) => {
   await page.goto('/tests/order-records-harness.html')
@@ -24,4 +25,25 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
   await page.getByRole('button', { name: '导出 Excel', exact: true }).click()
   const download = await downloadPromise
   expect(download.suggestedFilename()).toMatch(/budu订单记录_.+\.xlsx/)
+  const stream = await download.createReadStream()
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  const wb = XLSX.read(Buffer.concat(chunks), { type: 'buffer' })
+  expect(wb.SheetNames).toEqual(['订单列表', '商品明细'])
+  const orderSheet = XLSX.utils.sheet_to_json(wb.Sheets['订单列表'], { header: 1 })
+  expect(orderSheet[0]).toContain('商品明细')
+  expect(orderSheet.some((row) => row.includes('卡皮巴拉布丁×1'))).toBe(true)
+  const itemSheet = XLSX.utils.sheet_to_json(wb.Sheets['商品明细'], { header: 1 })
+  expect(itemSheet[0]).toEqual(['订单号', '商品名称', 'SKU', '单价（元）', '数量', '小计（元）'])
+  expect(itemSheet.some((row) => row.includes('卡皮巴拉布丁'))).toBe(true)
+})
+
+test('开发者可删除订单，删除后列表刷新', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.goto('/tests/order-records-harness.html')
+  await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: /删除/ }).first().click()
+  await expect(page.getByText('共 1 笔订单', { exact: true })).toBeVisible()
+  await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toBeVisible()
 })

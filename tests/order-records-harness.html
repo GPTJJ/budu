@@ -44,6 +44,14 @@
         })
         return json({ ok: true, total: filtered.length, rows: filtered })
       }
+      const deleteMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)$/)
+      if (deleteMatch && options.method === 'DELETE') {
+        const id = decodeURIComponent(deleteMatch[1])
+        const index = orders.findIndex((order) => order.id === id)
+        if (index === -1) return json({ error: '订单不存在' }, 404)
+        orders.splice(index, 1)
+        return json({ ok: true })
+      }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 
