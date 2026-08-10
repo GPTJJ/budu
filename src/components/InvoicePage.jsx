@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, Camera, Copy, ImageUp, Loader2, Plus, Receipt, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarClock, Camera, Copy, ImageUp, Loader2, Mail, MapPin, Plus, Receipt, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
@@ -438,7 +438,7 @@ export default function InvoicePage({ currentUser, onBack }) {
             </button>
           </div>
         </div>
-        <div className="max-h-[520px] divide-y divide-slate-50 overflow-y-auto">
+        <div className="space-y-3 p-3 sm:max-h-[520px] sm:space-y-0 sm:divide-y sm:divide-slate-50 sm:overflow-y-auto sm:p-0">
           {rows.map((r) => (
             <div
               key={r.id}
@@ -446,75 +446,87 @@ export default function InvoicePage({ currentUser, onBack }) {
               tabIndex={tab === 'pending' ? 0 : undefined}
               onClick={tab === 'pending' ? () => copyRow(r) : undefined}
               onKeyDown={tab === 'pending' ? (e) => e.key === 'Enter' && copyRow(r) : undefined}
-              className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 ${
-                tab === 'pending' ? 'cursor-pointer transition hover:bg-slate-50' : ''
+              className={`rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:flex sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-5 sm:py-3 sm:shadow-none ${
+                tab === 'pending' ? 'cursor-pointer transition hover:border-budu-100 hover:bg-slate-50' : ''
               }`}
               title={tab === 'pending' ? t('点击复制抬头/税号/邮箱等信息') : undefined}
             >
-              <span
-                className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
-                  r.titleType === 'company' ? 'bg-budu-50 text-budu-600' : 'bg-budu-50 text-budu-600'
-                }`}
-              >
-                {t(r.titleType === 'company' ? '公司' : '个人')}
-              </span>
-              <span
-                className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
-                  r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                }`}
-              >
-                {t(r.status === 'done' ? '已开票' : '待开票')}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-700">
+              <div className="flex items-center gap-2 sm:contents">
+                <span className="shrink-0 rounded-lg bg-budu-50 px-2 py-0.5 text-[11px] font-bold text-budu-600">
+                  {t(r.titleType === 'company' ? '公司' : '个人')}
+                </span>
+                <span
+                  className={`shrink-0 rounded-lg px-2 py-0.5 text-[11px] font-bold ${
+                    r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                  }`}
+                >
+                  {t(r.status === 'done' ? '已开票' : '待开票')}
+                </span>
+                <span className="ml-auto shrink-0 text-lg font-black tabular-nums text-slate-800 sm:hidden">¥{yuan(r.amountCents)}</span>
+              </div>
+
+              <div className="mt-3 min-w-0 flex-1 sm:mt-0">
+                <p className="break-words text-[15px] font-bold leading-6 text-slate-800 [overflow-wrap:anywhere] sm:text-sm sm:font-semibold sm:text-slate-700">
                   {r.companyName || '—'}
-                  {r.taxNo && <span className="ml-2 font-normal text-slate-400">{r.taxNo}</span>}
+                  {r.taxNo && <span className="ml-2 hidden font-normal text-slate-400 sm:inline">{r.taxNo}</span>}
                 </p>
-                <p className="mt-0.5 text-[11px] text-slate-400">
+                {r.taxNo && <p className="mt-1 break-all font-mono text-xs leading-5 text-slate-400 sm:hidden">{r.taxNo}</p>}
+
+                <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 rounded-xl bg-slate-50/80 p-3 text-xs text-slate-500 sm:hidden">
+                  <p className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-slate-300" /><span className="truncate">{storeName(r.storeKey)}</span></p>
+                  <p className="truncate text-right">{t(r.category)}</p>
+                  <p className="col-span-2 flex min-w-0 items-start gap-1.5"><Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300" /><span className="min-w-0 break-all">{r.email || '—'}</span></p>
+                  <p className="col-span-2 flex min-w-0 items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5 shrink-0 text-slate-300" /><span>{fmtTime(r.createdAt)}</span><span className="ml-auto shrink-0 text-slate-400">{r.createdBy}</span></p>
+                </div>
+
+                <p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
                   {storeName(r.storeKey)} · {t(r.category)} · {r.email} · {fmtTime(r.createdAt)} · {r.createdBy}
                 </p>
               </div>
-              <span className="text-sm font-bold text-slate-800">¥{yuan(r.amountCents)}</span>
-              {tab === 'pending' && (
+              <span className="hidden shrink-0 text-sm font-bold tabular-nums text-slate-800 sm:block">¥{yuan(r.amountCents)}</span>
+
+              <div className="mt-3 flex items-stretch gap-2 sm:mt-0 sm:items-center">
+                {tab === 'pending' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      copyRow(r)
+                    }}
+                    className="flex min-h-10 flex-1 items-center justify-center gap-1 rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100 sm:min-h-0 sm:flex-none sm:rounded-lg sm:px-2.5 sm:py-1.5"
+                    aria-label={t('复制信息')}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    {t('复制信息')}
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    copyRow(r)
+                    toggleStatus(r)
                   }}
-                  className="flex items-center gap-1 rounded-lg bg-budu-50 px-2.5 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
-                  aria-label={t('复制信息')}
+                  className={`min-h-10 flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition sm:min-h-0 sm:flex-none sm:rounded-lg sm:px-2.5 sm:py-1.5 ${
+                    r.status === 'done'
+                      ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                  }`}
                 >
-                  <Copy className="h-3.5 w-3.5" />
-                  {t('复制信息')}
+                  {t(r.status === 'done' ? '标记待开票' : '标记已开票')}
                 </button>
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  toggleStatus(r)
-                }}
-                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                  r.status === 'done'
-                    ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                }`}
-              >
-                {t(r.status === 'done' ? '标记待开票' : '标记已开票')}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  remove(r.id)
-                }}
-                className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                aria-label={t('删除')}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    remove(r.id)
+                  }}
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-100 text-slate-300 transition hover:border-rose-100 hover:bg-rose-50 hover:text-rose-500 sm:h-auto sm:w-auto sm:border-0 sm:p-1.5"
+                  aria-label={t('删除')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           ))}
           {rows.length === 0 && (
-            <p className="grid place-items-center py-10 text-xs text-slate-300">
+            <p className="grid place-items-center py-10 text-xs text-slate-300 sm:mx-0">
               {t(tab === 'done' ? '暂无已开票记录' : '暂无待开票记录')}
             </p>
           )}
