@@ -9,6 +9,7 @@ APP_DIR="$3"
 SHA="$4"
 
 SSH_ARGS=(ssh -o BatchMode=yes -o ConnectTimeout=15)
+SCP_ARGS=(scp -o BatchMode=yes -o ConnectTimeout=15)
 run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
@@ -28,31 +29,49 @@ echo "==> 部署目标：$USER@$HOST:$APP_DIR（$SHA）"
 PREV="$(run_remote "cat .current-sha 2>/dev/null || true")"
 echo "==> 当前线上版本：${PREV:-（无记录）}"
 
+BUNDLE_PATH="/tmp/budu-release-$SHA.bundle"
+LOCAL_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-release.XXXXXX")"
+trap 'rm -f "$LOCAL_BUNDLE"' EXIT
+if [ "$(git rev-parse HEAD)" = "$SHA" ]; then
+  echo "==> 生成并上传离线发布包"
+  git bundle create "$LOCAL_BUNDLE" HEAD
+  "${SCP_ARGS[@]}" "$LOCAL_BUNDLE" "$USER@$HOST:$BUNDLE_PATH"
+else
+  echo "==> 本地 HEAD 与目标版本不一致，跳过离线发布包"
+fi
+
 BACKUP_NAME="predeploy-${SHA}-$(date -u +%Y%m%dT%H%M%SZ).sql"
 echo "==> 迁移前备份 PostgreSQL：~/.budu-backups/$BACKUP_NAME"
 run_remote "mkdir -p \"\$HOME/.budu-backups\" && docker compose exec -T postgres sh -lc 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"' > \"\$HOME/.budu-backups/$BACKUP_NAME\" && test -s \"\$HOME/.budu-backups/$BACKUP_NAME\" && chmod 600 \"\$HOME/.budu-backups/$BACKUP_NAME\""
 echo "==> PostgreSQL 备份完成"
 
-echo "==> 拉取 GitHub 最新代码（网络波动时最多重试 4 次）..."
 FETCHED=0
-for attempt in 1 2 3 4; do
-  if run_remote "git -c http.version=HTTP/1.1 fetch origin main"; then
-    FETCHED=1
-    break
-  fi
-  if [ "$attempt" -lt 4 ]; then
-    echo "==> 第 $attempt 次拉取失败，15 秒后重试..."
-    sleep 15
-  fi
-done
+if run_remote "test -s '$BUNDLE_PATH'"; then
+  echo "==> 使用 Actions 上传的离线发布包"
+  run_remote "git fetch '$BUNDLE_PATH' HEAD"
+  FETCHED=1
+else
+  echo "==> 未找到离线发布包，改从 GitHub 拉取（网络波动时最多重试 4 次）..."
+  for attempt in 1 2 3 4; do
+    if run_remote "git -c http.version=HTTP/1.1 fetch origin main"; then
+      FETCHED=1
+      break
+    fi
+    if [ "$attempt" -lt 4 ]; then
+      echo "==> 第 $attempt 次拉取失败，15 秒后重试..."
+      sleep 15
+    fi
+  done
+fi
 
 if [ "$FETCHED" -ne 1 ]; then
-  echo "==> 无法从 GitHub 拉取代码，保留当前线上版本"
+  echo "==> 无法获取发布代码，保留当前线上版本"
   exit 1
 fi
 run_remote "git checkout --force '$SHA'"
 run_remote "docker compose up -d --build"
 run_remote "docker compose restart nginx"
+run_remote "rm -f '$BUNDLE_PATH'"
 
 echo "==> 等待健康检查（最多 90 秒）..."
 if wait_healthy 18; then
