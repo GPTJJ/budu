@@ -100,6 +100,13 @@ function replayOrder(existing, user, storeId, cartHash) {
   return existing
 }
 
+posRouter.get('/pos/config', wrap(async (req, res) => {
+  requirePosUser(req.user)
+  const mode = paymentMode()
+  const channels = mode === 'mock' ? ['wechat', 'alipay', 'cash'] : ['cash']
+  res.json({ mode, mock: mode === 'mock', channels })
+}))
+
 posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
