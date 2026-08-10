@@ -64,6 +64,7 @@ export function buildOrderSnapshot(products, items, options = {}) {
       productId: product.id,
       productNameSnapshot: product.name,
       skuSnapshot: product.sku,
+      skuId: product.sku || '',
       unitSnapshot: product.unit || '',
       unitPrice,
       costPriceSnapshot,

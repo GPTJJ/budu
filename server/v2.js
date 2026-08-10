@@ -317,6 +317,15 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date, incCents, ord, staffNames, version } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const store = await prisma.store.findUnique({ where: { key: storeKey } })
+  const effDate = store?.salesDataSourceEffectiveDate ? store.salesDataSourceEffectiveDate.toISOString().slice(0, 10) : ''
+  const source = store?.salesDataSource === 'manual' || (effDate && date && String(date).slice(0, 10) < effDate)
+    ? 'manual'
+    : (store?.salesDataSource || 'manual')
+  if (source === 'pos') throw bad('该门店已接入 POS，营业数据自动同步，不可人工修改', 403)
+  if (source === 'hybrid' && !['developer', 'manager'].includes(req.user.role)) {
+    throw bad('混合模式门店的营业数据由 POS 同步，员工不可直接修改', 403)
+  }
   const d = dateOnly(date)
   const cents = Number(incCents)
   const orderCount = Number(ord)
@@ -326,6 +335,9 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const composite = { storeKey, date: d }
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: composite } })
+  if (existing?.status === 'confirmed' && !['developer', 'manager'].includes(req.user.role)) {
+    throw bad('日报已确认，普通员工不可修改', 409)
+  }
   if (existing && version != null && existing.version !== Number(version)) {
     return res.status(409).json({
       error: '数据已被他人修改，已加载最新数据',
@@ -341,10 +353,29 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
     })
   }
   const base = { incCents: BigInt(cents), ord: orderCount, staffNames: names, updatedBy: req.user.username }
-  const saved = await prisma.dailyEntry.upsert({
-    where: { storeKey_date: composite },
-    update: { ...base, version: { increment: 1 }, updatedAt: new Date() },
-    create: { id: `de-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey, date: d, ...base, version: existing ? existing.version + 1 : 1 },
+  const saved = await prisma.$transaction(async (tx) => {
+    const row = await tx.dailyEntry.upsert({
+      where: { storeKey_date: composite },
+      update: { ...base, version: { increment: 1 }, updatedAt: new Date() },
+      create: { id: `de-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey, date: d, ...base, version: existing ? existing.version + 1 : 1 },
+    })
+    if (existing && (existing.incCents !== BigInt(cents) || existing.ord !== orderCount || JSON.stringify(existing.staffNames) !== JSON.stringify(names))) {
+      await tx.dailyEntryAuditLog.create({
+        data: {
+          id: `audit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          storeId: storeKey,
+          date: d,
+          module: 'sales_manual',
+          fieldName: 'incCents_ord_staffNames',
+          beforeValue: { incCents: existing.incCents.toString(), ord: existing.ord, staffNames: existing.staffNames },
+          afterValue: { incCents: String(cents), ord: orderCount, staffNames: names },
+          reason: '人工营业数据保存',
+          operatorId: req.user.id,
+          operatorName: req.user.username,
+        },
+      })
+    }
+    return row
   })
   res.json({
     ok: true,

@@ -84,6 +84,7 @@ function serializeOrder(order) {
     subtotal: order.subtotal.toString(),
     discountAmount: order.discountAmount.toString(),
     payableAmount: order.payableAmount.toString(),
+    businessDate: order.businessDate ? order.businessDate.toISOString().slice(0, 10) : null,
     discountPercent: order.discountPercent ?? 100,
     remark: order.remark || '',
     status: order.status,
@@ -231,6 +232,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   const products = await prisma.inventoryItem.findMany({ where: { id: { in: normalizedItems.map((item) => item.productId) } } })
   const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
   const now = new Date()
+  const businessDate = new Date(`${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00.000Z`)
   const id = `ord-${crypto.randomUUID()}`
   const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
 
@@ -239,9 +241,10 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
       data: {
         id, orderNo, storeId, cashierId: req.user.id, cashierNameSnapshot: req.user.username,
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
+        businessDate,
         discountPercent: snapshot.discountPercent, remark: snapshot.remark,
         checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
-        items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
+        items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line, discountAmount: 0n, actualAmount: line.lineAmount })) },
       },
       include: orderInclude(),
     })

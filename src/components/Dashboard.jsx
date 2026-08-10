@@ -199,7 +199,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   user={user}
                 />
               ) : isStoreEntryView && user?.role !== 'public' ? (
-                <StoreEntryPage onBack={() => setView('overview')} />
+                <StoreEntryPage user={user} onBack={() => setView('overview')} />
               ) : isScheduleView ? (
                 <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
               ) : isMailingView && user?.role !== 'public' ? (

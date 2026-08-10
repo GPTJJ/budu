@@ -8,23 +8,26 @@ datasource db {
 }
 
 model Store {
-  key                String              @id
-  name               String              @unique
-  district           String              @default("")
-  createdAt          DateTime            @default(now())
-  staff              Staff[]
-  entries            DailyEntry[]
-  stock              StockBalance[]
-  ledger             StockLedger[]
-  transferOut        TransferRequest[]   @relation("TransferFrom")
-  transferIn         TransferRequest[]   @relation("TransferTo")
-  purchases          PurchaseRequest[]
-  waste              WasteRecord[]
-  expenses           Expense[]
-  invoices           Invoice[]
-  bigBonuses         BigOrderBonus[]
-  memberConsumptions MemberConsumption[]
-  orders             Order[]
+  key                          String              @id
+  name                         String              @unique
+  district                     String              @default("")
+  salesDataSource              String              @default("manual") @map("sales_data_source")
+  salesDataSourceEffectiveDate DateTime?           @map("sales_data_source_effective_date")
+  createdAt                    DateTime            @default(now())
+  staff                        Staff[]
+  entries                      DailyEntry[]
+  dailyStaff                   DailyStoreStaff[]
+  stock                        StockBalance[]
+  ledger                       StockLedger[]
+  transferOut                  TransferRequest[]   @relation("TransferFrom")
+  transferIn                   TransferRequest[]   @relation("TransferTo")
+  purchases                    PurchaseRequest[]
+  waste                        WasteRecord[]
+  expenses                     Expense[]
+  invoices                     Invoice[]
+  bigBonuses                   BigOrderBonus[]
+  memberConsumptions           MemberConsumption[]
+  orders                       Order[]
 }
 
 model User {
@@ -48,18 +51,69 @@ model Staff {
 }
 
 model DailyEntry {
-  id         String   @id
-  storeKey   String
-  date       DateTime @db.Date
-  incCents   BigInt   @default(0)
-  ord        Int      @default(0)
-  staffNames Json     @default("[]")
-  version    Int      @default(1)
-  updatedBy  String   @default("")
-  updatedAt  DateTime @default(now()) @updatedAt
-  store      Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  id                      String    @id
+  storeKey                String
+  date                    DateTime  @db.Date
+  incCents                BigInt    @default(0)
+  ord                     Int       @default(0)
+  staffNames              Json      @default("[]")
+  status                  String    @default("draft")
+  salesDataStatus         String    @default("not_applicable") @map("sales_data_status")
+  posSyncAt               DateTime? @map("pos_sync_at")
+  hybridAdjustmentCents   BigInt    @default(0) @map("hybrid_adjustment_cents")
+  hybridAdjustmentNote    String    @default("") @map("hybrid_adjustment_note")
+  confirmedAt             DateTime? @map("confirmed_at")
+  confirmedBy             String    @default("") @map("confirmed_by")
+  version                 Int       @default(1)
+  updatedBy               String    @default("")
+  updatedAt               DateTime  @default(now()) @updatedAt
+  store                   Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@unique([storeKey, date])
+}
+
+model DailyStoreStaff {
+  id                  String   @id
+  storeId             String   @map("store_id")
+  date                DateTime @db.Date
+  staffId             String   @map("staff_id")
+  staffNameSnapshot   String   @default("") @map("staff_name_snapshot")
+  shiftId             String   @default("") @map("shift_id")
+  scheduledStartTime  String   @default("") @map("scheduled_start_time")
+  scheduledEndTime    String   @default("") @map("scheduled_end_time")
+  actualStartTime     String   @default("") @map("actual_start_time")
+  actualEndTime       String   @default("") @map("actual_end_time")
+  breakMinutes        Int      @default(0) @map("break_minutes")
+  scheduledHours      Float    @default(0) @map("scheduled_hours")
+  actualHours         Float    @default(0) @map("actual_hours")
+  attendanceStatus    String   @default("normal") @map("attendance_status")
+  source              String   @default("manual")
+  createdBy           String   @default("") @map("created_by")
+  updatedBy           String   @default("") @map("updated_by")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+  store               Store    @relation(fields: [storeId], references: [key], onDelete: Cascade)
+
+  @@unique([storeId, date, staffId])
+  @@index([storeId, date])
+  @@map("daily_store_staff")
+}
+
+model DailyEntryAuditLog {
+  id           String   @id
+  storeId      String   @map("store_id")
+  date         DateTime @db.Date
+  module       String   @default("")
+  fieldName    String   @default("") @map("field_name")
+  beforeValue  Json?    @map("before_value")
+  afterValue   Json?    @map("after_value")
+  reason       String   @default("")
+  operatorId   String   @default("") @map("operator_id")
+  operatorName String   @default("") @map("operator_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([storeId, date])
+  @@map("daily_entry_audit_logs")
 }
 
 model InventoryItem {
@@ -97,6 +151,7 @@ model Order {
   subtotal            BigInt      @default(0)
   discountAmount      BigInt      @default(0) @map("discount_amount")
   payableAmount       BigInt      @default(0) @map("payable_amount")
+  businessDate        DateTime?   @db.Date @map("business_date")
   discountPercent     Int         @default(100) @map("discount_percent")
   remark              String      @default("")
   status              String      @default("draft")
@@ -229,8 +284,11 @@ model OrderItem {
   unitSnapshot        String        @default("") @map("unit_snapshot")
   unitPrice           BigInt        @map("unit_price")
   costPriceSnapshot   BigInt        @map("cost_price_snapshot")
+  skuId               String        @default("") @map("sku_id")
   quantity            Int
   lineAmount          BigInt        @map("line_amount")
+  discountAmount      BigInt        @default(0) @map("discount_amount")
+  actualAmount        BigInt        @default(0) @map("actual_amount")
   isGift              Boolean       @default(false) @map("is_gift")
   order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
