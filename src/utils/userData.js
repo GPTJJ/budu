@@ -68,8 +68,6 @@ export async function loadUserData() {
     products: Array.isArray(data.products) ? data.products : [],
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
-    dailySales: {},
-    dishDaily: [],
     bigBonuses: [],
   }
   // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
@@ -91,14 +89,12 @@ export async function loadUserData() {
   } catch {
     /* v2 不可用时回退 KV */
   }
-  // v2（PostgreSQL）为申请单/库存/美团数据源
+  // v2（PostgreSQL）为申请单/库存数据源
   try {
-    const [transfers, purchases, stock, sales, dishes] = await Promise.all([
+    const [transfers, purchases, stock] = await Promise.all([
       api('/v2/transfer-requests'),
       api('/v2/purchase-requests'),
       api('/v2/stock'),
-      api('/v2/daily-sales'),
-      api('/v2/dish-daily'),
     ])
     const reqs = []
     for (const r of (transfers && transfers.rows) || []) {
@@ -151,12 +147,6 @@ export async function loadUserData() {
       updatedAt: r.updatedAt,
       updatedBy: '',
     }))
-    const salesMap = {}
-    for (const r of (sales && sales.rows) || []) {
-      salesMap[`${r.date.slice(0, 7)}|${r.storeKey}|${r.date.slice(5)}`] = r
-    }
-    cached.dailySales = salesMap
-    cached.dishDaily = (dishes && dishes.rows) || []
     try {
       const bb = await api('/v2/big-bonuses')
       cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
@@ -209,12 +199,10 @@ export function getUserData() {
       products: Array.isArray(mirror.products) ? mirror.products : [],
       inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
       inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
-      dailySales: mirror.dailySales && typeof mirror.dailySales === 'object' ? mirror.dailySales : {},
-      dishDaily: Array.isArray(mirror.dishDaily) ? mirror.dishDaily : [],
       bigBonuses: Array.isArray(mirror.bigBonuses) ? mirror.bigBonuses : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], dailySales: {}, dishDaily: [], bigBonuses: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [] }
 }
 
 export function getEntries() {
@@ -373,16 +361,6 @@ export function commitInventoryState(inventory, requests) {
   data.inventory = inventory
   data.inventoryRequests = requests
   syncUserData()
-}
-
-export function getDailySales() {
-  const d = getUserData().dailySales
-  return d && typeof d === 'object' ? d : {}
-}
-
-export function getDishDaily() {
-  const d = getUserData().dishDaily
-  return Array.isArray(d) ? d : []
 }
 
 export function commitRemovedStaff(removedStaff) {

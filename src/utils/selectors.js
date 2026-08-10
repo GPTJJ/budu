@@ -9,8 +9,6 @@ import {
   getRemovedStaff,
   getStores,
   getProducts,
-  getDailySales,
-  getDishDaily,
   getBigBonuses,
 } from './userData.js'
 import { formatMoney } from './format.js'
@@ -164,27 +162,6 @@ export function dailyRows(monthKey, storeKey) {
       }
       for (const f of SUM_FIELDS) cur[f] += ov[f] || 0
       cur.local = true
-    }
-  }
-  // 美团实时数据（M4）：覆盖当日营业额/订单/渠道，保留手工值班人员
-  const sales = getDailySales()
-  for (const [k, s] of Object.entries(sales)) {
-    const parts = k.split('|')
-    if (parts.length !== 3 || parts[0] !== monthKey) continue
-    if (storeKey !== 'all' && parts[1] !== storeKey) continue
-    let row = map.get(parts[2])
-    if (!row) {
-      row = { d: parts[2] }
-      for (const f of SUM_FIELDS) row[f] = 0
-      map.set(parts[2], row)
-    }
-    row.inc = Number(s.incCents) / 100
-    row.ord = Number(s.ord) || 0
-    row.meituan = true
-    for (const ch of (s.channels || [])) {
-      const cents = Number(ch.amountCents) || 0
-      if (ch.name === '美团外卖') row.mt = cents / 100
-      else if (ch.name === '店内销售') row.inStore = cents / 100
     }
   }
   return [...map.values()].sort((a, b) => a.d.localeCompare(b.d))
@@ -747,38 +724,6 @@ export function products(monthKey, storeKey) {
       discount: 0,
       custom: true,
     })
-  }
-  // 美团菜品（M4）：仅合并已映射到系统商品的数据
-  const dishMap = new Map()
-  for (const d of getDishDaily()) {
-    if (!d.productName) continue
-    if (d.date.slice(0, 7) !== monthKey) continue
-    if (storeKey !== 'all' && d.storeKey !== storeKey) continue
-    const key = storeKey === 'all' ? `${d.storeKey}::${d.productName}` : d.productName
-    const cur = dishMap.get(key) || {
-      name: d.productName,
-      storeKey: d.storeKey,
-      storeName: storeName(d.storeKey),
-      sales: 0,
-      amount: 0,
-      income: 0,
-      discount: 0,
-      custom: true,
-      meituan: true,
-    }
-    cur.sales += d.sales
-    cur.amount += Number(d.amountCents) / 100
-    dishMap.set(key, cur)
-  }
-  for (const p of dishMap.values()) {
-    const key = storeKey === 'all' ? `${p.storeKey}::${p.name}` : p.name
-    const existing = map.get(key)
-    if (existing && !existing.meituan) {
-      existing.sales += p.sales
-      existing.amount += p.amount
-    } else {
-      map.set(key, p)
-    }
   }
   return [...map.values()].sort((a, b) => b.amount - a.amount)
 }
