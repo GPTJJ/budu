@@ -189,7 +189,7 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   requirePosUser(req.user)
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
-  const allowed = req.user.role === 'developer' || (req.user.role === 'manager' && canStore(req.user, current.storeId))
+  const allowed = req.user.role !== 'public' && canStore(req.user, current.storeId)
   if (!allowed) throw httpError('无退款权限', 403)
   const result = await paymentService.createRefund({
     orderId: current.id,

@@ -255,7 +255,7 @@ export default function OrderRecordsPage({ user, onBack }) {
                       {user.role === 'developer' && (
                         <button onClick={() => removeOrder(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50" aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-3.5 w-3.5" />删除</button>
                       )}
-                      {(user.role === 'developer' || user.role === 'manager') && orderRemainingCents(order) > 0n && (
+                      {user.role !== 'public' && orderRemainingCents(order) > 0n && (
                         <button onClick={() => openRefund(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-orange-600 hover:bg-orange-50" aria-label={`退款 ${order.orderNo}`}><Download className="h-3.5 w-3.5" />退款</button>
                       )}
                       <button onClick={() => setDetail(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-budu-600 hover:bg-budu-50"><Package className="h-3.5 w-3.5" />明细</button>
