@@ -31,7 +31,7 @@ verify_frontend_path() {
   local nginx_hash=""
   for i in $(seq 1 "$tries"); do
     api_hash="$(run_remote "docker compose exec -T api sha256sum /app/dist/index.html | cut -d ' ' -f1" 2>/dev/null || true)"
-    nginx_hash="$(run_remote "docker compose exec -T nginx wget --no-check-certificate -qO- https://127.0.0.1/ | sha256sum | cut -d ' ' -f1" 2>/dev/null || true)"
+    nginx_hash="$(run_remote "docker compose exec -T nginx wget -T 5 -qO- http://api:3000/ | sha256sum | cut -d ' ' -f1" 2>/dev/null || true)"
     if [ -n "$api_hash" ] && [ "$api_hash" = "$nginx_hash" ]; then
       echo "==> 前端链路校验通过：$api_hash"
       return 0
@@ -87,7 +87,7 @@ if [ "$FETCHED" -ne 1 ]; then
 fi
 run_remote "git checkout --force '$SHA'"
 run_remote "docker compose up -d --build"
-run_remote "docker compose up -d --force-recreate nginx"
+run_remote "docker compose up -d --no-deps --force-recreate nginx"
 run_remote "rm -f '$BUNDLE_PATH'"
 
 echo "==> 等待健康检查（最多 90 秒）..."
@@ -102,7 +102,7 @@ echo "==> 健康检查失败，开始回滚"
 if [ -n "$PREV" ]; then
   run_remote "git checkout --force '$PREV'"
   run_remote "docker compose up -d --build"
-  run_remote "docker compose up -d --force-recreate nginx"
+  run_remote "docker compose up -d --no-deps --force-recreate nginx"
   if wait_healthy 12 && verify_frontend_path 12; then
     run_remote "echo '$PREV' > .current-sha"
     echo "==> 已回滚到 $PREV"
