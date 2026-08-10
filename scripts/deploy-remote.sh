@@ -52,6 +52,7 @@ if [ "$FETCHED" -ne 1 ]; then
 fi
 run_remote "git checkout --force '$SHA'"
 run_remote "docker compose up -d --build"
+run_remote "docker compose restart nginx"
 
 echo "==> 等待健康检查（最多 90 秒）..."
 if wait_healthy 18; then
@@ -65,6 +66,7 @@ echo "==> 健康检查失败，开始回滚"
 if [ -n "$PREV" ]; then
   run_remote "git checkout --force '$PREV'"
   run_remote "docker compose up -d --build"
+  run_remote "docker compose restart nginx"
   if wait_healthy 12; then
     run_remote "echo '$PREV' > .current-sha"
     echo "==> 已回滚到 $PREV"
