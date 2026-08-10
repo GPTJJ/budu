@@ -23,7 +23,8 @@ function todayStr() {
 const inputCls = 'input'
 
 function staffIdFor(storeKey, name) {
-  return `st-${storeKey}-${String(name).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
+  const encoded = [...String(name)].map((ch) => ch.codePointAt(0).toString(36)).join('')
+  return `st-${storeKey}-${encoded.slice(0, 64)}`
 }
 
 function Field({ label, icon: Icon, children }) {
