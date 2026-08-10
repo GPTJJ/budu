@@ -21,6 +21,7 @@ import { api } from '../utils/api'
 import { PRODUCT_CATEGORIES, MATERIAL_NAMES, FIXED_BY_CATEGORY, classifyProduct } from '../utils/productCategories'
 import { resolveItemCategory } from '../utils/itemCategory'
 import InventoryListModal from './InventoryListModal'
+import ShipTransferModal from './ShipTransferModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
 
@@ -101,9 +102,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [version, setVersion] = useState(0)
+  const [shipEdit, setShipEdit] = useState(null)
 
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const productNames = [...new Set(products(month, 'all').map((p) => p.name))].slice(0, 100)
+  const shipCatalog = [...new Set([...productNames, ...Object.values(FIXED_BY_CATEGORY).flat()])]
   const filteredProducts = productNames.filter((n) => classifyProduct(n) === productCategory)
   const categoryProducts = [
     ...new Set([...(FIXED_BY_CATEGORY[productCategory] || []), ...filteredProducts]),
@@ -1041,7 +1044,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                       {t('驳回')}
                     </button>
                     <button
-                      onClick={() => runTransferAction(r, 'ship')}
+                      onClick={() => setShipEdit(r)}
                       className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
                     >
                       <Truck className="h-3.5 w-3.5" />
@@ -1156,6 +1159,30 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         </div>
       )}
 
+      {shipEdit && (
+        <ShipTransferModal
+          request={shipEdit}
+          catalog={shipCatalog}
+          storeDisplay={storeDisplay}
+          onClose={() => setShipEdit(null)}
+          onConfirm={async (items) => {
+            try {
+              await api(`/v2/transfer-requests/${shipEdit.id}/ship`, {
+                method: 'POST',
+                body: JSON.stringify({ items }),
+              })
+              await loadUserData()
+              setVersion((v) => v + 1)
+              setSavedTip(t('已确认发货，申请已完成'))
+              setTimeout(() => setSavedTip(''), 2400)
+              setShipEdit(null)
+            } catch (err) {
+              setError(t(err.message))
+              throw err
+            }
+          }}
+        />
+      )}
       {previewList && <InventoryListModal request={previewList} onClose={() => setPreviewList(null)} />}
     </div>
   )

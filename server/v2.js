@@ -446,12 +446,35 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!isManager(req.user) || !canStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
   // 调货仅保留发货/收货提醒与记录，不校验、不扣减库存；发货后立即完成
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
+  // 发货门店可提交修改后的货品清单（items），以修改后的内容为准
+  const bodyItems = req.body && req.body.items
+  const rows = Array.isArray(bodyItems) ? itemRows(bodyItems) : null
+  const resolved = rows
+    ? await Promise.all(rows.map(async (r) => ({ ...r, item: await upsertItem(r.name, r.category) })))
+    : null
+  await prisma.$transaction(async (tx) => {
+    if (resolved) {
+      await tx.transferItem.deleteMany({ where: { requestId: t.id } })
+      for (const r of resolved) {
+        await tx.transferItem.create({
+          data: {
+            id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+            requestId: t.id,
+            itemId: r.item.id,
+            quantity: r.quantity,
+            note: r.note,
+          },
+        })
+      }
+    }
+    await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
+  })
+  const final = await getTransfer(t.id)
   sendWechatMarkdown(
     '调货已发货',
-    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
+    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
   ).catch(() => {})
-  res.json({ ok: true, request: updated })
+  res.json({ ok: true, request: serializeTransfer(final) })
 }))
 
 v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
