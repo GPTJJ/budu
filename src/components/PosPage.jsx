@@ -323,8 +323,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setStage('ordering')
   }
 
+  const handleExit = () => {
+    // 未付款订单不残留：下次进入 POS 直接回到点单界面
+    savePendingOrder(user.id, storeId, '')
+    onExit()
+  }
+
   if (stores.length === 0) {
-    return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可用门店</h2><p className="mt-2 text-sm text-slate-400">请先让开发者为账号绑定门店。</p><button onClick={onExit} className="mt-6 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
+    return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可用门店</h2><p className="mt-2 text-sm text-slate-400">请先让开发者为账号绑定门店。</p><button onClick={handleExit} className="mt-6 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
   }
 
   if (stage === 'loading') {
@@ -351,7 +357,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       <>
         <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
-            <button onClick={() => { setScannerChannel(''); setStage('ordering') }} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
+            <button onClick={() => { savePendingOrder(user.id, storeId, ''); setScannerChannel(''); setCashConfirm(false); setStage('ordering') }} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
             <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
@@ -399,7 +405,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   if (stage === 'success' && order) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-emerald-50 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">{order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={onExit} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">退出 POS</button></div>
+        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">{order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={handleExit} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">退出 POS</button></div>
       </div>
     )
   }
@@ -407,7 +413,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   return (
     <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-800" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', touchAction: 'manipulation' }}>
       <header className="flex h-[60px] shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 lg:h-[72px] lg:px-4">
-        <button onClick={onExit} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button>
+        <button onClick={handleExit} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button>
         <strong className="hidden text-lg text-budu-600 sm:block">POS</strong>
         <label className="relative min-w-0 flex-1">
           <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />

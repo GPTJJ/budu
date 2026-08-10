@@ -177,3 +177,26 @@ test('手机端 POS：底部结算栏、分类横滑、购物车抽屉与结算'
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
   await expect(page.getByText('¥72.00', { exact: true })).toBeVisible()
 })
+
+test('未付款返回后再次进入 POS 不直接跳付款页', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=return-bug')
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '返回点单', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
+  await expect(page.getByText('合计 · 1 件', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '返回点单', exact: true }).click()
+  await page.getByRole('button', { name: '退出 POS', exact: true }).click()
+  await page.reload()
+  await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
+})
