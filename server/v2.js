@@ -5,6 +5,7 @@ import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
+import { resolveStoreName } from './store-names.js'
 
 export const v2Router = Router()
 
@@ -58,10 +59,11 @@ function isoDate(d) {
 }
 
 async function ensureStore(storeKey, name) {
+  const known = name || resolveStoreName(storeKey)
   return prisma.store.upsert({
     where: { key: storeKey },
-    update: {},
-    create: { key: storeKey, name: name || storeKey },
+    update: known && known !== storeKey ? { name: known } : {},
+    create: { key: storeKey, name: known || storeKey },
   })
 }
 
@@ -101,6 +103,8 @@ function serializeTransfer(r) {
     type: 'transfer',
     storeKey: r.toStoreKey,
     fromStoreKey: r.fromStoreKey,
+    storeName: r.toStore ? resolveStoreName(r.toStore.key, r.toStore.name) : '',
+    fromStoreName: r.fromStore ? resolveStoreName(r.fromStore.key, r.fromStore.name) : '',
     status: r.status,
     note: r.note,
     createdBy: r.createdBy,
@@ -122,6 +126,7 @@ function serializePurchase(r) {
     id: r.id,
     type: 'purchase',
     storeKey: r.storeKey,
+    storeName: r.store ? resolveStoreName(r.store.key, r.store.name) : '',
     status: r.status,
     supplier: r.supplier,
     expectedAt: r.expectedAt,
@@ -445,7 +450,7 @@ v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.transferRequest.findMany({
     where,
-    include: { items: { include: { item: true } } },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
     orderBy: { createdAt: 'desc' },
     take: 500,
   })
@@ -575,7 +580,7 @@ v2Router.get('/purchase-requests', wrap(async (req, res) => {
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.purchaseRequest.findMany({
     where,
-    include: { items: { include: { item: true } } },
+    include: { items: { include: { item: true } }, store: true },
     orderBy: { createdAt: 'desc' },
     take: 500,
   })
@@ -916,7 +921,11 @@ v2Router.put('/staff', wrap(async (req, res) => {
       const storeKey = String(s.storeKey || '').trim()
       if (!name || name.length > 30 || !storeKey || storeKey.length > 30) throw bad('员工数据不正确')
       if (allowed && !allowed.includes(storeKey)) throw bad('无权限', 403)
-      await tx.store.upsert({ where: { key: storeKey }, update: {}, create: { key: storeKey, name: storeKey } })
+      await tx.store.upsert({
+        where: { key: storeKey },
+        update: {},
+        create: { key: storeKey, name: resolveStoreName(storeKey) || storeKey },
+      })
       const id = `st-${storeKey}-${name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
       await tx.staff.upsert({
         where: { id },

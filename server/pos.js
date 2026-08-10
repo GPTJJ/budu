@@ -7,6 +7,7 @@ import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './p
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { assertOrderTransition } from './order-state.js'
+import { resolveStoreName } from './store-names.js'
 
 export const posRouter = Router()
 
@@ -78,7 +79,7 @@ function serializeOrder(order) {
     id: order.id,
     orderNo: order.orderNo,
     storeId: order.storeId,
-    storeName: order.store?.name || order.storeId,
+    storeName: order.store ? resolveStoreName(order.store.key, order.store.name) : order.storeId,
     cashierId: order.cashierId,
     cashierNameSnapshot: order.cashierNameSnapshot,
     subtotal: order.subtotal.toString(),

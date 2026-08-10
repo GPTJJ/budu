@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
+import { resolveStoreName } from './store-names.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -28,7 +29,7 @@ function canStore(user, storeId) {
 async function ensureStore(key) {
   const existing = await prisma.store.findUnique({ where: { key } })
   if (existing) return existing
-  return prisma.store.create({ data: { key, name: key, district: '' } })
+  return prisma.store.create({ data: { key, name: resolveStoreName(key) || key, district: '' } })
 }
 
 function dateOnly(value) {

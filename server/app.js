@@ -13,6 +13,8 @@ import { posRouter } from './pos.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
+import { prisma } from './pg.js'
+import { resolveStoreName } from './store-names.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -1021,6 +1023,28 @@ export function createApp() {
     }
     res.status(404).json({ error: '前端未构建，请先运行 npm run build' })
   })
+
+  // 门店名称自愈：静态报表中文名 + KV 门店名回填 PG，避免订单/推送显示字母 key
+  async function syncStoreNames() {
+    if (!process.env.DATABASE_URL) return
+    try {
+      const db = await loadDb()
+      const kvNames = new Map((Array.isArray(db.stores) ? db.stores : []).map((s) => [s.key, String(s.name || '')]))
+      const rows = await prisma.store.findMany()
+      let updated = 0
+      for (const row of rows) {
+        const name = resolveStoreName(row.key, kvNames.get(row.key) || '')
+        if (name && name !== row.name && name !== row.key) {
+          await prisma.store.update({ where: { key: row.key }, data: { name } })
+          updated += 1
+        }
+      }
+      console.log(`[store-names-sync] 完成，更新 ${updated} 家门店名称`)
+    } catch (error) {
+      console.error('[store-names-sync]', error.message)
+    }
+  }
+  syncStoreNames()
 
   return app
 }
