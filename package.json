@@ -13,6 +13,7 @@
     "start": "node server/index.js",
     "test:inventory": "node scripts/test-inventory-workflow.mjs",
     "test:pos": "node --test scripts/test-pos-core.mjs",
+    "test:payments": "node --test scripts/test-payment-foundation.mjs",
     "test:pos:browser": "playwright test tests/pos-ipad.spec.mjs",
     "test:ssr": "node scripts/smoke-render.mjs",
     "migrate:pg": "node scripts/migrate-kv-to-pg.mjs",

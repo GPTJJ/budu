@@ -38,11 +38,13 @@ export default function PosPage({ user, onExit }) {
   const [category, setCategory] = useState('全部')
   const [stage, setStage] = useState('loading')
   const [order, setOrder] = useState(null)
+  const [payment, setPayment] = useState(null)
   const [checkoutKey, setCheckoutKeyState] = useState('')
   const [sessionLoaded, setSessionLoaded] = useState(false)
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [paying, setPaying] = useState('')
+  const [queryingPayment, setQueryingPayment] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -67,6 +69,7 @@ export default function PosPage({ user, onExit }) {
     setCart(session.cart && typeof session.cart === 'object' ? session.cart : {})
     setCheckoutKeyState(session.checkoutKey)
     setOrder(null)
+    setPayment(null)
     setError('')
     const restoreId = session.successOrderId || session.pendingOrderId
     if (!restoreId) {
@@ -79,6 +82,7 @@ export default function PosPage({ user, onExit }) {
       .then((data) => {
         if (!active) return
         setOrder(data.order)
+        setPayment(data.order.payments?.[0] || null)
         if (data.order.status === 'completed') {
           savePendingOrder(user.id, storeId, '')
           saveSuccessOrder(user.id, storeId, data.order.id)
@@ -178,18 +182,28 @@ export default function PosPage({ user, onExit }) {
     setPaying(paymentMethod)
     setError('')
     try {
-      const data = await api(`/v2/pos/orders/${order.id}/complete`, {
+      const data = await api(`/v2/pos/orders/${order.id}/payments`, {
         method: 'POST',
-        body: JSON.stringify({ paymentMethod }),
+        body: JSON.stringify({
+          channel: paymentMethod,
+          requestKey: `${order.id}:${paymentMethod}:${createCheckoutKey()}`,
+        }),
       })
       setOrder(data.order)
-      setCart({})
-      savePosCart(user.id, storeId, {})
-      savePendingOrder(user.id, storeId, '')
-      saveSuccessOrder(user.id, storeId, data.order.id)
-      saveCheckoutKey(user.id, storeId, '')
-      setCheckoutKeyState('')
-      setStage('success')
+      setPayment(data.payment)
+      if (data.order.status === 'completed' && data.order.paymentStatus === 'paid') {
+        setCart({})
+        savePosCart(user.id, storeId, {})
+        savePendingOrder(user.id, storeId, '')
+        saveSuccessOrder(user.id, storeId, data.order.id)
+        saveCheckoutKey(user.id, storeId, '')
+        setCheckoutKeyState('')
+        setStage('success')
+      } else if (['failed', 'timeout'].includes(data.payment.status)) {
+        setError(data.payment.failureMessage || '支付未成功，可以重新选择支付方式')
+      } else {
+        setError('支付处理中，请稍后查询支付结果')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -197,10 +211,35 @@ export default function PosPage({ user, onExit }) {
     }
   }
 
+  const queryCurrentPayment = async () => {
+    if (!payment || queryingPayment) return
+    setQueryingPayment(true)
+    setError('')
+    try {
+      const data = await api(`/v2/pos/payments/${payment.id}/query`, { method: 'POST' })
+      setPayment(data.payment)
+      setOrder(data.order)
+      if (data.order.status === 'completed' && data.order.paymentStatus === 'paid') {
+        setCart({})
+        savePosCart(user.id, storeId, {})
+        savePendingOrder(user.id, storeId, '')
+        saveSuccessOrder(user.id, storeId, data.order.id)
+        setStage('success')
+      } else {
+        setError(data.payment.failureMessage || `当前支付状态：${data.payment.status}`)
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setQueryingPayment(false)
+    }
+  }
+
   const startNext = () => {
     clearPosTransaction(user.id, storeId)
     setCart({})
     setOrder(null)
+    setPayment(null)
     setCheckoutKeyState('')
     setQuery('')
     setCategory('全部')
@@ -222,6 +261,11 @@ export default function PosPage({ user, onExit }) {
           <button onClick={() => setStage('ordering')} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
           <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">模拟支付 · 不调用真实支付接口</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
           {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
+          {payment && !['success'].includes(payment.status) && (
+            <button disabled={queryingPayment} onClick={queryCurrentPayment} className="mx-auto mt-4 block rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+              {queryingPayment ? '查询中…' : '查询支付结果'}
+            </button>
+          )}
           <div className="mt-8 grid grid-cols-3 gap-4">
             <button disabled={Boolean(paying)} onClick={() => completePayment('wechat')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-6 font-bold text-emerald-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'wechat' ? '处理中…' : '微信支付'}</button>
             <button disabled={Boolean(paying)} onClick={() => completePayment('alipay')} className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-6 font-bold text-sky-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'alipay' ? '处理中…' : '支付宝'}</button>

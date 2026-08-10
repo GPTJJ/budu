@@ -15,6 +15,7 @@
     ]
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: [{ key: 'test-store', name: '测试门店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
     let order = JSON.parse(sessionStorage.getItem('__budu-pos-test-order') || 'null')
+    let payment = JSON.parse(sessionStorage.getItem('__budu-pos-test-payment') || 'null')
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
@@ -22,15 +23,18 @@
       if (path === '/api/v2/pos/orders' && options.method === 'POST') {
         const body = JSON.parse(options.body)
         const payable = body.items.reduce((sum, item) => sum + Number(products.find((p) => p.productId === item.productId).salePriceCents) * item.quantity, 0)
-        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(payable), discountAmount: '0', payableAmount: String(payable), status: 'pending', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', items: body.items }
+        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(payable), discountAmount: '0', payableAmount: String(payable), status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', items: body.items, payments: [] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         return json({ ok: true, order }, 201)
       }
-      if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order })
-      if (order && path === `/api/v2/pos/orders/${order.id}/complete`) {
-        order = { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: JSON.parse(options.body).paymentMethod, completedAt: new Date().toISOString() }
+      if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order: { ...order, payments: payment ? [payment] : [] } })
+      if (order && path === `/api/v2/pos/orders/${order.id}/payments`) {
+        const body = JSON.parse(options.body)
+        payment = { id: `payment-${userId}`, paymentNo: `PAY-${userId}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: 'success', merchantTradeNo: `MT-${userId}`, providerTradeNo: `MOCK-${userId}`, provider: 'mock', callbackCount: 1 }
+        order = { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
-        return json({ ok: true, order })
+        sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
+        return json({ ok: true, payment, order }, 201)
       }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }

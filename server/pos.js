@@ -4,6 +4,9 @@ import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { serializeProduct } from './products.js'
 import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
+import { paymentService } from './payments/index.js'
+import { serializePayment } from './payments/payment-service.js'
+import { assertOrderTransition } from './order-state.js'
 
 export const posRouter = Router()
 
@@ -30,7 +33,11 @@ function canReadOrder(user, order) {
   return user.role === 'developer' || order.cashierId === user.id
 }
 
-const orderInclude = () => ({ store: true, items: { orderBy: { id: 'asc' } } })
+const orderInclude = () => ({
+  store: true,
+  items: { orderBy: { id: 'asc' } },
+  payments: { orderBy: { createdAt: 'desc' } },
+})
 
 function serializeOrder(order) {
   return {
@@ -52,6 +59,7 @@ function serializeOrder(order) {
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
+    payments: (order.payments || []).map(serializePayment),
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -109,7 +117,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
       data: {
         id, orderNo, storeId, cashierId: req.user.id, cashierNameSnapshot: req.user.username,
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
-        checkoutKey, cartHash,
+        checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
         items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },
       include: orderInclude(),
@@ -132,22 +140,97 @@ posRouter.get('/pos/orders/:id', wrap(async (req, res) => {
   res.json({ order: serializeOrder(order) })
 }))
 
+posRouter.post('/pos/orders/:id/payments', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  const result = await paymentService.createPayment({
+    orderId: current.id,
+    channel: req.body?.channel,
+    requestKey: req.body?.requestKey,
+    provider: 'mock',
+    scenario: req.body?.mockScenario || 'success',
+    callbackDelayMs: req.body?.callbackDelayMs,
+  })
+  res.status(result.reused ? 200 : 201).json({
+    ok: true,
+    reused: result.reused,
+    payment: serializePayment(result.payment),
+    order: serializeOrder(result.order),
+  })
+}))
+
+posRouter.get('/pos/payments/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const result = await paymentService.result(req.params.id)
+  if (!canReadOrder(req.user, result.order)) throw httpError('无权限', 403)
+  res.json({ payment: serializePayment(result.payment), order: serializeOrder(result.order) })
+}))
+
+posRouter.post('/pos/payments/:id/query', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const before = await paymentService.result(req.params.id)
+  if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
+  const result = await paymentService.queryPayment(req.params.id)
+  res.json({ payment: serializePayment(result.payment), order: serializeOrder(result.order) })
+}))
+
+posRouter.post('/pos/payments/:id/close', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const before = await paymentService.result(req.params.id)
+  if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
+  const result = await paymentService.closePayment(req.params.id)
+  res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
+}))
+
+posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  let current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  if (current.status === 'cancelled') {
+    const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+    return res.json({ ok: true, order: serializeOrder(order) })
+  }
+  assertOrderTransition(current.status, 'cancelled')
+  const active = await paymentService.activePayment(current.id)
+  if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
+  if (active) await paymentService.closePayment(active.id)
+  current = await prisma.order.findUnique({ where: { id: current.id } })
+  const changed = await prisma.order.updateMany({
+    where: { id: current.id, status: current.status },
+    data: { status: 'cancelled', version: { increment: 1 } },
+  })
+  if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
+  const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  res.json({ ok: true, order: serializeOrder(order) })
+}))
+
+// V1 compatibility: old clients still complete through the PaymentService.
 posRouter.post('/pos/orders/:id/complete', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const paymentMethod = String(req.body?.paymentMethod ?? '')
   if (!['wechat', 'alipay', 'cash'].includes(paymentMethod)) throw httpError('支付方式不正确')
-  const order = await prisma.$transaction(async (tx) => {
-    const current = await tx.order.findUnique({ where: { id: req.params.id }, include: orderInclude() })
-    if (!current) throw httpError('订单不存在', 404)
-    if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
-    if (current.status === 'completed' && current.paymentStatus === 'paid') return current
-    if (current.status !== 'pending' || current.paymentStatus !== 'unpaid') throw httpError('当前订单状态不可支付', 409)
-    await tx.order.updateMany({
-      where: { id: current.id, status: 'pending', paymentStatus: 'unpaid' },
-      data: { status: 'completed', paymentStatus: 'paid', paymentMethod, paymentMode: 'mock', completedAt: new Date(), version: { increment: 1 } },
-    })
-    return tx.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  const current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  if (current.status === 'completed' && current.paymentStatus === 'paid') {
+    const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+    return res.json({ ok: true, order: serializeOrder(order) })
+  }
+  const result = await paymentService.createPayment({
+    orderId: current.id,
+    channel: paymentMethod,
+    requestKey: `v1:${current.id}:${paymentMethod}`,
+    provider: 'mock',
+    scenario: 'success',
   })
-  res.json({ ok: true, order: serializeOrder(order) })
+  res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))

@@ -10,6 +10,7 @@ import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
+import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -418,6 +419,7 @@ export function createApp() {
   }
 
   app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
+  app.use('/api/payments', paymentCallbackRouter)
   app.use('/api/v2', requireAuth, productsRouter, posRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------

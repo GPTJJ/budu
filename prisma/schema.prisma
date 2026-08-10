@@ -97,7 +97,7 @@ model Order {
   subtotal            BigInt      @default(0)
   discountAmount      BigInt      @default(0) @map("discount_amount")
   payableAmount       BigInt      @default(0) @map("payable_amount")
-  status              String      @default("pending")
+  status              String      @default("draft")
   paymentStatus       String      @default("unpaid") @map("payment_status")
   paymentMethod       String?     @map("payment_method")
   paymentMode         String      @default("mock") @map("payment_mode")
@@ -109,11 +109,44 @@ model Order {
   completedAt         DateTime?   @map("completed_at")
   store               Store       @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
+  payments            Payment[]
 
   @@index([storeId, createdAt])
   @@index([cashierId, createdAt])
   @@index([status, paymentStatus])
   @@map("orders")
+}
+
+model Payment {
+  id               String    @id
+  paymentNo        String    @unique @map("payment_no")
+  orderId          String    @map("order_id")
+  channel          String
+  amount           BigInt
+  currency         String    @default("CNY")
+  status           String    @default("created")
+  merchantTradeNo  String    @unique @map("merchant_trade_no")
+  providerTradeNo  String?   @unique @map("provider_trade_no")
+  provider         String
+  requestKey       String    @unique @map("request_key")
+  failureCode      String    @default("") @map("failure_code")
+  failureMessage   String    @default("") @map("failure_message")
+  providerMetadata Json      @default("{}") @map("provider_metadata")
+  callbackCount    Int       @default(0) @map("callback_count")
+  lastCallbackId   String    @default("") @map("last_callback_id")
+  lastCallbackAt   DateTime? @map("last_callback_at")
+  requestedAt      DateTime  @default(now()) @map("requested_at")
+  paidAt           DateTime? @map("paid_at")
+  failedAt         DateTime? @map("failed_at")
+  closedAt         DateTime? @map("closed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@index([orderId, status])
+  @@index([provider, status])
+  @@map("payments")
 }
 
 model OrderItem {
