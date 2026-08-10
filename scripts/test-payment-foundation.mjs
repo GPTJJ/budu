@@ -37,6 +37,8 @@ class MemoryPrisma {
     }]
     this.payments = []
     this.paymentLogs = []
+    this.refunds = []
+    this.refundItems = []
     this.payment = {
       findUnique: async ({ where, include }) => {
         const row = this.payments.find((item) => matches(item, where))
@@ -69,6 +71,28 @@ class MemoryPrisma {
         return data
       },
     }
+    this.refund = {
+      findUnique: async ({ where, include }) => {
+        const row = this.refunds.find((item) => matches(item, where))
+        if (!row) return null
+        const items = include?.items
+          ? this.refundItems.filter((item) => item.refundId === row.id).map((item) => {
+            const orderItem = this.orders.flatMap((order) => order.items || []).find((oi) => oi.id === item.orderItemId)
+            return include?.items?.include?.orderItem ? { ...item, orderItem: orderItem || null } : item
+          })
+          : undefined
+        return { ...row, ...(items ? { items } : {}) }
+      },
+      create: async ({ data, include }) => {
+        const row = { ...data }
+        const nested = row.items
+        delete row.items
+        this.refunds.push(row)
+        for (const item of nested?.create || []) this.refundItems.push({ ...item, refundId: row.id })
+        const items = include?.items ? this.refundItems.filter((item) => item.refundId === row.id) : undefined
+        return { ...row, ...(items ? { items } : {}) }
+      },
+    }
     this.order = {
       findUnique: async ({ where, include }) => {
         const row = this.orders.find((item) => matches(item, where))
@@ -76,8 +100,12 @@ class MemoryPrisma {
         return include ? {
           ...row,
           store: { key: row.storeId, name: '测试门店' },
-          items: [],
+          items: row.items || [],
           payments: [...this.payments].filter((payment) => payment.orderId === row.id).reverse(),
+          refunds: this.refunds.filter((refund) => refund.orderId === row.id).map((refund) => ({
+            ...refund,
+            items: this.refundItems.filter((item) => item.refundId === refund.id),
+          })),
         } : row
       },
       updateMany: async ({ where, data }) => {
@@ -276,4 +304,85 @@ test('原始回调落库且敏感字段被脱敏', () => {
     merchantTradeNo: 'MT-1',
   })
   assert.equal(sanitizePayload('x'.repeat(30000))?.truncated, true)
+})
+
+function refundDb() {
+  const db = new MemoryPrisma()
+  db.orders = [{
+    id: 'refund-order', orderNo: 'POS-R1', storeId: 'store-1', cashierId: 'user-1', cashierNameSnapshot: '员工1',
+    subtotal: 18200n, discountAmount: 0n, payableAmount: 18200n, status: 'completed', paymentStatus: 'paid',
+    paymentMethod: 'cash', paymentMode: 'cash', checkoutKey: 'ck-r1', cartHash: 'h', version: 1,
+    createdAt: new Date(), updatedAt: new Date(), completedAt: new Date(),
+    items: [
+      { id: 'oi-1', orderId: 'refund-order', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'SKU-1', unitPrice: 7200n, costPriceSnapshot: 2350n, quantity: 2, lineAmount: 14400n },
+      { id: 'oi-2', orderId: 'refund-order', productId: 'p-2', productNameSnapshot: '草莓奶油蛋糕', skuSnapshot: 'SKU-2', unitPrice: 3800n, costPriceSnapshot: 1200n, quantity: 1, lineAmount: 3800n },
+    ],
+  }]
+  db.payments = [{
+    id: 'pay-r1', paymentNo: 'PAY-R1', orderId: 'refund-order', channel: 'cash', paymentMethod: '', amount: 18200n,
+    currency: 'CNY', status: 'success', merchantTradeNo: 'MT-R1', providerTradeNo: 'CASH-R1', provider: 'cash',
+    requestKey: 'rk-r1', failureCode: '', failureMessage: '', providerMetadata: {}, callbackCount: 0,
+    lastCallbackId: '', lastCallbackAt: null, requestedAt: new Date(), paidAt: new Date(), failedAt: null, closedAt: null,
+    createdAt: new Date(), updatedAt: new Date(),
+  }]
+  return db
+}
+
+test('整单退款：金额为剩余应付、订单变 refunded、商品明细全部记录', async () => {
+  const db = refundDb()
+  const service = new PaymentService(db)
+  const result = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-req-full-1', operator: 'dev' })
+  assert.equal(result.refund.status, 'completed')
+  assert.equal(result.refund.refundAmount, 18200n)
+  assert.equal(result.refund.items.length, 2)
+  assert.equal(db.orders[0].status, 'refunded')
+  assert.equal(db.orders[0].paymentStatus, 'refunded')
+  assert.equal(db.payments[0].status, 'refunded')
+  assert.equal(db.paymentLogs.some((log) => log.event === 'refund.completed'), true)
+})
+
+test('部分退款：按商品退指定数量，第二次补足后订单变 refunded', async () => {
+  const db = refundDb()
+  const service = new PaymentService(db)
+  const first = await service.createRefund({
+    orderId: 'refund-order',
+    requestKey: 'refund-req-partial-1',
+    items: [{ orderItemId: 'oi-1', quantity: 1 }],
+    reason: '退一个布丁',
+  })
+  assert.equal(first.refund.refundAmount, 7200n)
+  assert.equal(first.refund.items[0].quantity, 1)
+  assert.equal(db.orders[0].status, 'partially_refunded')
+  assert.equal(db.orders[0].paymentStatus, 'partially_refunded')
+
+  const second = await service.createRefund({
+    orderId: 'refund-order',
+    requestKey: 'refund-req-partial-2',
+    items: [{ orderItemId: 'oi-1', quantity: 1 }, { orderItemId: 'oi-2', quantity: 1 }],
+  })
+  assert.equal(second.refund.refundAmount, 11000n)
+  assert.equal(db.orders[0].status, 'refunded')
+  assert.equal(db.refunds.length, 2)
+})
+
+test('退款幂等：相同 requestKey 只创建一条退款；超量退款被拒绝', async () => {
+  const db = refundDb()
+  const service = new PaymentService(db)
+  const first = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-req-same-1', items: [{ orderItemId: 'oi-1', quantity: 1 }] })
+  const replay = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-req-same-1', items: [{ orderItemId: 'oi-1', quantity: 1 }] })
+  assert.equal(db.refunds.length, 1)
+  assert.equal(first.refund.id, replay.refund.id)
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'refund-order', requestKey: 'refund-req-over-1', items: [{ orderItemId: 'oi-1', quantity: 3 }] }),
+    /可退数量不足/,
+  )
+})
+
+test('未支付订单不可退款', async () => {
+  const db = new MemoryPrisma()
+  const service = new PaymentService(db)
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'order-1', requestKey: 'refund-req-pending-1' }),
+    /当前订单状态不可退款/,
+  )
 })

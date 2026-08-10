@@ -69,8 +69,9 @@ export class MockPaymentProvider extends PaymentProvider {
     return { callback: event(payment, 'closed') }
   }
 
-  async refundPayment() {
-    throw httpError('退款接口已预留，本阶段暂不执行退款', 501)
+  async refundPayment(payment, options = {}) {
+    const refundNo = String(options.refundNo || payment.paymentNo)
+    return { providerRefundNo: `MOCKRF${refundNo}` }
   }
 
   async verifyCallback(payload) {

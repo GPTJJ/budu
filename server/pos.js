@@ -46,8 +46,32 @@ const orderInclude = () => ({
   store: true,
   items: { orderBy: { id: 'asc' } },
   payments: { orderBy: { createdAt: 'desc' } },
-  refunds: { orderBy: { createdAt: 'desc' } },
+  refunds: { orderBy: { createdAt: 'desc' }, include: { items: { include: { orderItem: true } } } },
 })
+
+function serializeRefund(refund) {
+  return {
+    id: refund.id,
+    refundNo: refund.refundNo,
+    orderId: refund.orderId,
+    paymentId: refund.paymentId,
+    amount: refund.refundAmount.toString(),
+    reason: refund.reason,
+    status: refund.status,
+    providerRefundNo: refund.providerRefundNo,
+    requestedBy: refund.requestedBy,
+    approvedBy: refund.approvedBy,
+    createdAt: refund.createdAt,
+    completedAt: refund.completedAt,
+    items: (refund.items || []).map((item) => ({
+      id: item.id,
+      orderItemId: item.orderItemId,
+      productName: item.orderItem?.productNameSnapshot || '',
+      quantity: item.quantity,
+      amountCents: item.amountCents.toString(),
+    })),
+  }
+}
 
 function serializeOrder(order) {
   return {
@@ -70,15 +94,7 @@ function serializeOrder(order) {
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
     payments: (order.payments || []).map(serializePayment),
-    refunds: (order.refunds || []).map((refund) => ({
-      id: refund.id,
-      refundNo: refund.refundNo,
-      amount: refund.refundAmount.toString(),
-      status: refund.status,
-      reason: refund.reason,
-      createdAt: refund.createdAt,
-      completedAt: refund.completedAt,
-    })),
+    refunds: (order.refunds || []).map(serializeRefund),
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -162,6 +178,24 @@ posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
     await tx.order.delete({ where: { id: order.id } })
   })
   res.json({ ok: true })
+}))
+
+posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  const allowed = req.user.role === 'developer' || (req.user.role === 'manager' && canStore(req.user, current.storeId))
+  if (!allowed) throw httpError('无退款权限', 403)
+  const result = await paymentService.createRefund({
+    orderId: current.id,
+    items: req.body?.items,
+    reason: req.body?.reason,
+    requestKey: req.body?.requestKey,
+    operator: req.user.username,
+  })
+  const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  res.status(201).json({ ok: true, refund: serializeRefund(result.refund), order: serializeOrder(order) })
 }))
 
 posRouter.get('/pos/products', wrap(async (req, res) => {

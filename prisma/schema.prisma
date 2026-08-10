@@ -166,16 +166,33 @@ model Refund {
   reason           String    @default("")
   status           String    @default("pending")
   providerRefundNo String?   @unique @map("provider_refund_no")
+  requestKey       String    @unique @map("request_key")
   requestedBy      String    @default("") @map("requested_by")
   approvedBy       String    @default("") @map("approved_by")
   createdAt        DateTime  @default(now()) @map("created_at")
   completedAt      DateTime? @map("completed_at")
   order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
   payment          Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  items            RefundItem[]
 
   @@index([orderId, createdAt])
   @@index([paymentId, createdAt])
   @@map("refunds")
+}
+
+model RefundItem {
+  id           String    @id
+  refundId     String    @map("refund_id")
+  orderItemId  String    @map("order_item_id")
+  quantity     Int
+  amountCents  BigInt    @map("amount_cents")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  refund       Refund    @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  orderItem    OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@index([refundId])
+  @@index([orderItemId])
+  @@map("refund_items")
 }
 
 model PaymentLog {
@@ -214,6 +231,7 @@ model OrderItem {
   lineAmount          BigInt        @map("line_amount")
   order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems         RefundItem[]
 
   @@index([orderId])
   @@index([productId])

@@ -29,6 +29,15 @@
         payments: [], refunds: [],
         items: [{ id: 'oi-2', productId: 'p-2', productNameSnapshot: '草莓奶油蛋糕', skuSnapshot: 'BUDU-002', unitPrice: '3800', quantity: 2, lineAmount: '7600' }, { id: 'oi-3', productId: 'p-3', productNameSnapshot: '蓝莓酸奶杯', skuSnapshot: 'BUDU-003', unitPrice: '2600', quantity: 1, lineAmount: '2600' }],
       },
+      {
+        id: 'order-3', orderNo: 'POS-TEST-ORDER-003', storeId: 'store-1', storeName: '测试门店',
+        cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '18200', discountAmount: '0', payableAmount: '18200',
+        status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', paymentMode: 'cash',
+        createdAt: '2026-08-11T05:00:00.000Z', updatedAt: '2026-08-11T05:00:00.000Z', completedAt: '2026-08-11T05:00:05.000Z',
+        payments: [{ id: 'pay-3', paymentNo: 'PAY-TEST-3', channel: 'cash', amount: '18200', status: 'success', paidAt: '2026-08-11T05:00:05.000Z', createdAt: '2026-08-11T05:00:00.000Z' }],
+        refunds: [],
+        items: [{ id: 'oi-4', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitPrice: '7200', quantity: 2, lineAmount: '14400' }, { id: 'oi-5', productId: 'p-2', productNameSnapshot: '草莓奶油蛋糕', skuSnapshot: 'BUDU-002', unitPrice: '3800', quantity: 1, lineAmount: '3800' }],
+      },
     ]
 
     window.fetch = async (url, options = {}) => {
@@ -51,6 +60,31 @@
         if (index === -1) return json({ error: '订单不存在' }, 404)
         orders.splice(index, 1)
         return json({ ok: true })
+      }
+      const refundMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)\/refunds$/)
+      if (refundMatch && options.method === 'POST') {
+        const id = decodeURIComponent(refundMatch[1])
+        const order = orders.find((item) => item.id === id)
+        if (!order) return json({ error: '订单不存在' }, 404)
+        const body = JSON.parse(options.body)
+        const refundedBefore = (order.refunds || []).filter((r) => r.status === 'completed').reduce((sum, r) => sum + Number(r.amount), 0)
+        const items = body.items && body.items.length
+          ? body.items.map((row) => {
+            const orderItem = order.items.find((item) => item.id === row.orderItemId)
+            return { id: `ri-${row.orderItemId}`, orderItemId: row.orderItemId, productName: orderItem.productNameSnapshot, quantity: row.quantity, amountCents: String(Number(orderItem.unitPrice) * row.quantity) }
+          })
+          : order.items.map((orderItem) => ({ id: `ri-all-${orderItem.id}`, orderItemId: orderItem.id, productName: orderItem.productNameSnapshot, quantity: orderItem.quantity, amountCents: orderItem.lineAmount }))
+        const amount = String(items.reduce((sum, item) => sum + Number(item.amountCents), 0))
+        const fully = Number(amount) >= Number(order.payableAmount) - refundedBefore
+        const refund = {
+          id: `ref-${Date.now()}`, refundNo: 'RF-TEST-' + Date.now(), orderId: order.id, paymentId: (order.payments[0] || {}).id || '',
+          amount, reason: body.reason || '', status: 'completed', providerRefundNo: 'LOCALRF-TEST',
+          requestedBy: 'dev', approvedBy: 'dev', createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), items,
+        }
+        order.refunds = [...(order.refunds || []), refund]
+        order.status = fully ? 'refunded' : 'partially_refunded'
+        order.paymentStatus = fully ? 'refunded' : 'partially_refunded'
+        return json({ ok: true, refund, order }, 201)
       }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
