@@ -29,8 +29,8 @@ PREV="$(run_remote "cat .current-sha 2>/dev/null || true")"
 echo "==> 当前线上版本：${PREV:-（无记录）}"
 
 BACKUP_NAME="predeploy-${SHA}-$(date -u +%Y%m%dT%H%M%SZ).sql"
-echo "==> 迁移前备份 PostgreSQL：backups/pg/$BACKUP_NAME"
-run_remote "mkdir -p backups/pg && docker compose exec -T postgres sh -lc 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"' > 'backups/pg/$BACKUP_NAME' && test -s 'backups/pg/$BACKUP_NAME'"
+echo "==> 迁移前备份 PostgreSQL：~/.budu-backups/$BACKUP_NAME"
+run_remote "mkdir -p \"\$HOME/.budu-backups\" && docker compose exec -T postgres sh -lc 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"' > \"\$HOME/.budu-backups/$BACKUP_NAME\" && test -s \"\$HOME/.budu-backups/$BACKUP_NAME\" && chmod 600 \"\$HOME/.budu-backups/$BACKUP_NAME\""
 echo "==> PostgreSQL 备份完成"
 
 echo "==> 拉取 GitHub 最新代码（网络波动时最多重试 4 次）..."
