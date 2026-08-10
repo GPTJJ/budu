@@ -79,7 +79,7 @@ export default function PullToRefresh({ onRefresh, children }) {
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
           <div
-            className="mt-1 flex flex-col items-center gap-0.5 rounded-2xl border border-white/60 bg-white/85 px-3 py-1.5 shadow-lg backdrop-blur"
+            className="flex flex-col items-center gap-0.5"
             style={{ transform: `translateY(${Math.max(pull - 24, 0)}px)` }}
           >
             <img
@@ -99,7 +99,7 @@ export default function PullToRefresh({ onRefresh, children }) {
                   : `scale(${(0.85 + (pull / 96) * 0.25).toFixed(3)}) rotate(${(-8 + (pull / 96) * 8).toFixed(2)}deg)`,
               }}
             />
-            <span className="text-[10px] font-medium text-slate-500">
+            <span className="text-[10px] font-medium text-slate-600 [text-shadow:0_1px_2px_rgba(255,255,255,0.95)]">
               {refreshing ? '刷新中…' : pull >= THRESHOLD ? '释放刷新' : '下拉刷新'}
             </span>
           </div>
