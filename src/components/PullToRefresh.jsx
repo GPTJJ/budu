@@ -79,14 +79,14 @@ export default function PullToRefresh({ onRefresh, children }) {
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
           <div
-            className="mt-1 flex flex-col items-center gap-1 rounded-2xl border border-white/60 bg-white/85 px-4 py-2 shadow-lg backdrop-blur"
+            className="mt-1 flex flex-col items-center gap-0.5 rounded-2xl border border-white/60 bg-white/85 px-3 py-1.5 shadow-lg backdrop-blur"
             style={{ transform: `translateY(${Math.max(pull - 24, 0)}px)` }}
           >
             <img
               src={iconUrl}
               alt=""
               draggable={false}
-              className={`w-[72px] select-none ${
+              className={`w-12 select-none ${
                 refreshing
                   ? 'animate-[budu-wiggle_0.6s_ease-in-out_infinite]'
                   : pull >= THRESHOLD
