@@ -21,29 +21,8 @@ function todayStr() {
 
 const inputCls = 'input'
 
-const ATTENDANCE_STATUSES = [
-  ['normal', '正常'],
-  ['late', '迟到'],
-  ['early_leave', '早退'],
-  ['leave', '请假'],
-  ['absence', '缺勤'],
-  ['substitute', '替班'],
-]
-
 function staffIdFor(storeKey, name) {
   return `st-${storeKey}-${String(name).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
-}
-
-function actualHoursFrom(start, end, breakMinutes) {
-  if (!/^\d{1,2}:\d{2}$/.test(String(start || '')) || !/^\d{1,2}:\d{2}$/.test(String(end || ''))) return 0
-  const toMin = (value) => {
-    const [h, m] = String(value).split(':').map(Number)
-    return h * 60 + m
-  }
-  let minutes = toMin(end) - toMin(start)
-  if (minutes < 0) minutes += 24 * 60
-  const breaks = Math.max(0, Number(breakMinutes) || 0)
-  return Math.max(0, Math.round(((minutes - breaks) / 60) * 100) / 100)
 }
 
 function Field({ label, icon: Icon, children }) {
@@ -159,15 +138,10 @@ export default function StoreEntryPage({ user, onBack }) {
     }
   }
 
-  const updateStaffRow = (index, patch) => {
-    setStaffRows((current) => current.map((row, i) => {
-      if (i !== index) return row
-      const next = { ...row, ...patch }
-      if (!isManager && patch.actualHours == null) {
-        next.actualHours = actualHoursFrom(next.actualStartTime, next.actualEndTime, next.breakMinutes)
-      }
-      return next
-    }))
+  const updateHours = (index, value) => {
+    setStaffRows((current) => current.map((row, i) => (
+      i === index ? { ...row, actualHours: Math.max(0, Math.min(24, Number(value) || 0)) } : row
+    )))
   }
 
   const addStaff = (staff) => {
@@ -217,6 +191,42 @@ export default function StoreEntryPage({ user, onBack }) {
       tip(t('值班人员已保存 ✓'))
     } catch (e) {
       setError(e.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
+  const removeStaff = async (index) => {
+    const next = staffRows.filter((_, i) => i !== index)
+    setStaffRows(next)
+    setSaving('staff')
+    setError('')
+    try {
+      await api('/v2/daily-staff', {
+        method: 'PUT',
+        body: JSON.stringify({
+          storeKey: store,
+          date,
+          items: next.map((row) => ({
+            staffId: row.staffId,
+            staffName: row.staffName,
+            scheduledStartTime: row.scheduledStartTime,
+            scheduledEndTime: row.scheduledEndTime,
+            actualStartTime: '',
+            actualEndTime: '',
+            breakMinutes: 0,
+            actualHours: row.actualHours,
+            attendanceStatus: 'normal',
+          })),
+          reason: '移除值班人员',
+        }),
+      })
+      await refreshAll()
+      await loadOverview()
+      tip(t('值班人员已移除 ✓'))
+    } catch (e) {
+      setError(e.message)
+      await loadOverview()
     } finally {
       setSaving('')
     }
@@ -421,36 +431,22 @@ export default function StoreEntryPage({ user, onBack }) {
               <tr className="bg-slate-50/80 text-xs text-slate-400">
                 <th className="px-3 py-2.5 font-semibold">员工</th>
                 <th className="px-3 py-2.5 font-semibold">计划班次</th>
-                <th className="px-3 py-2.5 font-semibold">实际上班</th>
-                <th className="px-3 py-2.5 font-semibold">实际下班</th>
-                <th className="px-3 py-2.5 font-semibold">休息(分钟)</th>
                 <th className="px-3 py-2.5 font-semibold">实际工时</th>
-                <th className="px-3 py-2.5 font-semibold">出勤状态</th>
                 <th className="px-3 py-2.5 text-right font-semibold">操作</th>
               </tr>
             </thead>
             <tbody>
               {staffRows.length === 0 ? (
-                <tr><td colSpan="8" className="px-3 py-10 text-center text-sm text-slate-300">暂无值班人员，请从右上角添加</td></tr>
+                <tr><td colSpan="4" className="px-3 py-10 text-center text-sm text-slate-300">暂无值班人员，请从右上角添加</td></tr>
               ) : staffRows.map((row, index) => (
                 <tr key={row.staffId} className="border-t border-slate-50">
                   <td className="px-3 py-2.5 font-semibold text-slate-700">{row.staffName}</td>
                   <td className="px-3 py-2.5 text-xs text-slate-500">{row.scheduledStartTime && row.scheduledEndTime ? `${row.scheduledStartTime}-${row.scheduledEndTime}` : '—'}</td>
-                  <td className="px-3 py-2.5"><input type="time" value={row.actualStartTime} onChange={(e) => updateStaffRow(index, { actualStartTime: e.target.value })} disabled={!canEditStaff} className="h-9 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-budu-400 disabled:opacity-50" /></td>
-                  <td className="px-3 py-2.5"><input type="time" value={row.actualEndTime} onChange={(e) => updateStaffRow(index, { actualEndTime: e.target.value })} disabled={!canEditStaff} className="h-9 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-budu-400 disabled:opacity-50" /></td>
-                  <td className="px-3 py-2.5"><input type="number" min="0" max="600" value={row.breakMinutes} onChange={(e) => updateStaffRow(index, { breakMinutes: Number(e.target.value) || 0 })} disabled={!canEditStaff} className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-sm outline-none focus:border-budu-400 disabled:opacity-50" /></td>
                   <td className="px-3 py-2.5">
-                    {isManager
-                      ? <input type="number" step="0.01" min="0" max="24" value={row.actualHours} onChange={(e) => updateStaffRow(index, { actualHours: Math.max(0, Number(e.target.value) || 0) })} className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-sm tabular-nums outline-none focus:border-budu-400" />
-                      : <span className="tabular-nums text-slate-600">{Number(row.actualHours).toFixed(2)}</span>}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <select value={row.attendanceStatus} onChange={(e) => updateStaffRow(index, { attendanceStatus: e.target.value })} disabled={!canEditStaff} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm outline-none disabled:opacity-50">
-                      {ATTENDANCE_STATUSES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
+                    <input type="number" step="0.01" min="0" max="24" value={row.actualHours} onChange={(e) => updateHours(index, e.target.value)} disabled={!canEditStaff} className="h-9 w-24 rounded-lg border border-slate-200 px-2 text-sm tabular-nums outline-none focus:border-budu-400 disabled:opacity-50" />
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    <button onClick={() => setStaffRows((current) => current.filter((_, i) => i !== index))} disabled={!canEditStaff} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 hover:bg-rose-50 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" />移除</button>
+                    <button onClick={() => removeStaff(index)} disabled={!canEditStaff || saving === 'staff'} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 hover:bg-rose-50 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" />{saving === 'staff' ? '移除中…' : '移除'}</button>
                   </td>
                 </tr>
               ))}

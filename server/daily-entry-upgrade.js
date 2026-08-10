@@ -273,7 +273,8 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
     const actualEndTime = String(item.actualEndTime || '').slice(0, 5)
     const scheduledStartTime = String(item.scheduledStartTime || '').slice(0, 5)
     const scheduledEndTime = String(item.scheduledEndTime || '').slice(0, 5)
-    const actualHours = ['developer', 'manager'].includes(req.user.role) && item.actualHours != null
+    const providedHours = item.actualHours != null && item.actualHours !== '' && Number.isFinite(Number(item.actualHours))
+    const actualHours = providedHours
       ? Math.max(0, Math.min(24, Math.round(Number(item.actualHours) * 100) / 100))
       : hoursFromTimes(actualStartTime, actualEndTime, breakMinutes)
     return {
