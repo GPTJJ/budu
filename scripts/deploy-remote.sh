@@ -28,7 +28,23 @@ echo "==> 部署目标：$USER@$HOST:$APP_DIR（$SHA）"
 PREV="$(run_remote "cat .current-sha 2>/dev/null || true")"
 echo "==> 当前线上版本：${PREV:-（无记录）}"
 
-run_remote "git fetch origin main"
+echo "==> 拉取 GitHub 最新代码（网络波动时最多重试 4 次）..."
+FETCHED=0
+for attempt in 1 2 3 4; do
+  if run_remote "git -c http.version=HTTP/1.1 fetch origin main"; then
+    FETCHED=1
+    break
+  fi
+  if [ "$attempt" -lt 4 ]; then
+    echo "==> 第 $attempt 次拉取失败，15 秒后重试..."
+    sleep 15
+  fi
+done
+
+if [ "$FETCHED" -ne 1 ]; then
+  echo "==> 无法从 GitHub 拉取代码，保留当前线上版本"
+  exit 1
+fi
 run_remote "git checkout --force '$SHA'"
 run_remote "docker compose up -d --build"
 
