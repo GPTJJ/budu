@@ -84,6 +84,8 @@ function serializeOrder(order) {
     subtotal: order.subtotal.toString(),
     discountAmount: order.discountAmount.toString(),
     payableAmount: order.payableAmount.toString(),
+    discountPercent: order.discountPercent ?? 100,
+    remark: order.remark || '',
     status: order.status,
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
@@ -105,6 +107,7 @@ function serializeOrder(order) {
       costPriceSnapshot: item.costPriceSnapshot.toString(),
       quantity: item.quantity,
       lineAmount: item.lineAmount.toString(),
+      isGift: item.isGift === true,
     })),
   }
 }
@@ -217,14 +220,16 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   if (!canStore(req.user, storeId)) throw httpError('无权在该门店点单', 403)
   if (checkoutKey.length < 8 || checkoutKey.length > 100) throw httpError('结算标识不正确')
   const normalizedItems = normalizeCartItems(req.body?.items)
-  const cartHash = hashCart(normalizedItems)
+  const discountPercent = Number(req.body?.discountPercent ?? 100)
+  const remark = String(req.body?.remark ?? '').slice(0, 200)
+  const cartHash = hashCart({ items: normalizedItems, discountPercent, remark })
   const previous = await prisma.order.findUnique({ where: { checkoutKey }, include: orderInclude() })
   if (previous) return res.json({ ok: true, reused: true, order: serializeOrder(replayOrder(previous, req.user, storeId, cartHash)) })
 
   const store = await prisma.store.findUnique({ where: { key: storeId } })
   if (!store) throw httpError('门店不存在，请先同步门店资料', 404)
   const products = await prisma.inventoryItem.findMany({ where: { id: { in: normalizedItems.map((item) => item.productId) } } })
-  const snapshot = buildOrderSnapshot(products, normalizedItems)
+  const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
   const now = new Date()
   const id = `ord-${crypto.randomUUID()}`
   const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
@@ -234,6 +239,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
       data: {
         id, orderNo, storeId, cashierId: req.user.id, cashierNameSnapshot: req.user.username,
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
+        discountPercent: snapshot.discountPercent, remark: snapshot.remark,
         checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
         items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },

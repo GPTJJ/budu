@@ -97,6 +97,8 @@ model Order {
   subtotal            BigInt      @default(0)
   discountAmount      BigInt      @default(0) @map("discount_amount")
   payableAmount       BigInt      @default(0) @map("payable_amount")
+  discountPercent     Int         @default(100) @map("discount_percent")
+  remark              String      @default("")
   status              String      @default("draft")
   paymentStatus       String      @default("unpaid") @map("payment_status")
   paymentMethod       String?     @map("payment_method")
@@ -229,6 +231,7 @@ model OrderItem {
   costPriceSnapshot   BigInt        @map("cost_price_snapshot")
   quantity            Int
   lineAmount          BigInt        @map("line_amount")
+  isGift              Boolean       @default(false) @map("is_gift")
   order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
   refundItems         RefundItem[]

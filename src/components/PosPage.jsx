@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Banknote, Check, ChevronDown, Minus, Package, Plus, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
+import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
 import CameraScanner from './CameraScanner'
 import {
   clearPosTransaction,
-  cartTotalCents,
   changeCartQuantity,
   createCheckoutKey,
   formatCents,
@@ -19,6 +18,12 @@ import {
 } from '../utils/pos'
 
 const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现金' }
+
+function parseDiscountPercent(value) {
+  const num = Number(String(value ?? '').trim())
+  if (!Number.isFinite(num) || num < 0.1 || num > 10) return 100
+  return Math.max(1, Math.min(100, Math.round(num * 10)))
+}
 
 function allowedStores(user) {
   const stores = allStores()
@@ -50,6 +55,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [posConfig, setPosConfig] = useState(null)
   const [cashConfirm, setCashConfirm] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
+  const [giftMap, setGiftMap] = useState({})
+  const [discount, setDiscount] = useState('10')
+  const [remark, setRemark] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => (
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(min-width: 1024px)').matches
@@ -88,6 +96,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setSelectedPosStore(user.id, storeId)
     const session = loadPosStoreSession(user.id, storeId)
     setCart(session.cart && typeof session.cart === 'object' ? session.cart : {})
+    setGiftMap({})
+    setDiscount('10')
+    setRemark('')
     setCheckoutKeyState(session.checkoutKey)
     setOrder(null)
     setPayment(null)
@@ -149,7 +160,12 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     .map(([productId, quantity]) => ({ product: productMap.get(productId), quantity: Number(quantity) }))
     .filter((line) => line.product && Number.isInteger(line.quantity) && line.quantity > 0), [cart, productMap])
   const cartCount = cartLines.reduce((sum, line) => sum + line.quantity, 0)
-  const cartTotal = cartTotalCents(cart, products)
+  const discountPercent = parseDiscountPercent(discount)
+  const cartSubtotal = cartLines.reduce((sum, line) => (
+    giftMap[line.product.productId] ? sum : sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
+  ), 0n)
+  const cartTotal = (cartSubtotal * BigInt(discountPercent) + 50n) / 100n
+  const cartDiscountAmount = cartSubtotal - cartTotal
   const mockMode = posConfig ? posConfig.mock : (order ? order.paymentMode === 'mock' : true)
   const channels = posConfig?.channels?.length ? posConfig.channels : (mockMode ? ['wechat', 'alipay', 'cash'] : ['cash'])
 
@@ -159,17 +175,78 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
   const changeQuantity = (productId, delta) => {
     invalidateCheckout()
-    setCart((current) => changeCartQuantity(current, productId, delta))
+    const next = changeCartQuantity(cart, productId, delta)
+    setCart(next)
+    if (!next[productId]) {
+      setGiftMap((current) => { const copy = { ...current }; delete copy[productId]; return copy })
+    }
   }
   const removeLine = (productId) => {
     invalidateCheckout()
     setCart((current) => { const next = { ...current }; delete next[productId]; return next })
+    setGiftMap((current) => { const next = { ...current }; delete next[productId]; return next })
   }
   const clearCart = () => {
     if (cartCount && !window.confirm('确认清空当前订单中的全部商品吗？')) return
     invalidateCheckout()
     setCart({})
+    setGiftMap({})
   }
+  const toggleGift = (productId) => {
+    invalidateCheckout()
+    setGiftMap((current) => ({ ...current, [productId]: !current[productId] }))
+  }
+  const setDiscountValue = (value) => {
+    invalidateCheckout()
+    setDiscount(value)
+  }
+  const setRemarkValue = (value) => {
+    invalidateCheckout()
+    setRemark(value)
+  }
+
+  const renderCartLine = ({ product, quantity }) => {
+    const isGift = Boolean(giftMap[product.productId])
+    const lineAmount = isGift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
+    return (
+      <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold text-slate-800">{product.name}</p>
+            <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</p>
+          </div>
+          <button onClick={() => toggleGift(product.productId)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
+          <button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+        </div>
+        <div className="mt-3 flex items-center">
+          <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? '¥0.00 赠送' : formatCents(lineAmount)}</strong>
+          <div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button>
+            <span className="w-9 text-center text-sm font-bold">{quantity}</span>
+            <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderDiscountControls = () => (
+    <div className="space-y-2.5">
+      <div>
+        <p className="text-xs text-slate-400">折扣</p>
+        <div className="mt-1 flex items-center gap-1.5 overflow-x-auto">
+          {[['10', '不打折'], ['9', '9折'], ['8.5', '8.5折'], ['8', '8折']].map(([value, label]) => (
+            <button key={value} onClick={() => setDiscountValue(value)} className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold ${discount === value ? 'bg-budu-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{label}</button>
+          ))}
+          <label className="relative shrink-0">
+            <input value={discount} onChange={(e) => setDiscountValue(e.target.value)} inputMode="decimal" aria-label="折扣输入" className="h-8 w-16 rounded-lg border border-slate-200 bg-white pl-2 pr-6 text-xs font-semibold outline-none focus:border-budu-400" />
+            <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">折</span>
+          </label>
+        </div>
+      </div>
+      <label className="block text-xs text-slate-400">备注<input value={remark} onChange={(e) => setRemarkValue(e.target.value)} placeholder="订单备注" className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-budu-400" /></label>
+    </div>
+  )
 
   const checkout = async () => {
     if (!storeId || cartLines.length === 0 || submitting) return
@@ -187,7 +264,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         body: JSON.stringify({
           storeId,
           checkoutKey: key,
-          items: cartLines.map((line) => ({ productId: line.product.productId, quantity: line.quantity })),
+          items: cartLines.map((line) => ({ productId: line.product.productId, quantity: line.quantity, gift: Boolean(giftMap[line.product.productId]) })),
+          discountPercent,
+          remark,
         }),
       })
       setOrder(data.order)
@@ -443,8 +522,15 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
 
         {isDesktop && <aside className="flex min-h-0 w-[300px] shrink-0 flex-col border-l border-slate-200 bg-white xl:w-[340px]">
           <div className="flex h-[72px] shrink-0 items-center border-b border-slate-100 px-5"><ShoppingCart className="h-5 w-5 text-budu-600" /><h2 className="ml-2 font-bold">当前订单</h2><span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span><button onClick={clearCart} disabled={!cartCount} className="ml-auto text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button></div>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(({ product, quantity }) => <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}</p></div><button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div><div className="mt-3 flex items-center"><strong className="text-sm text-budu-600">{formatCents(BigInt(product.salePriceCents) * BigInt(quantity))}</strong><div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white"><button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button><span className="w-9 text-center text-sm font-bold">{quantity}</span><button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button></div></div></div>)}</div>
-          <div className="shrink-0 border-t border-slate-100 bg-white p-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}><div className="mb-4 flex items-end justify-between"><div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div><p className="text-xs text-slate-400">优惠 ¥0.00</p></div><button onClick={checkout} disabled={!cartCount || submitting} className="w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button></div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(renderCartLine)}</div>
+          <div className="shrink-0 border-t border-slate-100 bg-white p-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+            {renderDiscountControls()}
+            <div className="mt-4 flex items-end justify-between">
+              <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
+              {cartDiscountAmount > 0n && <p className="text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}
+            </div>
+            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="mt-3 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+          </div>
         </aside>}
       </div>
 
@@ -458,7 +544,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             <p className="text-[11px] text-slate-400">合计 · {cartCount} 件</p>
             <p className="truncate text-lg font-black text-slate-900">{formatCents(cartTotal)}</p>
           </div>
-          <button onClick={checkout} disabled={!cartCount || submitting} className="shrink-0 rounded-2xl bg-budu-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
+          <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="shrink-0 rounded-2xl bg-budu-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
         </div>
       </div>}
 
@@ -473,14 +559,15 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
               <button onClick={() => setCartOpen(false)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-              {cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(({ product, quantity }) => <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}</p></div><button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button></div><div className="mt-3 flex items-center"><strong className="text-sm text-budu-600">{formatCents(BigInt(product.salePriceCents) * BigInt(quantity))}</strong><div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white"><button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button><span className="w-9 text-center text-sm font-bold">{quantity}</span><button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button></div></div></div>)}
+              {cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(renderCartLine)}
             </div>
             <div className="shrink-0 border-t border-slate-100 p-4">
+              {renderDiscountControls()}
               <div className="mb-3 flex items-end justify-between">
                 <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
-                <button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>
+                <div className="text-right"><button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>{cartDiscountAmount > 0n && <p className="mt-1 text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
               </div>
-              <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting} className="w-full rounded-2xl bg-budu-500 py-3.5 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+              <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="w-full rounded-2xl bg-budu-500 py-3.5 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
             </div>
           </div>
         </div>

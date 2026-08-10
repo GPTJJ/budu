@@ -312,25 +312,36 @@ export class PaymentService {
     const rawItems = Array.isArray(input.items) && input.items.length > 0 ? input.items : []
     const lines = []
     let amount = 0n
+    const discountPercent = BigInt(order.discountPercent ?? 100)
+    const lineRefundAmount = (unitPrice, quantity) => {
+      const base = BigInt(unitPrice) * BigInt(quantity) * discountPercent
+      return (base + 50n) / 100n
+    }
     if (rawItems.length === 0) {
       for (const item of order.items) {
+        if (item.isGift === true) continue
         const remainingQty = item.quantity - (refundedQty.get(item.id) || 0)
         if (remainingQty <= 0) continue
-        const lineAmount = BigInt(item.unitPrice) * BigInt(remainingQty)
+        const lineAmount = lineRefundAmount(item.unitPrice, remainingQty)
         lines.push({ orderItemId: item.id, quantity: remainingQty, amountCents: lineAmount })
         amount += lineAmount
       }
-      if (amount !== remainingOrder) throw httpError('退款金额与订单应付金额不一致，请联系开发者', 409)
+      if (lines.length > 0 && amount !== remainingOrder) {
+        const difference = remainingOrder - amount
+        lines[lines.length - 1] = { ...lines[lines.length - 1], amountCents: lines[lines.length - 1].amountCents + difference }
+        amount = remainingOrder
+      }
     } else {
       for (const row of rawItems) {
         const orderItemId = String(row.orderItemId || '').trim()
         const quantity = Number(row.quantity)
         const item = byId.get(orderItemId)
         if (!item) throw httpError('退款商品不存在于该订单', 400)
+        if (item.isGift === true) throw httpError('赠送商品不可退款', 400)
         if (!Number.isInteger(quantity) || quantity < 1) throw httpError('退款数量必须是正整数', 400)
         const remainingQty = item.quantity - (refundedQty.get(item.id) || 0)
         if (quantity > remainingQty) throw httpError(`「${item.productNameSnapshot}」可退数量不足`, 409)
-        const lineAmount = BigInt(item.unitPrice) * BigInt(quantity)
+        const lineAmount = lineRefundAmount(item.unitPrice, quantity)
         lines.push({ orderItemId, quantity, amountCents: lineAmount })
         amount += lineAmount
       }

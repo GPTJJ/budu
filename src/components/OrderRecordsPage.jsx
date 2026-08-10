@@ -301,7 +301,7 @@ export default function OrderRecordsPage({ user, onBack }) {
                       <tr><th className="px-4 py-2.5">商品</th><th className="px-4 py-2.5 text-right">单价</th><th className="px-4 py-2.5 text-right">可退数量</th><th className="px-4 py-2.5 text-right">本次退款数量</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {refundOrder.items.map((item) => {
+                      {refundOrder.items.filter((item) => !item.isGift).map((item) => {
                         const remaining = item.quantity - itemRefundedQty(refundOrder, item.id)
                         return (
                           <tr key={item.id}>
@@ -352,6 +352,8 @@ export default function OrderRecordsPage({ user, onBack }) {
                 <div><p className="text-xs text-slate-400">下单时间</p><p className="mt-1 font-semibold text-slate-700">{localTime(detail.createdAt)}</p></div>
                 <div><p className="text-xs text-slate-400">状态</p><p className="mt-1 font-semibold text-slate-700">{statusLabels[detail.status] || detail.status}</p></div>
               </div>
+              {(detail.discountPercent ?? 100) < 100 && <p className="text-xs text-slate-500">折扣：{Number(detail.discountPercent) / 10} 折 · 优惠 {Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
+              {detail.remark && <p className="text-xs text-slate-500">备注：{detail.remark}</p>}
               <div>
                 <h4 className="text-sm font-bold text-slate-800">商品明细</h4>
                 <div className="mt-2 overflow-hidden rounded-2xl border border-slate-100">
@@ -360,11 +362,11 @@ export default function OrderRecordsPage({ user, onBack }) {
                     <tbody className="divide-y divide-slate-100">
                       {(detail.items || []).map((item) => (
                         <tr key={item.id}>
-                          <td className="px-4 py-2.5 font-semibold text-slate-700">{item.productNameSnapshot}</td>
+                          <td className="px-4 py-2.5 font-semibold text-slate-700">{item.productNameSnapshot}{item.isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</td>
                           <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{item.skuSnapshot}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{Number(centsToYuan(item.unitPrice)).toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{item.isGift ? '0.00' : Number(centsToYuan(item.unitPrice)).toFixed(2)}</td>
                           <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{item.quantity}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-800">{Number(centsToYuan(item.lineAmount)).toFixed(2)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-800">{item.isGift ? '0.00' : Number(centsToYuan(item.lineAmount)).toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>

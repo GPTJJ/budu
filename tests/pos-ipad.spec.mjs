@@ -18,7 +18,7 @@ test('iPad 横屏三栏、快速加购、购物车和搜索', async ({ page }) =
   }))
   expect(layout).toEqual({ width: 1024, height: 768, scrollWidth: 1024, scrollHeight: 768 })
 
-  const product = page.getByRole('button', { name: /卡皮巴拉布丁/ })
+  const product = page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ })
   for (let i = 0; i < 30; i += 1) await product.click()
   await expect(page.getByText('合计 · 30 件', { exact: true })).toBeVisible()
   await expect(page.getByText('¥2,160.00', { exact: true }).last()).toBeVisible()
@@ -66,9 +66,9 @@ test('两个员工浏览器上下文的购物车互不串单', async ({ browser 
     pageA.goto('http://127.0.0.1:5198/tests/pos-harness.html?user=employee-a'),
     pageB.goto('http://127.0.0.1:5198/tests/pos-harness.html?user=employee-b'),
   ])
-  await pageA.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
-  await pageB.getByRole('button', { name: /草莓奶油蛋糕/ }).click()
-  await pageB.getByRole('button', { name: /草莓奶油蛋糕/ }).click()
+  await pageA.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await pageB.locator('main').getByRole('button', { name: /草莓奶油蛋糕/ }).click()
+  await pageB.locator('main').getByRole('button', { name: /草莓奶油蛋糕/ }).click()
   await expect(pageA.getByText('合计 · 1 件', { exact: true })).toBeVisible()
   await expect(pageB.getByText('合计 · 2 件', { exact: true })).toBeVisible()
   await contextA.close()
@@ -199,4 +199,28 @@ test('未付款返回后再次进入 POS 不直接跳付款页', async ({ page }
   await page.reload()
   await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
+})
+
+test('POS 赠送/折扣/备注 对应减免并可结算', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=gift-discount')
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await page.getByRole('button', { name: /草莓奶油蛋糕/ }).click()
+  await expect(page.getByText('合计 · 2 件', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥110.00', { exact: true }).last()).toBeVisible()
+
+  await page.getByRole('button', { name: '赠送 卡皮巴拉布丁', exact: true }).click()
+  await expect(page.getByText('¥0.00 赠送', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥38.00', { exact: true }).last()).toBeVisible()
+
+  await page.getByRole('button', { name: '9折', exact: true }).click()
+  await expect(page.getByText('¥34.20', { exact: true })).toBeVisible()
+  await expect(page.getByText('优惠 -¥3.80', { exact: true })).toBeVisible()
+
+  await page.getByLabel('折扣输入').fill('8.5')
+  await expect(page.getByText('¥32.30', { exact: true })).toBeVisible()
+  await page.getByPlaceholder('订单备注').fill('测试备注')
+
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥32.30', { exact: true })).toBeVisible()
 })

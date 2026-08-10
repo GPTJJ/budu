@@ -38,7 +38,7 @@ test('服务端合并重复商品并拒绝客户端伪造价格', () => {
   assert.deepEqual(normalizeCartItems([
     { productId: 'product-1', quantity: 2 },
     { productId: 'product-1', quantity: 3 },
-  ]), [{ productId: 'product-1', quantity: 5 }])
+  ]), [{ productId: 'product-1', quantity: 5, gift: false }])
   assert.throws(() => normalizeCartItems([{ productId: 'product-1', quantity: 1, unitPrice: 1 }]), /服务器计算/)
 })
 
@@ -65,4 +65,35 @@ test('非法数量、下架商品和缺失商品被拒绝', () => {
   assert.throws(() => normalizeCartItems([{ productId: 'product-1', quantity: 0 }]), /1-999/)
   assert.throws(() => buildOrderSnapshot([{ ...product, isActive: false }], [{ productId: product.id, quantity: 1 }]), /未上架/)
   assert.throws(() => buildOrderSnapshot([], [{ productId: 'missing', quantity: 1 }]), /不存在/)
+})
+
+test('赠送与折扣由服务端统一计算并写入快照', () => {
+  const fresh = { ...product, salePriceCents: 7200n, costPriceCents: 2350n }
+  const gift = buildOrderSnapshot([fresh], [{ productId: fresh.id, quantity: 2, gift: true }], { discountPercent: 90, remark: '试吃' })
+  assert.equal(gift.subtotal, 0n)
+  assert.equal(gift.payableAmount, 0n)
+  assert.equal(gift.discountAmount, 0n)
+  assert.equal(gift.lines[0].isGift, true)
+  assert.equal(gift.lines[0].lineAmount, 0n)
+  assert.equal(gift.remark, '试吃')
+
+  const discounted = buildOrderSnapshot([fresh], [{ productId: fresh.id, quantity: 2 }], { discountPercent: 85 })
+  assert.equal(discounted.subtotal, 14400n)
+  assert.equal(discounted.payableAmount, 12240n)
+  assert.equal(discounted.discountAmount, 2160n)
+  assert.equal(discounted.discountPercent, 85)
+  assert.throws(() => buildOrderSnapshot([product], [{ productId: product.id, quantity: 1 }], { discountPercent: 101 }), /折扣/)
+  assert.throws(() => buildOrderSnapshot([product], [{ productId: product.id, quantity: 1 }], { discountPercent: 0 }), /折扣/)
+})
+
+test('赠送状态计入归一化与购物车哈希', () => {
+  assert.deepEqual(normalizeCartItems([
+    { productId: 'product-1', quantity: 1, gift: true },
+    { productId: 'product-1', quantity: 2, gift: false },
+  ]), [{ productId: 'product-1', quantity: 3, gift: true }])
+  const a = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: true }], discountPercent: 90, remark: 'x' })
+  const b = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: false }], discountPercent: 90, remark: 'x' })
+  const c = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: true }], discountPercent: 100, remark: 'x' })
+  assert.notEqual(a, b)
+  assert.notEqual(a, c)
 })

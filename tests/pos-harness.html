@@ -71,8 +71,16 @@
       if (path === '/api/v2/pos/products') return json({ rows: products })
       if (path === '/api/v2/pos/orders' && options.method === 'POST') {
         const body = JSON.parse(options.body)
-        const payable = body.items.reduce((sum, item) => sum + Number(products.find((p) => p.productId === item.productId).salePriceCents) * item.quantity, 0)
-        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(payable), discountAmount: '0', payableAmount: String(payable), status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', items: body.items, payments: [] }
+        const items = body.items.map((row) => {
+          const p = products.find((pp) => pp.productId === row.productId)
+          const gift = row.gift === true
+          const unitPrice = p.salePriceCents
+          return { id: `oi-${row.productId}`, productId: row.productId, productNameSnapshot: p.name, skuSnapshot: p.sku, unitPrice, quantity: row.quantity, lineAmount: gift ? '0' : String(Number(unitPrice) * row.quantity), isGift: gift }
+        })
+        const subtotal = items.reduce((sum, item) => sum + Number(item.lineAmount), 0)
+        const discountPercent = Number(body.discountPercent ?? 100)
+        const payable = Math.round((subtotal * discountPercent) / 100)
+        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable), payableAmount: String(payable), discountPercent, remark: body.remark || '', status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', items, payments: [] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         return json({ ok: true, order }, 201)
       }
