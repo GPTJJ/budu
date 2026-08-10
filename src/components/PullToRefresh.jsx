@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import iconUrl from '../assets/pull-refresh-icon.png'
 
 const THRESHOLD = 64
 
@@ -79,11 +79,29 @@ export default function PullToRefresh({ onRefresh, children }) {
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
           <div
-            className="mt-2 flex items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-xs font-medium text-slate-500 shadow-lg"
-            style={{ transform: `translateY(${Math.max(pull - 16, 0)}px)` }}
+            className="mt-1 flex flex-col items-center gap-1 rounded-2xl border border-white/60 bg-white/85 px-4 py-2 shadow-lg backdrop-blur"
+            style={{ transform: `translateY(${Math.max(pull - 24, 0)}px)` }}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-budu-500' : ''}`} />
-            {refreshing ? '刷新中…' : pull >= THRESHOLD ? '释放刷新' : '下拉刷新'}
+            <img
+              src={iconUrl}
+              alt=""
+              draggable={false}
+              className={`w-[72px] select-none ${
+                refreshing
+                  ? 'animate-[budu-wiggle_0.6s_ease-in-out_infinite]'
+                  : pull >= THRESHOLD
+                    ? 'animate-[budu-bounce_0.3s_ease-out_1]'
+                    : ''
+              }`}
+              style={{
+                transform: refreshing
+                  ? undefined
+                  : `scale(${(0.85 + (pull / 96) * 0.25).toFixed(3)}) rotate(${(-8 + (pull / 96) * 8).toFixed(2)}deg)`,
+              }}
+            />
+            <span className="text-[10px] font-medium text-slate-500">
+              {refreshing ? '刷新中…' : pull >= THRESHOLD ? '释放刷新' : '下拉刷新'}
+            </span>
           </div>
         </div>
       )}
