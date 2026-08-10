@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Order Records Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import OrderRecordsPage from '/src/components/OrderRecordsPage.jsx'
+    import '/src/index.css'
+
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
+      entries: {}, staff: [], stores: [{ key: 'store-1', name: '测试门店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
+    }))
+
+    const orders = [
+      {
+        id: 'order-1', orderNo: 'POS-TEST-ORDER-001', storeId: 'store-1', storeName: '测试门店',
+        cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '7200', discountAmount: '0', payableAmount: '7200',
+        status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', paymentMode: 'cash',
+        createdAt: '2026-08-11T03:00:00.000Z', updatedAt: '2026-08-11T03:00:00.000Z', completedAt: '2026-08-11T03:00:05.000Z',
+        payments: [{ id: 'pay-1', paymentNo: 'PAY-TEST-1', channel: 'cash', amount: '7200', status: 'success', paidAt: '2026-08-11T03:00:05.000Z', createdAt: '2026-08-11T03:00:00.000Z' }],
+        refunds: [],
+        items: [{ id: 'oi-1', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitPrice: '7200', quantity: 1, lineAmount: '7200' }],
+      },
+      {
+        id: 'order-2', orderNo: 'POS-TEST-ORDER-002', storeId: 'store-1', storeName: '测试门店',
+        cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '10200', discountAmount: '0', payableAmount: '10200',
+        status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock',
+        createdAt: '2026-08-11T04:00:00.000Z', updatedAt: '2026-08-11T04:00:00.000Z', completedAt: null,
+        payments: [], refunds: [],
+        items: [{ id: 'oi-2', productId: 'p-2', productNameSnapshot: '草莓奶油蛋糕', skuSnapshot: 'BUDU-002', unitPrice: '3800', quantity: 2, lineAmount: '7600' }, { id: 'oi-3', productId: 'p-3', productNameSnapshot: '蓝莓酸奶杯', skuSnapshot: 'BUDU-003', unitPrice: '2600', quantity: 1, lineAmount: '2600' }],
+      },
+    ]
+
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/pos/orders') {
+        const qs = new URL(url, location.origin).searchParams
+        const filtered = orders.filter((order) => {
+          if (qs.get('paymentMethod') && order.paymentMethod !== qs.get('paymentMethod')) return false
+          if (qs.get('status') && order.status !== qs.get('status')) return false
+          if (qs.get('q') && !order.orderNo.toLowerCase().includes(qs.get('q').toLowerCase())) return false
+          return true
+        })
+        return json({ ok: true, total: filtered.length, rows: filtered })
+      }
+      return json({ error: `未模拟接口 ${path}` }, 404)
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(OrderRecordsPage, {
+      user: { id: 'user-1', username: 'dev', role: 'developer', storeKeys: ['store-1'] },
+      onBack: () => {},
+    }))
+  </script></body>
+</html>

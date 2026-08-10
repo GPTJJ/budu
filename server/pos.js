@@ -100,11 +100,52 @@ function replayOrder(existing, user, storeId, cartHash) {
   return existing
 }
 
+function buildOrderWhere(user, query = {}) {
+  const where = {}
+  const allowed = Array.isArray(user.storeKeys) ? user.storeKeys : []
+  if (user.role !== 'developer') {
+    where.storeId = { in: allowed }
+    where.cashierId = user.id
+  }
+  const storeId = String(query.store || '').trim()
+  if (storeId && (user.role === 'developer' || allowed.includes(storeId))) where.storeId = storeId
+  const from = String(query.from || '').trim()
+  const to = String(query.to || '').trim()
+  const range = {}
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) range.gte = new Date(`${from}T00:00:00+08:00`)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    const end = new Date(`${to}T00:00:00+08:00`)
+    end.setDate(end.getDate() + 1)
+    range.lt = end
+  }
+  if (range.gte || range.lt) where.createdAt = range
+  const paymentMethod = String(query.paymentMethod || '').trim()
+  if (['wechat', 'alipay', 'cash'].includes(paymentMethod)) where.paymentMethod = paymentMethod
+  const status = String(query.status || '').trim()
+  if (['draft', 'pending_payment', 'paid', 'completed', 'cancelled', 'partially_refunded', 'refunded'].includes(status)) {
+    where.status = status
+  }
+  const q = String(query.q || '').trim()
+  if (q) where.orderNo = { contains: q, mode: 'insensitive' }
+  return where
+}
+
 posRouter.get('/pos/config', wrap(async (req, res) => {
   requirePosUser(req.user)
   const mode = paymentMode()
   const channels = mode === 'mock' ? ['wechat', 'alipay', 'cash'] : ['cash']
   res.json({ mode, mock: mode === 'mock', channels })
+}))
+
+posRouter.get('/pos/orders', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const where = buildOrderWhere(req.user, req.query)
+  const [rows, total] = await Promise.all([
+    prisma.order.findMany({ where, include: orderInclude(), orderBy: { createdAt: 'desc' }, take: 200 }),
+    prisma.order.count({ where }),
+  ])
+  res.json({ ok: true, total, rows: rows.map(serializeOrder) })
 }))
 
 posRouter.get('/pos/products', wrap(async (req, res) => {

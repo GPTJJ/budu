@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'pos-ipad.spec.mjs',
+  testMatch: ['pos-ipad.spec.mjs', 'order-records.spec.mjs'],
   fullyParallel: false,
   retries: 0,
   reporter: 'line',
