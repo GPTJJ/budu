@@ -260,6 +260,121 @@ dailyEntryUpgradeRouter.get('/store-sales-sources', wrap(async (req, res) => {
   })
 }))
 
+async function posScopeStores(req, storeParam) {
+  if (storeParam && !canStore(req.user, storeParam)) throw httpError('无权限', 403)
+  const stores = await prisma.store.findMany({ where: storeParam ? { key: storeParam } : {} })
+  if (req.user.role !== 'developer') {
+    const allowed = new Set(req.user.storeKeys || [])
+    return stores.filter((store) => allowed.has(store.key))
+  }
+  return stores
+}
+
+dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const stores = await posScopeStores(req, String(req.query.store || '').trim())
+  if (stores.length === 0) return res.json({ rows: [] })
+  const storeIds = stores.map((store) => store.key)
+  const [orders, entries] = await Promise.all([
+    prisma.order.findMany({
+      where: { storeId: { in: storeIds }, businessDate: { not: null }, status: { not: 'cancelled' } },
+      include: { payments: true, refunds: true },
+    }),
+    prisma.dailyEntry.findMany({ where: { storeKey: { in: storeIds } } }),
+  ])
+  const storeMap = new Map(stores.map((store) => [store.key, store]))
+  const entryMap = new Map(entries.map((entry) => [`${entry.storeKey}|${isoDate(entry.date)}`, entry]))
+  const groups = new Map()
+  for (const order of orders) {
+    const dateStr = isoDate(order.businessDate)
+    const store = storeMap.get(order.storeId)
+    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    const key = `${order.storeId}|${dateStr}`
+    const group = groups.get(key) || {
+      storeId: order.storeId,
+      date: dateStr,
+      originalSales: 0n,
+      effectiveSales: 0n,
+      refundAmount: 0n,
+      discountAmount: 0n,
+      orderCount: 0,
+      byChannel: { wechat: 0n, alipay: 0n, cash: 0n, other: 0n },
+    }
+    group.originalSales += order.subtotal
+    group.effectiveSales += order.payableAmount
+    group.discountAmount += order.discountAmount
+    group.orderCount += 1
+    for (const refund of order.refunds || []) {
+      if (refund.status === 'completed') group.refundAmount += refund.refundAmount
+    }
+    for (const pay of order.payments || []) {
+      if (['success', 'partially_refunded', 'refunded'].includes(pay.status)) {
+        const channel = ['wechat', 'alipay', 'cash'].includes(pay.channel) ? pay.channel : 'other'
+        group.byChannel[channel] += pay.amount
+      }
+    }
+    groups.set(key, group)
+  }
+  const toStr = (value) => value.toString()
+  const rows = [...groups.values()].map((group) => {
+    const adjustment = entryMap.get(`${group.storeId}|${group.date}`)?.hybridAdjustmentCents || 0n
+    const effective = group.effectiveSales - group.refundAmount + adjustment
+    return {
+      storeKey: group.storeId,
+      date: group.date,
+      incCents: toStr(effective),
+      ord: group.orderCount,
+      refundCents: toStr(group.refundAmount),
+      discountCents: toStr(group.discountAmount),
+      avgCents: toStr(group.orderCount > 0 ? effective / BigInt(group.orderCount) : 0n),
+      byChannel: Object.fromEntries(Object.entries(group.byChannel).map(([key, value]) => [key, toStr(value)])),
+    }
+  })
+  res.json({ rows })
+}))
+
+dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const stores = await posScopeStores(req, String(req.query.store || '').trim())
+  if (stores.length === 0) return res.json({ rows: [] })
+  const storeIds = stores.map((store) => store.key)
+  const storeMap = new Map(stores.map((store) => [store.key, store]))
+  const items = await prisma.orderItem.findMany({
+    where: { order: { storeId: { in: storeIds }, businessDate: { not: null }, status: { not: 'cancelled' } } },
+    include: { order: { select: { storeId: true, businessDate: true } } },
+  })
+  const map = new Map()
+  for (const item of items) {
+    const dateStr = isoDate(item.order.businessDate)
+    const store = storeMap.get(item.order.storeId)
+    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    const key = `${item.order.storeId}|${item.productId}`
+    const current = map.get(key) || {
+      storeKey: item.order.storeId,
+      date: dateStr,
+      productId: item.productId,
+      name: item.productNameSnapshot,
+      sku: item.skuSnapshot,
+      quantity: 0,
+      amountCents: 0n,
+    }
+    current.quantity += item.quantity
+    current.amountCents += item.actualAmount || 0n
+    map.set(key, current)
+  }
+  res.json({
+    rows: [...map.values()].map((row) => ({
+      storeKey: row.storeKey,
+      date: row.date,
+      productId: row.productId,
+      name: row.name,
+      sku: row.sku,
+      quantity: row.quantity,
+      amountCents: row.amountCents.toString(),
+    })),
+  })
+}))
+
 dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.body?.storeKey || '').trim()

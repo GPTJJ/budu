@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
+import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
 import {
   clearPosTransaction,
@@ -400,11 +401,13 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setQuery('')
     setCategory('全部')
     setStage('ordering')
+    loadUserData().catch(() => {})
   }
 
   const handleExit = () => {
     // 未付款订单不残留：下次进入 POS 直接回到点单界面
     savePendingOrder(user.id, storeId, '')
+    loadUserData().catch(() => {})
     onExit()
   }
 

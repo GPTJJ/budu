@@ -69,6 +69,8 @@ export async function loadUserData() {
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
     bigBonuses: [],
+    posDaily: [],
+    posProductSales: [],
   }
   // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
   try {
@@ -88,6 +90,16 @@ export async function loadUserData() {
     }
   } catch {
     /* v2 不可用时回退 KV */
+  }
+  try {
+    const [posDaily, posProductSales] = await Promise.all([
+      api('/v2/pos/daily-summary'),
+      api('/v2/pos/product-sales'),
+    ])
+    cached.posDaily = (posDaily && Array.isArray(posDaily.rows)) ? posDaily.rows : []
+    cached.posProductSales = (posProductSales && Array.isArray(posProductSales.rows)) ? posProductSales.rows : []
+  } catch {
+    /* POS 汇总不可用时保留旧值 */
   }
   // v2（PostgreSQL）为申请单/库存数据源
   try {
@@ -200,9 +212,11 @@ export function getUserData() {
       inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
       inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
       bigBonuses: Array.isArray(mirror.bigBonuses) ? mirror.bigBonuses : [],
+      posDaily: Array.isArray(mirror.posDaily) ? mirror.posDaily : [],
+      posProductSales: Array.isArray(mirror.posProductSales) ? mirror.posProductSales : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], posDaily: [], posProductSales: [] }
 }
 
 export function getEntries() {

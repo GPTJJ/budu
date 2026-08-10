@@ -10,6 +10,7 @@ import {
   getStores,
   getProducts,
   getBigBonuses,
+  getUserData,
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
@@ -114,6 +115,16 @@ export function localEntries() {
   return getEntries()
 }
 
+/** POS 门店每日营业汇总（由订单实时计算，缓存于镜像层） */
+export function getPosDaily() {
+  return Array.isArray(getUserData().posDaily) ? getUserData().posDaily : []
+}
+
+/** POS 商品销售汇总（由 order_items 实时计算） */
+export function getPosProductSales() {
+  return Array.isArray(getUserData().posProductSales) ? getUserData().posProductSales : []
+}
+
 /** 保存一条门店业绩录入（自动同步到服务端共享数据） */
 export function saveLocalEntry(monthKey, storeKey, day, data) {
   const next = { ...getEntries(), [`${monthKey}|${storeKey}|${day}`]: data }
@@ -153,7 +164,7 @@ export function dailyRows(monthKey, storeKey) {
       if (ov) cur.local = true
       overrides.delete(row.d)
     }
-    for (const [d, ov] of overrides) {
+  for (const [d, ov] of overrides) {
       let cur = map.get(d)
       if (!cur) {
         cur = { d }
@@ -162,6 +173,29 @@ export function dailyRows(monthKey, storeKey) {
       }
       for (const f of SUM_FIELDS) cur[f] += ov[f] || 0
       cur.local = true
+    }
+  }
+  const posDaily = getPosDaily()
+  for (const row of posDaily) {
+    if (!String(row.date || '').startsWith(monthKey)) continue
+    if (storeKey !== 'all' && row.storeKey !== storeKey) continue
+    const d = String(row.date).slice(5)
+    const inc = Number(row.incCents) / 100
+    const ord = Number(row.ord) || 0
+    if (storeKey === 'all') {
+      let cur = map.get(d)
+      if (!cur) {
+        cur = { d }
+        for (const f of SUM_FIELDS) cur[f] = 0
+        map.set(d, cur)
+      }
+      cur.inc += inc
+      cur.ord += ord
+      cur.pos = true
+    } else {
+      const cur = { d, inc, ord, local: true, pos: true, refundCents: row.refundCents, discountCents: row.discountCents }
+      for (const f of SUM_FIELDS) if (!(f in cur)) cur[f] = 0
+      map.set(d, cur)
     }
   }
   return [...map.values()].sort((a, b) => a.d.localeCompare(b.d))
@@ -724,6 +758,29 @@ export function products(monthKey, storeKey) {
       discount: 0,
       custom: true,
     })
+  }
+  for (const row of getPosProductSales()) {
+    if (!String(row.date || '').startsWith(monthKey)) continue
+    if (storeKey !== 'all' && row.storeKey !== storeKey) continue
+    const amount = Number(row.amountCents) / 100
+    const cur = map.get(row.name)
+    if (cur) {
+      cur.sales += row.quantity
+      cur.amount += amount
+      cur.income += amount
+    } else {
+      map.set(row.name, {
+        name: row.name,
+        sku: row.sku,
+        sales: row.quantity,
+        amount,
+        income: amount,
+        discount: 0,
+        pos: true,
+        storeKey: row.storeKey,
+        storeName: storeName(row.storeKey),
+      })
+    }
   }
   return [...map.values()].sort((a, b) => b.amount - a.amount)
 }
