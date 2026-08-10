@@ -2,19 +2,50 @@ import crypto from 'node:crypto'
 import { httpError } from '../pos-core.js'
 import { assertOrderPaymentTransition, assertOrderTransition } from '../order-state.js'
 import { MockPaymentProvider } from './providers/mock.js'
+import { CashPaymentProvider } from './providers/cash.js'
 import { WechatPayProvider } from './providers/wechat-pay.js'
 import { AlipayProvider } from './providers/alipay.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
+const SENSITIVE_KEYS = /^(authcode|code|secret|apikey|api_key|privatekey|private_key|password|cert|key)$/i
 
 const paymentNo = () => `PAY${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 14).toUpperCase()}`
+
+export function paymentMode() {
+  const mode = String(process.env.PAYMENT_MODE || 'mock').trim().toLowerCase()
+  return mode === 'live' ? 'live' : 'mock'
+}
+
+export function sanitizePayload(value) {
+  if (value == null) return null
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.map(walk)
+    if (node && typeof node === 'object') {
+      const out = {}
+      for (const [key, val] of Object.entries(node)) {
+        out[key] = SENSITIVE_KEYS.test(key) ? '[REDACTED]' : walk(val)
+      }
+      return out
+    }
+    return node
+  }
+  try {
+    const cleaned = walk(value)
+    const text = JSON.stringify(cleaned)
+    if (text.length > 20000) return { truncated: true, size: text.length, sample: text.slice(0, 20000) }
+    return cleaned
+  } catch {
+    return { note: '[payload too large or unserializable]' }
+  }
+}
 
 export class PaymentService {
   constructor(prismaClient, providers) {
     this.prisma = prismaClient
     this.providers = providers || new Map([
       ['mock', new MockPaymentProvider()],
+      ['cash', new CashPaymentProvider()],
       ['wechat_pay', new WechatPayProvider()],
       ['alipay', new AlipayProvider()],
     ])
@@ -26,12 +57,25 @@ export class PaymentService {
     return provider
   }
 
+  resolveProvider(channel) {
+    if (paymentMode() === 'mock') return 'mock'
+    if (channel === 'cash') return 'cash'
+    if (channel === 'wechat') return 'wechat_pay'
+    if (channel === 'alipay') return 'alipay'
+    throw httpError('支付渠道不正确')
+  }
+
   async result(paymentId) {
     const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } })
     if (!payment) throw httpError('支付记录不存在', 404)
     const order = await this.prisma.order.findUnique({
       where: { id: payment.orderId },
-      include: { store: true, items: { orderBy: { id: 'asc' } }, payments: { orderBy: { createdAt: 'desc' } } },
+      include: {
+        store: true,
+        items: { orderBy: { id: 'asc' } },
+        payments: { orderBy: { createdAt: 'desc' } },
+        refunds: { orderBy: { createdAt: 'desc' } },
+      },
     })
     return { payment, order }
   }
@@ -49,15 +93,38 @@ export class PaymentService {
     }
   }
 
+  async logEvent(payment, order, event, extra = {}, client = this.prisma) {
+    try {
+      await client.paymentLog.create({
+        data: {
+          id: `plog-${crypto.randomUUID()}`,
+          paymentId: payment.id,
+          orderId: order.id,
+          storeKey: order.storeId || '',
+          cashierId: order.cashierId || '',
+          event,
+          channel: payment.channel || '',
+          amount: payment.amount || 0n,
+          status: extra.status || payment.status || '',
+          providerTradeNo: extra.providerTradeNo || payment.providerTradeNo || null,
+          failureCode: extra.failureCode || payment.failureCode || '',
+          failureMessage: extra.failureMessage || payment.failureMessage || '',
+          callbackAt: extra.callbackAt || null,
+        },
+      })
+    } catch (error) {
+      console.error('[payment-log]', error.message)
+    }
+  }
+
   async createPayment(input) {
     const orderId = String(input.orderId || '').trim()
     const channel = String(input.channel || '')
     const requestKey = String(input.requestKey || '').trim()
-    const providerName = String(input.provider || 'mock')
+    const providerName = this.resolveProvider(channel)
     if (!orderId) throw httpError('订单 ID 不正确')
     if (!CHANNELS.includes(channel)) throw httpError('支付渠道不正确')
     if (requestKey.length < 8 || requestKey.length > 160) throw httpError('支付请求幂等键不正确')
-    if (providerName !== 'mock') throw httpError('当前阶段仅启用 MockPaymentProvider', 501)
 
     const replay = await this.prisma.payment.findUnique({ where: { requestKey } })
     if (replay) {
@@ -81,55 +148,67 @@ export class PaymentService {
     const no = paymentNo()
     let payment
     try {
-      payment = await this.prisma.payment.create({
-        data: {
-          id: `pay-${crypto.randomUUID()}`,
-          paymentNo: no,
-          orderId: order.id,
-          channel,
-          amount: order.payableAmount,
-          currency: 'CNY',
-          status: 'created',
-          merchantTradeNo: `BUDU${no}`,
-          provider: providerName,
-          requestKey,
-          providerMetadata: {},
-        },
+      payment = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.payment.create({
+          data: {
+            id: `pay-${crypto.randomUUID()}`,
+            paymentNo: no,
+            orderId: order.id,
+            channel,
+            paymentMethod: String(input.paymentMethod || '').slice(0, 30),
+            amount: order.payableAmount,
+            currency: 'CNY',
+            status: 'created',
+            merchantTradeNo: `BUDU${no}`,
+            provider: providerName,
+            requestKey,
+            requestPayload: sanitizePayload({
+              channel,
+              paymentMethod: String(input.paymentMethod || '').slice(0, 30),
+              provider: providerName,
+              requestedAt: new Date().toISOString(),
+            }),
+            providerMetadata: {},
+          },
+        })
+        if (order.paymentStatus !== 'pending') {
+          assertOrderPaymentTransition(order.paymentStatus, 'pending')
+          const updated = await tx.order.updateMany({
+            where: { id: order.id, status: 'pending_payment', paymentStatus: order.paymentStatus },
+            data: { paymentStatus: 'pending', version: { increment: 1 } },
+          })
+          if (updated.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
+        }
+        return created
       })
     } catch (error) {
       if (error?.code !== 'P2002') throw error
-      const existing = await this.prisma.payment.findUnique({ where: { requestKey } }) || await this.activePayment(order.id)
+      const existing = (await this.prisma.payment.findUnique({ where: { requestKey } })) || (await this.activePayment(order.id))
       if (!existing) throw httpError('支付请求冲突，请查询订单后重试', 409)
       if (existing.channel !== channel) throw httpError('该订单已有其他渠道的支付处理中', 409)
       return { ...(await this.result(existing.id)), reused: true }
     }
 
-    if (order.paymentStatus !== 'pending') {
-      assertOrderPaymentTransition(order.paymentStatus, 'pending')
-      await this.prisma.order.updateMany({
-        where: { id: order.id, status: 'pending_payment', paymentStatus: order.paymentStatus },
-        data: { paymentStatus: 'pending', version: { increment: 1 } },
-      })
-    }
+    await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
     const provider = this.provider(providerName)
     let response
     try {
       response = await provider.createPayment(payment, {
-        scenario: input.scenario,
+        scenario: paymentMode() === 'mock' ? input.scenario : undefined,
         callbackDelayMs: input.callbackDelayMs,
         authCode: input.authCode,
       })
     } catch (error) {
-      await this.handleCallback(providerName, {
-        signature: 'mock-valid',
-        eventId: `provider-error-${crypto.randomUUID()}`,
+      await this.applyPaymentEvent(providerName, {
+        eventId: `internal-${crypto.randomUUID()}`,
         paymentNo: payment.paymentNo,
         merchantTradeNo: payment.merchantTradeNo,
         status: 'failed',
         failureCode: 'PROVIDER_ERROR',
         failureMessage: error.message,
-      })
+        raw: { internal: true, failureCode: 'PROVIDER_ERROR', failureMessage: error.message },
+      }).catch((logError) => console.error('[payment-provider-error]', logError.message))
       throw error
     }
 
@@ -138,7 +217,12 @@ export class PaymentService {
       data: {
         providerTradeNo: response.providerTradeNo || null,
         providerMetadata: response.metadata || {},
+        responsePayload: sanitizePayload(response.metadata || {}),
       },
+    })
+    await this.logEvent(payment, order, 'payment.provider.response', {
+      status: response.callbacks?.[0]?.status || payment.status,
+      providerTradeNo: payment.providerTradeNo,
     })
     for (const callback of response.callbacks || []) await this.handleCallback(providerName, callback)
     if (response.scheduledCallback) {
@@ -155,7 +239,12 @@ export class PaymentService {
     if (!payment) throw httpError('支付记录不存在', 404)
     const response = await this.provider(payment.provider).queryPayment(payment)
     if (response.callback) await this.handleCallback(payment.provider, response.callback)
-    return this.result(payment.id)
+    const result = await this.result(payment.id)
+    await this.logEvent(result.payment, result.order, 'payment.query', {
+      status: result.payment.status,
+      providerTradeNo: result.payment.providerTradeNo,
+    })
+    return result
   }
 
   async closePayment(paymentId) {
@@ -165,7 +254,12 @@ export class PaymentService {
     if (payment.status === 'closed') return this.result(payment.id)
     const response = await this.provider(payment.provider).closePayment(payment)
     if (response.callback) await this.handleCallback(payment.provider, response.callback)
-    return this.result(payment.id)
+    const result = await this.result(payment.id)
+    await this.logEvent(result.payment, result.order, 'payment.closed', {
+      status: result.payment.status,
+      providerTradeNo: result.payment.providerTradeNo,
+    })
+    return result
   }
 
   async refundPayment() {
@@ -178,6 +272,10 @@ export class PaymentService {
 
   async handleCallback(providerName, payload) {
     const verified = await this.verifyCallback(providerName, payload)
+    return this.applyPaymentEvent(providerName, { ...verified, raw: payload })
+  }
+
+  async applyPaymentEvent(providerName, verified) {
     const payment = await this.prisma.payment.findFirst({
       where: {
         OR: [
@@ -198,9 +296,17 @@ export class PaymentService {
           callbackCount: { increment: 1 },
           lastCallbackId: String(verified.eventId || '').slice(0, 120),
           lastCallbackAt: new Date(),
+          ...(verified.raw !== undefined ? { rawCallback: sanitizePayload(verified.raw) } : {}),
         },
       })
-      if (verified.eventId && current.lastCallbackId === String(verified.eventId).slice(0, 120)) return
+      if (verified.eventId && current.lastCallbackId === String(verified.eventId).slice(0, 120)) {
+        await this.logEvent(current, current.order, 'payment.callback.duplicate', {
+          status: current.status,
+          providerTradeNo: current.providerTradeNo,
+          callbackAt: new Date(),
+        }, tx)
+        return
+      }
 
       if (verified.status === 'success') {
         if (current.status === 'success') return
@@ -245,6 +351,11 @@ export class PaymentService {
         } else if (current.order.status !== 'completed') {
           throw httpError(`订单 ${current.order.status} 状态收到成功支付，需要人工核对`, 409)
         }
+        await this.logEvent(current, current.order, 'payment.success', {
+          status: 'success',
+          providerTradeNo: verified.providerTradeNo || current.providerTradeNo,
+          callbackAt: new Date(),
+        }, tx)
         return
       }
 
@@ -268,6 +379,13 @@ export class PaymentService {
         where: { id: current.order.id, status: 'pending_payment', paymentStatus: current.order.paymentStatus },
         data: { paymentStatus: nextOrderPaymentStatus, version: { increment: 1 } },
       })
+      await this.logEvent(current, current.order, `payment.${eventStatus}`, {
+        status: eventStatus,
+        providerTradeNo: verified.providerTradeNo || current.providerTradeNo,
+        failureCode: verified.failureCode,
+        failureMessage: verified.failureMessage,
+        callbackAt: new Date(),
+      }, tx)
     })
     return this.result(payment.id)
   }
@@ -279,6 +397,7 @@ export function serializePayment(payment) {
     paymentNo: payment.paymentNo,
     orderId: payment.orderId,
     channel: payment.channel,
+    paymentMethod: payment.paymentMethod || '',
     amount: payment.amount.toString(),
     currency: payment.currency,
     status: payment.status,

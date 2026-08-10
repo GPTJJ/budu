@@ -13,7 +13,7 @@ export default defineConfig({
   },
   projects: [{ name: 'ipad-webkit', use: { browserName: 'webkit' } }],
   webServer: {
-    command: `${process.execPath} node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5198 --strictPort`,
+    command: `"${process.execPath}" node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5198 --strictPort`,
     url: 'http://127.0.0.1:5198/tests/pos-harness.html',
     reuseExistingServer: true,
     timeout: 30000,

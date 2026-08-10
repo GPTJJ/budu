@@ -256,6 +256,40 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     }
   }
 
+  const closeCurrentPayment = async () => {
+    if (!payment || queryingPayment || paying) return
+    setQueryingPayment(true)
+    setError('')
+    try {
+      const data = await api(`/v2/pos/payments/${payment.id}/close`, { method: 'POST' })
+      setPayment(data.payment)
+      setOrder(data.order)
+      setError(data.payment.status === 'closed'
+        ? '当前支付已关闭，可以重新选择支付方式'
+        : (data.payment.failureMessage || `当前支付状态：${data.payment.status}`))
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setQueryingPayment(false)
+    }
+  }
+
+  // 支付处理中自动查询（防止回调延迟时员工重复扫码/重复扣款）
+  useEffect(() => {
+    if (stage !== 'payment' || !payment || !['created', 'pending'].includes(payment.status)) return
+    let polls = 0
+    const timer = window.setInterval(() => {
+      polls += 1
+      if (polls > 10) {
+        window.clearInterval(timer)
+        return
+      }
+      queryCurrentPayment()
+    }, 3000)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, payment?.id, payment?.status])
+
   const startNext = () => {
     clearPosTransaction(user.id, storeId)
     setCart({})
@@ -277,17 +311,29 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   if (stage === 'payment' && order) {
+    const isMock = order.paymentMode === 'mock'
+    const pendingPayment = payment && ['created', 'pending'].includes(payment.status)
     return (
       <>
         <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
             <button onClick={() => { setScannerChannel(''); setStage('ordering') }} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
-            <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">扫码模拟支付 · 不调用真实支付接口</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
+            <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{isMock ? '扫码模拟支付 · 不调用真实支付接口' : '请扫描顾客付款码完成支付'}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
+            {pendingPayment && (
+              <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">正在确认支付，请勿重复付款</div>
+            )}
             {payment && !['success'].includes(payment.status) && (
-              <button disabled={queryingPayment} onClick={queryCurrentPayment} className="mx-auto mt-4 block rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-                {queryingPayment ? '查询中…' : '查询支付结果'}
-              </button>
+              <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-3">
+                <button disabled={queryingPayment} onClick={queryCurrentPayment} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                  {queryingPayment ? '查询中…' : '查询支付结果'}
+                </button>
+                {pendingPayment && (
+                  <button disabled={queryingPayment} onClick={closeCurrentPayment} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">
+                    关闭当前支付
+                  </button>
+                )}
+              </div>
             )}
             <div className="mt-8 grid grid-cols-3 gap-4">
               <button disabled={Boolean(paying)} onClick={() => startPayment('wechat')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-6 font-bold text-emerald-700 disabled:opacity-50"><WalletCards className="mx-auto mb-3 h-8 w-8" />{paying === 'wechat' ? '处理中…' : '微信扫码'}</button>
@@ -302,9 +348,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   if (stage === 'success' && order) {
+    const isMock = order.paymentMode === 'mock'
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-emerald-50 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">本次为模拟支付，订单已保存为 completed</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={onExit} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">退出 POS</button></div>
+        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">{isMock ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成'}</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={onExit} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">退出 POS</button></div>
       </div>
     )
   }

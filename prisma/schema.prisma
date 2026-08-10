@@ -110,6 +110,8 @@ model Order {
   store               Store       @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
   payments            Payment[]
+  refunds             Refund[]
+  paymentLogs         PaymentLog[]
 
   @@index([storeId, createdAt])
   @@index([cashierId, createdAt])
@@ -122,6 +124,7 @@ model Payment {
   paymentNo        String    @unique @map("payment_no")
   orderId          String    @map("order_id")
   channel          String
+  paymentMethod    String    @default("") @map("payment_method")
   amount           BigInt
   currency         String    @default("CNY")
   status           String    @default("created")
@@ -132,6 +135,9 @@ model Payment {
   failureCode      String    @default("") @map("failure_code")
   failureMessage   String    @default("") @map("failure_message")
   providerMetadata Json      @default("{}") @map("provider_metadata")
+  requestPayload   Json?     @map("request_payload")
+  responsePayload  Json?     @map("response_payload")
+  rawCallback      Json?     @map("raw_callback")
   callbackCount    Int       @default(0) @map("callback_count")
   lastCallbackId   String    @default("") @map("last_callback_id")
   lastCallbackAt   DateTime? @map("last_callback_at")
@@ -142,11 +148,57 @@ model Payment {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
   order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds          Refund[]
+  paymentLogs      PaymentLog[]
 
   @@index([orderId, createdAt])
   @@index([orderId, status])
   @@index([provider, status])
   @@map("payments")
+}
+
+model Refund {
+  id               String    @id
+  refundNo         String    @unique @map("refund_no")
+  orderId          String    @map("order_id")
+  paymentId        String    @map("payment_id")
+  refundAmount     BigInt    @map("refund_amount")
+  reason           String    @default("")
+  status           String    @default("pending")
+  providerRefundNo String?   @unique @map("provider_refund_no")
+  requestedBy      String    @default("") @map("requested_by")
+  approvedBy       String    @default("") @map("approved_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  completedAt      DateTime? @map("completed_at")
+  order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment          Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@index([paymentId, createdAt])
+  @@map("refunds")
+}
+
+model PaymentLog {
+  id              String    @id
+  paymentId       String    @map("payment_id")
+  orderId         String    @map("order_id")
+  storeKey        String    @default("") @map("store_key")
+  cashierId       String    @default("") @map("cashier_id")
+  event           String
+  channel         String    @default("")
+  amount          BigInt    @default(0)
+  status          String    @default("")
+  providerTradeNo String?   @map("provider_trade_no")
+  failureCode     String    @default("") @map("failure_code")
+  failureMessage  String    @default("") @map("failure_message")
+  callbackAt      DateTime? @map("callback_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  payment         Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([paymentId, createdAt])
+  @@map("payment_logs")
 }
 
 model OrderItem {

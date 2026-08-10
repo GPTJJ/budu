@@ -13,6 +13,7 @@
     const cameraMode = params.get('camera') || 'ok'
     const scanDelay = Number(params.get('scanDelay') || 20)
     const duplicateScan = params.get('duplicate') === '1'
+    const payMode = params.get('paymode') || 'success'
     let scanIndex = 0
     window.__paymentRequestCount = 0
     window.__cameraTrackStops = 0
@@ -75,13 +76,26 @@
         window.__paymentRequestCount += 1
         if (['wechat', 'alipay'].includes(body.channel) && !body.authCode) return json({ error: '请扫描有效的顾客付款码' }, 400)
         const failed = String(body.authCode || '').startsWith('FAIL')
-        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
-        order = failed
+        const pending = payMode === 'pending' && ['wechat', 'alipay'].includes(body.channel)
+        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
+        order = pending
+          ? { ...order, status: 'pending_payment', paymentStatus: 'pending', paymentMethod: null, payments: [payment] }
+          : failed
           ? { ...order, status: 'pending_payment', paymentStatus: 'failed', paymentMethod: null, payments: [payment] }
           : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
         return json({ ok: true, payment, order }, 201)
+      }
+      if (order && payment && path === `/api/v2/pos/payments/${payment.id}/query` && options.method === 'POST') {
+        return json({ payment, order })
+      }
+      if (order && payment && path === `/api/v2/pos/payments/${payment.id}/close` && options.method === 'POST') {
+        payment = { ...payment, status: 'closed', failureMessage: '' }
+        order = { ...order, paymentStatus: 'unpaid', payments: [payment] }
+        sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
+        sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
+        return json({ payment, order })
       }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }

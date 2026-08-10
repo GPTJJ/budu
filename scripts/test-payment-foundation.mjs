@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PaymentService } from '../server/payments/payment-service.js'
+import { PaymentService, paymentMode, sanitizePayload } from '../server/payments/payment-service.js'
+import { CashPaymentProvider } from '../server/payments/providers/cash.js'
 import { MockPaymentProvider } from '../server/payments/providers/mock.js'
 import { canTransitionOrder, canTransitionOrderPayment } from '../server/order-state.js'
 
@@ -35,6 +36,7 @@ class MemoryPrisma {
       createdAt: new Date(), updatedAt: new Date(), completedAt: null,
     }]
     this.payments = []
+    this.paymentLogs = []
     this.payment = {
       findUnique: async ({ where, include }) => {
         const row = this.payments.find((item) => matches(item, where))
@@ -61,6 +63,12 @@ class MemoryPrisma {
         return { count: rows.length }
       },
     }
+    this.paymentLog = {
+      create: async ({ data }) => {
+        this.paymentLogs.push(data)
+        return data
+      },
+    }
     this.order = {
       findUnique: async ({ where, include }) => {
         const row = this.orders.find((item) => matches(item, where))
@@ -81,6 +89,17 @@ class MemoryPrisma {
   }
 
   async $transaction(handler) { return handler(this) }
+}
+
+async function withMode(mode, fn) {
+  const previous = process.env.PAYMENT_MODE
+  process.env.PAYMENT_MODE = mode
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env.PAYMENT_MODE
+    else process.env.PAYMENT_MODE = previous
+  }
 }
 
 test('正式订单与订单支付状态机只允许后端定义的转换', () => {
@@ -188,4 +207,73 @@ test('扫码付款码只传给 Provider 内存，不进入支付持久化字段'
   assert.equal(receivedAuthCode, authCode)
   assert.equal(result.payment.providerMetadata.authCodeReceived, true)
   assert.equal(JSON.stringify(result.payment, (_, value) => typeof value === 'bigint' ? value.toString() : value).includes(authCode), false)
+})
+
+test('PAYMENT_MODE 控制 Provider 选择，live 模式现金走 CashProvider', async () => {
+  const service = new PaymentService({})
+  await withMode('mock', () => {
+    assert.equal(paymentMode(), 'mock')
+    assert.equal(service.resolveProvider('wechat'), 'mock')
+    assert.equal(service.resolveProvider('alipay'), 'mock')
+    assert.equal(service.resolveProvider('cash'), 'mock')
+  })
+  await withMode('live', () => {
+    assert.equal(paymentMode(), 'live')
+    assert.equal(service.resolveProvider('cash'), 'cash')
+    assert.equal(service.resolveProvider('wechat'), 'wechat_pay')
+    assert.equal(service.resolveProvider('alipay'), 'alipay')
+  })
+})
+
+test('live 模式现金支付立即完成，并写入审计日志', async () => {
+  await withMode('live', async () => {
+    const db = new MemoryPrisma()
+    const service = new PaymentService(db)
+    const result = await service.createPayment({
+      orderId: 'order-1',
+      channel: 'cash',
+      requestKey: 'request-cash-live-1',
+      paymentMethod: 'cashier-confirm',
+    })
+    assert.equal(result.payment.provider, 'cash')
+    assert.equal(result.payment.status, 'success')
+    assert.equal(result.payment.paymentMethod, 'cashier-confirm')
+    assert.equal(result.order.status, 'completed')
+    assert.equal(result.order.paymentStatus, 'paid')
+    assert.equal(db.paymentLogs.some((log) => log.event === 'payment.created'), true)
+    assert.equal(db.paymentLogs.some((log) => log.event === 'payment.success'), true)
+    assert.equal(db.paymentLogs.every((log) => log.storeKey === 'store-1' && log.cashierId === 'user-1'), true)
+  })
+})
+
+test('Provider 抛错时支付标记 failed、订单回到 failed，可重新支付', async () => {
+  await withMode('live', async () => {
+    const db = new MemoryPrisma()
+    class ExplodingCash extends CashPaymentProvider {
+      async createPayment() { throw new Error('POS 终端离线') }
+    }
+    const service = new PaymentService(db, new Map([['cash', new ExplodingCash()]]))
+    await assert.rejects(
+      () => service.createPayment({ orderId: 'order-1', channel: 'cash', requestKey: 'request-explode-1' }),
+      /POS 终端离线/,
+    )
+    const payment = db.payments.find((row) => row.requestKey === 'request-explode-1')
+    assert.equal(payment.status, 'failed')
+    assert.equal(payment.failureCode, 'PROVIDER_ERROR')
+    assert.equal(db.orders[0].paymentStatus, 'failed')
+    assert.equal(db.paymentLogs.some((log) => log.event === 'payment.failed'), true)
+
+    const retryService = new PaymentService(db)
+    const retried = await retryService.createPayment({ orderId: 'order-1', channel: 'cash', requestKey: 'request-explode-retry' })
+    assert.equal(retried.order.status, 'completed')
+  })
+})
+
+test('原始回调落库且敏感字段被脱敏', () => {
+  assert.deepEqual(sanitizePayload({ authCode: '134567890123456789', secret: 's3cret', merchantTradeNo: 'MT-1' }), {
+    authCode: '[REDACTED]',
+    secret: '[REDACTED]',
+    merchantTradeNo: 'MT-1',
+  })
+  assert.equal(sanitizePayload('x'.repeat(30000))?.truncated, true)
 })

@@ -1,6 +1,16 @@
 /** 系统版本更新记录（仅存档，不再推送到重要提醒/铃铛） */
 export const CHANGELOG = [
   {
+    version: 'V1.48',
+    date: '2026-08-11',
+    releasedAt: '2026-08-11T12:00:00.000Z',
+    items: [
+      'POS 支付底层升级：支付单补全请求/响应/原始回调字段，新增退款预留与支付审计日志',
+      '新增 PAYMENT_MODE 模式开关（mock/live）与现金支付 Provider，回调路由规范为 /api/payments/wechat/callback 与 /api/payments/alipay/callback',
+      'POS 支付中自动查询支付结果并支持关闭当前支付，防止回调延迟时重复扣款',
+    ],
+  },
+  {
     version: 'V1.47',
     date: '2026-08-11',
     releasedAt: '2026-08-11T10:00:00.000Z',

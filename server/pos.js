@@ -5,7 +5,7 @@ import { prisma, dbReady } from './pg.js'
 import { serializeProduct } from './products.js'
 import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
 import { paymentService } from './payments/index.js'
-import { serializePayment } from './payments/payment-service.js'
+import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { assertOrderTransition } from './order-state.js'
 
 export const posRouter = Router()
@@ -46,6 +46,7 @@ const orderInclude = () => ({
   store: true,
   items: { orderBy: { id: 'asc' } },
   payments: { orderBy: { createdAt: 'desc' } },
+  refunds: { orderBy: { createdAt: 'desc' } },
 })
 
 function serializeOrder(order) {
@@ -69,6 +70,15 @@ function serializeOrder(order) {
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
     payments: (order.payments || []).map(serializePayment),
+    refunds: (order.refunds || []).map((refund) => ({
+      id: refund.id,
+      refundNo: refund.refundNo,
+      amount: refund.refundAmount.toString(),
+      status: refund.status,
+      reason: refund.reason,
+      createdAt: refund.createdAt,
+      completedAt: refund.completedAt,
+    })),
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -160,9 +170,10 @@ posRouter.post('/pos/orders/:id/payments', wrap(async (req, res) => {
     orderId: current.id,
     channel,
     requestKey: req.body?.requestKey,
-    provider: 'mock',
-    scenario: req.body?.mockScenario || 'success',
-    callbackDelayMs: req.body?.callbackDelayMs,
+    paymentMethod: req.body?.paymentMethod,
+    ...(paymentMode() === 'mock'
+      ? { scenario: req.body?.mockScenario || 'success', callbackDelayMs: req.body?.callbackDelayMs }
+      : {}),
     authCode: paymentAuthCode(req.body, channel),
   })
   res.status(result.reused ? 200 : 201).json({
@@ -240,8 +251,7 @@ posRouter.post('/pos/orders/:id/complete', wrap(async (req, res) => {
     orderId: current.id,
     channel: paymentMethod,
     requestKey: `v1:${current.id}:${paymentMethod}`,
-    provider: 'mock',
-    scenario: 'success',
+    paymentMethod: 'cashier-confirm',
   })
   res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))

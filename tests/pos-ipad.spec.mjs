@@ -29,6 +29,15 @@ test('iPad 横屏三栏、快速加购、购物车和搜索', async ({ page }) =
   await page.getByPlaceholder('搜索商品名称 / SKU / 条码').fill('690000000002')
   await expect(page.getByRole('button', { name: /草莓奶油蛋糕/ })).toBeVisible()
   await expect(product).toHaveCount(0)
+  await page.getByPlaceholder('搜索商品名称 / SKU / 条码').fill('')
+  await page.getByRole('button', { name: '蛋糕', exact: true }).click()
+  await expect(page.getByRole('button', { name: /草莓奶油蛋糕/ })).toBeVisible()
+  await expect(product).toHaveCount(0)
+  await page.getByRole('button', { name: '全部', exact: true }).click()
+  await expect(product).toBeVisible()
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: '清空', exact: true }).click()
+  await expect(page.getByText('合计 · 0 件', { exact: true })).toBeVisible()
 })
 
 test('待支付、模拟支付和成功页刷新恢复', async ({ page }) => {
@@ -116,6 +125,17 @@ test('模拟支付失败后可重新扫描新付款码', async ({ page }) => {
   await page.getByRole('button', { name: '微信扫码', exact: true }).click()
   await expect(page.getByText('模拟支付失败，请重新扫码', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(2)
+})
+
+test('支付处理中提示勿重复付款，关闭后可重新选择支付方式', async ({ page }) => {
+  await enterPayment(page, '/tests/pos-harness.html?user=pending-close&paymode=pending')
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByText('正在确认支付，请勿重复付款', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '关闭当前支付', exact: true }).click()
+  await expect(page.getByText('当前支付已关闭，可以重新选择支付方式', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '现金', exact: true }).click()
   await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
   expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(2)
 })
