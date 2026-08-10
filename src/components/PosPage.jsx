@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
+import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, ReceiptText, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
+import OrderRecordsPage from './OrderRecordsPage'
 import {
   clearPosTransaction,
   changeCartQuantity,
@@ -56,6 +57,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [posConfig, setPosConfig] = useState(null)
   const [cashConfirm, setCashConfirm] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
+  const [showOrders, setShowOrders] = useState(false)
   const [giftMap, setGiftMap] = useState({})
   const [discount, setDiscount] = useState('10')
   const [remark, setRemark] = useState('')
@@ -415,6 +417,16 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可用门店</h2><p className="mt-2 text-sm text-slate-400">请先让开发者为账号绑定门店。</p><button onClick={handleExit} className="mt-6 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
   }
 
+  if (showOrders) {
+    return (
+      <div className="h-screen h-[100dvh] overflow-y-auto bg-slate-100" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className="mx-auto w-full max-w-[1600px] p-3 sm:p-5 lg:p-6">
+          <OrderRecordsPage user={user} onBack={() => setShowOrders(false)} />
+        </div>
+      </div>
+    )
+  }
+
   if (stage === 'loading') {
     return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 text-sm font-medium text-slate-400">正在恢复 POS 会话…</div>
   }
@@ -505,6 +517,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
           <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-11 max-w-[170px] appearance-none rounded-2xl border border-slate-200 bg-white pl-3 pr-8 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </label>
+        <button onClick={() => setShowOrders(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-600 hover:text-budu-600" aria-label="订单记录">
+          <ReceiptText className="h-4 w-4 text-budu-600" />
+          <span className="hidden sm:inline">订单记录</span>
+        </button>
       </header>
 
       <div className="flex min-h-0 flex-1">

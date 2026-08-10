@@ -224,3 +224,14 @@ test('POS 赠送/折扣/备注 对应减免并可结算', async ({ page }) => {
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
   await expect(page.getByText('¥32.30', { exact: true })).toBeVisible()
 })
+
+test('POS 点单内可打开订单记录并返回', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=pos-orders')
+  await expect(page.getByPlaceholder('搜索商品名称 / SKU / 条码')).toBeVisible()
+  await page.getByRole('button', { name: /订单记录/ }).click()
+  await expect(page.getByText('订单记录', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('暂无符合条件的订单', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '返回', exact: true }).click()
+  await expect(page.getByPlaceholder('搜索商品名称 / SKU / 条码')).toBeVisible()
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
+})

@@ -84,6 +84,10 @@
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         return json({ ok: true, order }, 201)
       }
+      if (path === '/api/v2/pos/orders' && (!options.method || options.method === 'GET')) {
+        const rows = order ? [order] : []
+        return json({ ok: true, total: rows.length, rows })
+      }
       if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order: { ...order, payments: payment ? [payment] : [] } })
       if (order && path === `/api/v2/pos/orders/${order.id}/payments`) {
         const body = JSON.parse(options.body)
