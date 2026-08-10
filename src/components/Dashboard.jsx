@@ -11,6 +11,7 @@ import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import PageLoading from './LoadingSkeleton'
+import PullToRefresh from './PullToRefresh'
 import { APP_VERSION } from '../version'
 import { allStores, kpiCards } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
@@ -124,8 +125,9 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   return (
-    <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
-      <div className="flex min-h-screen min-h-[100dvh] bg-canvas">
+    <PullToRefresh onRefresh={handleRefresh}>
+      <PublicModeProvider isPublic={user?.role === 'public'} isStore={user?.role === 'store'}>
+        <div className="flex min-h-screen min-h-[100dvh] bg-canvas">
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm lg:hidden"
@@ -162,7 +164,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
-            onRefresh={handleRefresh}
           />
 
           <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
@@ -267,7 +268,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
           onMore={() => setSidebarOpen(true)}
         />
         <PwaInstallPrompt authenticated />
-      </div>
-    </PublicModeProvider>
+        </div>
+      </PublicModeProvider>
+    </PullToRefresh>
   )
 }

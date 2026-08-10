@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
+import { MapPin, Menu, ChevronDown } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import NotificationBell from './NotificationBell'
@@ -16,12 +16,10 @@ export default function Header({
   onStoreChange,
   onMenuClick,
   onNavigate,
-  onRefresh,
   user,
 }) {
   const { t } = useI18n()
   const name = user?.username || t('伙伴')
-  const [refreshing, setRefreshing] = useState(false)
   const visibleStores =
     user?.role === 'developer' || user?.role === 'public'
       ? allStores()
@@ -41,12 +39,6 @@ export default function Header({
         : hour >= 14 && hour < 18
           ? '下午好，{name} 👋'
           : '晚上好，{name} 👋'
-
-  const handleRefresh = () => {
-    if (!onRefresh || refreshing) return
-    setRefreshing(true)
-    Promise.resolve(onRefresh()).finally(() => setRefreshing(false))
-  }
 
   return (
     <header
@@ -74,16 +66,6 @@ export default function Header({
             )}
           </div>
         </div>
-
-        {/* 刷新页面（移动端，消息铃铛左侧） */}
-        <button
-          type="button"
-          onClick={handleRefresh}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition active:scale-95 md:hidden"
-          aria-label={t('刷新页面')}
-        >
-          <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
 
         <NotificationBell variant="mobile" user={user} onNavigate={onNavigate} />
 
@@ -115,16 +97,6 @@ export default function Header({
               </label>
             </>
           )}
-
-          {/* 刷新页面（桌面端，消息铃铛左侧） */}
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="hidden h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-budu-500 md:grid"
-            aria-label={t('刷新页面')}
-          >
-            <RefreshCw className={`h-[18px] w-[18px] ${refreshing ? 'animate-spin' : ''}`} />
-          </button>
 
           <NotificationBell variant="desktop" user={user} onNavigate={onNavigate} />
 
