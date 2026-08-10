@@ -341,7 +341,7 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   const storeMap = new Map(stores.map((store) => [store.key, store]))
   const items = await prisma.orderItem.findMany({
     where: { order: { storeId: { in: storeIds }, businessDate: { not: null }, status: { not: 'cancelled' } } },
-    include: { order: { select: { storeId: true, businessDate: true } } },
+    include: { order: { select: { storeId: true, businessDate: true, subtotal: true, payableAmount: true } } },
   })
   const map = new Map()
   for (const item of items) {
@@ -358,9 +358,36 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
       quantity: 0,
       amountCents: 0n,
     }
+    const subtotal = item.order.subtotal || 0n
+    const payable = item.order.payableAmount || 0n
+    let revenue = item.actualAmount || 0n
+    if (subtotal > 0n && payable !== subtotal) {
+      revenue = (revenue * payable + subtotal / 2n) / subtotal
+    }
     current.quantity += item.quantity
-    current.amountCents += item.actualAmount || 0n
+    current.amountCents += revenue
     map.set(key, current)
+  }
+  const refundItems = await prisma.refundItem.findMany({
+    where: {
+      refund: {
+        status: 'completed',
+        order: { storeId: { in: storeIds }, businessDate: { not: null } },
+      },
+    },
+    include: {
+      orderItem: { include: { order: { select: { storeId: true, businessDate: true } } } },
+    },
+  })
+  for (const refundItem of refundItems) {
+    const dateStr = isoDate(refundItem.orderItem.order.businessDate)
+    const store = storeMap.get(refundItem.orderItem.order.storeId)
+    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    const key = `${refundItem.orderItem.order.storeId}|${refundItem.orderItem.productId}`
+    const current = map.get(key)
+    if (!current) continue
+    current.quantity = Math.max(0, current.quantity - refundItem.quantity)
+    current.amountCents = BigInt(Math.max(0, Number(current.amountCents - refundItem.amountCents)))
   }
   res.json({
     rows: [...map.values()].map((row) => ({
