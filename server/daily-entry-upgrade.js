@@ -246,6 +246,20 @@ dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {
   res.json({ ok: true, storeKey, salesDataSource, effectiveDate: effectiveDate || '' })
 }))
 
+dailyEntryUpgradeRouter.get('/store-sales-sources', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (req.user?.role !== 'developer') throw httpError('仅管理员可查看门店销售数据来源', 403)
+  const rows = await prisma.store.findMany({ orderBy: { name: 'asc' } })
+  res.json({
+    rows: rows.map((row) => ({
+      storeKey: row.key,
+      storeName: row.name,
+      salesDataSource: row.salesDataSource,
+      salesDataSourceEffectiveDate: isoDate(row.salesDataSourceEffectiveDate),
+    })),
+  })
+}))
+
 dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.body?.storeKey || '').trim()

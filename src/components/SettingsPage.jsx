@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Languages, MapPin, Plus, Server, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Database, Languages, MapPin, Plus, Server, Store, Trash2 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
@@ -14,6 +14,15 @@ export default function SettingsPage({ user, onBack }) {
   const [storeError, setStoreError] = useState('')
   const [version, setVersion] = useState(0)
   const [alertTip, setAlertTip] = useState('')
+  const [sourceStores, setSourceStores] = useState([])
+  const [sourceStore, setSourceStore] = useState('')
+  const [sourceType, setSourceType] = useState('manual')
+  const [sourceDate, setSourceDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const [sourceSaving, setSourceSaving] = useState(false)
+  const [sourceTip, setSourceTip] = useState('')
   const isDeveloper = user?.role === 'developer'
   const customStores = getStores()
 
@@ -47,6 +56,61 @@ export default function SettingsPage({ user, onBack }) {
       setAlertTip(res.configured ? t('测试消息已发送 ✓') : t('未配置 Webhook，仅返回站内状态'))
     } catch (err) {
       setAlertTip(t(err.message))
+    }
+  }
+
+  useEffect(() => {
+    if (!isDeveloper) return
+    api('/v2/store-sales-sources')
+      .then((data) => {
+        const list = data.rows || []
+        setSourceStores(list)
+        if (list.length > 0) {
+          setSourceStore((current) => current || list[0].storeKey)
+        }
+      })
+      .catch((err) => setSourceTip(t(err.message)))
+  }, [isDeveloper]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const row = sourceStores.find((s) => s.storeKey === sourceStore)
+    if (row) {
+      setSourceType(row.salesDataSource || 'manual')
+      setSourceDate(row.salesDataSourceEffectiveDate || (() => {
+        const d = new Date()
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      })())
+    }
+  }, [sourceStore, sourceStores])
+
+  const saveSalesSource = async () => {
+    if (!sourceStore) {
+      setSourceTip(t('请选择门店'))
+      return
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) {
+      setSourceTip(t('请选择生效日期'))
+      return
+    }
+    setSourceSaving(true)
+    setSourceTip('')
+    try {
+      await api('/v2/store-sales-source', {
+        method: 'PUT',
+        body: JSON.stringify({
+          storeKey: sourceStore,
+          salesDataSource: sourceType,
+          effectiveDate: sourceDate,
+          reason: '设置页门店来源配置',
+        }),
+      })
+      const data = await api('/v2/store-sales-sources')
+      setSourceStores(data.rows || [])
+      setSourceTip(t('门店销售数据来源已保存 ✓'))
+    } catch (err) {
+      setSourceTip(t(err.message))
+    } finally {
+      setSourceSaving(false)
     }
   }
 
@@ -170,6 +234,53 @@ export default function SettingsPage({ user, onBack }) {
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isDeveloper && (
+        <div className="card p-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-500 text-white shadow-md">
+              <Store className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-[15px] font-bold text-slate-800">POS 试点门店配置</h3>
+              <p className="mt-0.5 text-xs text-slate-400">按门店设置营业数据来源：人工录入 / POS 自动同步 / 混合模式（生效日期起生效，历史日报不受影响）</p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
+            <label className="block text-xs font-semibold text-slate-500">门店
+              <select value={sourceStore} onChange={(e) => setSourceStore(e.target.value)} className="input mt-1">
+                {sourceStores.map((s) => <option key={s.storeKey} value={s.storeKey}>{s.storeName}</option>)}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-slate-500">销售数据来源
+              <select value={sourceType} onChange={(e) => setSourceType(e.target.value)} className="input mt-1">
+                <option value="manual">人工录入（暂未接入 POS）</option>
+                <option value="pos">POS 自动同步</option>
+                <option value="hybrid">混合模式（POS + 管理员调整）</option>
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-slate-500">生效日期
+              <input type="date" value={sourceDate} onChange={(e) => setSourceDate(e.target.value)} className="input mt-1" />
+            </label>
+            <div className="flex items-end">
+              <button onClick={saveSalesSource} disabled={sourceSaving || sourceStores.length === 0} className="w-full rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                {sourceSaving ? '保存中…' : '保存配置'}
+              </button>
+            </div>
+          </div>
+          {sourceTip && <p className="mt-3 text-xs font-medium text-slate-500">{sourceTip}</p>}
+          {sourceStores.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {sourceStores.map((s) => (
+                <span key={s.storeKey} className={`rounded-full px-3 py-1 text-xs font-semibold ${s.salesDataSource === 'pos' ? 'bg-emerald-50 text-emerald-600' : s.salesDataSource === 'hybrid' ? 'bg-violet-50 text-violet-600' : 'bg-slate-100 text-slate-500'}`}>
+                  {s.storeName} · {s.salesDataSource === 'pos' ? 'POS' : s.salesDataSource === 'hybrid' ? '混合' : '人工'}{s.salesDataSourceEffectiveDate ? `（${s.salesDataSourceEffectiveDate} 起）` : ''}
+                </span>
               ))}
             </div>
           )}
