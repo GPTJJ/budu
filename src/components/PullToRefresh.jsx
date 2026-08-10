@@ -86,7 +86,7 @@ export default function PullToRefresh({ onRefresh, children }) {
               src={iconUrl}
               alt=""
               draggable={false}
-              className={`w-12 select-none ${
+              className={`h-12 w-auto max-w-[64px] select-none ${
                 refreshing
                   ? 'animate-[budu-wiggle_0.6s_ease-in-out_infinite]'
                   : pull >= THRESHOLD
