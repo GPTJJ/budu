@@ -268,10 +268,11 @@ test('POS 赠送/折扣/备注 对应减免并可结算', async ({ page }) => {
 
   await page.getByRole('button', { name: '9折', exact: true }).click()
   await expect(page.getByText('¥34.20', { exact: true })).toBeVisible()
-  await expect(page.getByText('优惠 -¥3.80', { exact: true })).toBeVisible()
+  await expect(page.getByText('优惠 -¥75.80', { exact: true })).toBeVisible()
 
   await page.getByLabel('折扣输入').fill('8.5')
   await expect(page.getByText('¥32.30', { exact: true })).toBeVisible()
+  await expect(page.getByText('优惠 -¥77.70', { exact: true })).toBeVisible()
   await page.getByPlaceholder('订单备注').fill('测试备注')
 
   await page.getByRole('button', { name: '结算', exact: true }).click()

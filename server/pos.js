@@ -109,6 +109,8 @@ function serializeOrder(order) {
       costPriceSnapshot: item.costPriceSnapshot.toString(),
       quantity: item.quantity,
       lineAmount: item.lineAmount.toString(),
+      discountAmount: item.discountAmount.toString(),
+      actualAmount: item.actualAmount.toString(),
       isGift: item.isGift === true,
     })),
   }
@@ -245,7 +247,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
         businessDate,
         discountPercent: snapshot.discountPercent, remark: snapshot.remark,
         checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
-        items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line, discountAmount: 0n, actualAmount: line.lineAmount })) },
+        items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },
       include: orderInclude(),
     })

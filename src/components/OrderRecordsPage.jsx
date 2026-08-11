@@ -352,7 +352,7 @@ export default function OrderRecordsPage({ user, onBack }) {
                 <div><p className="text-xs text-slate-400">下单时间</p><p className="mt-1 font-semibold text-slate-700">{localTime(detail.createdAt)}</p></div>
                 <div><p className="text-xs text-slate-400">状态</p><p className="mt-1 font-semibold text-slate-700">{statusLabels[detail.status] || detail.status}</p></div>
               </div>
-              {(detail.discountPercent ?? 100) < 100 && <p className="text-xs text-slate-500">折扣：{Number(detail.discountPercent) / 10} 折 · 优惠 {Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
+              {BigInt(detail.discountAmount || 0) > 0n && <p className="text-xs text-slate-500">{(detail.discountPercent ?? 100) < 100 ? `折扣：${Number(detail.discountPercent) / 10} 折 · ` : ''}优惠（含赠送）{Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
               {detail.remark && <p className="text-xs text-slate-500">备注：{detail.remark}</p>}
               <div>
                 <h4 className="text-sm font-bold text-slate-800">商品明细</h4>

@@ -166,9 +166,12 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const cartCount = cartLines.reduce((sum, line) => sum + line.quantity, 0)
   const discountPercent = parseDiscountPercent(discount)
   const cartSubtotal = cartLines.reduce((sum, line) => (
+    sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
+  ), 0n)
+  const chargeableSubtotal = cartLines.reduce((sum, line) => (
     giftMap[line.product.productId] ? sum : sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
   ), 0n)
-  const cartTotal = (cartSubtotal * BigInt(discountPercent) + 50n) / 100n
+  const cartTotal = (chargeableSubtotal * BigInt(discountPercent) + 50n) / 100n
   const cartDiscountAmount = cartSubtotal - cartTotal
   const mockMode = posConfig ? posConfig.mock : (order ? order.paymentMode === 'mock' : true)
   const channels = posConfig?.channels?.length ? posConfig.channels : (mockMode ? ['wechat', 'alipay', 'cash'] : ['cash'])

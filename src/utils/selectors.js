@@ -16,6 +16,7 @@ import { formatMoney } from './format.js'
 import { en, interpolate } from '../locales'
 import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
 import { APP_VERSION } from '../version'
+import { posDailyMetrics } from './posDaily.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -180,8 +181,7 @@ export function dailyRows(monthKey, storeKey) {
     if (!String(row.date || '').startsWith(monthKey)) continue
     if (storeKey !== 'all' && row.storeKey !== storeKey) continue
     const d = String(row.date).slice(5)
-    const inc = Number(row.incCents) / 100
-    const ord = Number(row.ord) || 0
+    const { inc, dis, rev, ord } = posDailyMetrics(row)
     if (storeKey === 'all') {
       let cur = map.get(d)
       if (!cur) {
@@ -190,10 +190,12 @@ export function dailyRows(monthKey, storeKey) {
         map.set(d, cur)
       }
       cur.inc += inc
+      cur.rev += rev
+      cur.dis += dis
       cur.ord += ord
       cur.pos = true
     } else {
-      const cur = { d, inc, ord, local: true, pos: true, refundCents: row.refundCents, discountCents: row.discountCents }
+      const cur = { d, inc, rev, dis, ord, local: true, pos: true, refundCents: row.refundCents, discountCents: row.discountCents }
       for (const f of SUM_FIELDS) if (!(f in cur)) cur[f] = 0
       map.set(d, cur)
     }

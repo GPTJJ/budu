@@ -324,6 +324,8 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
       storeKey: group.storeId,
       date: group.date,
       incCents: toStr(effective),
+      originalSalesCents: toStr(group.originalSales),
+      effectiveSalesCents: toStr(group.effectiveSales),
       ord: group.orderCount,
       refundCents: toStr(group.refundAmount),
       discountCents: toStr(group.discountAmount),
@@ -359,12 +361,7 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
       quantity: 0,
       amountCents: 0n,
     }
-    const subtotal = item.order.subtotal || 0n
-    const payable = item.order.payableAmount || 0n
     let revenue = item.actualAmount || 0n
-    if (subtotal > 0n && payable !== subtotal) {
-      revenue = (revenue * payable + subtotal / 2n) / subtotal
-    }
     current.quantity += item.quantity
     current.amountCents += revenue
     map.set(key, current)

@@ -73,10 +73,25 @@ export function buildOrderSnapshot(products, items, options = {}) {
       isGift,
     }
   })
-  const subtotal = lines.reduce((sum, line) => sum + line.lineAmount, 0n)
-  const payableAmount = (subtotal * BigInt(discountPercent) + 50n) / 100n
+  // 折前金额包含赠送商品原价；实付只计算非赠送商品。
+  // 因此优惠金额同时包含“赠送减免”和普通折扣减免。
+  const subtotal = lines.reduce((sum, line) => sum + line.unitPrice * BigInt(line.quantity), 0n)
+  const chargeableAmount = lines.reduce((sum, line) => sum + line.lineAmount, 0n)
+  const payableAmount = (chargeableAmount * BigInt(discountPercent) + 50n) / 100n
   const discountAmount = subtotal - payableAmount
-  return { lines, subtotal, discountAmount, payableAmount, discountPercent, remark }
+  const paidLines = lines.filter((line) => !line.isGift)
+  let allocated = 0n
+  const finalizedLines = lines.map((line) => {
+    const grossAmount = line.unitPrice * BigInt(line.quantity)
+    if (line.isGift) return { ...line, discountAmount: grossAmount, actualAmount: 0n }
+    const isLast = line === paidLines[paidLines.length - 1]
+    const actualAmount = isLast
+      ? payableAmount - allocated
+      : (line.lineAmount * BigInt(discountPercent) + 50n) / 100n
+    allocated += actualAmount
+    return { ...line, discountAmount: grossAmount - actualAmount, actualAmount }
+  })
+  return { lines: finalizedLines, subtotal, discountAmount, payableAmount, discountPercent, remark }
 }
 
 export function httpError(message, status = 400) {

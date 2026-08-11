@@ -70,17 +70,21 @@ test('非法数量、下架商品和缺失商品被拒绝', () => {
 test('赠送与折扣由服务端统一计算并写入快照', () => {
   const fresh = { ...product, salePriceCents: 7200n, costPriceCents: 2350n }
   const gift = buildOrderSnapshot([fresh], [{ productId: fresh.id, quantity: 2, gift: true }], { discountPercent: 90, remark: '试吃' })
-  assert.equal(gift.subtotal, 0n)
+  assert.equal(gift.subtotal, 14400n)
   assert.equal(gift.payableAmount, 0n)
-  assert.equal(gift.discountAmount, 0n)
+  assert.equal(gift.discountAmount, 14400n)
   assert.equal(gift.lines[0].isGift, true)
   assert.equal(gift.lines[0].lineAmount, 0n)
+  assert.equal(gift.lines[0].discountAmount, 14400n)
+  assert.equal(gift.lines[0].actualAmount, 0n)
   assert.equal(gift.remark, '试吃')
 
   const discounted = buildOrderSnapshot([fresh], [{ productId: fresh.id, quantity: 2 }], { discountPercent: 85 })
   assert.equal(discounted.subtotal, 14400n)
   assert.equal(discounted.payableAmount, 12240n)
   assert.equal(discounted.discountAmount, 2160n)
+  assert.equal(discounted.lines[0].discountAmount, 2160n)
+  assert.equal(discounted.lines[0].actualAmount, 12240n)
   assert.equal(discounted.discountPercent, 85)
   assert.throws(() => buildOrderSnapshot([product], [{ productId: product.id, quantity: 1 }], { discountPercent: 101 }), /折扣/)
   assert.throws(() => buildOrderSnapshot([product], [{ productId: product.id, quantity: 1 }], { discountPercent: 0 }), /折扣/)
