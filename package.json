@@ -17,6 +17,7 @@
     "test:camera": "node --test scripts/test-camera-scanner.mjs",
     "test:swipe-back": "node --test scripts/test-swipe-back.mjs",
     "test:pos-daily": "node --test scripts/test-pos-daily.mjs",
+    "test:product-excel": "node --test scripts/test-product-excel.mjs",
     "test:pos:browser": "playwright test tests/pos-ipad.spec.mjs",
     "test:ssr": "node scripts/smoke-render.mjs",
     "migrate:pg": "node scripts/migrate-kv-to-pg.mjs",

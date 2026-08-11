@@ -118,6 +118,99 @@ productsRouter.post('/products', wrap(async (req, res) => {
   res.status(201).json({ ok: true, product: serializeProduct(row) })
 }))
 
+productsRouter.post('/products/import', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductManager(req.user)
+  const inputRows = req.body?.rows
+  if (!Array.isArray(inputRows) || inputRows.length < 1 || inputRows.length > 1000) {
+    throw httpError('每次请选择 1-1000 条有效商品导入')
+  }
+
+  const seenSku = new Set()
+  const seenName = new Set()
+  const normalized = inputRows.map((body, index) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(`第 ${index + 1} 行格式不正确`)
+    const data = productData({
+      ...body,
+      unit: body.unit || '份',
+      image: '',
+      barcode: body.barcode || '',
+      isActive: true,
+      trackInventory: body.trackInventory === true,
+      sortOrder: body.sortOrder === '' || body.sortOrder == null ? index : body.sortOrder,
+    })
+    if (seenSku.has(data.sku)) throw httpError(`Excel 内 SKU 重复：${data.sku}`)
+    if (seenName.has(data.name)) throw httpError(`Excel 内菜品名重复：${data.name}`)
+    seenSku.add(data.sku)
+    seenName.add(data.name)
+    return {
+      data,
+      provided: {
+        unit: Boolean(String(body.unit || '').trim()),
+        barcode: Boolean(String(body.barcode || '').trim()),
+        sortOrder: !(body.sortOrder === '' || body.sortOrder == null),
+        trackInventory: Object.prototype.hasOwnProperty.call(body, 'trackInventory'),
+      },
+    }
+  })
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existingRows = await tx.inventoryItem.findMany({
+      where: { OR: [
+        { sku: { in: normalized.map((row) => row.data.sku) } },
+        { name: { in: normalized.map((row) => row.data.name) } },
+      ] },
+    })
+    const bySku = new Map(existingRows.map((row) => [row.sku, row]).filter(([sku]) => sku))
+    const byName = new Map(existingRows.map((row) => [row.name, row]))
+    const saved = []
+    let created = 0
+    let updated = 0
+
+    for (const row of normalized) {
+      const skuMatch = bySku.get(row.data.sku)
+      const nameMatch = byName.get(row.data.name)
+      if (skuMatch && nameMatch && skuMatch.id !== nameMatch.id) {
+        throw httpError(`「${row.data.name}」的 SKU 与菜品名匹配到不同商品，请先检查 Excel`, 409)
+      }
+      const existing = skuMatch || nameMatch || null
+      if (!existing) {
+        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data } })
+        bySku.set(createdRow.sku, createdRow)
+        byName.set(createdRow.name, createdRow)
+        saved.push(createdRow)
+        created += 1
+        continue
+      }
+
+      const data = {
+        ...row.data,
+        image: existing.image || '',
+        unit: row.provided.unit ? row.data.unit : existing.unit || '份',
+        barcode: row.provided.barcode ? row.data.barcode : existing.barcode || '',
+        sortOrder: row.provided.sortOrder ? row.data.sortOrder : existing.sortOrder,
+        trackInventory: row.provided.trackInventory ? row.data.trackInventory : existing.trackInventory,
+        isActive: true,
+      }
+      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } } })
+      if (existing.sku) bySku.delete(existing.sku)
+      byName.delete(existing.name)
+      bySku.set(updatedRow.sku, updatedRow)
+      byName.set(updatedRow.name, updatedRow)
+      saved.push(updatedRow)
+      updated += 1
+    }
+    return { saved, created, updated }
+  }, { maxWait: 5000, timeout: 30000 })
+
+  res.json({
+    ok: true,
+    created: result.created,
+    updated: result.updated,
+    rows: result.saved.map(serializeProduct),
+  })
+}))
+
 productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
