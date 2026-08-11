@@ -36,75 +36,73 @@ export default function KpiCard({ card, featured = false }) {
         featured ? 'col-span-2 xl:col-span-1' : ''
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div
-            className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${style.iconBg} text-white shadow-sm sm:h-10 sm:w-10`}
-          >
-            <Icon className="h-5 w-5" />
-          </div>
-          <p className={`truncate font-medium text-slate-500 ${featured ? 'text-sm' : 'text-[13px]'}`}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <div
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${style.iconBg} text-white shadow-sm sm:h-10 sm:w-10`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className={`whitespace-nowrap font-medium leading-5 text-slate-500 ${featured ? 'text-sm' : 'text-[13px]'}`}>
             {t(card.label || style.label)}
           </p>
+          <span
+            className={`chip mt-1 hidden max-w-full text-[10px] sm:inline-flex ${
+              up == null
+                ? 'bg-slate-100 text-slate-400'
+                : up
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : 'bg-rose-50 text-rose-500'
+            }`}
+          >
+            {hide ? '—' : up == null ? t('较上月 —') : t('较上月 {pct}', { pct: pctText(card.change) })}
+          </span>
         </div>
-        <span
-          className={`chip hidden shrink-0 sm:inline-flex ${
-            up == null
-              ? 'bg-slate-100 text-slate-400'
-              : up
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'bg-rose-50 text-rose-500'
-          }`}
-        >
-          {hide ? '—' : up == null ? t('较上月 —') : t('较上月 {pct}', { pct: pctText(card.change) })}
-        </span>
       </div>
 
-      <div className="mt-3 flex items-end justify-between gap-1.5 sm:mt-4 sm:gap-2">
-        <div className="min-w-0">
-          {hide ? (
-            <>
-              <p className="text-[26px] font-semibold leading-none tracking-tight text-slate-300">•••</p>
-              {isStore && (
-                <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">
-                  {t('经营数据仅开发者可见')}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <p
-                className={`truncate font-semibold leading-none tracking-tight tabular-nums text-slate-800 ${
-                  featured ? 'text-[22px] sm:text-[30px]' : 'text-[17px] sm:text-[26px]'
-                }`}
-              >
-                {card.prefix}
-                {card.value}
-                <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>
+      <div className="mt-3 min-w-0 sm:mt-4">
+        {hide ? (
+          <>
+            <p className="text-[26px] font-semibold leading-none tracking-tight text-slate-300">•••</p>
+            {isStore && (
+              <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">
+                {t('经营数据仅开发者可见')}
               </p>
-              <p className="mt-2 hidden text-[11px] text-slate-400 sm:block">{card.note}</p>
-            </>
-          )}
-        </div>
-        <div className="h-9 w-12 shrink-0 sm:h-11 sm:w-24">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`spark-${card.key}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={style.color} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={style.color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area
-                type="monotone"
-                dataKey="v"
-                stroke={style.color}
-                strokeWidth={2}
-                fill={`url(#spark-${card.key})`}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+            )}
+          </>
+        ) : (
+          <p
+            className={`whitespace-nowrap font-semibold leading-none tracking-tight tabular-nums text-slate-800 ${
+              featured ? 'text-[22px] sm:text-[30px] 2xl:text-[22px]' : 'text-[17px] sm:text-[26px] 2xl:text-[22px]'
+            }`}
+          >
+            {card.prefix}
+            {card.value}
+            <span className="ml-1 text-xs font-medium text-slate-400">{card.unit}</span>
+          </p>
+        )}
+        <div className="mt-2 flex min-h-11 items-end justify-between gap-2">
+          {!hide && <p className="hidden min-w-0 text-[11px] leading-4 text-slate-400 sm:line-clamp-2">{card.note}</p>}
+          <div className="h-9 w-12 shrink-0 sm:h-11 sm:w-20">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={`spark-${card.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={style.color} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={style.color} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="v"
+                  stroke={style.color}
+                  strokeWidth={2}
+                  fill={`url(#spark-${card.key})`}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
     </div>
