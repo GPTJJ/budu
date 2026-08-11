@@ -8,6 +8,7 @@ export default function PullToRefresh({ onRefresh, children }) {
   const [pull, setPull] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const startY = useRef(null)
+  const startX = useRef(null)
   const pulling = useRef(false)
   const pullRef = useRef(0)
 
@@ -24,6 +25,7 @@ export default function PullToRefresh({ onRefresh, children }) {
       const t = e.touches && e.touches[0]
       if (!t) return
       startY.current = t.clientY
+      startX.current = t.clientX
       pulling.current = true
     }
 
@@ -33,6 +35,14 @@ export default function PullToRefresh({ onRefresh, children }) {
       if (!t || startY.current == null) return
       if (window.scrollY > 0) return
       const dy = t.clientY - startY.current
+      const dx = t.clientX - startX.current
+      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+        pulling.current = false
+        startX.current = null
+        startY.current = null
+        updatePull(0)
+        return
+      }
       if (dy <= 0) {
         updatePull(0)
         return
@@ -45,6 +55,7 @@ export default function PullToRefresh({ onRefresh, children }) {
       if (!pulling.current) return
       pulling.current = false
       startY.current = null
+      startX.current = null
       if (pullRef.current >= THRESHOLD && !refreshing) {
         setRefreshing(true)
         updatePull(48)

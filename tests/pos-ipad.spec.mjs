@@ -1,5 +1,34 @@
 import { expect, test } from '@playwright/test'
 
+async function swipeRightFromEdge(page, { y = 400, distance = 120 } = {}) {
+  await page.evaluate(({ y: clientY, distance: dx }) => {
+    const target = document.elementFromPoint(8, clientY) || document.body
+    const makeTouch = (clientX) => ({
+      identifier: 1,
+      target,
+      clientX,
+      clientY,
+      pageX: clientX,
+      pageY: clientY,
+      screenX: clientX,
+      screenY: clientY,
+    })
+    const start = makeTouch(8)
+    const move = makeTouch(8 + dx)
+    const dispatch = (type, touches, changedTouches) => {
+      const event = new TouchEvent(type, { bubbles: true, cancelable: true })
+      Object.defineProperties(event, {
+        touches: { value: touches },
+        changedTouches: { value: changedTouches },
+      })
+      target.dispatchEvent(event)
+    }
+    dispatch('touchstart', [start], [start])
+    dispatch('touchmove', [move], [move])
+    dispatch('touchend', [], [move])
+  }, { y, distance })
+}
+
 async function enterPayment(page, url) {
   await page.goto(url)
   await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
@@ -77,7 +106,7 @@ test('两个员工浏览器上下文的购物车互不串单', async ({ browser 
 
 test('iPad 横屏扫码窗口、连续识别与同码防重复提交', async ({ page }) => {
   const authCode = '134567890123456789'
-  await enterPayment(page, `/tests/pos-harness.html?user=scanner-layout&codes=${authCode}&duplicate=1`)
+  await enterPayment(page, `/tests/pos-harness.html?user=scanner-layout&codes=${authCode}&duplicate=1&scanDelay=250`)
   await page.getByRole('button', { name: '微信扫码', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '微信付款码扫码' })
   await expect(dialog).toBeVisible()
@@ -176,6 +205,31 @@ test('手机端 POS：底部结算栏、分类横滑、购物车抽屉与结算'
   await drawer.getByRole('button', { name: '结算', exact: true }).click()
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
   await expect(page.getByText('¥72.00', { exact: true })).toBeVisible()
+})
+
+test('移动端右滑按页面层级返回，并释放扫码摄像头', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/tests/pos-harness.html?user=swipe-back&scanDelay=800')
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+
+  await page.getByRole('button', { name: '打开购物车', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '购物车' })).toBeVisible()
+  await swipeRightFromEdge(page)
+  await expect(page.getByRole('dialog', { name: '购物车' })).toHaveCount(0)
+
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '微信扫码', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '微信付款码扫码' })).toBeVisible()
+  await swipeRightFromEdge(page)
+  await expect(page.getByRole('dialog', { name: '微信付款码扫码' })).toHaveCount(0)
+  expect(await page.evaluate(() => window.__cameraTrackStops)).toBeGreaterThan(0)
+
+  await swipeRightFromEdge(page)
+  await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
+  await swipeRightFromEdge(page)
+  expect(await page.evaluate(() => window.__posExitCount)).toBe(1)
 })
 
 test('未付款返回后再次进入 POS 不直接跳付款页', async ({ page }) => {

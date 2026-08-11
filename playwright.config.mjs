@@ -9,6 +9,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:5198',
     viewport: { width: 1024, height: 768 },
+    hasTouch: true,
     userAgent: 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
   },
   projects: [{ name: 'ipad-webkit', use: { browserName: 'webkit' } }],

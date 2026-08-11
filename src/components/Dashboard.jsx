@@ -18,6 +18,7 @@ import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
@@ -90,6 +91,22 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isInvoiceView = view === 'finance-invoice'
   const isMemberView = view === 'member'
 
+  const returnToOverview = () => {
+    setView('overview')
+    if (typeof window !== 'undefined' && window.location.hash === '#pos') {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    }
+    window.scrollTo?.({ top: 0, behavior: 'smooth' })
+  }
+
+  useSwipeBack({
+    enabled: view !== 'overview' && !isPosView,
+    onBack: () => {
+      if (sidebarOpen) setSidebarOpen(false)
+      else returnToOverview()
+    },
+  })
+
   if (needsBinding) {
     return (
       <div className="grid min-h-[70vh] place-items-center px-4">
@@ -118,8 +135,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   const exitPos = () => {
-    setView('overview')
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    returnToOverview()
   }
 
   /** 局部刷新：先拉取最新共享数据，再重挂载当前页面组件（Header/Sidebar 保持不动） */
@@ -193,45 +209,45 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               >
               {isStaffView ? (
                 <PersonnelPage
-                  onBack={() => setView('overview')}
+                  onBack={returnToOverview}
                   canDelete={user?.role === 'developer'}
                   canManage={user?.role === 'developer'}
                   user={user}
                 />
               ) : isStoreEntryView && user?.role !== 'public' ? (
-                <StoreEntryPage user={user} onBack={() => setView('overview')} />
+                <StoreEntryPage user={user} onBack={returnToOverview} />
               ) : isScheduleView ? (
-                <SchedulePage onBack={() => setView('overview')} canEdit={user?.role !== 'public'} />
+                <SchedulePage onBack={returnToOverview} canEdit={user?.role !== 'public'} />
               ) : isMailingView && user?.role !== 'public' ? (
-                <StoreMailingPage onBack={() => setView('overview')} />
+                <StoreMailingPage onBack={returnToOverview} />
               ) : isOrdersView && user?.role !== 'public' ? (
-                <OrderRecordsPage user={user} onBack={() => setView('overview')} />
+                <OrderRecordsPage user={user} onBack={returnToOverview} />
               ) : isProductCenterView && ['developer', 'manager'].includes(user?.role) ? (
-                <ProductCenterPage onBack={() => setView('overview')} />
+                <ProductCenterPage onBack={returnToOverview} />
               ) : isSettingsView ? (
-                <SettingsPage user={user} onBack={() => setView('overview')} />
+                <SettingsPage user={user} onBack={returnToOverview} />
               ) : isAccountAdminView && user?.role === 'developer' ? (
-                <AccountAdminPage currentUser={user} onBack={() => setView('overview')} />
+                <AccountAdminPage currentUser={user} onBack={returnToOverview} />
               ) : isAnalyticsView && user?.role !== 'public' ? (
-                <DataAnalysisPage onBack={() => setView('overview')} />
+                <DataAnalysisPage onBack={returnToOverview} />
               ) : isInventoryTransferView && user?.role !== 'public' ? (
                 <InventoryRequestPage
                   type="transfer"
                   currentUser={user}
-                  onBack={() => setView('overview')}
+                  onBack={returnToOverview}
                 />
               ) : isInventoryPurchaseView && user?.role !== 'public' ? (
                 <InventoryRequestPage
                   type="purchase"
                   currentUser={user}
-                  onBack={() => setView('overview')}
+                  onBack={returnToOverview}
                 />
               ) : isFinanceView && (user?.role === 'developer' || user?.role === 'manager') ? (
-                <FinancePage currentUser={user} onBack={() => setView('overview')} />
+                <FinancePage currentUser={user} onBack={returnToOverview} />
               ) : isInvoiceView && user?.role !== 'public' ? (
-                <InvoicePage currentUser={user} onBack={() => setView('overview')} />
+                <InvoicePage currentUser={user} onBack={returnToOverview} />
               ) : isMemberView && user?.role !== 'public' ? (
-                <MemberPage currentUser={user} onBack={() => setView('overview')} />
+                <MemberPage currentUser={user} onBack={returnToOverview} />
               ) : (
                 <>
                   {/* 核心 KPI 统计 */}

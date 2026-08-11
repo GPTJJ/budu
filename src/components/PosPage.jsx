@@ -5,6 +5,7 @@ import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
 import OrderRecordsPage from './OrderRecordsPage'
+import useSwipeBack from '../hooks/useSwipeBack'
 import {
   clearPosTransaction,
   changeCartQuantity,
@@ -413,6 +414,26 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     onExit()
   }
 
+  const returnToOrdering = () => {
+    savePendingOrder(user.id, storeId, '')
+    setScannerChannel('')
+    setCashConfirm(false)
+    setStage('ordering')
+  }
+
+  useSwipeBack({
+    enabled: stage !== 'loading' && stores.length > 0,
+    onBack: () => {
+      if (scannerChannel) setScannerChannel('')
+      else if (cashConfirm) setCashConfirm(false)
+      else if (cartOpen) setCartOpen(false)
+      else if (showOrders) setShowOrders(false)
+      else if (stage === 'payment') returnToOrdering()
+      else if (stage === 'success') startNext()
+      else handleExit()
+    },
+  })
+
   if (stores.length === 0) {
     return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可用门店</h2><p className="mt-2 text-sm text-slate-400">请先让开发者为账号绑定门店。</p><button onClick={handleExit} className="mt-6 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
   }
@@ -451,7 +472,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       <>
         <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
-            <button onClick={() => { savePendingOrder(user.id, storeId, ''); setScannerChannel(''); setCashConfirm(false); setStage('ordering') }} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
+            <button onClick={returnToOrdering} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
             <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
@@ -530,7 +551,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         </aside>}
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {!isDesktop && <div className="flex shrink-0 gap-2 overflow-x-auto px-3 py-2" aria-label="商品分类">
+          {!isDesktop && <div className="flex shrink-0 gap-2 overflow-x-auto px-3 py-2" aria-label="商品分类" data-swipe-back-ignore="true">
             {categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold transition ${category === item ? 'border-budu-400 bg-budu-500 text-white' : 'border-slate-200 bg-white text-slate-500'}`}>{item}</button>)}
           </div>}
           {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
