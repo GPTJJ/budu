@@ -440,13 +440,13 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
         ),
       },
     },
-    include: { items: { include: { item: true } } },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
   sendWechatMarkdown(
     '新调货申请',
     `**${created.fromStoreKey}** → **${created.toStoreKey}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出门店店长尽快审核发货。`,
   ).catch(() => {})
-  res.json({ ok: true, request: created })
+  res.json({ ok: true, request: serializeTransfer(created) })
 }))
 
 v2Router.get('/transfer-requests', wrap(async (req, res) => {
@@ -573,13 +573,13 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
         ),
       },
     },
-    include: { items: { include: { item: true } } },
+    include: { items: { include: { item: true } }, store: true },
   })
   sendWechatMarkdown(
     '新采购申请',
     `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplier ? ` · 供应商 **${created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
   ).catch(() => {})
-  res.json({ ok: true, request: created })
+  res.json({ ok: true, request: serializePurchase(created) })
 }))
 
 v2Router.get('/purchase-requests', wrap(async (req, res) => {
