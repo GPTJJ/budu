@@ -2,13 +2,11 @@
  *  调货/采购申请：开发者/店长全量可见；「隋晓」等额外账号按绑定门店全量可见；普通店员仅看自己提交的申请 */
 import { loadUserData, getInventoryRequests } from './userData'
 import { api } from './api'
+import { hasInventoryTransferAll } from '../../shared/accountPermissions'
 
 const SEEN_KEY = 'budu-inventory-seen-at'
 const MUTED_KEY = 'budu-alert-muted'
 const POLL_MS = 8000
-/** 额外接收全部调货/采购申请提醒的账号（按绑定门店过滤） */
-const EXTRA_REQUEST_NOTIFY_USERS = new Set(['隋晓'])
-
 let state = { unread: 0, items: [], stock: [] }
 let listeners = []
 let timer = null
@@ -165,7 +163,7 @@ export function ensurePolling(user) {
   currentUserKey = key
   currentUserName = user ? user.username : ''
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
-  currentIsRequestNotifier = Boolean(user && EXTRA_REQUEST_NOTIFY_USERS.has(user.username))
+  currentIsRequestNotifier = hasInventoryTransferAll(user)
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
   currentCanSeeMailings = Boolean(user && user.role === 'developer')
   currentInvoices = []

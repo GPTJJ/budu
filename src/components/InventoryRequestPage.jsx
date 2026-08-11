@@ -24,6 +24,7 @@ import InventoryListModal from './InventoryListModal'
 import ShipTransferModal from './ShipTransferModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { useI18n } from '../i18n'
+import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 
 const inputCls = 'input'
 
@@ -130,6 +131,7 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     listTab === 'done' ? isFinished(r) : !isFinished(r),
   )
   const isDeveloper = currentUser?.role === 'developer'
+  const isTransferAdmin = isTransfer && hasInventoryTransferAll(currentUser)
   const canManageOptions = currentUser?.role === 'developer'
 
   const loadItems = async () => {
@@ -211,8 +213,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
   // 待审核：开发者或申请人可删；已驳回：仅开发者可删；其他状态不可删
   const canDelete = (r) => {
-    if (r.status === 'pending') return isDeveloper || r.createdBy === currentUser?.username
-    if (r.status === 'rejected') return isDeveloper
+    if (r.status === 'pending') return isTransferAdmin || isDeveloper || r.createdBy === currentUser?.username
+    if (r.status === 'rejected') return isTransferAdmin || isDeveloper
     return false
   }
 
@@ -291,11 +293,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
 
   const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
 
-  const canShip = (r) =>
-    isDeveloper ||
-    (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.fromStoreKey))
-  const canReceive = (r) =>
-    isDeveloper || (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.storeKey))
+  const canShip = (r) => canManageTransferStore(currentUser, r.fromStoreKey)
+  const canReceive = (r) => canManageTransferStore(currentUser, r.storeKey)
   const canReject = canShip
   const canReceivePurchase = (r) =>
     isDeveloper ||

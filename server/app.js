@@ -15,6 +15,11 @@ import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma } from './pg.js'
 import { resolveStoreName } from './store-names.js'
+import {
+  canManageTransferStore,
+  hasInventoryTransferAll,
+  normalizeAccountPermissions,
+} from '../shared/accountPermissions.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -240,6 +245,7 @@ export function createApp() {
       role: u.role,
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
+      permissions: normalizeAccountPermissions(u.permissions),
       avatar: u.avatar || '',
       createdAt: u.createdAt,
     }
@@ -297,10 +303,20 @@ export function createApp() {
     next()
   }
 
+  function requireTransferManager(req, res, next) {
+    if (!req.user || (!['developer', 'manager'].includes(req.user.role) && !hasInventoryTransferAll(req.user))) {
+      return res.status(403).json({ error: '无权限' })
+    }
+    next()
+  }
+
   function scopeInventoryRequests(bodyRequests, dbRequests, user) {
     if (user.role === 'developer') return true
     const allowed = new Set(boundStores(user))
-    const inScope = (r) => allowed.has(r.storeKey) || (r.type === 'transfer' && allowed.has(r.fromStoreKey))
+    const inScope = (r) =>
+      (r.type === 'transfer' && hasInventoryTransferAll(user)) ||
+      allowed.has(r.storeKey) ||
+      (r.type === 'transfer' && allowed.has(r.fromStoreKey))
     const dbArr = dbRequests || []
     const bodyArr = bodyRequests || []
     for (const r of dbArr.filter((x) => !inScope(x))) {
@@ -360,7 +376,10 @@ export function createApp() {
     }
     const products = (db.products || []).filter((p) => allowed.has(p.storeKey))
     const inventoryRequests = (db.inventoryRequests || []).filter(
-      (r) => allowed.has(r.storeKey) || (r.type === 'transfer' && allowed.has(r.fromStoreKey)),
+      (r) =>
+        (r.type === 'transfer' && hasInventoryTransferAll(user)) ||
+        allowed.has(r.storeKey) ||
+        (r.type === 'transfer' && allowed.has(r.fromStoreKey)),
     )
     const stores = (db.stores || []).filter((s) => allowed.has(s.key))
     const inventory = (db.inventory || []).filter((row) => allowed.has(row.storeKey))
@@ -485,6 +504,7 @@ export function createApp() {
       role,
       storeKeys,
       staffKey,
+      permissions: normalizeAccountPermissions(),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -640,6 +660,15 @@ export function createApp() {
     res.json({ user: userPublic(target) })
   })
 
+  app.put('/api/admin/users/:id/permissions', requireAuth, requireDeveloper, async (req, res) => {
+    const db = await loadDb()
+    const target = db.users.find((u) => u.id === req.params.id)
+    if (!target) return res.status(404).json({ error: '账号不存在' })
+    target.permissions = normalizeAccountPermissions(req.body)
+    await persist()
+    res.json({ user: userPublic(target) })
+  })
+
   app.put('/api/admin/users/:id/password', requireAuth, requireDeveloper, async (req, res) => {
     const newPassword = String(req.body.newPassword || '')
     if (newPassword.length < 6) {
@@ -691,13 +720,13 @@ export function createApp() {
   })
 
   // ---------- 调货状态机：发货（调出门店 manager） / 确认收货（调入门店 manager） ----------
-  app.post('/api/inventory/requests/:id/ship', requireAuth, requireManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/ship', requireAuth, requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
     if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可发货' })
     if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可发货' })
-    if (!canManageStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
+    if (!canManageTransferStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
     const at = new Date().toISOString()
     r.status = 'in_transit'
     r.updatedAt = at
@@ -709,13 +738,13 @@ export function createApp() {
     res.json({ ok: true, request: r })
   })
 
-  app.post('/api/inventory/requests/:id/receive', requireAuth, requireManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/receive', requireAuth, requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
     if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可确认收货' })
     if (r.status !== 'in_transit') return res.status(400).json({ error: '当前状态不可收货' })
-    if (!canManageStore(req.user, r.storeKey)) return res.status(403).json({ error: '无权限' })
+    if (!canManageTransferStore(req.user, r.storeKey)) return res.status(403).json({ error: '无权限' })
     const at = new Date().toISOString()
     r.status = 'completed'
     r.updatedAt = at
@@ -727,13 +756,13 @@ export function createApp() {
     res.json({ ok: true, request: r })
   })
 
-  app.post('/api/inventory/requests/:id/reject', requireAuth, requireManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/reject', requireAuth, requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
     if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可驳回' })
     if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可驳回' })
-    if (!canManageStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
+    if (!canManageTransferStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
     const at = new Date().toISOString()
     r.status = 'rejected'
     r.updatedAt = at

@@ -6,6 +6,11 @@ import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
+import {
+  canAccessTransferStore,
+  canManageTransferStore,
+  hasInventoryTransferAll,
+} from '../shared/accountPermissions.js'
 
 export const v2Router = Router()
 
@@ -413,6 +418,9 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '')
   if (req.user?.role === 'public') throw bad('无权限', 403)
   if (!fromStoreKey || !toStoreKey || fromStoreKey === toStoreKey) throw bad('调出/调入门店不正确')
+  if (!canAccessTransferStore(req.user, fromStoreKey) && !canAccessTransferStore(req.user, toStoreKey)) {
+    throw bad('无权为所选门店发起调货', 403)
+  }
   const rows = itemRows(items)
   await ensureStore(fromStoreKey)
   await ensureStore(toStoreKey)
@@ -444,7 +452,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
 v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user?.role === 'public') throw bad('无权限', 403)
-  const sf = storeFilter(req.user)
+  const sf = hasInventoryTransferAll(req.user) ? null : storeFilter(req.user)
   const where = {}
   if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }, { createdBy: req.user.username }]
   if (req.query.status) where.status = String(req.query.status)
@@ -461,8 +469,9 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
   if (!t) throw bad('申请不存在', 404)
-  if (req.user.role !== 'developer' && t.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = t.status === 'rejected' && req.user.role === 'developer'
+  const transferAdmin = hasInventoryTransferAll(req.user)
+  if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
+  const canDeleteRejected = t.status === 'rejected' && transferAdmin
   if (t.status !== 'pending' && !canDeleteRejected) throw bad('仅待审核或已驳回申请可删除')
   await prisma.transferRequest.delete({ where: { id: t.id } })
   res.json({ ok: true })
@@ -476,7 +485,7 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('申请不存在', 404)
-  if (!isManager(req.user) || !canStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
+  if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
   // 调货仅保留发货/收货提醒与记录，不校验、不扣减库存；发货后立即完成
   // 发货门店可提交修改后的货品清单（items），以修改后的内容为准
@@ -514,7 +523,7 @@ v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('申请不存在', 404)
-  if (!isManager(req.user) || !canStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
+  if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可驳回')
   const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'rejected', updatedAt: new Date() } })
   res.json({ ok: true, request: updated })
@@ -524,7 +533,7 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('申请不存在', 404)
-  if (!isManager(req.user) || !canStore(req.user, t.toStoreKey)) throw bad('无权限', 403)
+  if (!canManageTransferStore(req.user, t.toStoreKey)) throw bad('无权限', 403)
   if (!['pending', 'in_transit'].includes(t.status)) throw bad('当前状态不可收货')
   // 收货仅确认与记录，不增减库存；确认后立即完成
   const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
@@ -1382,4 +1391,3 @@ v2Router.post('/members/:id/consumptions', wrap(async (req, res) => {
   })
   res.json({ ok: true, points: member.points + points, consumption: { id: row.id, storeKey: row.storeKey, date: isoDate(row.date), amountCents: row.amountCents.toString(), note: row.note } })
 }))
-

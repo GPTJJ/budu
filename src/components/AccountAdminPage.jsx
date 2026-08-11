@@ -407,6 +407,22 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     }
   }
 
+  const changeTransferPermission = async (u) => {
+    const enabled = !u.permissions?.inventoryTransferAll
+    const action = enabled ? '授予' : '撤销'
+    if (!window.confirm(t('确定{action}「{name}」库存调拨全权限吗？', { action, name: u.username }))) return
+    setError('')
+    try {
+      await api(`/admin/users/${u.id}/permissions`, {
+        method: 'PUT',
+        body: JSON.stringify({ inventoryTransferAll: enabled }),
+      })
+      await load()
+    } catch (err) {
+      setError(t(err.message))
+    }
+  }
+
   const openStaffBind = async (u) => {
     try {
       await loadUserData()
@@ -505,6 +521,9 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                                 : t('未绑定员工')}
                             </p>
                           )}
+                          {u.permissions?.inventoryTransferAll && (
+                            <p className="text-[11px] font-medium text-emerald-600">{t('库存调拨全权限')}</p>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -526,6 +545,19 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
+                        {u.role !== 'public' && u.role !== 'developer' && (
+                          <button
+                            onClick={() => changeTransferPermission(u)}
+                            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
+                              u.permissions?.inventoryTransferAll
+                                ? 'bg-emerald-50 text-emerald-600 hover:bg-rose-50 hover:text-rose-500'
+                                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
+                            }`}
+                          >
+                            <Shield className="h-3.5 w-3.5" />
+                            {t(u.permissions?.inventoryTransferAll ? '撤销调拨全权限' : '调拨全权限')}
+                          </button>
+                        )}
                         {u.role !== 'developer' && u.role !== 'public' && (
                           <button
                             onClick={() => setBindTarget(u)}

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { normalizeAccountPermissions } from '../shared/accountPermissions.js'
 
 /**
  * 数据存储适配层：
@@ -90,6 +91,7 @@ export async function loadDb() {
     else if (u.role === 'member') u.role = 'staff'
     if (!Array.isArray(u.storeKeys)) u.storeKeys = []
     if (!u.staffKey) u.staffKey = ''
+    u.permissions = normalizeAccountPermissions(u.permissions)
   }
   // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任
   if (db.users.length > 0 && !db.users.some((u) => u.role === 'developer')) {
