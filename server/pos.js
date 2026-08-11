@@ -213,7 +213,21 @@ posRouter.get('/pos/products', wrap(async (req, res) => {
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
-  res.json({ rows: rows.map(serializeProduct) })
+  res.json({
+    rows: rows.map((product) => ({ ...serializeProduct(product), image: '', hasImage: Boolean(product.image) })),
+  })
+}))
+
+posRouter.get('/pos/products/:productId/image', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
+  if (!product || !product.image) throw httpError('商品图片不存在', 404)
+  const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(product.image))
+  if (!match) throw httpError('商品图片格式不正确', 400)
+  res.setHeader('Cache-Control', 'public, max-age=86400')
+  res.setHeader('Content-Type', `image/${match[1]}`)
+  res.send(Buffer.from(match[2], 'base64'))
 }))
 
 posRouter.post('/pos/orders', wrap(async (req, res) => {
