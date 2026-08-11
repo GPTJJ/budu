@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import KpiCard from './KpiCard'
