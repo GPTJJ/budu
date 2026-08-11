@@ -17,7 +17,7 @@ export default class ErrorBoundary extends Component {
   componentDidCatch(error) {
     console.error('[ErrorBoundary]', error)
     const msg = String((error && error.message) || error || '')
-    const isChunk = /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module/i.test(msg)
+    const isChunk = /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed/i.test(msg)
     if (isChunk && typeof sessionStorage !== 'undefined') {
       const key = 'budu-er-reload'
       if (!sessionStorage.getItem(key)) {

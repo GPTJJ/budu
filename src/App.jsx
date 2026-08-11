@@ -1,12 +1,13 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import LoginPage from './components/LoginPage'
 import { AppLoading } from './components/LoadingSkeleton'
 import { api } from './utils/api'
 import { loadUserData, resetUserData } from './utils/userData'
 import { useI18n } from './i18n'
+import { lazyRetry } from './utils/lazyRetry'
 
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
-const Dashboard = lazy(() => import('./components/Dashboard'))
+const Dashboard = lazyRetry(() => import('./components/Dashboard'))
 
 export default function App() {
   const { t } = useI18n()
@@ -18,7 +19,7 @@ export default function App() {
     api('/auth/me')
       .then(async ({ user: u }) => {
         setUser(u)
-        await loadUserData()
+        await loadUserData().catch(() => {})
         setDataReady(true)
       })
       .catch(() => {
@@ -30,7 +31,7 @@ export default function App() {
 
   const handleLogin = async (u) => {
     setUser(u)
-    await loadUserData()
+    await loadUserData().catch(() => {})
     setDataReady(true)
   }
 

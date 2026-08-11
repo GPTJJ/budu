@@ -56,7 +56,8 @@ function writeMirror() {
 
 /** 登录成功后拉取共享数据；首次登录自动迁移旧版本地数据 */
 export async function loadUserData() {
-  const data = await api('/userdata')
+  const data = await api('/userdata').catch(() => null)
+  if (!data || typeof data !== 'object') return
   cached = {
     entries: data.entries || {},
     staff: Array.isArray(data.staff) ? data.staff : [],

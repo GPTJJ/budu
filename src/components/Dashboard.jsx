@@ -18,6 +18,7 @@ import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
+import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
@@ -30,7 +31,7 @@ const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
 const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
-const PosPage = lazy(() => import('./PosPage'))
+const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const FinancePage = lazy(() => import('./FinancePage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
