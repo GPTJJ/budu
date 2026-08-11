@@ -74,6 +74,15 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   ))
   const [pageKey, setPageKey] = useState(0)
 
+  // 进入系统后空闲预加载 POS 相关分包，点开 POS 时无需等待下载
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      import('./PosPage').catch(() => {})
+      import('./OrderRecordsPage').catch(() => {})
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff'
   const isStoreEntryView = view === 'store-entry'

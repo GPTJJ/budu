@@ -21,6 +21,8 @@ import {
 } from '../utils/pos'
 
 const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现金' }
+const PRODUCTS_CACHE_TTL = 60 * 1000
+const productsCacheKey = (userId) => `budu-pos-products:${userId}`
 
 function parseDiscountPercent(value) {
   const num = Number(String(value ?? '').trim())
@@ -82,12 +84,31 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     api('/v2/pos/config')
       .then((data) => { if (active) setPosConfig(data) })
       .catch(() => { /* 配置读取失败时按订单模式回退 */ })
+    const cached = (() => {
+      try {
+        const raw = sessionStorage.getItem(productsCacheKey(user.id))
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        if (parsed && Array.isArray(parsed.rows) && Date.now() - parsed.at < PRODUCTS_CACHE_TTL) return parsed.rows
+      } catch { /* 缓存损坏时忽略 */ }
+      return null
+    })()
+    if (cached) {
+      setProducts(cached)
+      setLoadingProducts(false)
+    }
     api('/v2/pos/products')
-      .then((data) => { if (active) setProducts(data.rows || []) })
+      .then((data) => {
+        if (!active) return
+        setProducts(data.rows || [])
+        try {
+          sessionStorage.setItem(productsCacheKey(user.id), JSON.stringify({ at: Date.now(), rows: data.rows || [] }))
+        } catch { /* 存储失败不影响功能 */ }
+      })
       .catch((e) => { if (active) setError(e.message) })
       .finally(() => { if (active) setLoadingProducts(false) })
     return () => { active = false }
-  }, [])
+  }, [user.id])
 
   useEffect(() => {
     if (!storeId && stores[0]) setStoreId(stores[0].key)
