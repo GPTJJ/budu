@@ -27,6 +27,39 @@ function fmtTime(value) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+function fmtBytes(value) {
+  const bytes = Number(value || 0)
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} B`
+}
+
+function compressImageFile(file, maxSize = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        const dataUrl = canvas.toDataURL('image/jpeg', quality)
+        const baseName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image'
+        resolve({ dataUrl, fileName: `${baseName}.jpg`, mime: 'image/jpeg' })
+      }
+      img.onerror = () => reject(new Error('图片读取失败'))
+      img.src = reader.result
+    }
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function fileIcon(type) {
   if (!type) return 'file'
   if (type.includes('image')) return 'image'
@@ -170,7 +203,7 @@ export default function AssetCenterPage({ user, onBack }) {
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{error}</div>}
 
         {overview && (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
             {[
               ['文件总数', overview.total],
               ['即将到期（30天内）', overview.expiring],
@@ -182,6 +215,14 @@ export default function AssetCenterPage({ user, onBack }) {
                 <p className="mt-1 text-2xl font-black tabular-nums">{value}</p>
               </div>
             ))}
+            <div className={card}>
+              <p className="text-xs text-slate-400">存储用量</p>
+              <p className="mt-1 text-2xl font-black tabular-nums">{fmtBytes(overview.storageBytes)}</p>
+              <p className="mt-1 text-[11px] text-slate-400">共 {overview.versionCount || 0} 个版本 · 建议 {fmtBytes(overview.storageSoftLimitBytes)} 以内</p>
+              {overview.storageBytes > (overview.storageSoftLimitBytes || 1) * 0.8 && (
+                <p className="mt-1 text-[11px] font-semibold text-amber-600">存储接近上限，建议清理旧版本或迁移对象存储</p>
+              )}
+            </div>
             <div className={`${card} xl:col-span-1`}>
               <p className="text-xs text-slate-400">最近更新</p>
               <div className="mt-1 space-y-0.5">
@@ -321,20 +362,39 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
   }))
   const [dataUrl, setDataUrl] = useState('')
   const [fileName, setFileName] = useState('')
+  const [fileMime, setFileMime] = useState('')
+  const [compressed, setCompressed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const update = (key, value) => setForm((s) => ({ ...s, [key]: value }))
 
-  const pickFile = (fileInput) => {
+  const pickFile = async (fileInput) => {
     const file = fileInput.files?.[0]
     if (!file) return
     setFileName(file.name)
+    setFileMime(file.type || '')
+    setCompressed(false)
     setError('')
-    const reader = new FileReader()
-    reader.onload = () => setDataUrl(String(reader.result))
-    reader.onerror = () => setError('读取文件失败')
-    reader.readAsDataURL(file)
+    try {
+      const isImage = String(file.type || '').startsWith('image/') &&
+        !String(file.type || '').includes('gif') &&
+        !String(file.type || '').includes('svg')
+      if (isImage) {
+        const out = await compressImageFile(file)
+        setFileName(out.fileName)
+        setFileMime(out.mime)
+        setDataUrl(out.dataUrl)
+        setCompressed(true)
+      } else {
+        const reader = new FileReader()
+        reader.onload = () => setDataUrl(String(reader.result))
+        reader.onerror = () => setError('读取文件失败')
+        reader.readAsDataURL(file)
+      }
+    } catch (e) {
+      setError(e.message || '读取文件失败')
+    }
   }
 
   const save = async () => {
@@ -349,7 +409,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
         description: form.description,
         issuingAuthority: form.issuingAuthority, licenseNo: form.licenseNo,
         issueDate: form.issueDate || null, expiryDate: form.expiryDate || null, isPermanent: form.isPermanent,
-        ...(dataUrl ? { dataUrl, fileName, fileType: fileName.split('.').pop() || '', note: form.note } : {}),
+        ...(dataUrl ? { dataUrl, fileName, fileType: fileMime || fileName.split('.').pop() || '', note: form.note } : {}),
       }
       if (isEdit) await api(`/v2/asset-center/files/${file.id}`, { method: 'PUT', body: JSON.stringify(body) })
       else await api('/v2/asset-center/files', { method: 'POST', body: JSON.stringify(body) })
@@ -363,7 +423,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
 
   const field = 'input'
   return (
-    <ModalShell title={isEdit ? '编辑文件资料' : '上传文件'} subtitle={isEdit ? `当前版本 V${file.currentVersion}` : '支持图片 / PDF / Office 等，单文件最大约 9MB'} onClose={onClose} wide>
+    <ModalShell title={isEdit ? '编辑文件资料' : '上传文件'} subtitle={isEdit ? `当前版本 V${file.currentVersion} · 最多保留 20 个版本` : '支持图片 / PDF / Office 等，单文件最大约 9MB；图片会自动压缩'} onClose={onClose} wide>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <label className="block text-xs font-semibold text-slate-500">文件名称<input value={form.name} onChange={(e) => update('name', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
         <label className="block text-xs font-semibold text-slate-500">类别<select value={form.category} onChange={(e) => update('category', e.target.value)} className={`mt-1 w-full ${field}`}>{categories.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}</select></label>
@@ -383,6 +443,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
             {isEdit ? '更新文件（可选，选择后生成新版本）' : '选择文件'}
             <input type="file" onChange={(e) => pickFile(e.target)} className="mt-1 block w-full text-sm" />
           </label>
+          {compressed && <p className="mt-1 text-[11px] font-medium text-emerald-600">图片已自动压缩（最长边 1600px），上传更流畅</p>}
           {isEdit && <input value={form.note} onChange={(e) => update('note', e.target.value)} placeholder="本次版本说明（可选）" className={`mt-2 w-full ${field}`} />}
         </div>
       </div>
@@ -433,7 +494,7 @@ function VersionsModal({ file, onClose, onRestored }) {
     }
   }
   return (
-    <ModalShell title={`版本管理 · ${file.name}`} subtitle="每次更新保留旧版本，可恢复任意历史版本" onClose={onClose} wide>
+    <ModalShell title={`版本管理 · ${file.name}`} subtitle="每次更新保留旧版本，可恢复任意历史版本；最多保留 20 个版本，超出后最早的版本自动清理" onClose={onClose} wide>
       <div className="mt-4 space-y-2">
         {error && <p className="text-sm text-rose-500">{error}</p>}
         {versions.map((v) => (

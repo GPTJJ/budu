@@ -12,7 +12,7 @@ test('budu档案馆渲染概览、分类、卡片与到期状态', async ({ page
   await expect(page.getByText('营业执照-通盈店', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('30天内到期', { exact: true }).last()).toBeVisible()
   await expect(page.getByText('企业证照', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('新店签约', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('品牌信息', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('产品质检', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('到期提醒', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /管理分类/ })).toHaveCount(1)

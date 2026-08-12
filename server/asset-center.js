@@ -3,17 +3,20 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { loadDb, persist } from './store.js'
 import { httpError } from './pos-core.js'
+import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
 
 export const assetCenterRouter = Router()
 
 const BUILTIN_CATEGORIES = [
   { key: 'license', name: '企业证照', sort: 1 },
-  { key: 'store', name: '新店签约', sort: 2 },
-  { key: 'brand', name: '品牌信息', sort: 3 },
-  { key: 'contract', name: '合同中心', sort: 4 },
-  { key: 'quality', name: '产品质检', sort: 5 },
-  { key: 'other', name: '其他文件', sort: 6 },
+  { key: 'brand', name: '品牌信息', sort: 2 },
+  { key: 'contract', name: '合同中心', sort: 3 },
+  { key: 'quality', name: '产品质检', sort: 4 },
+  { key: 'other', name: '其他文件', sort: 5 },
 ]
+
+const MAX_VERSIONS = 20
+const STORAGE_SOFT_LIMIT_BYTES = 1024 * 1024 * 1024
 
 async function categoryRows() {
   if (!dbReady()) return BUILTIN_CATEGORIES.map((c) => ({ ...c, builtin: true, createdAt: null, updatedAt: null }))
@@ -244,7 +247,7 @@ assetCenterRouter.get('/asset-center/overview', wrap(async (req, res) => {
   requireAssetAccess(req.user)
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const [total, expiring, expired, addedThisMonth, recent] = await Promise.all([
+  const [total, expiring, expired, addedThisMonth, recent, versionAgg] = await Promise.all([
     prisma.assetFile.count({ where: { deletedAt: null } }),
     prisma.assetFile.count({
       where: { deletedAt: null, category: 'license', isPermanent: false, expiryDate: { gte: now, lte: new Date(Date.now() + 30 * DAY_MS) } },
@@ -252,12 +255,16 @@ assetCenterRouter.get('/asset-center/overview', wrap(async (req, res) => {
     prisma.assetFile.count({ where: { deletedAt: null, category: 'license', isPermanent: false, expiryDate: { lt: now } } }),
     prisma.assetFile.count({ where: { deletedAt: null, createdAt: { gte: monthStart } } }),
     prisma.assetFile.findMany({ where: { deletedAt: null }, orderBy: { updatedAt: 'desc' }, take: 8, include: { versions: { orderBy: { version: 'desc' }, take: 1 } } }),
+    prisma.assetFileVersion.aggregate({ _sum: { fileSize: true }, _count: true }),
   ])
   res.json({
     total,
     expiring,
     expired,
     addedThisMonth,
+    storageBytes: Number(versionAgg._sum.fileSize || 0),
+    versionCount: versionAgg._count,
+    storageSoftLimitBytes: STORAGE_SOFT_LIMIT_BYTES,
     recent: recent.map(serializeFile),
   })
 }))
@@ -289,18 +296,19 @@ assetCenterRouter.get('/asset-center/files/:id/versions', wrap(async (req, res) 
     orderBy: { version: 'desc' },
   })
   if (versions.length === 0) throw httpError('文件不存在', 404)
+  const rows = await Promise.all(versions.map(async (v) => ({
+    id: v.id,
+    version: v.version,
+    name: v.name,
+    fileType: v.fileType,
+    fileSize: v.fileSize,
+    uploaderName: v.uploaderName,
+    note: v.note,
+    createdAt: v.createdAt,
+    dataUrl: await readAssetData(v.storageProvider, v.storageKey, v.dataUrl),
+  })))
   res.json({
-    rows: versions.map((v) => ({
-      id: v.id,
-      version: v.version,
-      name: v.name,
-      fileType: v.fileType,
-      fileSize: v.fileSize,
-      uploaderName: v.uploaderName,
-      note: v.note,
-      createdAt: v.createdAt,
-      dataUrl: v.dataUrl,
-    })),
+    rows,
   })
 }))
 
@@ -334,6 +342,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         updatedBy: req.user.username,
       },
     })
+    const storage = await storeAssetData(dataUrl, assetObjectKey(id, 1))
     await tx.assetFileVersion.create({
       data: {
         id: `afv-${crypto.randomUUID()}`,
@@ -342,7 +351,9 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         name: String(body.fileName || name).slice(0, 120),
         fileType: String(body.fileType || '').slice(0, 80),
         fileSize: decodeSize(dataUrl),
-        dataUrl,
+        dataUrl: storage.dataUrl,
+        storageProvider: storage.provider,
+        storageKey: storage.storageKey,
         uploaderId: req.user.id,
         uploaderName: req.user.username,
         note: '初始版本',
@@ -373,6 +384,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
       fileType = String(body.fileType || existing.fileType || '').slice(0, 80)
       fileSize = decodeSize(dataUrl)
       fileName = String(body.fileName || existing.name || '').slice(0, 120)
+      const storage = await storeAssetData(dataUrl, assetObjectKey(existing.id, currentVersion))
       await tx.assetFileVersion.create({
         data: {
           id: `afv-${crypto.randomUUID()}`,
@@ -381,12 +393,23 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
           name: fileName,
           fileType,
           fileSize,
-          dataUrl,
+          dataUrl: storage.dataUrl,
+          storageProvider: storage.provider,
+          storageKey: storage.storageKey,
           uploaderId: req.user.id,
           uploaderName: req.user.username,
           note: String(body.note || '').slice(0, 200),
         },
       })
+      const extra = await tx.assetFileVersion.findMany({
+        where: { fileId: existing.id },
+        orderBy: { version: 'desc' },
+        skip: MAX_VERSIONS,
+        select: { id: true },
+      })
+      if (extra.length > 0) {
+        await tx.assetFileVersion.deleteMany({ where: { id: { in: extra.map((v) => v.id) } } })
+      }
     }
     await tx.assetFile.update({
       where: { id: existing.id },
@@ -458,6 +481,7 @@ assetCenterRouter.get('/asset-center/files/:id/download', wrap(async (req, res) 
   if (!file || file.deletedAt) throw httpError('文件不存在', 404)
   const version = file.versions.find((v) => v.version === file.currentVersion) || file.versions[0]
   if (!version) throw httpError('文件内容缺失', 404)
+  const dataUrl = await readAssetData(version.storageProvider, version.storageKey, version.dataUrl)
   await logAction(req.user, 'download', { fileId: file.id, fileName: file.name, storeKey: file.storeKey, detail: `V${version.version}` })
   res.json({
     ok: true,
@@ -465,7 +489,7 @@ assetCenterRouter.get('/asset-center/files/:id/download', wrap(async (req, res) 
     fileType: version.fileType,
     fileSize: version.fileSize,
     version: version.version,
-    dataUrl: version.dataUrl,
+    dataUrl,
   })
 }))
 

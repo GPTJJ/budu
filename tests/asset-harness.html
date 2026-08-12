@@ -36,11 +36,10 @@
       if (path === '/api/v2/asset-center/config') return json({ enabled: true, role: 'developer' })
       if (path === '/api/v2/asset-center/categories') return json({ rows: [
         { key: 'license', name: '企业证照', builtin: true, sort: 1 },
-        { key: 'store', name: '新店签约', builtin: true, sort: 2 },
-        { key: 'brand', name: '品牌信息', builtin: true, sort: 3 },
-        { key: 'contract', name: '合同中心', builtin: true, sort: 4 },
-        { key: 'quality', name: '产品质检', builtin: true, sort: 5 },
-        { key: 'other', name: '其他文件', builtin: true, sort: 6 },
+        { key: 'brand', name: '品牌信息', builtin: true, sort: 2 },
+        { key: 'contract', name: '合同中心', builtin: true, sort: 3 },
+        { key: 'quality', name: '产品质检', builtin: true, sort: 4 },
+        { key: 'other', name: '其他文件', builtin: true, sort: 5 },
       ] })
       if (path === '/api/v2/asset-center/overview') return json({ total: 2, expiring: 1, expired: 0, addedThisMonth: 2, recent: files })
       if (path === '/api/v2/asset-center/reminders') return json({ rows: [{ id: 'r1', fileId: 'af-1', fileName: '营业执照-通盈店', storeKey: 'tongying', remindType: '15', daysLeft: 8 }] })
