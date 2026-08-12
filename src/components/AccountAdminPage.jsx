@@ -402,6 +402,13 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     try {
       await api(`/admin/users/${u.id}/role`, { method: 'PUT', body: JSON.stringify({ role }) })
       await load()
+      try {
+        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
+        if (bc) {
+          bc.postMessage({ type: 'auth-changed' })
+          bc.close()
+        }
+      } catch { /* 同浏览器多标签页即时同步，失败时靠轮询兜底 */ }
     } catch (err) {
       setError(t(err.message))
     }
@@ -418,6 +425,13 @@ export default function AccountAdminPage({ currentUser, onBack }) {
         body: JSON.stringify({ inventoryTransferAll: enabled }),
       })
       await load()
+      try {
+        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
+        if (bc) {
+          bc.postMessage({ type: 'auth-changed' })
+          bc.close()
+        }
+      } catch { /* 同浏览器多标签页即时同步，失败时靠轮询兜底 */ }
     } catch (err) {
       setError(t(err.message))
     }

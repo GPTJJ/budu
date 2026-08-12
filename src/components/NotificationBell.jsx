@@ -28,7 +28,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
       unsub()
       window.removeEventListener('pointerdown', unlockAudio)
     }
-  }, [user?.username, user?.role])
+  }, [user?.username, user?.role, user?.assetCenter, user?.permissions])
 
   const isDesktop = variant === 'desktop'
   const unread = alerts.unread

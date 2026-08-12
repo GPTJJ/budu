@@ -172,23 +172,24 @@ async function refresh() {
 }
 
 /** 启动全局数据同步（所有登录账号，8 秒一次） */
-export function ensurePolling(user) {
-  const key = user ? user.username : null
-  const nextCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
-  if (currentUserKey === key) {
-    if (currentCanSeeAssets !== nextCanSeeAssets) {
-      currentCanSeeAssets = nextCanSeeAssets
-      compute()
-    }
-    return
-  }
-  currentUserKey = key
-  currentUserName = user ? user.username : ''
+function applyUserCaps(user) {
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
   currentIsRequestNotifier = hasInventoryTransferAll(user)
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
   currentCanSeeMailings = Boolean(user && user.role === 'developer')
   currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
+}
+
+export function ensurePolling(user) {
+  const key = user ? user.username : null
+  if (currentUserKey === key) {
+    applyUserCaps(user)
+    compute()
+    return
+  }
+  currentUserKey = key
+  currentUserName = user ? user.username : ''
+  applyUserCaps(user)
   currentInvoices = []
   currentMailings = []
   currentAssetReminders = []

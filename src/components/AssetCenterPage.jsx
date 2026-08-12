@@ -525,7 +525,14 @@ function GrantsModal({ onClose }) {
     try {
       await api('/v2/asset-center/grants', { method: 'PUT', body: JSON.stringify({ userId: u.id, granted: !u.assetCenter }) })
       setUsers((list) => list.map((x) => x.id === u.id ? { ...x, assetCenter: !u.assetCenter } : x))
-      setSaved(`已保存：${u.username} ${!u.assetCenter ? '已授权' : '已取消授权'}，对方 10 秒内自动生效`)
+      try {
+        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
+        if (bc) {
+          bc.postMessage({ type: 'auth-changed' })
+          bc.close()
+        }
+      } catch { /* 同浏览器多标签页即时同步，失败时靠轮询兜底 */ }
+      setSaved(`已保存：${u.username} ${!u.assetCenter ? '已授权' : '已取消授权'}，对方 3 秒内自动生效`)
     } catch (e) {
       setError(e.message)
     }

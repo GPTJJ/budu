@@ -29,10 +29,13 @@ export default function App() {
       .finally(() => setAuthLoading(false))
   }, [])
 
-  // 账号权限实时同步：授权/取消授权后，已登录会话在 10 秒内自动生效
+  // 账号权限实时同步：3 秒轮询 + 回到前台立即刷新 + 同浏览器多标签页授权后即时广播
   useEffect(() => {
     if (!user) return undefined
-    const id = window.setInterval(async () => {
+    let busy = false
+    const sync = async () => {
+      if (busy) return
+      busy = true
       try {
         const data = await api('/auth/me')
         if (!data || !data.user) return
@@ -45,9 +48,31 @@ export default function App() {
         })
       } catch {
         /* 网络波动时保留当前账号 */
+      } finally {
+        busy = false
       }
-    }, 10000)
-    return () => window.clearInterval(id)
+    }
+    const id = window.setInterval(sync, 3000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') sync()
+    }
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    let bc = null
+    try {
+      bc = new BroadcastChannel('budu-auth-sync')
+      bc.onmessage = (e) => {
+        if (e && e.data && e.data.type === 'auth-changed') sync()
+      }
+    } catch {
+      /* 浏览器不支持 BroadcastChannel 时忽略 */
+    }
+    return () => {
+      window.clearInterval(id)
+      window.removeEventListener('focus', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+      if (bc) bc.close()
+    }
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogin = async (u) => {
