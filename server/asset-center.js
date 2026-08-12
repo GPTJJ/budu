@@ -293,7 +293,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireAssetAccess(req.user)
   const body = req.body || {}
-  const category = text(body.category, 20, '类别', true)
+  const category = text(body.category, 60, '类别', true)
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const name = text(body.name, 100, '文件名称', true)
   const dataUrl = validDataUrl(body.dataUrl)
@@ -345,7 +345,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
   const body = req.body || {}
   const existing = await prisma.assetFile.findUnique({ where: { id: req.params.id } })
   if (!existing || existing.deletedAt) throw httpError('文件不存在', 404)
-  const category = text(body.category || existing.category, 20, '类别', true)
+  const category = text(body.category || existing.category, 60, '类别', true)
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const dataUrl = body.dataUrl ? validDataUrl(body.dataUrl) : null
   const updated = await prisma.$transaction(async (tx) => {
