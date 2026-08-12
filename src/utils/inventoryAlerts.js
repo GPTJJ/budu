@@ -16,11 +16,13 @@ let currentUserName = ''
 let currentIsRequestNotifier = false
 let currentCanSeeInvoices = false
 let currentCanSeeMailings = false
+let currentCanSeeAssets = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
 let currentInvoices = []
 let currentMailings = []
+let currentAssetReminders = []
 
 function muted() {
   try {
@@ -106,7 +108,12 @@ function compute() {
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
         .map((r) => ({ ...r, type: 'mailing' }))
     : []
-  const items = [...reqItems, ...invItems, ...mailItems].sort((a, b) =>
+  const assetItems = currentCanSeeAssets
+    ? currentAssetReminders
+        .filter((r) => !seenAt || String(r.createdAt) > seenAt)
+        .map((r) => ({ ...r, type: 'asset' }))
+    : []
+  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
   state = { ...state, unread: items.length, items }
@@ -153,6 +160,14 @@ async function refresh() {
       /* v2 不可用时忽略 */
     }
   }
+  if (currentCanSeeAssets) {
+    try {
+      const res = await api('/v2/asset-center/reminders')
+      currentAssetReminders = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* 资产中心不可用时忽略 */
+    }
+  }
   compute()
 }
 
@@ -166,8 +181,10 @@ export function ensurePolling(user) {
   currentIsRequestNotifier = hasInventoryTransferAll(user)
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
   currentCanSeeMailings = Boolean(user && user.role === 'developer')
+  currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
   currentInvoices = []
   currentMailings = []
+  currentAssetReminders = []
   initialized = false
   lastNotifiedId = null
   if (timer) {

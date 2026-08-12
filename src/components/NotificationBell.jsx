@@ -42,6 +42,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
           ? 'store-mailing'
           : item.type === 'invoice'
             ? 'finance-invoice'
+            : item.type === 'asset'
+              ? 'asset-center'
             : item.type === 'transfer'
               ? 'inventory-transfer'
               : 'inventory-purchase',
@@ -114,7 +116,9 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                             ? 'bg-amber-50 text-amber-600'
                             : r.type === 'mailing'
                               ? 'bg-budu-50 text-budu-600'
-                              : 'bg-sky-50 text-sky-600'
+                              : r.type === 'asset'
+                                ? 'bg-rose-50 text-rose-600'
+                                : 'bg-sky-50 text-sky-600'
                         }`}
                       >
                         {t(
@@ -122,6 +126,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                             ? '开票申请'
                             : r.type === 'mailing'
                               ? '发件单'
+                              : r.type === 'asset'
+                                ? '资产到期'
                               : r.type === 'transfer'
                                 ? '调货申请'
                                 : '采购申请',
@@ -131,6 +137,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                         ? t('{recipient} · {address}', { recipient: r.recipient || '', address: r.address || '' })
                         : r.type === 'invoice'
                           ? t('{company} · ¥{amount}', { company: r.companyName || t('个人'), amount: yuan(r.amountCents) })
+                          : r.type === 'asset'
+                            ? t('{file} · {days}', { file: r.fileName || '', days: r.remindType === 'expired' ? '已过期' : `${r.daysLeft} 天到期` })
                           : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
@@ -146,6 +154,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                               category: r.category || t('其他'),
                               email: r.email || '—',
                             })
+                          : r.type === 'asset'
+                            ? t('{store}', { store: storeLabel(r.storeKey, r.storeName) })
                           : r.type === 'transfer'
                             ? t('从 {from} 调往 {to}', {
                                 from: storeLabel(r.fromStoreKey, r.fromStoreName),
@@ -154,7 +164,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                             : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-300">
-                      {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
+                      {r.type === 'asset' ? '' : t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                     </p>
                   </button>
                 ))}
