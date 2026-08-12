@@ -69,7 +69,10 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     const list = allStores().filter((s) => (user.storeKeys || []).includes(s.key))
     return list[0] ? list[0].key : 'all'
   })
-  const [day, setDay] = useState(null) // 'MM-DD' 按日查看；null 按整月查看
+  const [day, setDay] = useState(() => {
+    const d = new Date()
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` // 默认当天
+  })
   const [view, setView] = useState(() => (
     user?.role !== 'public' && typeof window !== 'undefined' && window.location.hash === '#pos' ? 'store-pos' : 'overview'
   ))
