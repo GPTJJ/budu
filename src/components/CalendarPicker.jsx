@@ -198,7 +198,10 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
               {onWeekSelect && (
                 <button
                   onClick={() => {
-                    const base = fullDateOf(viewMonth, day || '01')
+                    const base = fullDateOf(
+                      viewMonth,
+                      day || (viewMonth === today.slice(0, 7) ? today.slice(8) : '01'),
+                    )
                     onWeekSelect(mondayOf(base))
                     setOpen(false)
                   }}
