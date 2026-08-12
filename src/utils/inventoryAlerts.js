@@ -23,6 +23,17 @@ let audioCtx = null
 let currentInvoices = []
 let currentMailings = []
 let currentAssetReminders = []
+let lastCapsKey = ''
+
+function capsKey(user) {
+  return [
+    Boolean(user && ['developer', 'manager'].includes(user.role)),
+    hasInventoryTransferAll(user),
+    Boolean(user && user.role !== 'public'),
+    Boolean(user && user.role === 'developer'),
+    Boolean(user && (user.role === 'developer' || user.assetCenter === true)),
+  ].join('|')
+}
 
 function muted() {
   try {
@@ -185,11 +196,17 @@ export function ensurePolling(user) {
   if (currentUserKey === key) {
     applyUserCaps(user)
     compute()
+    const nextCapsKey = capsKey(user)
+    if (nextCapsKey !== lastCapsKey) {
+      lastCapsKey = nextCapsKey
+      refresh()
+    }
     return
   }
   currentUserKey = key
   currentUserName = user ? user.username : ''
   applyUserCaps(user)
+  lastCapsKey = capsKey(user)
   currentInvoices = []
   currentMailings = []
   currentAssetReminders = []
