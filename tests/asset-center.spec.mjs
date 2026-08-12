@@ -15,5 +15,6 @@ test('budu档案馆渲染概览、分类、卡片与到期状态', async ({ page
   await expect(page.getByText('新店签约', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('产品质检', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('到期提醒', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /管理分类/ }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: /管理分类/ })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: /管理分类/ })).toBeVisible()
 })

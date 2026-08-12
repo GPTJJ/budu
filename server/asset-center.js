@@ -224,6 +224,21 @@ assetCenterRouter.put('/asset-center/categories/:key', wrap(async (req, res) => 
   })
 }))
 
+assetCenterRouter.delete('/asset-center/categories/:key', wrap(async (req, res) => {
+  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const key = String(req.params.key || '')
+  const existing = await prisma.assetCategory.findUnique({ where: { key } })
+  if (!existing) throw httpError('分类不存在', 404)
+  if (existing.builtin) throw httpError('内置分类不能删除', 400)
+  await prisma.$transaction([
+    prisma.assetFile.updateMany({ where: { category: key }, data: { category: 'other' } }),
+    prisma.assetCategory.delete({ where: { key } }),
+  ])
+  await logAction(req.user, 'category_delete', { fileName: existing.name, detail: `删除分类：${existing.name}，文件移入其他文件` })
+  res.json({ ok: true })
+}))
+
 assetCenterRouter.get('/asset-center/overview', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireAssetAccess(req.user)

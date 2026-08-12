@@ -213,9 +213,6 @@ export default function AssetCenterPage({ user, onBack }) {
               <button key={c.key} onClick={() => setTab(c.key)} className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition ${tab === c.key ? 'bg-budu-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>{c.name}</button>
             ))}
           </div>
-          {isDeveloper && (
-            <button onClick={() => setCatsOpen(true)} className="btn-secondary px-2.5 py-1.5 text-xs"><Tags className="h-3.5 w-3.5" />管理分类</button>
-          )}
         </div>
 
         <div className="grid gap-2.5 md:grid-cols-2">
@@ -595,8 +592,23 @@ function CategoriesModal({ onClose }) {
     }
   }
 
+  const remove = async (row) => {
+    if (!window.confirm(`确认删除分类「${row.name}」？该分类下的文件会自动移入「其他文件」。`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await api(`/v2/asset-center/categories/${row.key}`, { method: 'DELETE' })
+      setSaved(`已删除分类：${row.name}`)
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <ModalShell title="管理分类" subtitle="自定义分类可新增、改名；内置分类名称固定" onClose={onClose} wide>
+    <ModalShell title="管理分类" subtitle="自定义分类可新增、改名、删除；内置分类名称固定" onClose={onClose} wide>
       <div className="mt-4 space-y-3">
         {error && <p className="text-sm text-rose-500">{error}</p>}
         {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600">{saved}</p>}
@@ -619,7 +631,10 @@ function CategoriesModal({ onClose }) {
                   {row.builtin ? (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">内置</span>
                   ) : (
-                    <button onClick={() => { setEditingKey(row.key); setEditName(row.name); setError(''); setSaved('') }} className="btn-secondary px-3 py-1.5 text-xs"><Pencil className="h-3 w-3" />改名</button>
+                    <>
+                      <button onClick={() => { setEditingKey(row.key); setEditName(row.name); setError(''); setSaved('') }} className="btn-secondary px-3 py-1.5 text-xs"><Pencil className="h-3 w-3" />改名</button>
+                      <button onClick={() => remove(row)} disabled={busy} className="btn-secondary px-3 py-1.5 text-xs text-rose-500 hover:bg-rose-50"><Trash2 className="h-3 w-3" />删除</button>
+                    </>
                   )}
                 </>
               )}
@@ -681,7 +696,7 @@ function LogsModal({ onClose }) {
   useEffect(() => {
     api('/v2/asset-center/logs').then((d) => setLogs(d.rows || [])).catch((e) => setError(e.message))
   }, [])
-  const actionLabel = { upload: '上传', update: '修改', upload_version: '更新版本', restore: '恢复', delete: '删除', download: '下载', grant: '授权', revoke: '取消授权', package: '开店资料包', category_add: '新增分类', category_rename: '分类改名' }
+  const actionLabel = { upload: '上传', update: '修改', upload_version: '更新版本', restore: '恢复', delete: '删除', download: '下载', grant: '授权', revoke: '取消授权', package: '开店资料包', category_add: '新增分类', category_rename: '分类改名', category_delete: '删除分类' }
   return (
     <ModalShell title="操作日志" subtitle="上传/修改/下载/删除等关键操作留痕" onClose={onClose} wide>
       <div className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto">
