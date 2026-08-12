@@ -91,6 +91,7 @@ export async function loadDb() {
     else if (u.role === 'member') u.role = 'staff'
     if (!Array.isArray(u.storeKeys)) u.storeKeys = []
     if (!u.staffKey) u.staffKey = ''
+    if (!u.secondPasswordHash) u.secondPasswordHash = ''
     u.permissions = normalizeAccountPermissions(u.permissions)
   }
   // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任

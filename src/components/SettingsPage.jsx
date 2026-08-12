@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Languages, MapPin, Plus, Server, Store, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Database, Languages, Lock, MapPin, Plus, Server, Store, Trash2 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
@@ -23,6 +23,12 @@ export default function SettingsPage({ user, onBack }) {
   })
   const [sourceSaving, setSourceSaving] = useState(false)
   const [sourceTip, setSourceTip] = useState('')
+  const [secOld, setSecOld] = useState('')
+  const [secNew, setSecNew] = useState('')
+  const [secConfirm, setSecConfirm] = useState('')
+  const [secError, setSecError] = useState('')
+  const [secTip, setSecTip] = useState('')
+  const [secSaving, setSecSaving] = useState(false)
   const isDeveloper = user?.role === 'developer'
   const customStores = getStores()
 
@@ -56,6 +62,38 @@ export default function SettingsPage({ user, onBack }) {
       setAlertTip(res.configured ? t('测试消息已发送 ✓') : t('未配置 Webhook，仅返回站内状态'))
     } catch (err) {
       setAlertTip(t(err.message))
+    }
+  }
+
+  const saveSecondPassword = async () => {
+    if (!secOld.trim()) {
+      setSecError('请输入当前登录密码')
+      return
+    }
+    if (secNew.length < 6) {
+      setSecError('二级密码至少 6 位')
+      return
+    }
+    if (secNew !== secConfirm) {
+      setSecError('两次输入的二级密码不一致')
+      return
+    }
+    setSecSaving(true)
+    setSecError('')
+    setSecTip('')
+    try {
+      await api('/auth/second-password', {
+        method: 'PUT',
+        body: JSON.stringify({ oldPassword: secOld, newSecondPassword: secNew }),
+      })
+      setSecOld('')
+      setSecNew('')
+      setSecConfirm('')
+      setSecTip('二级密码已保存')
+    } catch (err) {
+      setSecError(err.message)
+    } finally {
+      setSecSaving(false)
     }
   }
 
@@ -184,6 +222,38 @@ export default function SettingsPage({ user, onBack }) {
               {t('发送测试消息')}
             </button>
             {alertTip && <span className="text-xs font-medium text-slate-500">{alertTip}</span>}
+          </div>
+        </div>
+      )}
+
+      {isDeveloper && (
+        <div className="card p-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-500 text-white shadow-md">
+              <Lock className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-[15px] font-bold text-slate-800">二级密码</h3>
+              <p className="mt-0.5 text-xs text-slate-400">用于删除雇员等高风险操作，防止误删；忘记时可用当前登录密码重新设置</p>
+            </div>
+          </div>
+          <div className="mt-4 grid max-w-xl gap-3 sm:grid-cols-3">
+            <label className="block text-xs font-semibold text-slate-500">当前登录密码
+              <input type="password" value={secOld} onChange={(e) => setSecOld(e.target.value)} className="input mt-1 w-full" />
+            </label>
+            <label className="block text-xs font-semibold text-slate-500">新二级密码（至少 6 位）
+              <input type="password" value={secNew} onChange={(e) => setSecNew(e.target.value)} className="input mt-1 w-full" />
+            </label>
+            <label className="block text-xs font-semibold text-slate-500">确认新二级密码
+              <input type="password" value={secConfirm} onChange={(e) => setSecConfirm(e.target.value)} className="input mt-1 w-full" />
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button onClick={saveSecondPassword} disabled={secSaving} className="rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50">
+              {secSaving ? '保存中…' : '保存二级密码'}
+            </button>
+            {secError && <span className="text-xs font-medium text-rose-500">{secError}</span>}
+            {secTip && <span className="text-xs font-medium text-emerald-600">{secTip}</span>}
           </div>
         </div>
       )}

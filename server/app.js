@@ -580,6 +580,34 @@ export function createApp() {
     res.json({ user: userPublic(req.user) })
   })
 
+  // ---------- 二级密码：用于删除雇员等高风险操作 ----------
+  app.put('/api/auth/second-password', requireAuth, async (req, res) => {
+    const body = req.body || {}
+    const oldPassword = String(body.oldPassword || '')
+    const newSecondPassword = String(body.newSecondPassword || '')
+    if (!oldPassword || !verifyPassword(oldPassword, req.user.passwordHash)) {
+      return res.status(400).json({ error: '当前登录密码错误' })
+    }
+    if (newSecondPassword.length < 6) {
+      return res.status(400).json({ error: '二级密码至少 6 位' })
+    }
+    req.user.secondPasswordHash = hashPassword(newSecondPassword)
+    await persist()
+    res.json({ ok: true })
+  })
+
+  app.post('/api/auth/verify-second-password', requireAuth, async (req, res) => {
+    const body = req.body || {}
+    const secondPassword = String(body.secondPassword || '')
+    if (!req.user.secondPasswordHash) {
+      return res.status(400).json({ error: '尚未设置二级密码，请先在系统设置中设置' })
+    }
+    if (!verifyPassword(secondPassword, req.user.secondPasswordHash)) {
+      return res.status(401).json({ error: '二级密码不正确' })
+    }
+    res.json({ ok: true })
+  })
+
   // ---------- 修改用户名 / 头像 ----------
   app.put('/api/auth/profile', requireAuth, async (req, res) => {
     const body = req.body || {}

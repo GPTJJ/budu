@@ -22,6 +22,7 @@ import {
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
+import { api } from '../utils/api'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -228,6 +229,73 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
+/** 二次确认：删除雇员需输入二级密码（开发者账户） */
+function SecondPasswordModal({ name, onClose, onSuccess }) {
+  const [pwd, setPwd] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (!pwd) {
+      setError('请输入二级密码')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await api('/auth/verify-second-password', { method: 'POST', body: JSON.stringify({ secondPassword: pwd }) })
+      onSuccess()
+    } catch (e) {
+      setError(e.message || '二级密码不正确')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-lg">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">二次确认</h3>
+            <p className="mt-1 text-xs text-slate-400">删除雇员属于高风险操作，请输入二级密码后继续</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label="关闭"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="mt-5 rounded-xl bg-rose-50/70 px-4 py-3 text-sm text-slate-600">
+          确认删除 {name} 吗？此操作不可撤销。
+        </p>
+
+        <input
+          type="password"
+          value={pwd}
+          onChange={(e) => setPwd(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+          placeholder="请输入二级密码"
+          autoFocus
+          className="input mt-4 w-full"
+        />
+        {error && <p className="mt-2 text-xs font-medium text-rose-500">{error}</p>}
+
+        <div className="mt-5 grid grid-cols-2 gap-2.5">
+          <button onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200">
+            取消
+          </button>
+          <button onClick={submit} disabled={busy || !pwd} className="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-200/60 transition hover:bg-rose-600 disabled:opacity-50">
+            {busy ? '验证中…' : '确认删除'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   const { t } = useI18n()
   const [y, m] = String(month).split('-').map(Number)
@@ -391,6 +459,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const [weekStart, setWeekStart] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [showSecondPwd, setShowSecondPwd] = useState(false)
   const [bigBonusEmp, setBigBonusEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
   const [showExport, setShowExport] = useState(false)
@@ -748,12 +817,29 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       )}
 
       {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onSave={handleAddStaff} />}
-      {pendingDelete && (
+      {pendingDelete && !showSecondPwd && (
         <ConfirmDeleteModal
           name={pendingDelete}
           onClose={() => setPendingDelete(null)}
           onConfirm={() => {
+            if (canDelete) setShowSecondPwd(true)
+            else {
+              handleDeleteStaff(pendingDelete)
+              setPendingDelete(null)
+            }
+          }}
+        />
+      )}
+      {pendingDelete && showSecondPwd && (
+        <SecondPasswordModal
+          name={pendingDelete}
+          onClose={() => {
+            setShowSecondPwd(false)
+            setPendingDelete(null)
+          }}
+          onSuccess={() => {
             handleDeleteStaff(pendingDelete)
+            setShowSecondPwd(false)
             setPendingDelete(null)
           }}
         />
