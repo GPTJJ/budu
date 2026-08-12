@@ -10,8 +10,6 @@ export const en = {
   '商品管理': 'Products',
   '库存采购': 'Inventory',
   '财务利润': 'Finance',
-  '会员营销': 'Members',
-  '数据分析': 'Analytics',
   '系统设置': 'Settings',
   '全部': 'All',
   '全部雇员': 'All Staff',

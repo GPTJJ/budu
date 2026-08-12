@@ -29,13 +29,11 @@ const StoreMailingPage = lazy(() => import('./StoreMailingPage'))
 const OrderRecordsPage = lazy(() => import('./OrderRecordsPage'))
 const SettingsPage = lazy(() => import('./SettingsPage'))
 const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
-const DataAnalysisPage = lazy(() => import('./DataAnalysisPage'))
 const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
 const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const FinancePage = lazy(() => import('./FinancePage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
-const MemberPage = lazy(() => import('./MemberPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 
 const pageTitles = {
@@ -50,8 +48,6 @@ const pageTitles = {
   'inventory-purchase': '申请采购',
   finance: '财务利润',
   'finance-invoice': '发票开具',
-  member: '会员营销',
-  analytics: '数据分析',
   'asset-center': 'budu档案馆',
   settings: '系统设置',
   'account-admin': '账号管理',
@@ -98,13 +94,11 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isPosView = view === 'store-pos'
   const isSettingsView = view === 'settings'
   const isAccountAdminView = view === 'account-admin'
-  const isAnalyticsView = view === 'analytics'
   const isProductCenterView = view === 'product-center'
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
-  const isMemberView = view === 'member'
   const isAssetCenterView = view === 'asset-center'
 
   const returnToOverview = () => {
@@ -244,8 +238,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <SettingsPage user={user} onBack={returnToOverview} />
               ) : isAccountAdminView && user?.role === 'developer' ? (
                 <AccountAdminPage currentUser={user} onBack={returnToOverview} />
-              ) : isAnalyticsView && user?.role !== 'public' ? (
-                <DataAnalysisPage onBack={returnToOverview} />
               ) : isInventoryTransferView && user?.role !== 'public' ? (
                 <InventoryRequestPage
                   type="transfer"
@@ -262,8 +254,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <FinancePage currentUser={user} onBack={returnToOverview} />
               ) : isInvoiceView && user?.role !== 'public' ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
-              ) : isMemberView && user?.role !== 'public' ? (
-                <MemberPage currentUser={user} onBack={returnToOverview} />
               ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.assetCenter === true) ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
