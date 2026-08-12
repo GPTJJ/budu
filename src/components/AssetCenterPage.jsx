@@ -71,10 +71,21 @@ function compressImageFile(file, maxSize = 1600, quality = 0.82) {
   })
 }
 
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+
+function isImageType(type) {
+  const t = String(type || '').toLowerCase()
+  return t.includes('image') || IMAGE_EXT.includes(t) || IMAGE_EXT.some((ext) => t.endsWith('.' + ext))
+}
+
+function isPdfType(type) {
+  const t = String(type || '').toLowerCase()
+  return t === 'application/pdf' || t === 'pdf' || t.endsWith('.pdf')
+}
+
 function fileIcon(type) {
-  if (!type) return 'file'
-  if (type.includes('image')) return 'image'
-  if (type.includes('pdf')) return 'pdf'
+  if (isImageType(type)) return 'image'
+  if (isPdfType(type)) return 'pdf'
   return 'file'
 }
 
@@ -498,7 +509,7 @@ function PreviewModal({ file, onClose }) {
       setDownloading(false)
     }
   }
-  const isImage = data && String(data.fileType).includes('image')
+  const isImage = data && isImageType(data.fileType)
   return (
     <ModalShell title={`预览 · ${file.name}`} subtitle={tooLarge ? `文件较大 · ${fmtBytes(file.fileSize)}` : data ? `V${data.version} · ${data.name}` : '加载中…'} onClose={onClose} wide>
       <div className="mt-4 grid min-h-[320px] place-items-center rounded-xl bg-slate-50">
@@ -509,7 +520,7 @@ function PreviewModal({ file, onClose }) {
           </div>
         ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
           <img src={data.dataUrl} alt={file.name} className="max-h-[60vh] rounded-lg object-contain" />
-        ) : data.fileType === 'application/pdf' ? (
+        ) : isPdfType(data.fileType) ? (
           <iframe title={file.name} src={data.dataUrl} className="h-[60vh] w-full rounded-lg" />
         ) : (
           <a href={data.dataUrl} download={data.name} className="btn-primary px-5 py-2"><Download className="h-4 w-4" />该格式不支持内嵌预览，点击下载查看</a>
