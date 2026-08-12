@@ -29,6 +29,27 @@ export default function App() {
       .finally(() => setAuthLoading(false))
   }, [])
 
+  // 账号权限实时同步：授权/取消授权后，已登录会话在 10 秒内自动生效
+  useEffect(() => {
+    if (!user) return undefined
+    const id = window.setInterval(async () => {
+      try {
+        const data = await api('/auth/me')
+        if (!data || !data.user) return
+        setUser((prev) => {
+          if (!prev) return prev
+          const next = data.user
+          const keys = ['role', 'storeKeys', 'staffKey', 'assetCenter', 'permissions']
+          const changed = keys.some((key) => JSON.stringify(prev[key]) !== JSON.stringify(next[key]))
+          return changed ? next : prev
+        })
+      } catch {
+        /* 网络波动时保留当前账号 */
+      }
+    }, 10000)
+    return () => window.clearInterval(id)
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleLogin = async (u) => {
     setUser(u)
     await loadUserData().catch(() => {})

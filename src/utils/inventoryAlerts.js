@@ -174,7 +174,14 @@ async function refresh() {
 /** 启动全局数据同步（所有登录账号，8 秒一次） */
 export function ensurePolling(user) {
   const key = user ? user.username : null
-  if (currentUserKey === key) return
+  const nextCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
+  if (currentUserKey === key) {
+    if (currentCanSeeAssets !== nextCanSeeAssets) {
+      currentCanSeeAssets = nextCanSeeAssets
+      compute()
+    }
+    return
+  }
   currentUserKey = key
   currentUserName = user ? user.username : ''
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))

@@ -517,6 +517,7 @@ function PackageModal({ stores, rows, onClose, onMake }) {
 function GrantsModal({ onClose }) {
   const [users, setUsers] = useState([])
   const [error, setError] = useState('')
+  const [saved, setSaved] = useState('')
   useEffect(() => {
     api('/v2/asset-center/grants').then((d) => setUsers(d.users || [])).catch((e) => setError(e.message))
   }, [])
@@ -524,6 +525,7 @@ function GrantsModal({ onClose }) {
     try {
       await api('/v2/asset-center/grants', { method: 'PUT', body: JSON.stringify({ userId: u.id, granted: !u.assetCenter }) })
       setUsers((list) => list.map((x) => x.id === u.id ? { ...x, assetCenter: !u.assetCenter } : x))
+      setSaved(`已保存：${u.username} ${!u.assetCenter ? '已授权' : '已取消授权'}，对方 10 秒内自动生效`)
     } catch (e) {
       setError(e.message)
     }
@@ -532,6 +534,7 @@ function GrantsModal({ onClose }) {
     <ModalShell title="资产中心授权" subtitle="默认仅开发者可见；可为店长/店员单独开通查看权限" onClose={onClose} wide>
       <div className="mt-4 space-y-2">
         {error && <p className="text-sm text-rose-500">{error}</p>}
+        {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">{saved}</p>}
         {users.filter((u) => u.role !== 'developer').map((u) => (
           <div key={u.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 dark:border-slate-700">
             <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{u.username}</p><p className="text-xs text-slate-400">{u.role === 'manager' ? '店长·区域负责人' : '店员'}</p></div>
