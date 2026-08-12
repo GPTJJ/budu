@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import iconUrl from '../assets/pull-refresh-icon.png'
+import { ArrowDown } from 'lucide-react'
 
 const THRESHOLD = 64
 
@@ -89,30 +89,34 @@ export default function PullToRefresh({ onRefresh, children }) {
           className="pointer-events-none fixed inset-x-0 top-0 z-[120] flex justify-center"
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
-          <div
-            className="flex flex-col items-center gap-0.5"
-            style={{ transform: `translateY(${Math.max(pull - 24, 0)}px)` }}
-          >
-            <img
-              src={iconUrl}
-              alt=""
-              draggable={false}
-              className={`h-12 w-auto max-w-[64px] select-none ${
-                refreshing
-                  ? 'animate-[budu-wiggle_0.6s_ease-in-out_infinite]'
-                  : pull >= THRESHOLD
-                    ? 'animate-[budu-bounce_0.3s_ease-out_1]'
-                    : ''
+          <div style={{ transform: `translateY(${Math.max(pull - 20, 0)}px)` }}>
+            <div
+              className={`flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/85 px-3 py-1.5 shadow-sm backdrop-blur-md ${
+                refreshing ? 'opacity-95' : ''
               }`}
-              style={{
-                transform: refreshing
-                  ? undefined
-                  : `scale(${(0.85 + (pull / 96) * 0.25).toFixed(3)}) rotate(${(-8 + (pull / 96) * 8).toFixed(2)}deg)`,
-              }}
-            />
-            <span className="text-[10px] font-medium text-slate-600 [text-shadow:0_1px_2px_rgba(255,255,255,0.95)]">
-              {refreshing ? '刷新中…' : pull >= THRESHOLD ? '释放刷新' : '下拉刷新'}
-            </span>
+            >
+              <span className="relative grid h-6 w-6 shrink-0 place-items-center">
+                <span className="absolute inset-0 rounded-full border-2 border-slate-200/80" />
+                <span
+                  className={`absolute inset-0 rounded-full border-2 border-transparent border-t-budu-500 transition-transform duration-100 motion-reduce:transition-none ${
+                    refreshing ? 'animate-spin motion-reduce:animate-none' : ''
+                  }`}
+                  style={{
+                    transform: refreshing ? undefined : `rotate(${Math.min(pull / 96, 1) * 360}deg)`,
+                  }}
+                />
+                {!refreshing && (
+                  <ArrowDown
+                    className={`h-3 w-3 text-budu-500 transition-transform duration-200 motion-reduce:transition-none ${
+                      pull >= THRESHOLD ? 'rotate-180' : ''
+                    }`}
+                  />
+                )}
+              </span>
+              <span className="select-none text-[11px] font-medium text-slate-600">
+                {refreshing ? '刷新中…' : pull >= THRESHOLD ? '释放刷新' : '下拉刷新'}
+              </span>
+            </div>
           </div>
         </div>
       )}

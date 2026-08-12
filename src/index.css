@@ -146,23 +146,3 @@
     scroll-behavior: auto !important;
   }
 }
-
-@keyframes budu-bounce {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    transform: translateY(-6px) scale(1.08);
-  }
-}
-
-@keyframes budu-wiggle {
-  0%,
-  100% {
-    transform: rotate(-6deg);
-  }
-  50% {
-    transform: rotate(6deg);
-  }
-}
