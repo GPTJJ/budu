@@ -155,7 +155,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                               email: r.email || '—',
                             })
                           : r.type === 'asset'
-                            ? t('{store}', { store: storeLabel(r.storeKey, r.storeName) })
+                            ? ''
                           : r.type === 'transfer'
                             ? t('从 {from} 调往 {to}', {
                                 from: storeLabel(r.fromStoreKey, r.fromStoreName),

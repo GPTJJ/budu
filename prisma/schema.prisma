@@ -548,6 +548,17 @@ model AssetFile {
   @@map("asset_files")
 }
 
+model AssetCategory {
+  key       String   @id
+  name      String
+  builtin   Boolean  @default(false)
+  sort      Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("asset_categories")
+}
+
 model AssetFileVersion {
   id              String    @id
   fileId          String    @map("file_id")

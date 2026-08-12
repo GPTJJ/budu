@@ -27,7 +27,7 @@ const menus = [
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'member', label: '会员营销', icon: Heart },
   { key: 'analytics', label: '数据分析', icon: BarChart3 },
-  { key: 'asset-center', label: '企业资产中心', icon: FolderArchive },
+  { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
 

@@ -6,7 +6,30 @@ import { httpError } from './pos-core.js'
 
 export const assetCenterRouter = Router()
 
-export const ASSET_CATEGORIES = ['license', 'store', 'staff', 'brand', 'contract', 'operation', 'other']
+const BUILTIN_CATEGORIES = [
+  { key: 'license', name: '企业证照', sort: 1 },
+  { key: 'store', name: '新店签约', sort: 2 },
+  { key: 'brand', name: '品牌信息', sort: 3 },
+  { key: 'contract', name: '合同中心', sort: 4 },
+  { key: 'quality', name: '产品质检', sort: 5 },
+  { key: 'other', name: '其他文件', sort: 6 },
+]
+
+async function categoryRows() {
+  if (!dbReady()) return BUILTIN_CATEGORIES.map((c) => ({ ...c, builtin: true, createdAt: null, updatedAt: null }))
+  try {
+    const rows = await prisma.assetCategory.findMany({ orderBy: { sort: 'asc' } })
+    return rows.length > 0
+      ? rows
+      : BUILTIN_CATEGORIES.map((c) => ({ ...c, builtin: true, createdAt: null, updatedAt: null }))
+  } catch {
+    return BUILTIN_CATEGORIES.map((c) => ({ ...c, builtin: true, createdAt: null, updatedAt: null }))
+  }
+}
+
+async function categoryKeys() {
+  return (await categoryRows()).map((r) => r.key)
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -47,8 +70,6 @@ function serializeFile(file) {
     id: file.id,
     name: file.name,
     category: file.category,
-    company: file.company,
-    storeKey: file.storeKey,
     tags: Array.isArray(file.tags) ? file.tags : [],
     description: file.description,
     fileName: latest ? latest.name : '',
@@ -123,19 +144,14 @@ async function logAction(user, action, input = {}) {
 function baseWhere(req) {
   const q = String(req.query.q || '').trim()
   const category = String(req.query.category || '').trim()
-  const storeKey = String(req.query.store || '').trim()
-  const company = String(req.query.company || '').trim()
   const tag = String(req.query.tag || '').trim()
   const status = String(req.query.status || '').trim()
   const where = { deletedAt: null }
-  if (ASSET_CATEGORIES.includes(category)) where.category = category
-  if (storeKey) where.storeKey = storeKey
-  if (company) where.company = { contains: company, mode: 'insensitive' }
+  if (category) where.category = category
   if (tag) where.tags = { array_contains: [tag] }
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },
-      { company: { contains: q, mode: 'insensitive' } },
       { description: { contains: q, mode: 'insensitive' } },
       { licenseNo: { contains: q, mode: 'insensitive' } },
     ]
@@ -158,6 +174,54 @@ function baseWhere(req) {
 assetCenterRouter.get('/asset-center/config', wrap(async (req, res) => {
   requireAssetAccess(req.user)
   res.json({ enabled: true, role: req.user.role })
+}))
+
+assetCenterRouter.get('/asset-center/categories', wrap(async (req, res) => {
+  requireAssetAccess(req.user)
+  const rows = await categoryRows()
+  res.json({
+    rows: rows.map((r) => ({
+      key: r.key,
+      name: r.name,
+      builtin: Boolean(r.builtin),
+      sort: r.sort,
+    })),
+  })
+}))
+
+assetCenterRouter.post('/asset-center/categories', wrap(async (req, res) => {
+  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const name = text(req.body?.name, 20, '分类名称', true)
+  const rows = await categoryRows()
+  if (rows.some((r) => r.name === name)) throw httpError('分类名称已存在', 409)
+  const key = `cat-${crypto.randomUUID()}`
+  const created = await prisma.assetCategory.create({
+    data: { key, name, builtin: false, sort: rows.length + 1 },
+  })
+  await logAction(req.user, 'category_add', { fileName: name, detail: `新增分类：${name}` })
+  res.status(201).json({
+    ok: true,
+    row: { key: created.key, name: created.name, builtin: created.builtin, sort: created.sort },
+  })
+}))
+
+assetCenterRouter.put('/asset-center/categories/:key', wrap(async (req, res) => {
+  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const key = String(req.params.key || '')
+  const name = text(req.body?.name, 20, '分类名称', true)
+  const existing = await prisma.assetCategory.findUnique({ where: { key } })
+  if (!existing) throw httpError('分类不存在', 404)
+  if (existing.builtin) throw httpError('内置分类名称固定，不能修改', 400)
+  const rows = await categoryRows()
+  if (rows.some((r) => r.key !== key && r.name === name)) throw httpError('分类名称已存在', 409)
+  const updated = await prisma.assetCategory.update({ where: { key }, data: { name, updatedAt: new Date() } })
+  await logAction(req.user, 'category_rename', { fileName: name, detail: `分类改名：${existing.name} → ${name}` })
+  res.json({
+    ok: true,
+    row: { key: updated.key, name: updated.name, builtin: updated.builtin, sort: updated.sort },
+  })
 }))
 
 assetCenterRouter.get('/asset-center/overview', wrap(async (req, res) => {
@@ -230,7 +294,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
   requireAssetAccess(req.user)
   const body = req.body || {}
   const category = text(body.category, 20, '类别', true)
-  if (!ASSET_CATEGORIES.includes(category)) throw httpError('类别不正确')
+  if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const name = text(body.name, 100, '文件名称', true)
   const dataUrl = validDataUrl(body.dataUrl)
   const file = await prisma.$transaction(async (tx) => {
@@ -240,8 +304,8 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         id,
         name,
         category,
-        company: text(body.company, 50, '所属公司'),
-        storeKey: text(body.storeKey, 30, '所属门店'),
+        company: '',
+        storeKey: '',
         tags: normalizeTags(body.tags),
         description: text(body.description, 300, '描述'),
         fileType: String(body.fileType || '').slice(0, 80),
@@ -282,7 +346,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
   const existing = await prisma.assetFile.findUnique({ where: { id: req.params.id } })
   if (!existing || existing.deletedAt) throw httpError('文件不存在', 404)
   const category = text(body.category || existing.category, 20, '类别', true)
-  if (!ASSET_CATEGORIES.includes(category)) throw httpError('类别不正确')
+  if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const dataUrl = body.dataUrl ? validDataUrl(body.dataUrl) : null
   const updated = await prisma.$transaction(async (tx) => {
     let currentVersion = existing.currentVersion
@@ -314,8 +378,6 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
       data: {
         name: text(body.name || existing.name, 100, '文件名称', true),
         category,
-        company: text(body.company !== undefined ? body.company : existing.company, 50, '所属公司'),
-        storeKey: text(body.storeKey !== undefined ? body.storeKey : existing.storeKey, 30, '所属门店'),
         tags: body.tags !== undefined ? normalizeTags(body.tags) : existing.tags,
         description: text(body.description !== undefined ? body.description : existing.description, 300, '描述'),
         ...(dataUrl ? { fileType, fileSize, currentVersion } : {}),
@@ -437,10 +499,8 @@ assetCenterRouter.get('/asset-center/logs', wrap(async (req, res) => {
 
 assetCenterRouter.post('/asset-center/package-log', wrap(async (req, res) => {
   requireAssetAccess(req.user)
-  const storeKey = String(req.body?.storeKey || '').slice(0, 30)
   const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 50) : []
   await logAction(req.user, 'package', {
-    storeKey,
     fileName: files.join('、').slice(0, 100),
     detail: `开店资料包（${files.length} 个文件）`,
   })

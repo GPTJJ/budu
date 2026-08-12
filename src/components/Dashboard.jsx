@@ -52,7 +52,7 @@ const pageTitles = {
   'finance-invoice': '发票开具',
   member: '会员营销',
   analytics: '数据分析',
-  'asset-center': '企业资产中心',
+  'asset-center': 'budu档案馆',
   settings: '系统设置',
   'account-admin': '账号管理',
 }

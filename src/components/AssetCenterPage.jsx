@@ -1,29 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import JSZip from 'jszip'
 import {
-  ArrowLeft, Check, Download, Eye, FileText, FolderArchive, History, Lock, Moon, PackagePlus, Pencil, Plus, Search, Sun, Trash2, Upload, X,
+  ArrowLeft, Check, Download, Eye, FileText, FolderArchive, History, Lock, PackagePlus, Pencil, Plus, Search, Tags, Trash2, Upload, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { allStores } from '../utils/selectors'
 import { useI18n } from '../i18n'
 
-const CATEGORIES = [
-  ['license', '企业证照'],
-  ['store', '门店资料'],
-  ['staff', '人员资料'],
-  ['brand', '品牌资料'],
-  ['contract', '合同中心'],
-  ['operation', '经营资料'],
-  ['other', '其他文件'],
-]
-
 const STATUS_META = {
-  normal: { label: '正常', cls: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300' },
-  expiring: { label: '30天内到期', cls: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300' },
-  expired: { label: '已过期', cls: 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300' },
+  normal: { label: '正常', cls: 'bg-emerald-50 text-emerald-600' },
+  expiring: { label: '30天内到期', cls: 'bg-amber-50 text-amber-600' },
+  expired: { label: '已过期', cls: 'bg-rose-50 text-rose-600' },
 }
 
-const inputCls = 'input dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500'
+const inputCls = 'input'
 
 function fmtDate(value) {
   if (!value) return ''
@@ -48,12 +37,10 @@ function fileIcon(type) {
 export default function AssetCenterPage({ user, onBack }) {
   const { t } = useI18n()
   const isDeveloper = user?.role === 'developer'
-  const [dark, setDark] = useState(false)
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
-  const [store, setStore] = useState('')
-  const [company, setCompany] = useState('')
   const [status, setStatus] = useState('')
+  const [categories, setCategories] = useState([])
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [overview, setOverview] = useState(null)
@@ -68,9 +55,9 @@ export default function AssetCenterPage({ user, onBack }) {
   const [packageOpen, setPackageOpen] = useState(false)
   const [grantsOpen, setGrantsOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
+  const [catsOpen, setCatsOpen] = useState(false)
 
-  const stores = useMemo(() => allStores(), [])
-  const storeName = (key) => stores.find((s) => s.key === key)?.name || key || '—'
+  const categoryName = (key) => (categories.find((c) => c.key === key) || { name: key }).name
 
   const load = async () => {
     setLoading(true)
@@ -79,18 +66,18 @@ export default function AssetCenterPage({ user, onBack }) {
       const params = new URLSearchParams()
       if (tab !== 'all') params.set('category', tab)
       if (q.trim()) params.set('q', q.trim())
-      if (store) params.set('store', store)
-      if (company.trim()) params.set('company', company.trim())
       if (status) params.set('status', status)
-      const [list, ov, rem] = await Promise.all([
+      const [list, ov, rem, cats] = await Promise.all([
         api(`/v2/asset-center/files?${params.toString()}`),
         api('/v2/asset-center/overview'),
         api('/v2/asset-center/reminders'),
+        api('/v2/asset-center/categories'),
       ])
       setRows(list.rows || [])
       setTotal(list.total || 0)
       setOverview(ov)
       setReminders(rem.rows || [])
+      setCategories(cats.rows || [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -98,7 +85,7 @@ export default function AssetCenterPage({ user, onBack }) {
     }
   }
 
-  useEffect(() => { load() }, [tab, store, status]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [tab, status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const showTip = (text) => {
     setTip(text)
@@ -129,64 +116,47 @@ export default function AssetCenterPage({ user, onBack }) {
     }
   }
 
-  const makePackage = async (storeKey) => {
-    const files = rows.filter((r) => r.storeKey === storeKey)
-    const match = (keywords, category) => files.find((f) => {
-      if (category && f.category !== category) return false
-      const hay = `${f.name} ${(f.tags || []).join(' ')}`
-      return keywords.some((k) => hay.includes(k))
-    })
-    const wanted = [
-      { key: '营业执照', category: 'license', keywords: ['营业执照', '执照'] },
-      { key: '食品经营许可证', category: 'license', keywords: ['食品经营许可', '经营许可'] },
-      { key: '法人身份证', category: 'staff', keywords: ['法人', '身份证'] },
-      { key: '品牌logo', category: 'brand', keywords: ['logo', '商标', '标志'] },
-      { key: '公司简介', category: 'brand', keywords: ['公司简介', '简介'] },
-    ]
-    const picked = wanted.map((w) => ({ ...w, file: match(w.keywords, w.category) }))
+  const makePackage = async (selected) => {
+    if (!Array.isArray(selected) || selected.length === 0) return
     const zip = new JSZip()
-    const folder = zip.folder(`开店资料包-${storeName(storeKey)}`)
-    for (const item of picked) {
-      if (!item.file) continue
-      const data = await api(`/v2/asset-center/files/${item.file.id}/download`)
-      const ext = (data.name || item.file.name).split('.').pop() || 'bin'
-      const safeName = `${item.key}.${ext}`
+    const folder = zip.folder('budu档案馆资料包')
+    const names = []
+    for (const file of selected) {
+      const data = await api(`/v2/asset-center/files/${file.id}/download`)
+      const safeName = String(data.name || file.name || 'file').trim()
       const base64 = String(data.dataUrl).split(',')[1] || ''
       folder.file(safeName, base64, { base64: true })
+      names.push(file.name || safeName)
     }
-    const missing = picked.filter((p) => !p.file).map((p) => p.key)
-    if (missing.length) showTip(`以下资料暂缺，已跳过：${missing.join('、')}`)
+    const now = new Date()
+    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
     const blob = await zip.generateAsync({ type: 'blob' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `开店资料包-${storeName(storeKey)}.zip`
+    link.download = `budu档案馆资料包-${ymd}.zip`
     link.click()
     setTimeout(() => URL.revokeObjectURL(link.href), 5000)
     await api('/v2/asset-center/package-log', {
       method: 'POST',
-      body: JSON.stringify({ storeKey, files: picked.filter((p) => p.file).map((p) => p.key) }),
+      body: JSON.stringify({ files: names }),
     })
   }
 
-  const rootCls = dark ? 'dark' : ''
-  const card = 'rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800'
+  const card = 'rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm'
 
   return (
-    <div className={rootCls}>
-      <div className="space-y-5 text-slate-800 dark:text-slate-100">
+    <div>
+      <div className="space-y-5 text-slate-800">
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={onBack} className="btn-secondary px-3 py-2" aria-label="返回"><ArrowLeft className="h-4 w-4" />返回</button>
           <div>
-            <h2 className="text-xl font-bold">企业资产中心</h2>
-            <p className="mt-0.5 text-[13px] text-slate-400 dark:text-slate-400">企业级文档中心 · 证照/资料/合同统一管理</p>
+            <h2 className="text-xl font-bold">budu档案馆</h2>
+            <p className="mt-0.5 text-[13px] text-slate-400">企业级文档中心 · 证照/资料/合同统一管理</p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <button onClick={() => setDark((v) => !v)} className="btn-secondary px-3 py-2" aria-label="深色模式">
-              {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              {dark ? '浅色' : '深色'}
-            </button>
             {isDeveloper && (
               <>
+                <button onClick={() => setCatsOpen(true)} className="btn-secondary px-3 py-2"><Tags className="h-4 w-4" />管理分类</button>
                 <button onClick={() => setGrantsOpen(true)} className="btn-secondary px-3 py-2"><Lock className="h-4 w-4" />授权</button>
                 <button onClick={() => setLogsOpen(true)} className="btn-secondary px-3 py-2"><History className="h-4 w-4" />日志</button>
               </>
@@ -196,8 +166,8 @@ export default function AssetCenterPage({ user, onBack }) {
           </div>
         </div>
 
-        {tip && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">{tip}</div>}
-        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-600 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
+        {tip && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-600">{tip}</div>}
+        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{error}</div>}
 
         {overview && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
@@ -224,11 +194,11 @@ export default function AssetCenterPage({ user, onBack }) {
         )}
 
         {reminders.length > 0 && (
-          <div className="rounded-2xl border border-amber-200/70 bg-amber-50/60 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
-            <p className="text-sm font-bold text-amber-700 dark:text-amber-300">到期提醒</p>
+          <div className="rounded-2xl border border-amber-200/70 bg-amber-50/60 p-4">
+            <p className="text-sm font-bold text-amber-700">到期提醒</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {reminders.slice(0, 8).map((r) => (
-                <span key={r.id} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.remindType === 'expired' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'}`}>
+                <span key={r.id} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.remindType === 'expired' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
                   {r.fileName} · {r.remindType === 'expired' ? '已过期' : `${r.daysLeft} 天到期`}
                 </span>
               ))}
@@ -237,18 +207,19 @@ export default function AssetCenterPage({ user, onBack }) {
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap gap-1 rounded-2xl bg-white p-1.5 shadow-sm dark:bg-slate-800 dark:ring-1 dark:ring-slate-700">
-            <button onClick={() => setTab('all')} className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition ${tab === 'all' ? 'bg-budu-500 text-white' : 'text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700'}`}>全部（{total}）</button>
-            {CATEGORIES.map(([key, label]) => (
-              <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition ${tab === key ? 'bg-budu-500 text-white' : 'text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700'}`}>{label}</button>
+          <div className="inline-flex flex-wrap gap-1 rounded-2xl bg-white p-1.5 shadow-sm">
+            <button onClick={() => setTab('all')} className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition ${tab === 'all' ? 'bg-budu-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>全部（{total}）</button>
+            {categories.map((c) => (
+              <button key={c.key} onClick={() => setTab(c.key)} className={`rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition ${tab === c.key ? 'bg-budu-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>{c.name}</button>
             ))}
           </div>
+          {isDeveloper && (
+            <button onClick={() => setCatsOpen(true)} className="btn-secondary px-2.5 py-1.5 text-xs"><Tags className="h-3.5 w-3.5" />管理分类</button>
+          )}
         </div>
 
-        <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
-          <label className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索名称/公司/描述/证照编号" className={`input pl-9 ${inputCls}`} /></label>
-          <select value={store} onChange={(e) => setStore(e.target.value)} className={`input ${inputCls}`}><option value="">全部门店</option>{stores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select>
-          <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="所属公司" className={`input ${inputCls}`} />
+        <div className="grid gap-2.5 md:grid-cols-2">
+          <label className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索名称/描述/证照编号" className={`input pl-9 ${inputCls}`} /></label>
           <select value={status} onChange={(e) => setStatus(e.target.value)} className={`input ${inputCls}`}><option value="">全部状态</option><option value="normal">正常</option><option value="expiring">30天内到期</option><option value="expired">已过期</option></select>
         </div>
 
@@ -264,21 +235,20 @@ export default function AssetCenterPage({ user, onBack }) {
               return (
                 <div key={f.id} className={card}>
                   <div className="flex items-start gap-3">
-                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600 dark:bg-budu-500/15 dark:text-budu-300">
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600">
                       {icon === 'image' ? <Eye className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold">{f.name}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">{(CATEGORIES.find((c) => c[0] === f.category) || ['', f.category])[1]} · {storeName(f.storeKey)}</p>
+                      <p className="mt-0.5 text-xs text-slate-400">{categoryName(f.category)}</p>
                     </div>
                     {f.category === 'license' && (
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusMeta.cls}`}>{statusMeta.label}</span>
                     )}
                   </div>
 
-                  <div className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                    <p className="flex justify-between"><span className="text-slate-400">所属公司</span><span className="font-medium text-slate-700 dark:text-slate-300">{f.company || '—'}</span></p>
-                    {(f.tags || []).length > 0 && <p className="flex flex-wrap gap-1 pt-0.5">{f.tags.map((tag) => <span key={tag} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">{tag}</span>)}</p>}
+                  <div className="mt-3 space-y-1 text-xs text-slate-500">
+                    {(f.tags || []).length > 0 && <p className="flex flex-wrap gap-1 pt-0.5">{f.tags.map((tag) => <span key={tag} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{tag}</span>)}</p>}
                     {f.category === 'license' && (
                       <>
                         <p className="flex justify-between"><span className="text-slate-400">发证机关</span><span className="font-medium">{f.issuingAuthority || '—'}</span></p>
@@ -291,12 +261,12 @@ export default function AssetCenterPage({ user, onBack }) {
                     <p className="text-[11px] text-slate-400">最后更新 {fmtTime(f.updatedAt)}</p>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3 dark:border-slate-700">
-                    <button onClick={() => setPreview(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"><Eye className="h-3.5 w-3.5" />预览</button>
-                    <button onClick={() => downloadFile(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"><Download className="h-3.5 w-3.5" />下载</button>
-                    <button onClick={() => { setEditing(f); setUploadOpen(true) }} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"><Pencil className="h-3.5 w-3.5" />编辑</button>
-                    <button onClick={() => setVersionsOpen(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"><History className="h-3.5 w-3.5" />版本</button>
-                    <button onClick={() => removeFile(f)} className="ml-auto flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5" />删除</button>
+                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
+                    <button onClick={() => setPreview(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Eye className="h-3.5 w-3.5" />预览</button>
+                    <button onClick={() => downloadFile(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Download className="h-3.5 w-3.5" />下载</button>
+                    <button onClick={() => { setEditing(f); setUploadOpen(true) }} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Pencil className="h-3.5 w-3.5" />编辑</button>
+                    <button onClick={() => setVersionsOpen(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><History className="h-3.5 w-3.5" />版本</button>
+                    <button onClick={() => removeFile(f)} className="ml-auto flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" />删除</button>
                   </div>
                 </div>
               )
@@ -305,12 +275,13 @@ export default function AssetCenterPage({ user, onBack }) {
         )}
       </div>
 
-      {uploadOpen && <AssetFormModal user={user} file={editing} stores={stores} onClose={() => setUploadOpen(false)} onSaved={() => { setUploadOpen(false); load() }} />}
+      {uploadOpen && <AssetFormModal user={user} file={editing} categories={categories} onClose={() => setUploadOpen(false)} onSaved={() => { setUploadOpen(false); load() }} />}
       {preview && <PreviewModal file={preview} onClose={() => setPreview(null)} />}
       {versionsOpen && <VersionsModal file={versionsOpen} onClose={() => setVersionsOpen(null)} onRestored={() => load()} />}
-      {packageOpen && <PackageModal stores={stores} rows={rows} onClose={() => setPackageOpen(false)} onMake={makePackage} />}
+      {packageOpen && <PackageModal categories={categories} onClose={() => setPackageOpen(false)} onMake={makePackage} />}
       {grantsOpen && <GrantsModal onClose={() => setGrantsOpen(false)} />}
       {logsOpen && <LogsModal onClose={() => setLogsOpen(false)} />}
+      {catsOpen && <CategoriesModal onClose={() => { setCatsOpen(false); load() }} />}
     </div>
   )
 }
@@ -319,13 +290,13 @@ function ModalShell({ title, subtitle, onClose, children, wide }) {
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative max-h-[90vh] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} overflow-y-auto rounded-2xl bg-white p-6 shadow-lg dark:bg-slate-800 dark:text-slate-100`}>
+      <div className={`relative max-h-[90vh] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} overflow-y-auto rounded-2xl bg-white p-6 shadow-lg`}>
         <div className="flex items-start gap-3">
           <div>
             <h3 className="text-lg font-bold">{title}</h3>
             {subtitle && <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-300" aria-label="关闭"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-400" aria-label="关闭"><X className="h-5 w-5" /></button>
         </div>
         {children}
       </div>
@@ -334,16 +305,16 @@ function ModalShell({ title, subtitle, onClose, children, wide }) {
 }
 
 const emptyForm = {
-  name: '', category: 'license', company: '', storeKey: '', tags: '', description: '',
+  name: '', category: 'license', tags: '', description: '',
   issuingAuthority: '', licenseNo: '', issueDate: '', expiryDate: '', isPermanent: false, fileName: '', note: '',
 }
 
-function AssetFormModal({ user, file, stores, onClose, onSaved }) {
+function AssetFormModal({ user, file, categories, onClose, onSaved }) {
   const isEdit = Boolean(file)
   const [form, setForm] = useState(() => ({
     ...emptyForm,
     ...(file ? {
-      name: file.name, category: file.category, company: file.company, storeKey: file.storeKey,
+      name: file.name, category: file.category,
       tags: (file.tags || []).join('、'), description: file.description,
       issuingAuthority: file.issuingAuthority, licenseNo: file.licenseNo,
       issueDate: file.issueDate ? String(file.issueDate).slice(0, 10) : '',
@@ -376,7 +347,7 @@ function AssetFormModal({ user, file, stores, onClose, onSaved }) {
     setError('')
     try {
       const body = {
-        name: form.name, category: form.category, company: form.company, storeKey: form.storeKey,
+        name: form.name, category: form.category,
         tags: form.tags.split(/[,，、]/).map((x) => x.trim()).filter(Boolean),
         description: form.description,
         issuingAuthority: form.issuingAuthority, licenseNo: form.licenseNo,
@@ -393,35 +364,33 @@ function AssetFormModal({ user, file, stores, onClose, onSaved }) {
     }
   }
 
-  const field = 'input dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+  const field = 'input'
   return (
     <ModalShell title={isEdit ? '编辑文件资料' : '上传文件'} subtitle={isEdit ? `当前版本 V${file.currentVersion}` : '支持图片 / PDF / Office 等，单文件最大约 9MB'} onClose={onClose} wide>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">文件名称<input value={form.name} onChange={(e) => update('name', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">类别<select value={form.category} onChange={(e) => update('category', e.target.value)} className={`mt-1 w-full ${field}`}>{CATEGORIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">所属公司<input value={form.company} onChange={(e) => update('company', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">所属门店<select value={form.storeKey} onChange={(e) => update('storeKey', e.target.value)} className={`mt-1 w-full ${field}`}><option value="">不指定</option>{stores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">标签（顿号分隔）<input value={form.tags} onChange={(e) => update('tags', e.target.value)} placeholder="营业执照、食品经营许可" className={`mt-1 w-full ${field}`} /></label>
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">描述<input value={form.description} onChange={(e) => update('description', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+        <label className="block text-xs font-semibold text-slate-500">文件名称<input value={form.name} onChange={(e) => update('name', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+        <label className="block text-xs font-semibold text-slate-500">类别<select value={form.category} onChange={(e) => update('category', e.target.value)} className={`mt-1 w-full ${field}`}>{categories.map((c) => <option key={c.key} value={c.key}>{c.name}</option>)}</select></label>
+        <label className="block text-xs font-semibold text-slate-500">标签（顿号分隔）<input value={form.tags} onChange={(e) => update('tags', e.target.value)} placeholder="营业执照、食品经营许可" className={`mt-1 w-full ${field}`} /></label>
+        <label className="block text-xs font-semibold text-slate-500">描述<input value={form.description} onChange={(e) => update('description', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
         {form.category === 'license' && (
           <>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">发证机关<input value={form.issuingAuthority} onChange={(e) => update('issuingAuthority', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">证照编号<input value={form.licenseNo} onChange={(e) => update('licenseNo', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">发证日期<input type="date" value={form.issueDate} onChange={(e) => update('issueDate', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">到期日期<input type="date" value={form.expiryDate} onChange={(e) => update('expiryDate', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400"><input type="checkbox" checked={form.isPermanent} onChange={(e) => update('isPermanent', e.target.checked)} className="h-4 w-4 accent-budu-500" />长期有效</label>
+            <label className="block text-xs font-semibold text-slate-500">发证机关<input value={form.issuingAuthority} onChange={(e) => update('issuingAuthority', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+            <label className="block text-xs font-semibold text-slate-500">证照编号<input value={form.licenseNo} onChange={(e) => update('licenseNo', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+            <label className="block text-xs font-semibold text-slate-500">发证日期<input type="date" value={form.issueDate} onChange={(e) => update('issueDate', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+            <label className="block text-xs font-semibold text-slate-500">到期日期<input type="date" value={form.expiryDate} onChange={(e) => update('expiryDate', e.target.value)} className={`mt-1 w-full ${field}`} /></label>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500"><input type="checkbox" checked={form.isPermanent} onChange={(e) => update('isPermanent', e.target.checked)} className="h-4 w-4 accent-budu-500" />长期有效</label>
           </>
         )}
         <div className="md:col-span-2">
-          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <label className="block text-xs font-semibold text-slate-500">
             {isEdit ? '更新文件（可选，选择后生成新版本）' : '选择文件'}
             <input type="file" onChange={(e) => pickFile(e.target)} className="mt-1 block w-full text-sm" />
           </label>
           {isEdit && <input value={form.note} onChange={(e) => update('note', e.target.value)} placeholder="本次版本说明（可选）" className={`mt-2 w-full ${field}`} />}
         </div>
       </div>
-      {error && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-600 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
-      <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-700">
+      {error && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</p>}
+      <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
         <button onClick={onClose} className="btn-secondary px-4 py-2">取消</button>
         <button onClick={save} disabled={saving} className="btn-primary px-5 py-2">{saving ? '保存中…' : isEdit ? '保存' : '上传'}</button>
       </div>
@@ -438,7 +407,7 @@ function PreviewModal({ file, onClose }) {
   const isImage = data && String(data.fileType).includes('image')
   return (
     <ModalShell title={`预览 · ${file.name}`} subtitle={data ? `V${data.version} · ${data.name}` : '加载中…'} onClose={onClose} wide>
-      <div className="mt-4 grid min-h-[320px] place-items-center rounded-xl bg-slate-50 dark:bg-slate-900">
+      <div className="mt-4 grid min-h-[320px] place-items-center rounded-xl bg-slate-50">
         {error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
           <img src={data.dataUrl} alt={file.name} className="max-h-[60vh] rounded-lg object-contain" />
         ) : data.fileType === 'application/pdf' ? (
@@ -471,8 +440,8 @@ function VersionsModal({ file, onClose, onRestored }) {
       <div className="mt-4 space-y-2">
         {error && <p className="text-sm text-rose-500">{error}</p>}
         {versions.map((v) => (
-          <div key={v.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 dark:border-slate-700">
-            <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${v.version === file.currentVersion ? 'bg-budu-50 text-budu-600 dark:bg-budu-500/15 dark:text-budu-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>V{v.version}</span>
+          <div key={v.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-4 py-3">
+            <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${v.version === file.currentVersion ? 'bg-budu-50 text-budu-600' : 'bg-slate-100 text-slate-500'}`}>V{v.version}</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{v.name}</p>
               <p className="text-xs text-slate-400">{v.uploaderName || '—'} · {fmtTime(v.createdAt)}{v.note ? ` · ${v.note}` : ''}</p>
@@ -487,27 +456,178 @@ function VersionsModal({ file, onClose, onRestored }) {
   )
 }
 
-function PackageModal({ stores, rows, onClose, onMake }) {
-  const [storeKey, setStoreKey] = useState('')
+function PackageModal({ categories, onClose, onMake }) {
+  const [files, setFiles] = useState([])
+  const [selected, setSelected] = useState(() => new Set())
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api('/v2/asset-center/files?pageSize=200')
+      .then((d) => setFiles(d.rows || []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+  const catName = (key) => (categories.find((c) => c.key === key) || { name: key }).name
+  const groupDefs = categories.length > 0
+    ? categories
+    : [...new Set(files.map((f) => f.category))].map((key) => ({ key, name: key }))
+  const groups = groupDefs
+    .map((c) => ({ ...c, list: files.filter((f) => f.category === c.key) }))
+    .filter((g) => g.list.length > 0)
+  const allSelected = files.length > 0 && files.every((f) => selected.has(f.id))
+  const toggle = (id) => setSelected((s) => {
+    const n = new Set(s)
+    if (n.has(id)) n.delete(id)
+    else n.add(id)
+    return n
+  })
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(files.map((f) => f.id)))
   const run = async () => {
-    if (!storeKey) return
+    if (selected.size === 0) return
     setBusy(true)
     try {
-      await onMake(storeKey)
+      await onMake(files.filter((f) => selected.has(f.id)))
     } finally {
       setBusy(false)
       onClose()
     }
   }
   return (
-    <ModalShell title="生成开店资料包" subtitle="自动收集营业执照、食品经营许可证、法人身份证、品牌 logo、公司简介并打包 ZIP" onClose={onClose}>
+    <ModalShell title="生成开店资料包" subtitle="勾选要打包的文件，按原文件名生成 ZIP" onClose={onClose} wide>
       <div className="mt-4 space-y-3">
-        <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">选择门店<select value={storeKey} onChange={(e) => setStoreKey(e.target.value)} className="input mt-1 w-full dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"><option value="">请选择</option>{stores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>
-        <p className="text-xs text-slate-400">提示：请先在该门店上传对应资料并打上合适标签；缺失的资料会自动跳过并在打包时提示。</p>
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-700">
+        {error && <p className="text-sm text-rose-500">{error}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-400">已选 {selected.size} 个文件</p>
+          <div className="flex gap-2">
+            <button onClick={toggleAll} disabled={files.length === 0} className="btn-secondary px-2.5 py-1.5 text-xs">{allSelected ? '取消全选' : '全选'}</button>
+            {selected.size > 0 && <button onClick={() => setSelected(new Set())} className="btn-secondary px-2.5 py-1.5 text-xs">清空</button>}
+          </div>
+        </div>
+        {loading ? (
+          <p className="py-10 text-center text-sm text-slate-400">加载中…</p>
+        ) : groups.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-300">暂无文件可打包</p>
+        ) : (
+          <div className="max-h-[55vh] space-y-4 overflow-y-auto">
+            {groups.map((g) => (
+              <div key={g.key}>
+                <p className="text-xs font-bold text-slate-500">{catName(g.key)}（{g.list.length}）</p>
+                <div className="mt-1.5 space-y-1">
+                  {g.list.map((f) => (
+                    <label key={f.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm transition hover:bg-slate-50">
+                      <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggle(f.id)} className="h-4 w-4 accent-budu-500" />
+                      <span className="min-w-0 flex-1 truncate font-medium">{f.name}</span>
+                      <span className="shrink-0 text-[11px] text-slate-400">V{f.currentVersion}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
           <button onClick={onClose} className="btn-secondary px-4 py-2">取消</button>
-          <button onClick={run} disabled={!storeKey || busy} className="btn-primary px-5 py-2"><FolderArchive className="h-4 w-4" />{busy ? '生成中…' : '生成并下载'}</button>
+          <button onClick={run} disabled={selected.size === 0 || busy} className="btn-primary px-5 py-2"><FolderArchive className="h-4 w-4" />{busy ? '生成中…' : '生成并下载'}</button>
+        </div>
+      </div>
+    </ModalShell>
+  )
+}
+
+function CategoriesModal({ onClose }) {
+  const [rows, setRows] = useState([])
+  const [newName, setNewName] = useState('')
+  const [editingKey, setEditingKey] = useState('')
+  const [editName, setEditName] = useState('')
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    try {
+      const d = await api('/v2/asset-center/categories')
+      setRows(d.rows || [])
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = async () => {
+    const name = newName.trim()
+    if (!name) {
+      setError('请输入分类名称')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await api('/v2/asset-center/categories', { method: 'POST', body: JSON.stringify({ name }) })
+      setNewName('')
+      setSaved(`已新增分类：${name}`)
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const rename = async (row) => {
+    const name = editName.trim()
+    if (!name) {
+      setError('请输入分类名称')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await api(`/v2/asset-center/categories/${row.key}`, { method: 'PUT', body: JSON.stringify({ name }) })
+      setEditingKey('')
+      setSaved(`已改名：${name}`)
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell title="管理分类" subtitle="自定义分类可新增、改名；内置分类名称固定" onClose={onClose} wide>
+      <div className="mt-4 space-y-3">
+        {error && <p className="text-sm text-rose-500">{error}</p>}
+        {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600">{saved}</p>}
+        <div className="flex gap-2">
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新分类名称（20字以内）" className="input flex-1" />
+          <button onClick={add} disabled={busy || !newName.trim()} className="btn-primary px-4 py-2"><Plus className="h-4 w-4" />添加</button>
+        </div>
+        <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+          {rows.map((row) => (
+            <div key={row.key} className="flex items-center gap-2 rounded-xl border border-slate-100 px-3 py-2.5">
+              {editingKey === row.key ? (
+                <>
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)} className="input flex-1" />
+                  <button onClick={() => rename(row)} disabled={busy || !editName.trim()} className="btn-primary px-3 py-1.5 text-xs">保存</button>
+                  <button onClick={() => setEditingKey('')} className="btn-secondary px-3 py-1.5 text-xs">取消</button>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.name}</span>
+                  {row.builtin ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">内置</span>
+                  ) : (
+                    <button onClick={() => { setEditingKey(row.key); setEditName(row.name); setError(''); setSaved('') }} className="btn-secondary px-3 py-1.5 text-xs"><Pencil className="h-3 w-3" />改名</button>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end border-t border-slate-100 pt-3">
+          <button onClick={onClose} className="btn-secondary px-4 py-2">关闭</button>
         </div>
       </div>
     </ModalShell>
@@ -541,11 +661,11 @@ function GrantsModal({ onClose }) {
     <ModalShell title="资产中心授权" subtitle="默认仅开发者可见；可为店长/店员单独开通查看权限" onClose={onClose} wide>
       <div className="mt-4 space-y-2">
         {error && <p className="text-sm text-rose-500">{error}</p>}
-        {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">{saved}</p>}
+        {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600">{saved}</p>}
         {users.filter((u) => u.role !== 'developer').map((u) => (
-          <div key={u.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3 dark:border-slate-700">
+          <div key={u.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3">
             <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{u.username}</p><p className="text-xs text-slate-400">{u.role === 'manager' ? '店长·区域负责人' : '店员'}</p></div>
-            <button onClick={() => toggle(u)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${u.assetCenter ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+            <button onClick={() => toggle(u)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${u.assetCenter ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
               {u.assetCenter ? <><Check className="mr-1 inline h-3 w-3" />已授权</> : '未授权'}
             </button>
           </div>
@@ -561,14 +681,14 @@ function LogsModal({ onClose }) {
   useEffect(() => {
     api('/v2/asset-center/logs').then((d) => setLogs(d.rows || [])).catch((e) => setError(e.message))
   }, [])
-  const actionLabel = { upload: '上传', update: '修改', upload_version: '更新版本', restore: '恢复', delete: '删除', download: '下载', grant: '授权', revoke: '取消授权', package: '开店资料包' }
+  const actionLabel = { upload: '上传', update: '修改', upload_version: '更新版本', restore: '恢复', delete: '删除', download: '下载', grant: '授权', revoke: '取消授权', package: '开店资料包', category_add: '新增分类', category_rename: '分类改名' }
   return (
     <ModalShell title="操作日志" subtitle="上传/修改/下载/删除等关键操作留痕" onClose={onClose} wide>
       <div className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto">
         {error && <p className="text-sm text-rose-500">{error}</p>}
         {logs.map((log) => (
-          <div key={log.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-4 py-2.5 text-sm dark:border-slate-700">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">{actionLabel[log.action] || log.action}</span>
+          <div key={log.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-4 py-2.5 text-sm">
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{actionLabel[log.action] || log.action}</span>
             <span className="min-w-0 flex-1 truncate font-medium">{log.fileName || log.detail}</span>
             <span className="text-xs text-slate-400">{log.username} · {fmtTime(log.createdAt)}</span>
           </div>
