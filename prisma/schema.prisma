@@ -516,3 +516,97 @@ model MailingRecord {
 
   @@index([status, createdAt])
 }
+
+model AssetFile {
+  id               String    @id
+  name             String
+  category         String
+  company          String    @default("")
+  storeKey         String    @default("") @map("store_key")
+  tags             Json      @default("[]")
+  description      String    @default("")
+  fileType         String    @default("") @map("file_type")
+  fileSize         Int       @default(0) @map("file_size")
+  storageProvider  String    @default("local") @map("storage_provider")
+  storageKey       String    @default("") @map("storage_key")
+  currentVersion   Int       @default(1) @map("current_version")
+  issuingAuthority String    @default("") @map("issuing_authority")
+  licenseNo        String    @default("") @map("license_no")
+  issueDate        DateTime? @map("issue_date")
+  expiryDate       DateTime? @map("expiry_date")
+  isPermanent      Boolean   @default(false) @map("is_permanent")
+  deletedAt        DateTime? @map("deleted_at")
+  createdBy        String    @default("") @map("created_by")
+  updatedBy        String    @default("") @map("updated_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  versions         AssetFileVersion[]
+
+  @@index([category, deletedAt])
+  @@index([storeKey, deletedAt])
+  @@index([expiryDate])
+  @@map("asset_files")
+}
+
+model AssetFileVersion {
+  id              String    @id
+  fileId          String    @map("file_id")
+  version         Int
+  name            String
+  fileType        String    @default("") @map("file_type")
+  fileSize        Int       @default(0) @map("file_size")
+  dataUrl         String    @db.Text @map("data_url")
+  storageProvider String    @default("local") @map("storage_provider")
+  storageKey      String    @default("") @map("storage_key")
+  uploaderId      String    @default("") @map("uploader_id")
+  uploaderName    String    @default("") @map("uploader_name")
+  note            String    @default("")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  file            AssetFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, version])
+  @@index([fileId])
+  @@map("asset_file_versions")
+}
+
+model AssetAccessGrant {
+  id        String   @id
+  userId    String   @unique @map("user_id")
+  username  String
+  grantedBy String   @default("") @map("granted_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("asset_access_grants")
+}
+
+model AssetOperationLog {
+  id        String   @id
+  action    String
+  userId    String   @default("") @map("user_id")
+  username  String   @default("")
+  fileId    String   @default("") @map("file_id")
+  fileName  String   @default("") @map("file_name")
+  storeKey  String   @default("") @map("store_key")
+  detail    String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([fileId])
+  @@map("asset_operation_logs")
+}
+
+model AssetReminder {
+  id         String    @id
+  fileId     String    @map("file_id")
+  fileName   String    @default("") @map("file_name")
+  storeKey   String    @default("") @map("store_key")
+  remindType String    @map("remind_type")
+  daysLeft   Int       @default(0) @map("days_left")
+  sent       Boolean   @default(false)
+  notifiedAt DateTime? @map("notified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([fileId, remindType])
+  @@index([createdAt])
+  @@map("asset_reminders")
+}

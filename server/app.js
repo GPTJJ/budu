@@ -11,10 +11,12 @@ import { v2Router } from './v2.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
+import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma } from './pg.js'
 import { resolveStoreName } from './store-names.js'
+import { startAssetReminderJob } from './asset-reminders.js'
 import {
   canManageTransferStore,
   hasInventoryTransferAll,
@@ -226,7 +228,7 @@ function normalizeInventory(raw) {
 
 export function createApp() {
   const app = express()
-  app.use(express.json({ limit: '5mb' }))
+  app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
   // 所有 API 响应禁止缓存（登录态/业务数据是动态的，CDN 只缓存静态资源）
   app.use('/api', (req, res, next) => {
@@ -246,6 +248,7 @@ export function createApp() {
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
       permissions: normalizeAccountPermissions(u.permissions),
+      assetCenter: u.role === 'developer' || Boolean(u.assetCenter),
       avatar: u.avatar || '',
       createdAt: u.createdAt,
     }
@@ -442,7 +445,7 @@ export function createApp() {
 
   app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
   app.use('/api/payments', paymentCallbackRouter)
-  app.use('/api/v2', requireAuth, productsRouter, posRouter, dailyEntryUpgradeRouter, v2Router)
+  app.use('/api/v2', requireAuth, productsRouter, posRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -1074,6 +1077,7 @@ export function createApp() {
     }
   }
   syncStoreNames()
+  startAssetReminderJob()
 
   return app
 }

@@ -36,6 +36,7 @@ const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const FinancePage = lazy(() => import('./FinancePage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
 const MemberPage = lazy(() => import('./MemberPage'))
+const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 
 const pageTitles = {
   staff: '雇员',
@@ -51,6 +52,7 @@ const pageTitles = {
   'finance-invoice': '发票开具',
   member: '会员营销',
   analytics: '数据分析',
+  'asset-center': '企业资产中心',
   settings: '系统设置',
   'account-admin': '账号管理',
 }
@@ -103,6 +105,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
   const isMemberView = view === 'member'
+  const isAssetCenterView = view === 'asset-center'
 
   const returnToOverview = () => {
     setView('overview')
@@ -261,6 +264,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
               ) : isMemberView && user?.role !== 'public' ? (
                 <MemberPage currentUser={user} onBack={returnToOverview} />
+              ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.assetCenter === true) ? (
+                <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
                 <>
                   {/* 核心 KPI 统计 */}

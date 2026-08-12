@@ -9,6 +9,7 @@ import {
   Heart,
   BarChart3,
   Settings,
+  FolderArchive,
   ChevronDown,
   CalendarClock,
 } from 'lucide-react'
@@ -26,6 +27,7 @@ const menus = [
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'member', label: '会员营销', icon: Heart },
   { key: 'analytics', label: '数据分析', icon: BarChart3 },
+  { key: 'asset-center', label: '企业资产中心', icon: FolderArchive },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
 
@@ -56,8 +58,16 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
       : user?.role === 'staff'
-        ? menus.filter((m) => ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings'].includes(m.key))
-        : menus
+        ? menus.filter((m) =>
+            ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings'].includes(m.key) ||
+            (m.key === 'asset-center' && user.assetCenter === true),
+          )
+        : user?.role === 'manager'
+          ? menus.filter((m) =>
+              ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings', 'member', 'analytics'].includes(m.key) ||
+              (m.key === 'asset-center' && user.assetCenter === true),
+            )
+          : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))
