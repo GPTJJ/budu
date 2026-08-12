@@ -23,7 +23,7 @@ const menus = [
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'product', label: '商品管理', icon: Package },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
-  { key: 'finance', label: '财务利润', icon: Wallet },
+  { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'member', label: '会员营销', icon: Heart },
   { key: 'analytics', label: '数据分析', icon: BarChart3 },
   { key: 'settings', label: '系统设置', icon: Settings },
@@ -42,7 +42,6 @@ const subMenus = {
     { key: 'inventory-transfer', label: '申请调货' },
     { key: 'inventory-purchase', label: '申请采购' },
   ],
-  finance: [{ key: 'finance-invoice', label: '发票开具' }],
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
@@ -52,12 +51,12 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     user?.role === 'public'
       ? [
           ...menus.filter(
-            (m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product' && m.key !== 'inventory',
+            (m) => m.key !== 'store' && m.key !== 'analytics' && m.key !== 'product' && m.key !== 'inventory' && m.key !== 'finance-invoice',
           ),
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
       : user?.role === 'staff'
-        ? menus.filter((m) => ['overview', 'staff', 'store', 'inventory', 'finance', 'settings'].includes(m.key))
+        ? menus.filter((m) => ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings'].includes(m.key))
         : menus
 
   const toggleExpand = (key) =>
