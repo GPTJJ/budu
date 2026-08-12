@@ -151,7 +151,21 @@ export default function StoreMailingPage({ onBack }) {
         method: 'POST',
         body: JSON.stringify({ method, postage, fee, address, recipient, phone, remark }),
       })
-      showTip('已提交发件单 ✓')
+      // 提交成功后清空表单与本地存档，避免下次打开时残留上次信息
+      setMethod('顺丰邮寄')
+      setPostage('包邮')
+      setFee('标准件18¥')
+      setWechatFee(false)
+      setAddress('')
+      setRecipient('')
+      setPhone('')
+      setRemark('')
+      try {
+        localStorage.removeItem(STORAGE_KEY)
+      } catch {
+        /* 隐私模式等场景忽略 */
+      }
+      showTip('已提交发件单，表单已清空 ✓')
       await loadRecords()
     } catch (e) {
       showTip(e.message || '提交失败')
