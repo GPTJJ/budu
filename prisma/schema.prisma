@@ -523,6 +523,7 @@ model AssetFile {
   category         String
   company          String    @default("")
   storeKey         String    @default("") @map("store_key")
+  thumbnail        String    @default("")
   tags             Json      @default("[]")
   description      String    @default("")
   fileType         String    @default("") @map("file_type")

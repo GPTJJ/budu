@@ -12,6 +12,8 @@ const STATUS_META = {
   expired: { label: '已过期', cls: 'bg-rose-50 text-rose-600' },
 }
 
+const PREVIEW_MAX_BYTES = 8 * 1024 * 1024
+
 const inputCls = 'input'
 
 function fmtDate(value) {
@@ -49,8 +51,17 @@ function compressImageFile(file, maxSize = 1600, quality = 0.82) {
         canvas.height = h
         canvas.getContext('2d').drawImage(img, 0, 0, w, h)
         const dataUrl = canvas.toDataURL('image/jpeg', quality)
+        const thumbSize = 240
+        const tScale = Math.min(1, thumbSize / Math.max(img.width, img.height))
+        const tw = Math.max(1, Math.round(img.width * tScale))
+        const th = Math.max(1, Math.round(img.height * tScale))
+        const tCanvas = document.createElement('canvas')
+        tCanvas.width = tw
+        tCanvas.height = th
+        tCanvas.getContext('2d').drawImage(img, 0, 0, tw, th)
+        const thumbnailDataUrl = tCanvas.toDataURL('image/jpeg', 0.7)
         const baseName = String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image'
-        resolve({ dataUrl, fileName: `${baseName}.jpg`, mime: 'image/jpeg' })
+        resolve({ dataUrl, thumbnailDataUrl, fileName: `${baseName}.jpg`, mime: 'image/jpeg' })
       }
       img.onerror = () => reject(new Error('图片读取失败'))
       img.src = reader.result
@@ -273,9 +284,13 @@ export default function AssetCenterPage({ user, onBack }) {
               return (
                 <div key={f.id} className={card}>
                   <div className="flex items-start gap-3">
-                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600">
-                      {icon === 'image' ? <Eye className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
-                    </div>
+                    {f.thumbnail ? (
+                      <img src={f.thumbnail} alt={f.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" />
+                    ) : (
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600">
+                        {icon === 'image' ? <Eye className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
+                      </div>
+                    )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold">{f.name}</p>
                       <p className="mt-0.5 text-xs text-slate-400">{categoryName(f.category)}</p>
@@ -364,6 +379,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
   const [fileName, setFileName] = useState('')
   const [fileMime, setFileMime] = useState('')
   const [compressed, setCompressed] = useState(false)
+  const [thumbnailDataUrl, setThumbnailDataUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -375,6 +391,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
     setFileName(file.name)
     setFileMime(file.type || '')
     setCompressed(false)
+    setThumbnailDataUrl('')
     setError('')
     try {
       const isImage = String(file.type || '').startsWith('image/') &&
@@ -385,6 +402,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
         setFileName(out.fileName)
         setFileMime(out.mime)
         setDataUrl(out.dataUrl)
+        setThumbnailDataUrl(out.thumbnailDataUrl)
         setCompressed(true)
       } else {
         const reader = new FileReader()
@@ -409,7 +427,7 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
         description: form.description,
         issuingAuthority: form.issuingAuthority, licenseNo: form.licenseNo,
         issueDate: form.issueDate || null, expiryDate: form.expiryDate || null, isPermanent: form.isPermanent,
-        ...(dataUrl ? { dataUrl, fileName, fileType: fileMime || fileName.split('.').pop() || '', note: form.note } : {}),
+        ...(dataUrl ? { dataUrl, thumbnailDataUrl, fileName, fileType: fileMime || fileName.split('.').pop() || '', note: form.note } : {}),
       }
       if (isEdit) await api(`/v2/asset-center/files/${file.id}`, { method: 'PUT', body: JSON.stringify(body) })
       else await api('/v2/asset-center/files', { method: 'POST', body: JSON.stringify(body) })
@@ -459,14 +477,37 @@ function AssetFormModal({ user, file, categories, onClose, onSaved }) {
 function PreviewModal({ file, onClose }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
+  const [downloading, setDownloading] = useState(false)
+  const tooLarge = Number(file.fileSize || 0) > PREVIEW_MAX_BYTES
   useEffect(() => {
+    if (tooLarge) return
     api(`/v2/asset-center/files/${file.id}/download`).then(setData).catch((e) => setError(e.message))
-  }, [file.id])
+  }, [file.id, tooLarge])
+  const download = async () => {
+    setDownloading(true)
+    setError('')
+    try {
+      const d = await api(`/v2/asset-center/files/${file.id}/download`)
+      const link = document.createElement('a')
+      link.href = d.dataUrl
+      link.download = d.name || file.name
+      link.click()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
   const isImage = data && String(data.fileType).includes('image')
   return (
-    <ModalShell title={`预览 · ${file.name}`} subtitle={data ? `V${data.version} · ${data.name}` : '加载中…'} onClose={onClose} wide>
+    <ModalShell title={`预览 · ${file.name}`} subtitle={tooLarge ? `文件较大 · ${fmtBytes(file.fileSize)}` : data ? `V${data.version} · ${data.name}` : '加载中…'} onClose={onClose} wide>
       <div className="mt-4 grid min-h-[320px] place-items-center rounded-xl bg-slate-50">
-        {error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
+        {tooLarge ? (
+          <div className="px-6 py-10 text-center">
+            <p className="text-sm text-slate-500">文件较大（{fmtBytes(file.fileSize)}），为避免卡顿已关闭内嵌预览</p>
+            <button onClick={download} disabled={downloading} className="btn-primary mt-4 px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '下载查看'}</button>
+          </div>
+        ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
           <img src={data.dataUrl} alt={file.name} className="max-h-[60vh] rounded-lg object-contain" />
         ) : data.fileType === 'application/pdf' ? (
           <iframe title={file.name} src={data.dataUrl} className="h-[60vh] w-full rounded-lg" />

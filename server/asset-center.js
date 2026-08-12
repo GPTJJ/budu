@@ -73,6 +73,7 @@ function serializeFile(file) {
     id: file.id,
     name: file.name,
     category: file.category,
+    thumbnail: file.thumbnail || '',
     tags: Array.isArray(file.tags) ? file.tags : [],
     description: file.description,
     fileName: latest ? latest.name : '',
@@ -117,6 +118,14 @@ function validDataUrl(value) {
   if (!dataUrl) throw httpError('请选择文件')
   if (!/^data:[^;,]{2,80};base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw httpError('文件数据格式不正确')
   if (dataUrl.length > 12000000) throw httpError('文件过大，请压缩后上传（最大约 9MB）')
+  return dataUrl
+}
+
+function validThumbnail(value) {
+  const dataUrl = String(value || '')
+  if (!dataUrl) return ''
+  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw httpError('缩略图格式不正确')
+  if (dataUrl.length > 300000) throw httpError('缩略图过大')
   return dataUrl
 }
 
@@ -320,6 +329,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const name = text(body.name, 100, '文件名称', true)
   const dataUrl = validDataUrl(body.dataUrl)
+  const thumbnail = validThumbnail(body.thumbnailDataUrl)
   const file = await prisma.$transaction(async (tx) => {
     const id = `af-${crypto.randomUUID()}`
     const created = await tx.assetFile.create({
@@ -329,6 +339,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         category,
         company: '',
         storeKey: '',
+        thumbnail,
         tags: normalizeTags(body.tags),
         description: text(body.description, 300, '描述'),
         fileType: String(body.fileType || '').slice(0, 80),
@@ -374,6 +385,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
   const category = text(body.category || existing.category, 60, '类别', true)
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const dataUrl = body.dataUrl ? validDataUrl(body.dataUrl) : null
+  const thumbnail = dataUrl ? validThumbnail(body.thumbnailDataUrl) : existing.thumbnail
   const updated = await prisma.$transaction(async (tx) => {
     let currentVersion = existing.currentVersion
     let fileType = existing.fileType
@@ -416,6 +428,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
       data: {
         name: text(body.name || existing.name, 100, '文件名称', true),
         category,
+        thumbnail,
         tags: body.tags !== undefined ? normalizeTags(body.tags) : existing.tags,
         description: text(body.description !== undefined ? body.description : existing.description, 300, '描述'),
         ...(dataUrl ? { fileType, fileSize, currentVersion } : {}),
@@ -452,6 +465,7 @@ assetCenterRouter.post('/asset-center/files/:id/restore', wrap(async (req, res) 
     where: { id: req.params.id },
     data: {
       currentVersion: version,
+      thumbnail: '',
       fileType: target.fileType,
       fileSize: target.fileSize,
       name: target.name.slice(0, 100) || undefined,
