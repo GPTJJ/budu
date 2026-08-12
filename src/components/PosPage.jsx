@@ -237,21 +237,21 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     const isGift = Boolean(giftMap[product.productId])
     const lineAmount = isGift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
     return (
-      <div key={product.productId} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+      <div key={product.productId} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-slate-800">{product.name}</p>
+            <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
             <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</p>
           </div>
           <button onClick={() => toggleGift(product.productId)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
-          <button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
+          <button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 transition hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
-        <div className="mt-3 flex items-center">
+        <div className="mt-2 flex items-center">
           <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? '¥0.00 赠送' : formatCents(lineAmount)}</strong>
-          <div className="ml-auto flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-9 w-9 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-4 w-4" /></button>
-            <span className="w-9 text-center text-sm font-bold">{quantity}</span>
-            <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-9 w-9 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-4 w-4" /></button>
+          <div className="ml-auto flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
+            <span className="w-8 text-center text-sm font-bold">{quantity}</span>
+            <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-8 w-8 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-3.5 w-3.5" /></button>
           </div>
         </div>
       </div>
@@ -555,14 +555,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         <button onClick={handleExit} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button>
         <strong className="hidden text-lg text-budu-600 sm:block">POS</strong>
         <label className="relative min-w-0 flex-1">
-          <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className="w-full rounded-2xl bg-slate-100 py-3 pl-11 pr-4 text-sm outline-none ring-budu-200 focus:ring-2" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className="w-full rounded-xl bg-slate-100 py-2.5 pl-10 pr-4 text-sm outline-none ring-budu-200 focus:ring-2" />
         </label>
         <label className="relative shrink-0">
-          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-11 max-w-[170px] appearance-none rounded-2xl border border-slate-200 bg-white pl-3 pr-8 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-10 max-w-[170px] appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </label>
-        <button onClick={() => setShowOrders(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-600 hover:text-budu-600" aria-label="订单记录">
+        <button onClick={() => setShowOrders(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-budu-300 hover:text-budu-600" aria-label="订单记录">
           <ReceiptText className="h-4 w-4 text-budu-600" />
           <span className="hidden sm:inline">订单记录</span>
         </button>
@@ -580,7 +580,50 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
           </div>}
           {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
           <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-4">
-            {loadingProducts ? <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div> : visibleProducts.length === 0 ? <div className="grid h-full place-items-center text-center text-slate-400"><div><Package className="mx-auto h-10 w-10 text-slate-300" /><p className="mt-3 text-sm">暂无符合条件的上架商品</p></div></div> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">{visibleProducts.map((product) => { const quantity = Number(cart[product.productId] || 0); const imageSrc = product.hasImage ? `/api/v2/pos/products/${product.productId}/image?v=${encodeURIComponent(product.updatedAt || '')}` : ''; return <button key={product.productId} onClick={() => changeQuantity(product.productId, 1)} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition active:scale-[0.98] active:border-budu-400"><div className="aspect-[4/3] bg-slate-100">{imageSrc ? <img src={imageSrc} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><Package className="h-9 w-9 text-slate-300" /></div>}</div>{quantity > 0 && <span className="absolute right-2 top-2 grid min-w-7 place-items-center rounded-full bg-budu-500 px-2 py-1 text-xs font-bold text-white shadow">{quantity}</span>}<div className="p-3"><p className="truncate text-sm font-bold text-slate-800">{product.name}</p><div className="mt-2 flex items-end justify-between"><span className="text-base font-black text-budu-600">{formatCents(product.salePriceCents)}</span><span className="text-[11px] text-slate-400">/{product.unit}</span></div></div></button> })}</div>}
+            {loadingProducts ? (
+              <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div>
+            ) : visibleProducts.length === 0 ? (
+              <div className="grid h-full place-items-center text-center text-slate-400">
+                <div>
+                  <Package className="mx-auto h-8 w-8 text-slate-300" />
+                  <p className="mt-2 text-sm">暂无符合条件的上架商品</p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                {visibleProducts.map((product) => {
+                  const quantity = Number(cart[product.productId] || 0)
+                  const imageSrc = product.hasImage ? `/api/v2/pos/products/${product.productId}/image?v=${encodeURIComponent(product.updatedAt || '')}` : ''
+                  return (
+                    <button
+                      key={product.productId}
+                      onClick={() => changeQuantity(product.productId, 1)}
+                      className="relative overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 active:scale-[0.97] active:border-budu-400"
+                    >
+                      <div className="aspect-square bg-slate-100">
+                        {imageSrc ? (
+                          <img src={imageSrc} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="grid h-full place-items-center"><Package className="h-6 w-6 text-slate-300" /></div>
+                        )}
+                      </div>
+                      {quantity > 0 && (
+                        <span className="absolute right-1 top-1 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1 py-0.5 text-[10px] font-bold text-white shadow">
+                          {quantity}
+                        </span>
+                      )}
+                      <div className="p-1.5">
+                        <p className="truncate text-[11px] font-semibold leading-tight text-slate-800">{product.name}</p>
+                        <div className="mt-1 flex items-end justify-between gap-1">
+                          <span className="truncate text-[13px] font-black text-budu-600">{formatCents(product.salePriceCents)}</span>
+                          <span className="shrink-0 text-[10px] text-slate-400">/{product.unit}</span>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </main>
 
@@ -593,22 +636,22 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
               <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
               {cartDiscountAmount > 0n && <p className="text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}
             </div>
-            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="mt-3 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="mt-3 w-full rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
           </div>
         </aside>}
       </div>
 
       {!isDesktop && <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-2" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} aria-label="结算栏">
         <div className="flex items-center gap-3">
-          <button onClick={() => setCartOpen(true)} disabled={!cartCount} className="relative grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-slate-100 text-slate-600 disabled:opacity-40" aria-label="打开购物车">
+          <button onClick={() => setCartOpen(true)} disabled={!cartCount} className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 disabled:opacity-40" aria-label="打开购物车">
             <ShoppingCart className="h-6 w-6" />
             {cartCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{cartCount}</span>}
           </button>
           <div className="min-w-0 flex-1">
             <p className="text-[11px] text-slate-400">合计 · {cartCount} 件</p>
-            <p className="truncate text-lg font-black text-slate-900">{formatCents(cartTotal)}</p>
+            <p className="truncate text-base font-black text-slate-900">{formatCents(cartTotal)}</p>
           </div>
-          <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="shrink-0 rounded-2xl bg-budu-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
+          <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="shrink-0 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
         </div>
       </div>}
 
@@ -631,7 +674,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
                 <div className="text-right"><button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>{cartDiscountAmount > 0n && <p className="mt-1 text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
               </div>
-              <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="w-full rounded-2xl bg-budu-500 py-3.5 text-base font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+              <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="w-full rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
             </div>
           </div>
         </div>
