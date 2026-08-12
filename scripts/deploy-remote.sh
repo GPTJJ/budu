@@ -94,7 +94,8 @@ if [ "$FETCHED" -ne 1 ]; then
 fi
 run_remote "git checkout --force '$SHA'"
 run_remote "docker ps -a --format '{{.Names}}' | grep -E '^[0-9a-f]{12}_budu-api-1$' | xargs -r -n1 docker rm -f" || true
-run_remote "docker compose up -d --build"
+run_remote "docker build -t budu-api:latest ."
+run_remote "docker compose up -d --no-deps --force-recreate api"
 run_remote "docker compose up -d --no-deps --force-recreate nginx"
 run_remote "rm -f '$BUNDLE_PATH'"
 
