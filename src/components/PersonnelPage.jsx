@@ -228,16 +228,16 @@ function ConfirmDeleteModal({ name, onClose, onConfirm }) {
   )
 }
 
-function DailyPayModal({ emp, month, hidePersonal, onClose }) {
+function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   const { t } = useI18n()
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
+  const weekDays = weekStart ? getWeekDays(weekStart) : null
   const dayRows = []
-  for (let d = 1; d <= daysInMonth; d += 1) {
-    const dd = `${String(d).padStart(2, '0')}`
-    const detail = employeeDailyPayDetail(month, `${String(m).padStart(2, '0')}-${dd}`, emp.name)
+  const pushDay = (monthKey, dd, label) => {
+    const detail = employeeDailyPayDetail(monthKey, dd, emp.name)
     dayRows.push({
-      day: dd,
+      day: label,
       revenue: detail ? detail.totals.inc : 0,
       orders: detail ? detail.totals.ord : 0,
       hours: detail ? detail.totals.hours : 0,
@@ -248,6 +248,16 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
       hasData: Boolean(detail),
       stores: detail ? detail.rows.map((r) => r.storeName).join('、') : '',
     })
+  }
+  if (weekStart && weekDays) {
+    for (const w of weekDays) pushDay(w.date.slice(0, 7), w.date.slice(5), w.date.slice(5))
+  } else if (day) {
+    pushDay(month, day, day)
+  } else {
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      const dd = `${String(d).padStart(2, '0')}`
+      pushDay(month, `${String(m).padStart(2, '0')}-${dd}`, dd)
+    }
   }
   const totals = dayRows.reduce(
     (s, r) => ({
@@ -263,10 +273,16 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
   )
 
   const download = () => {
+    const periodLabel = weekStart
+      ? `本周 ${weekStart} ~ ${weekDays[6].date}`
+      : day
+        ? `当日 ${month}-${day}`
+        : month
+    const periodKey = weekStart ? weekStart.replace(/-/g, '') : day ? `${month}-${day}`.replace(/-/g, '') : month
     const lines = [
       'BUDU 员工工资明细',
       `员工：${emp.name}`,
-      `月份：${month}`,
+      `期间：${periodLabel}`,
       '',
       '日期\t营业额(元)\t订单\t工时(h)\t基础工资(元)\t提成(元)\t大单奖(元)\t当日工资(元)',
       ...dayRows.map((r) =>
@@ -280,7 +296,7 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `工资明细-${emp.name}-${month}.txt`
+    a.download = `工资明细-${emp.name}-${periodKey}.txt`
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   }
@@ -291,8 +307,8 @@ function DailyPayModal({ emp, month, hidePersonal, onClose }) {
       <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t('当月每日工资明细')}</h3>
-            <p className="mt-0.5 text-xs text-slate-400">{t('{month} · 按日期正序排列', { month })}</p>
+            <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t(weekStart ? '本周每日工资明细' : day ? '当日工资明细' : '当月每日工资明细')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('{period} · 按日期正序排列', { period: weekStart ? `${weekStart} ~ ${weekDays[6].date}` : day ? `${month}-${day}` : month })}</p>
           </div>
           <button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400">
             <X className="h-5 w-5" />
@@ -558,6 +574,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
               const periodRevenue = onDuty ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
+              const periodWorkedDays = weekStart
+                ? status ? status.workedDays : 0
+                : day
+                  ? status ? 1 : 0
+                  : emp.workedDays
               const periodText = weekStart
                 ? `${Number(weekStart.slice(5, 7))}.${Number(weekStart.slice(8, 10))} - ${Number(weekDays[6].date.slice(5, 7))}.${Number(weekDays[6].date.slice(8, 10))}`
                 : day
@@ -616,7 +637,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {emp.storeName} · {t('出勤 {days} 天', { days: emp.workedDays })}
+                        {emp.storeName} · {t('出勤 {days} 天', { days: periodWorkedDays })}
                       </p>
                     </div>
                   </div>
@@ -750,6 +771,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         <DailyPayModal
           emp={detailEmp}
           month={month}
+          day={day}
+          weekStart={weekStart}
           hidePersonal={hidePersonal}
           onClose={() => setDetailEmp(null)}
         />
