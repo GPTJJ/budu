@@ -36,7 +36,7 @@ async function enterPayment(page, url) {
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
 }
 
-test('iPad 横屏三栏、快速加购、购物车和搜索', async ({ page }) => {
+test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=layout-user')
   await expect(page.getByRole('heading', { name: '当前订单' })).toBeVisible()
   const layout = await page.evaluate(() => ({
@@ -44,10 +44,21 @@ test('iPad 横屏三栏、快速加购、购物车和搜索', async ({ page }) =
     height: window.innerHeight,
     scrollWidth: document.documentElement.scrollWidth,
     scrollHeight: document.documentElement.scrollHeight,
+    cart: document.querySelector('[data-testid="pos-cart-panel"]')?.getBoundingClientRect().toJSON(),
+    catalog: document.querySelector('[data-testid="pos-catalog-panel"]')?.getBoundingClientRect().toJSON(),
   }))
-  expect(layout).toEqual({ width: 1024, height: 768, scrollWidth: 1024, scrollHeight: 768 })
+  expect(layout.width).toBe(1024)
+  expect(layout.height).toBe(768)
+  expect(layout.scrollWidth).toBe(1024)
+  expect(layout.scrollHeight).toBe(768)
+  expect(layout.cart.x).toBe(0)
+  expect(layout.cart.right).toBeLessThanOrEqual(layout.catalog.x + 1)
+  expect(layout.cart.width).toBeGreaterThanOrEqual(390)
+  expect(layout.catalog.width).toBeGreaterThan(layout.cart.width)
 
   const product = page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ })
+  const productBox = await product.boundingBox()
+  expect(productBox.height).toBeLessThanOrEqual(100)
   for (let i = 0; i < 30; i += 1) await product.click()
   await expect(page.getByText('合计 · 30 件', { exact: true })).toBeVisible()
   await expect(page.getByText('¥2,160.00', { exact: true }).last()).toBeVisible()

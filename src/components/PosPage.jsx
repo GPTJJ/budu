@@ -258,6 +258,33 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     )
   }
 
+  const renderDesktopCartLine = ({ product, quantity }, index) => {
+    const isGift = Boolean(giftMap[product.productId])
+    const lineAmount = isGift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
+    return (
+      <div key={product.productId} className="group grid grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 px-3 py-2.5 transition hover:bg-slate-50">
+        <span className="text-center text-xs font-semibold text-slate-300">{index + 1}</span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
+            {isGift && <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-slate-400">{product.sku || '无 SKU'} · {formatCents(product.salePriceCents)}/{product.unit}</p>
+        </div>
+        <div className="flex h-8 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-full w-7 place-items-center text-slate-500 active:bg-slate-100" aria-label={`减少 ${product.name}`}><Minus className="h-3 w-3" /></button>
+          <span className="min-w-7 flex-1 text-center text-xs font-black text-slate-700">{quantity}</span>
+          <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
+        </div>
+        <div className="flex items-center justify-end gap-1">
+          <strong className={`min-w-0 truncate text-right text-xs ${isGift ? 'text-rose-500' : 'text-slate-800'}`}>{isGift ? '¥0.00 赠送' : formatCents(lineAmount)}</strong>
+          <button onClick={() => toggleGift(product.productId)} className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg transition ${isGift ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-rose-50 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`} title="赠送"><Gift className="h-3.5 w-3.5" /></button>
+          <button onClick={() => removeLine(product.productId)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={`删除 ${product.name}`} title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+      </div>
+    )
+  }
+
   const renderDiscountControls = () => (
     <div className="space-y-2.5">
       <div>
@@ -551,35 +578,59 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
 
   return (
     <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-800" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', touchAction: 'manipulation' }}>
-      <header className="flex h-[60px] shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 lg:h-[72px] lg:px-4">
-        <button onClick={handleExit} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="退出 POS"><X className="h-5 w-5" /></button>
-        <strong className="hidden text-lg text-budu-600 sm:block">POS</strong>
+      <header className={`flex shrink-0 items-center gap-2 px-3 ${isDesktop ? 'h-14 bg-slate-900 text-white shadow-sm' : 'h-[60px] border-b border-slate-200 bg-white'}`}>
+        <button onClick={handleExit} className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${isDesktop ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-slate-100 text-slate-500'}`} aria-label="退出 POS"><X className="h-5 w-5" /></button>
+        <div className="hidden shrink-0 items-center gap-2 sm:flex">
+          <strong className={isDesktop ? 'text-white' : 'text-budu-600'}>BUDU POS</strong>
+          {isDesktop && <span className="rounded-md bg-budu-500/20 px-2 py-1 text-[10px] font-bold text-budu-200">点单</span>}
+        </div>
         <label className="relative min-w-0 flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className="w-full rounded-xl bg-slate-100 py-2.5 pl-10 pr-4 text-sm outline-none ring-budu-200 focus:ring-2" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className={`w-full py-2.5 pl-10 pr-4 text-sm outline-none ring-budu-200 focus:ring-2 ${isDesktop ? 'rounded-lg border border-white/10 bg-white/10 text-white placeholder:text-slate-400' : 'rounded-xl bg-slate-100 text-slate-800'}`} />
         </label>
         <label className="relative shrink-0">
-          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className="h-10 max-w-[170px] appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 text-sm font-semibold text-slate-700 outline-none" disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={`h-10 max-w-[170px] appearance-none pl-3 pr-8 text-sm font-semibold outline-none ${isDesktop ? 'rounded-lg border border-white/10 bg-slate-800 text-white' : 'rounded-xl border border-slate-200 bg-white text-slate-700'}`} disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </label>
-        <button onClick={() => setShowOrders(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-budu-300 hover:text-budu-600" aria-label="订单记录">
-          <ReceiptText className="h-4 w-4 text-budu-600" />
+        <button onClick={() => setShowOrders(true)} className={`flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-semibold transition ${isDesktop ? 'rounded-lg bg-white/10 text-slate-100 hover:bg-white/20' : 'rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-budu-300 hover:text-budu-600'}`} aria-label="订单记录">
+          <ReceiptText className={`h-4 w-4 ${isDesktop ? 'text-budu-300' : 'text-budu-600'}`} />
           <span className="hidden sm:inline">订单记录</span>
         </button>
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {isDesktop && <aside className="flex min-h-0 w-[148px] shrink-0 flex-col border-r border-slate-200 bg-white xl:w-[164px]">
-          <div className="flex h-[72px] shrink-0 items-center border-b border-slate-100 px-3"><strong className="text-lg text-budu-600">POS</strong></div>
-          <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`w-full rounded-xl px-2 py-3 text-left text-sm font-semibold transition ${category === item ? 'bg-budu-500 text-white shadow-md shadow-budu-100' : 'text-slate-500 hover:bg-slate-100'}`}>{item}</button>)}</nav>
+        {isDesktop && <aside data-testid="pos-cart-panel" className="flex min-h-0 w-[40%] min-w-[390px] max-w-[500px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-[4px_0_18px_rgba(15,23,42,0.04)]">
+          <div className="flex h-14 shrink-0 items-center border-b border-slate-100 px-4">
+            <ShoppingCart className="h-5 w-5 text-budu-600" />
+            <h2 className="ml-2 text-base font-black text-slate-800">当前订单</h2>
+            <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount} 件</span>
+            <button onClick={clearCart} disabled={!cartCount} className="ml-auto rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30">清空</button>
+          </div>
+          <div className="grid h-8 shrink-0 grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 text-[10px] font-semibold text-slate-400">
+            <span className="text-center">#</span><span>商品</span><span className="text-center">数量</span><span className="text-right">金额 / 操作</span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-slate-50"><ShoppingCart className="h-8 w-8 text-slate-200" /></div><p className="mt-4 text-sm font-bold text-slate-400">还没有选择商品</p><p className="mt-1 text-xs text-slate-300">点击右侧商品开始点单</p></div></div> : cartLines.map(renderDesktopCartLine)}
+          </div>
+          <div className="shrink-0 border-t border-slate-200 bg-white p-3" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
+            {renderDiscountControls()}
+            <div className="mt-3 flex items-end justify-between border-t border-dashed border-slate-200 pt-3">
+              <div className="text-xs text-slate-400"><p className="font-semibold text-slate-500">合计 · {cartCount} 件</p><p className="mt-1">商品小计 {formatCents(cartSubtotal)}</p>{cartDiscountAmount > 0n && <p className="mt-1 font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
+              <div className="text-right"><p className="text-[11px] font-semibold text-slate-400">应收金额</p><p className="text-2xl font-black tracking-tight text-budu-600">{formatCents(cartTotal)}</p></div>
+            </div>
+            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="mt-3 w-full rounded-xl bg-budu-500 py-3 text-sm font-black text-white shadow-lg shadow-budu-100 transition hover:bg-budu-600 active:scale-[0.99] disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+          </div>
         </aside>}
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {!isDesktop && <div className="flex shrink-0 gap-2 overflow-x-auto px-3 py-2" aria-label="商品分类" data-swipe-back-ignore="true">
-            {categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold transition ${category === item ? 'border-budu-400 bg-budu-500 text-white' : 'border-slate-200 bg-white text-slate-500'}`}>{item}</button>)}
-          </div>}
+        <main data-testid="pos-catalog-panel" className="flex min-h-0 min-w-0 flex-1 flex-col bg-slate-100">
+          <div className={`flex shrink-0 items-center border-b border-slate-200 bg-white ${isDesktop ? 'h-14 px-3' : 'px-3 py-2'}`}>
+            <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto" aria-label="商品分类" data-swipe-back-ignore="true">
+              {categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 whitespace-nowrap font-bold transition ${isDesktop ? 'rounded-lg px-3 py-2 text-xs' : 'rounded-full border px-3.5 py-1.5 text-xs'} ${category === item ? 'border-budu-500 bg-budu-500 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}>{item}</button>)}
+            </div>
+            {isDesktop && <span className="ml-3 shrink-0 text-xs font-semibold text-slate-400">{visibleProducts.length} 个商品</span>}
+          </div>
           {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {loadingProducts ? (
               <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div>
             ) : visibleProducts.length === 0 ? (
@@ -590,7 +641,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+              <div className={`grid gap-2 ${isDesktop ? '' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5'}`} style={isDesktop ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' } : undefined}>
                 {visibleProducts.map((product) => {
                   const quantity = Number(cart[product.productId] || 0)
                   const imageSrc = product.hasImage ? `/api/v2/pos/products/${product.productId}/image?v=${encodeURIComponent(product.updatedAt || '')}` : ''
@@ -598,24 +649,24 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                     <button
                       key={product.productId}
                       onClick={() => changeQuantity(product.productId, 1)}
-                      className="relative overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 active:scale-[0.97] active:border-budu-400"
+                      className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop ? 'flex min-h-[82px] items-center rounded-lg p-2' : 'rounded-xl'}`}
                     >
-                      <div className="aspect-square bg-slate-100">
+                      <div className={isDesktop ? 'h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100' : 'aspect-square bg-slate-100'}>
                         {imageSrc ? (
                           <img src={imageSrc} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" />
                         ) : (
-                          <div className="grid h-full place-items-center"><Package className="h-6 w-6 text-slate-300" /></div>
+                          <div className="grid h-full place-items-center"><Package className={`${isDesktop ? 'h-5 w-5' : 'h-6 w-6'} text-slate-300`} /></div>
                         )}
                       </div>
                       {quantity > 0 && (
-                        <span className="absolute right-1 top-1 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1 py-0.5 text-[10px] font-bold text-white shadow">
+                        <span className="absolute right-1.5 top-1.5 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1 py-0.5 text-[10px] font-bold text-white shadow">
                           {quantity}
                         </span>
                       )}
-                      <div className="p-1.5">
-                        <p className="truncate text-[11px] font-semibold leading-tight text-slate-800">{product.name}</p>
+                      <div className={isDesktop ? 'min-w-0 flex-1 pl-2' : 'p-1.5'}>
+                        <p className={`truncate font-bold leading-tight text-slate-800 ${isDesktop ? 'pr-4 text-xs' : 'text-[11px]'}`}>{product.name}</p>
                         <div className="mt-1 flex items-end justify-between gap-1">
-                          <span className="truncate text-[13px] font-black text-budu-600">{formatCents(product.salePriceCents)}</span>
+                          <span className={`${isDesktop ? 'text-sm' : 'text-[13px]'} truncate font-black text-budu-600`}>{formatCents(product.salePriceCents)}</span>
                           <span className="shrink-0 text-[10px] text-slate-400">/{product.unit}</span>
                         </div>
                       </div>
@@ -626,19 +677,6 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             )}
           </div>
         </main>
-
-        {isDesktop && <aside className="flex min-h-0 w-[300px] shrink-0 flex-col border-l border-slate-200 bg-white xl:w-[340px]">
-          <div className="flex h-[72px] shrink-0 items-center border-b border-slate-100 px-5"><ShoppingCart className="h-5 w-5 text-budu-600" /><h2 className="ml-2 font-bold">当前订单</h2><span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span><button onClick={clearCart} disabled={!cartCount} className="ml-auto text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button></div>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(renderCartLine)}</div>
-          <div className="shrink-0 border-t border-slate-100 bg-white p-4" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
-            {renderDiscountControls()}
-            <div className="mt-4 flex items-end justify-between">
-              <div><p className="text-xs text-slate-400">合计 · {cartCount} 件</p><p className="mt-1 text-2xl font-black text-slate-900">{formatCents(cartTotal)}</p></div>
-              {cartDiscountAmount > 0n && <p className="text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}
-            </div>
-            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="mt-3 w-full rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
-          </div>
-        </aside>}
       </div>
 
       {!isDesktop && <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-2" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} aria-label="结算栏">
