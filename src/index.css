@@ -101,6 +101,61 @@
   .empty-state {
     @apply grid place-items-center py-10 text-sm text-slate-400;
   }
+
+  .mobile-liquid-nav {
+    padding-top: 0.45rem;
+    background: linear-gradient(to top, rgba(246, 247, 249, 0.72), rgba(246, 247, 249, 0));
+    pointer-events: none;
+  }
+
+  .mobile-liquid-nav__glass {
+    isolation: isolate;
+    pointer-events: auto;
+    background:
+      radial-gradient(circle at 12% -35%, rgba(255, 255, 255, 0.96), transparent 54%),
+      radial-gradient(circle at 84% 130%, rgba(194, 154, 216, 0.18), transparent 48%),
+      linear-gradient(120deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.42));
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    box-shadow:
+      0 10px 34px rgba(51, 35, 66, 0.16),
+      0 2px 8px rgba(51, 35, 66, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      inset 0 -1px 0 rgba(112, 80, 134, 0.09);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+  }
+
+  .mobile-liquid-nav__glass::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(105deg, rgba(255, 255, 255, 0.32), transparent 38%, rgba(255, 255, 255, 0.14) 72%, transparent);
+    pointer-events: none;
+  }
+
+  .mobile-liquid-nav__item {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-liquid-nav__selection {
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: inherit;
+    background:
+      radial-gradient(circle at 30% 10%, rgba(255, 255, 255, 0.94), transparent 58%),
+      linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(221, 191, 235, 0.38));
+    box-shadow:
+      0 5px 14px rgba(108, 66, 130, 0.13),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      inset 0 -1px 0 rgba(112, 80, 134, 0.08);
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .mobile-liquid-nav__glass {
+      background: rgba(255, 255, 255, 0.94);
+    }
+  }
 }
 
 @layer utilities {

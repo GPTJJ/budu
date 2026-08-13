@@ -84,6 +84,23 @@ test('部分退款按商品退指定数量', async ({ page }) => {
 test('手机底部导航包含 POS点单并可跳转', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/tests/mobile-nav-harness.html')
+  const nav = page.getByRole('navigation', { name: '手机快捷导航' })
+  await expect(nav).toBeVisible()
+  const glassStyle = await nav.locator('.mobile-liquid-nav__glass').evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
+      borderRadius: style.borderRadius,
+      position: getComputedStyle(element.closest('nav')).position,
+      bottom: element.closest('nav').getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+    }
+  })
+  expect(glassStyle.backdropFilter).toContain('blur')
+  expect(Number.parseFloat(glassStyle.borderRadius)).toBeGreaterThanOrEqual(24)
+  expect(glassStyle.position).toBe('fixed')
+  expect(Math.abs(glassStyle.bottom - glassStyle.viewportHeight)).toBeLessThanOrEqual(1)
+  await expect(page.getByRole('button', { name: '首页', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('button', { name: 'POS点单', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'POS点单', exact: true }).click()
   await expect.poll(() => page.evaluate(() => window.__navigated)).toEqual(['store-pos'])
