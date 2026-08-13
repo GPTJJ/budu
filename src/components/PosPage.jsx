@@ -190,7 +190,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
   ), 0n)
   const chargeableSubtotal = cartLines.reduce((sum, line) => (
-    giftMap[line.product.productId] ? sum : sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
+    sum + BigInt(line.product.salePriceCents) * BigInt(Math.max(0, line.quantity - Number(giftMap[line.product.productId] || 0)))
   ), 0n)
   const cartTotal = (chargeableSubtotal * BigInt(discountPercent) + 50n) / 100n
   const cartDiscountAmount = cartSubtotal - cartTotal
@@ -205,9 +205,17 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     invalidateCheckout()
     const next = changeCartQuantity(cart, productId, delta)
     setCart(next)
-    if (!next[productId]) {
-      setGiftMap((current) => { const copy = { ...current }; delete copy[productId]; return copy })
-    }
+    setGiftMap((current) => {
+      const giftQty = Number(current[productId] || 0)
+      const nextQty = Number(next[productId] || 0)
+      if (!nextQty) {
+        const copy = { ...current }
+        delete copy[productId]
+        return copy
+      }
+      if (delta < 0 && giftQty > nextQty) return { ...current, [productId]: nextQty }
+      return current
+    })
   }
   const removeLine = (productId) => {
     invalidateCheckout()
@@ -222,7 +230,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
   const toggleGift = (productId) => {
     invalidateCheckout()
-    setGiftMap((current) => ({ ...current, [productId]: !current[productId] }))
+    setGiftMap((current) => {
+      const quantity = Number(cart[productId] || 0)
+      const giftQty = Number(current[productId] || 0)
+      return { ...current, [productId]: giftQty > 0 ? 0 : quantity }
+    })
   }
   const setDiscountValue = (value) => {
     invalidateCheckout()
@@ -234,20 +246,21 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   const renderCartLine = ({ product, quantity }) => {
-    const isGift = Boolean(giftMap[product.productId])
-    const lineAmount = isGift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
+    const giftQty = Math.min(Number(giftMap[product.productId] || 0), quantity)
+    const isGift = giftQty > 0
+    const lineAmount = BigInt(product.salePriceCents) * BigInt(quantity - giftQty)
     return (
       <div key={product.productId} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
-            <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</p>
+            <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠 {giftQty}</span>}</p>
           </div>
           <button onClick={() => toggleGift(product.productId)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
           <button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 transition hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
         <div className="mt-2 flex items-center">
-          <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? '¥0.00 赠送' : formatCents(lineAmount)}</strong>
+          <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
           <div className="ml-auto flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
             <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
             <span className="w-8 text-center text-sm font-bold">{quantity}</span>
@@ -259,15 +272,16 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   const renderDesktopCartLine = ({ product, quantity }, index) => {
-    const isGift = Boolean(giftMap[product.productId])
-    const lineAmount = isGift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
+    const giftQty = Math.min(Number(giftMap[product.productId] || 0), quantity)
+    const isGift = giftQty > 0
+    const lineAmount = BigInt(product.salePriceCents) * BigInt(quantity - giftQty)
     return (
       <div key={product.productId} className="group grid grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 px-3 py-2.5 transition hover:bg-slate-50">
         <span className="text-center text-xs font-semibold text-slate-300">{index + 1}</span>
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
             <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
-            {isGift && <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}
+            {isGift && <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠 {giftQty}</span>}
           </div>
           <p className="mt-0.5 truncate text-[11px] text-slate-400">{product.sku || '无 SKU'} · {formatCents(product.salePriceCents)}/{product.unit}</p>
         </div>
@@ -277,7 +291,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
           <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
         </div>
         <div className="flex items-center justify-end gap-1">
-          <strong className={`min-w-0 truncate text-right text-xs ${isGift ? 'text-rose-500' : 'text-slate-800'}`}>{isGift ? '¥0.00 赠送' : formatCents(lineAmount)}</strong>
+          <strong className={`min-w-0 truncate text-right text-xs ${isGift ? 'text-rose-500' : 'text-slate-800'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
           <button onClick={() => toggleGift(product.productId)} className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg transition ${isGift ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-rose-50 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`} title="赠送"><Gift className="h-3.5 w-3.5" /></button>
           <button onClick={() => removeLine(product.productId)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={`删除 ${product.name}`} title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
@@ -319,7 +333,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         body: JSON.stringify({
           storeId,
           checkoutKey: key,
-          items: cartLines.map((line) => ({ productId: line.product.productId, quantity: line.quantity, gift: Boolean(giftMap[line.product.productId]) })),
+          items: cartLines.flatMap((line) => {
+            const giftQty = Math.min(Number(giftMap[line.product.productId] || 0), line.quantity)
+            const normalQty = line.quantity - giftQty
+            const rows = []
+            if (normalQty > 0) rows.push({ productId: line.product.productId, quantity: normalQty, gift: false })
+            if (giftQty > 0) rows.push({ productId: line.product.productId, quantity: giftQty, gift: true })
+            return rows
+          }),
           discountPercent,
           remark,
         }),

@@ -29,14 +29,16 @@ export function normalizeCartItems(raw) {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
       throw httpError('商品数量应为 1-999 的整数')
     }
-    const prev = lines.get(productId) || { quantity: 0, gift: false }
+    // 收费与赠送分开归并：同一商品可同时存在“收费行”和“赠送行”
+    const key = `${productId}\u0000${gift ? 'gift' : 'normal'}`
+    const prev = lines.get(key) || { productId, quantity: 0, gift }
     const next = prev.quantity + quantity
     if (next > 999) throw httpError('同一商品数量不能超过 999')
-    lines.set(productId, { quantity: next, gift: prev.gift || gift })
+    lines.set(key, { productId, quantity: next, gift })
   }
-  return [...lines.entries()]
-    .map(([productId, line]) => ({ productId, quantity: line.quantity, gift: line.gift }))
-    .sort((a, b) => a.productId.localeCompare(b.productId))
+  return [...lines.values()]
+    .map((line) => ({ productId: line.productId, quantity: line.quantity, gift: line.gift }))
+    .sort((a, b) => a.productId.localeCompare(b.productId) || Number(a.gift) - Number(b.gift))
 }
 
 export function hashCart(items) {

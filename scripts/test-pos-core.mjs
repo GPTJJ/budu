@@ -90,11 +90,33 @@ test('赠送与折扣由服务端统一计算并写入快照', () => {
   assert.throws(() => buildOrderSnapshot([product], [{ productId: product.id, quantity: 1 }], { discountPercent: 0 }), /折扣/)
 })
 
-test('赠送状态计入归一化与购物车哈希', () => {
+test('赠送与收费按行分开归并，同一商品可同时存在', () => {
   assert.deepEqual(normalizeCartItems([
     { productId: 'product-1', quantity: 1, gift: true },
     { productId: 'product-1', quantity: 2, gift: false },
-  ]), [{ productId: 'product-1', quantity: 3, gift: true }])
+  ]), [
+    { productId: 'product-1', quantity: 2, gift: false },
+    { productId: 'product-1', quantity: 1, gift: true },
+  ])
+  const fresh = { ...product, salePriceCents: 7200n, costPriceCents: 2350n }
+  const snapshot = buildOrderSnapshot([fresh], [
+    { productId: fresh.id, quantity: 1, gift: false },
+    { productId: fresh.id, quantity: 1, gift: true },
+  ], { discountPercent: 100 })
+  assert.equal(snapshot.subtotal, 14400n)
+  assert.equal(snapshot.payableAmount, 7200n)
+  assert.equal(snapshot.lines.length, 2)
+  assert.equal(snapshot.lines.find((l) => !l.isGift).actualAmount, 7200n)
+  assert.equal(snapshot.lines.find((l) => l.isGift).actualAmount, 0n)
+
+  const a = hashCart({ items: normalizeCartItems([{ productId: 'product-1', quantity: 1, gift: true }]), discountPercent: 90, remark: 'x' })
+  const b = hashCart({ items: normalizeCartItems([{ productId: 'product-1', quantity: 1, gift: false }]), discountPercent: 90, remark: 'x' })
+  const c = hashCart({ items: normalizeCartItems([{ productId: 'product-1', quantity: 1, gift: true }]), discountPercent: 100, remark: 'x' })
+  assert.notEqual(a, b)
+  assert.notEqual(a, c)
+})
+
+test('赠送状态计入购物车哈希', () => {
   const a = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: true }], discountPercent: 90, remark: 'x' })
   const b = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: false }], discountPercent: 90, remark: 'x' })
   const c = hashCart({ items: [{ productId: 'product-1', quantity: 1, gift: true }], discountPercent: 100, remark: 'x' })

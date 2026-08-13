@@ -321,6 +321,21 @@ test('POS 赠送/折扣/备注 对应减免并可结算', async ({ page }) => {
   await expect(page.getByText('¥32.30', { exact: true })).toBeVisible()
 })
 
+test('POS 赠送商品再次单点按正常价加入（不再整行赠送）', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=gift-discount')
+  await page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ }).first().click()
+  await page.getByRole('button', { name: '赠送 卡皮巴拉布丁', exact: true }).click()
+  await expect(page.getByText('¥0.00 赠送', { exact: true })).toBeVisible()
+
+  await page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ }).first().click()
+  await expect(page.getByText('合计 · 2 件', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥72.00 赠1', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥72.00', { exact: true }).last()).toBeVisible()
+})
+
 test('POS 点单内可打开订单记录并返回', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=pos-orders')
   await expect(page.getByPlaceholder('搜索商品名称 / SKU / 条码')).toBeVisible()
