@@ -20,7 +20,7 @@ globalThis.localStorage.setItem(
     entries: {
       '2026-08|tongying|10': { inc: 3500, ord: 80, staff: ['叶芷辰'] },
       '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
-      '2026-08|guanshe|07': { inc: 0, ord: 0, staff: ['隋晓'] },
+      '2026-08|guanshe|08-07': { inc: 0, ord: 0, staff: ['隋晓'] },
       '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
       '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
     },
@@ -37,7 +37,7 @@ const server = await createServer({
   appType: 'custom',
   logLevel: 'silent',
 })
-const { employeeList, entryEmployeePerformance, employeeDayStatus } =
+const { employeeList, entryEmployeePerformance, employeeDayStatus, employeeDailyPayDetail, employeeWeekStatus } =
   await server.ssrLoadModule('/src/utils/selectors.js')
 
 let failed = 0
@@ -84,6 +84,14 @@ check('employeeList 8 月：左可翠（新增门店 key 按名称匹配朝外 1
   workedDays: 1,
 })
 
+const sui = month.find((e) => e.name === '隋晓')
+check('employeeList 8 月：隋晓官舍调货补贴计入工资', sui, {
+  salary: 352,
+  basePay: 330,
+  transferSubsidy: 22,
+  hours: 11,
+})
+
 const top = entryEmployeePerformance('all', '2026-08')
 const topYe = top.find((e) => e.name === '叶芷辰')
 check('entryEmployeePerformance 8 月：叶芷辰', topYe, {
@@ -108,6 +116,33 @@ check('employeeDayStatus 8-08 通盈 2 人日', day2, {
   basePay: 224,
   commission: 160,
   hours: 8,
+})
+
+const guansheDay = employeeDayStatus('2026-08', '08-07', '隋晓')
+check('employeeDayStatus 8-07 官舍调货补贴', guansheDay, {
+  pay: 352,
+  basePay: 330,
+  commission: 0,
+  transferSubsidy: 22,
+  hours: 11,
+})
+
+const guansheDetail = employeeDailyPayDetail('2026-08', '08-07', '隋晓')
+check('employeeDailyPayDetail 官舍补贴与明细合计一致', guansheDetail?.totals, {
+  pay: 352,
+  basePay: 330,
+  transferSubsidy: 22,
+})
+check('employeeDailyPayDetail 官舍门店行单列补贴', guansheDetail?.rows?.[0], {
+  transferSubsidyRate: 2,
+  transferSubsidy: 22,
+  total: 352,
+})
+
+const guansheWeek = employeeWeekStatus('2026-08', ['2026-08-07'], '隋晓')
+check('employeeWeekStatus 本周调货补贴汇总', guansheWeek, {
+  pay: 352,
+  transferSubsidy: 22,
 })
 
 if (failed) {

@@ -17,9 +17,39 @@ const cases = [
     expect: { hours: 8, baseRate: 28, basePay: 224, commissionRate: 20, commission: 160, total: 384 },
   },
   {
-    name: '官舍 1 人 11h → 基础薪资 330',
+    name: '官舍 2026-08-01 后 1 人 11h → 基础薪资 330 + 调货补贴 22',
     got: calcDailyPay({ storeKey: 'guanshe', revenue: 0, date: '2026-08-07', staffCount: 1 }),
-    expect: { hours: 11, baseRate: 30, basePay: 330, commissionRate: 0, commission: 0, total: 330 },
+    expect: {
+      hours: 11,
+      baseRate: 30,
+      basePay: 330,
+      commissionRate: 0,
+      commission: 0,
+      transferSubsidyRate: 2,
+      transferSubsidy: 22,
+      total: 352,
+    },
+  },
+  {
+    name: '官舍 2026-07-31 已发工资 → 不追溯调货补贴',
+    got: calcDailyPay({ storeKey: 'guanshe', revenue: 0, date: '2026-07-31', staffCount: 1 }),
+    expect: { basePay: 330, transferSubsidyRate: 0, transferSubsidy: 0, total: 330 },
+  },
+  {
+    name: '官舍 2026-08-01 生效边界 → 当天开始计算补贴',
+    got: calcDailyPay({ storeKey: 'guanshe', revenue: 0, date: '2026-08-01', staffCount: 2 }),
+    expect: { hours: 8, basePay: 224, transferSubsidyRate: 2, transferSubsidy: 16, total: 240 },
+  },
+  {
+    name: '自动门店 key + 官舍名称 → 仍计算调货补贴',
+    got: calcDailyPay({
+      storeKey: 'store-guanshe-auto',
+      storeName: '北京官舍运营中心店',
+      revenue: 0,
+      date: '2026-08-01',
+      staffCount: 1,
+    }),
+    expect: { hours: 11, basePay: 330, transferSubsidyRate: 2, transferSubsidy: 22, total: 352 },
   },
   {
     name: '西单 2 人 8h 2000 达标 → 基础时薪 28 + 提成 40',
@@ -112,9 +142,17 @@ const monthCases = [
     expect: { salary: 384, basePay: 224, commission: 160, hours: 8, workedDays: 1, workedRevenue: 4250 },
   },
   {
-    name: '隋晓 8 月：官舍 1 人 330',
+    name: '隋晓 8 月：官舍 1 人基础工资 330 + 调货补贴 22',
     got: monthPay.get('隋晓'),
-    expect: { salary: 330, basePay: 330, commission: 0, hours: 11, workedDays: 1, workedRevenue: 0 },
+    expect: {
+      salary: 352,
+      basePay: 330,
+      commission: 0,
+      transferSubsidy: 22,
+      hours: 11,
+      workedDays: 1,
+      workedRevenue: 0,
+    },
   },
   {
     name: '左可翠 8 月：朝外 1 人 11.5h 未达标 345',
@@ -135,6 +173,7 @@ for (const c of monthCases) {
 /** 特殊员工「卡皮巴拉」：只统计工时，不计算工资 */
 const noPayEntries = {
   '2026-08|tongying|17': { inc: 2500, ord: 10, staff: ['卡皮巴拉', '叶芷辰'] },
+  '2026-08|guanshe|18': { inc: 2500, ord: 10, staff: ['卡皮巴拉'] },
 }
 const noPayMap = monthlyPayrollFromEntries(noPayEntries, '2026-08', { tongying: '北京通盈中心店' })
 const capybara = noPayMap.get('卡皮巴拉')
@@ -144,7 +183,8 @@ if (
   capybara.salary !== 0 ||
   capybara.basePay !== 0 ||
   capybara.commission !== 0 ||
-  capybara.hours !== 8
+  capybara.transferSubsidy !== 0 ||
+  capybara.hours !== 19
 ) {
   failed += 1
   console.log('FAIL 卡皮巴拉应只统计工时、不计算工资:', JSON.stringify(capybara))

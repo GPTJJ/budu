@@ -42,9 +42,9 @@ function todayParts() {
   return { month: `${d.getFullYear()}-${mm}`, day: `${mm}-${dd}` }
 }
 
-function Stat({ label, value, accent }) {
+function Stat({ label, value, accent, className = '' }) {
   return (
-    <div className="rounded-xl bg-slate-50/80 px-3 py-2">
+    <div className={`rounded-xl bg-slate-50/80 px-3 py-2 ${className}`}>
       <p className="text-[10px] text-slate-400">{label}</p>
       <p className={`mt-0.5 text-sm font-bold tabular-nums ${accent || 'text-slate-700'}`}>{value}</p>
     </div>
@@ -312,6 +312,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
       hours: detail ? detail.totals.hours : 0,
       basePay: detail ? detail.totals.basePay : 0,
       commission: detail ? detail.totals.commission : 0,
+      transferSubsidy: detail ? detail.totals.transferSubsidy : 0,
       bigBonus: detail ? detail.totals.bigBonus : 0,
       pay: detail ? detail.totals.pay : 0,
       hasData: Boolean(detail),
@@ -335,10 +336,11 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
       hours: s.hours + r.hours,
       basePay: s.basePay + r.basePay,
       commission: s.commission + r.commission,
+      transferSubsidy: s.transferSubsidy + r.transferSubsidy,
       bigBonus: s.bigBonus + r.bigBonus,
       pay: s.pay + r.pay,
     }),
-    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, bigBonus: 0, pay: 0 },
+    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, pay: 0 },
   )
 
   const download = () => {
@@ -373,7 +375,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
         ) : (
           <>
             <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[560px] text-left text-sm">
+              <table className="w-full min-w-[680px] text-left text-sm">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
                     <th className="py-2 pr-2">{t('日期')}</th>
@@ -382,6 +384,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                     <th className="py-2 pr-2 text-right">{t('工时')}</th>
                     <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
                     <th className="py-2 pr-2 text-right">{t('提成')}</th>
+                    <th className="py-2 pr-2 text-right">{t('调货补贴')}</th>
                     <th className="py-2 pr-2 text-right">{t('大单奖')}</th>
                     <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
                   </tr>
@@ -398,6 +401,9 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.basePay.toFixed(2)}` : '—'}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.commission.toFixed(2)}` : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">
+                        {r.hasData ? `¥${r.transferSubsidy.toFixed(2)}` : '—'}
+                      </td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">
                         {r.hasData && r.bigBonus > 0 ? `¥${r.bigBonus.toFixed(2)}` : '—'}
                       </td>
@@ -413,6 +419,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.hours}h</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.basePay.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-emerald-600">¥{totals.transferSubsidy.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.bigBonus.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
                   </tr>
@@ -625,6 +632,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               const periodHours = onDuty ? status.hours : 0
               const periodPerf = onDuty ? status.commission : 0
               const periodBase = onDuty ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
+              const periodTransfer = onDuty ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
               const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
               const periodRevenue = onDuty ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
@@ -720,6 +728,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       label={t('大单奖')}
                       value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`}
                       accent="text-amber-600"
+                    />
+                    <Stat
+                      label={t('调货补贴')}
+                      value={hidePersonal ? '•••' : `¥${formatMoney(periodTransfer)}`}
+                      accent="text-emerald-600"
+                      className="col-span-2"
                     />
                   </div>
 

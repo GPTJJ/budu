@@ -68,6 +68,8 @@ const BASE_RATE = 28
 const OVERTIME_SUBSIDY = 2
 const COMMISSION_STEP = 1000
 const COMMISSION_PER_STEP = 5
+export const TRANSFER_SUBSIDY_EFFECTIVE_DATE = '2026-08-01'
+export const TRANSFER_SUBSIDY_RATE = 2
 /** 特殊员工：只统计工时，不计算任何工资（如吉祥物「卡皮巴拉」） */
 const NO_PAY_STAFF = new Set(['卡皮巴拉'])
 
@@ -92,11 +94,18 @@ export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
   return COMMISSION_PER_STEP + extra * COMMISSION_PER_STEP
 }
 
+/** 官舍运营中心调货补贴：自 2026-08-01 起按实际官舍值班工时增加 2 元/h。 */
+export function transferSubsidyRate(storeKey, dateStr, storeName = '') {
+  const date = String(dateStr || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < TRANSFER_SUBSIDY_EFFECTIVE_DATE) return 0
+  return normalizeStoreKey(storeKey, storeName) === 'guanshe' ? TRANSFER_SUBSIDY_RATE : 0
+}
+
 function round2(v) {
   return Math.round(v * 100) / 100
 }
 
-/** 计算单个员工某日薪酬：基础薪资 + 业绩提成 */
+/** 计算单个员工某日薪酬：基础薪资 + 业绩提成 + 官舍调货补贴 */
 export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount }) {
   const normKey = normalizeStoreKey(storeKey, storeName)
   const hours = dutyHours(normKey, staffCount)
@@ -104,20 +113,24 @@ export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount })
   const basePay = round2(baseRate * hours)
   const rate = commissionRate(normKey, revenue, date)
   const commission = round2(rate * hours)
+  const subsidyRate = transferSubsidyRate(normKey, date, storeName)
+  const transferSubsidy = round2(subsidyRate * hours)
   return {
     hours,
     baseRate,
     basePay,
     commissionRate: rate,
     commission,
-    total: round2(basePay + commission),
+    transferSubsidyRate: subsidyRate,
+    transferSubsidy,
+    total: round2(basePay + commission + transferSubsidy),
   }
 }
 
 /**
  * 从业绩录入对象聚合某月每位员工的薪酬。
  * entries 的键格式为「月份|门店Key|MM-DD」，值为 { inc, ord, staff: string[] }。
- * 返回 Map：name -> { name, workedDays, workedRevenue, orders, hours, basePay, commission, salary, stores }
+ * 返回 Map：name -> { name, workedDays, workedRevenue, orders, hours, basePay, commission, transferSubsidy, salary, stores }
  */
 export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
   const map = new Map()
@@ -150,6 +163,7 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
         hours: 0,
         basePay: 0,
         commission: 0,
+        transferSubsidy: 0,
         salary: 0,
         days: new Set(),
         stores: new Set(),
@@ -159,6 +173,7 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
       rec.hours += daily.hours
       rec.basePay += noPay ? 0 : daily.basePay
       rec.commission += noPay ? 0 : daily.commission
+      rec.transferSubsidy += noPay ? 0 : daily.transferSubsidy
       rec.salary += noPay ? 0 : daily.total
       rec.days.add(day)
       rec.stores.add(storeKey)
@@ -174,6 +189,7 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
     rec.hours = round2(rec.hours)
     rec.basePay = round2(rec.basePay)
     rec.commission = round2(rec.commission)
+    rec.transferSubsidy = round2(rec.transferSubsidy)
     rec.salary = round2(rec.salary)
     rec.stores = [...rec.stores]
   }

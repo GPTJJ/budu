@@ -501,6 +501,7 @@ export function employeeList(storeKey, monthKey = null) {
   salary: pr ? pr.salary + (isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey)) : 0,
           basePay: pr ? pr.basePay : 0,
           commission: pr ? pr.commission : 0,
+          transferSubsidy: pr ? pr.transferSubsidy : 0,
           perf: pr ? pr.commission : 0,
   big: isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey),
           payrollComputed: true,
@@ -844,7 +845,7 @@ export function employeeDayStatus(monthKey, day, name) {
   let hours = 0
   let basePay = 0
   let commission = 0
-  let pay = 0
+  let transferSubsidy = 0
   const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
@@ -865,7 +866,7 @@ export function employeeDayStatus(monthKey, day, name) {
     hours += daily.hours
     basePay += noPay ? 0 : daily.basePay
     commission += noPay ? 0 : daily.commission
-    pay += noPay ? 0 : daily.total
+    transferSubsidy += noPay ? 0 : daily.transferSubsidy
     count += 1
     stores.push(storeKey)
   }
@@ -877,8 +878,9 @@ export function employeeDayStatus(monthKey, day, name) {
     hours: Math.round(hours * 100) / 100,
     basePay: Math.round(basePay * 100) / 100,
     commission: Math.round(commission * 100) / 100,
+    transferSubsidy: Math.round(transferSubsidy * 100) / 100,
     bigBonus,
-    pay: Math.round((basePay + commission + bigBonus) * 100) / 100,
+    pay: Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100,
   }
 }
 
@@ -892,7 +894,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   let hours = 0
   let basePay = 0
   let commission = 0
-  let pay = 0
+  let transferSubsidy = 0
   const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
   const bonusByStore = new Map()
   let bonusTotalCents = 0
@@ -927,6 +929,8 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       basePay: daily.basePay,
       commissionRate: daily.commissionRate,
       commission: daily.commission,
+      transferSubsidyRate: daily.transferSubsidyRate,
+      transferSubsidy: daily.transferSubsidy,
       bigBonus: 0,
       total: daily.total,
     })
@@ -935,7 +939,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     hours += daily.hours
     basePay += noPay ? 0 : daily.basePay
     commission += noPay ? 0 : daily.commission
-    pay += noPay ? 0 : daily.total
+    transferSubsidy += noPay ? 0 : daily.transferSubsidy
   }
   if (rows.length === 0) return null
   let assignedCents = 0
@@ -957,6 +961,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     for (const row of rows) {
       row.basePay = 0
       row.commission = 0
+      row.transferSubsidy = 0
       row.bigBonus = 0
       row.total = 0
     }
@@ -968,6 +973,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
         hours: Math.round(hours * 100) / 100,
         basePay: 0,
         commission: 0,
+        transferSubsidy: 0,
         bigBonus: 0,
         pay: 0,
       },
@@ -981,8 +987,9 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       hours: Math.round(hours * 100) / 100,
       basePay: Math.round(basePay * 100) / 100,
       commission: Math.round(commission * 100) / 100,
+      transferSubsidy: Math.round(transferSubsidy * 100) / 100,
       bigBonus,
-      pay: Math.round((basePay + commission + bigBonus) * 100) / 100,
+      pay: Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100,
     },
   }
 }
@@ -993,6 +1000,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   let hours = 0
   let basePay = 0
   let commission = 0
+  let transferSubsidy = 0
   let bigBonus = 0
   let inc = 0
   let ord = 0
@@ -1006,6 +1014,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     hours += st.hours
     basePay += st.basePay
     commission += st.commission
+    transferSubsidy += st.transferSubsidy || 0
     bigBonus += st.bigBonus || 0
     inc += st.inc
     ord += st.ord
@@ -1018,8 +1027,9 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     hours: r2(hours),
     basePay: r2(basePay),
     commission: r2(commission),
+    transferSubsidy: r2(transferSubsidy),
     bigBonus: r2(bigBonus),
-    pay: r2(basePay + commission + bigBonus),
+    pay: r2(basePay + commission + transferSubsidy + bigBonus),
     inc: r2(inc),
     ord: r2(ord),
     stores: [...stores],

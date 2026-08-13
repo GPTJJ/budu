@@ -229,6 +229,7 @@ export const en = {
   '工时': 'Hours',
   '当日工时': 'Daily hours',
   '业绩提成': 'Commission',
+  '调货补贴': 'Stock Transfer Subsidy',
   '当日提成': 'Daily commission',
   '当班营业额': 'Shift revenue',
   '当日营业额': 'Daily revenue',
