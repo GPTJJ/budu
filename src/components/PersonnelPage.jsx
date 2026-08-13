@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Award, CalendarDays, Download, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Award, CalendarDays, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
 import ExportSalaryModal from './ExportSalaryModal'
@@ -23,6 +23,7 @@ import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
+import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -341,36 +342,20 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   )
 
   const download = () => {
+    const selectedDate = day
+      ? (String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${String(day).padStart(2, '0')}`)
+      : ''
     const periodLabel = weekStart
       ? `本周 ${weekStart} ~ ${weekDays[6].date}`
       : day
-        ? `当日 ${month}-${day}`
+        ? `当日 ${selectedDate}`
         : month
-    const periodKey = weekStart ? weekStart.replace(/-/g, '') : day ? `${month}-${day}`.replace(/-/g, '') : month
-    const lines = [
-      'BUDU 员工工资明细',
-      `员工：${emp.name}`,
-      `期间：${periodLabel}`,
-      '',
-      '日期\t营业额(元)\t订单\t工时(h)\t基础工资(元)\t提成(元)\t大单奖(元)\t当日工资(元)',
-      ...dayRows.map((r) =>
-        [r.day, r.revenue.toFixed(2), r.orders, r.hours, r.basePay.toFixed(2), r.commission.toFixed(2), r.bigBonus.toFixed(2), r.pay.toFixed(2)].join('\t'),
-      ),
-      '',
-      ['合计', totals.revenue.toFixed(2), totals.orders, totals.hours, totals.basePay.toFixed(2), totals.commission.toFixed(2), totals.bigBonus.toFixed(2), totals.pay.toFixed(2)].join('\t'),
-      '',
-      '说明：基础工资=基础时薪×工时；提成=提成时薪×工时；大单奖=订单金额×5%；当日工资=基础工资+提成+大单奖；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计 0。',
-    ]
-    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/plain;charset=utf-8' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `工资明细-${emp.name}-${periodKey}.txt`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    const periodKey = weekStart ? weekStart.replace(/-/g, '') : day ? selectedDate.replace(/-/g, '') : month.replace(/-/g, '')
+    downloadEmployeePayExcel({ employeeName: emp.name, periodLabel, periodKey, dayRows, totals })
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`${emp.name}工资明细`}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex flex-wrap items-center gap-3">
@@ -438,8 +423,8 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
               onClick={download}
               className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
             >
-              <Download className="h-4 w-4" />
-              {t('下载文档')}
+              <FileSpreadsheet className="h-4 w-4" />
+              {t('导出 Excel')}
             </button>
           </>
         )}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Personnel Export Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { I18nProvider } from '/src/i18n.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import '/src/index.css'
+
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
+      entries: {
+        '2026-08|tongying|08-09': { inc: 7200, ord: 80, staff: ['叶芷辰'] },
+      },
+      staff: [],
+      removedStaff: [],
+      stores: [{ key: 'tongying', name: '北京通盈中心店' }],
+      schedules: {},
+      products: [],
+      inventoryRequests: [],
+      inventory: [],
+      analysis: {},
+      productImages: {},
+      bigBonuses: [],
+      posDaily: [],
+      posProductSales: [],
+    }))
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(I18nProvider, null,
+        React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+          React.createElement(PersonnelPage, {
+            user: { id: 'dev-1', username: 'developer', role: 'developer' },
+            canDelete: true,
+            canManage: true,
+            onBack: () => {},
+          }),
+        ),
+      ),
+    )
+  </script></body>
+</html>
+
