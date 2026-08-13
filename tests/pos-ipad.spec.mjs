@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-async function swipeRightFromEdge(page, { y = 400, distance = 120 } = {}) {
+async function beginSwipeRightFromEdge(page, { y = 400, distance = 120 } = {}) {
   await page.evaluate(({ y: clientY, distance: dx }) => {
     const target = document.elementFromPoint(8, clientY) || document.body
     const makeTouch = (clientX) => ({
@@ -13,6 +13,7 @@ async function swipeRightFromEdge(page, { y = 400, distance = 120 } = {}) {
       screenX: clientX,
       screenY: clientY,
     })
+    window.__swipeBackTest = { target, makeTouch, clientY, distance: dx }
     const start = makeTouch(8)
     const move = makeTouch(8 + dx)
     const dispatch = (type, touches, changedTouches) => {
@@ -25,8 +26,27 @@ async function swipeRightFromEdge(page, { y = 400, distance = 120 } = {}) {
     }
     dispatch('touchstart', [start], [start])
     dispatch('touchmove', [move], [move])
-    dispatch('touchend', [], [move])
   }, { y, distance })
+}
+
+async function endSwipeRightFromEdge(page) {
+  await page.evaluate(() => {
+    const state = window.__swipeBackTest
+    if (!state) return
+    const move = state.makeTouch(8 + state.distance)
+    const event = new TouchEvent('touchend', { bubbles: true, cancelable: true })
+    Object.defineProperties(event, {
+      touches: { value: [] },
+      changedTouches: { value: [move] },
+    })
+    state.target.dispatchEvent(event)
+    delete window.__swipeBackTest
+  })
+}
+
+async function swipeRightFromEdge(page, options) {
+  await beginSwipeRightFromEdge(page, options)
+  await endSwipeRightFromEdge(page)
 }
 
 async function enterPayment(page, url) {
@@ -225,8 +245,18 @@ test('移动端右滑按页面层级返回，并释放扫码摄像头', async ({
 
   await page.getByRole('button', { name: '打开购物车', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '购物车' })).toBeVisible()
-  await swipeRightFromEdge(page)
+  await beginSwipeRightFromEdge(page)
+  const tracking = await page.evaluate(() => ({
+    active: document.documentElement.classList.contains('swipe-back-active'),
+    transform: getComputedStyle(document.getElementById('root')).transform,
+    progress: Number(getComputedStyle(document.documentElement).getPropertyValue('--swipe-back-progress')),
+  }))
+  expect(tracking.active).toBe(true)
+  expect(tracking.transform).not.toBe('none')
+  expect(tracking.progress).toBeGreaterThan(0.5)
+  await endSwipeRightFromEdge(page)
   await expect(page.getByRole('dialog', { name: '购物车' })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('swipe-back-active'))).toBe(false)
 
   await page.getByRole('button', { name: '结算', exact: true }).click()
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
@@ -240,7 +270,7 @@ test('移动端右滑按页面层级返回，并释放扫码摄像头', async ({
   await expect(page.getByText('应付金额', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '结算', exact: true })).toBeVisible()
   await swipeRightFromEdge(page)
-  expect(await page.evaluate(() => window.__posExitCount)).toBe(1)
+  await expect.poll(() => page.evaluate(() => window.__posExitCount)).toBe(1)
 })
 
 test('未付款返回后再次进入 POS 不直接跳付款页', async ({ page }) => {
