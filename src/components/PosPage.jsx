@@ -11,8 +11,12 @@ import {
   changeCartQuantity,
   createCheckoutKey,
   formatCents,
+  giftLineKey,
   getSelectedPosStore,
   loadPosStoreSession,
+  migratePosCart,
+  normalLineKey,
+  parseLineKey,
   saveCheckoutKey,
   savePendingOrder,
   savePosCart,
@@ -61,7 +65,6 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [cashConfirm, setCashConfirm] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
   const [showOrders, setShowOrders] = useState(false)
-  const [giftMap, setGiftMap] = useState({})
   const [discount, setDiscount] = useState('10')
   const [remark, setRemark] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => (
@@ -120,8 +123,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setSessionLoaded(false)
     setSelectedPosStore(user.id, storeId)
     const session = loadPosStoreSession(user.id, storeId)
-    setCart(session.cart && typeof session.cart === 'object' ? session.cart : {})
-    setGiftMap({})
+    setCart(migratePosCart(session.cart && typeof session.cart === 'object' ? session.cart : {}))
     setDiscount('10')
     setRemark('')
     setCheckoutKeyState(session.checkoutKey)
@@ -182,7 +184,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     })
   }, [products, query, category])
   const cartLines = useMemo(() => Object.entries(cart)
-    .map(([productId, quantity]) => ({ product: productMap.get(productId), quantity: Number(quantity) }))
+    .map(([key, quantity]) => {
+      const { productId, gift } = parseLineKey(key)
+      return { key, product: productMap.get(productId), quantity: Number(quantity), gift }
+    })
     .filter((line) => line.product && Number.isInteger(line.quantity) && line.quantity > 0), [cart, productMap])
   const cartCount = cartLines.reduce((sum, line) => sum + line.quantity, 0)
   const discountPercent = parseDiscountPercent(discount)
@@ -190,7 +195,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
   ), 0n)
   const chargeableSubtotal = cartLines.reduce((sum, line) => (
-    sum + BigInt(line.product.salePriceCents) * BigInt(Math.max(0, line.quantity - Number(giftMap[line.product.productId] || 0)))
+    line.gift ? sum : sum + BigInt(line.product.salePriceCents) * BigInt(line.quantity)
   ), 0n)
   const cartTotal = (chargeableSubtotal * BigInt(discountPercent) + 50n) / 100n
   const cartDiscountAmount = cartSubtotal - cartTotal
@@ -201,39 +206,29 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setCheckoutKeyState('')
     if (storeId) saveCheckoutKey(user.id, storeId, '')
   }
-  const changeQuantity = (productId, delta) => {
+  const changeQuantity = (lineKey, delta) => {
     invalidateCheckout()
-    const next = changeCartQuantity(cart, productId, delta)
-    setCart(next)
-    setGiftMap((current) => {
-      const giftQty = Number(current[productId] || 0)
-      const nextQty = Number(next[productId] || 0)
-      if (!nextQty) {
-        const copy = { ...current }
-        delete copy[productId]
-        return copy
-      }
-      if (delta < 0 && giftQty > nextQty) return { ...current, [productId]: nextQty }
-      return current
-    })
+    setCart(changeCartQuantity(cart, lineKey, delta))
   }
-  const removeLine = (productId) => {
+  const removeLine = (lineKey) => {
     invalidateCheckout()
-    setCart((current) => { const next = { ...current }; delete next[productId]; return next })
-    setGiftMap((current) => { const next = { ...current }; delete next[productId]; return next })
+    setCart((current) => { const next = { ...current }; delete next[lineKey]; return next })
   }
   const clearCart = () => {
     if (cartCount && !window.confirm('确认清空当前订单中的全部商品吗？')) return
     invalidateCheckout()
     setCart({})
-    setGiftMap({})
   }
-  const toggleGift = (productId) => {
+  const toggleGift = (line) => {
     invalidateCheckout()
-    setGiftMap((current) => {
-      const quantity = Number(cart[productId] || 0)
-      const giftQty = Number(current[productId] || 0)
-      return { ...current, [productId]: giftQty > 0 ? 0 : quantity }
+    setCart((current) => {
+      const quantity = Number(current[line.key] || 0)
+      if (!quantity) return current
+      const next = { ...current }
+      delete next[line.key]
+      const target = line.gift ? normalLineKey(line.product.productId) : giftLineKey(line.product.productId)
+      next[target] = Math.min(999, Number(next[target] || 0) + quantity)
+      return next
     })
   }
   const setDiscountValue = (value) => {
@@ -245,38 +240,40 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setRemark(value)
   }
 
-  const renderCartLine = ({ product, quantity }) => {
-    const giftQty = Math.min(Number(giftMap[product.productId] || 0), quantity)
-    const isGift = giftQty > 0
-    const lineAmount = BigInt(product.salePriceCents) * BigInt(quantity - giftQty)
+  const renderCartLine = (line) => {
+    const { product, quantity, gift } = line
+    const giftQty = gift ? quantity : 0
+    const isGift = gift
+    const lineAmount = gift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
     return (
-      <div key={product.productId} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
+      <div key={line.key} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
             <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠 {giftQty}</span>}</p>
           </div>
-          <button onClick={() => toggleGift(product.productId)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
-          <button onClick={() => removeLine(product.productId)} className="p-1 text-slate-300 transition hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+          <button onClick={() => toggleGift(line)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
+          <button onClick={() => removeLine(line.key)} className="p-1 text-slate-300 transition hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
         <div className="mt-2 flex items-center">
           <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
           <div className="ml-auto flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
+            <button onClick={() => changeQuantity(line.key, -1)} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
             <span className="w-8 text-center text-sm font-bold">{quantity}</span>
-            <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-8 w-8 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-3.5 w-3.5" /></button>
+            <button onClick={() => changeQuantity(line.key, 1)} className="grid h-8 w-8 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-3.5 w-3.5" /></button>
           </div>
         </div>
       </div>
     )
   }
 
-  const renderDesktopCartLine = ({ product, quantity }, index) => {
-    const giftQty = Math.min(Number(giftMap[product.productId] || 0), quantity)
-    const isGift = giftQty > 0
-    const lineAmount = BigInt(product.salePriceCents) * BigInt(quantity - giftQty)
+  const renderDesktopCartLine = (line, index) => {
+    const { product, quantity, gift } = line
+    const giftQty = gift ? quantity : 0
+    const isGift = gift
+    const lineAmount = gift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
     return (
-      <div key={product.productId} className="group grid grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 px-3 py-2.5 transition hover:bg-slate-50">
+      <div key={line.key} className="group grid grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 px-3 py-2.5 transition hover:bg-slate-50">
         <span className="text-center text-xs font-semibold text-slate-300">{index + 1}</span>
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -286,14 +283,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
           <p className="mt-0.5 truncate text-[11px] text-slate-400">{product.sku || '无 SKU'} · {formatCents(product.salePriceCents)}/{product.unit}</p>
         </div>
         <div className="flex h-8 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <button onClick={() => changeQuantity(product.productId, -1)} className="grid h-full w-7 place-items-center text-slate-500 active:bg-slate-100" aria-label={`减少 ${product.name}`}><Minus className="h-3 w-3" /></button>
+          <button onClick={() => changeQuantity(line.key, -1)} className="grid h-full w-7 place-items-center text-slate-500 active:bg-slate-100" aria-label={`减少 ${product.name}`}><Minus className="h-3 w-3" /></button>
           <span className="min-w-7 flex-1 text-center text-xs font-black text-slate-700">{quantity}</span>
-          <button onClick={() => changeQuantity(product.productId, 1)} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
+          <button onClick={() => changeQuantity(line.key, 1)} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
         </div>
         <div className="flex items-center justify-end gap-1">
           <strong className={`min-w-0 truncate text-right text-xs ${isGift ? 'text-rose-500' : 'text-slate-800'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
-          <button onClick={() => toggleGift(product.productId)} className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg transition ${isGift ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-rose-50 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`} title="赠送"><Gift className="h-3.5 w-3.5" /></button>
-          <button onClick={() => removeLine(product.productId)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={`删除 ${product.name}`} title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
+          <button onClick={() => toggleGift(line)} className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg transition ${isGift ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-rose-50 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`} title="赠送"><Gift className="h-3.5 w-3.5" /></button>
+          <button onClick={() => removeLine(line.key)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={`删除 ${product.name}`} title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
         </div>
       </div>
     )
@@ -333,14 +330,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         body: JSON.stringify({
           storeId,
           checkoutKey: key,
-          items: cartLines.flatMap((line) => {
-            const giftQty = Math.min(Number(giftMap[line.product.productId] || 0), line.quantity)
-            const normalQty = line.quantity - giftQty
-            const rows = []
-            if (normalQty > 0) rows.push({ productId: line.product.productId, quantity: normalQty, gift: false })
-            if (giftQty > 0) rows.push({ productId: line.product.productId, quantity: giftQty, gift: true })
-            return rows
-          }),
+          items: cartLines.map((line) => ({ productId: line.product.productId, quantity: line.quantity, gift: line.gift })),
           discountPercent,
           remark,
         }),
@@ -669,7 +659,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                   return (
                     <button
                       key={product.productId}
-                      onClick={() => changeQuantity(product.productId, 1)}
+                      onClick={() => changeQuantity(normalLineKey(product.productId), 1)}
                       className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop ? 'flex min-h-[82px] items-center rounded-lg p-2' : 'rounded-xl'}`}
                     >
                       <div className={isDesktop ? 'h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100' : 'aspect-square bg-slate-100'}>

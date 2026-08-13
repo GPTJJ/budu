@@ -27,9 +27,31 @@ export function changeCartQuantity(cart, productId, delta) {
   return next
 }
 
+/** 购物车行 key：同一商品可拆成收费行（::n）与赠送行（::g） */
+export const normalLineKey = (productId) => `${productId}::n`
+export const giftLineKey = (productId) => `${productId}::g`
+
+export function parseLineKey(key) {
+  const text = String(key || '')
+  const idx = text.lastIndexOf('::')
+  if (idx <= 0) return { productId: text, gift: false }
+  return { productId: text.slice(0, idx), gift: text.slice(idx + 2) === 'g' }
+}
+
+/** 兼容旧购物车格式：{ productId: 数量 } → { productId::n: 数量 } */
+export function migratePosCart(cart) {
+  const out = {}
+  for (const [key, quantity] of Object.entries(cart || {})) {
+    if (String(key).includes('::')) out[key] = quantity
+    else out[`${key}::n`] = quantity
+  }
+  return out
+}
+
 export function cartTotalCents(cart, products) {
   const byId = new Map((products || []).map((product) => [product.productId, product]))
-  return Object.entries(cart || {}).reduce((sum, [productId, quantity]) => {
+  return Object.entries(cart || {}).reduce((sum, [key, quantity]) => {
+    const { productId } = parseLineKey(key)
     const product = byId.get(productId)
     if (!product || !Number.isInteger(Number(quantity)) || Number(quantity) <= 0) return sum
     return sum + BigInt(product.salePriceCents) * BigInt(quantity)

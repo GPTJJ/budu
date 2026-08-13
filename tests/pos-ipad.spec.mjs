@@ -329,7 +329,8 @@ test('POS 赠送商品再次单点按正常价加入（不再整行赠送）', a
 
   await page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ }).first().click()
   await expect(page.getByText('合计 · 2 件', { exact: true })).toBeVisible()
-  await expect(page.getByText('¥72.00 赠1', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥0.00 赠送', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥72.00', { exact: true }).last()).toBeVisible()
 
   await page.getByRole('button', { name: '结算', exact: true }).click()
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
