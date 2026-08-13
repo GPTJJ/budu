@@ -75,7 +75,10 @@ function buildRows(employees, startDate, endDate) {
           hours: 0,
           basePay: 0,
           commission: 0,
+          transferSubsidy: 0,
           bigBonus: 0,
+          automaticPay: 0,
+          salaryAdjustment: 0,
           pay: 0,
         }
         summaryMap.set(emp.name, rec)
@@ -86,9 +89,12 @@ function buildRows(employees, startDate, endDate) {
       rec.hours += detail.totals.hours
       rec.basePay += detail.totals.basePay
       rec.commission += detail.totals.commission
+      rec.transferSubsidy += detail.totals.transferSubsidy
       rec.bigBonus += detail.totals.bigBonus
+      rec.automaticPay += detail.totals.automaticPay
+      rec.salaryAdjustment += detail.totals.salaryAdjustment
       rec.pay += detail.totals.pay
-      for (const row of detail.rows) {
+      for (const [rowIndex, row] of detail.rows.entries()) {
         rec.stores.add(row.storeName)
         detailRows.push({
           日期: date,
@@ -102,8 +108,12 @@ function buildRows(employees, startDate, endDate) {
           '基础工资(元)': r2(row.basePay),
           '提成时薪(元/h)': r2(row.commissionRate),
           '业绩提成(元)': r2(row.commission),
+          '调货补贴(元)': r2(row.transferSubsidy),
           '大单奖(元)': r2(row.bigBonus),
-          '当日工资(元)': r2(row.total),
+          '自动工资(元)': r2(row.total),
+          '薪资调整(元)': rowIndex === 0 ? r2(detail.totals.salaryAdjustment) : 0,
+          调整原因: rowIndex === 0 && detail.totals.payAdjustment ? detail.totals.payAdjustment.reason || '' : '',
+          '最终工资(元)': rowIndex === 0 ? r2(detail.totals.pay) : '',
         })
       }
     }
@@ -119,7 +129,10 @@ function buildRows(employees, startDate, endDate) {
     '工时(h)': r2(rec.hours),
     '基础工资(元)': r2(rec.basePay),
     '业绩提成(元)': r2(rec.commission),
+    '调货补贴(元)': r2(rec.transferSubsidy),
     '大单奖(元)': r2(rec.bigBonus),
+    '自动工资(元)': r2(rec.automaticPay),
+    '薪资调整(元)': r2(rec.salaryAdjustment),
     '工资合计(元)': r2(rec.pay),
   }))
   return { detailRows, summaryRows }

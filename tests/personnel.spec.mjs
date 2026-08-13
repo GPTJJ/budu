@@ -6,10 +6,13 @@ test('员工卡片工资明细下载为可读取的 Excel 表格', async ({ page
   await page.goto('/tests/personnel-harness.html')
   const employeeCard = page.locator('.card').filter({ hasText: '叶芷辰' }).first()
   await expect(employeeCard).toBeVisible()
+  await expect(employeeCard.getByText('薪资调整')).toBeVisible()
+  await expect(employeeCard.getByRole('button', { name: '调整每日薪资' })).toBeVisible()
   await employeeCard.click()
 
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByText(/叶芷辰 · 当月每日工资明细/)).toBeVisible()
+  await expect(dialog.getByText('临时加班补偿')).toBeVisible()
   await expect(dialog.getByRole('button', { name: '导出 Excel', exact: true })).toBeVisible()
 
   const downloadPromise = page.waitForEvent('download')
@@ -25,6 +28,54 @@ test('员工卡片工资明细下载为可读取的 Excel 表格', async ({ page
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets['工资明细'], { header: 1, raw: true })
   expect(rows[0][0]).toBe('BUDU 员工工资明细')
   expect(rows[1][1]).toBe('叶芷辰')
-  expect(rows[4]).toEqual(['日期', '值班门店', '营业额(元)', '订单', '工时(h)', '基础工资(元)', '业绩提成(元)', '大单奖(元)', '当日工资(元)'])
-  expect(rows.some((row) => row[0] === '09' && row[1] === '北京通盈中心店' && row[8] === 540)).toBe(true)
+  expect(rows[4]).toEqual(['日期', '值班门店', '营业额(元)', '订单', '工时(h)', '基础工资(元)', '业绩提成(元)', '调货补贴(元)', '大单奖(元)', '自动工资(元)', '薪资调整(元)', '调整原因', '最终工资(元)'])
+  expect(rows.some((row) => row[0] === '09' && row[1] === '北京通盈中心店' && row[9] === 540 && row[10] === 20 && row[11] === '临时加班补偿' && row[12] === 560)).toBe(true)
+})
+
+test('开发者可调整每日最终工资并提交审计明细', async ({ page }) => {
+  let submitted = null
+  await page.route('**/api/v2/daily-pay-adjustments', async (route) => {
+    submitted = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        adjustment: {
+          id: 'dpa-test',
+          staffName: '叶芷辰',
+          date: '2026-08-09',
+          autoPayCentsSnapshot: '54000',
+          adjustedPayCents: '57000',
+          reason: '闭店加班补偿',
+          createdBy: 'developer',
+          updatedBy: 'developer',
+          createdAt: '2026-08-10T01:00:00.000Z',
+          updatedAt: '2026-08-13T15:00:00.000Z',
+          version: 2,
+        },
+      }),
+    })
+  })
+
+  await page.goto('/tests/personnel-harness.html')
+  const employeeCard = page.locator('.card').filter({ hasText: '叶芷辰' }).first()
+  await employeeCard.getByRole('button', { name: '调整每日薪资' }).click()
+  const dialog = page.getByRole('dialog', { name: '调整每日薪资' })
+  await expect(dialog).toBeVisible()
+  await dialog.locator('input[type="date"]').fill('2026-08-09')
+  await expect(dialog.getByText('当前人工调整明细')).toBeVisible()
+  await dialog.locator('input[type="number"]').fill('570')
+  await dialog.locator('textarea').fill('闭店加班补偿')
+  await dialog.getByRole('button', { name: '更新调整' }).click()
+
+  await expect(dialog.getByText('当日工资已调整并生效')).toBeVisible()
+  expect(submitted).toEqual({
+    staffName: '叶芷辰',
+    date: '2026-08-09',
+    autoPayCentsSnapshot: 54000,
+    adjustedPayCents: 57000,
+    reason: '闭店加班补偿',
+    version: 1,
+  })
 })

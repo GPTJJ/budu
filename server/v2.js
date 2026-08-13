@@ -200,6 +200,63 @@ function serializeBigBonus(r) {
   }
 }
 
+function serializeDailyPayAdjustment(r) {
+  return {
+    id: r.id,
+    staffName: r.staffName,
+    date: isoDate(r.date),
+    autoPayCentsSnapshot: r.autoPayCentsSnapshot.toString(),
+    adjustedPayCents: r.adjustedPayCents.toString(),
+    reason: r.reason,
+    active: r.active,
+    createdBy: r.createdBy,
+    updatedBy: r.updatedBy,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    version: r.version,
+  }
+}
+
+function dailyPayAdjustmentAuditValue(r) {
+  if (!r) return null
+  return {
+    autoPayCentsSnapshot: r.autoPayCentsSnapshot.toString(),
+    adjustedPayCents: r.adjustedPayCents.toString(),
+    reason: r.reason,
+    active: r.active,
+    version: r.version,
+  }
+}
+
+function staffNameFromAccount(user) {
+  if (!user || user.role !== 'staff' || !user.staffKey) return ''
+  const parts = String(user.staffKey).split('::')
+  return parts.length > 1 ? parts.slice(1).join('::') : ''
+}
+
+async function scopeDailyPayAdjustments(rows, user) {
+  if (user?.role === 'developer') return rows
+  if (!user || user.role === 'public') return []
+  const ownName = staffNameFromAccount(user)
+  if (user.role === 'staff' && !ownName) return []
+  const allowedStores = new Set(Array.isArray(user.storeKeys) ? user.storeKeys : [])
+  if (allowedStores.size === 0 || rows.length === 0) return []
+
+  const dates = [...new Map(rows.map((row) => [isoDate(row.date), row.date])).values()]
+  const entries = await prisma.dailyEntry.findMany({
+    where: { date: { in: dates } },
+    select: { storeKey: true, date: true, staffNames: true },
+  })
+  return rows.filter((row) => {
+    if (user.role === 'staff' && row.staffName !== ownName) return false
+    const date = isoDate(row.date)
+    const duties = entries.filter(
+      (entry) => isoDate(entry.date) === date && Array.isArray(entry.staffNames) && entry.staffNames.includes(row.staffName),
+    )
+    return duties.length > 0 && duties.every((entry) => allowedStores.has(entry.storeKey))
+  })
+}
+
 function storeFilter(user) {
   if (user.role === 'developer' || user.role === 'public') return null
   return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
@@ -348,7 +405,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   if (existing?.status === 'confirmed' && !['developer', 'manager'].includes(req.user.role)) {
     throw bad('日报已确认，普通员工不可修改', 409)
   }
-  if (existing && version != null && existing.version !== Number(version)) {
+  if (existing && ((existing.active && version == null) || (version != null && existing.version !== Number(version)))) {
     return res.status(409).json({
       error: '数据已被他人修改，已加载最新数据',
       latest: {
@@ -1304,6 +1361,147 @@ v2Router.delete('/big-bonuses/:id', wrap(async (req, res) => {
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.bigOrderBonus.delete({ where: { id: row.id } })
+  res.json({ ok: true })
+}))
+
+// ---------- 每日薪资人工调整（仅开发者可写） ----------
+v2Router.get('/daily-pay-adjustments', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!req.user || req.user.role === 'public') throw bad('无权限', 403)
+  const month = String(req.query.month || '')
+  const staffName = String(req.query.staffName || '').trim()
+  const where = { active: true }
+  if (staffName) where.staffName = staffName.slice(0, 50)
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    const [year, monthNumber] = month.split('-').map(Number)
+    where.date = {
+      gte: new Date(Date.UTC(year, monthNumber - 1, 1)),
+      lt: new Date(Date.UTC(year, monthNumber, 1)),
+    }
+  }
+  const rows = await prisma.dailyPayAdjustment.findMany({
+    where,
+    orderBy: [{ date: 'desc' }, { staffName: 'asc' }],
+    take: 2000,
+  })
+  const scoped = await scopeDailyPayAdjustments(rows, req.user)
+  res.json({ rows: scoped.map(serializeDailyPayAdjustment) })
+}))
+
+v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user?.role !== 'developer') throw bad('仅开发者可调整每日薪资', 403)
+  const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version } = req.body || {}
+  const name = String(staffName || '').trim()
+  if (!name || name.length > 50) throw bad('员工姓名不正确')
+  const d = dateOnly(date)
+  const autoCents = Number(autoPayCentsSnapshot)
+  const adjustedCents = Number(adjustedPayCents)
+  if (!Number.isInteger(autoCents) || autoCents < 0 || autoCents > 999999999) {
+    throw bad('自动工资金额不正确（单位：分）')
+  }
+  if (!Number.isInteger(adjustedCents) || adjustedCents < 0 || adjustedCents > 999999999) {
+    throw bad('调整后工资金额不正确（单位：分）')
+  }
+  const reasonText = String(reason || '').trim()
+  if (!reasonText || reasonText.length > 200) throw bad('请填写 1-200 字的调整原因')
+
+  const duties = await prisma.dailyEntry.findMany({ where: { date: d }, select: { staffNames: true } })
+  const hasDuty = duties.some((entry) => Array.isArray(entry.staffNames) && entry.staffNames.includes(name))
+  if (!hasDuty) throw bad('该员工当天没有可识别的值班记录，无法调整工资', 409)
+
+  const key = { staffName: name, date: d }
+  const existing = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: key } })
+  if (existing && version != null && existing.version !== Number(version)) {
+    return res.status(409).json({
+      error: '该工资调整已被其他开发者修改，请刷新后重试',
+      latest: serializeDailyPayAdjustment(existing),
+    })
+  }
+  const base = {
+    autoPayCentsSnapshot: BigInt(autoCents),
+    adjustedPayCents: BigInt(adjustedCents),
+    reason: reasonText,
+    active: true,
+    updatedBy: req.user.username,
+  }
+  let saved
+  try {
+    saved = await prisma.$transaction(async (tx) => {
+      let row
+      if (existing) {
+        const updated = await tx.dailyPayAdjustment.updateMany({
+          where: { id: existing.id, version: existing.version },
+          data: { ...base, version: { increment: 1 } },
+        })
+        if (updated.count !== 1) throw bad('该工资调整已被其他开发者修改，请刷新后重试', 409)
+        row = await tx.dailyPayAdjustment.findUnique({ where: { id: existing.id } })
+      } else {
+        row = await tx.dailyPayAdjustment.create({
+          data: {
+            id: uid('dpa'),
+            staffName: name,
+            date: d,
+            ...base,
+            createdBy: req.user.username,
+          },
+        })
+      }
+      await tx.dailyPayAdjustmentAuditLog.create({
+        data: {
+          id: uid('dpa-audit'),
+          adjustmentId: row.id,
+          staffName: row.staffName,
+          date: row.date,
+          action: existing ? 'updated' : 'created',
+          beforeValue: existing ? dailyPayAdjustmentAuditValue(existing) : undefined,
+          afterValue: dailyPayAdjustmentAuditValue(row),
+          operatorName: req.user.username,
+        },
+      })
+      return row
+    })
+  } catch (err) {
+    if (err?.code === 'P2002') throw bad('该员工当天已有工资调整，请刷新后重试', 409)
+    throw err
+  }
+  res.json({ ok: true, adjustment: serializeDailyPayAdjustment(saved) })
+}))
+
+v2Router.delete('/daily-pay-adjustments/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user?.role !== 'developer') throw bad('仅开发者可恢复自动工资', 403)
+  const existing = await prisma.dailyPayAdjustment.findUnique({ where: { id: req.params.id } })
+  if (!existing) throw bad('工资调整记录不存在', 404)
+  const version = req.body?.version
+  if (version == null || existing.version !== Number(version)) {
+    return res.status(409).json({
+      error: '该工资调整已被其他开发者修改，请刷新后重试',
+      latest: serializeDailyPayAdjustment(existing),
+    })
+  }
+  if (existing.active) {
+    await prisma.$transaction(async (tx) => {
+      const restoredResult = await tx.dailyPayAdjustment.updateMany({
+        where: { id: existing.id, version: existing.version, active: true },
+        data: { active: false, updatedBy: req.user.username, version: { increment: 1 } },
+      })
+      if (restoredResult.count !== 1) throw bad('该工资调整已被其他开发者修改，请刷新后重试', 409)
+      const restored = await tx.dailyPayAdjustment.findUnique({ where: { id: existing.id } })
+      await tx.dailyPayAdjustmentAuditLog.create({
+        data: {
+          id: uid('dpa-audit'),
+          adjustmentId: existing.id,
+          staffName: existing.staffName,
+          date: existing.date,
+          action: 'restored_auto',
+          beforeValue: dailyPayAdjustmentAuditValue(existing),
+          afterValue: dailyPayAdjustmentAuditValue(restored),
+          operatorName: req.user.username,
+        },
+      })
+    })
+  }
   res.json({ ok: true })
 }))
 

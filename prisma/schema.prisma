@@ -475,6 +475,41 @@ model BigOrderBonus {
   @@index([storeKey, createdAt])
 }
 
+model DailyPayAdjustment {
+  id                   String   @id
+  staffName            String   @map("staff_name")
+  date                 DateTime @db.Date
+  autoPayCentsSnapshot BigInt   @default(0) @map("auto_pay_cents_snapshot")
+  adjustedPayCents     BigInt   @default(0) @map("adjusted_pay_cents")
+  reason               String   @default("")
+  active               Boolean  @default(true)
+  createdBy            String   @default("") @map("created_by")
+  updatedBy            String   @default("") @map("updated_by")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+  version              Int      @default(1)
+
+  @@unique([staffName, date])
+  @@index([date])
+  @@map("daily_pay_adjustments")
+}
+
+model DailyPayAdjustmentAuditLog {
+  id             String   @id
+  adjustmentId   String   @map("adjustment_id")
+  staffName      String   @map("staff_name")
+  date           DateTime @db.Date
+  action         String
+  beforeValue    Json?    @map("before_value")
+  afterValue     Json?    @map("after_value")
+  operatorName   String   @default("") @map("operator_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([adjustmentId, createdAt])
+  @@index([staffName, date])
+  @@map("daily_pay_adjustment_audit_logs")
+}
+
 model MemberConsumption {
   id          String   @id
   memberId    String

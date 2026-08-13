@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx'
 
-const PAY_NOTE = '基础工资=基础时薪×工时；提成=提成时薪×工时；调货补贴=2026-08-01起官舍值班工时×2元；大单奖=订单金额×5%；当日工资=基础工资+提成+调货补贴+大单奖；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计0。'
+const PAY_NOTE = '自动工资=基础工资+提成+调货补贴+大单奖；调货补贴=2026-08-01起官舍值班工时×2元；如开发者调整当日工资，则最终工资以调整金额为准并显示差额、原因；未调整时最终工资等于自动工资；1人值班按门店标准工时，2人及以上各8h；节假日/调休按2026年规则计算；未录入日期计0。'
 
 function money(value) {
   return Math.round((Number(value) || 0) * 100) / 100
@@ -23,7 +23,7 @@ function applyNumberFormat(sheet, range, columns, format) {
 }
 
 export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, totals }) {
-  const header = ['日期', '值班门店', '营业额(元)', '订单', '工时(h)', '基础工资(元)', '业绩提成(元)', '调货补贴(元)', '大单奖(元)', '当日工资(元)']
+  const header = ['日期', '值班门店', '营业额(元)', '订单', '工时(h)', '基础工资(元)', '业绩提成(元)', '调货补贴(元)', '大单奖(元)', '自动工资(元)', '薪资调整(元)', '调整原因', '最终工资(元)']
   const detailRows = dayRows.map((row) => [
     row.day,
     row.stores || '',
@@ -34,6 +34,9 @@ export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, 
     money(row.commission),
     money(row.transferSubsidy),
     money(row.bigBonus),
+    money(row.automaticPay),
+    money(row.salaryAdjustment),
+    row.payAdjustment ? row.payAdjustment.reason : '',
     money(row.pay),
   ])
   const totalRow = [
@@ -46,6 +49,9 @@ export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, 
     money(totals.commission),
     money(totals.transferSubsidy),
     money(totals.bigBonus),
+    money(totals.automaticPay),
+    money(totals.salaryAdjustment),
+    '',
     money(totals.pay),
   ]
   const sheet = XLSX.utils.aoa_to_sheet([
@@ -65,14 +71,15 @@ export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, 
   sheet['!cols'] = [
     { wch: 13 }, { wch: 24 }, { wch: 13 }, { wch: 10 }, { wch: 10 },
     { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
+    { wch: 14 }, { wch: 28 }, { wch: 14 },
   ]
   sheet['!rows'] = [{ hpt: 26 }, { hpt: 20 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }]
   sheet['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
-    { s: { r: totalRowIndex + 2, c: 1 }, e: { r: totalRowIndex + 2, c: 9 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } },
+    { s: { r: totalRowIndex + 2, c: 1 }, e: { r: totalRowIndex + 2, c: header.length - 1 } },
   ]
-  sheet['!autofilter'] = { ref: `A${headerRow + 1}:J${totalRowIndex + 1}` }
-  applyNumberFormat(sheet, tableRange, [2, 5, 6, 7, 8, 9], '¥#,##0.00')
+  sheet['!autofilter'] = { ref: `A${headerRow + 1}:${XLSX.utils.encode_col(header.length - 1)}${totalRowIndex + 1}` }
+  applyNumberFormat(sheet, tableRange, [2, 5, 6, 7, 8, 9, 10, 12], '¥#,##0.00')
   applyNumberFormat(sheet, tableRange, [3, 4], '0.00')
 
   const workbook = XLSX.utils.book_new()

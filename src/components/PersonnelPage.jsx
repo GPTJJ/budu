@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Award, CalendarDays, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Award, BadgeDollarSign, CalendarDays, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
+import DailyPayAdjustmentModal from './DailyPayAdjustmentModal'
 import ExportSalaryModal from './ExportSalaryModal'
 import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
@@ -49,6 +50,11 @@ function Stat({ label, value, accent, className = '' }) {
       <p className={`mt-0.5 text-sm font-bold tabular-nums ${accent || 'text-slate-700'}`}>{value}</p>
     </div>
   )
+}
+
+function signedMoney(value) {
+  const amount = Number(value) || 0
+  return `${amount >= 0 ? '+' : '-'}¥${formatMoney(Math.abs(amount))}`
 }
 
 const inputCls = 'input'
@@ -314,6 +320,9 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
       commission: detail ? detail.totals.commission : 0,
       transferSubsidy: detail ? detail.totals.transferSubsidy : 0,
       bigBonus: detail ? detail.totals.bigBonus : 0,
+      automaticPay: detail ? detail.totals.automaticPay : 0,
+      salaryAdjustment: detail ? detail.totals.salaryAdjustment : 0,
+      payAdjustment: detail ? detail.totals.payAdjustment : null,
       pay: detail ? detail.totals.pay : 0,
       hasData: Boolean(detail),
       stores: detail ? detail.rows.map((r) => r.storeName).join('、') : '',
@@ -338,9 +347,11 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
       commission: s.commission + r.commission,
       transferSubsidy: s.transferSubsidy + r.transferSubsidy,
       bigBonus: s.bigBonus + r.bigBonus,
+      automaticPay: s.automaticPay + r.automaticPay,
+      salaryAdjustment: s.salaryAdjustment + r.salaryAdjustment,
       pay: s.pay + r.pay,
     }),
-    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, pay: 0 },
+    { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 0, salaryAdjustment: 0, pay: 0 },
   )
 
   const download = () => {
@@ -375,7 +386,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
         ) : (
           <>
             <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[680px] text-left text-sm">
+              <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
                     <th className="py-2 pr-2">{t('日期')}</th>
@@ -386,6 +397,8 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                     <th className="py-2 pr-2 text-right">{t('提成')}</th>
                     <th className="py-2 pr-2 text-right">{t('调货补贴')}</th>
                     <th className="py-2 pr-2 text-right">{t('大单奖')}</th>
+                    <th className="py-2 pr-2 text-right">{t('自动工资')}</th>
+                    <th className="py-2 pr-2 text-right">{t('薪资调整')}</th>
                     <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
                   </tr>
                 </thead>
@@ -395,6 +408,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                       <td className="py-1.5 pr-2 font-semibold text-slate-700">
                         {r.day}
                         {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
+                        {r.payAdjustment && <span className="ml-1 rounded bg-violet-50 px-1 py-0.5 text-[9px] text-violet-600">{t('已调整')}</span>}
                       </td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.revenue.toFixed(2)}` : '—'}</td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? r.orders : '—'}</td>
@@ -406,6 +420,10 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                       </td>
                       <td className="py-1.5 pr-2 text-right tabular-nums">
                         {r.hasData && r.bigBonus > 0 ? `¥${r.bigBonus.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.automaticPay.toFixed(2)}` : '—'}</td>
+                      <td className={`py-1.5 pr-2 text-right tabular-nums ${r.payAdjustment ? 'font-semibold text-violet-600' : ''}`}>
+                        {r.payAdjustment ? signedMoney(r.salaryAdjustment) : '—'}
                       </td>
                       <td className="py-1.5 pr-2 text-right font-bold tabular-nums text-budu-600">
                         {r.hasData ? `¥${r.pay.toFixed(2)}` : '—'}
@@ -421,11 +439,31 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-emerald-600">¥{totals.transferSubsidy.toFixed(2)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.bigBonus.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.automaticPay.toFixed(2)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-violet-600">{signedMoney(totals.salaryAdjustment)}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            {dayRows.some((row) => row.payAdjustment) && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-bold text-slate-600">{t('人工调整明细')}</p>
+                {dayRows.filter((row) => row.payAdjustment).map((row) => (
+                  <div key={`adjustment-${row.day}`} className="rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-xs text-violet-700">
+                    <p className="font-semibold">
+                      {row.day} · {t('自动 ¥{auto} → 最终 ¥{final}（差额 {difference}）', {
+                        auto: row.payAdjustment.autoPaySnapshot.toFixed(2),
+                        final: row.payAdjustment.adjustedPay.toFixed(2),
+                        difference: signedMoney(row.payAdjustment.recordedDifference),
+                      })}
+                    </p>
+                    <p className="mt-1 break-words">{t('原因')}：{row.payAdjustment.reason}</p>
+                    <p className="mt-1 text-violet-400">{t('操作人')}：{row.payAdjustment.updatedBy || row.payAdjustment.createdBy || '—'} · {row.payAdjustment.updatedAt ? new Date(row.payAdjustment.updatedAt).toLocaleString('zh-CN') : '—'}</p>
+                  </div>
+                ))}
+              </div>
+            )}
             <button
               onClick={download}
               className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
@@ -453,6 +491,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const [pendingDelete, setPendingDelete] = useState(null)
   const [showSecondPwd, setShowSecondPwd] = useState(false)
   const [bigBonusEmp, setBigBonusEmp] = useState(null)
+  const [adjustmentEmp, setAdjustmentEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
   const [showExport, setShowExport] = useState(false)
   const [syncTick, setSyncTick] = useState(0)
@@ -634,6 +673,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               const periodBase = onDuty ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
               const periodTransfer = onDuty ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
               const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
+              const periodAdjustment = onDuty ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
+              const periodAdjustmentCount = onDuty ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
               const periodRevenue = onDuty ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
               const periodWorkedDays = weekStart
@@ -735,6 +776,14 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       accent="text-emerald-600"
                       className="col-span-2"
                     />
+                    {periodAdjustmentCount > 0 && (
+                      <Stat
+                        label={t('薪资调整')}
+                        value={hidePersonal ? '•••' : signedMoney(periodAdjustment)}
+                        accent="text-violet-600"
+                        className="col-span-2"
+                      />
+                    )}
                   </div>
 
                   <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
@@ -752,6 +801,19 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     >
                       <Award className="h-3.5 w-3.5" />
                       {t('大单奖')}
+                    </button>
+                  )}
+
+                  {user?.role === 'developer' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setAdjustmentEmp(emp)
+                      }}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:shadow active:scale-95"
+                    >
+                      <BadgeDollarSign className="h-3.5 w-3.5" />
+                      {t('调整每日薪资')}
                     </button>
                   )}
 
@@ -863,6 +925,14 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         />
       )}
       {bigBonusEmp && <BigBonusModal emp={bigBonusEmp} currentUser={user} onClose={() => setBigBonusEmp(null)} />}
+      {adjustmentEmp && (
+        <DailyPayAdjustmentModal
+          emp={adjustmentEmp}
+          initialDate={day ? `${month}-${day.slice(3)}` : weekStart || (month === todayParts().month ? `${month}-${todayParts().day.slice(3)}` : `${month}-01`)}
+          onClose={() => setAdjustmentEmp(null)}
+          onSaved={() => setSyncTick((value) => value + 1)}
+        />
+      )}
     </div>
   )
 }

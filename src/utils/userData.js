@@ -58,6 +58,7 @@ function writeMirror() {
 export async function loadUserData() {
   const data = await api('/userdata').catch(() => null)
   if (!data || typeof data !== 'object') return
+  const previousMirror = readMirror()
   cached = {
     entries: data.entries || {},
     staff: Array.isArray(data.staff) ? data.staff : [],
@@ -70,6 +71,7 @@ export async function loadUserData() {
     inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
     bigBonuses: [],
+    dailyPayAdjustments: Array.isArray(previousMirror?.dailyPayAdjustments) ? previousMirror.dailyPayAdjustments : [],
     posDaily: [],
     posProductSales: [],
   }
@@ -91,6 +93,24 @@ export async function loadUserData() {
     }
   } catch {
     /* v2 不可用时回退 KV */
+  }
+  try {
+    const adjustments = await api('/v2/daily-pay-adjustments')
+    cached.dailyPayAdjustments = ((adjustments && adjustments.rows) || []).map((row) => ({
+      id: row.id,
+      staffName: row.staffName,
+      date: String(row.date || '').slice(0, 10),
+      autoPayCentsSnapshot: Number(row.autoPayCentsSnapshot) || 0,
+      adjustedPayCents: Number(row.adjustedPayCents) || 0,
+      reason: row.reason || '',
+      createdBy: row.createdBy || '',
+      updatedBy: row.updatedBy || '',
+      createdAt: row.createdAt || '',
+      updatedAt: row.updatedAt || '',
+      version: Number(row.version) || 1,
+    }))
+  } catch {
+    cached.dailyPayAdjustments = Array.isArray(cached.dailyPayAdjustments) ? cached.dailyPayAdjustments : []
   }
   try {
     const [posDaily, posProductSales] = await Promise.all([
@@ -213,11 +233,12 @@ export function getUserData() {
       inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
       inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
       bigBonuses: Array.isArray(mirror.bigBonuses) ? mirror.bigBonuses : [],
+      dailyPayAdjustments: Array.isArray(mirror.dailyPayAdjustments) ? mirror.dailyPayAdjustments : [],
       posDaily: Array.isArray(mirror.posDaily) ? mirror.posDaily : [],
       posProductSales: Array.isArray(mirror.posProductSales) ? mirror.posProductSales : [],
     }
   }
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], posDaily: [], posProductSales: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] }
 }
 
 export function getEntries() {
@@ -358,6 +379,26 @@ export function getInventoryRequests() {
 export function getBigBonuses() {
   const r = getUserData().bigBonuses
   return Array.isArray(r) ? r : []
+}
+
+export function getDailyPayAdjustments() {
+  const rows = getUserData().dailyPayAdjustments
+  return Array.isArray(rows) ? rows : []
+}
+
+/** 仅更新 PostgreSQL 权威数据的本地镜像，不写入 KV userdata。 */
+export function replaceDailyPayAdjustments(rows) {
+  getUserData().dailyPayAdjustments = Array.isArray(rows) ? rows : []
+  writeMirror()
+}
+
+export function upsertDailyPayAdjustment(row) {
+  const rows = getDailyPayAdjustments().filter((item) => item.id !== row.id)
+  replaceDailyPayAdjustments([...rows, row])
+}
+
+export function removeDailyPayAdjustment(id) {
+  replaceDailyPayAdjustments(getDailyPayAdjustments().filter((row) => row.id !== id))
 }
 
 export function commitInventoryRequests(requests) {

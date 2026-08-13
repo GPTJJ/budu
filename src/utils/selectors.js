@@ -10,6 +10,7 @@ import {
   getStores,
   getProducts,
   getBigBonuses,
+  getDailyPayAdjustments,
   getUserData,
 } from './userData.js'
 import { formatMoney } from './format.js'
@@ -17,6 +18,7 @@ import { en, interpolate } from '../locales'
 import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
 import { APP_VERSION } from '../version'
 import { posDailyMetrics } from './posDaily.js'
+import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -50,6 +52,18 @@ export function bigBonusYuanMonth(name, monthKey) {
     .filter((r) => String(r.date || '').startsWith(monthKey))
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
   return Math.round((cents / 100) * 100) / 100
+}
+
+function dailyPayAdjustmentOn(name, dateStr) {
+  const rows = getDailyPayAdjustments()
+  return Array.isArray(rows)
+    ? rows.find((row) => row.staffName === name && String(row.date || '') === dateStr) || null
+    : null
+}
+
+function applyDailyPayAdjustment(name, dateStr, automaticPay) {
+  const adjustment = dailyPayAdjustmentOn(name, dateStr)
+  return applyDailyPayOverride(automaticPay, adjustment)
 }
 
 export function customStores() {
@@ -445,6 +459,27 @@ export function removeStaff(name) {
   commitRemovedStaff([...getRemovedStaff().filter((n) => n !== name), name])
 }
 
+function monthPayAdjustmentSummary(name, monthKey) {
+  const rows = getDailyPayAdjustments().filter(
+    (row) => row.staffName === name && String(row.date || '').startsWith(monthKey),
+  )
+  let delta = 0
+  const details = []
+  for (const row of rows) {
+    const date = String(row.date || '')
+    const automatic = automaticEmployeeDayStatus(date.slice(0, 7), date.slice(5), name)
+    if (!automatic) continue
+    const applied = applyDailyPayAdjustment(name, date, automatic.pay)
+    delta += applied.salaryAdjustment
+    details.push({ date, ...applied })
+  }
+  return {
+    delta: Math.round(delta * 100) / 100,
+    count: details.length,
+    details,
+  }
+}
+
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
   const removed = new Set(getRemovedStaff())
@@ -492,18 +527,24 @@ export function employeeList(storeKey, monthKey = null) {
       list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
       list = list.map((e) => {
         const pr = payroll.get(e.name)
+        const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey) : 0
+        const automaticSalary = pr ? Math.round((pr.salary + bigBonus) * 100) / 100 : 0
+        const adjustments = pr ? monthPayAdjustmentSummary(e.name, monthKey) : { delta: 0, count: 0, details: [] }
         return {
           ...e,
           workedDays: pr ? pr.workedDays : 0,
           workedRevenue: pr ? pr.workedRevenue : 0,
           orders: pr ? pr.orders : 0,
           hours: pr ? pr.hours : 0,
-  salary: pr ? pr.salary + (isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey)) : 0,
+          automaticSalary,
+          salaryAdjustment: adjustments.delta,
+          adjustmentCount: adjustments.count,
+          salary: Math.round((automaticSalary + adjustments.delta) * 100) / 100,
           basePay: pr ? pr.basePay : 0,
           commission: pr ? pr.commission : 0,
           transferSubsidy: pr ? pr.transferSubsidy : 0,
           perf: pr ? pr.commission : 0,
-  big: isNoPayStaff(e.name) ? 0 : bigBonusYuanMonth(e.name, monthKey),
+          big: bigBonus,
           payrollComputed: true,
         }
       })
@@ -576,13 +617,13 @@ export function entryEmployeePerformance(storeKey = 'all', monthKey = null) {
       map.set(name, rec)
     }
   }
-  const infoMap = new Map(employeeList('all').map((e) => [e.name, e]))
+  const infoMap = new Map(employeeList('all', hasPayroll ? monthKey : null).map((e) => [e.name, e]))
   return [...map.values()]
     .map((e) => {
       const info = infoMap.get(e.name)
       const pr = payrollMap.get(e.name)
-      const salary = hasPayroll ? (pr ? pr.salary : 0) : info ? info.salary || 0 : 0
-      const hours = hasPayroll ? (pr ? pr.hours : 0) : info ? (info.baseHours || 0) + (info.otHours || 0) : 0
+      const salary = hasPayroll ? (info ? info.salary || 0 : 0) : info ? info.salary || 0 : 0
+      const hours = hasPayroll ? (info ? info.hours || 0 : 0) : info ? (info.baseHours || 0) + (info.otHours || 0) : 0
       return {
         ...e,
         workedDays: hasPayroll ? (pr ? pr.workedDays : 0) : e.workedDays,
@@ -834,8 +875,8 @@ export function storeDetails(storeKey) {
 export function employeesByType(type, monthKey = null) {
   return employeeList('all', monthKey).filter((e) => e.type === type)
 }
-/** 员工在所选日期的值班业绩（本地录入按值班人数均摊） */
-export function employeeDayStatus(monthKey, day, name) {
+/** 不含人工覆盖的员工当日自动工资，供日/周/月统一计算。 */
+function automaticEmployeeDayStatus(monthKey, day, name) {
   if (!day) return null
   const entries = localEntries()
   const noPay = isNoPayStaff(name)
@@ -871,6 +912,7 @@ export function employeeDayStatus(monthKey, day, name) {
     stores.push(storeKey)
   }
   if (count === 0) return null
+  const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
   return {
     inc: Math.round(inc * 100) / 100,
     ord: Math.round(ord * 100) / 100,
@@ -880,8 +922,16 @@ export function employeeDayStatus(monthKey, day, name) {
     commission: Math.round(commission * 100) / 100,
     transferSubsidy: Math.round(transferSubsidy * 100) / 100,
     bigBonus,
-    pay: Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100,
+    pay: automaticPay,
   }
+}
+
+/** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。 */
+export function employeeDayStatus(monthKey, day, name) {
+  const automatic = automaticEmployeeDayStatus(monthKey, day, name)
+  if (!automatic) return null
+  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automatic.pay)
+  return { ...automatic, ...applied }
 }
 
 /** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载 */
@@ -965,6 +1015,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       row.bigBonus = 0
       row.total = 0
     }
+    const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), 0)
     return {
       rows,
       totals: {
@@ -975,10 +1026,12 @@ export function employeeDailyPayDetail(monthKey, day, name) {
         commission: 0,
         transferSubsidy: 0,
         bigBonus: 0,
-        pay: 0,
+        ...applied,
       },
     }
   }
+  const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
+  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay)
   return {
     rows,
     totals: {
@@ -989,7 +1042,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       commission: Math.round(commission * 100) / 100,
       transferSubsidy: Math.round(transferSubsidy * 100) / 100,
       bigBonus,
-      pay: Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100,
+      ...applied,
     },
   }
 }
@@ -1002,6 +1055,9 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   let commission = 0
   let transferSubsidy = 0
   let bigBonus = 0
+  let automaticPay = 0
+  let salaryAdjustment = 0
+  let adjustmentCount = 0
   let inc = 0
   let ord = 0
   const stores = new Set()
@@ -1016,6 +1072,9 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     commission += st.commission
     transferSubsidy += st.transferSubsidy || 0
     bigBonus += st.bigBonus || 0
+    automaticPay += st.automaticPay ?? st.pay
+    salaryAdjustment += st.salaryAdjustment || 0
+    if (st.payAdjustment) adjustmentCount += 1
     inc += st.inc
     ord += st.ord
     ;(st.stores || []).forEach((s) => stores.add(s))
@@ -1029,7 +1088,10 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     commission: r2(commission),
     transferSubsidy: r2(transferSubsidy),
     bigBonus: r2(bigBonus),
-    pay: r2(basePay + commission + transferSubsidy + bigBonus),
+    automaticPay: r2(automaticPay),
+    salaryAdjustment: r2(salaryAdjustment),
+    adjustmentCount,
+    pay: r2(automaticPay + salaryAdjustment),
     inc: r2(inc),
     ord: r2(ord),
     stores: [...stores],
