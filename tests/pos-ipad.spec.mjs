@@ -76,9 +76,31 @@ test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async 
   expect(layout.cart.width).toBeGreaterThanOrEqual(390)
   expect(layout.catalog.width).toBeGreaterThan(layout.cart.width)
 
+  const productGrid = await page.locator('[data-testid="pos-product-grid"]').evaluate((grid) => {
+    const cards = [...grid.querySelectorAll('[data-testid="pos-product-card"]')].slice(0, 4)
+    const cardRects = cards.map((card) => card.getBoundingClientRect().toJSON())
+    const longName = grid.querySelector('[data-product-id="p-4"] [data-testid="pos-product-name"]')
+    const longNameRect = longName.getBoundingClientRect()
+    return {
+      columns: getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length,
+      cardRects,
+      longNameHeight: longNameRect.height,
+      longNameClientHeight: longName.clientHeight,
+      longNameScrollHeight: longName.scrollHeight,
+    }
+  })
+  expect(productGrid.columns).toBe(3)
+  expect(productGrid.cardRects).toHaveLength(4)
+  expect(productGrid.cardRects[0].y).toBeCloseTo(productGrid.cardRects[1].y, 0)
+  expect(productGrid.cardRects[1].y).toBeCloseTo(productGrid.cardRects[2].y, 0)
+  expect(productGrid.cardRects[3].y).toBeGreaterThan(productGrid.cardRects[0].bottom)
+  expect(productGrid.longNameHeight).toBeGreaterThan(30)
+  expect(productGrid.longNameScrollHeight).toBeLessThanOrEqual(productGrid.longNameClientHeight + 1)
+
   const product = page.locator('main').getByRole('button', { name: /卡皮巴拉布丁/ })
   const productBox = await product.boundingBox()
-  expect(productBox.height).toBeLessThanOrEqual(100)
+  expect(productBox.height).toBeGreaterThanOrEqual(94)
+  expect(productBox.height).toBeLessThanOrEqual(120)
   for (let i = 0; i < 30; i += 1) await product.click()
   await expect(page.getByText('合计 · 30 件', { exact: true })).toBeVisible()
   await expect(page.getByText('¥2,160.00', { exact: true }).last()).toBeVisible()
@@ -98,6 +120,12 @@ test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async 
   page.on('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: '清空', exact: true }).click()
   await expect(page.getByText('合计 · 0 件', { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 768, height: 1024 })
+  await expect.poll(() => page.locator('[data-testid="pos-product-grid"]').evaluate((grid) => (
+    getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length
+  ))).toBe(3)
+  await expect(page.locator('[data-product-id="p-4"] [data-testid="pos-product-name"]')).toBeVisible()
 })
 
 test('待支付、模拟支付和成功页刷新恢复', async ({ page }) => {

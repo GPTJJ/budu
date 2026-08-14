@@ -28,6 +28,13 @@ const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现�
 const PRODUCTS_CACHE_TTL = 60 * 1000
 const productsCacheKey = (userId) => `budu-pos-products:${userId}`
 
+function isIpadViewport() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  const userAgent = navigator.userAgent || ''
+  const ipadDevice = /iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1)
+  return ipadDevice && window.innerWidth >= 768 && window.innerWidth <= 1366
+}
+
 function parseDiscountPercent(value) {
   const num = Number(String(value ?? '').trim())
   if (!Number.isFinite(num) || num < 0.1 || num > 10) return 100
@@ -72,6 +79,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       ? window.matchMedia('(min-width: 1024px)').matches
       : true
   ))
+  const [isIpad, setIsIpad] = useState(isIpadViewport)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -80,6 +88,17 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     mq.addEventListener?.('change', onChange)
     setIsDesktop(mq.matches)
     return () => mq.removeEventListener?.('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    const updateIpadViewport = () => setIsIpad(isIpadViewport())
+    window.addEventListener('resize', updateIpadViewport)
+    window.addEventListener('orientationchange', updateIpadViewport)
+    updateIpadViewport()
+    return () => {
+      window.removeEventListener('resize', updateIpadViewport)
+      window.removeEventListener('orientationchange', updateIpadViewport)
+    }
   }, [])
 
   useEffect(() => {
@@ -652,21 +671,27 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 </div>
               </div>
             ) : (
-              <div className={`grid gap-2 ${isDesktop ? '' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5'}`} style={isDesktop ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' } : undefined}>
+              <div
+                data-testid="pos-product-grid"
+                className={`grid gap-2 ${isIpad ? 'grid-cols-3' : (isDesktop ? '' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5')}`}
+                style={isDesktop && !isIpad ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' } : undefined}
+              >
                 {visibleProducts.map((product) => {
                   const quantity = Number(cart[product.productId] || 0)
                   const imageSrc = product.hasImage ? `/api/v2/pos/products/${product.productId}/image?v=${encodeURIComponent(product.updatedAt || '')}` : ''
                   return (
                     <button
                       key={product.productId}
+                      data-testid="pos-product-card"
+                      data-product-id={product.productId}
                       onClick={() => changeQuantity(normalLineKey(product.productId), 1)}
-                      className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop ? 'flex min-h-[82px] items-center rounded-lg p-2' : 'rounded-xl'}`}
+                      className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop || isIpad ? `flex items-center ${isIpad ? 'min-h-24 rounded-xl p-2.5' : 'min-h-[82px] rounded-lg p-2'}` : 'rounded-xl'}`}
                     >
-                      <div className={isDesktop ? 'h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100' : 'aspect-square bg-slate-100'}>
+                      <div className={isDesktop || isIpad ? `${isIpad ? 'h-16 w-16 rounded-xl' : 'h-12 w-12 rounded-lg'} shrink-0 overflow-hidden bg-slate-100` : 'aspect-square bg-slate-100'}>
                         {imageSrc ? (
                           <img src={imageSrc} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" />
                         ) : (
-                          <div className="grid h-full place-items-center"><Package className={`${isDesktop ? 'h-5 w-5' : 'h-6 w-6'} text-slate-300`} /></div>
+                          <div className="grid h-full place-items-center"><Package className={`${isDesktop || isIpad ? 'h-5 w-5' : 'h-6 w-6'} text-slate-300`} /></div>
                         )}
                       </div>
                       {quantity > 0 && (
@@ -674,10 +699,16 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                           {quantity}
                         </span>
                       )}
-                      <div className={isDesktop ? 'min-w-0 flex-1 pl-2' : 'p-1.5'}>
-                        <p className={`truncate font-bold leading-tight text-slate-800 ${isDesktop ? 'pr-4 text-xs' : 'text-[11px]'}`}>{product.name}</p>
+                      <div className={isDesktop || isIpad ? `min-w-0 flex-1 ${isIpad ? 'pl-2.5' : 'pl-2'}` : 'p-1.5'}>
+                        <p
+                          data-testid="pos-product-name"
+                          title={product.name}
+                          className={`font-bold text-slate-800 ${isIpad ? 'whitespace-normal break-words pr-5 text-[13px] leading-[1.35]' : (isDesktop ? 'truncate pr-4 text-xs leading-tight' : 'truncate text-[11px] leading-tight')}`}
+                        >
+                          {product.name}
+                        </p>
                         <div className="mt-1 flex items-end justify-between gap-1">
-                          <span className={`${isDesktop ? 'text-sm' : 'text-[13px]'} truncate font-black text-budu-600`}>{formatCents(product.salePriceCents)}</span>
+                          <span className={`${isDesktop || isIpad ? 'text-sm' : 'text-[13px]'} truncate font-black text-budu-600`}>{formatCents(product.salePriceCents)}</span>
                           <span className="shrink-0 text-[10px] text-slate-400">/{product.unit}</span>
                         </div>
                       </div>
