@@ -20,8 +20,8 @@ const render = async (path, props = {}) => {
 
 try {
   const checks = [
-    ['App 登录门', await render('/src/App.jsx'), ['budu', '正在加载']],
-    ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['budu 甜蜜运营系统', '登录', '新账号由开发者创建']],
+    ['App 登录门', await render('/src/App.jsx'), ['加载中']],
+    ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['budu', 'Operating System', '登录', '新账号由开发者创建']],
     [
       'AccountAdminPage',
       await render('/src/components/AccountAdminPage.jsx', {
@@ -75,14 +75,6 @@ try {
       ['财务利润', '费用录入'],
     ],
     [
-      'MemberPage',
-      await render('/src/components/MemberPage.jsx', {
-        currentUser: { username: 'budu', role: 'developer' },
-        onBack: () => {},
-      }),
-      ['会员营销', '会员列表'],
-    ],
-    [
       'Dashboard',
       await render('/src/components/Dashboard.jsx', {
         user: { username: 'budu', role: 'developer' },
@@ -91,8 +83,8 @@ try {
       }),
       ['首页概览', '门店经营'],
     ],
-    ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职雇员']],
-    ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['门店业绩录入', '值班人员']],
+    ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职人员']],
+    ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['值班人员', '选择值班人员（可多选）']],
     ['SchedulePage', await render('/src/components/SchedulePage.jsx', { onBack: () => {}, canEdit: true }), ['门店排班', '周排班表', '添加排班']],
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],
     ['RevenueTrendChart', await render('/src/components/RevenueTrendChart.jsx', { month: '2026-07', store: 'all', day: null }), ['营业额趋势']],
@@ -142,14 +134,9 @@ try {
       ['•••'],
     ],
     [
-      'DataAnalysisPage',
-      await render('/src/components/DataAnalysisPage.jsx', { onBack: () => {} }),
-      ['数据分析', '上传报表文件'],
-    ],
-    [
-      'ProductCatalogPage',
-      await render('/src/components/ProductCatalogPage.jsx', { onBack: () => {}, canEdit: true }),
-      ['商品目录', '新增商品'],
+      'ProductCenterPage',
+      await render('/src/components/ProductCenterPage.jsx', { onBack: () => {} }),
+      ['商品中心', '新增商品'],
     ],
     [
       'EmployeePerformanceTable store privacy',
