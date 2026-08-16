@@ -12,6 +12,33 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新进度快照（2026-08-17：备案暂停期开发约定）
+
+当前 HEAD：`8fed923`（2026-08-16），本地与 GitHub main 同步。
+
+**重要：域名备案暂停，暂不发布**
+- buducandy.cn 因备案问题暂时不能解析，线上访问暂不可用；期间**只开发 + push 存档，不发布**
+- 发布策略已调整：`deploy.yml` 移除 push 自动触发，改为 `workflow_dispatch` 手动触发；
+  且 Actions 中 Deploy workflow 已禁用（disabled_manually）。**恢复发布**：
+  1. GitHub → Settings → Actions → General 或仓库 Actions 页重新启用 Deploy workflow
+  2. Actions → Deploy to Tencent Cloud → Run workflow（手动触发）
+  3. （deploy.yml 中保留恢复 push 触发的注释说明）
+- 该策略下 push main 不会部署到腾讯云，可放心提交
+
+**本地开发环境（本机已搭好，2026-08-17）**
+- 本机无 brew/docker，使用 `embedded-postgres`（npm 包，自带 PG 二进制）：
+  - 位置：`~/Desktop/budu OS. dsh 版搭建/local-pg/`（不在项目内，不进 git）
+  - 启动：`cd "~/Desktop/budu OS. dsh 版搭建/local-pg" && node start-db.mjs`（端口 5432，库 budu，用户 budu/budu_local_dev）
+  - 停止：`node start-db.mjs stop`
+- 项目内 `.env.dev`（已被 .gitignore 覆盖，不会提交）：KV 线上凭据 + `DATABASE_URL`（本地 PG）+ `COOKIE_SECURE=0` + `PAYMENT_MODE=mock`
+- 迁移已应用（`prisma migrate deploy` 全部成功），本地库为空（orders/users/stores = 0）
+- 启动方式：
+  - 终端 1：`node --env-file=.env.dev server/index.js`（后端 http://localhost:3000）
+  - 终端 2：`npm run dev`（前端 http://localhost:5173，/api 代理到 3000）
+  - 验证：`curl http://localhost:3000/api/health` → `{"ok":true}`
+- 数据说明：登录/账号走线上 Upstash KV（budu 管理员密码同线上）；业务数据（业绩/订单/库存等）在本地空 PG，开发用测试数据，不碰线上 PG
+- 注意：`npm install` 曾出现 node_modules 损坏（express 目录被改名 lib 2），重装后正常
+
 ## 最新进度快照（2026-08-08）
 
 当前 HEAD：`3fdc71f`（V1.20 + 进度文档），本地与 GitHub main 同步；腾讯云 /opt/budu 已部署代码提交 `9c56d0f`（V1.20），文档提交无需部署。
