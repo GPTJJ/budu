@@ -1,0 +1,8 @@
+#!/bin/sh
+# 提交前快速构建校验；设置 SKIP_HOOKS=1 可跳过。
+if [ "$SKIP_HOOKS" = "1" ]; then exit 0; fi
+if ! command -v npm >/dev/null 2>&1; then exit 0; fi
+if ! npm run build >/dev/null 2>&1; then
+  echo "[githook] npm run build 失败，已阻止提交；如确认无需构建可 SKIP_HOOKS=1 git commit ..."
+  exit 1
+fi

@@ -14,9 +14,11 @@ import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
-import { prisma } from './pg.js'
+import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
 import { startAssetReminderJob } from './asset-reminders.js'
+import { APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
+import * as Sentry from '@sentry/node'
 import {
   canManageTransferStore,
   hasInventoryTransferAll,
@@ -230,6 +232,17 @@ export function createApp() {
   const app = express()
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
+  // 请求级结构化日志（只记录方法/路径/状态/耗时/requestId，不记录 body）
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next()
+    const start = Date.now()
+    const requestId = crypto.randomUUID().slice(0, 8)
+    res.setHeader('X-Request-Id', requestId)
+    res.on('finish', () => {
+      console.log(`[req] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms ${requestId}`)
+    })
+    next()
+  })
   // 所有 API 响应禁止缓存（登录态/业务数据是动态的，CDN 只缓存静态资源）
   app.use('/api', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store')
@@ -443,7 +456,14 @@ export function createApp() {
     return key
   }
 
-  app.get('/api/health', (req, res) => res.json({ ok: true, time: Date.now() }))
+  app.get('/api/health', (req, res) => res.json({
+    ok: true,
+    time: Date.now(),
+    env: APP_ENV,
+    appVersion: APP_VERSION,
+    gitSha: GIT_SHA || '',
+    dbOk: dbReady(),
+  }))
   app.use('/api/payments', paymentCallbackRouter)
   app.use('/api/v2', requireAuth, productsRouter, posRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
 
@@ -1106,6 +1126,10 @@ export function createApp() {
   }
   syncStoreNames()
   startAssetReminderJob()
+
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app)
+  }
 
   return app
 }

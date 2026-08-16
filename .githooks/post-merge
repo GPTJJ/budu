@@ -1,0 +1,10 @@
+#!/bin/sh
+# 拉取/合并后若 package-lock.json 变化，自动 npm install。
+if [ "$SKIP_HOOKS" = "1" ]; then exit 0; fi
+if ! command -v npm >/dev/null 2>&1; then exit 0; fi
+BASE=HEAD
+if git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1; then BASE=ORIG_HEAD; fi
+if git diff-tree -r --name-only "$BASE" HEAD 2>/dev/null | grep -q '^package-lock.json$'; then
+  echo "[githook] package-lock.json 已变化，执行 npm install ..."
+  npm install
+fi

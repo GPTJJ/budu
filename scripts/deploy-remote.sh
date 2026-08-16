@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # 远程部署脚本：由 GitHub Actions 调用（也可手动执行）
-# 用法：bash scripts/deploy-remote.sh <HOST> <USER> <APP_DIR> <GIT_SHA>
+# 用法：bash scripts/deploy-remote.sh <HOST> <USER> <APP_DIR> <GIT_SHA> [ENV]
 set -euo pipefail
 
 HOST="$1"
 USER="$2"
 APP_DIR="$3"
 SHA="$4"
-PRODUCTION_HOST="124.156.171.195"
-
-if [ "$HOST" != "$PRODUCTION_HOST" ]; then
-  echo "==> 拒绝部署：当前 GitHub Secret 不是香港生产服务器"
-  echo "==> 预期目标：$PRODUCTION_HOST"
-  exit 1
-fi
+ENV="${5:-test}"
+case "$ENV" in
+  dev|test|prod) ;;
+  *) echo "==> ENV 需为 dev/test/prod，当前：$ENV" && exit 1 ;;
+esac
 
 SSH_ARGS=(ssh -o BatchMode=yes -o ConnectTimeout=15)
 SCP_ARGS=(scp -o BatchMode=yes -o ConnectTimeout=15)
@@ -49,7 +47,7 @@ verify_frontend_path() {
   return 1
 }
 
-echo "==> 部署目标：$USER@$HOST:$APP_DIR（$SHA）"
+echo "==> 部署目标：$USER@$HOST:$APP_DIR（$SHA，env=$ENV）"
 PREV="$(run_remote "cat .current-sha 2>/dev/null || true")"
 echo "==> 当前线上版本：${PREV:-（无记录）}"
 
@@ -93,6 +91,8 @@ if [ "$FETCHED" -ne 1 ]; then
   exit 1
 fi
 run_remote "git checkout --force '$SHA'"
+run_remote "if grep -q '^APP_ENV=' .env 2>/dev/null; then sed -i \"s/^APP_ENV=.*/APP_ENV=${ENV}/\" .env; else echo \"APP_ENV=${ENV}\" >> .env; fi"
+run_remote "if grep -q '^GIT_SHA=' .env 2>/dev/null; then sed -i \"s/^GIT_SHA=.*/GIT_SHA=${SHA}/\" .env; else echo \"GIT_SHA=${SHA}\" >> .env; fi"
 run_remote "docker compose up -d --build"
 run_remote "docker compose up -d --no-deps --force-recreate nginx"
 run_remote "rm -f '$BUNDLE_PATH'"

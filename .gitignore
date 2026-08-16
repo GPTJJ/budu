@@ -19,6 +19,7 @@ _shot
 _*inspect*
 .codex-tmp/
 .cloudbase/
+.agents/skills/
 
 .tmp-*
 _tmp*

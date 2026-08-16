@@ -28,6 +28,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@sentry/node": "^10.70.0",
+    "@sentry/react": "^10.70.0",
     "@zxing/browser": "0.1.5",
     "@zxing/library": "0.21.3",
     "cookie-parser": "^1.4.7",

@@ -26,6 +26,9 @@ services:
         condition: service_healthy
     env_file:
       - .env.production
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-}
     volumes:
       - budu_data:/app/server/data
 
