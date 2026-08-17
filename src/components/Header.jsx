@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Menu, ChevronDown } from 'lucide-react'
+import { MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import NotificationBell from './NotificationBell'
@@ -16,6 +16,7 @@ export default function Header({
   onStoreChange,
   onMenuClick,
   onNavigate,
+  onRefresh,
   user,
 }) {
   const { t } = useI18n()
@@ -67,6 +68,15 @@ export default function Header({
           </div>
         </div>
 
+        <button
+          onClick={onRefresh}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-budu-300 hover:text-budu-500 md:hidden"
+          aria-label={t('刷新当前界面')}
+          title={t('刷新当前界面')}
+        >
+          <RefreshCw className="h-4 w-4" />
+        </button>
+
         <NotificationBell variant="mobile" user={user} onNavigate={onNavigate} />
 
         {/* 右侧工具栏 */}
@@ -97,6 +107,15 @@ export default function Header({
               </label>
             </>
           )}
+
+          <button
+            onClick={onRefresh}
+            className="hidden h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-budu-300 hover:text-budu-500 md:grid"
+            aria-label={t('刷新当前界面')}
+            title={t('刷新当前界面')}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
 
           <NotificationBell variant="desktop" user={user} onNavigate={onNavigate} />
 

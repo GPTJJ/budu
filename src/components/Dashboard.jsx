@@ -210,6 +210,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
+            onRefresh={handleRefresh}
           />
 
           <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:space-y-6 sm:px-5 sm:py-6 sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:px-8 lg:pb-6">
