@@ -12,6 +12,13 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新进度快照（2026-08-17：多环境 DevOps 与港京双服务器）
+
+- 香港 124.156.171.195 = 测试环境：`https://budu-hk.online`（Let's Encrypt 已配、每月自动续期），`APP_ENV=test`，独立本地 KV + 新库 `budu_test`；测试账号 `budu / BuduTest2026`。
+- 北京 154.8.195.42 = 生产预备：已部署最新代码 `68fb186`（V1.86），`APP_ENV=prod`，`/api/health` 经 SNI 校验为 `env=prod`、`dbOk=true`；DNS 仍指向香港，未切换。
+- CI SSH 密钥：本机 `~/.ssh/budu_ci`（无密码），公钥已装香港/北京；私钥待填入 GitHub Secrets（`HK_SSH_KEY`/`BJ_SSH_KEY`）。
+- 待办：GitHub Secrets（HK/BJ 四组）、Sentry DSN、测试团队账号、备案通过后 DNS 切换 + PG 数据迁移（见 `docs/MIGRATION_HK_BJ.md`）。
+
 ## 最新进度快照（2026-08-17：备案暂停期开发约定）
 
 当前 HEAD：`8fed923`（2026-08-16），本地与 GitHub main 同步。
