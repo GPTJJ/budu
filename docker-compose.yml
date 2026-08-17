@@ -25,7 +25,7 @@ services:
       postgres:
         condition: service_healthy
     env_file:
-      - .env.production
+      - ${ENV_FILE:-.env.production}
     environment:
       APP_ENV: ${APP_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-}

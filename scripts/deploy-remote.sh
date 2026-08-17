@@ -12,6 +12,9 @@ case "$ENV" in
   dev|test|prod) ;;
   *) echo "==> ENV 需为 dev/test/prod，当前：$ENV" && exit 1 ;;
 esac
+ENV_FILE=".env.production"
+if [ "$ENV" = "test" ]; then ENV_FILE=".env.test"; fi
+if [ "$ENV" = "dev" ]; then ENV_FILE=".env.dev"; fi
 
 SSH_ARGS=(ssh -o BatchMode=yes -o ConnectTimeout=15)
 SCP_ARGS=(scp -o BatchMode=yes -o ConnectTimeout=15)
@@ -93,6 +96,7 @@ fi
 run_remote "git checkout --force '$SHA'"
 run_remote "if grep -q '^APP_ENV=' .env 2>/dev/null; then sed -i \"s/^APP_ENV=.*/APP_ENV=${ENV}/\" .env; else echo \"APP_ENV=${ENV}\" >> .env; fi"
 run_remote "if grep -q '^GIT_SHA=' .env 2>/dev/null; then sed -i \"s/^GIT_SHA=.*/GIT_SHA=${SHA}/\" .env; else echo \"GIT_SHA=${SHA}\" >> .env; fi"
+run_remote "if grep -q '^ENV_FILE=' .env 2>/dev/null; then sed -i \"s|^ENV_FILE=.*|ENV_FILE=${ENV_FILE}|\" .env; else echo \"ENV_FILE=${ENV_FILE}\" >> .env; fi"
 run_remote "docker compose up -d --build"
 run_remote "docker compose up -d --no-deps --force-recreate nginx"
 run_remote "rm -f '$BUNDLE_PATH'"
