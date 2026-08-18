@@ -34,16 +34,13 @@ function serialize(row) {
   }
 }
 
-/** 员工本人（绑定员工或 username 直配）可见自己，店长可见本店，开发者全量 */
+/** 查看范围：开发者全量；其它账号（含店长）仅本人（绑定员工或 username 直配） */
 function noticeWhere(user, query = {}) {
   const where = {}
   if (user.role === 'developer') {
     // 全量
-  } else if (user.role === 'manager') {
-    const stores = Array.isArray(user.storeKeys) ? user.storeKeys : []
-    where.storeKey = { in: stores.length ? stores : ['__none__'] }
   } else {
-    // staff：本人（按绑定员工 storeKey::name 或账号名匹配）
+    // 本人：按绑定员工 storeKey::name 或账号名匹配
     where.OR = []
     if (user.staffKey) where.OR.push({ storeKey: user.staffKey.split('::')[0] || '__none__', employeeName: user.staffKey.split('::')[1] || '__none__' })
     where.OR.push({ targetUsername: user.username })
@@ -129,11 +126,13 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
   if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
   const row = await prisma.payrollNotice.findUnique({ where: { id: req.params.id } })
   if (!row) throw httpError('工资条不存在', 404)
+  // 仅本人（绑定员工或 username 直配）可签收；开发者可代签
   const isOwner =
     row.targetUsername === req.user.username ||
-    (req.user.role === 'staff' && row.storeKey === (req.user.staffKey || '').split('::')[0] && row.employeeName === (req.user.staffKey || '').split('::')[1]) ||
-    req.user.role === 'developer' ||
-    req.user.role === 'manager'
+    ((req.user.role === 'staff' || req.user.role === 'manager') &&
+      row.storeKey === (req.user.staffKey || '').split('::')[0] &&
+      row.employeeName === (req.user.staffKey || '').split('::')[1]) ||
+    req.user.role === 'developer'
   if (!isOwner) throw httpError('无权签收该工资条', 403)
   if (row.status === 'confirmed') {
     return res.json({ ok: true, row: serialize(row) })
