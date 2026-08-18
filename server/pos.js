@@ -20,7 +20,7 @@ const wrap = (handler) => async (req, res) => {
 }
 
 function requirePosUser(user) {
-  if (!user || !['developer', 'manager', 'staff'].includes(user.role)) throw httpError('无权限', 403)
+  if (!user || !['developer', 'manager', 'staff', 'cashier'].includes(user.role)) throw httpError('无权限', 403)
 }
 
 function canStore(user, storeId) {

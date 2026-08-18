@@ -300,7 +300,27 @@ export function createApp() {
     next()
   }
 
-  const ROLES = ['developer', 'manager', 'staff', 'public']
+  /** 业务接口（业绩/库存/发票/资产/商品中心等）：门店收银仅 POS 点单，一律拒绝 */
+  function requireBusiness(req, res, next) {
+    if (!req.user || req.user.role === 'cashier') {
+      return res.status(403).json({ error: '无权限' })
+    }
+    next()
+  }
+
+  const ROLES = ['developer', 'manager', 'staff', 'cashier', 'public']
+
+  /** 收银角色约束：仅绑定一家门店、不绑定员工 */
+  function validateCashierRole(role, storeKeys, staffKey) {
+    if (role !== 'cashier') return null
+    if (!Array.isArray(storeKeys) || storeKeys.length !== 1 || !storeKeys[0]) {
+      return '收银账号必须绑定且仅绑定一家门店'
+    }
+    if (staffKey) {
+      return '收银账号不绑定员工'
+    }
+    return null
+  }
 
   function boundStores(user) {
     return Array.isArray(user && user.storeKeys) ? user.storeKeys : []
@@ -355,8 +375,24 @@ export function createApp() {
     return true
   }
 
-  /** 按绑定门店过滤共享数据（developer/public 返回全量） */
+  /** 按绑定门店过滤共享数据（developer/public 返回全量；cashier 仅返回 POS 所需最小集） */
   function scopeUserData(db, user) {
+    // 门店收银：仅 POS 点单使用，只返回绑定门店与商品图片，其余全部隐藏
+    if (user && user.role === 'cashier') {
+      const allowed = new Set(boundStores(user))
+      return {
+        entries: {},
+        staff: [],
+        removedStaff: [],
+        analysis: {},
+        productImages: db.productImages || {},
+        stores: (db.stores || []).filter((s) => allowed.has(s.key)),
+        schedules: {},
+        products: [],
+        inventoryRequests: [],
+        inventory: [],
+      }
+    }
     if (!user || user.role === 'developer' || user.role === 'public') {
       return {
         entries: db.entries || {},
@@ -465,7 +501,10 @@ export function createApp() {
     dbOk: dbReady(),
   }))
   app.use('/api/payments', paymentCallbackRouter)
-  app.use('/api/v2', requireAuth, productsRouter, posRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
+  // v2 路由组：POS 对门店收银开放；其余业务接口（业绩/库存/发票/资产/商品中心等）对收银隐藏
+  app.use('/api/v2', requireAuth)
+  app.use('/api/v2', posRouter)
+  app.use('/api/v2', requireBusiness, productsRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -517,6 +556,11 @@ export function createApp() {
       const sk = normalizeStaffKey(req.body.staffKey)
       if (sk === null) return res.status(400).json({ error: 'staffKey 格式错误' })
       staffKey = sk
+    }
+    // 收银角色约束：仅绑定一家门店、不绑定员工
+    const cashierError = validateCashierRole(role, storeKeys, staffKey)
+    if (cashierError) {
+      return res.status(400).json({ error: cashierError })
     }
     if (db.users.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
@@ -704,6 +748,13 @@ export function createApp() {
     if (target.role === 'developer' && role !== 'developer' && developerCount <= 1) {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
+    // 收银角色约束（按变更后的角色 + 生效的门店/员工绑定校验）
+    const effStoreKeys = storeKeys !== null ? storeKeys : Array.isArray(target.storeKeys) ? target.storeKeys : []
+    const effStaffKey = staffKey !== null ? staffKey : target.staffKey || ''
+    const cashierError = validateCashierRole(role, effStoreKeys, effStaffKey)
+    if (cashierError) {
+      return res.status(400).json({ error: cashierError })
+    }
     target.role = role
     if (storeKeys !== null) target.storeKeys = storeKeys
     if (staffKey !== null) target.staffKey = staffKey
@@ -841,7 +892,7 @@ export function createApp() {
   app.put('/api/userdata', requireAuth, async (req, res) => {
     const body = req.body || {}
     const db = await loadDb()
-    if (req.user.role === 'public') {
+    if (req.user.role === 'public' || req.user.role === 'cashier') {
       return res.status(403).json({ error: '无权限' })
     }
     const allowed = new Set(boundStores(req.user))

@@ -137,6 +137,19 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     )
   }
 
+  // 门店收银：仅 POS 点单，全屏进入（无侧边栏/首页/其他功能），退出 POS 即退出登录
+  if (user?.role === 'cashier') {
+    return (
+      <PublicModeProvider isPublic={false} isStore={false}>
+        <ErrorBoundary>
+          <Suspense fallback={<PageLoading />}>
+            <PosPage user={user} onExit={onLogout} />
+          </Suspense>
+        </ErrorBoundary>
+      </PublicModeProvider>
+    )
+  }
+
   const handleNavigate = (nextView) => {
     setView(nextView)
     if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)

@@ -82,11 +82,11 @@ function ResetPasswordModal({ user, onClose }) {
   )
 }
 
-function StoreCheckboxes({ selected, onChange }) {
+function StoreCheckboxes({ selected, onChange, single = false }) {
   const { t } = useI18n()
   const stores = allStores()
   const toggle = (key) =>
-    onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key])
+    single ? onChange([key]) : onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key])
   if (stores.length === 0) {
     return <p className="text-xs text-slate-300">{t('暂无门店，请先在系统设置新增门店')}</p>
   }
@@ -194,15 +194,19 @@ function CreateUserModal({ onClose, onCreated }) {
               className={inputCls}
             >
               <option value="staff">{t('店员')}</option>
+              <option value="cashier">{t('门店收银')}</option>
               <option value="manager">{t('店长·区域负责人')}</option>
               <option value="public">{t('对外展示')}</option>
               <option value="developer">{t('开发者')}</option>
             </select>
           </div>
-          {['staff', 'manager'].includes(form.role) && (
+          {['staff', 'manager', 'cashier'].includes(form.role) && (
             <div>
-              <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定门店')}</span>
+              <span className="mb-1.5 block text-xs font-semibold text-slate-500">
+                {t(form.role === 'cashier' ? '绑定门店（收银账号仅可绑定一家）' : '绑定门店')}
+              </span>
               <StoreCheckboxes
+                single={form.role === 'cashier'}
                 selected={form.storeKeys}
                 onChange={(keys) => setForm((s) => ({ ...s, storeKeys: keys }))}
               />
@@ -270,7 +274,7 @@ function BindStoresModal({ user, onClose, onSaved }) {
           </button>
         </div>
         <div className="mt-5">
-          <StoreCheckboxes selected={selected} onChange={setSelected} />
+          <StoreCheckboxes single={user.role === 'cashier'} selected={selected} onChange={setSelected} />
           {error && <p className="mt-2 text-xs font-medium text-rose-500">{error}</p>}
         </div>
         <div className="mt-5 flex gap-2">
@@ -390,6 +394,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     if (role === 'developer') return t('开发者')
     if (role === 'manager') return t('店长·区域负责人')
     if (role === 'staff') return t('店员')
+    if (role === 'cashier') return t('门店收银')
     if (role === 'public') return t('对外展示')
     return role
   }
@@ -551,6 +556,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         <option value="developer">{t('开发者')}</option>
                         <option value="manager">{t('店长·区域负责人')}</option>
                         <option value="staff">{t('店员')}</option>
+                        <option value="cashier">{t('门店收银')}</option>
                         <option value="public">{t('对外展示')}</option>
                       </select>
                     </td>
