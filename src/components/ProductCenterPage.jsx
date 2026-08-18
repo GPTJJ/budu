@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, Download, ImagePlus, Package, Pen
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
-import { analyzeProductMenuSheets } from '../utils/productExcel'
+import { analyzeProductMenuSheets, applyAutoSku } from '../utils/productExcel'
 
 const emptyForm = {
   productId: '',
@@ -44,6 +44,20 @@ export default function ProductCenterPage({ onBack }) {
   const [form, setForm] = useState(null)
   const [importPreview, setImportPreview] = useState(null)
   const [importing, setImporting] = useState(false)
+  const [autoSkuEnabled, setAutoSkuEnabled] = useState(false)
+  const [skuPrefix, setSkuPrefix] = useState('BUDU-12Y')
+  // 勾选自动生成 SKU 时，预览与提交均使用生成后的 SKU（覆盖 Excel 中的原 SKU）
+  const previewRows = useMemo(() => {
+    if (!importPreview) return []
+    const base = importPreview.validRows
+    return autoSkuEnabled ? applyAutoSku(base, skuPrefix) : base
+  }, [importPreview, autoSkuEnabled, skuPrefix])
+  // 表格按「工作表:行号」映射 SKU（有效行显示生成值，无效行保留原值便于排查）
+  const skuMap = useMemo(() => {
+    const m = {}
+    for (const r of previewRows) m[`${r.sourceSheet}:${r.sourceRow}`] = r.sku
+    return m
+  }, [previewRows])
   const fileInputRef = useRef(null)
 
   const loadProducts = async () => {
@@ -145,7 +159,7 @@ export default function ProductCenterPage({ onBack }) {
       const data = await api('/v2/products/import', {
         method: 'POST',
         body: JSON.stringify({
-          rows: importPreview.validRows.map((row) => ({
+          rows: previewRows.map((row) => ({
             name: row.name,
             sku: row.sku,
             posCategory: row.posCategory,
@@ -301,6 +315,19 @@ export default function ProductCenterPage({ onBack }) {
               <button onClick={() => setImportPreview(null)} disabled={importing} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
             <div className="shrink-0 border-b border-slate-100 px-6 py-4">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                  <input type="checkbox" checked={autoSkuEnabled} onChange={(e) => setAutoSkuEnabled(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+                  自动生成 SKU（忽略表格中的 SKU）
+                </label>
+                {autoSkuEnabled && (
+                  <label className="flex items-center gap-2 text-sm text-slate-500">
+                    前缀
+                    <input value={skuPrefix} onChange={(e) => setSkuPrefix(e.target.value)} className="w-36 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-budu-400" />
+                    <span className="text-xs text-slate-400">示例：{skuPrefix}-01</span>
+                  </label>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-3 text-center text-sm">
                 <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-400">识别菜品</p><p className="mt-1 text-xl font-black text-slate-800">{importPreview.rows.length}</p></div>
                 <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-500">可导入</p><p className="mt-1 text-xl font-black text-emerald-700">{importPreview.validRows.length}</p></div>
@@ -315,7 +342,7 @@ export default function ProductCenterPage({ onBack }) {
                   <tr key={`${row.sourceSheet}-${row.sourceRow}-${index}`} className={row.errors.length ? 'bg-rose-50/40' : ''}>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-400">{row.sourceSheet} · {row.sourceRow} 行</td>
                     <td className="px-4 py-3 font-semibold text-slate-700">{row.name || '—'}</td>
-                    <td className="px-4 py-3 font-mono text-slate-600">{row.sku || '—'}</td>
+                    <td className="px-4 py-3 font-mono text-slate-600">{skuMap[`${row.sourceSheet}:${row.sourceRow}`] || row.sku || '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{row.posCategory || '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-700">{row.salePriceCents ? formatCents(row.salePriceCents) : '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-500">{row.costPriceCents ? formatCents(row.costPriceCents) : '—'}</td>

@@ -2,7 +2,7 @@ const FIELD_ALIASES = {
   name: ['商品名称', '菜品名称', '菜品名', '品名', '名称', '商品', '菜品', 'productname', 'itemname', 'menuitem', 'name'],
   sku: ['sku', '商品sku', '菜品sku', '商品编码', '菜品编码', '商品编号', '菜品编号', '货号', '编码', 'productsku', 'itemsku'],
   posCategory: ['分类', '商品分类', '菜品分类', '品类', '类别', 'category', 'productcategory', 'menucategory'],
-  salePriceCents: ['售价', '售价元', '销售价', '销售价格', '零售价', '价格', '单价', 'price', 'saleprice', 'sellingprice'],
+  salePriceCents: ['售价', '售价元', '售卖价', '售卖价格', '销售价', '销售价格', '零售价', '价格', '单价', 'price', 'saleprice', 'sellingprice'],
   costPriceCents: ['成本价', '成本价元', '成本', '进价', '采购价', 'cost', 'costprice'],
   unit: ['单位', '售卖单位', '计量单位', 'unit'],
   barcode: ['条码', '商品条码', '菜品条码', 'barcode', 'ean', 'upc'],
@@ -32,8 +32,22 @@ function fieldForHeader(value) {
 function moneyToCents(value) {
   const text = String(value ?? '').trim().replace(/[¥￥,，\s元]/g, '')
   if (!text) return { error: '缺少金额' }
-  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return { error: `金额格式不正确：${String(value)}` }
-  const [yuan, fraction = ''] = text.split('.')
+  // 最多 3 位小数；3 位小数按第 3 位四舍五入到分（字符串计算，避免浮点误差）
+  if (!/^\d+(?:\.\d{1,3})?$/.test(text)) return { error: `金额格式不正确：${String(value)}` }
+  let [yuan, fraction = ''] = text.split('.')
+  if (fraction.length > 2) {
+    const third = Number(fraction[2])
+    fraction = fraction.slice(0, 2)
+    if (third >= 5) {
+      const carry = Number(fraction) + 1
+      if (carry === 100) {
+        yuan = String(Number(yuan) + 1)
+        fraction = '00'
+      } else {
+        fraction = String(carry).padStart(2, '0')
+      }
+    }
+  }
   const cents = BigInt(yuan) * 100n + BigInt(fraction.padEnd(2, '0'))
   if (cents > 99999999999n) return { error: '金额超出允许范围' }
   return { value: cents.toString() }
@@ -60,6 +74,16 @@ function findHeader(rows) {
 function truthyCell(value) {
   const text = String(value ?? '').trim().toLowerCase()
   return ['1', 'true', '是', '参与', '启用', 'yes', 'y'].includes(text)
+}
+
+/**
+ * 自动生成 SKU：{prefix}-{NN}（如 BUDU-12Y-01）；序号位数按行数自适应（<100 用 2 位，≥100 用 3 位）
+ * 覆盖 Excel 中的 SKU（用于不想沿用源系统编码的场景）
+ */
+export function applyAutoSku(rows, prefix = 'BUDU-12Y') {
+  const p = String(prefix || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'ITEM'
+  const width = rows.length >= 100 ? 3 : 2
+  return rows.map((row, index) => ({ ...row, sku: `${p}-${String(index + 1).padStart(width, '0')}` }))
 }
 
 export function analyzeProductMenuSheets(sheets, existingProducts = []) {
