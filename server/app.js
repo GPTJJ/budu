@@ -10,6 +10,7 @@ import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
+import { payrollNoticeRouter } from './payroll-notice.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
@@ -504,7 +505,7 @@ export function createApp() {
   // v2 路由组：POS 对门店收银开放；其余业务接口（业绩/库存/发票/资产/商品中心等）对收银隐藏
   app.use('/api/v2', requireAuth)
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, productsRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
+  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, dailyEntryUpgradeRouter, assetCenterRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

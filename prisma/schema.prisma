@@ -657,3 +657,23 @@ model AssetReminder {
   @@index([createdAt])
   @@map("asset_reminders")
 }
+
+model PayrollNotice {
+  id             String    @id
+  periodType     String    @map("period_type") // month（全职月结）| week（兼职周结）
+  periodKey      String    @map("period_key") // 月: '2026-08'；周: 周起始日 '2026-08-10'
+  employeeName   String    @map("employee_name")
+  storeKey       String    @map("store_key")
+  targetUsername String    @default("") @map("target_username")
+  snapshot       Json // 每日明细数组 + 汇总快照（发放时固定）
+  totalCents     BigInt    @map("total_cents")
+  status         String    @default("pending") // pending | confirmed
+  confirmedAt    DateTime? @map("confirmed_at")
+  confirmedBy    String    @default("") @map("confirmed_by")
+  createdBy      String    @default("") @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([targetUsername, status])
+  @@index([periodKey])
+  @@map("payroll_notices")
+}

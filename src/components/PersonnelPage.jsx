@@ -4,6 +4,7 @@ import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
 import DailyPayAdjustmentModal from './DailyPayAdjustmentModal'
 import ExportSalaryModal from './ExportSalaryModal'
+import PayrollIssueModal from './PayrollIssueModal'
 import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
@@ -511,6 +512,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const [adjustmentEmp, setAdjustmentEmp] = useState(null)
   const [detailEmp, setDetailEmp] = useState(null)
   const [showExport, setShowExport] = useState(false)
+  const [showPayrollIssue, setShowPayrollIssue] = useState(false)
   const [syncTick, setSyncTick] = useState(0)
 
   // 与全局 8 秒数据同步保持一致：大单奖/业绩等新增后自动刷新卡片
@@ -653,6 +655,15 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             >
               <FileSpreadsheet className="h-4 w-4" />
               {t('导出表格')}
+            </button>
+          )}
+          {user?.role === 'developer' && (
+            <button
+              onClick={() => setShowPayrollIssue(true)}
+              className="flex items-center gap-1.5 rounded-2xl bg-budu-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:opacity-90"
+            >
+              <BadgeDollarSign className="h-4 w-4" />
+              {t('发放工资条')}
             </button>
           )}
         </div>
@@ -925,6 +936,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           weekStart={weekStart}
           onClose={() => setShowExport(false)}
         />
+      )}
+      {showPayrollIssue && (
+        <PayrollIssueModal onClose={() => setShowPayrollIssue(false)} onIssued={() => setSyncTick((v) => v + 1)} />
       )}
       {detailEmp && (
         <DailyPayModal

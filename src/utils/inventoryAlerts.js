@@ -17,12 +17,14 @@ let currentIsRequestNotifier = false
 let currentCanSeeInvoices = false
 let currentCanSeeMailings = false
 let currentCanSeeAssets = false
+let currentCanSeePayrolls = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
 let currentInvoices = []
 let currentMailings = []
 let currentAssetReminders = []
+let currentPayrolls = []
 let lastCapsKey = ''
 
 function capsKey(user) {
@@ -32,6 +34,7 @@ function capsKey(user) {
     Boolean(user && user.role !== 'public'),
     Boolean(user && user.role === 'developer'),
     Boolean(user && (user.role === 'developer' || user.assetCenter === true)),
+    Boolean(user && user.role !== 'public' && user.role !== 'cashier'),
   ].join('|')
 }
 
@@ -124,7 +127,11 @@ function compute() {
         .filter((r) => !seenAt || String(r.createdAt) > seenAt)
         .map((r) => ({ ...r, type: 'asset' }))
     : []
-  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems].sort((a, b) =>
+  // 工资条：未签收的工资条常驻提示（不随已读清空，签收后消失）
+  const payrollItems = currentCanSeePayrolls
+    ? currentPayrolls.filter((r) => r.status === 'pending').map((r) => ({ ...r, type: 'payroll' }))
+    : []
+  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
   state = { ...state, unread: items.length, items }
@@ -179,6 +186,14 @@ async function refresh() {
       /* 资产中心不可用时忽略 */
     }
   }
+  if (currentCanSeePayrolls) {
+    try {
+      const res = await api('/v2/payroll-notices?status=pending')
+      currentPayrolls = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* 工资条不可用时忽略 */
+    }
+  }
   compute()
 }
 
@@ -189,6 +204,7 @@ function applyUserCaps(user) {
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
   currentCanSeeMailings = Boolean(user && user.role === 'developer')
   currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
+  currentCanSeePayrolls = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
 }
 
 export function ensurePolling(user) {
@@ -210,6 +226,7 @@ export function ensurePolling(user) {
   currentInvoices = []
   currentMailings = []
   currentAssetReminders = []
+  currentPayrolls = []
   initialized = false
   lastNotifiedId = null
   if (timer) {
@@ -243,4 +260,9 @@ export function subscribe(fn) {
 
 export function getAlerts() {
   return state
+}
+
+/** 手动触发一次全量刷新（如工资条签收后移除未签收项） */
+export function refreshAlerts() {
+  refresh()
 }
