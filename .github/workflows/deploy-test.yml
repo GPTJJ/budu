@@ -2,13 +2,6 @@ name: Deploy to HK Test
 
 on:
   workflow_dispatch:
-  # 香港测试环境 GitHub Secrets 配好后，可取消注释启用 push 自动部署：
-  # push:
-  #   branches: [main]
-  #   paths-ignore:
-  #     - "docs/**"
-  #     - "README.md"
-  #     - "PROJECT_STATUS.md"
 
 concurrency:
   group: deploy-hk-test
@@ -24,8 +17,8 @@ jobs:
 
       - name: Configure SSH
         env:
-          SSH_KEY: ${{ secrets.HK_SSH_KEY }}
-          SSH_HOST: ${{ secrets.HK_HOST }}
+          SSH_KEY: ${{ secrets.HK_SSH_KEY || secrets.TENCENT_SSH_KEY }}
+          SSH_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
@@ -34,17 +27,7 @@ jobs:
 
       - name: Deploy to HK test
         env:
-          SSH_HOST: ${{ secrets.HK_HOST }}
-          SSH_USER: ${{ secrets.HK_USER }}
-          APP_DIR: ${{ secrets.HK_APP_DIR }}
+          SSH_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
+          SSH_USER: ${{ secrets.HK_USER || secrets.TENCENT_USER }}
+          APP_DIR: ${{ secrets.HK_APP_DIR || secrets.TENCENT_APP_DIR }}
         run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" test
-
-      - name: Notify failure
-        if: failure()
-        env:
-          WEBHOOK: ${{ secrets.WECHAT_WORK_WEBHOOK_URL }}
-        run: |
-          if [ -n "$WEBHOOK" ]; then
-            curl -s -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
-              -d "{\"msgtype\":\"markdown\",\"markdown\":{\"content\":\"## BUDU 测试环境部署失败\\ncommit: $GITHUB_SHA\"}}"
-          fi
