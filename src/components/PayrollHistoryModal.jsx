@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { BadgeDollarSign, CheckCircle2, Clock, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { periodLabel } from '../utils/payrollSlip'
+import { refreshAlerts } from '../utils/inventoryAlerts'
 import PayrollSlipModal from './PayrollSlipModal'
 
 const yuan = (cents) => `¥${Number(cents || 0).toFixed(2)}`
@@ -21,6 +22,7 @@ export default function PayrollHistoryModal({ user, onClose }) {
       .catch((e) => setError(e.message))
   }, [])
 
+  const countOf = (v) => (rows || []).filter((r) => v === 'all' || r.status === v).length
   const filtered = (rows || []).filter((r) => filter === 'all' || r.status === filter)
 
   const refresh = () => {
@@ -32,6 +34,12 @@ export default function PayrollHistoryModal({ user, onClose }) {
         setDetail((d) => (d ? list.find((r) => r.id === d.id) || d : d))
       })
       .catch(() => {})
+  }
+
+  const handleConfirmed = () => {
+    setDetail(null)
+    refresh() // 刷新记录列表
+    refreshAlerts() // 同步铃铛：未签收通知即时归档
   }
 
   return createPortal(
@@ -73,8 +81,14 @@ export default function PayrollHistoryModal({ user, onClose }) {
               }`}
             >
               {label}
-              {v === 'pending' && filtered.length > 0 && (
-                <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-600">{filtered.length}</span>
+              {v !== 'all' && countOf(v) > 0 && (
+                <span
+                  className={`ml-1 rounded px-1 text-[10px] font-bold ${
+                    v === 'pending' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'
+                  }`}
+                >
+                  {countOf(v)}
+                </span>
               )}
             </button>
           ))}
@@ -131,14 +145,7 @@ export default function PayrollHistoryModal({ user, onClose }) {
       </div>
 
       {detail && (
-        <PayrollSlipModal
-          notice={detail}
-          onClose={() => setDetail(null)}
-          onConfirmed={() => {
-            setDetail(null)
-            refresh()
-          }}
-        />
+        <PayrollSlipModal notice={detail} onClose={() => setDetail(null)} onConfirmed={handleConfirmed} />
       )}
     </div>,
     document.body,
