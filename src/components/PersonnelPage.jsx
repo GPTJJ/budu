@@ -594,11 +594,6 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
 
       {/* 类型切换 */}
       <div className="space-y-2.5">
-        <div className="inline-flex rounded-2xl bg-white p-1.5 shadow-card">
-          <span className="rounded-xl bg-budu-500 px-5 py-2 text-sm font-semibold text-white shadow-md">
-            {t('雇员')}（{scopedAll.length}）
-          </span>
-        </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
             {user?.role === 'developer' && (
