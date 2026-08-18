@@ -395,7 +395,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
         ) : (
           <>
             <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-400" />周末 / 法定节假日</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />周末 / 法定节假日</span>
               <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />调休上班（周末补班）</span>
             </div>
             <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
@@ -419,9 +419,9 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                   {dayRows.map((r) => (
                     <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
                       <td className="py-1.5 pr-2 font-semibold">
-                        <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-rose-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
+                        <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-amber-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
                           {r.day}
-                          {r.mark === 'holiday' && <span className="ml-1 rounded bg-rose-50 px-1 py-0.5 text-[9px] font-bold text-rose-500">{t('假')}</span>}
+                          {r.mark === 'holiday' && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700">{t('假')}</span>}
                           {r.mark === 'makeup' && <span className="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-600">{t('班')}</span>}
                         </span>
                         {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
