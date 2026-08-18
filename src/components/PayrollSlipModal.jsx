@@ -1,5 +1,6 @@
 // 工资条弹窗：员工查看每日明细 + 汇总 + 确认签收
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BadgeDollarSign, CheckCircle2, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
@@ -30,7 +31,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[96] flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
@@ -143,6 +144,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
