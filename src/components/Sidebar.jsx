@@ -10,6 +10,7 @@ import {
   FolderArchive,
   ChevronDown,
   CalendarClock,
+  ClipboardCheck,
 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import AccountMenu from './AccountMenu'
@@ -23,6 +24,7 @@ const menus = [
   { key: 'product', label: '商品管理', icon: Package },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
+  { key: 'approval', label: '审批中心', icon: ClipboardCheck },
   { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
@@ -52,21 +54,23 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     user?.role === 'public'
       ? [
           ...menus.filter(
-            (m) => m.key !== 'store' && m.key !== 'product' && m.key !== 'inventory' && m.key !== 'finance-invoice',
+            (m) => m.key !== 'store' && m.key !== 'product' && m.key !== 'inventory' && m.key !== 'finance-invoice' && m.key !== 'approval',
           ),
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
-      : user?.role === 'staff'
-        ? menus.filter((m) =>
-            ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings'].includes(m.key) ||
-            (m.key === 'asset-center' && user.assetCenter === true),
-          )
-        : user?.role === 'manager'
+      : user?.role === 'finance'
+        ? menus.filter((m) => ['overview', 'approval', 'settings'].includes(m.key))
+        : user?.role === 'staff'
           ? menus.filter((m) =>
-              ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'settings'].includes(m.key) ||
+              ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
               (m.key === 'asset-center' && user.assetCenter === true),
             )
-          : menus
+          : user?.role === 'manager'
+            ? menus.filter((m) =>
+                ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
+                (m.key === 'asset-center' && user.assetCenter === true),
+              )
+            : menus
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))

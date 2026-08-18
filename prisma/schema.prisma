@@ -677,3 +677,150 @@ model PayrollNotice {
   @@index([periodKey])
   @@map("payroll_notices")
 }
+
+// ================= 审批中心（通用审批引擎）=================
+
+/** 审批模板：工资审批 / 报销审批（后续可扩展请假/调休/采购/报损） */
+model ApprovalTemplate {
+  key          String   @id // payroll | expense
+  name         String
+  description  String   @default("")
+  schema       Json // 表单字段定义 [{key,label,type,required,options?,placeholder?}]
+  approverRule Json     @map("approver_rule") // {type:'role', role:'developer'} 或 {type:'username', username:'budu'}
+  ccRule       Json     @map("cc_rule") // [{type:'role',role:'finance'},{type:'staffField',field:'employee'},{type:'submitter'}]
+  active       Boolean  @default(true)
+  sort         Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  requests     ApprovalRequest[]
+
+  @@map("approval_templates")
+}
+
+/** 审批单：一张单据一条记录，表单数据存 form_data（金额以分存 Number） */
+model ApprovalRequest {
+  id               String             @id
+  requestNo        String             @unique @map("request_no") // AP-YYYYMMDD-XXXX
+  templateKey      String             @map("template_key")
+  title            String             @default("")
+  status           String             @default("draft") // draft|pending|approved|rejected|withdrawn|archived
+  formData         Json               @map("form_data")
+  amountCents      BigInt             @default(0) @map("amount_cents") // 冗余金额（分），列表排序/财务汇总
+  submitterUsername String             @map("submitter_username")
+  submitterName    String             @default("") @map("submitter_name")
+  approvedAt       DateTime?          @map("approved_at")
+  archivedAt       DateTime?          @map("archived_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @default(now()) @updatedAt @map("updated_at")
+  template         ApprovalTemplate   @relation(fields: [templateKey], references: [key], onDelete: Restrict)
+  nodes            ApprovalNode[]
+  ccs              ApprovalCc[]
+  attachments      ApprovalAttachment[]
+  comments         ApprovalComment[]
+  logs             ApprovalLog[]
+  notifications    ApprovalNotification[]
+
+  @@index([submitterUsername, status])
+  @@index([status, createdAt])
+  @@index([templateKey, status])
+  @@map("approval_requests")
+}
+
+/** 审批节点：提交人 → 审批人 → 抄送人（抄送不进节点表）；支持未来多级审批 */
+model ApprovalNode {
+  id               String          @id
+  requestId        String          @map("request_id")
+  nodeIndex        Int             @map("node_index")
+  approverUsername String          @map("approver_username")
+  status           String          @default("pending") // pending|approved|rejected
+  comment          String          @default("")
+  actedAt          DateTime?       @map("acted_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  request          ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  comments         ApprovalComment[]
+
+  @@index([requestId])
+  @@index([approverUsername, status])
+  @@map("approval_nodes")
+}
+
+/** 抄送：仅结果通知，非审批节点 */
+model ApprovalCc {
+  id          String          @id
+  requestId   String          @map("request_id")
+  ccUsername  String          @map("cc_username")
+  ccName      String          @default("") @map("cc_name")
+  readAt      DateTime?       @map("read_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  request     ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, ccUsername])
+  @@index([ccUsername, readAt])
+  @@map("approval_ccs")
+}
+
+/** 附件：图片/PDF/Excel，永久保存（PG data_url，可切 COS），在线预览 */
+model ApprovalAttachment {
+  id               String          @id
+  requestId        String?         @map("request_id") // 草稿期可空，提交时回填
+  name             String
+  fileType         String          @default("") @map("file_type")
+  fileSize         Int             @default(0) @map("file_size")
+  dataUrl          String          @db.Text @map("data_url")
+  storageProvider  String          @default("local") @map("storage_provider")
+  storageKey       String          @default("") @map("storage_key")
+  uploaderUsername String          @default("") @map("uploader_username")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  request          ApprovalRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@map("approval_attachments")
+}
+
+/** 审批意见：通过/驳回时的说明 */
+model ApprovalComment {
+  id        String          @id
+  requestId String          @map("request_id")
+  nodeId    String?         @map("node_id")
+  username  String          @default("")
+  userRole  String          @default("") @map("user_role")
+  content   String          @default("")
+  createdAt DateTime        @default(now()) @map("created_at")
+  request   ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  node      ApprovalNode?   @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([requestId])
+  @@map("approval_comments")
+}
+
+/** 操作日志：提交/审批/撤回/归档/重新提交 */
+model ApprovalLog {
+  id        String          @id
+  requestId String          @map("request_id")
+  action    String // submit|approve|reject|withdraw|archive|resubmit|create
+  username  String          @default("")
+  detail    String          @default("")
+  createdAt DateTime        @default(now()) @map("created_at")
+  request   ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("approval_logs")
+}
+
+/** 站内通知：待办/结果/抄送；channel 预留微信/企微扩展 */
+model ApprovalNotification {
+  id        String          @id
+  requestId String          @map("request_id")
+  username  String          @map("username")
+  type      String // todo|result|cc
+  title     String          @default("")
+  content   String          @default("")
+  readAt    DateTime?       @map("read_at")
+  channel   String          @default("inapp") // inapp | wechat | wecom（预留）
+  createdAt DateTime        @default(now()) @map("created_at")
+  request   ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([username, readAt])
+  @@index([requestId])
+  @@map("approval_notifications")
+}

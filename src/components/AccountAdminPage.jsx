@@ -196,6 +196,7 @@ function CreateUserModal({ onClose, onCreated }) {
               <option value="staff">{t('店员')}</option>
               <option value="cashier">{t('门店收银')}</option>
               <option value="manager">{t('店长·区域负责人')}</option>
+              <option value="finance">{t('财务')}</option>
               <option value="public">{t('对外展示')}</option>
               <option value="developer">{t('开发者')}</option>
             </select>
@@ -395,6 +396,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     if (role === 'manager') return t('店长·区域负责人')
     if (role === 'staff') return t('店员')
     if (role === 'cashier') return t('门店收银')
+    if (role === 'finance') return t('财务')
     if (role === 'public') return t('对外展示')
     return role
   }
@@ -557,6 +559,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         <option value="manager">{t('店长·区域负责人')}</option>
                         <option value="staff">{t('店员')}</option>
                         <option value="cashier">{t('门店收银')}</option>
+                        <option value="finance">{t('财务')}</option>
                         <option value="public">{t('对外展示')}</option>
                       </select>
                     </td>
@@ -565,7 +568,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        {u.role !== 'public' && u.role !== 'developer' && (
+                        {u.role !== 'public' && u.role !== 'developer' && u.role !== 'finance' && (
                           <button
                             onClick={() => changeTransferPermission(u)}
                             className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
@@ -578,7 +581,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                             {t(u.permissions?.inventoryTransferAll ? '撤销调拨全权限' : '调拨全权限')}
                           </button>
                         )}
-                        {u.role !== 'developer' && u.role !== 'public' && (
+                        {u.role !== 'developer' && u.role !== 'public' && u.role !== 'finance' && (
                           <button
                             onClick={() => setBindTarget(u)}
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"

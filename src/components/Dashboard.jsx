@@ -35,6 +35,7 @@ const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const FinancePage = lazy(() => import('./FinancePage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
+const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 
 const pageTitles = {
@@ -50,6 +51,7 @@ const pageTitles = {
   'inventory-purchase': '申请采购',
   finance: '财务利润',
   'finance-invoice': '发票开具',
+  approval: '审批中心',
   'asset-center': 'budu档案馆',
   settings: '系统设置',
   'account-admin': '账号管理',
@@ -58,7 +60,11 @@ const pageTitles = {
 export default function Dashboard({ user, onLogout, onUserChange }) {
   const { lang, t } = useI18n()
   const needsBinding =
-    user && user.role !== 'developer' && user.role !== 'public' && (!user.storeKeys || user.storeKeys.length === 0)
+    user &&
+    user.role !== 'developer' &&
+    user.role !== 'public' &&
+    user.role !== 'finance' &&
+    (!user.storeKeys || user.storeKeys.length === 0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [month, setMonth] = useState(() => {
     const d = new Date()
@@ -102,6 +108,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isInventoryPurchaseView = view === 'inventory-purchase'
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
+  const isApprovalView = view === 'approval'
   const isAssetCenterView = view === 'asset-center'
 
   const returnToOverview = () => {
@@ -273,6 +280,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <FinancePage currentUser={user} onBack={returnToOverview} />
               ) : isInvoiceView && user?.role !== 'public' ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
+              ) : isApprovalView && user?.role !== 'public' ? (
+                <ApprovalCenterPage user={user} onBack={returnToOverview} />
               ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.assetCenter === true) ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (

@@ -18,6 +18,7 @@ let currentCanSeeInvoices = false
 let currentCanSeeMailings = false
 let currentCanSeeAssets = false
 let currentCanSeePayrolls = false
+let currentCanSeeApprovals = false
 let initialized = false
 let lastNotifiedId = null
 let audioCtx = null
@@ -25,6 +26,7 @@ let currentInvoices = []
 let currentMailings = []
 let currentAssetReminders = []
 let currentPayrolls = []
+let currentApprovalNotes = []
 let lastCapsKey = ''
 
 function capsKey(user) {
@@ -35,8 +37,7 @@ function capsKey(user) {
     Boolean(user && user.role === 'developer'),
     Boolean(user && (user.role === 'developer' || user.assetCenter === true)),
     Boolean(user && user.role !== 'public' && user.role !== 'cashier'),
-  ].join('|')
-}
+  ].join('|')}
 
 function muted() {
   try {
@@ -131,7 +132,11 @@ function compute() {
   const payrollItems = currentCanSeePayrolls
     ? currentPayrolls.filter((r) => r.status === 'pending').map((r) => ({ ...r, type: 'payroll' }))
     : []
-  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems].sort((a, b) =>
+  // 审批中心：站内通知（待审批/审批结果/抄送），未读的显示，标记已读后消失
+  const approvalItems = currentCanSeeApprovals
+    ? currentApprovalNotes.filter((r) => !r.readAt).map((r) => ({ ...r, type: 'approval' }))
+    : []
+  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
   state = { ...state, unread: items.length, items }
@@ -194,6 +199,14 @@ async function refresh() {
       /* 工资条不可用时忽略 */
     }
   }
+  if (currentCanSeeApprovals) {
+    try {
+      const res = await api('/v2/approvals/notifications?unread=1')
+      currentApprovalNotes = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* 审批中心不可用时忽略 */
+    }
+  }
   compute()
 }
 
@@ -205,6 +218,7 @@ function applyUserCaps(user) {
   currentCanSeeMailings = Boolean(user && user.role === 'developer')
   currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
   currentCanSeePayrolls = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
+  currentCanSeeApprovals = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
 }
 
 export function ensurePolling(user) {
@@ -264,5 +278,25 @@ export function getAlerts() {
 
 /** 手动触发一次全量刷新（如工资条签收后移除未签收项） */
 export function refreshAlerts() {
+  refresh()
+}
+
+/** 审批通知：单条标记已读（点击铃铛条目后调用） */
+export async function markApprovalRead(ids) {
+  try {
+    await api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ ids }) })
+  } catch {
+    /* 忽略 */
+  }
+  refresh()
+}
+
+/** 审批通知：全部标记已读（铃铛「全部已读」时同步调用） */
+export async function markApprovalAllRead() {
+  try {
+    await api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ all: true }) })
+  } catch {
+    /* 忽略 */
+  }
   refresh()
 }

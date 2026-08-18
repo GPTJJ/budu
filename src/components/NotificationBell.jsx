@@ -8,6 +8,8 @@ import {
   unlockAudio,
   isAlertMuted,
   setAlertMuted,
+  markApprovalRead,
+  markApprovalAllRead,
 } from '../utils/inventoryAlerts'
 import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
@@ -40,6 +42,12 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
     // 工资条：铃铛只负责提醒，点击跳转到「人员管理 → 工资条」板块查看/签收
     if (item.type === 'payroll') {
       if (onNavigate) onNavigate('staff-payroll')
+      return
+    }
+    // 审批中心：标记已读并跳转
+    if (item.type === 'approval') {
+      markApprovalRead([item.id])
+      if (onNavigate) onNavigate('approval')
       return
     }
     if (onNavigate) {
@@ -98,7 +106,10 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
               </p>
               {unread > 0 && (
                 <button
-                  onClick={markSeen}
+                  onClick={() => {
+                    markSeen()
+                    markApprovalAllRead()
+                  }}
                   className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50"
                 >
                   <RefreshCw className="h-3 w-3" />
@@ -126,6 +137,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                 ? 'bg-rose-50 text-rose-600'
                               : r.type === 'payroll'
                                 ? 'bg-emerald-50 text-emerald-600'
+                              : r.type === 'approval'
+                                ? 'bg-violet-50 text-violet-600'
                                 : 'bg-sky-50 text-sky-600'
                         }`}
                       >
@@ -138,47 +151,53 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                 ? '资产到期'
                               : r.type === 'payroll'
                                 ? '工资条'
+                              : r.type === 'approval'
+                                ? '审批'
                               : r.type === 'transfer'
                                 ? '调货申请'
                                 : '采购申请',
                         )}
                       </span>
-                      {r.type === 'payroll'
-                        ? t('{name} · {period}', {
-                            name: r.employeeName || '',
-                            period: periodLabel(r.periodType, r.periodKey),
-                          })
-                        : r.type === 'mailing'
-                          ? t('{recipient} · {address}', { recipient: r.recipient || '', address: r.address || '' })
-                          : r.type === 'invoice'
-                            ? t('{company} · ¥{amount}', { company: r.companyName || t('个人'), amount: yuan(r.amountCents) })
-                            : r.type === 'asset'
-                              ? t('{file} · {days}', { file: r.fileName || '', days: r.remindType === 'expired' ? '已过期' : `${r.daysLeft} 天到期` })
-                            : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
+                      {r.type === 'approval'
+                        ? r.title
+                        : r.type === 'payroll'
+                          ? t('{name} · {period}', {
+                              name: r.employeeName || '',
+                              period: periodLabel(r.periodType, r.periodKey),
+                            })
+                          : r.type === 'mailing'
+                            ? t('{recipient} · {address}', { recipient: r.recipient || '', address: r.address || '' })
+                            : r.type === 'invoice'
+                              ? t('{company} · ¥{amount}', { company: r.companyName || t('个人'), amount: yuan(r.amountCents) })
+                              : r.type === 'asset'
+                                ? t('{file} · {days}', { file: r.fileName || '', days: r.remindType === 'expired' ? '已过期' : `${r.daysLeft} 天到期` })
+                                : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      {r.type === 'payroll'
-                        ? t('待签收 · {total}', { total: yuan(r.totalCents) })
-                        : r.type === 'mailing'
-                          ? t('{method} · {postage}{fee}', {
-                              method: r.method || '',
-                              postage: r.postage || '',
-                              fee: r.fee ? ` · ${r.fee}` : '',
-                            })
-                          : r.type === 'invoice'
-                            ? t('{store} · {category} · {email}', {
-                                store: storeLabel(r.storeKey, r.storeName),
-                                category: r.category || t('其他'),
-                                email: r.email || '—',
+                      {r.type === 'approval'
+                        ? r.content
+                        : r.type === 'payroll'
+                          ? t('待签收 · {total}', { total: yuan(r.totalCents) })
+                          : r.type === 'mailing'
+                            ? t('{method} · {postage}{fee}', {
+                                method: r.method || '',
+                                postage: r.postage || '',
+                                fee: r.fee ? ` · ${r.fee}` : '',
                               })
-                            : r.type === 'asset'
-                              ? ''
-                            : r.type === 'transfer'
-                              ? t('从 {from} 调往 {to}', {
-                                  from: storeLabel(r.fromStoreKey, r.fromStoreName),
-                                  to: storeLabel(r.storeKey, r.storeName),
+                            : r.type === 'invoice'
+                              ? t('{store} · {category} · {email}', {
+                                  store: storeLabel(r.storeKey, r.storeName),
+                                  category: r.category || t('其他'),
+                                  email: r.email || '—',
                                 })
-                              : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
+                              : r.type === 'asset'
+                                ? ''
+                                : r.type === 'transfer'
+                                  ? t('从 {from} 调往 {to}', {
+                                      from: storeLabel(r.fromStoreKey, r.fromStoreName),
+                                      to: storeLabel(r.storeKey, r.storeName),
+                                    })
+                                  : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-300">
                       {r.type === 'asset' || r.type === 'payroll' ? '' : t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
