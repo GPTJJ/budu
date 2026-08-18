@@ -494,6 +494,27 @@ function PreviewModal({ file, onClose }) {
     if (tooLarge) return
     api(`/v2/asset-center/files/${file.id}/download`).then(setData).catch((e) => setError(e.message))
   }, [file.id, tooLarge])
+  // PDF 预览：dataURL 在新版 Chrome 无法内嵌渲染（触发下载/空白），转 blob URL 解决
+  const [pdfUrl, setPdfUrl] = useState(null)
+  useEffect(() => {
+    if (!data || !isPdfType(data.fileType)) return
+    let revoked = false
+    fetch(data.dataUrl)
+      .then((r) => r.blob())
+      .then((blob) => {
+        if (revoked) return
+        const url = URL.createObjectURL(blob)
+        setPdfUrl(url)
+      })
+      .catch(() => {})
+    return () => {
+      revoked = true
+      setPdfUrl((cur) => {
+        if (cur) URL.revokeObjectURL(cur)
+        return null
+      })
+    }
+  }, [data])
   const download = async () => {
     setDownloading(true)
     setError('')
@@ -521,7 +542,7 @@ function PreviewModal({ file, onClose }) {
         ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
           <img src={data.dataUrl} alt={file.name} className="max-h-[60vh] rounded-lg object-contain" />
         ) : isPdfType(data.fileType) ? (
-          <iframe title={file.name} src={data.dataUrl} className="h-[60vh] w-full rounded-lg" />
+          <iframe title={file.name} src={pdfUrl || ''} className="h-[60vh] w-full rounded-lg" />
         ) : (
           <a href={data.dataUrl} download={data.name} className="btn-primary px-5 py-2"><Download className="h-4 w-4" />该格式不支持内嵌预览，点击下载查看</a>
         )}

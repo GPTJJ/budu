@@ -1,6 +1,14 @@
 /** 系统版本更新记录（服务端存档，不再推送到重要提醒/铃铛） */
 export const CHANGELOG = [
   {
+    version: 'V1.88',
+    date: '2026-08-18',
+    releasedAt: '2026-08-18T03:30:00.000Z',
+    items: [
+      '修复档案馆 PDF 预览空白：dataURL 在新版 Chrome 无法内嵌渲染（触发下载），改为 blob URL 预览',
+    ],
+  },
+  {
     version: 'V1.87',
     date: '2026-08-17',
     releasedAt: '2026-08-17T13:00:00.000Z',
