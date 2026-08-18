@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
 } from 'lucide-react'
@@ -88,6 +88,7 @@ export default function StoreEntryPage({ user, onBack }) {
   const [date, setDate] = useState(todayStr)
   const [overview, setOverview] = useState(null)
   const [loadingOverview, setLoadingOverview] = useState(true)
+  const overviewRef = useRef(null)
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [inc, setInc] = useState('')
@@ -113,11 +114,12 @@ export default function StoreEntryPage({ user, onBack }) {
   const allEmployees = useMemo(() => [...employeeList('all')].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')), [])
 
   const loadOverview = async () => {
-    setLoadingOverview(true)
+    setLoadingOverview((current) => current || !overviewRef.current)
     setError('')
     try {
       const data = await api(`/v2/daily-entry/overview?store=${encodeURIComponent(store)}&date=${date}`)
       setOverview(data)
+      overviewRef.current = data
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord || '') : '')
       setStaffRows((data.staff || []).map((s) => ({
@@ -142,7 +144,6 @@ export default function StoreEntryPage({ user, onBack }) {
 
   const refreshAll = async () => {
     await loadUserData().catch(() => {})
-    setVersion((v) => v + 1)
   }
 
   const tip = (message, ok = true) => {
@@ -205,11 +206,11 @@ export default function StoreEntryPage({ user, onBack }) {
           reason: '值班人员选择',
         }),
       })
-      await refreshAll()
-      await loadOverview()
+      // 值班人员本地已乐观更新，不再全量刷新（避免连续点选卡顿、界面闪断与请求竞态）
       tip(t('值班人员已保存 ✓'))
     } catch (e) {
       setError(e.message)
+      tip(t('值班人员保存失败，已恢复'), false)
       await loadOverview()
     } finally {
       setSaving('')
@@ -382,7 +383,7 @@ export default function StoreEntryPage({ user, onBack }) {
 
       <section className="card p-5">
         <h3 className="text-[15px] font-bold text-slate-800">今日经营概览</h3>
-        {loadingOverview ? (
+        {loadingOverview && !overview ? (
           <p className="mt-3 text-sm text-slate-400">正在加载…</p>
         ) : source === 'pos' || source === 'hybrid' ? (
           <>
