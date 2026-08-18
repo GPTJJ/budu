@@ -1214,6 +1214,10 @@ v2Router.post('/invoices', wrap(async (req, res) => {
       createdBy: req.user.username,
     },
   })
+  sendWechatMarkdown(
+    '新发票申请',
+    `门店 **${storeKey}**\n抬头 **${type === 'company' ? name : '个人'}**\n金额 **¥${(cents / 100).toFixed(2)}** · 品类 **${String(category || '其他').trim()}**\n提交人 **${req.user.username}**\n请尽快开票。`,
+  ).catch(() => {})
   res.json({ ok: true, invoice: serializeInvoice(row) })
 }))
 
@@ -1288,6 +1292,10 @@ v2Router.post('/mailing-records', wrap(async (req, res) => {
       createdBy: req.user.username,
     },
   })
+  sendWechatMarkdown(
+    '新门店邮寄',
+    `方式 **${m}**${f ? ` · 运费 **${f}**` : ''}\n收件人 **${name}**\n地址 ${addr}\n提交人 **${req.user.username}**\n请尽快安排发货。`,
+  ).catch(() => {})
   res.json({ ok: true, record: serializeMailingRecord(row) })
 }))
 
