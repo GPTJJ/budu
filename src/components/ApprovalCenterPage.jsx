@@ -502,7 +502,7 @@ function ApprovalDetailModal({ detail, user, onClose, onChanged, onEdit }) {
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const isDev = user?.role === 'developer'
+  const isSuper = user?.role === 'developer' || user?.role === 'finance'
   const isSubmitter = user?.username === request.submitterUsername
 
   const act = async (action, extra = {}) => {
@@ -629,8 +629,8 @@ function ApprovalDetailModal({ detail, user, onClose, onChanged, onEdit }) {
           </div>
         )}
 
-        {/* 审批操作区 */}
-        {request.status === 'pending' && isDev && (
+        {/* 审批操作区（开发者/财务，与开发者权限一致） */}
+        {request.status === 'pending' && isSuper && (
           <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/50 p-4">
             <p className="text-xs font-bold text-slate-600">审批操作</p>
             <textarea
@@ -688,8 +688,8 @@ function ApprovalDetailModal({ detail, user, onClose, onChanged, onEdit }) {
           </div>
         )}
 
-        {/* 归档（开发者） */}
-        {isDev && (request.status === 'approved' || request.status === 'rejected') && (
+        {/* 归档（开发者/财务） */}
+        {isSuper && (request.status === 'approved' || request.status === 'rejected') && (
           <div className="mt-3">
             <button onClick={() => act('archive')} disabled={Boolean(busy)} className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 text-xs font-bold text-violet-600 transition hover:bg-violet-100 disabled:opacity-40">
               <Check className="h-3.5 w-3.5" />归档单据

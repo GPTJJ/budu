@@ -30,14 +30,16 @@ let currentApprovalNotes = []
 let lastCapsKey = ''
 
 function capsKey(user) {
+  const isSuper = Boolean(user && (user.role === 'developer' || user.role === 'finance'))
   return [
     Boolean(user && ['developer', 'manager'].includes(user.role)),
     hasInventoryTransferAll(user),
     Boolean(user && user.role !== 'public'),
-    Boolean(user && user.role === 'developer'),
-    Boolean(user && (user.role === 'developer' || user.assetCenter === true)),
+    isSuper,
+    Boolean(user && (isSuper || user.assetCenter === true)),
     Boolean(user && user.role !== 'public' && user.role !== 'cashier'),
-  ].join('|')}
+  ].join('|')
+}
 
 function muted() {
   try {
@@ -215,8 +217,8 @@ function applyUserCaps(user) {
   currentCanNotify = Boolean(user && ['developer', 'manager'].includes(user.role))
   currentIsRequestNotifier = hasInventoryTransferAll(user)
   currentCanSeeInvoices = Boolean(user && user.role !== 'public')
-  currentCanSeeMailings = Boolean(user && user.role === 'developer')
-  currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.assetCenter === true))
+  currentCanSeeMailings = Boolean(user && (user.role === 'developer' || user.role === 'finance'))
+  currentCanSeeAssets = Boolean(user && (user.role === 'developer' || user.role === 'finance' || user.assetCenter === true))
   currentCanSeePayrolls = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
   currentCanSeeApprovals = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
 }

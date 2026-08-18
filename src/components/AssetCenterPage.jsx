@@ -91,7 +91,7 @@ function fileIcon(type) {
 
 export default function AssetCenterPage({ user, onBack }) {
   const { t } = useI18n()
-  const isDeveloper = user?.role === 'developer'
+  const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')

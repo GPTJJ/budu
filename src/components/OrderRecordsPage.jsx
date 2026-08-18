@@ -34,7 +34,7 @@ function monthStart() {
 export default function OrderRecordsPage({ user, onBack }) {
   const stores = useMemo(() => {
     const list = allStores()
-    if (user.role === 'developer') return list
+    if (user.role === 'developer' || user.role === 'finance') return list
     const allowed = new Set(user.storeKeys || [])
     return list.filter((store) => allowed.has(store.key))
   }, [user])
@@ -253,7 +253,7 @@ export default function OrderRecordsPage({ user, onBack }) {
                   <td className="px-4 py-3.5"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : order.status === 'cancelled' || order.status === 'refunded' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'}`}>{statusLabels[order.status] || order.status}</span></td>
                   <td className="px-5 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {user.role === 'developer' && (
+                      {(user.role === 'developer' || user.role === 'finance') && (
                         <button onClick={() => removeOrder(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50" aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-3.5 w-3.5" />删除</button>
                       )}
                       {user.role !== 'public' && orderRemainingCents(order) > 0n && (

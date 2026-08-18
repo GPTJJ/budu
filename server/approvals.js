@@ -359,12 +359,18 @@ approvalRouter.get('/approvals/requests', wrap(async (req, res) => {
     where.submitterUsername = user.username
   } else if (scope === 'todo') {
     where.status = 'pending'
-    where.nodes = { some: { approverUsername: user.username, status: 'pending' } }
+    // 财务与开发者审批权一致：todo 包含 developer 级审批节点的单据
+    const ctx = await userCtx()
+    const approverNames = new Set([user.username])
+    if (user.role === 'finance') {
+      for (const u of ctx.roleUsers.developer || []) approverNames.add(u.username)
+    }
+    where.nodes = { some: { approverUsername: { in: [...approverNames] }, status: 'pending' } }
   } else if (scope === 'cc') {
     where.ccs = { some: { ccUsername: user.username } }
   } else if (scope === 'all') {
-    if (user.role === 'finance') where.status = 'approved' // 财务仅已通过
-    else if (user.role !== 'developer') throw httpError('无权查看全部审批', 403)
+    // 超管（开发者/财务）查看全部；其他角色无权
+    if (user.role !== 'developer' && user.role !== 'finance') throw httpError('无权查看全部审批', 403)
   } else {
     throw httpError('scope 不正确')
   }
@@ -376,13 +382,11 @@ approvalRouter.get('/approvals/requests', wrap(async (req, res) => {
     take: 200,
     include: { template: { select: { name: true, approverRule: true } } },
   })
-  // todo/cc 兜底权限过滤（模板规则变化时防御）
+  // todo 兜底权限过滤（模板规则变化时防御）
   let list = rows
   if (scope === 'todo') {
     const ctx = await userCtx()
     list = rows.filter((r) => isApproverFor(user, r, r.template))
-  } else if (scope === 'all' && user.role !== 'developer') {
-    list = rows.filter((r) => r.status === 'approved')
   }
   res.json({
     ok: true,

@@ -130,9 +130,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const requests = visibleRequests.filter((r) =>
     listTab === 'done' ? isFinished(r) : !isFinished(r),
   )
-  const isDeveloper = currentUser?.role === 'developer'
+  const isDeveloper = currentUser?.role === 'developer' || currentUser?.role === 'finance' // 财务权限与开发者一致
   const isTransferAdmin = isTransfer && hasInventoryTransferAll(currentUser)
-  const canManageOptions = currentUser?.role === 'developer'
+  const canManageOptions = isDeveloper
 
   const loadItems = async () => {
     try {

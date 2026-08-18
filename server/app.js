@@ -289,7 +289,8 @@ export function createApp() {
   }
 
   function requireDeveloper(req, res, next) {
-    if (!req.user || req.user.role !== 'developer') {
+    // 财务角色权限与开发者一致
+    if (!req.user || (req.user.role !== 'developer' && req.user.role !== 'finance')) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
@@ -330,26 +331,26 @@ export function createApp() {
 
   function canManageStore(user, storeKey) {
     if (!user || user.role === 'public') return false
-    if (user.role === 'developer') return true
+    if (user.role === 'developer' || user.role === 'finance') return true
     return boundStores(user).includes(storeKey)
   }
 
   function requireManager(req, res, next) {
-    if (!req.user || !['developer', 'manager'].includes(req.user.role)) {
+    if (!req.user || !['developer', 'manager', 'finance'].includes(req.user.role)) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
   }
 
   function requireTransferManager(req, res, next) {
-    if (!req.user || (!['developer', 'manager'].includes(req.user.role) && !hasInventoryTransferAll(req.user))) {
+    if (!req.user || (!['developer', 'manager', 'finance'].includes(req.user.role) && !hasInventoryTransferAll(req.user))) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
   }
 
   function scopeInventoryRequests(bodyRequests, dbRequests, user) {
-    if (user.role === 'developer') return true
+    if (user.role === 'developer' || user.role === 'finance') return true
     const allowed = new Set(boundStores(user))
     const inScope = (r) =>
       (r.type === 'transfer' && hasInventoryTransferAll(user)) ||
@@ -395,7 +396,7 @@ export function createApp() {
         inventory: [],
       }
     }
-    if (!user || user.role === 'developer' || user.role === 'public') {
+    if (!user || user.role === 'developer' || user.role === 'finance' || user.role === 'public') {
       return {
         entries: db.entries || {},
         staff: db.staff || [],
@@ -898,7 +899,7 @@ export function createApp() {
       return res.status(403).json({ error: '无权限' })
     }
     const allowed = new Set(boundStores(req.user))
-    const isDeveloper = req.user.role === 'developer'
+    const isDeveloper = req.user.role === 'developer' || req.user.role === 'finance'
     const isManager = req.user.role === 'manager'
 
     if (body.entries !== undefined) {
@@ -938,7 +939,7 @@ export function createApp() {
     }
     if (body.removedStaff !== undefined) {
       const removedChanged = JSON.stringify(body.removedStaff) !== JSON.stringify(db.removedStaff || [])
-      if (removedChanged && req.user.role !== 'developer') {
+      if (removedChanged && req.user.role !== 'developer' && req.user.role !== 'finance') {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.removedStaff) || body.removedStaff.some((n) => typeof n !== 'string')) {
@@ -962,7 +963,7 @@ export function createApp() {
     }
     if (body.stores !== undefined) {
       const storesChanged = JSON.stringify(body.stores) !== JSON.stringify(db.stores || [])
-      if (storesChanged && req.user.role !== 'developer') {
+      if (storesChanged && req.user.role !== 'developer' && req.user.role !== 'finance') {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.stores)) {

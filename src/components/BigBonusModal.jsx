@@ -219,7 +219,8 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
             </div>
             <div className="mt-2 max-h-56 divide-y divide-slate-50 overflow-y-auto rounded-2xl border border-slate-100">
               {rows.map((r) => {
-                const canDelete = currentUser?.role === 'developer' || r.createdBy === currentUser?.username
+                const canDelete =
+                  currentUser?.role === 'developer' || currentUser?.role === 'finance' || r.createdBy === currentUser?.username
                 return (
                 <div key={r.id} className="flex items-center gap-3 px-3 py-2.5">
                   {r.receipt ? (

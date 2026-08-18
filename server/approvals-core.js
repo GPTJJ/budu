@@ -1,5 +1,7 @@
 // 审批引擎核心纯函数（无副作用，可独立单测）：
 // 状态机、权限矩阵、抄送规则解析、表单校验、金额转换、单号生成
+import { isSuperUser } from '../shared/accountPermissions.js'
+
 export const APPROVAL_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'withdrawn', 'archived']
 
 /** 状态机：key = 当前状态，value = 允许转移到的状态 */
@@ -20,13 +22,17 @@ export function isStatus(value) {
   return APPROVAL_STATUSES.includes(value)
 }
 
-/** 是否为该单据的审批人（老板/管理员）：模板规则 role=developer → 任意 developer；username → 指定账号 */
+/** 是否为该单据的审批人（老板/管理员/财务）：模板规则 role=developer → developer/finance；username → 指定账号 */
 export function isApproverFor(user, request, template) {
   if (!user || !request || !template) return false
   if (request.status === 'withdrawn' || request.status === 'draft') return false
   const rule = template.approverRule || {}
   if (rule.type === 'username') return user.username === rule.username
-  if (rule.type === 'role') return user.role === rule.role
+  if (rule.type === 'role') {
+    if (user.role === rule.role) return true
+    // 财务权限与开发者一致：developer 级审批人也对财务开放
+    if (rule.role === 'developer' && user.role === 'finance') return true
+  }
   return false
 }
 
@@ -40,15 +46,14 @@ export function isCcOf(user, request, ccList = []) {
   return Boolean(user && Array.isArray(ccList) && ccList.some((c) => c.ccUsername === user.username))
 }
 
-/** 单据可见性：提交人/审批人/抄送人/开发者；财务仅已通过；店员/店长仅本人相关 */
+/** 单据可见性：提交人/审批人/抄送人/超管（开发者+财务全量）；店员/店长仅本人相关 */
 export function canViewRequest(user, request, ctx = {}) {
   if (!user || !request) return false
   if (user.role === 'public' || user.role === 'cashier') return false
-  if (user.role === 'developer') return true
+  if (isSuperUser(user)) return true
   if (isSubmitter(user, request)) return true
   if (isApproverFor(user, request, ctx.template)) return true
   if (isCcOf(user, request, ctx.ccList)) return true
-  if (user.role === 'finance') return request.status === 'approved' // 财务只看已通过
   return false
 }
 
@@ -79,15 +84,15 @@ export function canDecide(user, request, template) {
   return canCreate(user) && isApproverFor(user, request, template) && canTransition(request.status, 'approved')
 }
 
-/** 归档：已通过/已驳回，仅开发者 */
+/** 归档：已通过/已驳回，仅超管（开发者/财务） */
 export function canArchive(user, request) {
-  return Boolean(user && user.role === 'developer') && (request.status === 'approved' || request.status === 'rejected')
+  return isSuperUser(user) && (request.status === 'approved' || request.status === 'rejected')
 }
 
-/** 删除：仅草稿，创建人或开发者 */
+/** 删除：仅草稿，创建人或超管（开发者/财务） */
 export function canDelete(user, request) {
   if (!canCreate(user) || request.status !== 'draft') return false
-  return user.role === 'developer' || isSubmitter(user, request)
+  return isSuperUser(user) || isSubmitter(user, request)
 }
 
 /** 金额（元，字符串/数字）→ 分（Number，安全整数范围内） */
@@ -193,6 +198,6 @@ export function scopeFilter(scope, user, ctx = {}) {
   if (scope === 'my') return { submitterUsername: user.username }
   if (scope === 'todo') return { status: 'pending' } // 审批人限定由节点查询/后端过滤
   if (scope === 'cc') return {} // 抄送我的：由 cc 关联过滤
-  if (scope === 'all') return user.role === 'finance' ? { status: 'approved' } : {}
+  if (scope === 'all') return isSuperUser(user) ? {} : {} // 超管（开发者/财务）全量
   return {}
 }

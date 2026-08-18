@@ -71,7 +71,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   })
   const [store, setStore] = useState(() => {
-    if (user?.role === 'developer' || user?.role === 'public') return 'all'
+    if (user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance') return 'all'
     const list = allStores().filter((s) => (user.storeKeys || []).includes(s.key))
     return list[0] ? list[0].key : 'all'
   })
@@ -244,8 +244,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               {isStaffView ? (
                 <PersonnelPage
                   onBack={returnToOverview}
-                  canDelete={user?.role === 'developer'}
-                  canManage={user?.role === 'developer'}
+                  canDelete={user?.role === 'developer' || user?.role === 'finance'}
+                  canManage={user?.role === 'developer' || user?.role === 'finance'}
                   user={user}
                 />
               ) : isPayrollView && user?.role !== 'public' ? (
@@ -258,11 +258,11 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <StoreMailingPage onBack={returnToOverview} />
               ) : isOrdersView && user?.role !== 'public' ? (
                 <OrderRecordsPage user={user} onBack={returnToOverview} />
-              ) : isProductCenterView && ['developer', 'manager'].includes(user?.role) ? (
+              ) : isProductCenterView && ['developer', 'manager', 'finance'].includes(user?.role) ? (
                 <ProductCenterPage onBack={returnToOverview} />
               ) : isSettingsView ? (
                 <SettingsPage user={user} onBack={returnToOverview} />
-              ) : isAccountAdminView && user?.role === 'developer' ? (
+              ) : isAccountAdminView && (user?.role === 'developer' || user?.role === 'finance') ? (
                 <AccountAdminPage currentUser={user} onBack={returnToOverview} />
               ) : isInventoryTransferView && user?.role !== 'public' ? (
                 <InventoryRequestPage
@@ -276,13 +276,13 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   currentUser={user}
                   onBack={returnToOverview}
                 />
-              ) : isFinanceView && (user?.role === 'developer' || user?.role === 'manager') ? (
+              ) : isFinanceView && (user?.role === 'developer' || user?.role === 'manager' || user?.role === 'finance') ? (
                 <FinancePage currentUser={user} onBack={returnToOverview} />
               ) : isInvoiceView && user?.role !== 'public' ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
               ) : isApprovalView && user?.role !== 'public' ? (
                 <ApprovalCenterPage user={user} onBack={returnToOverview} />
-              ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.assetCenter === true) ? (
+              ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.role === 'finance' || user.assetCenter === true) ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
                 <>

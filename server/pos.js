@@ -178,7 +178,7 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
 posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  if (req.user.role !== 'developer') throw httpError('仅开发者可删除订单', 403)
+  if (req.user.role !== 'developer' && req.user.role !== 'finance') throw httpError('仅开发者可删除订单', 403)
   const order = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!order) throw httpError('订单不存在', 404)
   await prisma.$transaction(async (tx) => {

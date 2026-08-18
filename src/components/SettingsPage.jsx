@@ -29,7 +29,7 @@ export default function SettingsPage({ user, onBack }) {
   const [secError, setSecError] = useState('')
   const [secTip, setSecTip] = useState('')
   const [secSaving, setSecSaving] = useState(false)
-  const isDeveloper = user?.role === 'developer'
+  const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
   const customStores = getStores()
 
   const addStore = () => {

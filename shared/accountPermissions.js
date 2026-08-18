@@ -19,6 +19,11 @@ export function hasInventoryTransferAll(user) {
   )
 }
 
+/** 最高权限角色：开发者与财务（财务权限与开发者一致） */
+export function isSuperUser(user) {
+  return Boolean(user && (user.role === 'developer' || user.role === 'finance'))
+}
+
 export function canAccessTransferStore(user, storeKey) {
   if (!user || user.role === 'public') return false
   if (hasInventoryTransferAll(user)) return true

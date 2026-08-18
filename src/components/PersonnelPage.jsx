@@ -500,7 +500,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
-  const [filter, setFilter] = useState(() => (user?.role === 'developer' ? 'all' : 'fulltime'))
+  const [filter, setFilter] = useState(() => (user?.role === 'developer' || user?.role === 'finance' ? 'all' : 'fulltime'))
   const [month, setMonth] = useState(() => todayParts().month)
   const [day, setDay] = useState(null)
   const [weekStart, setWeekStart] = useState(null)
@@ -613,7 +613,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
-            {user?.role === 'developer' && (
+            {(user?.role === 'developer' || user?.role === 'finance') && (
               <button
                 onClick={() => setFilter('all')}
                 className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
@@ -646,7 +646,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               {t('兼职人员')}（{parttime.length}）
             </button>
           </div>
-          {user?.role === 'developer' && (
+          {(user?.role === 'developer' || user?.role === 'finance') && (
             <button
               onClick={() => setShowExport(true)}
               className="ml-auto flex items-center gap-1.5 rounded-2xl bg-emerald-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:opacity-90"
@@ -816,7 +816,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     </button>
                   )}
 
-                  {user?.role === 'developer' && (
+                  {(user?.role === 'developer' || user?.role === 'finance') && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
