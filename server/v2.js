@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
-import { sendWechatMarkdown } from './wechat-alert.js'
+import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
@@ -1008,7 +1008,7 @@ v2Router.post('/alerts/test', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user.role !== 'developer') throw bad('无权限', 403)
   const ok = await sendWechatMarkdown('BUDU 告警测试', '这是一条测试消息，企微告警通道正常 ✅')
-  res.json({ ok, configured: Boolean(process.env.WECHAT_WORK_WEBHOOK_URL) })
+  res.json({ ok, configured: Boolean(wecomWebhookUrl()) })
 }))
 
 let weatherCache = { at: 0, data: null }
