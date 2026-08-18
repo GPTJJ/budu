@@ -84,6 +84,14 @@ try {
       ['首页概览', '门店经营'],
     ],
     ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职人员']],
+    [
+      'PayrollPage',
+      await render('/src/components/PayrollPage.jsx', {
+        user: { username: 'budu', role: 'developer' },
+        onBack: () => {},
+      }),
+      ['工资条', '发放工资条', '待签收', '已签收'],
+    ],
     ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['值班人员', '选择值班人员（可多选）']],
     ['SchedulePage', await render('/src/components/SchedulePage.jsx', { onBack: () => {}, canEdit: true }), ['门店排班', '周排班表', '添加排班']],
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],

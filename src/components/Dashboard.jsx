@@ -23,6 +23,7 @@ import useSwipeBack from '../hooks/useSwipeBack'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
+const PayrollPage = lazy(() => import('./PayrollPage'))
 const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
 const SchedulePage = lazy(() => import('./SchedulePage'))
 const StoreMailingPage = lazy(() => import('./StoreMailingPage'))
@@ -38,6 +39,7 @@ const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 
 const pageTitles = {
   staff: '雇员',
+  'staff-payroll': '工资条',
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
   'store-mailing': '门店邮寄',
@@ -87,6 +89,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff'
+  const isPayrollView = view === 'staff-payroll'
   const isStoreEntryView = view === 'store-entry'
   const isScheduleView = view === 'store-schedule'
   const isMailingView = view === 'store-mailing'
@@ -238,6 +241,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   canManage={user?.role === 'developer'}
                   user={user}
                 />
+              ) : isPayrollView && user?.role !== 'public' ? (
+                <PayrollPage user={user} onBack={returnToOverview} />
               ) : isStoreEntryView && user?.role !== 'public' ? (
                 <StoreEntryPage user={user} onBack={returnToOverview} />
               ) : isScheduleView ? (

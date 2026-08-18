@@ -28,7 +28,10 @@ const menus = [
 ]
 
 const subMenus = {
-  staff: [{ key: 'staff', label: '雇员' }],
+  staff: [
+    { key: 'staff', label: '雇员' },
+    { key: 'staff-payroll', label: '工资条' },
+  ],
   store: [
     { key: 'store-entry', label: '门店业绩录入' },
     { key: 'store-schedule', label: '门店排班' },
