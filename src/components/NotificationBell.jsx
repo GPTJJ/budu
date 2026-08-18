@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, RefreshCw } from 'lucide-react'
+import { BadgeDollarSign, Bell, RefreshCw } from 'lucide-react'
 import {
   getAlerts,
   subscribe,
@@ -13,6 +13,7 @@ import {
 import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
 import PayrollSlipModal from './PayrollSlipModal'
+import PayrollHistoryModal from './PayrollHistoryModal'
 import { useI18n } from '../i18n'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -23,6 +24,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
   const [open, setOpen] = useState(false)
   const [muted, setMuted] = useState(isAlertMuted())
   const [payrollNotice, setPayrollNotice] = useState(null)
+  const [showPayrollHistory, setShowPayrollHistory] = useState(false)
 
   useEffect(() => {
     ensurePolling(user)
@@ -213,27 +215,44 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
               )}
             </div>
 
-            {/* 提示音开关 */}
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
-              <span className="text-xs font-medium text-slate-500">{t('提示音')}</span>
-              <button
-                onClick={() => {
-                  const next = !muted
-                  setMuted(next)
-                  setAlertMuted(next)
-                  if (!next) unlockAudio()
-                }}
-                className={`relative h-5 w-9 rounded-full transition-colors ${
-                  muted ? 'bg-slate-200' : 'bg-budu-400'
-                }`}
-                aria-label={t(muted ? '关闭' : '开启')}
-              >
-                <span
-                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${
-                    muted ? 'left-0.5' : 'left-[18px]'
+            {/* 工资条记录入口 + 提示音开关 */}
+            <div className="border-t border-slate-100">
+              {user && user.role !== 'public' && user.role !== 'cashier' && (
+                <button
+                  onClick={() => {
+                    setShowPayrollHistory(true)
+                    setOpen(false)
+                  }}
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left text-xs font-semibold text-budu-500 transition hover:bg-budu-50/60"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <BadgeDollarSign className="h-3.5 w-3.5" />
+                    {t('工资条记录')}
+                  </span>
+                  <span className="text-[10px] text-slate-300">查看历史 / 签收留痕</span>
+                </button>
+              )}
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-xs font-medium text-slate-500">{t('提示音')}</span>
+                <button
+                  onClick={() => {
+                    const next = !muted
+                    setMuted(next)
+                    setAlertMuted(next)
+                    if (!next) unlockAudio()
+                  }}
+                  className={`relative h-5 w-9 rounded-full transition-colors ${
+                    muted ? 'bg-slate-200' : 'bg-budu-400'
                   }`}
-                />
-              </button>
+                  aria-label={t(muted ? '关闭' : '开启')}
+                >
+                  <span
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-[left] ${
+                      muted ? 'left-0.5' : 'left-[18px]'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
         </>
@@ -247,6 +266,9 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
             refreshAlerts()
           }}
         />
+      )}
+      {showPayrollHistory && (
+        <PayrollHistoryModal user={user} onClose={() => setShowPayrollHistory(false)} />
       )}
     </div>
   )
