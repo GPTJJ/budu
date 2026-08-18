@@ -98,7 +98,7 @@ try {
         user: { username: 'budu', role: 'developer' },
         onBack: () => {},
       }),
-      ['审批中心', '待我审批', '我发起的', '抄送我的', '全部审批', '新建申请'],
+      ['审批中心', '发起申请', '待我审批', '我发起的', '抄送我的', '全部审批'],
     ],
     ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['值班人员', '选择值班人员（可多选）']],
     ['SchedulePage', await render('/src/components/SchedulePage.jsx', { onBack: () => {}, canEdit: true }), ['门店排班', '周排班表', '添加排班']],

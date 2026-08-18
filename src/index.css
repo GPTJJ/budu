@@ -259,3 +259,18 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* 审批中心 Bottom Sheet 弹出动画（200ms 轻量） */
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.sheet-up {
+  animation: sheet-up 0.2s ease-out;
+}
