@@ -20,6 +20,7 @@ import {
   allStores,
   storeName,
 } from '../utils/selectors'
+import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
@@ -311,8 +312,16 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
     const detail = employeeDailyPayDetail(monthKey, dd, emp.name)
+    // 周末/法定节假日标记（与首页日历一致：假=红+「假」、调休=绿+「班」、普通周末=红）
+    const full = String(dd).includes('-') ? `${monthKey}-${String(dd).slice(3)}` : `${monthKey}-${String(dd)}`
+    const isHolidayDay = HOLIDAYS_2026.has(full)
+    const isMakeupDay = WORKDAYS_2026.has(full)
+    const dow = new Date(`${full}T00:00:00`).getDay()
+    const isWeekendDay = !isHolidayDay && !isMakeupDay && (dow === 0 || dow === 6)
+    const mark = isHolidayDay ? 'holiday' : isMakeupDay ? 'makeup' : isWeekendDay ? 'weekend' : null
     dayRows.push({
       day: label,
+      mark,
       revenue: detail ? detail.totals.inc : 0,
       orders: detail ? detail.totals.ord : 0,
       hours: detail ? detail.totals.hours : 0,
@@ -385,6 +394,10 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
           <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
         ) : (
           <>
+            <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-400" />周末 / 法定节假日</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />调休上班（周末补班）</span>
+            </div>
             <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
               <table className="w-full min-w-[860px] text-left text-sm">
                 <thead className="sticky top-0 bg-white">
@@ -405,8 +418,12 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
                 <tbody className="divide-y divide-slate-50">
                   {dayRows.map((r) => (
                     <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
-                      <td className="py-1.5 pr-2 font-semibold text-slate-700">
-                        {r.day}
+                      <td className="py-1.5 pr-2 font-semibold">
+                        <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-rose-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
+                          {r.day}
+                          {r.mark === 'holiday' && <span className="ml-1 rounded bg-rose-50 px-1 py-0.5 text-[9px] font-bold text-rose-500">{t('假')}</span>}
+                          {r.mark === 'makeup' && <span className="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-600">{t('班')}</span>}
+                        </span>
                         {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
                         {r.payAdjustment && <span className="ml-1 rounded bg-violet-50 px-1 py-0.5 text-[9px] text-violet-600">{t('已调整')}</span>}
                       </td>
