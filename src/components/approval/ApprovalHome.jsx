@@ -142,7 +142,7 @@ export default function ApprovalHome({ user, templates, scope, onScope, rows, st
                   <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${r.templateKey === 'payroll' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                     {(() => {
                       const Icon = templateIcon(r.templateKey)
-                      return <Icon className="h-4.5 w-4.5" />
+                      return <Icon className="h-5 w-5" />
                     })()}
                   </span>
                   <span className="min-w-0 flex-1">

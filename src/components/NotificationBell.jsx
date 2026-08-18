@@ -44,9 +44,16 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
       if (onNavigate) onNavigate('staff-payroll')
       return
     }
-    // 审批中心：标记已读并跳转
+    // 审批中心：标记已读并跳转（按通知类型打开对应列表页）
     if (item.type === 'approval') {
       markApprovalRead([item.id])
+      try {
+        // 待审批 → 待我审批；抄送 → 抄送我的；结果 → 我发起的
+        const target = item.noticeType === 'todo' ? 'todo' : item.noticeType === 'cc' ? 'cc' : 'my'
+        sessionStorage.setItem('budu-approval-scope', target)
+      } catch {
+        /* 忽略 */
+      }
       if (onNavigate) onNavigate('approval')
       return
     }

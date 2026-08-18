@@ -20,7 +20,16 @@ export default function ApprovalCenterPage({ user, onBack }) {
   const [editTarget, setEditTarget] = useState(null)
   const [detail, setDetail] = useState(null)
   const [templates, setTemplates] = useState([])
-  const [scope, setScope] = useState('launch')
+  // 铃铛通知跳转时按通知类型打开对应列表页（一次性）
+  const [scope, setScope] = useState(() => {
+    try {
+      const s = sessionStorage.getItem('budu-approval-scope')
+      sessionStorage.removeItem('budu-approval-scope')
+      return s || 'launch'
+    } catch {
+      return 'launch'
+    }
+  })
   const [statusFilter, setStatusFilter] = useState('')
   const [rows, setRows] = useState(null)
   const [tick, setTick] = useState(0)

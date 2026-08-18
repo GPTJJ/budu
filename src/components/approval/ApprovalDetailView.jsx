@@ -21,7 +21,11 @@ function Timeline({ detail }) {
   const { request, nodes, ccs, logs } = detail
   const submitLog = [...(logs || [])].reverse().find((l) => l.action === 'submit')
   const createLog = [...(logs || [])].reverse().find((l) => l.action === 'create')
-  const node = nodes?.[0]
+  // 驳回重提后存在多个节点：优先待审批节点；否则取 actedAt 最新的审批结果
+  const pendingNode = (nodes || []).find((n) => n.status === 'pending')
+  const node =
+    pendingNode ||
+    [...(nodes || [])].sort((a, b) => String(b.actedAt || '').localeCompare(String(a.actedAt || '')))[0]
   const ccUsers = ccs || []
   const submittedAt = submitLog?.createdAt || createLog?.createdAt || request.createdAt
 

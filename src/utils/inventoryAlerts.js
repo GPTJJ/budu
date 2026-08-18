@@ -135,8 +135,9 @@ function compute() {
     ? currentPayrolls.filter((r) => r.status === 'pending').map((r) => ({ ...r, type: 'payroll' }))
     : []
   // 审批中心：站内通知（待审批/审批结果/抄送），未读的显示，标记已读后消失
+  // 保留 noticeType（todo/result/cc）供铃铛点击时跳转到对应列表页
   const approvalItems = currentCanSeeApprovals
-    ? currentApprovalNotes.filter((r) => !r.readAt).map((r) => ({ ...r, type: 'approval' }))
+    ? currentApprovalNotes.filter((r) => !r.readAt).map((r) => ({ ...r, type: 'approval', noticeType: r.type }))
     : []
   const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),

@@ -1,6 +1,6 @@
 // 审批中心 · 发起审批表单页（企业微信风格单列表单）
 // 业务逻辑与接口完全复用现有实现；仅呈现层改版
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowLeft, Send } from 'lucide-react'
 import { api } from '../../utils/api'
 import { allStores, storeName } from '../../utils/selectors'
@@ -81,7 +81,6 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
   const [busy, setBusy] = useState(false)
   // 选择器状态
   const [picker, setPicker] = useState(null) // { field, type: 'option'|'employee'|'month' }
-  const dateInputRef = useRef(null)
 
   const schema = template.schema || []
   const fieldOf = (key) => schema.find((f) => f.key === key)
@@ -171,7 +170,6 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
                 {value || '请选择日期'}
               </span>
               <input
-                ref={dateInputRef}
                 type="date"
                 value={value || ''}
                 onChange={(e) => e.target.value && setField(field.key)(e.target.value)}
