@@ -495,6 +495,12 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     onExit()
   }
 
+  const confirmExit = () => {
+    if (window.confirm('确定退出 POS 吗？')) {
+      handleExit()
+    }
+  }
+
   const returnToOrdering = () => {
     savePendingOrder(user.id, storeId, '')
     setScannerChannel('')
@@ -601,7 +607,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   if (stage === 'success' && order) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-emerald-50 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">{order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={handleExit} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">退出 POS</button></div>
+        <div className="w-full max-w-lg rounded-[32px] bg-white p-9 text-center shadow-2xl"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">支付成功</h2><p className="mt-2 text-sm text-slate-400">{order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-5xl font-black text-emerald-600">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between"><span className="text-slate-400">订单号</span><span className="font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p><p className="flex justify-between"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p></div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={startNext} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">返回 POS</button></div>
       </div>
     )
   }
@@ -609,7 +615,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   return (
     <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-100 text-slate-800" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', touchAction: 'manipulation' }}>
       <header className={`flex shrink-0 items-center gap-2 px-3 ${isDesktop ? 'h-14 bg-slate-900 text-white shadow-sm' : 'h-[60px] border-b border-slate-200 bg-white'}`}>
-        <button onClick={handleExit} className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${isDesktop ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-slate-100 text-slate-500'}`} aria-label="退出 POS"><X className="h-5 w-5" /></button>
+        <button onClick={confirmExit} className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${isDesktop ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-slate-100 text-slate-500'}`} aria-label="退出 POS"><X className="h-5 w-5" /></button>
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
           <strong className={isDesktop ? 'text-white' : 'text-budu-600'}>BUDU POS</strong>
           {isDesktop && <span className="rounded-md bg-budu-500/20 px-2 py-1 text-[10px] font-bold text-budu-200">点单</span>}

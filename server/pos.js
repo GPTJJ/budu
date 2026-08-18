@@ -128,7 +128,10 @@ function buildOrderWhere(user, query = {}) {
   const allowed = Array.isArray(user.storeKeys) ? user.storeKeys : []
   if (user.role !== 'developer') {
     where.storeId = { in: allowed }
-    where.cashierId = user.id
+    // 门店收银：查看本店全部订单（收银数据），不按收银员过滤
+    if (user.role !== 'cashier') {
+      where.cashierId = user.id
+    }
   }
   const storeId = String(query.store || '').trim()
   if (storeId && (user.role === 'developer' || allowed.includes(storeId))) where.storeId = storeId
@@ -156,7 +159,8 @@ function buildOrderWhere(user, query = {}) {
 posRouter.get('/pos/config', wrap(async (req, res) => {
   requirePosUser(req.user)
   const mode = paymentMode()
-  const channels = mode === 'mock' ? ['wechat', 'alipay', 'cash'] : ['cash']
+  // 微信/支付宝扫码支付尚未开通：结算界面两通道显示「暂未开通」且不可点击；开通后在 channels 中放开
+  const channels = ['cash']
   res.json({ mode, mock: mode === 'mock', channels })
 }))
 

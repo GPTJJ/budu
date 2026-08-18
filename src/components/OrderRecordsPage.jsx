@@ -76,7 +76,8 @@ export default function OrderRecordsPage({ user, onBack }) {
     }
   }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // 查询条件（日期/门店/支付方式/状态/关键词）变化时实时重新拉取
+  useEffect(() => { load() }, [from, to, store, paymentMethod, status, q]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportExcel = () => {
     if (rows.length === 0) {
