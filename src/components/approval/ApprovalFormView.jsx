@@ -11,16 +11,34 @@ import PayrollSlipCard from '../PayrollSlipCard'
 import { periodLabel } from '../../utils/payrollSlip'
 import { toPng } from 'html-to-image'
 
-/** 审批流程展示：提交人（只读）/ 审批人（管理员）/ 抄送人（默认 + 可添加） */
-function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNotices }) {
+/** 审批流程展示：提交人（只读）/ 审批人（管理员）/ 抄送人（默认 + 可添加）；显示账号持有人姓名 */
+function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNotices, candidates }) {
   const rule = template.approverRule || {}
   const ccRule = Array.isArray(template.ccRule) ? template.ccRule : []
-  const approver = rule.type === 'username' ? rule.username : '管理员'
-  // 默认抄送人（规则）：提交人 + 财务
+  const nameOf = (uname) => {
+    const c = (candidates || []).find((x) => x.username === uname)
+    return c ? c.name : uname
+  }
+  // 审批人：规则角色对应的账号持有人姓名（如管理员张三）
+  const approverNames = (() => {
+    if (rule.type === 'username') return [nameOf(rule.username)]
+    if (rule.type === 'role') {
+      const list = (candidates || []).filter((c) => c.role === rule.role)
+      if (list.length > 0) return list.map((c) => c.name)
+    }
+    return []
+  })()
+  const approver = approverNames.length > 0 ? `${rule.role === 'admin' ? '管理员' : rule.role} · ${approverNames.join('、')}` : rule.type === 'username' ? rule.username : '管理员'
+  // 默认抄送人（规则）：提交人 + 财务账号（显示持有人姓名）
   const defaultCc = []
   for (const r of ccRule) {
-    if (r.type === 'role' && r.role === 'finance') defaultCc.push({ name: '财务', tag: '默认' })
-    else if (r.type === 'submitter') defaultCc.push({ name: user?.username || '提交人', tag: '提交人' })
+    if (r.type === 'role' && r.role === 'finance') {
+      const fin = (candidates || []).filter((c) => c.role === 'finance')
+      if (fin.length > 0) fin.forEach((c) => defaultCc.push({ name: c.name, tag: '默认' }))
+      else defaultCc.push({ name: '财务', tag: '默认' })
+    } else if (r.type === 'submitter') {
+      defaultCc.push({ name: user?.displayName || user?.username || '提交人', tag: '提交人' })
+    }
   }
   return (
     <div>
@@ -33,7 +51,7 @@ function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNoti
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">
               <UserRound className="h-4 w-4" />
             </span>
-            <span className="truncate text-[15px] text-slate-800">{user?.username}</span>
+            <span className="truncate text-[15px] text-slate-800">{user?.displayName || user?.username}</span>
             <span className="text-[11px] text-slate-300">（当前账号，不可更改）</span>
           </span>
         </div>
@@ -60,16 +78,16 @@ function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNoti
                 <span className="rounded bg-white px-1 py-0.5 text-[9px] font-semibold text-slate-400">{p.tag}</span>
               </span>
             ))}
-            {(extraCc || []).map((name) => (
-              <span key={name} className="flex items-center gap-1.5 rounded-lg bg-budu-50 px-2 py-1">
+            {(extraCc || []).map((uname) => (
+              <span key={uname} className="flex items-center gap-1.5 rounded-lg bg-budu-50 px-2 py-1">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-white text-[10px] font-bold text-budu-500">
-                  {name.slice(0, 1)}
+                  {nameOf(uname).slice(0, 1)}
                 </span>
-                <span className="text-xs font-medium text-budu-600">{name}</span>
+                <span className="text-xs font-medium text-budu-600">{nameOf(uname)}</span>
                 <button
-                  onClick={() => onRemoveCc?.(name)}
+                  onClick={() => onRemoveCc?.(uname)}
                   className="rounded bg-white px-1 text-[10px] font-bold text-slate-400 transition hover:text-rose-500"
-                  aria-label={`移除抄送人 ${name}`}
+                  aria-label={`移除抄送人 ${uname}`}
                 >
                   ×
                 </button>
@@ -118,7 +136,14 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
   const [payrollNotices, setPayrollNotices] = useState(null) // 已签收工资条（payroll 模板）
   const [importing, setImporting] = useState(false)
   const [slipNotice, setSlipNotice] = useState(null) // 当前导入的工资条（用于生成图片附件）
+  const [candidates, setCandidates] = useState([]) // 账号姓名映射（抄送人/审批人显示）
   const slipCardRef = useRef(null)
+
+  useEffect(() => {
+    api('/v2/approvals/cc-candidates')
+      .then((res) => setCandidates(Array.isArray(res.rows) ? res.rows : []))
+      .catch(() => setCandidates([]))
+  }, [])
 
   const schema = template.schema || []
   const fieldOf = (key) => schema.find((f) => f.key === key)
@@ -409,6 +434,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
           template={template}
           user={user}
           extraCc={extraCc}
+          candidates={candidates}
           onAddCc={() => setPicker({ field: '', type: 'cc' })}
           onRemoveCc={(name) => setExtraCc((prev) => (prev || []).filter((x) => x !== name))}
           payrollNotices={showPayrollPicker ? payrollNotices : null}

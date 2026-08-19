@@ -120,7 +120,7 @@ function StoreCheckboxes({ selected, onChange, single = false }) {
 
 function CreateUserModal({ onClose, onCreated }) {
   const { t } = useI18n()
-  const [form, setForm] = useState({ username: '', password: '', role: 'staff', storeKeys: [] })
+  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [] })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -136,6 +136,7 @@ function CreateUserModal({ onClose, onCreated }) {
         method: 'POST',
         body: JSON.stringify({
           username: form.username.trim(),
+          name: form.name.trim(),
           password: form.password,
           role: form.role,
           storeKeys: form.storeKeys,
@@ -174,6 +175,15 @@ function CreateUserModal({ onClose, onCreated }) {
               placeholder={t('2-20 个字符')}
               className={inputCls}
               autoFocus
+            />
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('持有人姓名（用于审批/抄送显示，可空）')}</span>
+            <input
+              value={form.name}
+              onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
+              placeholder={t('如：张三')}
+              className={inputCls}
             />
           </div>
           <div>
@@ -528,7 +538,10 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                           )}
                         </span>
                         <div className="leading-tight">
-                          <p className="font-semibold text-slate-700">{u.username}</p>
+                          <p className="font-semibold text-slate-700">
+                            {u.displayName || u.username}
+                            {u.displayName && <span className="ml-1.5 text-[11px] font-normal text-slate-400">@{u.username}</span>}
+                          </p>
                           {isSelf && <p className="text-[11px] font-medium text-budu-500">{t('当前账号')}</p>}
                           {u.role !== 'developer' && u.role !== 'public' && (
                             <p className="text-[11px] text-slate-400">
@@ -591,6 +604,21 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                           >
                             <MapPin className="h-3.5 w-3.5" />
                             {t('绑定门店')}
+                          </button>
+                        )}
+                        {u.username !== 'public1' && u.role !== 'public' && !isSelf && (
+                          <button
+                            onClick={() => {
+                              const name = window.prompt(t('设置持有人姓名（用于审批/抄送显示）'), u.displayName || '')
+                              if (name === null) return
+                              api(`/admin/users/${u.id}/name`, { method: 'PUT', body: JSON.stringify({ name: name.trim() }) })
+                                .then(load)
+                                .catch((err) => setError(t(err.message)))
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
+                          >
+                            <Users className="h-3.5 w-3.5" />
+                            {t('设置姓名')}
                           </button>
                         )}
                         {u.role === 'staff' && (

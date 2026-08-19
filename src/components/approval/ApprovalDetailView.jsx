@@ -1,6 +1,6 @@
 // 审批中心 · 审批详情页（企业微信风格：信息行 + Timeline + 底部操作栏）
 // 业务逻辑与接口完全复用现有实现；仅呈现层改版
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, CheckCircle2, ClipboardCheck, Download, RotateCcw, Send, Trash2, XCircle } from 'lucide-react'
 import { api } from '../../utils/api'
 import { storeName } from '../../utils/selectors'
@@ -16,8 +16,8 @@ const ACTION_LABEL = {
   archive: '归档单据',
 }
 
-/** Timeline：提交申请 → 审批 → 抄送（数据来自现有 logs/nodes/ccs） */
-function Timeline({ detail }) {
+/** Timeline：提交申请 → 审批 → 抄送（数据来自现有 logs/nodes/ccs；显示账号持有人姓名） */
+function Timeline({ detail, nameOf }) {
   const { request, nodes, ccs, logs } = detail
   const submitLog = [...(logs || [])].reverse().find((l) => l.action === 'submit')
   const createLog = [...(logs || [])].reverse().find((l) => l.action === 'create')
@@ -61,7 +61,7 @@ function Timeline({ detail }) {
               {node ? '管理员审批' : '审批'}
             </p>
             <p className="text-xs text-slate-400">
-              {node?.approverUsername || '管理员'}
+              {node ? nameOf(node.approverUsername) : '管理员'}
               {node ? ` · ${node.status === 'pending' ? '待处理' : node.status === 'approved' ? '已通过' : '已驳回'}` : '待处理'}
               {node?.actedAt ? ` · ${fmtShortTime(node.actedAt)}` : ''}
             </p>
@@ -91,7 +91,18 @@ export default function ApprovalDetailView({ detail, user, onBack, onChanged, on
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [candidates, setCandidates] = useState([])
   const isSuper = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'
+
+  useEffect(() => {
+    api('/v2/approvals/cc-candidates')
+      .then((res) => setCandidates(Array.isArray(res.rows) ? res.rows : []))
+      .catch(() => setCandidates([]))
+  }, [])
+  const nameOf = (uname) => {
+    const c = candidates.find((x) => x.username === uname)
+    return c ? c.name : uname
+  }
   const isSubmitter = user?.username === request.submitterUsername
   const canDecide = isSuper && request.status === 'pending'
   const schema = template.schema || []
@@ -232,7 +243,7 @@ export default function ApprovalDetailView({ detail, user, onBack, onChanged, on
         )}
 
         {/* Timeline */}
-        <Timeline detail={detail} />
+        <Timeline detail={detail} nameOf={nameOf} />
 
         {/* 审批意见 */}
         {comments.length > 0 && (

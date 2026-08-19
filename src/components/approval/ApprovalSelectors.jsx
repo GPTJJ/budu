@@ -310,6 +310,7 @@ export function CcSheet({ open, value = [], exclude, onChange, onClose }) {
         ) : (
           filtered.map((c) => {
             const selected = draft.includes(c.username)
+            const display = c.name && c.name !== c.username ? `${c.name}（${c.username}）` : c.username
             return (
               <button
                 key={c.username}
@@ -321,11 +322,11 @@ export function CcSheet({ open, value = [], exclude, onChange, onClose }) {
                     selected ? 'bg-budu-500 text-white' : 'bg-slate-100 text-slate-500'
                   }`}
                 >
-                  {c.username.slice(0, 1)}
+                  {display.slice(0, 1)}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className={`block truncate text-[15px] ${selected ? 'font-semibold text-budu-600' : 'text-slate-700'}`}>
-                    {c.username}
+                    {display}
                   </span>
                   <span className="block text-xs text-slate-400">{roleLabel(c.role)}</span>
                 </span>

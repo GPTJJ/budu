@@ -259,6 +259,7 @@ export function createApp() {
     return {
       id: u.id,
       username: u.username,
+      displayName: u.displayName || '',
       role: u.role,
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
@@ -571,6 +572,7 @@ export function createApp() {
     const user = {
       id: crypto.randomUUID(),
       username,
+      displayName,
       role,
       storeKeys,
       staffKey,
@@ -774,6 +776,16 @@ export function createApp() {
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     target.permissions = normalizeAccountPermissions(req.body)
+    await persist()
+    res.json({ user: userPublic(target) })
+  })
+
+  app.put('/api/admin/users/:id/name', requireAuth, requireDeveloper, async (req, res) => {
+    const db = await loadDb()
+    const target = db.users.find((u) => u.id === req.params.id)
+    if (!target) return res.status(404).json({ error: '账号不存在' })
+    const displayName = String(req.body.name || '').trim().slice(0, 20)
+    target.displayName = displayName
     await persist()
     res.json({ user: userPublic(target) })
   })

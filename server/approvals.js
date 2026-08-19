@@ -132,9 +132,10 @@ async function userCtx() {
   const roleUsers = {}
   const staffKeyMap = {}
   for (const u of users) {
+    const name = u.displayName || u.username
     roleUsers[u.role] = roleUsers[u.role] || []
-    roleUsers[u.role].push({ username: u.username, name: u.username })
-    if (u.staffKey) staffKeyMap[u.staffKey] = { username: u.username, name: u.username }
+    roleUsers[u.role].push({ username: u.username, name })
+    if (u.staffKey) staffKeyMap[u.staffKey] = { username: u.username, name }
   }
   return { users, roleUsers, staffKeyMap }
 }
@@ -191,7 +192,7 @@ approvalRouter.get('/approvals/cc-candidates', wrap(async (req, res) => {
   )
   res.json({
     ok: true,
-    rows: users.map((u) => ({ username: u.username, role: u.role })),
+    rows: users.map((u) => ({ username: u.username, role: u.role, name: u.displayName || u.username })),
   })
 }))
 
@@ -224,7 +225,11 @@ async function ccNamesOf(template, submitterUsername, submitterName, formData, e
   })
   const ccNames = new Map()
   for (const u of ccUsers) ccNames.set(u.username, u.name || u.username)
-  for (const uname of extraCc || []) if (!ccNames.has(uname)) ccNames.set(uname, uname)
+  const nameByUser = new Map()
+  for (const list of Object.values(ctx.roleUsers || {})) {
+    for (const u of list) if (!nameByUser.has(u.username)) nameByUser.set(u.username, u.name || u.username)
+  }
+  for (const uname of extraCc || []) if (!ccNames.has(uname)) ccNames.set(uname, nameByUser.get(uname) || uname)
   return ccNames
 }
 
@@ -346,7 +351,7 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
         formData: normalized,
         amountCents,
         submitterUsername: req.user.username,
-        submitterName: req.user.username,
+        submitterName: req.user.displayName || req.user.username,
       },
     })
     // 绑定附件
@@ -383,7 +388,7 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
         })
       }
       // 提交即建立抄送关系（提交人 + 财务 + 手动添加）
-      const ccNames = await ccNamesOf(template, req.user.username, req.user.username, normalized, extraCc, ctx)
+      const ccNames = await ccNamesOf(template, req.user.username, req.user.displayName || req.user.username, normalized, extraCc, ctx)
       for (const [uname, unameName] of ccNames) {
         await tx.approvalCc.upsert({
           where: { requestId_ccUsername: { requestId: id, ccUsername: uname } },
