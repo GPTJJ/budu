@@ -68,8 +68,14 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可发放工资条', 403)
   const { periodType, periodKey, rows } = req.body || {}
-  if (!['month', 'week'].includes(String(periodType || ''))) throw httpError('发放周期类型不正确')
-  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(String(periodKey || ''))) throw httpError('发放周期不正确')
+  const ptype = String(periodType || '')
+  if (!['month', 'week', 'custom'].includes(ptype)) throw httpError('发放周期类型不正确')
+  const periodRe = ptype === 'custom' ? /^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/ : /^\d{4}-\d{2}(-\d{2})?$/
+  if (!periodRe.test(String(periodKey || ''))) throw httpError('发放周期不正确')
+  if (ptype === 'custom') {
+    const [st, en] = String(periodKey).split('~')
+    if (st > en) throw httpError('周期开始不能晚于周期结束')
+  }
   if (!Array.isArray(rows) || rows.length < 1 || rows.length > 200) throw httpError('请至少选择 1 名员工（最多 200 名）')
 
   const seen = new Set()
@@ -85,7 +91,7 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
       throw httpError(`「${employeeName}」工资条数据不完整`)
     }
     if (!Number.isInteger(totalCents) || totalCents < 0) throw httpError(`「${employeeName}」工资金额不正确`)
-    const dupKey = `${storeKey}::${employeeName}::${periodType}::${periodKey}`
+    const dupKey = `${storeKey}::${employeeName}::${ptype}::${periodKey}`
     if (seen.has(dupKey)) throw httpError(`「${employeeName}」重复选择`)
     seen.add(dupKey)
     payloads.push({ employeeName, storeKey, targetUsername, snapshot, totalCents })
@@ -93,7 +99,7 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
 
   // 同员工同周期重复发放 → 409
   const existing = await prisma.payrollNotice.findMany({
-    where: { periodType, periodKey },
+    where: { periodType: ptype, periodKey },
     select: { id: true, employeeName: true, storeKey: true },
   })
   const existed = new Set(existing.map((r) => `${r.storeKey}::${r.employeeName}`))
@@ -107,7 +113,7 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
     const row = await prisma.payrollNotice.create({
       data: {
         id: `pn-${crypto.randomUUID()}`,
-        periodType: String(periodType),
+        periodType: ptype,
         periodKey: String(periodKey),
         employeeName: r.employeeName,
         storeKey: r.storeKey,

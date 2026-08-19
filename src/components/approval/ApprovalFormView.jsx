@@ -166,10 +166,14 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
     try {
       const summary = notice.snapshot?.summary || {}
       const totalYuan = Number(summary.total || 0).toFixed(2)
-      // 周期起止：月 → 1 日~月末；周 → 周一~周日
+      // 周期起止：月 → 1 日~月末；周 → 周一~周日；自定 → 直接取起止
       let start = ''
       let end = ''
-      if (notice.periodType === 'week') {
+      if (notice.periodType === 'custom') {
+        const parts = String(notice.periodKey || '').split('~')
+        start = parts[0] || ''
+        end = parts[1] || ''
+      } else if (notice.periodType === 'week') {
         const d = new Date(`${notice.periodKey}T00:00:00`)
         start = notice.periodKey
         const e = new Date(d)

@@ -12,7 +12,6 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const confirmed = notice.status === 'confirmed'
-  const isWeek = notice.periodType === 'week'
 
   const confirmSlip = async () => {
     setConfirming(true)
@@ -34,7 +33,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-slate-400">
-              {isWeek ? '兼职周结' : '全职月结'} · {periodLabel(notice.periodType, notice.periodKey)}
+              {notice.periodType === 'week' ? '兼职周结' : notice.periodType === 'custom' ? '自定周期' : '全职月结'} · {periodLabel(notice.periodType, notice.periodKey)}
             </p>
           </div>
           <button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100">

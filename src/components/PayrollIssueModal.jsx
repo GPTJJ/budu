@@ -24,6 +24,12 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
   const [weekDate, setWeekDate] = useState(() => toMonday(new Date().toISOString().slice(0, 10)))
+  const [customStart, setCustomStart] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 6)
+    return d.toISOString().slice(0, 10)
+  })
+  const [customEnd, setCustomEnd] = useState(() => new Date().toISOString().slice(0, 10))
   const [selected, setSelected] = useState(new Set())
   const [accounts, setAccounts] = useState([])
   const [issued, setIssued] = useState([])
@@ -38,7 +44,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
   }, [])
 
   // 该周期已发放记录（切换周期时刷新）
-  const periodKey = periodType === 'week' ? weekDate : monthKey
+  const periodKey = periodType === 'week' ? weekDate : periodType === 'custom' ? `${customStart}~${customEnd}` : monthKey
   useEffect(() => {
     setDone('')
     setError('')
@@ -101,8 +107,11 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
         }),
       })
       setDone(`已发放 ${res.count} 份工资条（${periodLabel(periodType, periodKey)}）`)
-      onIssued?.(res.count)
-      setTimeout(onClose, 1400)
+      // 提示展示 1.4s 后刷新列表并关闭
+      setTimeout(() => {
+        onIssued?.(res.count)
+        onClose()
+      }, 1400)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -138,6 +147,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
             {[
               ['month', '月度'],
               ['week', '周度'],
+              ['custom', '自定日期'],
             ].map(([v, label]) => (
               <button
                 key={v}
@@ -150,14 +160,15 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
               </button>
             ))}
           </div>
-          {periodType === 'month' ? (
+          {periodType === 'month' && (
             <input
               type="month"
               value={monthKey}
               onChange={(e) => e.target.value && setMonthKey(e.target.value)}
               className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-budu-400"
             />
-          ) : (
+          )}
+          {periodType === 'week' && (
             <input
               type="date"
               value={weekDate}
@@ -165,11 +176,35 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
               className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-budu-400"
             />
           )}
+          {periodType === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={customStart}
+                max={customEnd}
+                onChange={(e) => e.target.value && setCustomStart(e.target.value)}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-budu-400"
+                aria-label="自定周期开始日期"
+              />
+              <span className="text-xs text-slate-400">至</span>
+              <input
+                type="date"
+                value={customEnd}
+                min={customStart}
+                onChange={(e) => e.target.value && setCustomEnd(e.target.value)}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-budu-400"
+                aria-label="自定周期结束日期"
+              />
+            </div>
+          )}
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-bold text-budu-600">
             {periodLabel(periodType, periodKey)}
           </span>
           {periodType === 'week' && (
             <span className="text-[11px] text-slate-400">周度按所选日期所在周的周一至周日计算</span>
+          )}
+          {periodType === 'custom' && (
+            <span className="text-[11px] text-slate-400">按所选起止日期逐日计算员工工资</span>
           )}
         </div>
 
