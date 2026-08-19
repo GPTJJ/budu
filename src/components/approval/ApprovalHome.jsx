@@ -12,7 +12,7 @@ const TABS = [
 
 export default function ApprovalHome({ user, templates, scope, onScope, rows, statusFilter, onStatusFilter, onPickTemplate, onOpenDetail }) {
   const [q, setQ] = useState('')
-  const isSuper = user?.role === 'developer' || user?.role === 'finance'
+  const isSuper = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'
   const tabs = isSuper ? [...TABS, { key: 'all', label: '全部审批' }] : TABS
 
   // 模板分类分组

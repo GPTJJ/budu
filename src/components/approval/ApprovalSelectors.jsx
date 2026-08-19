@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Search } from 'lucide-react'
 import { employeeList, storeName } from '../../utils/selectors'
+import { api } from '../../utils/api'
 
 /** 通用底部弹出容器：半透明遮罩 + 取消/确定 + 安全区 */
 export function BottomSheet({ open, title, onClose, onConfirm, confirmDisabled, children }) {
@@ -256,5 +257,84 @@ export function TextAreaRow({ label, required, value, onChange, placeholder = '�
         />
       </label>
     </div>
+  )
+}
+
+/** 抄送人选择器：账号列表多选（排除 public/cashier 与本人），确定生效 */
+export function CcSheet({ open, value = [], exclude, onChange, onClose }) {
+  const [draft, setDraft] = useState(Array.isArray(value) ? value : [])
+  const [q, setQ] = useState('')
+  const [candidates, setCandidates] = useState([])
+  useEffect(() => {
+    if (open) {
+      setDraft(Array.isArray(value) ? value : [])
+      setQ('')
+      api('/v2/approvals/cc-candidates')
+        .then((res) => setCandidates(Array.isArray(res.rows) ? res.rows : []))
+        .catch(() => setCandidates([]))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+  const roleLabel = (role) =>
+    ({ developer: '开发者', admin: '管理员', manager: '店长', staff: '店员', finance: '财务' }[role] || role)
+  const filtered = candidates.filter(
+    (c) => c.username !== exclude && (!q.trim() || c.username.toLowerCase().includes(q.trim().toLowerCase())),
+  )
+  const toggle = (uname) => {
+    setDraft((prev) => (prev.includes(uname) ? prev.filter((x) => x !== uname) : [...prev, uname]))
+  }
+  return (
+    <BottomSheet
+      open={open}
+      title="添加抄送人"
+      onClose={onClose}
+      onConfirm={() => {
+        onChange(draft)
+        onClose()
+      }}
+    >
+      <div className="border-b border-slate-100 px-4 py-2.5">
+        <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+          <Search className="h-4 w-4 shrink-0 text-slate-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="搜索账号"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-300"
+          />
+        </div>
+      </div>
+      <div className="py-1">
+        {filtered.length === 0 ? (
+          <p className="py-10 text-center text-xs text-slate-300">未找到可添加的账号</p>
+        ) : (
+          filtered.map((c) => {
+            const selected = draft.includes(c.username)
+            return (
+              <button
+                key={c.username}
+                onClick={() => toggle(c.username)}
+                className="flex min-h-12 w-full items-center gap-3 px-5 text-left active:bg-slate-50"
+              >
+                <span
+                  className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                    selected ? 'bg-budu-500 text-white' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {c.username.slice(0, 1)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate text-[15px] ${selected ? 'font-semibold text-budu-600' : 'text-slate-700'}`}>
+                    {c.username}
+                  </span>
+                  <span className="block text-xs text-slate-400">{roleLabel(c.role)}</span>
+                </span>
+                {selected && <Check className="h-4 w-4 shrink-0 text-budu-500" />}
+              </button>
+            )
+          })
+        )}
+      </div>
+    </BottomSheet>
   )
 }

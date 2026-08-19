@@ -58,10 +58,10 @@ function Timeline({ detail }) {
           )}
           <div className="min-w-0 flex-1 pb-1">
             <p className="text-[15px] font-medium text-slate-800">
-              {node ? '老板审批' : '审批'}
+              {node ? '管理员审批' : '审批'}
             </p>
             <p className="text-xs text-slate-400">
-              {node?.approverUsername || '老板'}
+              {node?.approverUsername || '管理员'}
               {node ? ` · ${node.status === 'pending' ? '待处理' : node.status === 'approved' ? '已通过' : '已驳回'}` : '待处理'}
               {node?.actedAt ? ` · ${fmtShortTime(node.actedAt)}` : ''}
             </p>
@@ -91,7 +91,7 @@ export default function ApprovalDetailView({ detail, user, onBack, onChanged, on
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const isSuper = user?.role === 'developer' || user?.role === 'finance'
+  const isSuper = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'
   const isSubmitter = user?.username === request.submitterUsername
   const canDecide = isSuper && request.status === 'pending'
   const schema = template.schema || []

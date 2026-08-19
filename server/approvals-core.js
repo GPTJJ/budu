@@ -22,7 +22,7 @@ export function isStatus(value) {
   return APPROVAL_STATUSES.includes(value)
 }
 
-/** 是否为该单据的审批人（老板/管理员/财务）：模板规则 role=developer → developer/finance；username → 指定账号 */
+/** 是否为该单据的审批人：模板规则 role=admin → 管理员（超管亦可）；role=developer → 超管；username → 指定账号 */
 export function isApproverFor(user, request, template) {
   if (!user || !request || !template) return false
   if (request.status === 'withdrawn' || request.status === 'draft') return false
@@ -30,8 +30,9 @@ export function isApproverFor(user, request, template) {
   if (rule.type === 'username') return user.username === rule.username
   if (rule.type === 'role') {
     if (user.role === rule.role) return true
-    // 财务权限与开发者一致：developer 级审批人也对财务开放
-    if (rule.role === 'developer' && user.role === 'finance') return true
+    // 超管（开发者/管理员/财务）权限一致：任意超管角色都可审批
+    if (rule.role === 'admin' && isSuperUser(user)) return true
+    if (rule.role === 'developer' && isSuperUser(user)) return true
   }
   return false
 }

@@ -17,7 +17,7 @@ const POLL_MS = 8000
 
 export default function PayrollPage({ user, onBack }) {
   const { t } = useI18n()
-  const isDev = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
+  const isDev = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin' // 财务/管理员权限与开发者一致
   const allowed = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
   const [rows, setRows] = useState(null)
   const [error, setError] = useState('')

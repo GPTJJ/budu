@@ -5,6 +5,7 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
+import { isSuperUser } from '../shared/accountPermissions.js'
 import { loadDb } from './store.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
@@ -71,7 +72,8 @@ export async function ensureApprovalTemplates() {
       description: '员工工资发放审批：提交人到老板审批，通过后自动抄送财务与员工',
       sort: 1,
       schema: [
-        { key: 'salaryMonth', label: '工资月份', type: 'month', required: true },
+        { key: 'periodStart', label: '周期开始', type: 'date', required: true },
+        { key: 'periodEnd', label: '周期结束', type: 'date', required: true },
         { key: 'store', label: '门店', type: 'store', required: true },
         { key: 'employee', label: '员工', type: 'employee', required: true },
         { key: 'grossPay', label: '应发（元）', type: 'money', required: true },
@@ -80,10 +82,10 @@ export async function ensureApprovalTemplates() {
         { key: 'netPay', label: '实发（元）', type: 'money', required: true, amount: true },
         { key: 'remark', label: '备注', type: 'textarea', maxLength: 500 },
       ],
-      approverRule: { type: 'role', role: 'developer' },
+      approverRule: { type: 'role', role: 'admin' },
       ccRule: [
+        { type: 'submitter' },
         { type: 'role', role: 'finance' },
-        { type: 'staffField', field: 'employee' },
       ],
     },
     {
@@ -103,10 +105,10 @@ export async function ensureApprovalTemplates() {
         { key: 'occurredDate', label: '发生日期', type: 'date', required: true },
         { key: 'remark', label: '备注', type: 'textarea', maxLength: 500 },
       ],
-      approverRule: { type: 'role', role: 'developer' },
+      approverRule: { type: 'role', role: 'admin' },
       ccRule: [
-        { type: 'role', role: 'finance' },
         { type: 'submitter' },
+        { type: 'role', role: 'finance' },
       ],
     },
   ]
@@ -137,11 +139,20 @@ async function userCtx() {
   return { users, roleUsers, staffKeyMap }
 }
 
-/** 模板的审批人列表（role=developer → 全部 developer 账号） */
+/** 模板的审批人列表：role=admin → 全部管理员；若该角色无账号则回退开发者（保证流程可跑） */
 function approverUsernames(template, roleUsers) {
   const rule = template?.approverRule || {}
   if (rule.type === 'username') return [rule.username]
-  if (rule.type === 'role') return (roleUsers[rule.role] || []).map((u) => u.username)
+  if (rule.type === 'role') {
+    const names = (roleUsers[rule.role] || []).map((u) => u.username)
+    if (names.length > 0) return names
+    // 回退：超管角色（开发者/财务/管理员）任意一个
+    for (const fallback of ['developer', 'finance', 'admin']) {
+      const fb = (roleUsers[fallback] || []).map((u) => u.username)
+      if (fb.length > 0) return fb
+    }
+    return []
+  }
   return []
 }
 
@@ -169,6 +180,61 @@ approvalRouter.get('/approvals/templates', wrap(async (req, res) => {
   const rows = await prisma.approvalTemplate.findMany({ where: { active: true }, orderBy: { sort: 'asc' } })
   res.json({ ok: true, rows: rows.map((t) => ({ key: t.key, name: t.name, description: t.description, schema: t.schema, approverRule: t.approverRule, ccRule: t.ccRule })) })
 }))
+
+/** 可抄送账号候选（非公开/收银账号；用于表单「添加抄送人」） */
+approvalRouter.get('/approvals/cc-candidates', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!canCreate(req.user)) throw httpError('无权限', 403)
+  const db = await loadDb()
+  const users = (Array.isArray(db.users) ? db.users : []).filter(
+    (u) => u.role !== 'public' && u.role !== 'cashier',
+  )
+  res.json({
+    ok: true,
+    rows: users.map((u) => ({ username: u.username, role: u.role })),
+  })
+}))
+
+/** 校验额外抄送人账号列表（去重；仅保留存在的非公开/收银账号） */
+async function validateCcUsernames(rawList) {
+  if (!Array.isArray(rawList) || rawList.length === 0) return []
+  const db = await loadDb()
+  const users = Array.isArray(db.users) ? db.users : []
+  const seen = new Set()
+  const out = []
+  for (const name of rawList.slice(0, 20)) {
+    const uname = String(name || '').trim().slice(0, 30)
+    if (!uname || seen.has(uname)) continue
+    const u = users.find((x) => x.username === uname)
+    if (!u) throw httpError(`抄送账号「${uname}」不存在`)
+    if (u.role === 'public' || u.role === 'cashier') throw httpError(`「${uname}」不可作为抄送人`)
+    seen.add(uname)
+    out.push(uname)
+  }
+  return out
+}
+
+/** 抄送人集合：规则（提交人+财务等）+ 额外手动添加，返回 Map(username → name) */
+async function ccNamesOf(template, submitterUsername, submitterName, formData, extraCc, ctx) {
+  const ccUsers = resolveCcUsers(template.ccRule, {
+    roleUsers: ctx.roleUsers,
+    submitter: { username: submitterUsername, name: submitterName },
+    formData: formData || {},
+    staffKeyMap: ctx.staffKeyMap,
+  })
+  const ccNames = new Map()
+  for (const u of ccUsers) ccNames.set(u.username, u.name || u.username)
+  for (const uname of extraCc || []) if (!ccNames.has(uname)) ccNames.set(uname, uname)
+  return ccNames
+}
+
+/** 校验 payroll 周期起止日期 */
+function validatePayrollPeriod(template, normalized) {
+  if (template.key !== 'payroll') return
+  const start = String(normalized.periodStart || '')
+  const end = String(normalized.periodEnd || '')
+  if (start && end && start > end) throw httpError('周期开始不能晚于周期结束')
+}
 
 // ---------------- 附件 ----------------
 approvalRouter.post('/approvals/attachments', wrap(async (req, res) => {
@@ -231,7 +297,9 @@ function buildTitle(template, formData) {
   const d = formData || {}
   if (template.key === 'payroll') {
     const emp = String(d.employee || '').split('::')[1] || ''
-    return `${emp || '员工'} · ${d.salaryMonth || ''} 工资`
+    const start = d.periodStart || ''
+    const end = d.periodEnd || ''
+    return `${emp || '员工'} · ${start} ~ ${end} 工资`
   }
   if (template.key === 'expense') {
     return `${d.expenseType || '费用'}报销 ${Number(d.amount || 0) / 100} 元`
@@ -248,6 +316,9 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
 
   const { errors, normalized } = validateFormData(template.schema, body.formData)
   if (errors.length) throw httpError(`表单填写不完整：${errors[0]}`)
+  validatePayrollPeriod(template, normalized)
+  const extraCc = await validateCcUsernames(body.ccUsernames)
+  normalized._ccUsernames = extraCc
 
   // 序号：当天单据数 + 1
   const dayStart = new Date()
@@ -311,6 +382,15 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
           },
         })
       }
+      // 提交即建立抄送关系（提交人 + 财务 + 手动添加）
+      const ccNames = await ccNamesOf(template, req.user.username, req.user.username, normalized, extraCc, ctx)
+      for (const [uname, unameName] of ccNames) {
+        await tx.approvalCc.upsert({
+          where: { requestId_ccUsername: { requestId: id, ccUsername: uname } },
+          create: { id: `acc-${crypto.randomUUID()}`, requestId: id, ccUsername: uname, ccName: unameName },
+          update: {},
+        })
+      }
     }
     return request
   })
@@ -359,18 +439,20 @@ approvalRouter.get('/approvals/requests', wrap(async (req, res) => {
     where.submitterUsername = user.username
   } else if (scope === 'todo') {
     where.status = 'pending'
-    // 财务与开发者审批权一致：todo 包含 developer 级审批节点的单据
+    // 超管审批权一致：todo 包含所有超管级审批节点的单据
     const ctx = await userCtx()
     const approverNames = new Set([user.username])
-    if (user.role === 'finance') {
-      for (const u of ctx.roleUsers.developer || []) approverNames.add(u.username)
+    if (isSuperUser(user)) {
+      for (const r of ['developer', 'finance', 'admin']) {
+        for (const u of ctx.roleUsers[r] || []) approverNames.add(u.username)
+      }
     }
     where.nodes = { some: { approverUsername: { in: [...approverNames] }, status: 'pending' } }
   } else if (scope === 'cc') {
     where.ccs = { some: { ccUsername: user.username } }
   } else if (scope === 'all') {
-    // 超管（开发者/财务）查看全部；其他角色无权
-    if (user.role !== 'developer' && user.role !== 'finance') throw httpError('无权查看全部审批', 403)
+    // 超管（开发者/管理员/财务）查看全部；其他角色无权
+    if (!isSuperUser(user)) throw httpError('无权查看全部审批', 403)
   } else {
     throw httpError('scope 不正确')
   }
@@ -425,6 +507,9 @@ approvalRouter.put('/approvals/requests/:id', wrap(async (req, res) => {
   const template = await prisma.approvalTemplate.findUnique({ where: { key: request.templateKey } })
   const { errors, normalized } = validateFormData(template.schema, body.formData || request.formData)
   if (errors.length) throw httpError(`表单填写不完整：${errors[0]}`)
+  validatePayrollPeriod(template, normalized)
+  const extraCc = body.ccUsernames !== undefined ? await validateCcUsernames(body.ccUsernames) : (request.formData?._ccUsernames || [])
+  normalized._ccUsernames = extraCc
   const title = text(body.title || request.title, 60, '标题')
   await prisma.$transaction(async (tx) => {
     await tx.approvalRequest.update({
@@ -460,6 +545,11 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
   const approvers = approverUsernames(template, ctx.roleUsers)
   if (approvers.length === 0) throw httpError('审批人未配置，无法提交')
   const wasRejected = request.status === 'rejected'
+  // 额外抄送人：优先使用本次提交携带的，否则沿用草稿已保存的
+  const bodyCc = req.body && Array.isArray(req.body.ccUsernames) ? await validateCcUsernames(req.body.ccUsernames) : null
+  const extraCc = bodyCc !== null ? bodyCc : (request.formData?._ccUsernames || [])
+  // 规则抄送人（提交人 + 财务）+ 额外抄送人
+  const ccNames = await ccNamesOf(template, request.submitterUsername, request.submitterName, request.formData, extraCc, ctx)
   await prisma.$transaction(async (tx) => {
     await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'pending', approvedAt: null, archivedAt: null } })
     for (const username of approvers) {
@@ -475,6 +565,14 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
           title: '待你审批',
           content: `${req.user.username} 提交了${template.name}申请「${request.title}」`,
         },
+      })
+    }
+    // 提交即建立抄送关系（提交人 + 财务 + 手动添加），审批通过后统一通知
+    for (const [uname, unameName] of ccNames) {
+      await tx.approvalCc.upsert({
+        where: { requestId_ccUsername: { requestId: request.id, ccUsername: uname } },
+        create: { id: `acc-${crypto.randomUUID()}`, requestId: request.id, ccUsername: uname, ccName: unameName },
+        update: {},
       })
     }
     await tx.approvalLog.create({
@@ -552,25 +650,16 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
         content: `你的${template.name}申请「${request.title}」已被 ${req.user.username} ${action === 'approve' ? '通过' : '驳回'}${comment ? `：${comment}` : ''}`,
       },
     })
-    // 通过 → 抄送（财务 + 规则指定人），排除提交人本人（结果通知已覆盖）
+    // 通过 → 通知抄送人（提交时已建立抄送关系：提交人 + 财务 + 手动添加），排除提交人本人（结果通知已覆盖）
     if (action === 'approve') {
-      const ccUsers = resolveCcUsers(template.ccRule, {
-        roleUsers: ctx.roleUsers,
-        submitter: { username: request.submitterUsername, name: request.submitterName },
-        formData: request.formData,
-        staffKeyMap: ctx.staffKeyMap,
-      }).filter((u) => u.username !== request.submitterUsername)
-      for (const u of ccUsers) {
-        await tx.approvalCc.upsert({
-          where: { requestId_ccUsername: { requestId: request.id, ccUsername: u.username } },
-          create: { id: `acc-${crypto.randomUUID()}`, requestId: request.id, ccUsername: u.username, ccName: u.name },
-          update: {},
-        })
+      const ccRows = await tx.approvalCc.findMany({ where: { requestId: request.id } })
+      for (const c of ccRows) {
+        if (c.ccUsername === request.submitterUsername) continue
         await tx.approvalNotification.create({
           data: {
             id: `anot-${crypto.randomUUID()}`,
             requestId: request.id,
-            username: u.username,
+            username: c.ccUsername,
             type: 'cc',
             title: '抄送：审批已通过',
             content: `${template.name}申请「${request.title}」已通过审批，请查收`,

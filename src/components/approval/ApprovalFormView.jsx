@@ -1,40 +1,43 @@
 // 审批中心 · 发起审批表单页（企业微信风格单列表单）
 // 业务逻辑与接口完全复用现有实现；仅呈现层改版
-import { useMemo, useState } from 'react'
-import { ArrowLeft, Send } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, Send, UserRound } from 'lucide-react'
 import { api } from '../../utils/api'
 import { allStores, storeName } from '../../utils/selectors'
 import { AttachmentUploader, templateName } from './ApprovalShared'
-import { EmployeeSheet, FieldRow, InputFieldRow, MonthSheet, OptionSheet, TextAreaRow } from './ApprovalSelectors'
+import { EmployeeSheet, FieldRow, InputFieldRow, OptionSheet, TextAreaRow } from './ApprovalSelectors'
+import { CcSheet } from './ApprovalSelectors'
+import PayrollSlipCard from '../PayrollSlipCard'
+import { periodLabel } from '../../utils/payrollSlip'
+import { toPng } from 'html-to-image'
 
-function toMonday(dateStr) {
-  const d = new Date(`${dateStr}T00:00:00`)
-  const dow = (d.getDay() + 6) % 7
-  d.setDate(d.getDate() - dow)
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${dd}`
-}
-
-/** 审批流程展示（只读，数据来自模板规则 + 已选员工；不提供修改入口） */
-function FlowSection({ template, formData, submitterName }) {
+/** 审批流程展示：提交人（只读）/ 审批人（管理员）/ 抄送人（默认 + 可添加） */
+function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNotices }) {
   const rule = template.approverRule || {}
   const ccRule = Array.isArray(template.ccRule) ? template.ccRule : []
-  const approver = rule.type === 'username' ? rule.username : '老板'
-  const ccPeople = []
+  const approver = rule.type === 'username' ? rule.username : '管理员'
+  // 默认抄送人（规则）：提交人 + 财务
+  const defaultCc = []
   for (const r of ccRule) {
-    if (r.type === 'role' && r.role === 'finance') ccPeople.push({ name: '财务', tag: '抄送' })
-    else if (r.type === 'staffField') {
-      const emp = String(formData?.[r.field] || '').split('::')[1]
-      if (emp) ccPeople.push({ name: emp, tag: '抄送' })
-    } else if (r.type === 'submitter') {
-      ccPeople.push({ name: submitterName || '提交人', tag: '抄送' })
-    }
+    if (r.type === 'role' && r.role === 'finance') defaultCc.push({ name: '财务', tag: '默认' })
+    else if (r.type === 'submitter') defaultCc.push({ name: user?.username || '提交人', tag: '提交人' })
   }
   return (
     <div>
       <p className="px-4 pb-1 pt-5 text-xs font-semibold text-slate-400">审批流程</p>
       <div className="border-b border-slate-100">
+        {/* 提交人（只读，自动为当前账号） */}
+        <div className="flex min-h-[52px] items-center gap-3 px-4 py-2.5">
+          <span className="w-[110px] shrink-0 text-[15px] text-slate-600">提交人</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">
+              <UserRound className="h-4 w-4" />
+            </span>
+            <span className="truncate text-[15px] text-slate-800">{user?.username}</span>
+            <span className="text-[11px] text-slate-300">（当前账号，不可更改）</span>
+          </span>
+        </div>
+        {/* 审批人 */}
         <div className="flex min-h-[52px] items-center gap-3 px-4 py-2.5">
           <span className="w-[110px] shrink-0 text-[15px] text-slate-600">审批人</span>
           <span className="flex min-w-0 items-center gap-2">
@@ -44,20 +47,51 @@ function FlowSection({ template, formData, submitterName }) {
             <span className="truncate text-[15px] text-slate-800">{approver}</span>
           </span>
         </div>
+        {/* 抄送人：默认（提交人+财务）+ 可添加 */}
         <div className="flex min-h-[52px] items-center gap-3 px-4 py-2.5">
           <span className="w-[110px] shrink-0 text-[15px] text-slate-600">抄送人</span>
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            {ccPeople.length === 0 && <span className="text-sm text-slate-300">无</span>}
-            {ccPeople.map((p) => (
+            {defaultCc.map((p) => (
               <span key={`${p.name}-${p.tag}`} className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-2 py-1">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-white text-[10px] font-bold text-slate-500">
                   {p.name.slice(0, 1)}
                 </span>
                 <span className="text-xs font-medium text-slate-600">{p.name}</span>
+                <span className="rounded bg-white px-1 py-0.5 text-[9px] font-semibold text-slate-400">{p.tag}</span>
               </span>
             ))}
+            {(extraCc || []).map((name) => (
+              <span key={name} className="flex items-center gap-1.5 rounded-lg bg-budu-50 px-2 py-1">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-white text-[10px] font-bold text-budu-500">
+                  {name.slice(0, 1)}
+                </span>
+                <span className="text-xs font-medium text-budu-600">{name}</span>
+                <button
+                  onClick={() => onRemoveCc?.(name)}
+                  className="rounded bg-white px-1 text-[10px] font-bold text-slate-400 transition hover:text-rose-500"
+                  aria-label={`移除抄送人 ${name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={onAddCc}
+              className="grid h-7 w-7 place-items-center rounded-lg border border-dashed border-budu-300 text-lg font-semibold text-budu-500 transition hover:bg-budu-50"
+              aria-label="添加抄送人"
+            >
+              +
+            </button>
           </span>
         </div>
+        {/* 已签收工资条提示（工资审批专用） */}
+        {template.key === 'payroll' && payrollNotices && payrollNotices.length > 0 && (
+          <div className="border-t border-dashed border-slate-100 px-4 py-2.5">
+            <p className="text-[11px] font-medium text-emerald-600">
+              该员工有 {payrollNotices.length} 份已签收工资条，选中周期后自动填充并生成图片附件
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -77,19 +111,47 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
     return out
   })
   const [attachments, setAttachments] = useState(initial?.attachments || [])
+  const [extraCc, setExtraCc] = useState(() => (initial?.request?.formData?._ccUsernames || []))
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  // 选择器状态
-  const [picker, setPicker] = useState(null) // { field, type: 'option'|'employee'|'month' }
+  const [picker, setPicker] = useState(null) // { field, type: 'option'|'employee'|'month'|'cc' }
+  const [payrollNotices, setPayrollNotices] = useState(null) // 已签收工资条（payroll 模板）
+  const [importing, setImporting] = useState(false)
+  const [slipNotice, setSlipNotice] = useState(null) // 当前导入的工资条（用于生成图片附件）
+  const slipCardRef = useRef(null)
 
   const schema = template.schema || []
   const fieldOf = (key) => schema.find((f) => f.key === key)
   const setField = (key) => (value) => setFormData((s) => ({ ...s, [key]: value }))
 
+  // 工资审批：员工变化后拉取该员工已签收工资条
+  useEffect(() => {
+    if (template.key !== 'payroll') return undefined
+    const emp = String(formData.employee || '')
+    const empName = emp.split('::')[1] || ''
+    if (!empName) {
+      setPayrollNotices(null)
+      return undefined
+    }
+    let alive = true
+    setPayrollNotices([])
+    api(`/v2/payroll-notices?status=confirmed&employeeName=${encodeURIComponent(empName)}`)
+      .then((res) => {
+        if (alive) setPayrollNotices(Array.isArray(res.rows) ? res.rows : [])
+      })
+      .catch(() => {
+        if (alive) setPayrollNotices([])
+      })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.employee, template.key])
+
   const buildTitle = () => {
     if (template.key === 'payroll') {
       const emp = String(formData.employee || '').split('::')[1] || ''
-      return `${emp || '员工'} · ${formData.salaryMonth || ''} 工资`
+      return `${emp || '员工'} · ${formData.periodStart || ''} ~ ${formData.periodEnd || ''} 工资`
     }
     if (template.key === 'expense') {
       return `${formData.expenseType || '费用'}报销 ${Number(formData.amount || 0)} 元`
@@ -97,22 +159,84 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
     return template.name
   }
 
-  /** 提交/保存草稿（与现有逻辑一致：POST 新建 / PUT+submit 编辑） */
+  /** 导入工资条：填充周期起止 + 生成图片附件 */
+  const importPayroll = async (notice) => {
+    setImporting(true)
+    setError('')
+    try {
+      const summary = notice.snapshot?.summary || {}
+      const totalYuan = Number(summary.total || 0).toFixed(2)
+      // 周期起止：月 → 1 日~月末；周 → 周一~周日
+      let start = ''
+      let end = ''
+      if (notice.periodType === 'week') {
+        const d = new Date(`${notice.periodKey}T00:00:00`)
+        start = notice.periodKey
+        const e = new Date(d)
+        e.setDate(d.getDate() + 6)
+        const m = String(e.getMonth() + 1).padStart(2, '0')
+        const dd = String(e.getDate()).padStart(2, '0')
+        end = `${e.getFullYear()}-${m}-${dd}`
+      } else {
+        const [y, m] = String(notice.periodKey).split('-').map(Number)
+        start = `${notice.periodKey}-01`
+        end = `${notice.periodKey}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+      }
+      setSlipNotice(notice)
+      setFormData((s) => ({
+        ...s,
+        periodStart: start,
+        periodEnd: end,
+        store: notice.storeKey,
+        employee: `${notice.storeKey}::${notice.employeeName}`,
+        grossPay: totalYuan,
+        netPay: totalYuan,
+      }))
+      // 等待 DOM 更新（表单 + 隐藏工资条卡片）后再截图上传
+      await new Promise((r) => setTimeout(r, 400))
+      if (slipCardRef.current) {
+        const dataUrl = await toPng(slipCardRef.current, { pixelRatio: 2, cacheBust: true })
+        const fname = `工资条-${notice.employeeName}-${periodLabel(notice.periodType, notice.periodKey)}.png`
+        const res = await api('/v2/approvals/attachments', {
+          method: 'POST',
+          body: JSON.stringify({ name: fname, fileType: 'image/png', dataUrl }),
+        })
+        setAttachments((prev) => [...(prev || []).filter((a) => !a.name.startsWith('工资条-')), res.attachment])
+      }
+    } catch (e) {
+      setError(e.message || '导入工资条失败')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  /** 提交/保存草稿 */
   const save = async (submit) => {
     setBusy(true)
     setError('')
+    // 前端校验周期起止
+    if (template.key === 'payroll') {
+      const s = String(formData.periodStart || '')
+      const e = String(formData.periodEnd || '')
+      if (s && e && s > e) {
+        setError('周期开始不能晚于周期结束')
+        setBusy(false)
+        return
+      }
+    }
     try {
       const payload = {
         templateKey: template.key,
         formData,
         attachmentIds: attachments.map((a) => a.id),
+        ccUsernames: extraCc,
         title: buildTitle(),
         submit,
       }
       const res = initial
         ? await api(`/v2/approvals/requests/${initial.request.id}`, {
             method: 'PUT',
-            body: JSON.stringify({ formData, attachmentIds: payload.attachmentIds, title: payload.title }),
+            body: JSON.stringify({ formData, attachmentIds: payload.attachmentIds, ccUsernames: extraCc, title: payload.title }),
           })
         : await api('/v2/approvals/requests', { method: 'POST', body: JSON.stringify(payload) })
       if (submit && initial) {
@@ -126,7 +250,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
     }
   }
 
-  /** 行点击：选择型字段打开选择器；日期字段触发原生控件 */
+  /** 行点击：选择型字段打开选择器 */
   const handleRowClick = (field) => {
     if (field.type === 'month') setPicker({ field: field.key, type: 'month' })
     else if (field.type === 'store') setPicker({ field: field.key, type: 'option', options: stores.map((s) => ({ value: s.key, label: s.name })) })
@@ -218,6 +342,10 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
     }
   }
 
+  // 工资审批：选中员工后展示已签收工资条选择（表单字段下方）
+  const empName = String(formData.employee || '').split('::')[1] || ''
+  const showPayrollPicker = template.key === 'payroll' && empName && Array.isArray(payrollNotices) && payrollNotices.length > 0
+
   return (
     <div className="pb-24">
       {/* 顶部导航 */}
@@ -236,9 +364,32 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
         </p>
       )}
 
-      {/* 表单主体（单列表单，1px 分隔） */}
+      {/* 表单主体 */}
       <div className="mx-auto w-full max-w-[860px] bg-white">
         {schema.map((f) => renderField(f))}
+
+        {/* 已签收工资条导入（工资审批专用） */}
+        {showPayrollPicker && (
+          <div className="border-b border-slate-100 px-4 py-3">
+            <p className="pb-2 text-xs font-semibold text-slate-400">导入已签收工资条（自动填充并生成图片附件）</p>
+            <div className="space-y-1.5">
+              {payrollNotices.map((n) => (
+                <button
+                  key={n.id}
+                  onClick={() => importPayroll(n)}
+                  disabled={importing}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-left transition hover:border-budu-200 hover:bg-budu-50/40 disabled:opacity-50"
+                >
+                  <span className="text-xs font-semibold text-slate-700">
+                    {periodLabel(n.periodType, n.periodKey)}
+                  </span>
+                  <span className="text-xs font-bold tabular-nums text-budu-600">¥{Number(n.totalCents || 0) / 100}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 附件 */}
         <div className="border-b border-slate-100">
           <div className="flex min-h-[52px] items-center gap-3 px-4 py-2.5">
@@ -248,8 +399,16 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
             </div>
           </div>
         </div>
-        {/* 审批流程（只读） */}
-        <FlowSection template={template} formData={formData} submitterName={user?.username} />
+
+        {/* 审批流程（提交人只读 + 审批人 + 抄送人可添加） */}
+        <FlowSection
+          template={template}
+          user={user}
+          extraCc={extraCc}
+          onAddCc={() => setPicker({ field: '', type: 'cc' })}
+          onRemoveCc={(name) => setExtraCc((prev) => (prev || []).filter((x) => x !== name))}
+          payrollNotices={showPayrollPicker ? payrollNotices : null}
+        />
       </div>
 
       {/* 底部固定提交栏 */}
@@ -293,13 +452,27 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
           onClose={() => setPicker(null)}
         />
       )}
-      {picker?.type === 'month' && (
-        <MonthSheet
+      {picker?.type === 'cc' && (
+        <CcSheet
           open
-          value={formData[picker.field]}
-          onChange={setField(picker.field)}
+          value={extraCc}
+          exclude={user?.username}
+          onChange={setExtraCc}
           onClose={() => setPicker(null)}
         />
+      )}
+
+      {/* 工资条图片生成卡片（隐藏，导入时截图） */}
+      {template.key === 'payroll' && slipNotice && (
+        <div style={{ position: 'fixed', left: -9999, top: 0, pointerEvents: 'none' }}>
+          <div ref={slipCardRef} style={{ width: 760, background: '#fff', padding: 20 }}>
+            <PayrollSlipCard
+              employeeName={slipNotice.employeeName}
+              periodText={periodLabel(slipNotice.periodType, slipNotice.periodKey)}
+              snapshot={slipNotice.snapshot}
+            />
+          </div>
+        </div>
       )}
     </div>
   )

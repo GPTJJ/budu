@@ -84,10 +84,11 @@ export async function loadDb() {
   if (!db) db = structuredClone(DEFAULT_DB)
   if (!db.meta || typeof db.meta !== 'object') db.meta = {}
   if (!Array.isArray(db.users)) db.users = []
-  // 角色迁移：owner/admin/member/store -> developer/manager/staff/manager；旧 store 账号升级为 manager
+  // 角色迁移：owner/member/store -> developer/staff/manager；旧 store 账号升级为 manager
+  // 注意：admin 已是正式角色（管理员，与开发者同权），不参与迁移
   for (const u of db.users) {
     if (u.role === 'owner') u.role = 'developer'
-    else if (u.role === 'admin' || u.role === 'store') u.role = 'manager'
+    else if (u.role === 'store') u.role = 'manager'
     else if (u.role === 'member') u.role = 'staff'
     if (!Array.isArray(u.storeKeys)) u.storeKeys = []
     if (!u.staffKey) u.staffKey = ''

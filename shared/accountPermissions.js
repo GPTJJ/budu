@@ -15,13 +15,14 @@ export function hasInventoryTransferAll(user) {
     user &&
       user.role !== 'public' &&
       (user.role === 'developer' ||
+        user.role === 'admin' ||
         normalizeAccountPermissions(user.permissions)[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]),
   )
 }
 
-/** 最高权限角色：开发者与财务（财务权限与开发者一致） */
+/** 最高权限角色：开发者、管理员与财务（后两者权限与开发者一致） */
 export function isSuperUser(user) {
-  return Boolean(user && (user.role === 'developer' || user.role === 'finance'))
+  return Boolean(user && (user.role === 'developer' || user.role === 'finance' || user.role === 'admin'))
 }
 
 export function canAccessTransferStore(user, storeKey) {

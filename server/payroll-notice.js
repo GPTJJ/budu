@@ -3,6 +3,7 @@ import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
+import { isSuperUser } from '../shared/accountPermissions.js'
 
 export const payrollNoticeRouter = Router()
 
@@ -37,8 +38,8 @@ function serialize(row) {
 /** 查看范围：开发者全量；其它账号（含店长）仅本人（绑定员工或 username 直配） */
 function noticeWhere(user, query = {}) {
   const where = {}
-  if (user.role === 'developer') {
-    // 全量
+  if (isSuperUser(user)) {
+    // 开发者/管理员/财务全量
   } else {
     // 本人：按绑定员工 storeKey::name 或账号名匹配
     where.OR = []
@@ -48,6 +49,7 @@ function noticeWhere(user, query = {}) {
   if (query.periodType) where.periodType = String(query.periodType)
   if (query.periodKey) where.periodKey = String(query.periodKey)
   if (query.status) where.status = String(query.status)
+  if (query.employeeName) where.employeeName = String(query.employeeName).trim().slice(0, 50)
   return where
 }
 
@@ -64,7 +66,7 @@ payrollNoticeRouter.get('/payroll-notices', wrap(async (req, res) => {
 
 payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (req.user.role !== 'developer') throw httpError('仅开发者可发放工资条', 403)
+  if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可发放工资条', 403)
   const { periodType, periodKey, rows } = req.body || {}
   if (!['month', 'week'].includes(String(periodType || ''))) throw httpError('发放周期类型不正确')
   if (!/^\d{4}-\d{2}(-\d{2})?$/.test(String(periodKey || ''))) throw httpError('发放周期不正确')
@@ -132,7 +134,7 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
     ((req.user.role === 'staff' || req.user.role === 'manager') &&
       row.storeKey === (req.user.staffKey || '').split('::')[0] &&
       row.employeeName === (req.user.staffKey || '').split('::')[1]) ||
-    req.user.role === 'developer'
+    isSuperUser(req.user)
   if (!isOwner) throw httpError('无权签收该工资条', 403)
   if (row.status === 'confirmed') {
     return res.json({ ok: true, row: serialize(row) })

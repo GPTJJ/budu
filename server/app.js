@@ -263,7 +263,7 @@ export function createApp() {
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
       permissions: normalizeAccountPermissions(u.permissions),
-      assetCenter: u.role === 'developer' || Boolean(u.assetCenter),
+      assetCenter: u.role === 'developer' || u.role === 'finance' || u.role === 'admin' || Boolean(u.assetCenter),
       avatar: u.avatar || '',
       createdAt: u.createdAt,
     }
@@ -290,7 +290,7 @@ export function createApp() {
 
   function requireDeveloper(req, res, next) {
     // 财务角色权限与开发者一致
-    if (!req.user || (req.user.role !== 'developer' && req.user.role !== 'finance')) {
+    if (!req.user || (req.user.role !== 'developer' && req.user.role !== 'finance' && req.user.role !== 'admin')) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
@@ -311,7 +311,7 @@ export function createApp() {
     next()
   }
 
-  const ROLES = ['developer', 'manager', 'staff', 'cashier', 'public', 'finance']
+  const ROLES = ['developer', 'admin', 'manager', 'staff', 'cashier', 'public', 'finance']
 
   /** 收银角色约束：仅绑定一家门店、不绑定员工 */
   function validateCashierRole(role, storeKeys, staffKey) {
@@ -331,26 +331,26 @@ export function createApp() {
 
   function canManageStore(user, storeKey) {
     if (!user || user.role === 'public') return false
-    if (user.role === 'developer' || user.role === 'finance') return true
+    if (user.role === 'developer' || user.role === 'finance' || user.role === 'admin') return true
     return boundStores(user).includes(storeKey)
   }
 
   function requireManager(req, res, next) {
-    if (!req.user || !['developer', 'manager', 'finance'].includes(req.user.role)) {
+    if (!req.user || !['developer', 'manager', 'finance', 'admin'].includes(req.user.role)) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
   }
 
   function requireTransferManager(req, res, next) {
-    if (!req.user || (!['developer', 'manager', 'finance'].includes(req.user.role) && !hasInventoryTransferAll(req.user))) {
+    if (!req.user || (!['developer', 'manager', 'finance', 'admin'].includes(req.user.role) && !hasInventoryTransferAll(req.user))) {
       return res.status(403).json({ error: '无权限' })
     }
     next()
   }
 
   function scopeInventoryRequests(bodyRequests, dbRequests, user) {
-    if (user.role === 'developer' || user.role === 'finance') return true
+    if (user.role === 'developer' || user.role === 'finance' || user.role === 'admin') return true
     const allowed = new Set(boundStores(user))
     const inScope = (r) =>
       (r.type === 'transfer' && hasInventoryTransferAll(user)) ||
@@ -396,7 +396,7 @@ export function createApp() {
         inventory: [],
       }
     }
-    if (!user || user.role === 'developer' || user.role === 'finance' || user.role === 'public') {
+    if (!user || user.role === 'developer' || user.role === 'finance' || user.role === 'admin' || user.role === 'public') {
       return {
         entries: db.entries || {},
         staff: db.staff || [],
@@ -747,9 +747,13 @@ export function createApp() {
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能修改自己的权限' })
     }
-    const developerCount = db.users.filter((u) => u.role === 'developer').length
-    if (target.role === 'developer' && role !== 'developer' && developerCount <= 1) {
-      return res.status(400).json({ error: '至少保留一个最高权限账号' })
+    // 降级保护：若目标当前是超管且将变为非超管，需保证至少还剩一个超管
+    const superRoles = ['developer', 'finance', 'admin']
+    if (superRoles.includes(target.role) && !superRoles.includes(role)) {
+      const superCount = db.users.filter((u) => superRoles.includes(u.role)).length
+      if (superCount <= 1) {
+        return res.status(400).json({ error: '至少保留一个最高权限账号' })
+      }
     }
     // 收银角色约束（按变更后的角色 + 生效的门店/员工绑定校验）
     const effStoreKeys = storeKeys !== null ? storeKeys : Array.isArray(target.storeKeys) ? target.storeKeys : []
@@ -794,8 +798,8 @@ export function createApp() {
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能删除自己' })
     }
-    const developerCount = db.users.filter((u) => u.role === 'developer').length
-    if (target.role === 'developer' && developerCount <= 1) {
+    const superCount = db.users.filter((u) => ['developer', 'finance', 'admin'].includes(u.role)).length
+    if (['developer', 'finance', 'admin'].includes(target.role) && superCount <= 1) {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
     db.users = db.users.filter((u) => u.id !== target.id)

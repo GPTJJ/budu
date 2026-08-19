@@ -128,7 +128,6 @@ export default function ApprovalCenterPage({ user, onBack }) {
           </button>
           <div>
             <h2 className="text-xl font-bold text-slate-800">{t('审批中心')}</h2>
-            <p className="mt-0.5 text-[13px] text-slate-400">{t('工资与报销审批 · 提交 → 老板审批 → 抄送财务')}</p>
           </div>
         </div>
       )}

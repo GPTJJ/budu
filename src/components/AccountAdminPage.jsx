@@ -194,6 +194,7 @@ function CreateUserModal({ onClose, onCreated }) {
               className={inputCls}
             >
               <option value="staff">{t('店员')}</option>
+              <option value="admin">{t('管理员')}</option>
               <option value="cashier">{t('门店收银')}</option>
               <option value="manager">{t('店长·区域负责人')}</option>
               <option value="finance">{t('财务')}</option>
@@ -393,6 +394,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
 
   const roleLabel = (role) => {
     if (role === 'developer') return t('开发者')
+    if (role === 'admin') return t('管理员')
     if (role === 'manager') return t('店长·区域负责人')
     if (role === 'staff') return t('店员')
     if (role === 'cashier') return t('门店收银')
@@ -556,6 +558,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 outline-none transition focus:border-budu-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <option value="developer">{t('开发者')}</option>
+                        <option value="admin">{t('管理员')}</option>
                         <option value="manager">{t('店长·区域负责人')}</option>
                         <option value="staff">{t('店员')}</option>
                         <option value="cashier">{t('门店收银')}</option>
@@ -568,7 +571,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        {u.role !== 'public' && u.role !== 'developer' && u.role !== 'finance' && (
+                        {u.role !== 'public' && u.role !== 'developer' && u.role !== 'finance' && u.role !== 'admin' && (
                           <button
                             onClick={() => changeTransferPermission(u)}
                             className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
@@ -581,7 +584,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                             {t(u.permissions?.inventoryTransferAll ? '撤销调拨全权限' : '调拨全权限')}
                           </button>
                         )}
-                        {u.role !== 'developer' && u.role !== 'public' && u.role !== 'finance' && (
+                        {u.role !== 'developer' && u.role !== 'public' && u.role !== 'finance' && u.role !== 'admin' && (
                           <button
                             onClick={() => setBindTarget(u)}
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"

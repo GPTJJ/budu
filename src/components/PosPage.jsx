@@ -43,7 +43,7 @@ function parseDiscountPercent(value) {
 
 function allowedStores(user) {
   const stores = allStores()
-  if (user.role === 'developer') return stores
+  if (user.role === 'developer' || user.role === 'finance' || user.role === 'admin') return stores
   const allowed = new Set(user.storeKeys || [])
   return stores.filter((store) => allowed.has(store.key))
 }

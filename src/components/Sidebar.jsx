@@ -58,8 +58,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
           ),
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
-      : user?.role === 'finance'
-        ? menus // 财务权限与开发者一致：全部菜单
+      : user?.role === 'finance' || user?.role === 'admin'
+        ? menus // 财务/管理员权限与开发者一致：全部菜单
         : user?.role === 'staff'
           ? menus.filter((m) =>
               ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
