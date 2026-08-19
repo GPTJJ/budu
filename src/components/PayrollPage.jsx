@@ -10,7 +10,8 @@ import { refreshAlerts } from '../utils/inventoryAlerts'
 import PayrollSlipModal from './PayrollSlipModal'
 import PayrollIssueModal from './PayrollIssueModal'
 
-const yuan = (cents) => `¥${Number(cents || 0).toFixed(2)}`
+// 分 → 元（totalCents 以分存储，显示需 ÷100）
+const yuan = (cents) => `¥${(Number(cents || 0) / 100).toFixed(2)}`
 
 const POLL_MS = 8000
 

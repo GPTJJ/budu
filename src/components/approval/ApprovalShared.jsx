@@ -22,7 +22,8 @@ export function StatusBadge({ status, size = 'sm' }) {
   )
 }
 
-export const yuan = (cents) => `¥${Number(cents || 0).toFixed(2)}`
+// 分 → 元（amountCents 以分存储，显示需 ÷100）
+export const yuan = (cents) => `¥${(Number(cents || 0) / 100).toFixed(2)}`
 export const fmtTime = (v) => (v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—')
 export const fmtShortTime = (v) => (v ? new Date(v).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—')
 

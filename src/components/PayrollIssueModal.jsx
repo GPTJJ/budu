@@ -193,7 +193,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
                     r.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
                   }`}
                 >
-                  {r.employeeName} · {yuan(r.totalCents)}
+                  {r.employeeName} · ¥{(Number(r.totalCents) / 100).toFixed(2)}
                   {r.status === 'confirmed' ? ' · 已签收' : ' · 待签收'}
                 </span>
               ))}
