@@ -2,11 +2,6 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import KpiCard from './KpiCard'
-import StoreRankingTable from './StoreRankingTable'
-import RevenueTrendChart from './RevenueTrendChart'
-import ChannelChart from './ChannelChart'
-import EmployeePerformanceTable from './EmployeePerformanceTable'
-import ProductSalesTable from './ProductSalesTable'
 import NotificationPanel from './NotificationPanel'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
@@ -22,6 +17,13 @@ import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
+// 首页图表/表格：懒加载（recharts 等重型依赖拆为独立 chunk，移动端首屏显著提速）
+const StoreRankingTable = lazy(() => import('./StoreRankingTable'))
+const RevenueTrendChart = lazy(() => import('./RevenueTrendChart'))
+const ChannelChart = lazy(() => import('./ChannelChart'))
+const EmployeePerformanceTable = lazy(() => import('./EmployeePerformanceTable'))
+const ProductSalesTable = lazy(() => import('./ProductSalesTable'))
+
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
 const PayrollPage = lazy(() => import('./PayrollPage'))
 const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
@@ -287,38 +289,58 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
                 <>
-                  {/* 核心 KPI 统计 */}
+                  {/* 核心 KPI 统计（首屏立即渲染，零图表依赖） */}
                   <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3 2xl:grid-cols-6">
                     {cards.map((card, i) => (
                       <KpiCard key={card.key} card={card} featured={i === 0} />
                     ))}
                   </section>
 
-                  {/* 中部分析模块 */}
-                  <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                    <div className="xl:col-span-4">
-                      <StoreRankingTable month={month} store={store} day={day} />
-                    </div>
-                    <div className="xl:col-span-5">
-                      <RevenueTrendChart month={month} store={store} day={day} />
-                    </div>
-                    <div className="xl:col-span-3">
-                      <ChannelChart month={month} store={store} day={day} />
-                    </div>
-                  </section>
+                  {/* 图表/表格模块（懒加载：recharts 独立分包，移动端首屏不下载） */}
+                  <Suspense
+                    fallback={
+                      <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                        {[1, 2, 3].map((i) => (
+                          <div key={i} className={`animate-pulse rounded-2xl bg-slate-100 ${i === 1 ? 'xl:col-span-5' : 'xl:col-span-4'} ${i === 3 ? 'xl:col-span-3' : ''}`} style={{ height: 260 }} />
+                        ))}
+                      </section>
+                    }
+                  >
+                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                      <div className="xl:col-span-4">
+                        <StoreRankingTable month={month} store={store} day={day} />
+                      </div>
+                      <div className="xl:col-span-5">
+                        <RevenueTrendChart month={month} store={store} day={day} />
+                      </div>
+                      <div className="xl:col-span-3">
+                        <ChannelChart month={month} store={store} day={day} />
+                      </div>
+                    </section>
+                  </Suspense>
 
-                  {/* 底部业绩与数据模块 */}
-                  <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                    <div className="xl:col-span-4">
-                      <EmployeePerformanceTable store={store} month={month} user={user} />
-                    </div>
-                    <div className="xl:col-span-5">
-                    <ProductSalesTable month={month} store={store} />
-                    </div>
-                    <div className="xl:col-span-3">
-                      <NotificationPanel month={month} day={day} user={user} />
-                    </div>
-                  </section>
+                  {/* 底部业绩与数据模块（懒加载同包） */}
+                  <Suspense
+                    fallback={
+                      <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-4" style={{ height: 260 }} />
+                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-5" style={{ height: 260 }} />
+                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-3" style={{ height: 260 }} />
+                      </section>
+                    }
+                  >
+                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+                      <div className="xl:col-span-4">
+                        <EmployeePerformanceTable store={store} month={month} user={user} />
+                      </div>
+                      <div className="xl:col-span-5">
+                        <ProductSalesTable month={month} store={store} />
+                      </div>
+                      <div className="xl:col-span-3">
+                        <NotificationPanel month={month} day={day} user={user} />
+                      </div>
+                    </section>
+                  </Suspense>
                 </>
               )}
               </Suspense>

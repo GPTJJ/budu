@@ -6,7 +6,6 @@ import {
   BadgePercent,
   CalendarCheck2,
 } from 'lucide-react'
-import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import { pctText } from '../utils/selectors'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
@@ -27,7 +26,7 @@ export default function KpiCard({ card, featured = false }) {
   const hide = isPublic || isStore
   const style = CARD_STYLE[card.key] || CARD_STYLE.income
   const Icon = style.icon
-  const sparkData = card.spark.map((v, i) => ({ i, v }))
+  const spark = Array.isArray(card.spark) ? card.spark : []
   const up = card.change == null ? null : card.change >= 0
 
   return (
@@ -84,27 +83,39 @@ export default function KpiCard({ card, featured = false }) {
         <div className="mt-2 flex min-h-11 items-end justify-between gap-2">
           {!hide && <p className="hidden min-w-0 text-[11px] leading-4 text-slate-400 sm:line-clamp-2">{card.note}</p>}
           <div className="h-9 w-12 shrink-0 sm:h-11 sm:w-20">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id={`spark-${card.key}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={style.color} stopOpacity={0.3} />
-                    <stop offset="100%" stopColor={style.color} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <Area
-                  type="monotone"
-                  dataKey="v"
-                  stroke={style.color}
-                  strokeWidth={2}
-                  fill={`url(#spark-${card.key})`}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            <Sparkline values={spark} color={style.color} id={`spark-${card.key}`} />
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+/** 迷你趋势图（纯 SVG，无第三方图表库，首屏零额外依赖） */
+function Sparkline({ values, color, id }) {
+  if (!values || values.length < 2) return <div className="h-full w-full" />
+  const w = 100
+  const h = 40
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || 1
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w
+    const y = h - 3 - ((v - min) / span) * (h - 6)
+    return [x, y]
+  })
+  const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  const area = `${line} L${w},${h} L0,${h} Z`
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-full w-full">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
   )
 }
