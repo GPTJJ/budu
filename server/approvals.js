@@ -7,6 +7,7 @@ import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 import { loadDb } from './store.js'
+import { notify } from './notification-center.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
 import {
@@ -386,6 +387,16 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
             content: `${req.user.username} 提交了${template.name}申请「${title}」`,
           },
         })
+        // 通知中心（站内消息 + 微信提醒；与原通知并存，兼容零回归）
+        notify({
+          username,
+          templateKey: 'approval_todo',
+          data: { title, submitterName: req.user.displayName || req.user.username, templateName: template.name },
+          priority: 'high',
+          target: 'approval',
+          refType: 'approval',
+          refId: id,
+        }).catch(() => {})
       }
       // 提交即建立抄送关系（提交人 + 财务 + 手动添加）
       const ccNames = await ccNamesOf(template, req.user.username, req.user.displayName || req.user.username, normalized, extraCc, ctx)
@@ -571,6 +582,16 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
           content: `${req.user.username} 提交了${template.name}申请「${request.title}」`,
         },
       })
+      // 通知中心
+      notify({
+        username,
+        templateKey: 'approval_todo',
+        data: { title: request.title, submitterName: req.user.displayName || req.user.username, templateName: template.name },
+        priority: 'high',
+        target: 'approval',
+        refType: 'approval',
+        refId: request.id,
+      }).catch(() => {})
     }
     // 提交即建立抄送关系（提交人 + 财务 + 手动添加），审批通过后统一通知
     for (const [uname, unameName] of ccNames) {
@@ -655,6 +676,22 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
         content: `你的${template.name}申请「${request.title}」已被 ${req.user.username} ${action === 'approve' ? '通过' : '驳回'}${comment ? `：${comment}` : ''}`,
       },
     })
+    // 通知中心
+    notify({
+      username: request.submitterUsername,
+      templateKey: 'approval_result',
+      data: {
+        title: request.title,
+        templateName: template.name,
+        result: action === 'approve' ? '审批已通过' : '审批已驳回',
+        resultText: action === 'approve' ? '通过' : `驳回：${comment}`,
+        approverName: req.user.displayName || req.user.username,
+      },
+      priority: action === 'approve' ? 'normal' : 'high',
+      target: 'approval',
+      refType: 'approval',
+      refId: request.id,
+    }).catch(() => {})
     // 通过 → 通知抄送人（提交时已建立抄送关系：提交人 + 财务 + 手动添加），排除提交人本人（结果通知已覆盖）
     if (action === 'approve') {
       const ccRows = await tx.approvalCc.findMany({ where: { requestId: request.id } })
@@ -670,6 +707,15 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
             content: `${template.name}申请「${request.title}」已通过审批，请查收`,
           },
         })
+        // 通知中心
+        notify({
+          username: c.ccUsername,
+          templateKey: 'approval_cc',
+          data: { title: request.title, templateName: template.name },
+          target: 'approval',
+          refType: 'approval',
+          refId: request.id,
+        }).catch(() => {})
       }
     }
   })

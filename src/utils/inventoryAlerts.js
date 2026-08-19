@@ -27,6 +27,7 @@ let currentMailings = []
 let currentAssetReminders = []
 let currentPayrolls = []
 let currentApprovalNotes = []
+let currentCenterNotes = []
 let lastCapsKey = ''
 
 function capsKey(user) {
@@ -139,7 +140,11 @@ function compute() {
   const approvalItems = currentCanSeeApprovals
     ? currentApprovalNotes.filter((r) => !r.readAt).map((r) => ({ ...r, type: 'approval', noticeType: r.type }))
     : []
-  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems].sort((a, b) =>
+  // 通知中心：统一站内消息（工资条/审批/调货等），未读的显示；target 供点击跳转
+  const centerItems = currentCanSeeApprovals
+    ? currentCenterNotes.filter((r) => r.status === 'unread').map((r) => ({ ...r, type: 'center' }))
+    : []
+  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems, ...centerItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
   state = { ...state, unread: items.length, items }
@@ -208,6 +213,14 @@ async function refresh() {
       currentApprovalNotes = Array.isArray(res.rows) ? res.rows : []
     } catch {
       /* 审批中心不可用时忽略 */
+    }
+  }
+  if (currentCanSeeApprovals) {
+    try {
+      const res = await api('/v2/notifications?unread=1')
+      currentCenterNotes = Array.isArray(res.rows) ? res.rows : []
+    } catch {
+      /* 通知中心不可用时忽略 */
     }
   }
   compute()

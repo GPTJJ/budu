@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
+import { notify } from './notification-center.js'
 
 export const payrollNoticeRouter = Router()
 
@@ -126,6 +127,25 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
     })
     created.push(row)
   }
+  // 通知中心：发放工资条 → 员工站内消息 + 微信提醒（待签收）
+  for (const r of created) {
+    const period = r.periodType === 'week' || r.periodType === 'custom'
+      ? String(r.periodKey).replace('~', ' ~ ')
+      : `${r.periodKey.slice(0, 4)}年${Number(r.periodKey.slice(5, 7))}月`
+    const total = (Number(r.totalCents) / 100).toFixed(2)
+    if (r.targetUsername) {
+      notify({
+        username: r.targetUsername,
+        templateKey: 'payroll_pending',
+        data: { employeeName: r.employeeName, period, amount: total },
+        priority: 'high',
+        target: 'staff-payroll',
+        refType: 'payroll',
+        refId: r.id,
+        ack: true,
+      }).catch(() => {})
+    }
+  }
   res.json({ ok: true, count: created.length, rows: created.map(serialize) })
 }))
 
@@ -149,5 +169,23 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
     where: { id: row.id },
     data: { status: 'confirmed', confirmedAt: new Date(), confirmedBy: req.user.username },
   })
+  // 通知中心：签收留痕通知发放人（开发者/管理员/财务）
+  const period = row.periodType === 'week' || row.periodType === 'custom'
+    ? String(row.periodKey).replace('~', ' ~ ')
+    : `${row.periodKey.slice(0, 4)}年${Number(row.periodKey.slice(5, 7))}月`
+  if (row.createdBy) {
+    notify({
+      username: row.createdBy,
+      templateKey: 'payroll_confirmed',
+      data: {
+        employeeName: row.employeeName,
+        period,
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      },
+      target: 'staff-payroll',
+      refType: 'payroll',
+      refId: row.id,
+    }).catch(() => {})
+  }
   res.json({ ok: true, row: serialize(updated) })
 }))

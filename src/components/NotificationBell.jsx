@@ -13,6 +13,7 @@ import {
 } from '../utils/inventoryAlerts'
 import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
+import { api } from '../utils/api'
 import { useI18n } from '../i18n'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -39,6 +40,25 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
   const openItem = (item) => {
     markSeen()
     setOpen(false)
+    // 通知中心消息：标记已读 + 按 target 跳转对应页面
+    if (item.type === 'center') {
+      api(`/v2/notifications/read`, { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).catch(() => {})
+      if (onNavigate) {
+        const target = item.target || ''
+        const viewMap = {
+          'staff-payroll': 'staff-payroll',
+          approval: 'approval',
+          'inventory-transfer': 'inventory-transfer',
+          'inventory-purchase': 'inventory-purchase',
+          'finance-invoice': 'finance-invoice',
+          'store-mailing': 'store-mailing',
+          'asset-center': 'asset-center',
+          staff: 'staff',
+        }
+        onNavigate(viewMap[target] || 'overview')
+      }
+      return
+    }
     // 工资条：铃铛只负责提醒，点击跳转到「人员管理 → 工资条」板块查看/签收
     if (item.type === 'payroll') {
       if (onNavigate) onNavigate('staff-payroll')
@@ -146,6 +166,10 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                 ? 'bg-emerald-50 text-emerald-600'
                               : r.type === 'approval'
                                 ? 'bg-violet-50 text-violet-600'
+                              : r.type === 'center'
+                                ? r.priority === 'high'
+                                  ? 'bg-rose-50 text-rose-600'
+                                  : 'bg-violet-50 text-violet-600'
                                 : 'bg-sky-50 text-sky-600'
                         }`}
                       >
@@ -160,13 +184,17 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                 ? '工资条'
                               : r.type === 'approval'
                                 ? '审批'
+                              : r.type === 'center'
+                                ? r.priority === 'high' ? '重要' : '通知'
                               : r.type === 'transfer'
                                 ? '调货申请'
                                 : '采购申请',
                         )}
                       </span>
-                      {r.type === 'approval'
-                        ? r.title
+                      {r.type === 'center'
+                        ? r.title || ''
+                        : r.type === 'approval'
+                          ? r.title
                         : r.type === 'payroll'
                           ? t('{name} · {period}', {
                               name: r.employeeName || '',
@@ -181,8 +209,10 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                 : t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
                     </p>
                     <p className="mt-1 text-[11px] text-slate-400">
-                      {r.type === 'approval'
-                        ? r.content
+                      {r.type === 'center'
+                        ? r.content || ''
+                        : r.type === 'approval'
+                          ? r.content
                         : r.type === 'payroll'
                           ? t('待签收 · {total}', { total: yuan(r.totalCents) })
                           : r.type === 'mailing'
@@ -207,7 +237,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                                   : t('采购至 {store}', { store: storeLabel(r.storeKey, r.storeName) })}
                     </p>
                     <p className="mt-0.5 text-[10px] text-slate-300">
-                      {r.type === 'asset' || r.type === 'payroll' ? '' : t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
+                      {r.type === 'asset' || r.type === 'payroll' || r.type === 'center' ? '' : t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                     </p>
                   </button>
                 ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Languages, Lock, MapPin, Plus, Server, Store, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Database, Languages, Lock, MapPin, MessageCircle, Plus, Server, Store, Trash2 } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
@@ -29,6 +29,10 @@ export default function SettingsPage({ user, onBack }) {
   const [secError, setSecError] = useState('')
   const [secTip, setSecTip] = useState('')
   const [secSaving, setSecSaving] = useState(false)
+  // 微信绑定状态
+  const [wxBindings, setWxBindings] = useState(null)
+  const [wxTip, setWxTip] = useState('')
+  const [wxBusy, setWxBusy] = useState(false)
   const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
   const customStores = getStores()
 
@@ -62,6 +66,54 @@ export default function SettingsPage({ user, onBack }) {
       setAlertTip(res.configured ? t('测试消息已发送 ✓') : t('未配置 Webhook，仅返回站内状态'))
     } catch (err) {
       setAlertTip(t(err.message))
+    }
+  }
+
+  const loadWxBindings = async () => {
+    try {
+      const res = await api('/v2/wechat/bindings')
+      setWxBindings(res)
+    } catch {
+      setWxBindings(null)
+    }
+  }
+
+  useEffect(() => {
+    loadWxBindings()
+  }, [])
+
+  const bindWechat = async () => {
+    setWxBusy(true)
+    setWxTip('')
+    try {
+      const res = await api('/v2/wechat/bind-qrcode', { method: 'POST', body: JSON.stringify({}) })
+      window.open(res.url, '_blank')
+      setWxTip(t('请在打开的微信授权页扫码，授权成功后回到本页刷新查看绑定状态'))
+    } catch (err) {
+      setWxTip(t(err.message))
+    } finally {
+      setWxBusy(false)
+    }
+  }
+
+  const revokeWechat = async (id) => {
+    if (!window.confirm(t('确定解绑该微信吗？解绑后将不再收到微信提醒'))) return
+    try {
+      await api(`/v2/wechat/bindings/${id}/revoke`, { method: 'POST', body: JSON.stringify({}) })
+      setWxTip(t('已解绑'))
+      loadWxBindings()
+    } catch (err) {
+      setWxTip(t(err.message))
+    }
+  }
+
+  const testWechat = async () => {
+    setWxTip('')
+    try {
+      const res = await api('/v2/wechat/test', { method: 'POST', body: JSON.stringify({}) })
+      setWxTip(res.ok ? t('测试微信已发送 ✓') : t('发送失败'))
+    } catch (err) {
+      setWxTip(t(err.message))
     }
   }
 
@@ -225,6 +277,74 @@ export default function SettingsPage({ user, onBack }) {
           </div>
         </div>
       )}
+
+      {/* 微信提醒绑定（通知中心个人提醒） */}
+      <div className="card p-6">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
+            <MessageCircle className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-[15px] font-bold text-slate-800">{t('微信提醒')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {t('扫码授权一次绑定微信，工资条/审批/调货/发票/邮寄等站内通知将同步推送微信提醒，点击消息直达对应页面；微信仅提醒，不承载业务操作')}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          {wxBindings === null ? (
+            <p className="text-xs text-slate-300">{t('加载中…')}</p>
+          ) : !wxBindings.configured ? (
+            <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs font-medium text-slate-400">
+              {t('微信提醒通道未开通（需要配置企业微信自建应用或公众号资质）；当前仅站内通知，不影响任何现有功能')}
+            </p>
+          ) : (
+            <>
+              {wxBindings.rows.filter((r) => r.status === 'active').length === 0 ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={bindWechat}
+                    disabled={wxBusy}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    {wxBusy ? t('跳转中…') : t('扫码绑定微信')}
+                  </button>
+                  <span className="text-[11px] text-slate-400">{t('授权一次即可，随时可解绑')}</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {wxBindings.rows.filter((r) => r.status === 'active').map((b) => (
+                    <div key={b.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50/80 px-4 py-2.5">
+                      <span className="grid h-8 w-8 place-items-center rounded-full bg-budu-500 text-xs font-bold text-white">微</span>
+                      <span className="text-sm font-semibold text-slate-700">
+                        {b.nickname || t('微信')} · {b.channel === 'wecom' ? t('企业微信') : t('公众号')}
+                      </span>
+                      <span className="text-[11px] text-emerald-600">{t('已绑定')}</span>
+                      <span className="ml-auto flex items-center gap-2">
+                        <button
+                          onClick={testWechat}
+                          className="rounded-lg bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
+                        >
+                          {t('发送测试')}
+                        </button>
+                        <button
+                          onClick={() => revokeWechat(b.id)}
+                          className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-500 transition hover:bg-rose-100"
+                        >
+                          {t('解绑')}
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {wxTip && <p className="mt-3 text-xs font-medium text-slate-500">{wxTip}</p>}
+        </div>
+      </div>
 
       {isDeveloper && (
         <div className="card p-6">

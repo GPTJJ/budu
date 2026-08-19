@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
-import { sendWechatMarkdown } from './wechat-alert.js'
+import { broadcast } from './notification-center.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -48,7 +48,7 @@ export async function checkAssetReminders() {
   }
   if (digest.length > 0) {
     const lines = [`BUDU 资产到期提醒（${new Date().toISOString().slice(0, 10)}）`, ...digest]
-    sendWechatMarkdown('企业资产到期提醒', lines.join('\n')).catch(() => {})
+    broadcast('企业资产到期提醒', lines.join('\n')).catch(() => {})
     if (process.env.EMAIL_NOTIFY_ENABLED === '1') {
       console.info('[asset-reminder-email] 预留邮件接口，尚未配置 SMTP')
     }

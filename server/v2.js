@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
+import { broadcast } from './notification-center.js'
 import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
@@ -283,7 +284,7 @@ async function maybeAlertLowStock(storeKey) {
       await prisma.alertLog.create({
         data: { id: uid('al'), storeKey: r.storeKey, itemId: r.itemId, day },
       })
-      await sendWechatMarkdown(
+      await broadcast(
         '库存预警',
         `门店 **${r.storeKey}** 的「${r.item.name}」当前库存 **${r.quantity}**，已低于安全库存 **${r.minQty}**`,
       )
@@ -499,7 +500,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
-  sendWechatMarkdown(
+  broadcast(
     '新调货申请',
     `**${created.fromStoreKey}** → **${created.toStoreKey}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出门店店长尽快审核发货。`,
   ).catch(() => {})
@@ -569,7 +570,7 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
     await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
   })
   const final = await getTransfer(t.id)
-  sendWechatMarkdown(
+  broadcast(
     '调货已发货',
     `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
   ).catch(() => {})
@@ -594,7 +595,7 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
   if (!['pending', 'in_transit'].includes(t.status)) throw bad('当前状态不可收货')
   // 收货仅确认与记录，不增减库存；确认后立即完成
   const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
-  sendWechatMarkdown(
+  broadcast(
     '调货已收货',
     `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 确认人 **${req.user.username}**`,
   ).catch(() => {})
@@ -632,7 +633,7 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
     },
     include: { items: { include: { item: true } }, store: true },
   })
-  sendWechatMarkdown(
+  broadcast(
     '新采购申请',
     `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplier ? ` · 供应商 **${created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
   ).catch(() => {})
@@ -690,7 +691,7 @@ v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
     await tx.purchaseRequest.update({ where: { id: p.id }, data: { status: 'received', updatedAt: new Date() } })
   })
   maybeAlertLowStock(p.storeKey).catch(() => {})
-  sendWechatMarkdown(
+  broadcast(
     '采购已入库',
     `门店 **${p.storeKey}**\n货品 **${p.items.length}** 种已按实收数量入库 · 操作人 **${operator}**`,
   ).catch(() => {})
@@ -1214,7 +1215,7 @@ v2Router.post('/invoices', wrap(async (req, res) => {
       createdBy: req.user.username,
     },
   })
-  sendWechatMarkdown(
+  broadcast(
     '新发票申请',
     `门店 **${storeKey}**\n抬头 **${type === 'company' ? name : '个人'}**\n金额 **¥${(cents / 100).toFixed(2)}** · 品类 **${String(category || '其他').trim()}**\n提交人 **${req.user.username}**\n请尽快开票。`,
   ).catch(() => {})
@@ -1292,7 +1293,7 @@ v2Router.post('/mailing-records', wrap(async (req, res) => {
       createdBy: req.user.username,
     },
   })
-  sendWechatMarkdown(
+  broadcast(
     '新门店邮寄',
     `方式 **${m}**${f ? ` · 运费 **${f}**` : ''}\n收件人 **${name}**\n地址 ${addr}\n提交人 **${req.user.username}**\n请尽快安排发货。`,
   ).catch(() => {})

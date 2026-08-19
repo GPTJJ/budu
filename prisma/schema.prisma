@@ -824,3 +824,75 @@ model ApprovalNotification {
   @@index([requestId])
   @@map("approval_notifications")
 }
+
+// ==================== 通知中心（Notification Center）====================
+// 唯一通知入口：业务模块只调用通知中心，通道（站内/微信/APP/短信/邮件）由中心统一派发
+
+/** 通知模板：标题/内容占位符渲染、默认优先级、跳转目标 */
+model NotificationTemplate {
+  key          String  @id
+  name         String
+  description  String  @default("")
+  titleTpl     String
+  contentTpl   String
+  target       String  @default("") // 跳转目标：staff-payroll / approval / inventory-transfer / finance-invoice / store-mailing / asset-center 等
+  defaultPriority String @default("normal") // high | normal | low
+  active       Boolean @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @map("updated_at")
+
+  @@map("notification_templates")
+}
+
+/** 站内通知消息：模板/优先级/已读未读/删除/签收 */
+model Notification {
+  id          String   @id
+  username    String
+  templateKey String   @default("") @map("template_key")
+  title       String
+  content     String
+  priority    String   @default("normal") // high | normal | low
+  status      String   @default("unread") // unread | read | deleted
+  ackStatus   String   @default("none") @map("ack_status") // none | pending | confirmed（签收）
+  ackAt       DateTime? @map("ack_at")
+  ackBy       String   @default("") @map("ack_by")
+  target      String   @default("") // 跳转目标（模板或业务指定）
+  refType     String   @default("") @map("ref_type")
+  refId       String   @default("") @map("ref_id")
+  readAt      DateTime? @map("read_at")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([username, status])
+  @@index([username, createdAt])
+  @@map("notifications")
+}
+
+/** 通知投递记录：通道扩展留痕（inapp/wechat/wecom/email/sms/app） */
+model NotificationDelivery {
+  id             String   @id
+  notificationId String   @map("notification_id")
+  channel        String   @default("inapp")
+  status         String   @default("sent") // sent | failed | skipped
+  error          String   @default("")
+  sentAt         DateTime @default(now()) @map("sent_at")
+
+  @@index([notificationId])
+  @@map("notification_deliveries")
+}
+
+/** 微信绑定：扫码授权一次建立绑定，通知中心据此推送个人微信提醒 */
+model WechatBinding {
+  id        String   @id
+  username  String
+  channel   String   @default("wecom") // wecom 企业微信 | mp 公众号
+  openId    String
+  nickname  String   @default("")
+  status    String   @default("active") // active | revoked
+  boundAt   DateTime @default(now()) @map("bound_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  @@unique([username, channel])
+  @@index([username, status])
+  @@map("wechat_bindings")
+}
