@@ -25,6 +25,14 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: 磁盘检查与清理（系统盘满会导致 Failed to fetch）
+        env:
+          SSH_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
+          SSH_USER: ${{ secrets.HK_USER || secrets.TENCENT_USER }}
+          APP_DIR: ${{ secrets.HK_APP_DIR || secrets.TENCENT_APP_DIR }}
+        run: |
+          ssh "$SSH_USER@$SSH_HOST" "df -h / | tail -1; echo '--- 清理日志与缓存 ---'; sudo find /var/log -type f -name '*.log' -size +10M -exec truncate -s 0 {} \; 2>/dev/null || true; sudo journalctl --vacuum-size=100M 2>/dev/null || true; sudo apt-get clean 2>/dev/null || true; rm -rf \$APP_DIR/dist /tmp/*.log /home/*/.npm/_logs 2>/dev/null || true; docker system prune -af 2>/dev/null || true; df -h / | tail -1" || true
+
       - name: Deploy to HK test
         env:
           SSH_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
