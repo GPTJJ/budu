@@ -230,7 +230,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
           method: 'POST',
           body: JSON.stringify({ name: fname, fileType: 'image/png', dataUrl }),
         })
-        setAttachments((prev) => [...(prev || []).filter((a) => !a.name.startsWith('工资条-')), res.attachment])
+        setAttachments((prev) => [...(prev || []).filter((a) => !a.name.startsWith('工资条-')), { ...res.attachment, dataUrl }])
       }
     } catch (e) {
       setError(e.message || '导入工资条失败')

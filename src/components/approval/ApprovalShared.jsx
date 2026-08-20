@@ -165,6 +165,7 @@ export function fileIcon(fileType, cls = 'h-4 w-4') {
 export function AttachmentUploader({ attachments, onChange }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [preview, setPreview] = useState(null) // 预览中的图片附件
   const inputRef = useRef(null)
 
   const handleFiles = async (fileList) => {
@@ -186,7 +187,8 @@ export function AttachmentUploader({ attachments, onChange }) {
           method: 'POST',
           body: JSON.stringify({ name: fileName, fileType: mime, dataUrl }),
         })
-        onChange([...(attachments || []), res.attachment])
+        // 携带本地 dataUrl：表单内缩略图与点击预览（服务端返回不含图片内容）
+        onChange([...(attachments || []), { ...res.attachment, dataUrl }])
       } catch (e) {
         setError(e.message || '上传失败')
       } finally {
@@ -204,11 +206,16 @@ export function AttachmentUploader({ attachments, onChange }) {
         {(attachments || []).map((a) => (
           <span key={a.id} className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600">
             {a.fileType.startsWith('image/') && a.dataUrl ? (
-              <img src={a.dataUrl} alt="" className="h-5 w-5 rounded object-cover" />
+              <button onClick={() => setPreview(a)} className="flex items-center gap-1.5" aria-label={`预览 ${a.name}`} title="点击预览">
+                <img src={a.dataUrl} alt="" className="h-5 w-5 rounded object-cover" />
+                <span className="max-w-[160px] truncate">{a.name}</span>
+              </button>
             ) : (
-              fileIcon(a.fileType)
+              <>
+                {fileIcon(a.fileType)}
+                <span className="max-w-[160px] truncate">{a.name}</span>
+              </>
             )}
-            <span className="max-w-[160px] truncate">{a.name}</span>
             <button onClick={() => remove(a.id)} className="text-slate-300 transition hover:text-rose-500" aria-label="移除附件">
               <X className="h-3.5 w-3.5" />
             </button>
@@ -232,6 +239,22 @@ export function AttachmentUploader({ attachments, onChange }) {
         />
       </div>
       {error && <p className="mt-1.5 text-[11px] font-medium text-rose-500">{error}</p>}
+
+      {/* 图片附件预览弹窗 */}
+      {preview && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" onClick={() => setPreview(null)}>
+          <div className="relative max-h-[90vh] w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <img src={preview.dataUrl} alt={preview.name} className="max-h-[86vh] w-full rounded-2xl bg-white object-contain shadow-2xl" />
+            <div className="mt-3 flex items-center justify-between">
+              <p className="min-w-0 truncate text-xs font-semibold text-white/90">{preview.name}</p>
+              <div className="flex shrink-0 gap-2">
+                <a href={preview.dataUrl} download={preview.name} className="rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25">下载</a>
+                <button onClick={() => setPreview(null)} className="rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25" aria-label="关闭预览">关闭</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
