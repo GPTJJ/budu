@@ -546,6 +546,7 @@ export function createApp() {
     const username = String(req.body.username || '').trim()
     const password = String(req.body.password || '')
     const role = String(req.body.role || 'staff')
+    const displayName = String(req.body.name || '').trim().slice(0, 20)
     if (username.length < 2 || username.length > 20) {
       return res.status(400).json({ error: '用户名需为 2-20 个字符' })
     }

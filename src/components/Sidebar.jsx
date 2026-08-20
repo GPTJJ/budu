@@ -23,7 +23,6 @@ const menus = [
   { key: 'analysis', label: '经营分析', icon: ChartNoAxesCombined },
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
-  { key: 'product', label: '商品管理', icon: Package },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
@@ -41,8 +40,8 @@ const subMenus = {
     { key: 'store-schedule', label: '门店排班' },
     { key: 'store-mailing', label: '门店邮寄' },
     { key: 'store-pos', label: 'POS 点单' },
+    { key: 'product-center', label: '商品中心' },
   ],
-  product: [{ key: 'product-center', label: '商品中心' }],
   inventory: [
     { key: 'inventory-transfer', label: '申请调货' },
     { key: 'inventory-purchase', label: '申请采购' },
@@ -56,7 +55,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     user?.role === 'public'
       ? [
           ...menus.filter(
-            (m) => m.key !== 'store' && m.key !== 'product' && m.key !== 'inventory' && m.key !== 'finance-invoice' && m.key !== 'approval',
+            (m) => m.key !== 'store' && m.key !== 'inventory' && m.key !== 'finance-invoice' && m.key !== 'approval',
           ),
           { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
         ]
@@ -109,7 +108,10 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         </p>
         {visibleMenus.map((item) => {
           const Icon = item.icon
-          const subs = subMenus[item.key]
+          // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
+          const subs = (subMenus[item.key] || []).filter(
+            (sub) => !(sub.key === 'product-center' && user?.role === 'staff'),
+          )
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 
