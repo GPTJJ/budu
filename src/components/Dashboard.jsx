@@ -87,12 +87,22 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   ))
   const [pageKey, setPageKey] = useState(0)
 
-  // 进入系统后空闲预加载 POS 相关分包，点开 POS 时无需等待下载
+  // 桌面端空闲时预加载 POS；移动端/省流网络不抢占首页图表和数据带宽。
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection
+    const isMobile = window.matchMedia?.('(max-width: 1023px)').matches
+    const isConstrained = connection?.saveData || ['slow-2g', '2g', '3g'].includes(connection?.effectiveType)
+    if (isMobile || isConstrained) return undefined
+
+    const preload = () => {
       import('./PosPage').catch(() => {})
       import('./OrderRecordsPage').catch(() => {})
-    }, 800)
+    }
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 6000 })
+      return () => window.cancelIdleCallback(idleId)
+    }
+    const timer = window.setTimeout(preload, 3000)
     return () => window.clearTimeout(timer)
   }, [])
 

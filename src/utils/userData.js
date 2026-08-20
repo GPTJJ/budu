@@ -8,11 +8,33 @@ import { api } from './api'
  */
 
 const MIRROR_KEY = 'budu-os-cloud-mirror-v1'
+const MIRROR_OWNER_KEY = 'budu-os-cloud-mirror-owner-v1'
 const LEGACY_ENTRIES_KEY = 'budu-os-store-entries-v1'
 const LEGACY_STAFF_KEY = 'budu-os-staff-v1'
 
 let cached = null
 let saveTimer = null
+let activeUserId = ''
+
+function normalizeCachedData(value) {
+  const source = value && typeof value === 'object' ? value : {}
+  return {
+    entries: source.entries || {},
+    staff: Array.isArray(source.staff) ? source.staff : [],
+    removedStaff: Array.isArray(source.removedStaff) ? source.removedStaff : [],
+    analysis: source.analysis && typeof source.analysis === 'object' ? source.analysis : {},
+    productImages: source.productImages && typeof source.productImages === 'object' ? source.productImages : {},
+    stores: Array.isArray(source.stores) ? source.stores : [],
+    schedules: source.schedules && typeof source.schedules === 'object' ? source.schedules : {},
+    products: Array.isArray(source.products) ? source.products : [],
+    inventoryRequests: Array.isArray(source.inventoryRequests) ? source.inventoryRequests : [],
+    inventory: Array.isArray(source.inventory) ? source.inventory : [],
+    bigBonuses: Array.isArray(source.bigBonuses) ? source.bigBonuses : [],
+    dailyPayAdjustments: Array.isArray(source.dailyPayAdjustments) ? source.dailyPayAdjustments : [],
+    posDaily: Array.isArray(source.posDaily) ? source.posDaily : [],
+    posProductSales: Array.isArray(source.posProductSales) ? source.posProductSales : [],
+  }
+}
 
 function readMirror() {
   if (typeof localStorage === 'undefined') return null
@@ -49,53 +71,97 @@ function writeMirror() {
   if (typeof localStorage === 'undefined' || !cached) return
   try {
     localStorage.setItem(MIRROR_KEY, JSON.stringify(cached))
+    if (activeUserId) localStorage.setItem(MIRROR_OWNER_KEY, activeUserId)
   } catch {
     /* 忽略写入失败 */
   }
 }
 
+/**
+ * 仅在镜像明确属于当前登录账号时恢复数据，避免同一台设备切换账号时短暂显示上一账号数据。
+ * 返回 true 表示可以先展示镜像，再在后台刷新服务端数据。
+ */
+export function prepareUserDataForUser(userId) {
+  const nextUserId = String(userId || '')
+  if (activeUserId && activeUserId !== nextUserId) cached = null
+  activeUserId = nextUserId
+  if (!nextUserId || typeof localStorage === 'undefined') return false
+  try {
+    if (localStorage.getItem(MIRROR_OWNER_KEY) !== nextUserId) return false
+    const mirror = readMirror()
+    if (!mirror) return false
+    cached = normalizeCachedData(mirror)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 登录成功后拉取共享数据；首次登录自动迁移旧版本地数据 */
-export async function loadUserData() {
+export async function loadUserData(options = {}) {
+  const userId = typeof options === 'string' ? options : options?.userId
+  const onBaseReady = typeof options === 'object' ? options?.onBaseReady : null
+  if (userId) {
+    const nextUserId = String(userId)
+    if (activeUserId && activeUserId !== nextUserId) cached = null
+    activeUserId = nextUserId
+  }
   const data = await api('/userdata').catch(() => null)
   if (!data || typeof data !== 'object') return
-  const previousMirror = readMirror()
-  cached = {
-    entries: data.entries || {},
-    staff: Array.isArray(data.staff) ? data.staff : [],
-    removedStaff: Array.isArray(data.removedStaff) ? data.removedStaff : [],
-    analysis: data.analysis && typeof data.analysis === 'object' ? data.analysis : {},
-    productImages: data.productImages && typeof data.productImages === 'object' ? data.productImages : {},
-    stores: Array.isArray(data.stores) ? data.stores : [],
-    schedules: data.schedules && typeof data.schedules === 'object' ? data.schedules : {},
-    products: Array.isArray(data.products) ? data.products : [],
-    inventoryRequests: Array.isArray(data.inventoryRequests) ? data.inventoryRequests : [],
-    inventory: Array.isArray(data.inventory) ? data.inventory : [],
-    bigBonuses: [],
-    dailyPayAdjustments: Array.isArray(previousMirror?.dailyPayAdjustments) ? previousMirror.dailyPayAdjustments : [],
-    posDaily: [],
-    posProductSales: [],
-  }
-  // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
+  let previousMirror = null
   try {
-    const v2 = await api('/v2/daily-entries')
-    if (v2 && Array.isArray(v2.rows) && v2.rows.length > 0) {
-      const merged = {}
-      for (const row of v2.rows) {
-        const key = `${row.date.slice(0, 7)}|${row.storeKey}|${row.date.slice(5)}`
-        merged[key] = {
-          inc: Number(row.incCents) / 100,
-          ord: row.ord,
-          staff: Array.isArray(row.staffNames) ? row.staffNames : [],
-          v2version: row.version,
-        }
-      }
-      cached.entries = merged
-    }
+    const owner = typeof localStorage !== 'undefined' ? localStorage.getItem(MIRROR_OWNER_KEY) : ''
+    if (!activeUserId || owner === activeUserId) previousMirror = readMirror()
   } catch {
-    /* v2 不可用时回退 KV */
+    previousMirror = null
   }
-  try {
-    const adjustments = await api('/v2/daily-pay-adjustments')
+  cached = normalizeCachedData({
+    ...data,
+    bigBonuses: previousMirror?.bigBonuses,
+    dailyPayAdjustments: previousMirror?.dailyPayAdjustments,
+    posDaily: previousMirror?.posDaily,
+    posProductSales: previousMirror?.posProductSales,
+  })
+  // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
+  writeMirror()
+  if (onBaseReady) {
+    try {
+      onBaseReady(cached)
+    } catch {
+      /* UI 回调异常不影响数据同步 */
+    }
+  }
+
+  const requests = await Promise.allSettled([
+    api('/v2/daily-entries'),
+    api('/v2/daily-pay-adjustments'),
+    api('/v2/pos/daily-summary'),
+    api('/v2/pos/product-sales'),
+    api('/v2/transfer-requests'),
+    api('/v2/purchase-requests'),
+    api('/v2/stock'),
+    api('/v2/big-bonuses'),
+  ])
+  const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
+
+  // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
+  const v2 = result(0)
+  if (v2 && Array.isArray(v2.rows) && v2.rows.length > 0) {
+    const merged = {}
+    for (const row of v2.rows) {
+      const key = `${row.date.slice(0, 7)}|${row.storeKey}|${row.date.slice(5)}`
+      merged[key] = {
+        inc: Number(row.incCents) / 100,
+        ord: row.ord,
+        staff: Array.isArray(row.staffNames) ? row.staffNames : [],
+        v2version: row.version,
+      }
+    }
+    cached.entries = merged
+  }
+
+  const adjustments = result(1)
+  if (adjustments) {
     cached.dailyPayAdjustments = ((adjustments && adjustments.rows) || []).map((row) => ({
       id: row.id,
       staffName: row.staffName,
@@ -109,26 +175,22 @@ export async function loadUserData() {
       updatedAt: row.updatedAt || '',
       version: Number(row.version) || 1,
     }))
-  } catch {
-    cached.dailyPayAdjustments = Array.isArray(cached.dailyPayAdjustments) ? cached.dailyPayAdjustments : []
   }
-  try {
-    const [posDaily, posProductSales] = await Promise.all([
-      api('/v2/pos/daily-summary'),
-      api('/v2/pos/product-sales'),
-    ])
+
+  const posDaily = result(2)
+  const posProductSales = result(3)
+  if (posDaily) {
     cached.posDaily = (posDaily && Array.isArray(posDaily.rows)) ? posDaily.rows : []
-    cached.posProductSales = (posProductSales && Array.isArray(posProductSales.rows)) ? posProductSales.rows : []
-  } catch {
-    /* POS 汇总不可用时保留旧值 */
   }
+  if (posProductSales) {
+    cached.posProductSales = (posProductSales && Array.isArray(posProductSales.rows)) ? posProductSales.rows : []
+  }
+
   // v2（PostgreSQL）为申请单/库存数据源
-  try {
-    const [transfers, purchases, stock] = await Promise.all([
-      api('/v2/transfer-requests'),
-      api('/v2/purchase-requests'),
-      api('/v2/stock'),
-    ])
+  const transfers = result(4)
+  const purchases = result(5)
+  const stock = result(6)
+  if (transfers && purchases) {
     const reqs = []
     for (const r of (transfers && transfers.rows) || []) {
       reqs.push({
@@ -172,6 +234,8 @@ export async function loadUserData() {
       })
     }
     cached.inventoryRequests = reqs
+  }
+  if (stock) {
     cached.inventory = ((stock && stock.rows) || []).map((r) => ({
       storeKey: r.storeKey,
       productName: r.name,
@@ -180,21 +244,18 @@ export async function loadUserData() {
       updatedAt: r.updatedAt,
       updatedBy: '',
     }))
-    try {
-      const bb = await api('/v2/big-bonuses')
-      cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
-        id: r.id,
-        staffKey: r.staffKey,
-        storeKey: r.storeKey,
-        date: String(r.date || '').slice(0, 10),
-        amountCents: Number(r.amountCents) || 0,
-        bonusCents: Number(r.bonusCents) || 0,
-      }))
-    } catch {
-      cached.bigBonuses = Array.isArray(cached.bigBonuses) ? cached.bigBonuses : []
-    }
-  } catch {
-    /* v2 不可用时回退 KV */
+  }
+
+  const bb = result(7)
+  if (bb) {
+    cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
+      id: r.id,
+      staffKey: r.staffKey,
+      storeKey: r.storeKey,
+      date: String(r.date || '').slice(0, 10),
+      amountCents: Number(r.amountCents) || 0,
+      bonusCents: Number(r.bonusCents) || 0,
+    }))
   }
   const legacy = readLegacy()
   let migrated = false
@@ -219,24 +280,15 @@ export async function loadUserData() {
 
 export function getUserData() {
   if (cached) return cached
-  const mirror = readMirror()
+  let mirror = null
+  try {
+    const owner = typeof localStorage !== 'undefined' ? localStorage.getItem(MIRROR_OWNER_KEY) : ''
+    if (!activeUserId || owner === activeUserId) mirror = readMirror()
+  } catch {
+    mirror = null
+  }
   if (mirror) {
-    cached = {
-      entries: mirror.entries || {},
-      staff: Array.isArray(mirror.staff) ? mirror.staff : [],
-      removedStaff: Array.isArray(mirror.removedStaff) ? mirror.removedStaff : [],
-      analysis: mirror.analysis && typeof mirror.analysis === 'object' ? mirror.analysis : {},
-      productImages: mirror.productImages && typeof mirror.productImages === 'object' ? mirror.productImages : {},
-      stores: Array.isArray(mirror.stores) ? mirror.stores : [],
-      schedules: mirror.schedules && typeof mirror.schedules === 'object' ? mirror.schedules : {},
-      products: Array.isArray(mirror.products) ? mirror.products : [],
-      inventoryRequests: Array.isArray(mirror.inventoryRequests) ? mirror.inventoryRequests : [],
-      inventory: Array.isArray(mirror.inventory) ? mirror.inventory : [],
-      bigBonuses: Array.isArray(mirror.bigBonuses) ? mirror.bigBonuses : [],
-      dailyPayAdjustments: Array.isArray(mirror.dailyPayAdjustments) ? mirror.dailyPayAdjustments : [],
-      posDaily: Array.isArray(mirror.posDaily) ? mirror.posDaily : [],
-      posProductSales: Array.isArray(mirror.posProductSales) ? mirror.posProductSales : [],
-    }
+    cached = normalizeCachedData(mirror)
   }
   return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] }
 }
@@ -426,5 +478,6 @@ export function commitRemovedStaff(removedStaff) {
 
 export function resetUserData() {
   cached = null
+  activeUserId = ''
   if (saveTimer) clearTimeout(saveTimer)
 }

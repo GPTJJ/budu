@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budu-shell-v6'
+const CACHE_NAME = 'budu-shell-v7'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -31,13 +31,19 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
-          return response
-        })
-        .catch(() => caches.match('/')),
+      caches.match('/').then((cached) => {
+        const update = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const copy = response.clone()
+              caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
+            }
+            return response
+          })
+          .catch(() => null)
+        // 已安装的 PWA 立即使用本地壳，网络响应只负责后台刷新下一次启动。
+        return cached || update
+      }),
     )
     return
   }

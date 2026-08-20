@@ -2,31 +2,58 @@ import { Suspense, useEffect, useState } from 'react'
 import LoginPage from './components/LoginPage'
 import { AppLoading } from './components/LoadingSkeleton'
 import { api } from './utils/api'
-import { loadUserData, resetUserData } from './utils/userData'
+import { loadUserData, prepareUserDataForUser, resetUserData } from './utils/userData'
 import { useI18n } from './i18n'
 import { lazyRetry } from './utils/lazyRetry'
 
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
-const Dashboard = lazyRetry(() => import('./components/Dashboard'))
+const loadDashboard = () => import('./components/Dashboard')
+const Dashboard = lazyRetry(loadDashboard)
 
 export default function App() {
   const { t } = useI18n()
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)
+  const [, setDataRevision] = useState(0)
 
   useEffect(() => {
-    api('/auth/me')
-      .then(async ({ user: u }) => {
+    let cancelled = false
+    const bootstrap = async () => {
+      try {
+        const { user: u } = await api('/auth/me')
+        if (cancelled) return
+        const restored = prepareUserDataForUser(u.id)
         setUser(u)
-        await loadUserData().catch(() => {})
+        // 登录确认后立即并行下载 Dashboard，不再等待所有业务接口结束后才开始。
+        loadDashboard().catch(() => {})
+        if (restored) {
+          setDataReady(true)
+          setAuthLoading(false)
+        }
+        await loadUserData({
+          userId: u.id,
+          onBaseReady: () => {
+            if (cancelled) return
+            setDataReady(true)
+            setAuthLoading(false)
+          },
+        }).catch(() => {})
+        if (cancelled) return
         setDataReady(true)
-      })
-      .catch(() => {
+        setDataRevision((value) => value + 1)
+      } catch {
+        if (cancelled) return
         setUser(null)
         setDataReady(true)
-      })
-      .finally(() => setAuthLoading(false))
+      } finally {
+        if (!cancelled) setAuthLoading(false)
+      }
+    }
+    bootstrap()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // 账号权限实时同步：3 秒轮询 + 回到前台立即刷新 + 同浏览器多标签页授权后即时广播
@@ -75,10 +102,20 @@ export default function App() {
     }
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleLogin = async (u) => {
+  const handleLogin = (u) => {
+    const restored = prepareUserDataForUser(u.id)
+    setDataReady(restored)
     setUser(u)
-    await loadUserData().catch(() => {})
-    setDataReady(true)
+    loadDashboard().catch(() => {})
+    loadUserData({
+      userId: u.id,
+      onBaseReady: () => setDataReady(true),
+    })
+      .catch(() => {})
+      .finally(() => {
+        setDataReady(true)
+        setDataRevision((value) => value + 1)
+      })
   }
 
   const handleLogout = async () => {
