@@ -10,13 +10,13 @@ import {
   Settings,
   FolderArchive,
   ChevronDown,
-  CalendarClock,
   ClipboardCheck,
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
 import logoUrl from '../assets/logo.jpg'
 import { APP_VERSION } from '../version'
+import { MODULE_KEYS, hasModuleAccess } from '../../shared/accountPermissions'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -24,6 +24,7 @@ const menus = [
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
+  { key: 'finance', label: '财务利润', icon: Wallet },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
   { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },
@@ -50,27 +51,15 @@ const subMenus = {
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const [expandedKeys, setExpandedKeys] = useState({})
-  const visibleMenus =
-    user?.role === 'public'
-      ? [
-          ...menus.filter(
-            (m) => m.key !== 'store' && m.key !== 'inventory' && m.key !== 'finance-invoice' && m.key !== 'approval',
-          ),
-          { key: 'store-schedule', label: '门店排班', icon: CalendarClock },
-        ]
-      : user?.role === 'finance' || user?.role === 'admin'
-        ? menus // 财务/管理员权限与开发者一致：全部菜单
-        : user?.role === 'staff'
-          ? menus.filter((m) =>
-              ['overview', 'analysis', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
-              (m.key === 'asset-center' && user.assetCenter === true),
-            )
-          : user?.role === 'manager'
-            ? menus.filter((m) =>
-                ['overview', 'analysis', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
-                (m.key === 'asset-center' && user.assetCenter === true),
-              )
-            : menus
+  const groupModules = {
+    staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL],
+    store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER],
+    inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
+  }
+  const visibleMenus = menus.filter((item) => {
+    const keys = groupModules[item.key]
+    return keys ? keys.some((key) => hasModuleAccess(user, key)) : hasModuleAccess(user, item.key)
+  })
 
   const toggleExpand = (key) =>
     setExpandedKeys((s) => ({ ...s, [key]: !s[key] }))
@@ -108,9 +97,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         {visibleMenus.map((item) => {
           const Icon = item.icon
           // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
-          const subs = (subMenus[item.key] || []).filter(
-            (sub) => !(sub.key === 'product-center' && user?.role === 'staff'),
-          )
+          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.key))
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 

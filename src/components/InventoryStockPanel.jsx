@@ -52,7 +52,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
   const [form, setForm] = useState({ storeKey: stores[0]?.key || '', productName: '', quantity: '', minQty: '' })
   const [wasteForm, setWasteForm] = useState({ storeKey: stores[0]?.key || '', productName: '', quantity: '', reason: '' })
   const [error, setError] = useState('')
-  const canManage = Boolean(currentUser && ['developer', 'manager'].includes(currentUser.role))
+  const canManage = Boolean(currentUser && ['developer', 'admin', 'finance', 'manager'].includes(currentUser.role))
   const current = inventoryQuantity(inventory, form.storeKey, form.productName.trim())
 
   const rows = useMemo(

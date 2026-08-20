@@ -20,6 +20,7 @@ async function downloadCsv(url) {
 }
 
 export default function FinancePage({ currentUser, onBack }) {
+  const canManage = ['developer', 'admin', 'finance', 'manager'].includes(currentUser?.role)
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
   const [expenses, setExpenses] = useState([])
@@ -122,7 +123,7 @@ export default function FinancePage({ currentUser, onBack }) {
       {savedTip && <p className="rounded-xl bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-600">{savedTip}</p>}
       {error && <p className="rounded-xl bg-rose-50 px-4 py-2 text-xs font-medium text-rose-500">{error}</p>}
 
-      <div className="card p-5">
+      {canManage && <div className="card p-5">
         <h3 className="text-[15px] font-bold text-slate-800">{t('费用录入')}</h3>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
           <select value={form.storeKey} onChange={(e) => setForm((s) => ({ ...s, storeKey: e.target.value }))} className={inputCls}>
@@ -147,7 +148,7 @@ export default function FinancePage({ currentUser, onBack }) {
             {t('录入费用')}
           </button>
         </div>
-      </div>
+      </div>}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         <div className="card overflow-hidden xl:col-span-5">
@@ -191,9 +192,9 @@ export default function FinancePage({ currentUser, onBack }) {
                   {r.note && <p className="mt-0.5 text-[11px] text-slate-400">{r.note}</p>}
                 </div>
                 <span className="text-sm font-bold text-rose-500">¥{yuan(r.amountCents)}</span>
-                <button onClick={() => remove(r.id)} className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={t('删除')}>
+                {canManage && <button onClick={() => remove(r.id)} className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={t('删除')}>
                   <Trash2 className="h-4 w-4" />
-                </button>
+                </button>}
               </div>
             ))}
             {expenses.length === 0 && <p className="grid place-items-center py-10 text-xs text-slate-300">{t('本月暂无费用记录')}</p>}

@@ -8,6 +8,7 @@ import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
+import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
 
 export const posRouter = Router()
 
@@ -20,18 +21,18 @@ const wrap = (handler) => async (req, res) => {
 }
 
 function requirePosUser(user) {
-  if (!user || !['developer', 'manager', 'staff', 'cashier'].includes(user.role)) throw httpError('无权限', 403)
+  if (!user || !hasModuleAccess(user, MODULE_KEYS.STORE_POS) || (!isSuperUser(user) && !['manager', 'staff', 'cashier'].includes(user.role))) throw httpError('无权限', 403)
 }
 
 function canStore(user, storeId) {
   if (!user || user.role === 'public') return false
-  if (user.role === 'developer') return true
+  if (isSuperUser(user)) return true
   return Array.isArray(user.storeKeys) && user.storeKeys.includes(storeId)
 }
 
 function canReadOrder(user, order) {
   if (!canStore(user, order.storeId)) return false
-  return user.role === 'developer' || order.cashierId === user.id
+  return isSuperUser(user) || order.cashierId === user.id
 }
 
 function paymentAuthCode(body, channel) {
@@ -126,7 +127,7 @@ function replayOrder(existing, user, storeId, cartHash) {
 function buildOrderWhere(user, query = {}) {
   const where = {}
   const allowed = Array.isArray(user.storeKeys) ? user.storeKeys : []
-  if (user.role !== 'developer') {
+  if (!isSuperUser(user)) {
     where.storeId = { in: allowed }
     // 门店收银：查看本店全部订单（收银数据），不按收银员过滤
     if (user.role !== 'cashier') {
@@ -134,7 +135,7 @@ function buildOrderWhere(user, query = {}) {
     }
   }
   const storeId = String(query.store || '').trim()
-  if (storeId && (user.role === 'developer' || allowed.includes(storeId))) where.storeId = storeId
+  if (storeId && (isSuperUser(user) || allowed.includes(storeId))) where.storeId = storeId
   const from = String(query.from || '').trim()
   const to = String(query.to || '').trim()
   const range = {}
@@ -178,7 +179,7 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
 posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  if (req.user.role !== 'developer' && req.user.role !== 'finance') throw httpError('仅开发者可删除订单', 403)
+  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可删除订单', 403)
   const order = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!order) throw httpError('订单不存在', 404)
   await prisma.$transaction(async (tx) => {

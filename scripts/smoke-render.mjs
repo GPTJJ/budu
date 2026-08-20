@@ -163,7 +163,7 @@ try {
     ],
     [
       'ProductCenterPage',
-      await render('/src/components/ProductCenterPage.jsx', { onBack: () => {} }),
+      await render('/src/components/ProductCenterPage.jsx', { user: { role: 'developer' }, onBack: () => {} }),
       ['商品中心', '新增商品'],
     ],
     [

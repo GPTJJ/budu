@@ -65,7 +65,7 @@ export default function PayrollPage({ user, onBack }) {
       <div className="card grid place-items-center py-20 text-center">
         <Inbox className="h-9 w-9 text-slate-200" />
         <p className="mt-3 text-sm font-semibold text-slate-400">{t('当前账号无权查看工资条')}</p>
-        <p className="mt-1.5 text-xs text-slate-300">{t('工资条仅对开发者、店长与店员开放')}</p>
+        <p className="mt-1.5 text-xs text-slate-300">{t('工资条仅对已授权账号开放')}</p>
       </div>
     )
   }

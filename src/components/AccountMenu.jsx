@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDown, Image as ImageIcon, KeyRound, Loader2, LogOut, RefreshCw, Upload, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
+import { ROLE_LABELS, canManageAccounts } from '../../shared/accountPermissions'
 
 const inputCls = 'input'
 
@@ -206,14 +207,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
   const [modal, setModal] = useState(null)
   const name = user?.username || t('伙伴')
   const initial = name.slice(0, 2).toUpperCase()
-  const roleText =
-    user?.role === 'developer' || user?.role === 'finance'
-      ? user?.role === 'finance'
-        ? t('财务')
-        : t('开发者')
-      : user?.role === 'public'
-        ? t('对外展示')
-        : t('门店运营')
+  const roleText = t(ROLE_LABELS[user?.role] || '账号')
   const avatar = user?.avatar
 
   const close = () => setOpen(false)
@@ -266,7 +260,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
             <div className="my-1 h-px bg-slate-100" />
             <MenuButton icon={KeyRound} label={t('修改密码')} onClick={() => { close(); setModal('password') }} />
             <MenuButton icon={ImageIcon} label={t('修改头像')} onClick={() => { close(); setModal('avatar') }} />
-            {(user?.role === 'developer' || user?.role === 'finance') && onManageAccounts && (
+            {canManageAccounts(user) && onManageAccounts && (
               <MenuButton
                 icon={Users}
                 label={t('账号管理')}

@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { ensureNotificationTemplates } from './notification-center.js'
+import { ALL_MODULE_KEYS, hasModuleAccess } from '../shared/accountPermissions.js'
 
 export const notificationRouter = Router()
 
@@ -35,13 +36,17 @@ function serialize(row) {
   }
 }
 
+function allowedTargets(user) {
+  return ['', ...ALL_MODULE_KEYS.filter((key) => hasModuleAccess(user, key))]
+}
+
 /** 消息列表（分页；默认不含已删除；支持 status/unread 筛选） */
 notificationRouter.get('/notifications', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const user = req.user
   if (user.role === 'public' || user.role === 'cashier') throw httpError('无权限', 403)
   const { status, unread, priority, type, limit = 50, cursor } = req.query
-  const where = { username: user.username, status: { not: 'deleted' } }
+  const where = { username: user.username, status: { not: 'deleted' }, target: { in: allowedTargets(user) } }
   if (status && ['unread', 'read'].includes(String(status))) where.status = String(status)
   if (unread === '1') where.status = 'unread'
   if (priority && ['high', 'normal', 'low'].includes(String(priority))) where.priority = String(priority)
@@ -62,7 +67,7 @@ notificationRouter.get('/notifications/unread-count', wrap(async (req, res) => {
     return res.json({ ok: true, count: 0 })
   }
   const count = await prisma.notification.count({
-    where: { username: req.user.username, status: 'unread' },
+    where: { username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } },
   })
   res.json({ ok: true, count })
 }))
@@ -74,12 +79,12 @@ notificationRouter.post('/notifications/read', wrap(async (req, res) => {
   const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : []
   if (body.all === true) {
     await prisma.notification.updateMany({
-      where: { username: req.user.username, status: 'unread' },
+      where: { username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } },
       data: { status: 'read', readAt: new Date() },
     })
   } else if (ids.length) {
     await prisma.notification.updateMany({
-      where: { id: { in: ids }, username: req.user.username },
+      where: { id: { in: ids }, username: req.user.username, target: { in: allowedTargets(req.user) } },
       data: { status: 'read', readAt: new Date() },
     })
   }
@@ -90,7 +95,7 @@ notificationRouter.post('/notifications/read', wrap(async (req, res) => {
 notificationRouter.delete('/notifications/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   await prisma.notification.updateMany({
-    where: { id: req.params.id, username: req.user.username },
+    where: { id: req.params.id, username: req.user.username, target: { in: allowedTargets(req.user) } },
     data: { status: 'deleted', deletedAt: new Date() },
   })
   res.json({ ok: true })
@@ -100,7 +105,7 @@ notificationRouter.delete('/notifications/:id', wrap(async (req, res) => {
 notificationRouter.post('/notifications/:id/ack', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const row = await prisma.notification.findUnique({ where: { id: req.params.id } })
-  if (!row || row.username !== req.user.username) throw httpError('消息不存在', 404)
+  if (!row || row.username !== req.user.username || !allowedTargets(req.user).includes(row.target || '')) throw httpError('消息不存在', 404)
   if (row.ackStatus === 'confirmed') {
     return res.json({ ok: true, row: serialize(row) })
   }
@@ -116,5 +121,6 @@ notificationRouter.get('/notifications/templates', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   await ensureNotificationTemplates()
   const rows = await prisma.notificationTemplate.findMany({ where: { active: true }, orderBy: { key: 'asc' } })
-  res.json({ ok: true, rows: rows.map((t) => ({ key: t.key, name: t.name, description: t.description, target: t.target, defaultPriority: t.defaultPriority })) })
+  const targets = new Set(allowedTargets(req.user))
+  res.json({ ok: true, rows: rows.filter((t) => targets.has(t.target || '')).map((t) => ({ key: t.key, name: t.name, description: t.description, target: t.target, defaultPriority: t.defaultPriority })) })
 }))

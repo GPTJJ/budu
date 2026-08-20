@@ -25,6 +25,7 @@
     "test:employee-excel": "node --test scripts/test-employee-pay-excel.mjs",
     "test:daily-pay-adjustment": "node --test scripts/test-daily-pay-adjustment.mjs",
     "test:permissions": "node --test scripts/test-account-permissions.mjs",
+    "test:permissions:api": "node scripts/test-role-module-api.mjs",
     "test:pos:browser": "playwright test tests/pos-ipad.spec.mjs",
     "test:ssr": "node scripts/smoke-render.mjs",
     "migrate:pg": "node scripts/migrate-kv-to-pg.mjs",

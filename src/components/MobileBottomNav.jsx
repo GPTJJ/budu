@@ -3,26 +3,18 @@ import {
   CalendarDays,
   LayoutDashboard,
   Menu,
-  Settings,
   ShoppingCart,
-  Users,
 } from 'lucide-react'
 import { t } from '../utils/text'
+import { hasModuleAccess } from '../../shared/accountPermissions'
 
 export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
-  const isPublic = user?.role === 'public'
-  const items = isPublic
-    ? [
-        { key: 'overview', label: '首页', icon: LayoutDashboard },
-        { key: 'staff', label: '雇员', icon: Users },
-        { key: 'settings', label: '设置', icon: Settings },
-      ]
-    : [
+  const items = [
         { key: 'overview', label: '首页', icon: LayoutDashboard },
         { key: 'store-entry', label: '录入', icon: BarChart3 },
         { key: 'store-schedule', label: '排班', icon: CalendarDays },
         { key: 'store-pos', label: 'POS点单', icon: ShoppingCart },
-      ]
+      ].filter((item) => hasModuleAccess(user, item.key))
 
   const quickKeys = new Set(items.map((item) => item.key))
 
@@ -32,7 +24,7 @@ export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
       style={{ paddingBottom: 'max(0.45rem, env(safe-area-inset-bottom))' }}
       aria-label={t('手机快捷导航')}
     >
-      <div className="mobile-liquid-nav__glass relative mx-auto grid max-w-lg grid-cols-5 overflow-hidden rounded-[1.65rem] px-1 py-1">
+      <div className="mobile-liquid-nav__glass relative mx-auto grid max-w-lg overflow-hidden rounded-[1.65rem] px-1 py-1" style={{ gridTemplateColumns: `repeat(${items.length + 1}, minmax(0, 1fr))` }}>
         {items.map((item) => {
           const Icon = item.icon
           const active = view === item.key

@@ -11,6 +11,7 @@ import {
   canAccessTransferStore,
   canManageTransferStore,
   hasInventoryTransferAll,
+  isSuperUser,
 } from '../shared/accountPermissions.js'
 
 export const v2Router = Router()
@@ -33,12 +34,12 @@ const bad = (msg, status = 400) => {
 
 function canStore(user, storeKey) {
   if (!user || user.role === 'public') return false
-  if (user.role === 'developer') return true
+  if (isSuperUser(user)) return true
   return Array.isArray(user.storeKeys) && user.storeKeys.includes(storeKey)
 }
 
 function isManager(user) {
-  return Boolean(user && ['developer', 'manager'].includes(user.role))
+  return Boolean(user && (isSuperUser(user) || user.role === 'manager'))
 }
 
 function canInvoice(user) {
@@ -51,7 +52,7 @@ function canMailing(user) {
 
 function whereStores(user, storeKeyParam) {
   if (storeKeyParam) return storeKeyParam
-  if (user.role === 'developer' || user.role === 'public') return undefined
+  if (isSuperUser(user) || user.role === 'public') return undefined
   return { in: Array.isArray(user.storeKeys) ? user.storeKeys : [] }
 }
 
@@ -236,7 +237,7 @@ function staffNameFromAccount(user) {
 }
 
 async function scopeDailyPayAdjustments(rows, user) {
-  if (user?.role === 'developer') return rows
+  if (isSuperUser(user)) return rows
   if (!user || user.role === 'public') return []
   const ownName = staffNameFromAccount(user)
   if (user.role === 'staff' && !ownName) return []
@@ -259,12 +260,12 @@ async function scopeDailyPayAdjustments(rows, user) {
 }
 
 function storeFilter(user) {
-  if (user.role === 'developer' || user.role === 'public') return null
+  if (isSuperUser(user) || user.role === 'public') return null
   return Array.isArray(user.storeKeys) && user.storeKeys.length > 0 ? { in: user.storeKeys } : { in: [] }
 }
 
 function canWrite(user) {
-  return Boolean(user && ['developer', 'manager'].includes(user.role))
+  return Boolean(user && (isSuperUser(user) || user.role === 'manager'))
 }
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -391,7 +392,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
     ? 'manual'
     : (store?.salesDataSource || 'manual')
   if (source === 'pos') throw bad('该门店已接入 POS，营业数据自动同步，不可人工修改', 403)
-  if (source === 'hybrid' && !['developer', 'manager'].includes(req.user.role)) {
+  if (source === 'hybrid' && !isSuperUser(req.user) && req.user.role !== 'manager') {
     throw bad('混合模式门店的营业数据由 POS 同步，员工不可直接修改', 403)
   }
   const d = dateOnly(date)
@@ -403,7 +404,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const composite = { storeKey, date: d }
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: composite } })
-  if (existing?.status === 'confirmed' && !['developer', 'manager'].includes(req.user.role)) {
+  if (existing?.status === 'confirmed' && !isSuperUser(req.user) && req.user.role !== 'manager') {
     throw bad('日报已确认，普通员工不可修改', 409)
   }
   if (existing && ((existing.active && version == null) || (version != null && existing.version !== Number(version)))) {
@@ -658,8 +659,8 @@ v2Router.delete('/purchase-requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id } })
   if (!p) throw bad('申请不存在', 404)
-  if (req.user.role !== 'developer' && p.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = p.status === 'rejected' && req.user.role === 'developer'
+  if (!isSuperUser(req.user) && p.createdBy !== req.user.username) throw bad('无权限', 403)
+  const canDeleteRejected = p.status === 'rejected' && isSuperUser(req.user)
   if (p.status !== 'pending' && !canDeleteRejected) throw bad('仅待处理或已驳回申请可删除')
   await prisma.purchaseRequest.delete({ where: { id: p.id } })
   res.json({ ok: true })
@@ -980,7 +981,7 @@ v2Router.put('/staff', wrap(async (req, res) => {
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const list = Array.isArray(req.body && req.body.staff) ? req.body.staff : []
   if (list.length > 2000) throw bad('员工数量过多')
-  const allowed = req.user.role === 'developer' ? null : req.user.storeKeys || []
+  const allowed = isSuperUser(req.user) ? null : req.user.storeKeys || []
   await prisma.$transaction(async (tx) => {
     await tx.staff.deleteMany({ where: allowed ? { storeKey: { in: allowed } } : {} })
     for (const s of list) {
@@ -1007,7 +1008,7 @@ v2Router.put('/staff', wrap(async (req, res) => {
 // ---------- M3-2：企微告警测试 ----------
 v2Router.post('/alerts/test', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (req.user.role !== 'developer') throw bad('无权限', 403)
+  if (!isSuperUser(req.user)) throw bad('无权限', 403)
   const ok = await sendWechatMarkdown('BUDU 告警测试', '这是一条测试消息，企微告警通道正常 ✅')
   res.json({ ok, configured: Boolean(wecomWebhookUrl()) })
 }))
@@ -1059,7 +1060,6 @@ v2Router.get('/changelog', wrap(async (req, res) => {
 // ---------- M3-3：财务（费用/利润/导出） ----------
 v2Router.get('/expenses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
   const store = String(req.query.store || '')
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const month = String(req.query.month || '')
@@ -1099,20 +1099,18 @@ v2Router.delete('/expenses/:id', wrap(async (req, res) => {
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const row = await prisma.expense.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('费用不存在', 404)
-  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.expense.delete({ where: { id: row.id } })
   res.json({ ok: true })
 }))
 
 v2Router.get('/profit', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
   res.json(await computeProfit(req.user, String(req.query.month || ''), String(req.query.store || '')))
 }))
 
 v2Router.get('/export/profit', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canWrite(req.user)) throw bad('无权限', 403)
   const data = await computeProfit(req.user, String(req.query.month || ''), String(req.query.store || ''))
   const header = '门店,日期,营业收入(元),费用(元),利润(元)'
   const lines = (data.rows || []).map((r) => `${r.storeKey},${r.date},${(Number(r.incCents) / 100).toFixed(2)},${(Number(r.expenseCents) / 100).toFixed(2)},${(Number(r.profitCents) / 100).toFixed(2)}`)
@@ -1151,7 +1149,7 @@ v2Router.post('/invoices/ocr', wrap(async (req, res) => {
 
 v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (req.user?.role !== 'developer') throw bad('无权限', 403)
+  if (!isSuperUser(req.user)) throw bad('无权限', 403)
   await prisma.invoiceCompany.delete({ where: { id: req.params.id } }).catch(() => {})
   res.json({ ok: true })
 }))
@@ -1240,7 +1238,7 @@ v2Router.delete('/invoices/:id', wrap(async (req, res) => {
   const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发票记录不存在', 404)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
-  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.invoice.delete({ where: { id: row.id } })
   res.json({ ok: true })
 }))
@@ -1368,7 +1366,7 @@ v2Router.delete('/big-bonuses/:id', wrap(async (req, res) => {
   const row = await prisma.bigOrderBonus.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('大单奖记录不存在', 404)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
-  if (req.user.role !== 'developer' && row.createdBy !== req.user.username) throw bad('无权限', 403)
+  if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.bigOrderBonus.delete({ where: { id: row.id } })
   res.json({ ok: true })
 }))
@@ -1399,7 +1397,7 @@ v2Router.get('/daily-pay-adjustments', wrap(async (req, res) => {
 
 v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (req.user?.role !== 'developer') throw bad('仅开发者可调整每日薪资', 403)
+  if (!isSuperUser(req.user)) throw bad('仅最高业务权限账号可调整每日薪资', 403)
   const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 50) throw bad('员工姓名不正确')
@@ -1479,7 +1477,7 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
 
 v2Router.delete('/daily-pay-adjustments/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  if (req.user?.role !== 'developer') throw bad('仅开发者可恢复自动工资', 403)
+  if (!isSuperUser(req.user)) throw bad('仅最高业务权限账号可恢复自动工资', 403)
   const existing = await prisma.dailyPayAdjustment.findUnique({ where: { id: req.params.id } })
   if (!existing) throw bad('工资调整记录不存在', 404)
   const version = req.body?.version

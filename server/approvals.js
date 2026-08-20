@@ -282,7 +282,7 @@ approvalRouter.get('/approvals/attachments/:id/download', wrap(async (req, res) 
     const template = await prisma.approvalTemplate.findUnique({ where: { key: request.templateKey } })
     const ccs = await prisma.approvalCc.findMany({ where: { requestId: request.id } })
     if (!canViewRequest(req.user, request, { template, ccList: ccs })) throw httpError('无权查看该附件', 403)
-  } else if (row.uploaderUsername !== req.user.username && req.user.role !== 'developer') {
+  } else if (row.uploaderUsername !== req.user.username && !isSuperUser(req.user)) {
     throw httpError('无权查看该附件', 403)
   }
   const dataUrl = await readAssetData(row.storageProvider, row.storageKey, row.dataUrl)
@@ -365,7 +365,7 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
         const row = rows.find((r) => r.id === aid)
         if (!row) throw httpError('附件不存在')
         if (row.requestId && row.requestId !== id) throw httpError('附件已被其他单据使用')
-        if (row.uploaderUsername !== req.user.username && req.user.role !== 'developer') throw httpError('无权使用该附件')
+        if (row.uploaderUsername !== req.user.username && !isSuperUser(req.user)) throw httpError('无权使用该附件')
         if (!row.requestId) await tx.approvalAttachment.update({ where: { id: row.id }, data: { requestId: id } })
       }
     }
@@ -541,7 +541,7 @@ approvalRouter.put('/approvals/requests/:id', wrap(async (req, res) => {
         const row = rows.find((r) => r.id === aid)
         if (!row) throw httpError('附件不存在')
         if (row.requestId && row.requestId !== request.id) throw httpError('附件已被其他单据使用')
-        if (row.uploaderUsername !== req.user.username && req.user.role !== 'developer') throw httpError('无权使用该附件')
+        if (row.uploaderUsername !== req.user.username && !isSuperUser(req.user)) throw httpError('无权使用该附件')
         if (!row.requestId) await tx.approvalAttachment.update({ where: { id: row.id }, data: { requestId: request.id } })
       }
     }

@@ -22,7 +22,7 @@ function roiStyle(roi) {
 export default function EmployeePerformanceTable({ store, month, day, weekStart, user }) {
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
-  const hidden = isPublic || !user || user.role !== 'developer'
+  const hidden = isPublic || !user || !['developer', 'admin', 'finance'].includes(user.role)
   const hidePersonal = isStore
   const hideBusiness = isStore
   const entryRows = entryEmployeePerformance(store, month, day, weekStart)

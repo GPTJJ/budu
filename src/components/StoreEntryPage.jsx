@@ -82,7 +82,7 @@ function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled
 }
 
 export default function StoreEntryPage({ user, onBack }) {
-  const isManager = ['developer', 'manager'].includes(user?.role)
+  const isManager = ['developer', 'admin', 'finance', 'manager'].includes(user?.role)
   const [store, setStore] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
   const [date, setDate] = useState(todayStr)
   const [overview, setOverview] = useState(null)

@@ -4,6 +4,7 @@ import { prisma, dbReady } from './pg.js'
 import { loadDb, persist } from './store.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
+import { MODULE_KEYS, hasModuleAccess, isSuperUser, normalizeAccountPermissions } from '../shared/accountPermissions.js'
 
 export const assetCenterRouter = Router()
 
@@ -47,7 +48,7 @@ const wrap = (handler) => async (req, res) => {
 }
 
 export function canViewAssets(user) {
-  return Boolean(user && user.role !== 'public' && (user.role === 'developer' || user.assetCenter === true))
+  return hasModuleAccess(user, MODULE_KEYS.ASSET_CENTER)
 }
 
 function requireAssetAccess(user) {
@@ -202,7 +203,7 @@ assetCenterRouter.get('/asset-center/categories', wrap(async (req, res) => {
 }))
 
 assetCenterRouter.post('/asset-center/categories', wrap(async (req, res) => {
-  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!isSuperUser(req.user)) throw httpError('无权限', 403)
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const name = text(req.body?.name, 20, '分类名称', true)
   const rows = await categoryRows()
@@ -219,7 +220,7 @@ assetCenterRouter.post('/asset-center/categories', wrap(async (req, res) => {
 }))
 
 assetCenterRouter.put('/asset-center/categories/:key', wrap(async (req, res) => {
-  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!isSuperUser(req.user)) throw httpError('无权限', 403)
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const key = String(req.params.key || '')
   const name = text(req.body?.name, 20, '分类名称', true)
@@ -237,7 +238,7 @@ assetCenterRouter.put('/asset-center/categories/:key', wrap(async (req, res) => 
 }))
 
 assetCenterRouter.delete('/asset-center/categories/:key', wrap(async (req, res) => {
-  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!isSuperUser(req.user)) throw httpError('无权限', 403)
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const key = String(req.params.key || '')
   const existing = await prisma.assetCategory.findUnique({ where: { key } })
@@ -521,7 +522,7 @@ assetCenterRouter.get('/asset-center/grants', wrap(async (req, res) => {
     id: u.id,
     username: u.username,
     role: u.role,
-    assetCenter: u.role === 'developer' || Boolean(u.assetCenter),
+    assetCenter: hasModuleAccess(u, MODULE_KEYS.ASSET_CENTER),
   }))
   res.json({ users })
 }))
@@ -534,6 +535,9 @@ assetCenterRouter.put('/asset-center/grants', wrap(async (req, res) => {
   const target = (db.users || []).find((u) => u.id === userId)
   if (!target) throw httpError('账号不存在', 404)
   target.assetCenter = granted
+  const permissions = normalizeAccountPermissions(target.permissions, target.role, target.assetCenter === true)
+  permissions.modules[MODULE_KEYS.ASSET_CENTER] = granted
+  target.permissions = normalizeAccountPermissions(permissions, target.role)
   await persist()
   await prisma.assetAccessGrant.upsert({
     where: { userId },
@@ -541,11 +545,11 @@ assetCenterRouter.put('/asset-center/grants', wrap(async (req, res) => {
     create: { id: `aag-${crypto.randomUUID()}`, userId, username: target.username, grantedBy: req.user.username },
   })
   await logAction(req.user, granted ? 'grant' : 'revoke', { fileName: target.username, detail: `资产中心${granted ? '授权' : '取消授权'}` })
-  res.json({ ok: true, user: { id: target.id, username: target.username, assetCenter: target.role === 'developer' || granted } })
+  res.json({ ok: true, user: { id: target.id, username: target.username, assetCenter: hasModuleAccess(target, MODULE_KEYS.ASSET_CENTER) } })
 }))
 
 assetCenterRouter.get('/asset-center/logs', wrap(async (req, res) => {
-  if (req.user?.role !== 'developer') throw httpError('无权限', 403)
+  if (!isSuperUser(req.user)) throw httpError('无权限', 403)
   const rows = await prisma.assetOperationLog.findMany({ orderBy: { createdAt: 'desc' }, take: 100 })
   res.json({ rows })
 }))

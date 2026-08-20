@@ -276,7 +276,7 @@ export function CcSheet({ open, value = [], exclude, onChange, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   const roleLabel = (role) =>
-    ({ developer: '开发者', admin: '管理员', manager: '店长', staff: '店员', finance: '财务' }[role] || role)
+    ({ developer: '开发者', admin: '管理员', manager: '店长', staff: '员工', finance: '财务', cashier: '门店收银' }[role] || role)
   const filtered = candidates.filter(
     (c) => c.username !== exclude && (!q.trim() || c.username.toLowerCase().includes(q.trim().toLowerCase())),
   )

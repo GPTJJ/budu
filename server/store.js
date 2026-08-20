@@ -93,7 +93,18 @@ export async function loadDb() {
     if (!Array.isArray(u.storeKeys)) u.storeKeys = []
     if (!u.staffKey) u.staffKey = ''
     if (!u.secondPasswordHash) u.secondPasswordHash = ''
-    u.permissions = normalizeAccountPermissions(u.permissions)
+    if (u.role === 'public') {
+      u.status = 'disabled'
+      if (!u.disabledAt) u.disabledAt = new Date().toISOString()
+    } else if (!u.status) {
+      u.status = 'active'
+    }
+    const bindingComplete =
+      !['manager', 'staff'].includes(u.role) ||
+      (u.storeKeys.length > 0 && Boolean(u.staffKey))
+    if (u.bindingLegacyExempt === undefined) u.bindingLegacyExempt = !bindingComplete
+    if (bindingComplete) u.bindingLegacyExempt = false
+    u.permissions = normalizeAccountPermissions(u.permissions, u.role, u.assetCenter === true)
   }
   // 至少保留一个开发者（最高权限）账号，缺省时由最早注册的账号担任
   if (db.users.length > 0 && !db.users.some((u) => u.role === 'developer')) {

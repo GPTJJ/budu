@@ -32,7 +32,7 @@ export default function SettingsPage({ user, onBack }) {
   const [wxBindings, setWxBindings] = useState(null)
   const [wxTip, setWxTip] = useState('')
   const [wxBusy, setWxBusy] = useState(false)
-  const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
+  const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
   const customStores = getStores()
 
   const addStore = () => {

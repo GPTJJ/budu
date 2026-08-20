@@ -1,10 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  ALL_MODULE_KEYS,
+  MODULE_KEYS,
   canAccessTransferStore,
   canManageTransferStore,
   hasInventoryTransferAll,
   normalizeAccountPermissions,
+  hasModuleAccess,
 } from '../shared/accountPermissions.js'
 
 test('开发者始终拥有库存调拨全权限', () => {
@@ -35,11 +38,31 @@ test('公开账号不能通过权限字段越权', () => {
   assert.equal(canManageTransferStore(user, 'guanshe'), false)
 })
 
-test('权限规范化只保留已知布尔权限', () => {
-  assert.deepEqual(normalizeAccountPermissions({ inventoryTransferAll: true, developer: true }), {
+test('权限规范化保留已知模块并过滤未知字段', () => {
+  const normalized = normalizeAccountPermissions({
     inventoryTransferAll: true,
-  })
-  assert.deepEqual(normalizeAccountPermissions({ inventoryTransferAll: 'true' }), {
-    inventoryTransferAll: false,
-  })
+    developer: true,
+    modules: { overview: false, finance: true, unknown: true },
+  }, 'staff')
+  assert.equal(normalized.inventoryTransferAll, true)
+  assert.equal(normalized.modules.overview, false)
+  assert.equal(normalized.modules.finance, true)
+  assert.equal(Object.hasOwn(normalized.modules, 'unknown'), false)
+  assert.deepEqual(Object.keys(normalized.modules), [...ALL_MODULE_KEYS])
+  assert.equal(normalizeAccountPermissions({ inventoryTransferAll: 'true' }).inventoryTransferAll, false)
+})
+
+test('开发者固定全权限，管理员财务默认全权限但可以被开发者收回', () => {
+  assert.equal(ALL_MODULE_KEYS.every((key) => hasModuleAccess({ role: 'developer' }, key)), true)
+  assert.equal(ALL_MODULE_KEYS.every((key) => hasModuleAccess({ role: 'admin' }, key)), true)
+  const finance = { role: 'finance', permissions: { modules: { ...Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, true])), finance: false } } }
+  assert.equal(hasModuleAccess(finance, MODULE_KEYS.FINANCE), false)
+  assert.equal(hasModuleAccess(finance, MODULE_KEYS.OVERVIEW), true)
+})
+
+test('收银账号无论保存何种权限都固定仅开放 POS', () => {
+  const cashier = { role: 'cashier', permissions: { modules: { finance: true, overview: true } } }
+  assert.equal(hasModuleAccess(cashier, MODULE_KEYS.STORE_POS), true)
+  assert.equal(hasModuleAccess(cashier, MODULE_KEYS.FINANCE), false)
+  assert.equal(hasModuleAccess(cashier, MODULE_KEYS.OVERVIEW), false)
 })

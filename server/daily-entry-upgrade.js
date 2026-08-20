@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { resolveStoreName } from './store-names.js'
+import { isSuperUser } from '../shared/accountPermissions.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -22,7 +23,7 @@ const wrap = (handler) => async (req, res) => {
 
 function canStore(user, storeId) {
   if (!user || user.role === 'public') return false
-  if (user.role === 'developer') return true
+  if (isSuperUser(user)) return true
   return Array.isArray(user.storeKeys) && user.storeKeys.includes(storeId)
 }
 
@@ -207,7 +208,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
 
 dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (req.user?.role !== 'developer') throw httpError('仅管理员可修改门店销售数据来源', 403)
+  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可修改门店销售数据来源', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const salesDataSource = String(req.body?.salesDataSource || '').trim()
   const effectiveDate = String(req.body?.effectiveDate || '').trim()
@@ -249,7 +250,7 @@ dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {
 
 dailyEntryUpgradeRouter.get('/store-sales-sources', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (req.user?.role !== 'developer') throw httpError('仅管理员可查看门店销售数据来源', 403)
+  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可查看门店销售数据来源', 403)
   const rows = await prisma.store.findMany({ orderBy: { name: 'asc' } })
   res.json({
     rows: rows.map((row) => ({
@@ -264,7 +265,7 @@ dailyEntryUpgradeRouter.get('/store-sales-sources', wrap(async (req, res) => {
 async function posScopeStores(req, storeParam) {
   if (storeParam && !canStore(req.user, storeParam)) throw httpError('无权限', 403)
   const stores = await prisma.store.findMany({ where: storeParam ? { key: storeParam } : {} })
-  if (req.user.role !== 'developer') {
+  if (!isSuperUser(req.user)) {
     const allowed = new Set(req.user.storeKeys || [])
     return stores.filter((store) => allowed.has(store.key))
   }
@@ -410,7 +411,7 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   if (items.length > 100) throw httpError('值班人员不能超过 100 人')
   const d = dateOnly(dateStr)
   const existingEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-  if (existingEntry?.status === 'confirmed' && !['developer', 'manager'].includes(req.user.role)) {
+  if (existingEntry?.status === 'confirmed' && !isSuperUser(req.user) && req.user.role !== 'manager') {
     throw httpError('日报已确认，普通员工不可修改值班人员', 409)
   }
   await ensureStore(storeKey)
@@ -590,7 +591,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/confirm', wrap(async (req, res) => {
 
 dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!['developer', 'manager'].includes(req.user?.role)) throw httpError('无权限', 403)
+  if (!isSuperUser(req.user) && req.user?.role !== 'manager') throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
@@ -634,7 +635,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => 
 
 dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!['developer', 'manager'].includes(req.user?.role)) throw httpError('无权限', 403)
+  if (!isSuperUser(req.user) && req.user?.role !== 'manager') throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')

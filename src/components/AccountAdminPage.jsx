@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, KeyRound, Loader2, MapPin, Shield, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { ArrowLeft, KeyRound, Loader2, MapPin, RotateCcw, Shield, SlidersHorizontal, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores, employeeList, storeName } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { t } from '../utils/text'
+import { ACTIVE_ROLES, MODULE_GROUPS, ROLE_LABELS, defaultModuleKeys } from '../../shared/accountPermissions'
 
 const inputCls = 'input'
 
@@ -117,7 +118,7 @@ function StoreCheckboxes({ selected, onChange, single = false }) {
 }
 
 function CreateUserModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [] })
+  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [], staffKey: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -137,6 +138,7 @@ function CreateUserModal({ onClose, onCreated }) {
           password: form.password,
           role: form.role,
           storeKeys: form.storeKeys,
+          staffKey: form.staffKey,
         }),
       })
       onCreated()
@@ -200,12 +202,11 @@ function CreateUserModal({ onClose, onCreated }) {
               onChange={(e) => setForm((s) => ({ ...s, role: e.target.value }))}
               className={inputCls}
             >
-              <option value="staff">{t('店员')}</option>
+              <option value="staff">{t('员工')}</option>
               <option value="admin">{t('管理员')}</option>
               <option value="cashier">{t('门店收银')}</option>
-              <option value="manager">{t('店长·区域负责人')}</option>
+              <option value="manager">{t('店长')}</option>
               <option value="finance">{t('财务')}</option>
-              <option value="public">{t('对外展示')}</option>
               <option value="developer">{t('开发者')}</option>
             </select>
           </div>
@@ -217,8 +218,19 @@ function CreateUserModal({ onClose, onCreated }) {
               <StoreCheckboxes
                 single={form.role === 'cashier'}
                 selected={form.storeKeys}
-                onChange={(keys) => setForm((s) => ({ ...s, storeKeys: keys }))}
+                onChange={(keys) => setForm((s) => ({ ...s, storeKeys: keys, staffKey: s.staffKey && keys.includes(s.staffKey.split('::')[0]) ? s.staffKey : '' }))}
               />
+            </div>
+          )}
+          {['staff', 'manager'].includes(form.role) && (
+            <div>
+              <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定员工')}</span>
+              <select value={form.staffKey} onChange={(e) => setForm((s) => ({ ...s, staffKey: e.target.value }))} className={inputCls}>
+                <option value="">{t('请选择员工')}</option>
+                {[...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
+                  .filter((s) => form.storeKeys.includes(s.storeKey))
+                  .map((s) => <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>{s.name}（{storeName(s.storeKey)}）</option>)}
+              </select>
             </div>
           )}
           {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
@@ -306,22 +318,81 @@ function BindStoresModal({ user, onClose, onSaved }) {
   )
 }
 
-function BindStaffModal({ user, onClose, onSaved }) {
-  const staffList = employeeList('all')
-  const staffOptions = [...new Map(staffList.map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
-  const [staffKey, setStaffKey] = useState(user.staffKey || '')
-  const [error, setError] = useState('')
+function RoleBindingModal({ user, role, onClose, onSaved }) {
+  const [storeKeys, setStoreKeys] = useState(role === 'cashier' ? (user.storeKeys || []).slice(0, 1) : (user.storeKeys || []))
+  const [staffKey, setStaffKey] = useState(['manager', 'staff'].includes(role) ? (user.staffKey || '') : '')
   const [busy, setBusy] = useState(false)
-
+  const [error, setError] = useState('')
+  const staffOptions = [...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
+    .filter((s) => storeKeys.includes(s.storeKey))
   const submit = async () => {
-    setError('')
     setBusy(true)
+    setError('')
     try {
       await api(`/admin/users/${user.id}/role`, {
         method: 'PUT',
-        body: JSON.stringify({ role: user.role, storeKeys: user.storeKeys || [], staffKey }),
+        body: JSON.stringify({ role, storeKeys, staffKey: role === 'cashier' ? '' : staffKey }),
       })
-      onSaved()
+      await onSaved()
+      onClose()
+    } catch (err) {
+      setError(t(err.message))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+        <div className="flex items-start justify-between gap-3">
+          <div><h3 className="text-lg font-bold text-slate-800">{t('设置角色：{role}', { role: ROLE_LABELS[role] })}</h3><p className="mt-1 text-xs text-slate-400">{user.displayName || user.username}</p></div>
+          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div><span className="mb-1.5 block text-xs font-semibold text-slate-500">{role === 'cashier' ? t('绑定门店（仅一家）') : t('绑定门店')}</span><StoreCheckboxes single={role === 'cashier'} selected={storeKeys} onChange={(keys) => { setStoreKeys(keys); if (staffKey && !keys.includes(staffKey.split('::')[0])) setStaffKey('') }} /></div>
+          {['manager', 'staff'].includes(role) && <div><span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定员工')}</span><select value={staffKey} onChange={(e) => setStaffKey(e.target.value)} className={inputCls}><option value="">{t('请选择员工')}</option>{staffOptions.map((s) => <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>{s.name}（{storeName(s.storeKey)}）</option>)}</select></div>}
+          {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
+        </div>
+        <div className="mt-5 flex gap-2"><button onClick={onClose} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">{t('取消')}</button><button onClick={submit} disabled={busy} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{t('保存并切换')}</button></div>
+      </div>
+    </div>
+  )
+}
+
+function PermissionModal({ user, onClose, onSaved }) {
+  const initialModules = user.permissions?.modules || {}
+  const [modules, setModules] = useState(initialModules)
+  const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const toggleModule = (key) => setModules((current) => ({ ...current, [key]: current[key] !== true }))
+  const toggleGroup = (group) => {
+    const enabled = group.modules.every((item) => modules[item.key] === true)
+    setModules((current) => ({
+      ...current,
+      ...Object.fromEntries(group.modules.map((item) => [item.key, !enabled])),
+    }))
+  }
+  const resetDefaults = () => {
+    const defaults = new Set(defaultModuleKeys(user.role, user.assetCenter === true))
+    setModules(Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)])))
+  }
+  const submit = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await api(`/admin/users/${user.id}/permissions`, {
+        method: 'PUT',
+        body: JSON.stringify({ modules, inventoryTransferAll: transferAll }),
+      })
+      await onSaved()
+      try {
+        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
+        bc?.postMessage({ type: 'auth-changed' })
+        bc?.close()
+      } catch { /* 轮询兜底 */ }
       onClose()
     } catch (err) {
       setError(t(err.message))
@@ -333,37 +404,47 @@ function BindStaffModal({ user, onClose, onSaved }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+      <div className="relative max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-lg sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <h3 className="text-lg font-bold text-slate-800">{t('绑定员工：{name}', { name: user.username })}</h3>
-          <button
-            onClick={onClose}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-            aria-label={t('关闭')}
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div>
+            <h3 className="text-lg font-bold text-slate-800">{t('功能授权：{name}', { name: user.displayName || user.username })}</h3>
+            <p className="mt-1 text-xs text-slate-400">{t('授权仅决定版块访问，门店范围和版块内操作边界保持不变')}</p>
+          </div>
+          <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-400"><X className="h-5 w-5" /></button>
         </div>
-        <p className="mt-2 text-xs text-slate-400">{t('一个账号只能绑定一个员工，绑定后仅可查看本人档案')}</p>
-        <div className="mt-4">
-          <select value={staffKey} onChange={(e) => setStaffKey(e.target.value)} className={inputCls}>
-            <option value="">{t('不绑定员工')}</option>
-            {staffOptions.map((s) => (
-              <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>
-                {s.name}（{storeName(s.storeKey)}）
-              </option>
-            ))}
-          </select>
-          {error && <p className="mt-2 text-xs font-medium text-rose-500">{error}</p>}
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {MODULE_GROUPS.map((group) => {
+            const allEnabled = group.modules.every((item) => modules[item.key] === true)
+            return (
+              <section key={group.key} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+                <button type="button" onClick={() => toggleGroup(group)} className="flex w-full items-center justify-between text-sm font-bold text-slate-700">
+                  {t(group.label)}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${allEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-400'}`}>{allEnabled ? t('已全选') : t('全组选中')}</span>
+                </button>
+                <div className="mt-2 space-y-1">
+                  {group.modules.map((item) => (
+                    <label key={item.key} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl px-2 text-xs font-medium text-slate-600 hover:bg-white">
+                      <input type="checkbox" checked={modules[item.key] === true} onChange={() => toggleModule(item.key)} className="h-4 w-4 accent-budu-500" />
+                      {t(item.label)}
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )
+          })}
         </div>
-        <div className="mt-5 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200">
-            {t('取消')}
-          </button>
-          <button onClick={submit} disabled={busy} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50">
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t('保存')}
-          </button>
+        {modules['inventory-transfer'] === true && (
+          <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 text-xs font-semibold text-amber-700">
+            <input type="checkbox" checked={transferAll} onChange={(e) => setTransferAll(e.target.checked)} className="h-4 w-4 accent-amber-500" />
+            {t('允许管理全部门店的库存调拨（不受账号门店绑定限制）')}
+          </label>
+        )}
+        {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
+        {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button type="button" onClick={resetDefaults} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-600"><RotateCcw className="h-4 w-4" />{t('恢复角色默认')}</button>
+          <button type="button" onClick={onClose} className="ml-auto rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">{t('取消')}</button>
+          <button type="button" onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{t('保存授权')}</button>
         </div>
       </div>
     </div>
@@ -376,7 +457,8 @@ export default function AccountAdminPage({ currentUser, onBack }) {
   const [error, setError] = useState('')
   const [resetTarget, setResetTarget] = useState(null)
   const [bindTarget, setBindTarget] = useState(null)
-  const [staffBindTarget, setStaffBindTarget] = useState(null)
+  const [permissionTarget, setPermissionTarget] = useState(null)
+  const [roleTarget, setRoleTarget] = useState(null)
   const [createOpen, setCreateOpen] = useState(false)
 
   const load = async () => {
@@ -397,17 +479,16 @@ export default function AccountAdminPage({ currentUser, onBack }) {
   }, [])
 
   const roleLabel = (role) => {
-    if (role === 'developer') return t('开发者')
-    if (role === 'admin') return t('管理员')
-    if (role === 'manager') return t('店长·区域负责人')
-    if (role === 'staff') return t('店员')
-    if (role === 'cashier') return t('门店收银')
-    if (role === 'finance') return t('财务')
-    if (role === 'public') return t('对外展示')
-    return role
+    if (role === 'public') return t('已停用（原对外展示）')
+    return t(ROLE_LABELS[role] || role)
   }
 
   const changeRole = async (u, role) => {
+    if (['manager', 'staff', 'cashier'].includes(role)) {
+      try { await loadUserData() } catch { /* 使用现有员工缓存 */ }
+      setRoleTarget({ user: u, role })
+      return
+    }
     if (!window.confirm(t('确定将「{name}」的权限改为「{role}」吗？', { name: u.username, role: roleLabel(role) }))) {
       return
     }
@@ -425,38 +506,6 @@ export default function AccountAdminPage({ currentUser, onBack }) {
     } catch (err) {
       setError(t(err.message))
     }
-  }
-
-  const changeTransferPermission = async (u) => {
-    const enabled = !u.permissions?.inventoryTransferAll
-    const action = enabled ? '授予' : '撤销'
-    if (!window.confirm(t('确定{action}「{name}」库存调拨全权限吗？', { action, name: u.username }))) return
-    setError('')
-    try {
-      await api(`/admin/users/${u.id}/permissions`, {
-        method: 'PUT',
-        body: JSON.stringify({ inventoryTransferAll: enabled }),
-      })
-      await load()
-      try {
-        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
-        if (bc) {
-          bc.postMessage({ type: 'auth-changed' })
-          bc.close()
-        }
-      } catch { /* 同浏览器多标签页即时同步，失败时靠轮询兜底 */ }
-    } catch (err) {
-      setError(t(err.message))
-    }
-  }
-
-  const openStaffBind = async (u) => {
-    try {
-      await loadUserData()
-    } catch {
-      /* 忽略刷新失败 */
-    }
-    setStaffBindTarget(u)
   }
 
   const deleteUser = async (u) => {
@@ -544,7 +593,7 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                                 : t('未绑定门店')}
                             </p>
                           )}
-                          {u.role === 'staff' && (
+                          {['staff', 'manager'].includes(u.role) && (
                             <p className="text-[11px] text-slate-400">
                               {u.staffKey
                                 ? t('已绑定员工：{name}', { name: u.staffKey.split('::')[1] || u.staffKey })
@@ -554,6 +603,8 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                           {u.permissions?.inventoryTransferAll && (
                             <p className="text-[11px] font-medium text-emerald-600">{t('库存调拨全权限')}</p>
                           )}
+                          {u.status === 'disabled' && <p className="text-[11px] font-semibold text-rose-500">{t('账号已停用')}</p>}
+                          {u.bindingLegacyExempt && <p className="text-[11px] font-semibold text-amber-600">{t('待补齐门店与员工绑定')}</p>}
                         </div>
                       </div>
                     </td>
@@ -564,13 +615,8 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                         onChange={(e) => changeRole(u, e.target.value)}
                         className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 outline-none transition focus:border-budu-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <option value="developer">{t('开发者')}</option>
-                        <option value="admin">{t('管理员')}</option>
-                        <option value="manager">{t('店长·区域负责人')}</option>
-                        <option value="staff">{t('店员')}</option>
-                        <option value="cashier">{t('门店收银')}</option>
-                        <option value="finance">{t('财务')}</option>
-                        <option value="public">{t('对外展示')}</option>
+                        {u.role === 'public' && <option value="public">{t('已停用（原对外展示）')}</option>}
+                        {ACTIVE_ROLES.map((role) => <option key={role} value={role}>{t(ROLE_LABELS[role])}</option>)}
                       </select>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">
@@ -578,29 +624,25 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        {u.role !== 'public' && u.role !== 'developer' && u.role !== 'finance' && u.role !== 'admin' && (
+                        {!['public', 'developer', 'cashier'].includes(u.role) && (
                           <button
-                            onClick={() => changeTransferPermission(u)}
-                            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
-                              u.permissions?.inventoryTransferAll
-                                ? 'bg-emerald-50 text-emerald-600 hover:bg-rose-50 hover:text-rose-500'
-                                : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
-                            }`}
+                            onClick={() => setPermissionTarget(u)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-600 transition hover:bg-budu-50"
                           >
-                            <Shield className="h-3.5 w-3.5" />
-                            {t(u.permissions?.inventoryTransferAll ? '撤销调拨全权限' : '调拨全权限')}
+                            <SlidersHorizontal className="h-3.5 w-3.5" />
+                            {t('功能授权')}
                           </button>
                         )}
                         {u.role !== 'developer' && u.role !== 'public' && u.role !== 'finance' && u.role !== 'admin' && (
                           <button
-                            onClick={() => setBindTarget(u)}
+                            onClick={() => ['manager', 'staff'].includes(u.role) ? setRoleTarget({ user: u, role: u.role }) : setBindTarget(u)}
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
                           >
                             <MapPin className="h-3.5 w-3.5" />
                             {t('绑定门店')}
                           </button>
                         )}
-                        {u.username !== 'public1' && u.role !== 'public' && !isSelf && (
+                        {u.role !== 'public' && !isSelf && (
                           <button
                             onClick={() => {
                               const name = window.prompt(t('设置持有人姓名（用于审批/抄送显示）'), u.displayName || '')
@@ -615,9 +657,9 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                             {t('设置姓名')}
                           </button>
                         )}
-                        {u.role === 'staff' && (
+                        {['staff', 'manager'].includes(u.role) && (
                           <button
-                            onClick={() => openStaffBind(u)}
+                            onClick={() => setRoleTarget({ user: u, role: u.role })}
                             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
                           >
                             <Users className="h-3.5 w-3.5" />
@@ -660,8 +702,11 @@ export default function AccountAdminPage({ currentUser, onBack }) {
       {bindTarget && (
         <BindStoresModal user={bindTarget} onClose={() => setBindTarget(null)} onSaved={load} />
       )}
-      {staffBindTarget && (
-        <BindStaffModal user={staffBindTarget} onClose={() => setStaffBindTarget(null)} onSaved={load} />
+      {permissionTarget && (
+        <PermissionModal user={permissionTarget} onClose={() => setPermissionTarget(null)} onSaved={load} />
+      )}
+      {roleTarget && (
+        <RoleBindingModal user={roleTarget.user} role={roleTarget.role} onClose={() => setRoleTarget(null)} onSaved={load} />
       )}
       {createOpen && <CreateUserModal onClose={() => setCreateOpen(false)} onCreated={load} />}
     </div>

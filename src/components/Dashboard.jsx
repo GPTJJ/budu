@@ -14,6 +14,7 @@ import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
+import { firstAccessibleModule, hasModuleAccess } from '../../shared/accountPermissions'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
@@ -56,11 +57,9 @@ const pageTitles = {
 export default function Dashboard({ user, onLogout, onUserChange }) {
   const needsBinding =
     user &&
-    user.role !== 'developer' &&
-    user.role !== 'public' &&
-    user.role !== 'finance' &&
-    user.role !== 'admin' &&
-    (!user.storeKeys || user.storeKeys.length === 0)
+    ['manager', 'staff'].includes(user.role) &&
+    (user.bindingComplete === false || (user.bindingComplete === undefined && (!user.storeKeys || user.storeKeys.length === 0))) &&
+    user.bindingLegacyExempt !== true
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [month, setMonth] = useState(() => {
     const d = new Date()
@@ -77,7 +76,9 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   })
   const [weekStart, setWeekStart] = useState(null)
   const [view, setView] = useState(() => (
-    user?.role !== 'public' && typeof window !== 'undefined' && window.location.hash === '#pos' ? 'store-pos' : 'overview'
+    typeof window !== 'undefined' && window.location.hash === '#pos' && hasModuleAccess(user, 'store-pos')
+      ? 'store-pos'
+      : firstAccessibleModule(user)
   ))
   const [pageKey, setPageKey] = useState(0)
 
@@ -119,7 +120,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isAssetCenterView = view === 'asset-center'
 
   const returnToOverview = () => {
-    setView('overview')
+    setView(hasModuleAccess(user, 'overview') ? 'overview' : firstAccessibleModule(user))
     if (typeof window !== 'undefined' && window.location.hash === '#pos') {
       window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
     }
@@ -127,12 +128,18 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   useSwipeBack({
-    enabled: view !== 'overview' && !isPosView,
+    enabled: Boolean(view) && view !== 'overview' && !isPosView,
     onBack: () => {
       if (sidebarOpen) setSidebarOpen(false)
       else returnToOverview()
     },
   })
+
+  useEffect(() => {
+    if (view && hasModuleAccess(user, view)) return
+    const fallback = firstAccessibleModule(user)
+    if (fallback !== view) setView(fallback)
+  }, [user?.permissions, user?.role, view])
 
   if (needsBinding) {
     return (
@@ -168,6 +175,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   const handleNavigate = (nextView) => {
+    if (nextView !== 'account-admin' && !hasModuleAccess(user, nextView)) return
+    if (nextView === 'account-admin' && user?.role !== 'developer') return
     setView(nextView)
     if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
     else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
@@ -188,7 +197,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     setPageKey((v) => v + 1)
   }
 
-  if (isPosView && user?.role !== 'public') {
+  if (isPosView && hasModuleAccess(user, 'store-pos')) {
     return (
       <PublicModeProvider isPublic={false} isStore={false}>
         <ErrorBoundary>
@@ -256,7 +265,13 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               <Suspense
                 fallback={<PageLoading />}
               >
-              {isAnalysisView ? (
+              {!view ? (
+                <div className="card mx-auto max-w-lg p-8 text-center">
+                  <p className="text-4xl">🔒</p>
+                  <h2 className="mt-4 text-lg font-bold text-slate-800">{t('暂未授权功能')}</h2>
+                  <p className="mt-2 text-sm text-slate-400">{t('请联系开发者为当前账号开通所需版块')}</p>
+                </div>
+              ) : isAnalysisView && hasModuleAccess(user, 'analysis') ? (
                 <BusinessAnalysisPage
                   month={month}
                   store={store}
@@ -265,48 +280,48 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   user={user}
                   onBack={returnToOverview}
                 />
-              ) : isStaffView ? (
+              ) : isStaffView && hasModuleAccess(user, 'staff') ? (
                 <PersonnelPage
                   onBack={returnToOverview}
                   canDelete={user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'}
                   canManage={user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'}
                   user={user}
                 />
-              ) : isPayrollView && user?.role !== 'public' ? (
+              ) : isPayrollView && hasModuleAccess(user, 'staff-payroll') ? (
                 <PayrollPage user={user} onBack={returnToOverview} />
-              ) : isStoreEntryView && user?.role !== 'public' ? (
+              ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
                 <StoreEntryPage user={user} onBack={returnToOverview} />
-              ) : isScheduleView ? (
+              ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (
                 <SchedulePage onBack={returnToOverview} canEdit={user?.role !== 'public'} />
-              ) : isMailingView && user?.role !== 'public' ? (
+              ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
                 <StoreMailingPage onBack={returnToOverview} />
-              ) : isOrdersView && user?.role !== 'public' ? (
+              ) : isOrdersView && hasModuleAccess(user, 'store-pos') ? (
                 <OrderRecordsPage user={user} onBack={returnToOverview} />
-              ) : isProductCenterView && ['developer', 'manager', 'finance', 'admin'].includes(user?.role) ? (
-                <ProductCenterPage onBack={returnToOverview} />
-              ) : isSettingsView ? (
+              ) : isProductCenterView && hasModuleAccess(user, 'product-center') ? (
+                <ProductCenterPage user={user} onBack={returnToOverview} />
+              ) : isSettingsView && hasModuleAccess(user, 'settings') ? (
                 <SettingsPage user={user} onBack={returnToOverview} />
-              ) : isAccountAdminView && (user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin') ? (
+              ) : isAccountAdminView && user?.role === 'developer' ? (
                 <AccountAdminPage currentUser={user} onBack={returnToOverview} />
-              ) : isInventoryTransferView && user?.role !== 'public' ? (
+              ) : isInventoryTransferView && hasModuleAccess(user, 'inventory-transfer') ? (
                 <InventoryRequestPage
                   type="transfer"
                   currentUser={user}
                   onBack={returnToOverview}
                 />
-              ) : isInventoryPurchaseView && user?.role !== 'public' ? (
+              ) : isInventoryPurchaseView && hasModuleAccess(user, 'inventory-purchase') ? (
                 <InventoryRequestPage
                   type="purchase"
                   currentUser={user}
                   onBack={returnToOverview}
                 />
-              ) : isFinanceView && (user?.role === 'developer' || user?.role === 'manager' || user?.role === 'finance' || user?.role === 'admin') ? (
+              ) : isFinanceView && hasModuleAccess(user, 'finance') ? (
                 <FinancePage currentUser={user} onBack={returnToOverview} />
-              ) : isInvoiceView && user?.role !== 'public' ? (
+              ) : isInvoiceView && hasModuleAccess(user, 'finance-invoice') ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
-              ) : isApprovalView && user?.role !== 'public' ? (
+              ) : isApprovalView && hasModuleAccess(user, 'approval') ? (
                 <ApprovalCenterPage user={user} onBack={returnToOverview} />
-              ) : isAssetCenterView && user?.role !== 'public' && (user.role === 'developer' || user.role === 'finance' || user.role === 'admin' || user.assetCenter === true) ? (
+              ) : isAssetCenterView && hasModuleAccess(user, 'asset-center') ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
                 <>

@@ -68,12 +68,15 @@ export default function App() {
         setUser((prev) => {
           if (!prev) return prev
           const next = data.user
-          const keys = ['role', 'storeKeys', 'staffKey', 'assetCenter', 'permissions']
+          const keys = ['role', 'storeKeys', 'staffKey', 'assetCenter', 'permissions', 'status', 'bindingComplete', 'bindingLegacyExempt']
           const changed = keys.some((key) => JSON.stringify(prev[key]) !== JSON.stringify(next[key]))
           return changed ? next : prev
         })
-      } catch {
-        /* 网络波动时保留当前账号 */
+      } catch (error) {
+        if (error?.status === 401 || error?.status === 403) {
+          resetUserData()
+          setUser(null)
+        }
       } finally {
         busy = false
       }

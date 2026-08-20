@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import JSZip from 'jszip'
 import {
-  ArrowLeft, Check, Download, Eye, FileText, FolderArchive, History, Lock, PackagePlus, Pencil, Plus, Search, Tags, Trash2, Upload, X,
+  ArrowLeft, Download, Eye, FileText, FolderArchive, History, PackagePlus, Pencil, Plus, Search, Tags, Trash2, Upload, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
@@ -90,7 +90,7 @@ function fileIcon(type) {
 }
 
 export default function AssetCenterPage({ user, onBack }) {
-  const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
+  const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
@@ -107,7 +107,6 @@ export default function AssetCenterPage({ user, onBack }) {
   const [preview, setPreview] = useState(null)
   const [versionsOpen, setVersionsOpen] = useState(null)
   const [packageOpen, setPackageOpen] = useState(false)
-  const [grantsOpen, setGrantsOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const [catsOpen, setCatsOpen] = useState(false)
 
@@ -211,7 +210,6 @@ export default function AssetCenterPage({ user, onBack }) {
             {isDeveloper && (
               <>
                 <button onClick={() => setCatsOpen(true)} className="btn-secondary px-3 py-2"><Tags className="h-4 w-4" />管理分类</button>
-                <button onClick={() => setGrantsOpen(true)} className="btn-secondary px-3 py-2"><Lock className="h-4 w-4" />授权</button>
                 <button onClick={() => setLogsOpen(true)} className="btn-secondary px-3 py-2"><History className="h-4 w-4" />日志</button>
               </>
             )}
@@ -342,7 +340,6 @@ export default function AssetCenterPage({ user, onBack }) {
       {preview && <PreviewModal file={preview} onClose={() => setPreview(null)} />}
       {versionsOpen && <VersionsModal file={versionsOpen} onClose={() => setVersionsOpen(null)} onRestored={() => load()} />}
       {packageOpen && <PackageModal categories={categories} onClose={() => setPackageOpen(false)} onMake={makePackage} />}
-      {grantsOpen && <GrantsModal onClose={() => setGrantsOpen(false)} />}
       {logsOpen && <LogsModal onClose={() => setLogsOpen(false)} />}
       {catsOpen && <CategoriesModal onClose={() => { setCatsOpen(false); load() }} />}
     </div>
@@ -777,47 +774,6 @@ function CategoriesModal({ onClose }) {
         <div className="flex justify-end border-t border-slate-100 pt-3">
           <button onClick={onClose} className="btn-secondary px-4 py-2">关闭</button>
         </div>
-      </div>
-    </ModalShell>
-  )
-}
-
-function GrantsModal({ onClose }) {
-  const [users, setUsers] = useState([])
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState('')
-  useEffect(() => {
-    api('/v2/asset-center/grants').then((d) => setUsers(d.users || [])).catch((e) => setError(e.message))
-  }, [])
-  const toggle = async (u) => {
-    try {
-      await api('/v2/asset-center/grants', { method: 'PUT', body: JSON.stringify({ userId: u.id, granted: !u.assetCenter }) })
-      setUsers((list) => list.map((x) => x.id === u.id ? { ...x, assetCenter: !u.assetCenter } : x))
-      try {
-        const bc = 'BroadcastChannel' in window ? new BroadcastChannel('budu-auth-sync') : null
-        if (bc) {
-          bc.postMessage({ type: 'auth-changed' })
-          bc.close()
-        }
-      } catch { /* 同浏览器多标签页即时同步，失败时靠轮询兜底 */ }
-      setSaved(`已保存：${u.username} ${!u.assetCenter ? '已授权' : '已取消授权'}，对方 3 秒内自动生效`)
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-  return (
-    <ModalShell title="资产中心授权" subtitle="默认仅开发者可见；可为店长/店员单独开通查看权限" onClose={onClose} wide>
-      <div className="mt-4 space-y-2">
-        {error && <p className="text-sm text-rose-500">{error}</p>}
-        {saved && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-600">{saved}</p>}
-        {users.filter((u) => u.role !== 'developer').map((u) => (
-          <div key={u.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-4 py-3">
-            <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{u.username}</p><p className="text-xs text-slate-400">{u.role === 'manager' ? '店长·区域负责人' : '店员'}</p></div>
-            <button onClick={() => toggle(u)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${u.assetCenter ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
-              {u.assetCenter ? <><Check className="mr-1 inline h-3 w-3" />已授权</> : '未授权'}
-            </button>
-          </div>
-        ))}
       </div>
     </ModalShell>
   )

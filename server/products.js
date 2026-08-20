@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, normalizeSku, parseCents } from './pos-core.js'
+import { isSuperUser } from '../shared/accountPermissions.js'
 
 export const productsRouter = Router()
 
@@ -20,7 +21,11 @@ const wrap = (handler) => async (req, res) => {
 }
 
 function requireProductManager(user) {
-  if (!user || !['developer', 'manager'].includes(user.role)) throw httpError('无权限', 403)
+  if (!user || (!isSuperUser(user) && user.role !== 'manager')) throw httpError('无权限', 403)
+}
+
+function requireProductViewer(user) {
+  if (!user) throw httpError('无权限', 403)
 }
 
 function text(value, max, label, required = false) {
@@ -82,7 +87,7 @@ export function serializeProduct(product) {
 
 productsRouter.get('/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireProductManager(req.user)
+  requireProductViewer(req.user)
   const q = text(req.query.q, 80, '搜索词')
   const posCategory = text(req.query.category, 30, '商品分类')
   const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined

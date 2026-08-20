@@ -14,6 +14,7 @@ const LEGACY_STAFF_KEY = 'budu-os-staff-v1'
 
 let cached = null
 let saveTimer = null
+const pendingFields = new Set()
 let activeUserId = ''
 
 function normalizeCachedData(value) {
@@ -301,12 +302,17 @@ export function getStaff() {
   return getUserData().staff
 }
 
-function syncUserData() {
+function syncUserData(fields = []) {
   if (!cached) return
+  for (const field of fields) pendingFields.add(field)
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     writeMirror()
-    api('/userdata', { method: 'PUT', body: JSON.stringify(cached) }).catch(() => {
+    const names = [...pendingFields]
+    pendingFields.clear()
+    const payload = Object.fromEntries(names.map((field) => [field, cached[field]]))
+    if (names.length === 0) return
+    api('/userdata', { method: 'PUT', body: JSON.stringify(payload) }).catch(() => {
       console.warn('数据同步失败，已保存在本机缓存，将在下次变更时自动重试')
     })
   }, 250)
@@ -315,7 +321,7 @@ function syncUserData() {
 export async function commitEntries(entries) {
   const prev = { ...(getUserData().entries || {}) }
   getUserData().entries = entries
-  syncUserData()
+  syncUserData(['entries'])
   // 同步写入 PostgreSQL（单条 upsert + 乐观锁），避免整库覆盖
   const changed = Object.keys(entries).filter((k) => JSON.stringify(entries[k]) !== JSON.stringify(prev[k]))
   const removed = Object.keys(prev).filter((k) => !(k in entries))
@@ -367,7 +373,7 @@ export async function commitEntries(entries) {
 
 export async function commitStaff(staff) {
   getUserData().staff = staff
-  syncUserData()
+  syncUserData(['staff'])
   try {
     await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff }) })
   } catch {
@@ -391,7 +397,7 @@ export function getProductImages() {
 
 export function commitProductImages(images) {
   getUserData().productImages = images
-  syncUserData()
+  syncUserData(['productImages'])
 }
 
 export function getStores() {
@@ -400,7 +406,7 @@ export function getStores() {
 
 export function commitStores(stores) {
   getUserData().stores = stores
-  syncUserData()
+  syncUserData(['stores'])
 }
 
 export function getSchedules() {
@@ -410,7 +416,7 @@ export function getSchedules() {
 
 export function commitSchedules(schedules) {
   getUserData().schedules = schedules
-  syncUserData()
+  syncUserData(['schedules'])
 }
 
 export function getProducts() {
@@ -420,7 +426,7 @@ export function getProducts() {
 
 export function commitProducts(products) {
   getUserData().products = products
-  syncUserData()
+  syncUserData(['products'])
 }
 
 export function getInventoryRequests() {
@@ -455,7 +461,7 @@ export function removeDailyPayAdjustment(id) {
 
 export function commitInventoryRequests(requests) {
   getUserData().inventoryRequests = requests
-  syncUserData()
+  syncUserData(['inventoryRequests'])
 }
 
 export function getInventory() {
@@ -468,16 +474,17 @@ export function commitInventoryState(inventory, requests) {
   const data = getUserData()
   data.inventory = inventory
   data.inventoryRequests = requests
-  syncUserData()
+  syncUserData(['inventory', 'inventoryRequests'])
 }
 
 export function commitRemovedStaff(removedStaff) {
   getUserData().removedStaff = removedStaff
-  syncUserData()
+  syncUserData(['removedStaff'])
 }
 
 export function resetUserData() {
   cached = null
   activeUserId = ''
   if (saveTimer) clearTimeout(saveTimer)
+  pendingFields.clear()
 }

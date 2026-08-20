@@ -25,8 +25,13 @@ import { startAssetReminderJob } from './asset-reminders.js'
 import { APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
 import * as Sentry from '@sentry/node'
 import {
+  ACTIVE_ROLES,
+  MODULE_KEYS,
   canManageTransferStore,
+  hasAnyModuleAccess,
+  hasModuleAccess,
   hasInventoryTransferAll,
+  isSuperUser,
   normalizeAccountPermissions,
 } from '../shared/accountPermissions.js'
 
@@ -259,6 +264,9 @@ export function createApp() {
   }
 
   function userPublic(u) {
+    const bindingComplete =
+      !['manager', 'staff'].includes(u.role) ||
+      ((u.storeKeys || []).length > 0 && Boolean(u.staffKey))
     return {
       id: u.id,
       username: u.username,
@@ -266,8 +274,14 @@ export function createApp() {
       role: u.role,
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
-      permissions: normalizeAccountPermissions(u.permissions),
-      assetCenter: u.role === 'developer' || u.role === 'finance' || u.role === 'admin' || Boolean(u.assetCenter),
+      permissions: normalizeAccountPermissions(u.permissions, u.role, u.assetCenter === true),
+      assetCenter: hasModuleAccess(u, MODULE_KEYS.ASSET_CENTER),
+      status: u.status || (u.role === 'public' ? 'disabled' : 'active'),
+      disabledAt: u.disabledAt || '',
+      bindingComplete,
+      bindingLegacyExempt: u.bindingLegacyExempt === true && !bindingComplete,
+      permissionsUpdatedAt: u.permissionsUpdatedAt || '',
+      permissionsUpdatedBy: u.permissionsUpdatedBy || '',
       avatar: u.avatar || '',
       createdAt: u.createdAt,
     }
@@ -288,6 +302,7 @@ export function createApp() {
     if (!payload || !payload.sub) return res.status(401).json({ error: '未登录或登录已过期' })
     const user = (await loadDb()).users.find((u) => u.id === payload.sub)
     if (!user) return res.status(401).json({ error: '账号不存在' })
+    if (user.status === 'disabled' || user.role === 'public') return res.status(403).json({ error: '账号已停用，请联系开发者' })
     req.user = user
     next()
   }
@@ -298,6 +313,25 @@ export function createApp() {
       return res.status(403).json({ error: '无权限' })
     }
     next()
+  }
+
+  function requireAccountAdmin(req, res, next) {
+    if (!req.user || req.user.role !== 'developer') return res.status(403).json({ error: '仅开发者可管理账号与授权' })
+    next()
+  }
+
+  function requireModule(moduleKey) {
+    return (req, res, next) => {
+      if (!hasModuleAccess(req.user, moduleKey)) return res.status(403).json({ error: '该功能尚未授权' })
+      next()
+    }
+  }
+
+  function requireAnyModule(moduleKeys) {
+    return (req, res, next) => {
+      if (!hasAnyModuleAccess(req.user, moduleKeys)) return res.status(403).json({ error: '该功能尚未授权' })
+      next()
+    }
   }
 
   function requireOperational(req, res, next) {
@@ -315,7 +349,7 @@ export function createApp() {
     next()
   }
 
-  const ROLES = ['developer', 'admin', 'manager', 'staff', 'cashier', 'public', 'finance']
+  const ROLES = [...ACTIVE_ROLES]
 
   /** 收银角色约束：仅绑定一家门店、不绑定员工 */
   function validateCashierRole(role, storeKeys, staffKey) {
@@ -326,6 +360,16 @@ export function createApp() {
     if (staffKey) {
       return '收银账号不绑定员工'
     }
+    return null
+  }
+
+  function validateBoundRole(db, role, storeKeys, staffKey) {
+    if (!['manager', 'staff'].includes(role)) return null
+    if (!Array.isArray(storeKeys) || storeKeys.length < 1) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定至少一家门店`
+    if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
+    const [staffStoreKey, staffName] = String(staffKey).split('::')
+    if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
+    if (!(db.staff || []).some((item) => item.storeKey === staffStoreKey && item.name === staffName)) return '绑定员工不存在或已离职'
     return null
   }
 
@@ -478,6 +522,22 @@ export function createApp() {
     }
   }
 
+  function filterUserDataByModules(data, user) {
+    const allowed = (keys) => hasAnyModuleAccess(user, keys)
+    return {
+      entries: allowed([MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.FINANCE]) ? data.entries : {},
+      staff: allowed([MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE]) ? data.staff : [],
+      removedStaff: allowed([MODULE_KEYS.STAFF]) ? data.removedStaff : [],
+      analysis: allowed([MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.FINANCE]) ? data.analysis : {},
+      productImages: allowed([MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.STORE_POS]) ? data.productImages : {},
+      stores: data.stores || [],
+      schedules: allowed([MODULE_KEYS.STORE_SCHEDULE]) ? data.schedules : {},
+      products: allowed([MODULE_KEYS.PRODUCT_CENTER]) ? data.products : [],
+      inventoryRequests: allowed([MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ? data.inventoryRequests : [],
+      inventory: allowed([MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ? data.inventory : [],
+    }
+  }
+
   function normalizeStoreKeys(raw) {
     if (raw === undefined || raw === null) return null
     if (!Array.isArray(raw) || raw.length > 50) return null
@@ -512,6 +572,32 @@ export function createApp() {
   app.use('/api/v2/wechat/recv', wechatRecvRouter)
   // v2 路由组：POS 对门店收银开放；其余业务接口（业绩/库存/发票/资产/商品中心等）对收银隐藏
   app.use('/api/v2', requireAuth)
+  app.use('/api/v2', (req, res, next) => {
+    const pathname = req.path || ''
+    const rule =
+      (/^\/products(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
+      (/^\/pos\/(?:config|orders|products|payments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_POS]) ||
+      (/^\/pos\/(?:daily-summary|product-sales)(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.FINANCE]) ||
+      (/^\/daily-entries(?:\/|$)/.test(pathname) && (req.method === 'GET'
+        ? [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.FINANCE]
+        : [MODULE_KEYS.STORE_ENTRY])) ||
+      (/^\/daily-entry\/overview(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY]) ||
+      (/^\/daily-(?:entry|staff)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_ENTRY]) ||
+      (/^\/store-sales-source/.test(pathname) && [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.SETTINGS]) ||
+      (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
+      (/^\/(?:stock|items|waste-records)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ||
+      (/^\/(?:expenses|profit|export\/profit)(?:\/|$)/.test(pathname) && [MODULE_KEYS.FINANCE]) ||
+      (/^\/invoices(?:\/|$)/.test(pathname) && [MODULE_KEYS.FINANCE_INVOICE]) ||
+      (/^\/mailing-records(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_MAILING]) ||
+      (/^\/payroll-notices(?:\/|$)/.test(pathname) && [MODULE_KEYS.STAFF_PAYROLL]) ||
+      (/^\/approvals(?:\/|$)/.test(pathname) && [MODULE_KEYS.APPROVAL]) ||
+      (/^\/asset-center(?:\/|$)/.test(pathname) && [MODULE_KEYS.ASSET_CENTER]) ||
+      (/^\/wechat(?:\/|$)/.test(pathname) && [MODULE_KEYS.SETTINGS]) ||
+      (/^\/(?:big-bonuses|daily-pay-adjustments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL])
+    if (!rule) return next()
+    return requireAnyModule(rule)(req, res, next)
+  })
   app.use('/api/v2', posRouter)
   app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, dailyEntryUpgradeRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
 
@@ -532,6 +618,10 @@ export function createApp() {
       username,
       role: db.users.length === 0 ? 'developer' : 'store',
       storeKeys: [],
+      staffKey: '',
+      status: 'active',
+      bindingLegacyExempt: false,
+      permissions: normalizeAccountPermissions(null, 'developer'),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -542,7 +632,7 @@ export function createApp() {
   })
 
   // ---------- 创建账号（仅开发者） ----------
-  app.post('/api/admin/users', requireAuth, requireDeveloper, async (req, res) => {
+  app.post('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
     const username = String(req.body.username || '').trim()
     const password = String(req.body.password || '')
     const role = String(req.body.role || 'staff')
@@ -572,6 +662,8 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
+    const bindingError = validateBoundRole(db, role, storeKeys, staffKey)
+    if (bindingError) return res.status(400).json({ error: bindingError })
     if (db.users.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
@@ -582,7 +674,9 @@ export function createApp() {
       role,
       storeKeys,
       staffKey,
-      permissions: normalizeAccountPermissions(),
+      status: 'active',
+      bindingLegacyExempt: false,
+      permissions: normalizeAccountPermissions(req.body.permissions, role),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
@@ -598,6 +692,9 @@ export function createApp() {
     const user = (await loadDb()).users.find((u) => u.username === username)
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
+    }
+    if (user.status === 'disabled' || user.role === 'public') {
+      return res.status(403).json({ error: '账号已停用，请联系开发者' })
     }
     setAuthCookie(res, signToken(user, await getSecret()))
     res.json({ user: userPublic(user) })
@@ -727,12 +824,12 @@ export function createApp() {
   })
 
   // ---------- 账号管理（最高权限） ----------
-  app.get('/api/admin/users', requireAuth, requireDeveloper, async (req, res) => {
+  app.get('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
     const db = await loadDb()
     res.json({ users: db.users.map(userPublic) })
   })
 
-  app.put('/api/admin/users/:id/role', requireAuth, requireDeveloper, async (req, res) => {
+  app.put('/api/admin/users/:id/role', requireAuth, requireAccountAdmin, async (req, res) => {
     const role = String(req.body.role || '')
     if (!ROLES.includes(role)) {
       return res.status(400).json({ error: '角色不正确' })
@@ -770,23 +867,36 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
+    const bindingError = validateBoundRole(db, role, effStoreKeys, effStaffKey)
+    if (bindingError) return res.status(400).json({ error: bindingError })
     target.role = role
     if (storeKeys !== null) target.storeKeys = storeKeys
     if (staffKey !== null) target.staffKey = staffKey
+    if (!['manager', 'staff'].includes(role)) target.staffKey = ''
+    target.status = 'active'
+    target.disabledAt = ''
+    target.bindingLegacyExempt = false
+    target.permissions = normalizeAccountPermissions(null, role, target.assetCenter === true)
+    target.assetCenter = target.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
     await persist()
     res.json({ user: userPublic(target) })
   })
 
-  app.put('/api/admin/users/:id/permissions', requireAuth, requireDeveloper, async (req, res) => {
+  app.put('/api/admin/users/:id/permissions', requireAuth, requireAccountAdmin, async (req, res) => {
     const db = await loadDb()
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
-    target.permissions = normalizeAccountPermissions(req.body)
+    if (target.role === 'developer') return res.status(400).json({ error: '开发者固定拥有全部权限' })
+    if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
+    target.permissions = normalizeAccountPermissions(req.body, target.role, target.assetCenter === true)
+    target.assetCenter = target.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
+    target.permissionsUpdatedAt = new Date().toISOString()
+    target.permissionsUpdatedBy = req.user.username
     await persist()
     res.json({ user: userPublic(target) })
   })
 
-  app.put('/api/admin/users/:id/name', requireAuth, requireDeveloper, async (req, res) => {
+  app.put('/api/admin/users/:id/name', requireAuth, requireAccountAdmin, async (req, res) => {
     const db = await loadDb()
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
@@ -796,7 +906,7 @@ export function createApp() {
     res.json({ user: userPublic(target) })
   })
 
-  app.put('/api/admin/users/:id/password', requireAuth, requireDeveloper, async (req, res) => {
+  app.put('/api/admin/users/:id/password', requireAuth, requireAccountAdmin, async (req, res) => {
     const newPassword = String(req.body.newPassword || '')
     if (newPassword.length < 6) {
       return res.status(400).json({ error: '密码至少 6 位' })
@@ -809,7 +919,7 @@ export function createApp() {
     res.json({ ok: true })
   })
 
-  app.delete('/api/admin/users/:id', requireAuth, requireDeveloper, async (req, res) => {
+  app.delete('/api/admin/users/:id', requireAuth, requireAccountAdmin, async (req, res) => {
     const db = await loadDb()
     const target = db.users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
@@ -826,7 +936,7 @@ export function createApp() {
   })
 
   // ---------- 自定义门店（仅追加，门店运营/开发者可用；不能改名/删除） ----------
-  app.post('/api/stores', requireAuth, requireDeveloper, async (req, res) => {
+  app.post('/api/stores', requireAuth, requireModule(MODULE_KEYS.SETTINGS), requireDeveloper, async (req, res) => {
     const name = String(req.body.name || '').trim()
     const district =
       req.body.district === undefined || req.body.district === null
@@ -847,7 +957,7 @@ export function createApp() {
   })
 
   // ---------- 调货状态机：发货（调出门店 manager） / 确认收货（调入门店 manager） ----------
-  app.post('/api/inventory/requests/:id/ship', requireAuth, requireTransferManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/ship', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
@@ -865,7 +975,7 @@ export function createApp() {
     res.json({ ok: true, request: r })
   })
 
-  app.post('/api/inventory/requests/:id/receive', requireAuth, requireTransferManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/receive', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
@@ -883,7 +993,7 @@ export function createApp() {
     res.json({ ok: true, request: r })
   })
 
-  app.post('/api/inventory/requests/:id/reject', requireAuth, requireTransferManager, async (req, res) => {
+  app.post('/api/inventory/requests/:id/reject', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
     const db = await loadDb()
     const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
     if (!r) return res.status(404).json({ error: '申请不存在' })
@@ -910,7 +1020,7 @@ export function createApp() {
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json(scopeUserData(db, req.user))
+    res.json(filterUserDataByModules(scopeUserData(db, req.user), req.user))
   })
 
   // ---------- 共享数据：整体保存 ----------
@@ -921,8 +1031,24 @@ export function createApp() {
       return res.status(403).json({ error: '无权限' })
     }
     const allowed = new Set(boundStores(req.user))
-    const isDeveloper = req.user.role === 'developer' || req.user.role === 'finance'
+    const isDeveloper = isSuperUser(req.user)
     const isManager = req.user.role === 'manager'
+    const fieldRules = {
+      entries: [MODULE_KEYS.STORE_ENTRY],
+      staff: [MODULE_KEYS.STAFF],
+      removedStaff: [MODULE_KEYS.STAFF],
+      productImages: [MODULE_KEYS.PRODUCT_CENTER],
+      stores: [MODULE_KEYS.SETTINGS],
+      schedules: [MODULE_KEYS.STORE_SCHEDULE],
+      products: [MODULE_KEYS.PRODUCT_CENTER],
+      inventoryRequests: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
+      inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
+    }
+    for (const [field, modules] of Object.entries(fieldRules)) {
+      if (body[field] !== undefined && !hasAnyModuleAccess(req.user, modules)) {
+        return res.status(403).json({ error: '该功能尚未授权' })
+      }
+    }
 
     if (body.entries !== undefined) {
       if (typeof body.entries !== 'object' || Array.isArray(body.entries)) {
@@ -961,7 +1087,7 @@ export function createApp() {
     }
     if (body.removedStaff !== undefined) {
       const removedChanged = JSON.stringify(body.removedStaff) !== JSON.stringify(db.removedStaff || [])
-      if (removedChanged && req.user.role !== 'developer' && req.user.role !== 'finance') {
+      if (removedChanged && !isSuperUser(req.user)) {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.removedStaff) || body.removedStaff.some((n) => typeof n !== 'string')) {
@@ -985,7 +1111,7 @@ export function createApp() {
     }
     if (body.stores !== undefined) {
       const storesChanged = JSON.stringify(body.stores) !== JSON.stringify(db.stores || [])
-      if (storesChanged && req.user.role !== 'developer' && req.user.role !== 'finance') {
+      if (storesChanged && !isSuperUser(req.user)) {
         return res.status(403).json({ error: '无权限' })
       }
       if (!Array.isArray(body.stores)) {
@@ -1101,11 +1227,11 @@ export function createApp() {
       }
     }
     await persist()
-    res.json({ ok: true, ...scopeUserData(db, req.user) })
+    res.json({ ok: true, ...filterUserDataByModules(scopeUserData(db, req.user), req.user) })
   })
 
   // ---------- 数据分析：上传报表并解析 ----------
-  app.post('/api/analysis/upload', requireAuth, requireManager, async (req, res) => {
+  app.post('/api/analysis/upload', requireAuth, requireModule(MODULE_KEYS.ANALYSIS), requireManager, async (req, res) => {
     const body = req.body || {}
     const name = String(body.name || '')
     const raw = String(body.base64 || '').replace(/^data:[^;]+;base64,/, '')
@@ -1148,7 +1274,7 @@ export function createApp() {
     res.json({ ok: true, summary })
   })
 
-  app.delete('/api/analysis', requireAuth, requireManager, async (req, res) => {
+  app.delete('/api/analysis', requireAuth, requireModule(MODULE_KEYS.ANALYSIS), requireManager, async (req, res) => {
     const db = await loadDb()
     db.analysis = {}
     await persist()

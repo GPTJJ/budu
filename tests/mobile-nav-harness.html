@@ -8,10 +8,12 @@
     import '/src/index.css'
 
     window.__navigated = []
+    const limited = new URLSearchParams(location.search).get('limited') === '1'
+    const permissions = limited ? { modules: { overview: false, 'store-entry': false, 'store-schedule': true, 'store-pos': false } } : undefined
     createRoot(document.getElementById('root')).render(
       React.createElement(MobileBottomNav, {
         view: 'overview',
-        user: { id: 'user-1', username: 'staff', role: 'staff', storeKeys: ['store-1'] },
+        user: { id: 'user-1', username: 'staff', role: 'staff', storeKeys: ['store-1'], permissions },
         onNavigate: (key) => window.__navigated.push(key),
         onMore: () => window.__navigated.push('more'),
       }),
