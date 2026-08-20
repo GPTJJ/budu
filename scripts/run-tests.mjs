@@ -3,27 +3,21 @@
 // 用法：
 //   node scripts/run-tests.mjs            → 日常全量（npm run test）
 //   node scripts/run-tests.mjs critical    → 关键业务域（npm run test:critical）
-// 职责：顺序执行各测试脚本（node --test 或直接执行），任一失败即退出非 0。
-// 设计原则：只复用仓库现有测试，不修改任何测试逻辑与业务代码。
+// 职责：
+//   - 顺序执行各测试脚本（node --test 或直接执行），任一失败即退出非 0
+//   - 所有测试子进程使用「隔离测试环境」（不继承生产数据库/外部服务凭证，fail-safe）
+//   - 每个测试文件独立执行，文件级失败统计准确
+// 设计原则：只复用仓库现有测试，不修改任何测试逻辑与业务代码；不打印任何敏感变量值。
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 
-/** 测试文件存在性预检（node --test 对缺失文件静默返回 0，需显式拦截） */
-function checkFiles(list) {
-  const missing = list.filter((f) => !fs.existsSync(path.join(root, f)))
-  if (missing.length) {
-    console.error('缺失测试文件：' + missing.join(', '))
-    process.exit(1)
-  }
-}
-
 // ---------------- 测试清单 ----------------
-// node --test 框架（自动发现断言，失败非 0）
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
   'test-account-permissions.mjs',   // Auth / Permission（单元）→ critical
@@ -71,11 +65,59 @@ const CRITICAL_NODE_TEST = [
 const directFiles = (mode === 'critical' ? CRITICAL_DIRECT : DIRECT_SUITE).map((f) => path.join('scripts', f))
 const nodeTestFiles = (mode === 'critical' ? CRITICAL_NODE_TEST : NODE_TEST_SUITE).map((f) => path.join('scripts', f))
 checkFiles([...directFiles, ...nodeTestFiles])
-const directList = directFiles // 已带 scripts/ 前缀
-const nodeTestList = nodeTestFiles
 
-const run = (cmd, args) => {
-  const r = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', shell: false })
+// ---------------- 隔离测试环境 ----------------
+// 生产/外部服务凭证变量黑名单：测试子进程一律不继承（fail-safe，不依赖开发者机器是否干净）
+const STRIPPED_ENV_KEYS = [
+  // 数据库
+  'DATABASE_URL',
+  'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
+  // Upstash / KV / Redis
+  'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN',
+  'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_REST_API_READ_ONLY_TOKEN',
+  // 支付
+  'PAYMENT_MODE', 'ENABLE_MOCK_CALLBACK_API', 'EMAIL_NOTIFY_ENABLED',
+  // COS / 对象存储
+  'COS_BUCKET', 'COS_REGION', 'COS_SECRET_ID', 'COS_SECRET_KEY',
+  // OCR
+  'TENCENT_OCR_REGION', 'TENCENT_OCR_SECRET_ID', 'TENCENT_OCR_SECRET_KEY',
+  // 微信 / 企业微信
+  'WXWORK_CORP_ID', 'WXWORK_AGENT_ID', 'WXWORK_SECRET',
+  'WXWORK_RECV_TOKEN', 'WXWORK_RECV_AES_KEY',
+  'MP_APP_ID', 'MP_APP_SECRET', 'MP_TEMPLATE_ID',
+  'WECHAT_WORK_WEBHOOK_URL',
+  // Sentry
+  'SENTRY_DSN', 'VITE_SENTRY_DSN',
+  // 其他外部服务
+  'PUBLIC_BASE_URL',
+  // 随机种子/环境密钥（避免测试继承生产 JWT 等）
+  'JWT_SECRET',
+]
+
+/** 构造测试子进程的安全环境：白名单基础变量 + 强制 test 模式 + 清除所有生产/外部凭证 */
+function createTestEnv() {
+  return createTestEnvFrom(process.env)
+}
+
+const testEnv = createTestEnv()
+
+/** 文件存在性预检（node --test 对缺失文件静默返回 0，需显式拦截） */
+function checkFiles(list) {
+  const missing = list.filter((f) => !fs.existsSync(path.join(root, f)))
+  if (missing.length) {
+    console.error('缺失测试文件：' + missing.join(', '))
+    process.exit(1)
+  }
+}
+
+/** 执行单个测试文件；stdout/stderr 透传，返回是否成功 */
+function runOne(file, extraArgs = []) {
+  const r = spawnSync(process.execPath, [...extraArgs, file], {
+    cwd: root,
+    env: testEnv,
+    stdio: 'inherit',
+    shell: false,
+  })
   return r.status === 0
 }
 
@@ -83,24 +125,30 @@ let pass = 0
 let fail = 0
 const failures = []
 
-console.log(`\n===== BUDU 统一测试入口 [${mode}] =====\n`)
+console.log(`\n===== BUDU 统一测试入口 [${mode}] =====`)
+console.log(`  环境隔离：NODE_ENV=test / APP_ENV=test / DATA_DIR=本地临时目录 / 外部凭证已剥离\n`)
 
-// 1) 直接执行脚本
+// 1) 直接执行脚本（独立文件执行）
 for (const f of directFiles) {
-  const ok = run(process.execPath, [f])
+  const ok = runOne(f)
   if (ok) pass += 1
   else { fail += 1; failures.push(f) }
   console.log(`  ${ok ? '✅' : '❌'} ${f}\n`)
 }
 
-// 2) node --test 框架（一次调用跑一批，自动发现断言）
-const okBatch = run(process.execPath, ['--test', ...nodeTestList])
-if (okBatch) pass += nodeTestList.length
-else {
-  fail += nodeTestList.length
-  for (const f of nodeTestList) failures.push(f)
-  console.log(`  ❌ node --test 批次（${nodeTestList.join(', ')}）`)
+// 2) node --test 框架（每个文件独立执行 → 文件级失败统计准确）
+for (const f of nodeTestFiles) {
+  const ok = runOne(f, ['--test'])
+  if (ok) pass += 1
+  else { fail += 1; failures.push(f) }
+  console.log(`  ${ok ? '✅' : '❌'} ${f}\n`)
 }
+
+// 3) 环境隔离自验证（模拟父进程带假生产变量 → 子进程必须看不到）
+const isolationOk = verifyIsolation()
+if (isolationOk) pass += 1
+else { fail += 1; failures.push('环境隔离自验证') }
+console.log(`  ${isolationOk ? '✅' : '❌'} 环境隔离自验证\n`)
 
 console.log(`\n===== 结果：PASS ${pass} / FAIL ${fail} =====`)
 if (failures.length) {
@@ -109,3 +157,84 @@ if (failures.length) {
   process.exit(1)
 }
 process.exit(0)
+
+/** 环境隔离自验证：
+ * 1) 用「带假生产变量的父进程环境」调用 createTestEnv()，产物必须不含任何黑名单键；
+ * 2) 用该产物作为子进程 env 运行探针，子进程必须看不到假凭证、且为 test 模式、DATA_DIR 为本地临时。
+ * 使用假值，不涉及任何真实凭证。
+ */
+function verifyIsolation() {
+  // 模拟父进程带有生产配置（假值）
+  const fakeParent = {
+    ...process.env,
+    DATABASE_URL: 'postgres://fake-prod',
+    UPSTASH_REDIS_REST_URL: 'https://fake-prod',
+    UPSTASH_REDIS_REST_TOKEN: 'fake-secret',
+    KV_REST_API_URL: 'https://fake-prod',
+    KV_REST_API_TOKEN: 'fake-secret',
+    WXWORK_SECRET: 'fake-secret',
+    WXWORK_CORP_ID: 'fake-corp',
+    MP_APP_SECRET: 'fake-secret',
+    COS_SECRET_KEY: 'fake-secret',
+    TENCENT_OCR_SECRET_ID: 'fake-secret',
+    SENTRY_DSN: 'https://fake@sentry.example/1',
+    VITE_SENTRY_DSN: 'https://fake@sentry.example/1',
+    JWT_SECRET: 'fake-secret',
+    WECHAT_WORK_WEBHOOK_URL: 'https://fake-webhook',
+  }
+  // 直接用 createTestEnv 的剥离逻辑生成隔离环境（从假父进程角度）
+  const isolated = createTestEnvFrom(fakeParent)
+  const strippedKeys = [
+    'DATABASE_URL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN',
+    'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'WXWORK_SECRET', 'WXWORK_CORP_ID',
+    'MP_APP_SECRET', 'COS_SECRET_KEY', 'TENCENT_OCR_SECRET_ID',
+    'SENTRY_DSN', 'VITE_SENTRY_DSN', 'JWT_SECRET', 'WECHAT_WORK_WEBHOOK_URL',
+  ]
+  const leaked = strippedKeys.filter((k) => isolated[k] !== undefined)
+  if (leaked.length) {
+    console.error('ISOLATION_FAIL: 环境构造仍包含 ' + leaked.join(','))
+    return false
+  }
+  if (isolated.NODE_ENV !== 'test' || isolated.APP_ENV !== 'test') {
+    console.error('ISOLATION_FAIL: 未强制 test 模式')
+    return false
+  }
+  if (!isolated.DATA_DIR) {
+    console.error('ISOLATION_FAIL: 缺少 DATA_DIR')
+    return false
+  }
+  // 子进程探针：确认子进程看到的 env 与隔离构造一致（看不到假凭证）
+  const probe = `
+    const keys = ${JSON.stringify(strippedKeys)}
+    const leaked = keys.filter((k) => process.env[k] !== undefined)
+    if (process.env.NODE_ENV !== 'test' || process.env.APP_ENV !== 'test') { console.error('ISOLATION_FAIL: mode'); process.exit(1) }
+    if (!process.env.DATA_DIR) { console.error('ISOLATION_FAIL: DATA_DIR'); process.exit(1) }
+    if (leaked.length) { console.error('ISOLATION_FAIL: ' + leaked.join(',')); process.exit(1) }
+  `
+  const r = spawnSync(process.execPath, ['-e', probe], {
+    cwd: root,
+    env: isolated,
+    stdio: 'inherit',
+    shell: false,
+  })
+  if (r.status !== 0) return false
+  console.log('  隔离验证：外部凭证已剥离 / 强制 test 模式 / DATA_DIR 本地临时')
+  return true
+}
+
+/** 从指定父进程环境构造隔离测试环境（供自验证复用同一剥离逻辑） */
+function createTestEnvFrom(parentEnv) {
+  const env = {}
+  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT']) {
+    if (parentEnv[k] !== undefined) env[k] = parentEnv[k]
+  }
+  env.NODE_ENV = 'test'
+  env.APP_ENV = 'test'
+  env.DATA_DIR = parentEnv.TEST_DATA_DIR || path.join(os.tmpdir(), `budu-test-data-${process.pid}-${Date.now().toString(36)}`)
+  env.TEST_DATA_DIR = env.DATA_DIR
+  for (const [k, v] of Object.entries(parentEnv)) {
+    if (k.startsWith('TEST_') && !STRIPPED_ENV_KEYS.includes(k)) env[k] = v
+  }
+  for (const k of STRIPPED_ENV_KEYS) delete env[k]
+  return env
+}
