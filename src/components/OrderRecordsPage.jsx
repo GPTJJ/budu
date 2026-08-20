@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Download, FileSpreadsheet, Package, ReceiptText, Search, Trash2, X } from 'lucide-react'
+import { ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
@@ -21,14 +21,26 @@ function localTime(value) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-function today() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function beijingToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
-function monthStart() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+const emptySummary = {
+  recordCount: 0,
+  paidOrderCount: 0,
+  collectedAmount: '0',
+  grossAmount: '0',
+  refundAmount: '0',
+  discountAmount: '0',
+  itemQuantity: 0,
+  averageAmount: '0',
 }
 
 export default function OrderRecordsPage({ user, onBack }) {
@@ -38,14 +50,15 @@ export default function OrderRecordsPage({ user, onBack }) {
     const allowed = new Set(user.storeKeys || [])
     return list.filter((store) => allowed.has(store.key))
   }, [user])
-  const [from, setFrom] = useState(monthStart())
-  const [to, setTo] = useState(today())
+  const [from, setFrom] = useState(beijingToday)
+  const [to, setTo] = useState(beijingToday)
   const [store, setStore] = useState('all')
   const [paymentMethod, setPaymentMethod] = useState('')
   const [status, setStatus] = useState('')
   const [q, setQ] = useState('')
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
+  const [summary, setSummary] = useState(emptySummary)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState(null)
@@ -69,6 +82,7 @@ export default function OrderRecordsPage({ user, onBack }) {
       const data = await api(`/v2/pos/orders?${params.toString()}`)
       setRows(data.rows || [])
       setTotal(data.total || 0)
+      setSummary({ ...emptySummary, ...(data.summary || {}), recordCount: data.summary?.recordCount ?? data.total ?? 0 })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -126,9 +140,8 @@ export default function OrderRecordsPage({ user, onBack }) {
     setError('')
     try {
       await api(`/v2/pos/orders/${order.id}`, { method: 'DELETE' })
-      setRows((current) => current.filter((row) => row.id !== order.id))
-      setTotal((current) => Math.max(0, current - 1))
       if (detail?.id === order.id) setDetail(null)
+      await load()
     } catch (e) {
       setError(e.message)
     }
@@ -215,6 +228,24 @@ export default function OrderRecordsPage({ user, onBack }) {
             <button onClick={load} disabled={loading} className="h-10 shrink-0 rounded-xl bg-budu-500 px-5 text-sm font-semibold text-white disabled:opacity-50">{loading ? '查询中…' : '查询'}</button>
           </div>
         </div>
+      </section>
+
+      <section aria-label="订单汇总" className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
+        {[
+          { label: '累计收款', value: formatCents(summary.collectedAmount), note: `原收款 ${formatCents(summary.grossAmount)}`, icon: Banknote, tone: 'bg-emerald-50 text-emerald-600' },
+          { label: '订单数', value: `${summary.recordCount} 笔`, note: `已收款 ${summary.paidOrderCount} 笔`, icon: ShoppingBag, tone: 'bg-budu-50 text-budu-600' },
+          { label: '商品数量', value: `${summary.itemQuantity} 件`, note: '已扣除退款商品', icon: Package, tone: 'bg-sky-50 text-sky-600' },
+          { label: '客单价', value: formatCents(summary.averageAmount), note: '按已收款订单计算', icon: ReceiptText, tone: 'bg-violet-50 text-violet-600' },
+          { label: '优惠金额', value: formatCents(summary.discountAmount), note: '含折扣及赠送', icon: BadgePercent, tone: 'bg-amber-50 text-amber-600' },
+          { label: '退款金额', value: formatCents(summary.refundAmount), note: '已完成退款', icon: RotateCcw, tone: 'bg-rose-50 text-rose-600' },
+        ].map(({ label, value, note, icon: Icon, tone }) => (
+          <article key={label} className="min-w-0 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
+            <div className={`grid h-9 w-9 place-items-center rounded-xl ${tone}`}><Icon className="h-4 w-4" /></div>
+            <p className="mt-3 text-xs font-semibold text-slate-400">{label}</p>
+            <p className="mt-1 truncate text-xl font-black tabular-nums text-slate-900" title={value}>{value}</p>
+            <p className="mt-1 truncate text-[11px] text-slate-400" title={note}>{note}</p>
+          </article>
+        ))}
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">

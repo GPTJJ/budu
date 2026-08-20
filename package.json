@@ -13,6 +13,7 @@
     "start": "node server/index.js",
     "test:inventory": "node scripts/test-inventory-workflow.mjs",
     "test:pos": "node --test scripts/test-pos-core.mjs",
+    "test:pos-order-summary": "node --test scripts/test-pos-order-summary.mjs",
     "test:payments": "node --test scripts/test-payment-foundation.mjs",
     "test:camera": "node --test scripts/test-camera-scanner.mjs",
     "test:swipe-back": "node --test scripts/test-swipe-back.mjs",

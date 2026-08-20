@@ -3,7 +3,20 @@ import * as XLSX from 'xlsx'
 
 test('订单记录页展示列表、筛选、明细与导出', async ({ page }) => {
   await page.goto('/tests/order-records-harness.html')
+  const today = await page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+    return `${values.year}-${values.month}-${values.day}`
+  })
+  await expect(page.getByLabel('开始日期')).toHaveValue(today)
+  await expect(page.getByLabel('结束日期')).toHaveValue(today)
+  await expect.poll(() => page.evaluate(() => window.__lastOrderQuery)).toMatchObject({ from: today, to: today })
   await expect(page.getByText('共 3 笔订单', { exact: true })).toBeVisible()
+  const summary = page.getByRole('region', { name: '订单汇总' })
+  await expect(summary.getByText('¥254.00', { exact: true })).toBeVisible()
+  await expect(summary.getByText('3 笔', { exact: true })).toBeVisible()
+  await expect(summary.getByText('4 件', { exact: true })).toBeVisible()
+  await expect(summary.getByText('¥127.00', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toBeVisible()
 
@@ -12,6 +25,10 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
   await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
+
+  await page.getByLabel('开始日期').fill('2026-08-01')
+  await page.getByLabel('结束日期').fill('2026-08-15')
+  await expect.poll(() => page.evaluate(() => window.__lastOrderQuery)).toMatchObject({ from: '2026-08-01', to: '2026-08-15' })
 
   await page.getByRole('button', { name: /明细/ }).first().click()
   const dialog = page.getByRole('dialog')

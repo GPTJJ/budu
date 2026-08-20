@@ -45,13 +45,38 @@
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/v2/pos/orders') {
         const qs = new URL(url, location.origin).searchParams
+        window.__lastOrderQuery = Object.fromEntries(qs.entries())
         const filtered = orders.filter((order) => {
           if (qs.get('paymentMethod') && order.paymentMethod !== qs.get('paymentMethod')) return false
           if (qs.get('status') && order.status !== qs.get('status')) return false
           if (qs.get('q') && !order.orderNo.toLowerCase().includes(qs.get('q').toLowerCase())) return false
           return true
         })
-        return json({ ok: true, total: filtered.length, rows: filtered })
+        const paid = filtered.filter((order) => ['paid', 'partially_refunded', 'refunded'].includes(order.paymentStatus))
+        const grossAmount = paid.reduce((sum, order) => sum + Number(order.payableAmount), 0)
+        const refundAmount = paid.reduce((sum, order) => sum + (order.refunds || [])
+          .filter((refund) => refund.status === 'completed')
+          .reduce((inner, refund) => inner + Number(refund.amount), 0), 0)
+        const soldQuantity = paid.reduce((sum, order) => sum + order.items.reduce((inner, item) => inner + item.quantity, 0), 0)
+        const refundedQuantity = paid.reduce((sum, order) => sum + (order.refunds || [])
+          .filter((refund) => refund.status === 'completed')
+          .reduce((inner, refund) => inner + (refund.items || []).reduce((qty, item) => qty + item.quantity, 0), 0), 0)
+        const collectedAmount = Math.max(0, grossAmount - refundAmount)
+        return json({
+          ok: true,
+          total: filtered.length,
+          summary: {
+            recordCount: filtered.length,
+            paidOrderCount: paid.length,
+            collectedAmount: String(collectedAmount),
+            grossAmount: String(grossAmount),
+            refundAmount: String(refundAmount),
+            discountAmount: String(paid.reduce((sum, order) => sum + Number(order.discountAmount), 0)),
+            itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
+            averageAmount: String(paid.length ? Math.floor(collectedAmount / paid.length) : 0),
+          },
+          rows: filtered,
+        })
       }
       const deleteMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)$/)
       if (deleteMatch && options.method === 'DELETE') {

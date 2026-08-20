@@ -157,6 +157,26 @@ function buildOrderWhere(user, query = {}) {
   return where
 }
 
+export function composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats) {
+  const paidOrderCount = Number(paidStats?._count?._all || 0)
+  const grossAmount = BigInt(paidStats?._sum?.payableAmount || 0)
+  const discountAmount = BigInt(paidStats?._sum?.discountAmount || 0)
+  const refundAmount = BigInt(refundStats?._sum?.refundAmount || 0)
+  const soldQuantity = Number(itemStats?._sum?.quantity || 0)
+  const refundedQuantity = Number(refundItemStats?._sum?.quantity || 0)
+  const collectedAmount = grossAmount > refundAmount ? grossAmount - refundAmount : 0n
+  return {
+    recordCount: Number(total || 0),
+    paidOrderCount,
+    collectedAmount: collectedAmount.toString(),
+    grossAmount: grossAmount.toString(),
+    refundAmount: refundAmount.toString(),
+    discountAmount: discountAmount.toString(),
+    itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
+    averageAmount: (paidOrderCount > 0 ? collectedAmount / BigInt(paidOrderCount) : 0n).toString(),
+  }
+}
+
 posRouter.get('/pos/config', wrap(async (req, res) => {
   requirePosUser(req.user)
   const mode = paymentMode()
@@ -169,11 +189,39 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const where = buildOrderWhere(req.user, req.query)
-  const [rows, total] = await Promise.all([
+  const paidWhere = {
+    AND: [
+      where,
+      { paymentStatus: { in: ['paid', 'partially_refunded', 'refunded'] } },
+    ],
+  }
+  const [rows, total, paidStats, refundStats, itemStats, refundItemStats] = await Promise.all([
     prisma.order.findMany({ where, include: orderInclude(), orderBy: { createdAt: 'desc' }, take: 200 }),
     prisma.order.count({ where }),
+    prisma.order.aggregate({
+      where: paidWhere,
+      _count: { _all: true },
+      _sum: { payableAmount: true, discountAmount: true },
+    }),
+    prisma.refund.aggregate({
+      where: { status: 'completed', order: paidWhere },
+      _sum: { refundAmount: true },
+    }),
+    prisma.orderItem.aggregate({
+      where: { order: paidWhere },
+      _sum: { quantity: true },
+    }),
+    prisma.refundItem.aggregate({
+      where: { refund: { status: 'completed', order: paidWhere } },
+      _sum: { quantity: true },
+    }),
   ])
-  res.json({ ok: true, total, rows: rows.map(serializeOrder) })
+  res.json({
+    ok: true,
+    total,
+    summary: composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats),
+    rows: rows.map(serializeOrder),
+  })
 }))
 
 posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
