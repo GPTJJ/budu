@@ -13,7 +13,7 @@ import {
   CalendarClock,
   ClipboardCheck,
 } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
 import logoUrl from '../assets/logo.jpg'
 import { APP_VERSION } from '../version'
@@ -49,7 +49,6 @@ const subMenus = {
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
-  const { t } = useI18n()
   const [expandedKeys, setExpandedKeys] = useState({})
   const visibleMenus =
     user?.role === 'public'

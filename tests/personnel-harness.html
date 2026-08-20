@@ -5,7 +5,6 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import PersonnelPage from '/src/components/PersonnelPage.jsx'
-    import { I18nProvider } from '/src/i18n.jsx'
     import { PublicModeProvider } from '/src/visibility.jsx'
     import '/src/index.css'
 
@@ -41,15 +40,13 @@
     }))
 
     createRoot(document.getElementById('root')).render(
-      React.createElement(I18nProvider, null,
-        React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
-          React.createElement(PersonnelPage, {
-            user: { id: 'dev-1', username: 'developer', role: 'developer' },
-            canDelete: true,
-            canManage: true,
-            onBack: () => {},
-          }),
-        ),
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true,
+          canManage: true,
+          onBack: () => {},
+        }),
       ),
     )
   </script></body>

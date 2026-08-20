@@ -3,12 +3,11 @@ import { ChevronRight, X } from 'lucide-react'
 import Card from './Card'
 import { ranking, storeDetails, pctText, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber, rankStyle } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 /** 门店经营明细弹窗 */
 function StoreModal({ month, store, onClose }) {
-  const { t } = useI18n()
   const rows = storeDetails(store)
   const monthMax = new Map()
   for (const r of rows) {
@@ -151,7 +150,6 @@ function StoreModal({ month, store, onClose }) {
 }
 
 export default function StoreRankingTable({ month, store, day, weekStart }) {
-  const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
@@ -167,8 +165,8 @@ export default function StoreRankingTable({ month, store, day, weekStart }) {
           weekStart
             ? t('{start} 起 · 按自然周营业收入排序', { start: weekStart })
             : day
-            ? t('{month} · {day} 按日', { month: monthLabel(month, lang), day })
-            : t('{month} · 按营业收入排序', { month: monthLabel(month, lang) })
+            ? t('{month} · {day} 按日', { month: monthLabel(month), day })
+            : t('{month} · 按营业收入排序', { month: monthLabel(month) })
         }
         action={
           !hide && (

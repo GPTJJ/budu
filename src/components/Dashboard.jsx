@@ -9,7 +9,7 @@ import PullToRefresh from './PullToRefresh'
 import { APP_VERSION } from '../version'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
@@ -54,7 +54,6 @@ const pageTitles = {
 }
 
 export default function Dashboard({ user, onLogout, onUserChange }) {
-  const { lang, t } = useI18n()
   const needsBinding =
     user &&
     user.role !== 'developer' &&

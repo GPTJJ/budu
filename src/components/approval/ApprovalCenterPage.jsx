@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Inbox } from 'lucide-react'
 import { api } from '../../utils/api'
-import { useI18n } from '../../i18n'
+import { t } from '../../utils/text'
 import { refreshAlerts } from '../../utils/inventoryAlerts'
 import ApprovalHome from './ApprovalHome'
 import ApprovalFormView from './ApprovalFormView'
@@ -12,7 +12,6 @@ import ApprovalDetailView from './ApprovalDetailView'
 const POLL_MS = 8000
 
 export default function ApprovalCenterPage({ user, onBack }) {
-  const { t } = useI18n()
   const allowed = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
 
   const [view, setView] = useState('home') // home | form | detail

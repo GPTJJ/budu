@@ -7,10 +7,9 @@ import {
   ShoppingCart,
   Users,
 } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
-  const { t } = useI18n()
   const isPublic = user?.role === 'public'
   const items = isPublic
     ? [

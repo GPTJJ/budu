@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { ArrowLeft, ChartNoAxesCombined } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const StoreRankingTable = lazy(() => import('./StoreRankingTable'))
 const RevenueTrendChart = lazy(() => import('./RevenueTrendChart'))
@@ -22,7 +22,6 @@ function AnalysisSkeleton() {
 }
 
 export default function BusinessAnalysisPage({ month, store, day, weekStart, user, onBack }) {
-  const { t } = useI18n()
 
   return (
     <div className="space-y-5">

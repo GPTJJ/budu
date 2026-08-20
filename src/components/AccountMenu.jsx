@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { ChevronDown, Image as ImageIcon, KeyRound, Loader2, LogOut, RefreshCw, Upload, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 
 function ModalShell({ title, onClose, children }) {
-  const { t } = useI18n()
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
@@ -28,7 +27,6 @@ function ModalShell({ title, onClose, children }) {
 }
 
 function PasswordModal({ onClose }) {
-  const { t } = useI18n()
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -95,7 +93,6 @@ function PasswordModal({ onClose }) {
 }
 
 function ProfileModal({ mode, user, onUserChange, onClose }) {
-  const { t } = useI18n()
   const [username, setUsername] = useState(user?.username || '')
   const [avatar, setAvatar] = useState(user?.avatar || '')
   const [error, setError] = useState('')
@@ -205,7 +202,6 @@ function MenuButton({ icon: Icon, label, onClick, danger }) {
 }
 
 export default function AccountMenu({ user, onUserChange, onLogout, onManageAccounts, variant = 'header' }) {
-  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [modal, setModal] = useState(null)
   const name = user?.username || t('伙伴')

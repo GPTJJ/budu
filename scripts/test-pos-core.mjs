@@ -38,7 +38,7 @@ test('服务端合并重复商品并拒绝客户端伪造价格', () => {
   assert.deepEqual(normalizeCartItems([
     { productId: 'product-1', quantity: 2 },
     { productId: 'product-1', quantity: 3 },
-  ]), [{ productId: 'product-1', quantity: 5, gift: false }])
+  ]), [{ productId: 'product-1', quantity: 5, gift: false, comboFlavorIds: [] }])
   assert.throws(() => normalizeCartItems([{ productId: 'product-1', quantity: 1, unitPrice: 1 }]), /服务器计算/)
 })
 
@@ -95,8 +95,8 @@ test('赠送与收费按行分开归并，同一商品可同时存在', () => {
     { productId: 'product-1', quantity: 1, gift: true },
     { productId: 'product-1', quantity: 2, gift: false },
   ]), [
-    { productId: 'product-1', quantity: 2, gift: false },
-    { productId: 'product-1', quantity: 1, gift: true },
+    { productId: 'product-1', quantity: 2, gift: false, comboFlavorIds: [] },
+    { productId: 'product-1', quantity: 1, gift: true, comboFlavorIds: [] },
   ])
   const fresh = { ...product, salePriceCents: 7200n, costPriceCents: 2350n }
   const snapshot = buildOrderSnapshot([fresh], [

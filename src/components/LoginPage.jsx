@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import { APP_VERSION } from '../version'
 
 /** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
-  const { t } = useI18n()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPwd, setShowPwd] = useState(false)

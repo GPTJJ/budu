@@ -12,7 +12,7 @@ import {
 import Card from './Card'
 import { dailyRows, periodDailyRows, periodStats, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 function shortDate(d) {
@@ -21,7 +21,6 @@ function shortDate(d) {
 }
 
 function TrendTooltip({ active, payload, label }) {
-  const { t } = useI18n()
   if (!active || !payload || !payload.length) return null
   const revenue = payload.find((p) => p.dataKey === 'revenue')
   const orders = payload.find((p) => p.dataKey === 'orders')
@@ -44,7 +43,6 @@ function TrendTooltip({ active, payload, label }) {
 }
 
 export default function RevenueTrendChart({ month, store, day, weekStart }) {
-  const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
@@ -63,12 +61,12 @@ export default function RevenueTrendChart({ month, store, day, weekStart }) {
           ? t('{start} 起 · {store} 自然周趋势', { start: weekStart, store: storeName(store) })
           : day
           ? t('{month} · {store} 聚焦 {day}', {
-              month: monthLabel(month, lang),
+              month: monthLabel(month),
               store: storeName(store),
               day,
             })
           : t('{month} · {store} 每日营业收入与订单数', {
-              month: monthLabel(month, lang),
+              month: monthLabel(month),
               store: storeName(store),
             })
       }

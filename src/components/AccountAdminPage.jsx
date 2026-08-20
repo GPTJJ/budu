@@ -3,12 +3,11 @@ import { ArrowLeft, KeyRound, Loader2, MapPin, Shield, Trash2, UserPlus, Users, 
 import { api } from '../utils/api'
 import { allStores, employeeList, storeName } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 
 function ResetPasswordModal({ user, onClose }) {
-  const { t } = useI18n()
   const [newPassword, setNewPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
@@ -83,7 +82,6 @@ function ResetPasswordModal({ user, onClose }) {
 }
 
 function StoreCheckboxes({ selected, onChange, single = false }) {
-  const { t } = useI18n()
   const stores = allStores()
   const toggle = (key) =>
     single ? onChange([key]) : onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key])
@@ -119,7 +117,6 @@ function StoreCheckboxes({ selected, onChange, single = false }) {
 }
 
 function CreateUserModal({ onClose, onCreated }) {
-  const { t } = useI18n()
   const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [] })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -249,7 +246,6 @@ function CreateUserModal({ onClose, onCreated }) {
 }
 
 function BindStoresModal({ user, onClose, onSaved }) {
-  const { t } = useI18n()
   const [selected, setSelected] = useState(user.storeKeys || [])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -311,7 +307,6 @@ function BindStoresModal({ user, onClose, onSaved }) {
 }
 
 function BindStaffModal({ user, onClose, onSaved }) {
-  const { t } = useI18n()
   const staffList = employeeList('all')
   const staffOptions = [...new Map(staffList.map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
   const [staffKey, setStaffKey] = useState(user.staffKey || '')
@@ -376,7 +371,6 @@ function BindStaffModal({ user, onClose, onSaved }) {
 }
 
 export default function AccountAdminPage({ currentUser, onBack }) {
-  const { t } = useI18n()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

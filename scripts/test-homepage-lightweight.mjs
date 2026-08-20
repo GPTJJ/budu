@@ -12,20 +12,15 @@ const vite = await createServer({
 })
 after(() => vite.close())
 
-const i18n = await vite.ssrLoadModule('/src/i18n.jsx')
 const dashboard = await vite.ssrLoadModule('/src/components/Dashboard.jsx')
 
 test('首页渲染移动经营工作台且不再堆叠旧卡片与重要提醒', () => {
   const html = renderToString(
-    React.createElement(
-      i18n.I18nProvider,
-      null,
-      React.createElement(dashboard.default, {
-        user: { id: 'dev-1', username: 'budu', role: 'developer', storeKeys: [] },
-        onLogout: () => {},
-        onUserChange: () => {},
-      }),
-    ),
+    React.createElement(dashboard.default, {
+      user: { id: 'dev-1', username: 'budu', role: 'developer', storeKeys: [] },
+      onLogout: () => {},
+      onUserChange: () => {},
+    }),
   )
 
   assert.match(html, /营业收入/)
@@ -58,7 +53,7 @@ test('首页保持轻量图表并启用自然周筛选', async () => {
   assert.equal(selectors.prevMonthKey('2027-01'), '2026-12')
   const week = selectors.periodStats('2026-08', 'all', null, '2026-08-03')
   const previousWeek = selectors.periodStats('2026-08', 'all', null, '2026-07-27')
-  const weeklyIncome = selectors.kpiCards('2026-08', 'all', null, 'zh', '2026-08-03')[0]
+  const weeklyIncome = selectors.kpiCards('2026-08', 'all', null, '2026-08-03')[0]
   assert.equal(weeklyIncome.change, selectors.changePct(week.inc, previousWeek.inc))
 })
 

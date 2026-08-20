@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Languages, Lock, MapPin, MessageCircle, Plus, Server, Store, Trash2 } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { ArrowLeft, Bell, Database, Lock, MapPin, MessageCircle, Plus, Server, Store, Trash2 } from 'lucide-react'
+import { t } from '../utils/text'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
 import { commitStores, getStores } from '../utils/userData'
@@ -9,7 +9,6 @@ import { allStores } from '../utils/selectors'
 const inputCls = 'input'
 
 export default function SettingsPage({ user, onBack }) {
-  const { lang, setLang, t } = useI18n()
   const [storeName, setStoreName] = useState('')
   const [storeError, setStoreError] = useState('')
   const [version, setVersion] = useState(0)
@@ -216,42 +215,7 @@ export default function SettingsPage({ user, onBack }) {
         </button>
         <div>
           <h2 className="text-xl font-bold text-slate-800">{t('系统设置')}</h2>
-          <p className="mt-0.5 text-[13px] text-slate-400">{t('管理系统偏好与显示选项')}</p>
-        </div>
-      </div>
-
-      <div className="card p-6">
-        <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
-            <Languages className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="text-[15px] font-bold text-slate-800">{t('界面语言')}</h3>
-            <p className="mt-0.5 text-xs text-slate-400">{t('切换后立即生效，并保存在本机浏览器')}</p>
-          </div>
-        </div>
-
-        <div className="mt-5 grid max-w-sm grid-cols-2 gap-2.5">
-          <button
-            onClick={() => setLang('zh')}
-            className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              lang === 'zh'
-                ? 'bg-budu-500 text-white shadow-sm'
-                : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
-            }`}
-          >
-            {t('中文')}
-          </button>
-          <button
-            onClick={() => setLang('en')}
-            className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              lang === 'en'
-                ? 'bg-budu-500 text-white shadow-sm'
-                : 'bg-slate-50 text-slate-500 hover:bg-budu-50 hover:text-budu-600'
-            }`}
-          >
-            {t('English')}
-          </button>
+          <p className="mt-0.5 text-[13px] text-slate-400">{t('管理门店、安全、提醒与营业数据配置')}</p>
         </div>
       </div>
 
@@ -493,7 +457,7 @@ export default function SettingsPage({ user, onBack }) {
         </div>
         <div className="mt-4 flex items-center gap-2 rounded-2xl bg-slate-50/80 px-4 py-3 text-xs text-slate-500">
           <Database className="h-4 w-4 shrink-0 text-budu-600" />
-          {t('budu OS文档（三店4-7月报表 / 薪资表27-31周）')}
+          {t('PostgreSQL / 云端共享数据 / POS 实时汇总')}
         </div>
       </div>
     </div>

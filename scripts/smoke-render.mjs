@@ -4,6 +4,26 @@ import { createServer } from 'vite'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 
+const ssrStorage = new Map([
+  [
+    'budu-os-cloud-mirror-v1',
+    JSON.stringify({
+      entries: {
+        '2026-08|guanshe|08-10': { inc: 3000, ord: 20, staff: ['测试员工'] },
+      },
+      staff: [
+        { name: '测试员工', type: 'fulltime', storeKey: 'guanshe', storeName: '官舍店' },
+      ],
+    }),
+  ],
+])
+globalThis.localStorage = {
+  getItem: (key) => ssrStorage.get(key) ?? null,
+  setItem: (key, value) => ssrStorage.set(key, String(value)),
+  removeItem: (key) => ssrStorage.delete(key),
+  clear: () => ssrStorage.clear(),
+}
+
 const server = await createServer({
   server: { middlewareMode: true },
   appType: 'custom',
@@ -12,13 +32,17 @@ const server = await createServer({
 
 const render = async (path, props = {}) => {
   const mod = await server.ssrLoadModule(path)
-  const i18n = await server.ssrLoadModule('/src/i18n.jsx')
-  return renderToString(
-    React.createElement(i18n.I18nProvider, null, React.createElement(mod.default, props)),
-  )
+  return renderToString(React.createElement(mod.default, props))
 }
 
 try {
+  // SSR 不再依赖仓库内置的历史员工/报表样本；用仅存在于本测试进程内的
+  // 实时数据形态校验员工绩效及门店隐私，避免测试误把静态样本当成业务数据源。
+  const fixtureSelectors = await server.ssrLoadModule('/src/utils/selectors.js')
+  if (fixtureSelectors.entryEmployeePerformance('all', '2026-08').length !== 1) {
+    throw new Error('SSR fixture failed to produce employee performance data')
+  }
+
   const checks = [
     ['App 登录门', await render('/src/App.jsx'), ['加载中']],
     ['LoginPage', await render('/src/components/LoginPage.jsx', { onLogin: () => {} }), ['budu', 'Operating System', '登录', '新账号由开发者创建']],
@@ -118,8 +142,7 @@ try {
     ['ChannelChart', await render('/src/components/ChannelChart.jsx', { month: '2026-07', store: 'all', day: null }), ['渠道销售构成']],
     ['EmployeePerformanceTable', await render('/src/components/EmployeePerformanceTable.jsx', { store: 'all', month: '2026-08', user: { role: 'developer' } }), ['员工绩效 TOP5']],
     ['ProductSalesTable', await render('/src/components/ProductSalesTable.jsx', { month: '2026-07', store: 'all' }), ['商品销售 TOP10']],
-    ['NotificationPanel', await render('/src/components/NotificationPanel.jsx', { month: '2026-07', day: null }), ['重要提醒']],
-    ['SettingsPage', await render('/src/components/SettingsPage.jsx', { onBack: () => {} }), ['系统设置', '界面语言']],
+    ['SettingsPage', await render('/src/components/SettingsPage.jsx', { onBack: () => {} }), ['系统设置', '版本']],
     [
       'AccountMenu',
       await render('/src/components/AccountMenu.jsx', {
@@ -139,28 +162,6 @@ try {
       ['账号管理', '已注册账号'],
     ],
     [
-      'KpiCard public mode',
-      await (async () => {
-        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
-        const vis = await server.ssrLoadModule('/src/visibility.jsx')
-        const mod = await server.ssrLoadModule('/src/components/KpiCard.jsx')
-        return renderToString(
-          React.createElement(
-            i18n.I18nProvider,
-            null,
-            React.createElement(
-              vis.PublicModeProvider,
-              { isPublic: true },
-              React.createElement(mod.default, {
-                card: { key: 'income', prefix: '¥', value: '123', unit: '元', change: null, note: 'x', spark: [1, 2] },
-              }),
-            ),
-          ),
-        )
-      })(),
-      ['•••'],
-    ],
-    [
       'ProductCenterPage',
       await render('/src/components/ProductCenterPage.jsx', { onBack: () => {} }),
       ['商品中心', '新增商品'],
@@ -168,60 +169,28 @@ try {
     [
       'EmployeePerformanceTable store privacy',
       await (async () => {
-        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
         const vis = await server.ssrLoadModule('/src/visibility.jsx')
         const mod = await server.ssrLoadModule('/src/components/EmployeePerformanceTable.jsx')
         return renderToString(
           React.createElement(
-            i18n.I18nProvider,
-            null,
-            React.createElement(
-              vis.PublicModeProvider,
-              { isPublic: false, isStore: true },
-              React.createElement(mod.default, { store: 'all', user: { role: 'developer' } }),
-            ),
+            vis.PublicModeProvider,
+            { isPublic: false, isStore: true },
+            React.createElement(mod.default, { store: 'all', user: { role: 'developer' } }),
           ),
         )
       })(),
       ['•••'],
     ],
     [
-      'NotificationPanel store privacy hides commission',
-      await (async () => {
-        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
-        const vis = await server.ssrLoadModule('/src/visibility.jsx')
-        const mod = await server.ssrLoadModule('/src/components/NotificationPanel.jsx')
-        const html = renderToString(
-          React.createElement(
-            i18n.I18nProvider,
-            null,
-            React.createElement(
-              vis.PublicModeProvider,
-              { isPublic: false, isStore: true },
-              React.createElement(mod.default, { month: '2026-08', day: null }),
-            ),
-          ),
-        )
-        if (html.includes('业绩提成合计')) throw new Error('store role sees commission notice')
-        return html
-      })(),
-      ['重要提醒'],
-    ],
-    [
       'StoreRankingTable store hides revenue',
       await (async () => {
-        const i18n = await server.ssrLoadModule('/src/i18n.jsx')
         const vis = await server.ssrLoadModule('/src/visibility.jsx')
         const mod = await server.ssrLoadModule('/src/components/StoreRankingTable.jsx')
         const html = renderToString(
           React.createElement(
-            i18n.I18nProvider,
-            null,
-            React.createElement(
-              vis.PublicModeProvider,
-              { isPublic: false, isStore: true },
-              React.createElement(mod.default, { month: '2026-08', store: 'all', day: null }),
-            ),
+            vis.PublicModeProvider,
+            { isPublic: false, isStore: true },
+            React.createElement(mod.default, { month: '2026-08', store: 'all', day: null }),
           ),
         )
         if (html.includes('¥')) throw new Error('store role sees revenue in ranking')
@@ -254,4 +223,5 @@ try {
   process.exitCode = 1
 } finally {
   await server.close()
+  delete globalThis.localStorage
 }

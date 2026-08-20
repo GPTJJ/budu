@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, Share, X } from 'lucide-react'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const DISMISS_KEY = 'budu-pwa-install-dismissed-at'
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000
@@ -14,7 +14,6 @@ function recentlyDismissed() {
 }
 
 export default function PwaInstallPrompt({ authenticated = false }) {
-  const { t } = useI18n()
   const [installEvent, setInstallEvent] = useState(null)
   const [showIosTip, setShowIosTip] = useState(false)
   const [visible, setVisible] = useState(false)

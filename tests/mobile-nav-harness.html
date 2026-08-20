@@ -5,19 +5,16 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
-    import { I18nProvider } from '/src/i18n.jsx'
     import '/src/index.css'
 
     window.__navigated = []
     createRoot(document.getElementById('root')).render(
-      React.createElement(I18nProvider, null,
-        React.createElement(MobileBottomNav, {
-          view: 'overview',
-          user: { id: 'user-1', username: 'staff', role: 'staff', storeKeys: ['store-1'] },
-          onNavigate: (key) => window.__navigated.push(key),
-          onMore: () => window.__navigated.push('more'),
-        }),
-      ),
+      React.createElement(MobileBottomNav, {
+        view: 'overview',
+        user: { id: 'user-1', username: 'staff', role: 'staff', storeKeys: ['store-1'] },
+        onNavigate: (key) => window.__navigated.push(key),
+        onMore: () => window.__navigated.push('more'),
+      }),
     )
   </script></body>
 </html>

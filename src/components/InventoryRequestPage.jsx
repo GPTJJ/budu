@@ -23,7 +23,7 @@ import { resolveItemCategory } from '../utils/itemCategory'
 import InventoryListModal from './InventoryListModal'
 import ShipTransferModal from './ShipTransferModal'
 import InventoryStockPanel from './InventoryStockPanel'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 
 const inputCls = 'input'
@@ -66,7 +66,6 @@ const TRANSFER_STATUS_STYLE = {
 }
 
 export default function InventoryRequestPage({ type, currentUser, onBack }) {
-  const { t } = useI18n()
   /** 门店库存版块暂隐藏（后续再开发）；恢复时改为 true 即可 */
   const SHOW_STOCK_PANEL = false
   const isTransfer = type === 'transfer'

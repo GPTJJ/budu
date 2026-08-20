@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { toPng } from 'html-to-image'
 import { allStores } from '../utils/selectors'
 import { resolveItemCategory } from '../utils/itemCategory'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const CATEGORY_LABEL = { product: '产品', material: '物料', other: '其他' }
 const CATEGORY_STYLE = {
@@ -14,7 +14,6 @@ const CATEGORY_STYLE = {
 }
 
 export default function InventoryListModal({ request, onClose }) {
-  const { t } = useI18n()
   const cardRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [previewUrl, setPreviewUrl] = useState(null)

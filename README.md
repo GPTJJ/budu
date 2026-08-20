@@ -10,36 +10,25 @@ npm run dev      # http://localhost:5173
 npm run build    # 生产构建
 ```
 
-## 数据来源与更新
+## 数据来源
 
-- 报表文件位于 `C:\Users\Administrator\Desktop\budu OS文档\`：
-  - `三店4月份.xlsx` ~ `三店7月份.xlsx`（综合营业统计：每日营业额/订单/渠道/支付/菜品销量）
-  - `budu薪资表(总）.xlsx`（2026.27周 ~ 2026.31周：员工工资/工时/提成/考评）
-- 数据由脚本自动解析生成，**不要手动修改** `src/data/reportData.js`：
-
-```bash
-python scripts/build_report_data.py
-```
-
-- 更新报表后重新运行脚本，再刷新页面即可生效。
-- 页面顶部的「月份 + 门店」下拉会联动刷新全部模块：
-  KPI 卡片、门店排行、营业额趋势、渠道构成、员工绩效、商品销售、重要提醒。
+- 门店、每日业绩、POS、库存、订单、工资和审批数据来自云端业务接口。
+- 经营分析上传由服务端解析并保存，不再随前端打包旧月份静态报表。
+- 页面顶部的日期、自然周、月份和门店筛选会联动首页及经营分析。
 
 ## 说明
 
-- 商品 TOP10 来自菜品明细报表的真实单品数据（已剔除「赠品 / 临时商品」类目），随月份 + 门店下拉联动。
-- 员工绩效基于薪资表 5 周合计：当班营业额 = 出勤日门店营业额合计，ROI = 当班营业额 / 工资。
+- 商品 TOP10 来自云端商品销售汇总（已剔除「赠品 / 临时商品」类目），随周期和门店筛选联动。
+- 员工绩效基于每日值班、营业数据与当前工资规则实时计算。
 
 ## 目录结构
 
 ```
 budu/
-├── scripts/
-│   └── build_report_data.py   # Excel -> reportData.js 生成脚本
 ├── src/
 │   ├── App.jsx                # 布局 + 门店/月份筛选状态
 │   ├── data/
-│   │   └── reportData.js      # 自动生成的真实数据模块
+│   │   └── baseStores.js      # 轻量门店身份配置（不含经营数据）
 │   ├── utils/
 │   │   ├── selectors.js       # 筛选/汇总/环比/KPI/排行/提醒计算
 │   │   └── format.js          # 数字与排名样式工具
@@ -47,13 +36,11 @@ budu/
 │       ├── Sidebar.jsx
 │       ├── Header.jsx         # 月份 + 门店下拉
 │       ├── Card.jsx
-│       ├── KpiCard.jsx
 │       ├── StoreRankingTable.jsx
 │       ├── RevenueTrendChart.jsx
 │       ├── ChannelChart.jsx   # 渠道销售构成（店内/美团/闪购）
 │       ├── EmployeePerformanceTable.jsx
-│       ├── ProductSalesTable.jsx
-│       └── NotificationPanel.jsx
+│       └── ProductSalesTable.jsx
 ```
 
 ## 门店映射

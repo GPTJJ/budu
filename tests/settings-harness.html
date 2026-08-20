@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Settings Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import SettingsPage from '/src/components/SettingsPage.jsx'
+    import '/src/index.css'
+
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
+      entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {},
+      stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [],
+      bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
+    }))
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement('main', { className: 'mx-auto max-w-5xl p-4' },
+        React.createElement(SettingsPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          onBack: () => { document.documentElement.dataset.back = 'true' },
+        }),
+      ),
+    )
+  </script></body>
+</html>

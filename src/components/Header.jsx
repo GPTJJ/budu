@@ -3,7 +3,7 @@ import { MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import NotificationBell from './NotificationBell'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 export default function Header({
   month,
@@ -21,7 +21,6 @@ export default function Header({
   onRefresh,
   user,
 }) {
-  const { t } = useI18n()
   const name = user?.username || t('伙伴')
   const visibleStores =
     user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin'

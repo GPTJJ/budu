@@ -3,7 +3,7 @@ import LoginPage from './components/LoginPage'
 import { AppLoading } from './components/LoadingSkeleton'
 import { api } from './utils/api'
 import { loadUserData, prepareUserDataForUser, resetUserData } from './utils/userData'
-import { useI18n } from './i18n'
+import { t } from './utils/text'
 import { lazyRetry } from './utils/lazyRetry'
 
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
@@ -11,7 +11,6 @@ const loadDashboard = () => import('./components/Dashboard')
 const Dashboard = lazyRetry(loadDashboard)
 
 export default function App() {
-  const { t } = useI18n()
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)

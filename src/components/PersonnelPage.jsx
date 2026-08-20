@@ -22,7 +22,7 @@ import {
 } from '../utils/selectors'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
@@ -62,7 +62,6 @@ const inputCls = 'input'
 
 /** 添加员工弹窗 */
 function AddStaffModal({ onClose, onSave }) {
-  const { t } = useI18n()
   const [name, setName] = useState('')
   const [type, setType] = useState('parttime')
   const [storeKey, setStoreKey] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
@@ -189,7 +188,6 @@ function AddStaffModal({ onClose, onSave }) {
 
 /** 删除员工确认弹窗 */
 function ConfirmDeleteModal({ name, onClose, onConfirm }) {
-  const { t } = useI18n()
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -305,7 +303,6 @@ function SecondPasswordModal({ name, onClose, onSuccess }) {
 }
 
 function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
-  const { t } = useI18n()
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const weekDays = weekStart ? getWeekDays(weekStart) : null
@@ -496,7 +493,6 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
 }
 
 export default function PersonnelPage({ onBack, canDelete = false, canManage = false, user }) {
-  const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore

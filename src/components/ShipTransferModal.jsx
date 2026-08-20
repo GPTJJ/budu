@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Plus, Trash2, Truck, X } from 'lucide-react'
 import { resolveItemCategory } from '../utils/itemCategory'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 function newRow() {
   return {
@@ -14,7 +14,6 @@ function newRow() {
 }
 
 export default function ShipTransferModal({ request, catalog = [], storeDisplay, onClose, onConfirm }) {
-  const { t } = useI18n()
   const [rows, setRows] = useState(() => {
     const source = Array.isArray(request.items) && request.items.length > 0 ? request.items : []
     return source.length > 0

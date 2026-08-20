@@ -3,7 +3,7 @@ import { Download, Eye, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getWeekDays } from '../utils/schedule'
 import { employeeDailyPayDetail } from '../utils/selectors'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 
@@ -139,7 +139,6 @@ function buildRows(employees, startDate, endDate) {
 }
 
 export default function ExportSalaryModal({ employees, month, day, weekStart, onClose }) {
-  const { t } = useI18n()
   const defaults = useMemo(() => {
     if (weekStart) {
       const days = getWeekDays(weekStart)

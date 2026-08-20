@@ -6,7 +6,7 @@ import {
   removeDailyPayAdjustment,
   upsertDailyPayAdjustment,
 } from '../utils/userData'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 function localDate() {
   const now = new Date()
@@ -41,7 +41,6 @@ function signedYuan(value) {
 }
 
 export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onSaved }) {
-  const { t } = useI18n()
   const [date, setDate] = useState(initialDate || localDate())
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')

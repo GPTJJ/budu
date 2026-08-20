@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, BadgeDollarSign, CheckCircle2, Clock, Inbox } from 'lucide-react'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { periodLabel } from '../utils/payrollSlip'
 import { refreshAlerts } from '../utils/inventoryAlerts'
 import PayrollSlipModal from './PayrollSlipModal'
@@ -16,7 +16,6 @@ const yuan = (cents) => `¥${(Number(cents || 0) / 100).toFixed(2)}`
 const POLL_MS = 8000
 
 export default function PayrollPage({ user, onBack }) {
-  const { t } = useI18n()
   const isDev = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin' // 财务/管理员权限与开发者一致
   const allowed = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
   const [rows, setRows] = useState(null)

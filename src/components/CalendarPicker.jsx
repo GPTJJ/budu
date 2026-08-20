@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { CalendarDays, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
-import { useI18n, WEEK_EN } from '../i18n'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { getWeekDays } from '../utils/schedule'
+import { t } from '../utils/text'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -19,10 +19,10 @@ function fullDateOf(monthKey, day) {
   return d.includes('-') ? `${monthKey}-${d.slice(3)}` : `${monthKey}-${d}`
 }
 
-function fmtMonth(key, lang = 'zh') {
+function fmtMonth(key) {
   const [y, m] = String(key).split('-')
   if (!m) return key
-  return lang === 'en' ? `${m}/${y}` : `${y}年${m}月`
+  return `${y}年${m}月`
 }
 
 /** 生成该月日历格子（MM-DD，周一开头，前面补空） */
@@ -51,11 +51,10 @@ function mondayOf(dateStr) {
 }
 
 export default function CalendarPicker({ month, day, weekStart, onSelect, onWeekSelect }) {
-  const { lang, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(month)
   const today = todayKey()
-  const WEEK = lang === 'en' ? WEEK_EN : ['一', '二', '三', '四', '五', '六', '日']
+  const WEEK = ['一', '二', '三', '四', '五', '六', '日']
 
   const toggle = () => {
     if (!open) setViewMonth(month)
@@ -81,8 +80,8 @@ export default function CalendarPicker({ month, day, weekStart, onSelect, onWeek
           {weekStart
             ? `${weekStart.slice(5)} ~ ${weekEnd.slice(5)}`
             : day
-              ? `${fmtMonth(month, lang)} · ${day}`
-              : fmtMonth(month, lang)}
+              ? `${fmtMonth(month)} · ${day}`
+              : fmtMonth(month)}
         </span>
         {(day || weekStart) && (
           <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
@@ -104,7 +103,7 @@ export default function CalendarPicker({ month, day, weekStart, onSelect, onWeek
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <p className="text-sm font-bold text-slate-700">{fmtMonth(viewMonth, lang)}</p>
+              <p className="text-sm font-bold text-slate-700">{fmtMonth(viewMonth)}</p>
               <button
                 onClick={() => setViewMonth(shiftMonth(viewMonth, 1))}
                 className="grid h-8 w-8 place-items-center rounded-xl text-slate-400 transition hover:bg-budu-50 hover:text-budu-600"
@@ -232,7 +231,7 @@ export default function CalendarPicker({ month, day, weekStart, onSelect, onWeek
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
               >
                 <CalendarRange className="h-3.5 w-3.5" />
-                {t('查看整月（{month}）', { month: fmtMonth(viewMonth, lang) })}
+                {t('查看整月（{month}）', { month: fmtMonth(viewMonth) })}
               </button>
             </div>
           </div>

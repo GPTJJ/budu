@@ -31,7 +31,7 @@ import {
 } from '../utils/inventoryAlerts'
 import { notificationTargetView, prepareApprovalScope } from '../utils/notificationNavigation'
 import { getWeekDays } from '../utils/schedule'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const SUPER_ROLES = new Set(['developer', 'finance', 'admin'])
@@ -150,11 +150,10 @@ function SectionHeader({ title, action, onAction }) {
 }
 
 function OperationsCard({ month, store, day, weekStart }) {
-  const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidden = isPublic || isStore
-  const cards = kpiCards(month, store, day, lang, weekStart)
+  const cards = kpiCards(month, store, day, weekStart)
   const income = cards.find((item) => item.key === 'income')
   const orders = cards.find((item) => item.key === 'orders')
   const avgOrder = cards.find((item) => item.key === 'avgOrder')
@@ -247,7 +246,6 @@ const TODO_META = {
 }
 
 function TodoGrid({ counts, loading, onOpen }) {
-  const { t } = useI18n()
   return (
     <div className="grid grid-cols-2 gap-2.5">
       {Object.entries(TODO_META).map(([key, meta]) => {
@@ -297,7 +295,6 @@ function ActivityRow({ item, onOpen }) {
 }
 
 export default function HomeWorkspace({ month, store, day, weekStart, user, onNavigate, onSelectStore }) {
-  const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStorePrivacy = useStorePrivacy()
   const canUseOperations = Boolean(user && user.role !== 'public' && user.role !== 'cashier')

@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { Check, Download, FileSpreadsheet, X } from 'lucide-react'
 import { dailyRows, localEntries } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -31,7 +31,6 @@ function eachDate(start, end) {
 }
 
 export default function StoreEntryExportModal({ storeKey, storeName, onClose }) {
-  const { t } = useI18n()
   const [startDate, setStartDate] = useState(monthStart)
   const [endDate, setEndDate] = useState(todayStr)
   const [error, setError] = useState('')

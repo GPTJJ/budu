@@ -3,12 +3,11 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircle2, X } from 'lucide-react'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { periodLabel } from '../utils/payrollSlip'
 import PayrollSlipCard from './PayrollSlipCard'
 
 export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
-  const { t } = useI18n()
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const confirmed = notice.status === 'confirmed'

@@ -14,13 +14,12 @@ import {
 import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { notificationTargetView } from '../utils/notificationNavigation'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function NotificationBell({ variant = 'desktop', user, onNavigate }) {
-  const { t } = useI18n()
   const [alerts, setAlerts] = useState(getAlerts())
   const [open, setOpen] = useState(false)
   const [muted, setMuted] = useState(isAlertMuted())

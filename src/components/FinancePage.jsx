@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, Download, Plus, Trash2, Wallet } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 const CATEGORIES = ['房租', '人工', '水电', '原料', '平台佣金', '其他']
@@ -20,7 +20,6 @@ async function downloadCsv(url) {
 }
 
 export default function FinancePage({ currentUser, onBack }) {
-  const { t } = useI18n()
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
   const [expenses, setExpenses] = useState([])

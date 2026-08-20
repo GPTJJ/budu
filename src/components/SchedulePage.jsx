@@ -12,12 +12,11 @@ import {
 import { allStores, employeeList } from '../utils/selectors'
 import { getSchedules, commitSchedules } from '../utils/userData'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 
 export default function SchedulePage({ onBack, canEdit = true }) {
-  const { t } = useI18n()
   const stores = allStores()
   const [weekStart, setWeekStart] = useState(() => getWeekStart())
   const [storeKey, setStoreKey] = useState(() => (stores[0] ? stores[0].key : ''))

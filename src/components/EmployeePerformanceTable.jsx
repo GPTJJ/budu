@@ -2,7 +2,7 @@ import { ChevronRight } from 'lucide-react'
 import Card from './Card'
 import { employeeList, entryEmployeePerformance, storeName } from '../utils/selectors'
 import { formatMoney, rankStyle } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const AVATAR_GRADIENTS = [
@@ -20,7 +20,6 @@ function roiStyle(roi) {
 }
 
 export default function EmployeePerformanceTable({ store, month, day, weekStart, user }) {
-  const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidden = isPublic || !user || user.role !== 'developer'

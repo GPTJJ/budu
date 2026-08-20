@@ -3,7 +3,7 @@ import { ChevronRight, X } from 'lucide-react'
 import Card from './Card'
 import { products, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney, formatNumber } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { getProductImages } from '../utils/userData'
 
@@ -62,7 +62,6 @@ const isGiftLike = (name) => /赠品|临时商品/.test(name)
 
 /** 商品销售明细弹窗 */
 function ProductModal({ month, store, day, weekStart, onClose, onOpenProduct }) {
-  const { lang, t } = useI18n()
   const [showGift, setShowGift] = useState(false)
   const images = getProductImages()
   const all = products(month, store, day, weekStart)
@@ -95,7 +94,7 @@ function ProductModal({ month, store, day, weekStart, onClose, onOpenProduct }) 
             <h3 className="text-lg font-bold text-slate-800">{t('商品销售明细')}</h3>
             <p className="mt-1 text-xs text-slate-400">
               {t('{period} · {store} · 按销售额排序', {
-                period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month, lang),
+                period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month),
                 store: storeName(store),
               })}
             </p>
@@ -225,7 +224,6 @@ function ProductModal({ month, store, day, weekStart, onClose, onOpenProduct }) 
 }
 
 export default function ProductSalesTable({ month, store, day, weekStart, onOpenProduct }) {
-  const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
@@ -252,7 +250,7 @@ export default function ProductSalesTable({ month, store, day, weekStart, onOpen
       <Card
         title={t('商品销售 TOP10')}
         subtitle={t('{period} · {store} · 按销售额排序', {
-          period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month, lang),
+          period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month),
           store: storeName(store),
         })}
         action={

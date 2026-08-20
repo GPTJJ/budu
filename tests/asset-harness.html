@@ -5,7 +5,6 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import AssetCenterPage from '/src/components/AssetCenterPage.jsx'
-    import { I18nProvider } from '/src/i18n.jsx'
     import '/src/index.css'
 
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
@@ -49,9 +48,9 @@
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 
-    createRoot(document.getElementById('root')).render(React.createElement(I18nProvider, null, React.createElement(AssetCenterPage, {
+    createRoot(document.getElementById('root')).render(React.createElement(AssetCenterPage, {
       user: { id: 'budu', username: 'budu', role: 'developer', assetCenter: true },
       onBack: () => {},
-    })))
+    }))
   </script></body>
 </html>

@@ -8,7 +8,7 @@ import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
 import { loadUserData } from '../utils/userData'
 import { dutyHours } from '../utils/payroll'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
 
 function pad(n) {
@@ -82,7 +82,6 @@ function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled
 }
 
 export default function StoreEntryPage({ user, onBack }) {
-  const { t } = useI18n()
   const isManager = ['developer', 'manager'].includes(user?.role)
   const [store, setStore] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
   const [date, setDate] = useState(todayStr)

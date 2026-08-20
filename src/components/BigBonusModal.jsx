@@ -3,13 +3,12 @@ import { Award, Camera, ImageUp, Loader2, Plus, Trash2, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { normalizeImage } from '../utils/image'
 import { storeName } from '../utils/selectors'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input'
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function BigBonusModal({ emp, currentUser, onClose }) {
-  const { t } = useI18n()
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))

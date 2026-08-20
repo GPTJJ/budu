@@ -1,4 +1,4 @@
-import { DAILY, PRODUCTS, STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS } from '../data/reportData.js'
+import { BASE_STORES } from '../data/baseStores.js'
 import {
   commitEntries,
   commitStaff,
@@ -14,18 +14,13 @@ import {
   getUserData,
 } from './userData.js'
 import { formatMoney } from './format.js'
-import { en, interpolate } from '../locales'
+import { t } from './text.js'
 import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
-import { APP_VERSION } from '../version'
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 import { addWeeks, getWeekDays } from './schedule.js'
 
-export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
-
-const localize = (lang, key, vars) => interpolate(lang === 'en' ? en[key] || key : key, vars)
-
-export const STORE_KEYS = STORES.map((s) => s.key)
+export const STORE_KEYS = BASE_STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
 
 /** day 可能为 '07' 或 '08-07'，统一转成完整日期 YYYY-MM-DD */
@@ -72,7 +67,7 @@ export function customStores() {
 }
 
 export function allStores() {
-  return [...STORES, ...customStores()]
+  return [...BASE_STORES, ...customStores()]
 }
 
 export function allStoreKeys() {
@@ -85,23 +80,12 @@ export function storeName(key) {
   return s ? s.name : key
 }
 
-export function monthLabel(key, lang = 'zh') {
-  const m = MONTHS.find((x) => x.key === key)
-  if (m) {
-    if (lang === 'en') {
-      const mm = (m.label || '').match(/(\d{1,2})月/)
-      const yy = (m.label || '').match(/(\d{4})年/)
-      return mm && yy ? `${mm[1]}/${yy[1]}` : m.label
-    }
-    return m.label
-  }
+export function monthLabel(key) {
   const [y, mm] = String(key).split('-')
-  return mm ? (lang === 'en' ? `${mm}/${y}` : `${y}年${mm}月`) : key
+  return mm ? `${y}年${mm}月` : key
 }
 
 export function prevMonthKey(monthKey) {
-  const i = MONTHS.findIndex((m) => m.key === monthKey)
-  if (i > 0) return MONTHS[i - 1].key
   const [year, month] = String(monthKey).split('-').map(Number)
   if (!year || !month) return null
   const date = new Date(year, month - 2, 1)
@@ -115,15 +99,23 @@ function sameDayInMonth(day, targetMonth) {
 }
 
 export function allMonths() {
-  const keys = new Set(MONTHS.map((m) => m.key))
+  const keys = new Set()
   for (const k of getAnalysis().months || []) keys.add(k)
+  for (const k of Object.keys(getEntries())) {
+    const monthKey = k.split('|')[0]
+    if (/^\d{4}-\d{2}$/.test(monthKey)) keys.add(monthKey)
+  }
+  for (const row of getPosDaily()) {
+    const monthKey = String(row.date || '').slice(0, 7)
+    if (/^\d{4}-\d{2}$/.test(monthKey)) keys.add(monthKey)
+  }
   return [...keys]
     .sort()
     .map((key) => ({ key, label: monthLabel(key) }))
 }
 
 export function allEmployeeMonths() {
-  const keys = new Set(EMPLOYEE_MONTHS)
+  const keys = new Set()
   for (const k of Object.keys(getAnalysis().employeeMonthly || {})) keys.add(k)
   for (const k of Object.keys(getEntries())) {
     const m = k.split('|')[0]
@@ -178,7 +170,7 @@ export function dailyRows(monthKey, storeKey) {
       if (!key.startsWith(prefix)) continue
       overrides.set(key.slice(prefix.length), { inc: Number(v.inc) || 0, ord: Number(v.ord) || 0 })
     }
-    for (const row of (getAnalysis().daily || {})[monthKey]?.[k] || (DAILY[monthKey] || {})[k] || []) {
+    for (const row of (getAnalysis().daily || {})[monthKey]?.[k] || []) {
       const ov = overrides.get(row.d)
       let cur = map.get(row.d)
       if (!cur) {
@@ -319,7 +311,7 @@ export function dayStats(monthKey, storeKey, day) {
   return periodStats(monthKey, storeKey, day)
 }
 
-export function kpiCards(monthKey, storeKey, day = null, lang = 'zh', weekStart = null) {
+export function kpiCards(monthKey, storeKey, day = null, weekStart = null) {
   const agg = periodStats(monthKey, storeKey, day, weekStart)
   const monthAgg = aggregate(monthKey, storeKey)
   const pk = prevMonthKey(monthKey)
@@ -343,16 +335,16 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh', weekStart 
   return [
     {
       key: 'income',
-      label: localize(lang, '营业收入'),
+      label: t('营业收入'),
       value: formatMoney(agg.inc),
       unit: '元',
       prefix: '¥',
       change: pct(agg.inc, prevInc),
       note: weekStart
-        ? localize(lang, '自然周 {start} 起 · 对比上一自然周', { start: weekStart })
+        ? t('自然周 {start} 起 · 对比上一自然周', { start: weekStart })
         : day
-        ? localize(lang, '当日 {day} · 环比上月同日', { day })
-        : localize(lang, '营业 {days} 天 · 日均 ¥{money}', {
+        ? t('当日 {day} · 环比上月同日', { day })
+        : t('营业 {days} 天 · 日均 ¥{money}', {
             days: agg.days,
             money: formatMoney(agg.dailyAvg),
           }),
@@ -360,42 +352,42 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh', weekStart 
     },
     {
       key: 'orders',
-      label: localize(lang, '订单数'),
+      label: t('订单数'),
       value: fmt(agg.ord),
       unit: '单',
       prefix: '',
       change: pct(agg.ord, prevOrd),
-      note: localize(lang, '折前营业额 ¥{money}', { money: formatMoney(agg.rev) }),
+      note: t('折前营业额 ¥{money}', { money: formatMoney(agg.rev) }),
       spark: spark((r) => r.ord),
     },
     {
       key: 'avgOrder',
-      label: localize(lang, '客单价'),
+      label: t('客单价'),
       value: agg.avgOrder.toFixed(2),
       unit: '元',
       prefix: '¥',
       change: pct(agg.avgOrder, prevAvg),
-      note: localize(lang, '营业收入 / 订单量'),
+      note: t('营业收入 / 订单量'),
       spark: spark((r) => (r.ord ? r.inc / r.ord : 0)),
     },
     {
       key: 'dish',
-      label: localize(lang, '商品销量'),
+      label: t('商品销量'),
       value: fmt(agg.dish),
       unit: '份',
       prefix: '',
       change: pct(agg.dish, prevDish),
-      note: localize(lang, '菜品销售额 ¥{money}', { money: formatMoney(agg.dishInc) }),
+      note: t('菜品销售额 ¥{money}', { money: formatMoney(agg.dishInc) }),
       spark: spark((r) => r.dish),
     },
     {
       key: 'discount',
-      label: localize(lang, '优惠金额'),
+      label: t('优惠金额'),
       value: formatMoney(agg.dis),
       unit: '元',
       prefix: '¥',
       change: pct(agg.dis, prevDis),
-      note: localize(lang, '优惠率 {pct}%', {
+      note: t('优惠率 {pct}%', {
         pct: agg.rev ? ((agg.dis / agg.rev) * 100).toFixed(1) : 0,
       }),
       spark: spark((r) => r.dis),
@@ -403,22 +395,22 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh', weekStart 
     day || weekStart
       ? {
           key: 'monthTotal',
-          label: localize(lang, '本月累计'),
+          label: t('本月累计'),
           value: formatMoney(monthAgg.inc),
           unit: '元',
           prefix: '¥',
           change: prevMonthAgg ? changePct(monthAgg.inc, prevMonthAgg.inc) : null,
-          note: localize(lang, '{month} 整月汇总', { month: monthLabel(monthKey, lang) }),
+          note: t('{month} 整月汇总', { month: monthLabel(monthKey) }),
           spark: spark((r) => r.inc),
         }
       : {
           key: 'dailyAvg',
-          label: localize(lang, '日均营业额'),
+          label: t('日均营业额'),
           value: formatMoney(agg.dailyAvg),
           unit: '元',
           prefix: '¥',
           change: pct(agg.dailyAvg, prevDaily),
-          note: localize(lang, '{month} 汇总', { month: monthLabel(monthKey, lang) }),
+          note: t('{month} 汇总', { month: monthLabel(monthKey) }),
           spark: spark((r) => r.inc),
         },
   ]
@@ -534,8 +526,8 @@ export function employeeList(storeKey, monthKey = null) {
   const removed = new Set(getRemovedStaff())
   const source = (
     monthKey != null
-      ? analysisEmployeeMonthly(monthKey) || EMPLOYEE_MONTHLY[monthKey] || []
-      : analysisEmployees() || EMPLOYEES
+      ? analysisEmployeeMonthly(monthKey) || []
+      : analysisEmployees() || []
   ).filter((e) => !removed.has(e.name))
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
@@ -716,134 +708,6 @@ export function entryEmployeePerformance(storeKey = 'all', monthKey = null, day 
     .sort((a, b) => b.workedRevenue - a.workedRevenue)
 }
 
-/** 重要提醒（随所选月份动态生成） */
-export function notices(monthKey, day = null, lang = 'zh') {
-  const out = []
-  if (day) {
-    const aggDay = dayStats(monthKey, 'all', day)
-    out.push({
-      tag: '当日',
-      tagStyle: 'bg-grape-50 text-grape-600',
-      bg: 'bg-grape-100',
-      fg: 'text-grape-500',
-      time: `${monthLabel(monthKey, lang)} · ${day}`,
-      text: localize(lang, '全部门店当日营业收入 ¥{inc}，共 {ord} 单，客单价 ¥{avg}。', {
-        inc: formatMoney(aggDay.inc),
-        ord: aggDay.ord.toLocaleString('zh-CN'),
-        avg: aggDay.avgOrder.toFixed(2),
-      }),
-    })
-  }
-  const pk = prevMonthKey(monthKey)
-  const aggAll = aggregate(monthKey, 'all')
-  const rows = ranking(monthKey, 'all')
-
-  if (rows.length > 0) {
-    const leader = rows[0]
-    const laggard = rows[rows.length - 1]
-    out.push({
-      tag: '经营',
-      tagStyle: 'bg-budu-50 text-budu-600',
-      bg: 'bg-budu-100',
-      fg: 'text-budu-500',
-      time: `${monthLabel(monthKey, lang)}`,
-      text: localize(lang, '「{name}」本月营业收入 ¥{inc}，位列三家门店第一。', {
-        name: leader.name,
-        inc: leader.income.toLocaleString('zh-CN'),
-      }),
-    })
-    if (laggard.key !== leader.key) {
-      out.push({
-        tag: '关注',
-        tagStyle: 'bg-amber-50 text-amber-600',
-        bg: 'bg-amber-100',
-        fg: 'text-amber-600',
-        time: `${monthLabel(monthKey, lang)}`,
-        text: localize(lang, '「{name}」本月营业收入 ¥{inc}，为三家门店中最低，建议复盘菜单与引流。', {
-          name: laggard.name,
-          inc: laggard.income.toLocaleString('zh-CN'),
-        }),
-      })
-    }
-  }
-
-  if (pk) {
-    const changes = rows.map((r) => ({ name: r.name, pct: changePct(r.income, aggregate(pk, r.key).inc) }))
-    const worst = [...changes].sort((a, b) => a.pct - b.pct)[0]
-    if (worst && worst.pct < 0) {
-      out.push({
-        tag: '预警',
-        tagStyle: 'bg-rose-50 text-rose-500',
-        bg: 'bg-rose-100',
-        fg: 'text-rose-500',
-        time: `${monthLabel(pk, lang)} → ${monthLabel(monthKey, lang)}`,
-        text: localize(lang, '「{name}」营业收入环比下降 {pct}%，建议关注客流与营销活动。', {
-          name: worst.name,
-          pct: Math.abs(worst.pct).toFixed(1),
-        }),
-      })
-    } else if (worst) {
-      out.push({
-        tag: '增长',
-        tagStyle: 'bg-emerald-50 text-emerald-600',
-        bg: 'bg-emerald-100',
-        fg: 'text-emerald-600',
-        time: `${monthLabel(pk, lang)} → ${monthLabel(monthKey, lang)}`,
-        text: localize(lang, '全部门店营业收入环比增长 {pct}%（三店均值口径）。', {
-          pct: `${changes.reduce((s, c) => s + Math.max(c.pct, 0), 0) > 0 ? '+' : ''}${worst.pct.toFixed(1)}`,
-        }),
-      })
-    }
-  }
-
-  const payrollPerf = entryMonthPayroll(monthKey)
-  let topPerf = null
-  if (payrollPerf.size > 0) {
-    const top = [...payrollPerf.values()].sort((a, b) => b.commission - a.commission)[0]
-    topPerf = top && top.commission > 0 ? { name: top.name, perfValue: top.commission } : null
-  } else {
-    const t = [...EMPLOYEES].sort((a, b) => b.perf + b.big - (a.perf + a.big))[0]
-    topPerf = t && t.perf + t.big > 0 ? { name: t.name, perfValue: t.perf + t.big } : null
-  }
-  if (topPerf) {
-    out.push({
-      tag: '绩效',
-      tagStyle: 'bg-purple-50 text-purple-600',
-      bg: 'bg-purple-100',
-      fg: 'text-purple-600',
-      time: payrollPerf.size > 0 ? monthLabel(monthKey, lang) : localize(lang, '薪资表 27-31 周'),
-      text: localize(lang, '「{name}」业绩提成合计 ¥{amount}，全店最高。', {
-        name: topPerf.name,
-        amount: topPerf.perfValue.toLocaleString('zh-CN'),
-      }),
-    })
-  }
-
-  out.push({
-    tag: '数据',
-    tagStyle: 'bg-blue-50 text-blue-600',
-    bg: 'bg-blue-100',
-    fg: 'text-blue-600',
-    time: 'budu OS文档',
-    text: localize(lang, '营业数据已更新至 {month}，本月菜品销量 {dish} 份。', {
-      month: monthLabel(allMonths()[allMonths().length - 1].key, lang),
-      dish: aggAll.dish.toLocaleString('zh-CN'),
-    }),
-  })
-
-  out.push({
-    tag: '系统',
-    tagStyle: 'bg-emerald-50 text-emerald-600',
-    bg: 'bg-emerald-100',
-    fg: 'text-emerald-600',
-    time: APP_VERSION,
-    text: localize(lang, 'budu Operating System {version} 运行正常，数据由脚本自动从报表生成。', {
-      version: APP_VERSION,
-    }),
-  })
-
-  return out.slice(0, 5)
-}
 /** 菜品销售明细（按所选月份/门店合并，按销售额降序；all 表示跨店同名合并） */
 export function products(monthKey, storeKey, day = null, weekStart = null) {
   const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
@@ -851,7 +715,7 @@ export function products(monthKey, storeKey, day = null, weekStart = null) {
   const selectedDates = day || weekStart ? new Set(periodDates(monthKey, day, weekStart)) : null
   if (!selectedDates) {
     for (const k of keys) {
-      for (const p of (getAnalysis().products || {})[monthKey]?.[k] || (PRODUCTS[monthKey] || {})[k] || []) {
+      for (const p of (getAnalysis().products || {})[monthKey]?.[k] || []) {
         let cur = map.get(p.name)
         if (!cur) {
           cur = { name: p.name, sales: 0, amount: 0, income: 0, discount: 0 }

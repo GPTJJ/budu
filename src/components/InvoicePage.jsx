@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Building2, CalendarClock, Camera, Copy, ImageUp, Loader2, Mail, MapPin, Plus, Receipt, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { normalizeImage } from '../utils/image'
 
 const inputCls = 'input'
@@ -16,7 +16,6 @@ const fmtTime = (iso) => {
 }
 
 export default function InvoicePage({ currentUser, onBack }) {
-  const { t } = useI18n()
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
   const [tab, setTab] = useState('pending')

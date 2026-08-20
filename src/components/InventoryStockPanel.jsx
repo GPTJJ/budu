@@ -4,7 +4,7 @@ import { allStores, storeName } from '../utils/selectors'
 import { getInventory, loadUserData } from '../utils/userData'
 import { inventoryQuantity } from '../utils/inventory'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const inputCls = 'input py-2.5'
 
@@ -17,7 +17,6 @@ function formatTime(value) {
 }
 
 function ModalShell({ title, subtitle, onClose, children }) {
-  const { t } = useI18n()
   return (
     <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center sm:p-4">
       <button className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} aria-label={t('关闭')} />
@@ -38,7 +37,6 @@ function ModalShell({ title, subtitle, onClose, children }) {
 }
 
 export default function InventoryStockPanel({ currentUser, catalog = [], version, onChanged }) {
-  const { t } = useI18n()
   const stores = allStores()
   const inventory = getInventory()
   const [storeFilter, setStoreFilter] = useState('all')

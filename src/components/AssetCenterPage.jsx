@@ -4,7 +4,7 @@ import {
   ArrowLeft, Check, Download, Eye, FileText, FolderArchive, History, Lock, PackagePlus, Pencil, Plus, Search, Tags, Trash2, Upload, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 
 const STATUS_META = {
   normal: { label: '正常', cls: 'bg-emerald-50 text-emerald-600' },
@@ -90,7 +90,6 @@ function fileIcon(type) {
 }
 
 export default function AssetCenterPage({ user, onBack }) {
-  const { t } = useI18n()
   const isDeveloper = user?.role === 'developer' || user?.role === 'finance' // 财务权限与开发者一致
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')

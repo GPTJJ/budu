@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import Card from './Card'
 import { channelData, periodStats, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
-import { useI18n } from '../i18n'
+import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 
 const SOFT_COLORS = {
@@ -15,7 +15,6 @@ const SOFT_COLORS = {
 const colorFor = (name) => SOFT_COLORS[name] || '#94A3B8'
 
 function ChannelTooltip({ active, payload }) {
-  const { t } = useI18n()
   if (!active || !payload || !payload.length) return null
   const item = payload[0]
   return (
@@ -35,7 +34,6 @@ function ChannelTooltip({ active, payload }) {
 }
 
 export default function ChannelChart({ month, store, day, weekStart }) {
-  const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
@@ -52,11 +50,11 @@ export default function ChannelChart({ month, store, day, weekStart }) {
           ? t('{start} 起 · {store} 按自然周', { start: weekStart, store: storeName(store) })
           : day
           ? t('{month} · {store} {day} 按日', {
-              month: monthLabel(month, lang),
+              month: monthLabel(month),
               store: storeName(store),
               day,
             })
-          : `${monthLabel(month, lang)} · ${storeName(store)}`
+          : `${monthLabel(month)} · ${storeName(store)}`
       }
       action={
         !hide && (
