@@ -1,6 +1,16 @@
 import { expect, test } from '@playwright/test'
 import * as XLSX from 'xlsx'
 
+test('雇员页面恢复既有全职与兼职主档', async ({ page }) => {
+  await page.goto('/tests/personnel-harness.html')
+  await expect(page.getByRole('button', { name: '全部（10）' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '全职人员（3）' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '兼职人员（7）' })).toBeVisible()
+  for (const name of ['隋晓', '叶芷辰', '李飞燕', '左可翠', '陈文慧', '舒敏', '史璐璐', '马婧欣', '龚艺锦', '王红云']) {
+    await expect(page.getByText(name, { exact: true }).first()).toBeVisible()
+  }
+})
+
 test('员工卡片工资明细下载为可读取的 Excel 表格', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/tests/personnel-harness.html')

@@ -1,4 +1,5 @@
 import { BASE_STORES } from '../data/baseStores.js'
+import { BASE_EMPLOYEES } from '../data/baseEmployees.js'
 import {
   commitEntries,
   commitStaff,
@@ -526,13 +527,14 @@ export function employeeList(storeKey, monthKey = null) {
   const removed = new Set(getRemovedStaff())
   const source = (
     monthKey != null
-      ? analysisEmployeeMonthly(monthKey) || []
-      : analysisEmployees() || []
+      ? analysisEmployeeMonthly(monthKey) || BASE_EMPLOYEES
+      : analysisEmployees() || BASE_EMPLOYEES
   ).filter((e) => !removed.has(e.name))
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
     .filter((e) => !removed.has(e.name))
-  const base = [...source, ...local]
+  // 云端同名员工覆盖轻量兜底主档，避免恢复后与后来维护的员工重复。
+  const base = [...new Map([...source, ...local].map((e) => [e.name, e])).values()]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
   if (monthKey != null) {
     const payroll = entryMonthPayroll(monthKey)
