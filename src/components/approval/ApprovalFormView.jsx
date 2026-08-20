@@ -500,6 +500,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
               employeeName={slipNotice.employeeName}
               periodText={periodLabel(slipNotice.periodType, slipNotice.periodKey)}
               snapshot={slipNotice.snapshot}
+              full
             />
           </div>
         </div>

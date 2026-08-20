@@ -6,7 +6,7 @@ function fmt(v) {
   return `¥${Number(v || 0).toFixed(2)}`
 }
 
-export default function PayrollSlipCard({ employeeName, periodText, snapshot }) {
+export default function PayrollSlipCard({ employeeName, periodText, snapshot, full = false }) {
   const snap = snapshot || { days: [], summary: {} }
   return (
     <div className="rounded-2xl bg-white">
@@ -48,7 +48,7 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot }) 
         <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />周末 / 法定节假日</span>
         <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />调休上班</span>
       </div>
-      <div className="mt-2 max-h-[36vh] overflow-x-auto overflow-y-auto rounded-xl border border-slate-100">
+      <div className={`mt-2 overflow-x-auto rounded-xl border border-slate-100 ${full ? '' : 'max-h-[36vh] overflow-y-auto'}`}>
         <table className="w-full min-w-[720px] text-left text-xs">
           <thead className="sticky top-0 bg-slate-50 text-slate-400">
             <tr>
