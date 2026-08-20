@@ -135,6 +135,12 @@ export function canManageAccounts(user) {
   return Boolean(user && user.status !== 'disabled' && user.role === 'developer')
 }
 
+/** 页面访问判定：账号治理是开发者保留能力，不属于可授权业务版块。 */
+export function hasPageAccess(user, pageKey) {
+  if (pageKey === 'account-admin') return canManageAccounts(user)
+  return hasModuleAccess(user, pageKey)
+}
+
 export function canAccessTransferStore(user, storeKey) {
   if (!user || user.role === 'public' || !hasModuleAccess(user, MODULE_KEYS.INVENTORY_TRANSFER)) return false
   if (hasInventoryTransferAll(user)) return true

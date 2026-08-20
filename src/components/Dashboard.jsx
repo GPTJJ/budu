@@ -14,7 +14,7 @@ import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { firstAccessibleModule, hasModuleAccess } from '../../shared/accountPermissions'
+import { firstAccessibleModule, hasModuleAccess, hasPageAccess } from '../../shared/accountPermissions'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
@@ -136,7 +136,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   })
 
   useEffect(() => {
-    if (view && hasModuleAccess(user, view)) return
+    if (view && hasPageAccess(user, view)) return
     const fallback = firstAccessibleModule(user)
     if (fallback !== view) setView(fallback)
   }, [user?.permissions, user?.role, view])
@@ -175,8 +175,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   const handleNavigate = (nextView) => {
-    if (nextView !== 'account-admin' && !hasModuleAccess(user, nextView)) return
-    if (nextView === 'account-admin' && user?.role !== 'developer') return
+    if (!hasPageAccess(user, nextView)) return
     setView(nextView)
     if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
     else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)

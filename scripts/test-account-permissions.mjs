@@ -6,6 +6,7 @@ import {
   canAccessTransferStore,
   canManageTransferStore,
   hasInventoryTransferAll,
+  hasPageAccess,
   normalizeAccountPermissions,
   hasModuleAccess,
 } from '../shared/accountPermissions.js'
@@ -65,4 +66,12 @@ test('收银账号无论保存何种权限都固定仅开放 POS', () => {
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.STORE_POS), true)
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.FINANCE), false)
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.OVERVIEW), false)
+})
+
+test('账号管理作为开发者保留页面不会被版块撤权检查送回首页', () => {
+  assert.equal(hasPageAccess({ role: 'developer' }, 'account-admin'), true)
+  assert.equal(hasPageAccess({ role: 'admin' }, 'account-admin'), false)
+  assert.equal(hasPageAccess({ role: 'finance' }, 'account-admin'), false)
+  assert.equal(hasPageAccess({ role: 'developer', status: 'disabled' }, 'account-admin'), false)
+  assert.equal(hasPageAccess({ role: 'staff' }, MODULE_KEYS.STORE_POS), true)
 })
