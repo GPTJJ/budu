@@ -115,7 +115,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 
-          if (subs) {
+          if (subs.length > 0) {
             return (
               <div key={item.key}>
                 <button

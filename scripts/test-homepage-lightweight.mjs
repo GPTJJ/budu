@@ -72,4 +72,6 @@ test('分析组件与首页主包解耦并保留独立入口', () => {
   assert.match(analysisSource, /import\('\.\/RevenueTrendChart'\)/)
   assert.match(analysisSource, /import\('\.\/ProductSalesTable'\)/)
   assert.match(sidebarSource, /key: 'analysis', label: '经营分析'/)
+  assert.match(sidebarSource, /if \(subs\.length > 0\)/)
+  assert.doesNotMatch(sidebarSource, /if \(subs\) \{/)
 })
