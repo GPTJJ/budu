@@ -4,6 +4,8 @@ export const en = {
   '甜蜜治愈日常': 'Sweet daily healing',
   '运营管理': 'Operations',
   '首页概览': 'Overview',
+  '经营分析': 'Business Analytics',
+  '集中查看门店排行、经营趋势、渠道、员工与商品表现': 'View store rankings, trends, channels, staff and product performance in one place',
   '人员管理': 'Staff',
   '门店经营': 'Stores',
   'POS 点单': 'POS Ordering',

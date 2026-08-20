@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   LayoutDashboard,
+  ChartNoAxesCombined,
   Store,
   Users,
   Package,
@@ -19,6 +20,7 @@ import { APP_VERSION } from '../version'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
+  { key: 'analysis', label: '经营分析', icon: ChartNoAxesCombined },
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'product', label: '商品管理', icon: Package },
@@ -62,12 +64,12 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         ? menus // 财务/管理员权限与开发者一致：全部菜单
         : user?.role === 'staff'
           ? menus.filter((m) =>
-              ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
+              ['overview', 'analysis', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
               (m.key === 'asset-center' && user.assetCenter === true),
             )
           : user?.role === 'manager'
             ? menus.filter((m) =>
-                ['overview', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
+                ['overview', 'analysis', 'staff', 'store', 'inventory', 'finance-invoice', 'approval', 'settings'].includes(m.key) ||
                 (m.key === 'asset-center' && user.assetCenter === true),
               )
             : menus

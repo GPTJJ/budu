@@ -17,13 +17,7 @@ import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
-// 首页图表/表格：懒加载（recharts 等重型依赖拆为独立 chunk，移动端首屏显著提速）
-const StoreRankingTable = lazy(() => import('./StoreRankingTable'))
-const RevenueTrendChart = lazy(() => import('./RevenueTrendChart'))
-const ChannelChart = lazy(() => import('./ChannelChart'))
-const EmployeePerformanceTable = lazy(() => import('./EmployeePerformanceTable'))
-const ProductSalesTable = lazy(() => import('./ProductSalesTable'))
-
+const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
 const PayrollPage = lazy(() => import('./PayrollPage'))
 const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
@@ -41,6 +35,7 @@ const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 
 const pageTitles = {
+  analysis: '经营分析',
   staff: '雇员',
   'staff-payroll': '工资条',
   'store-entry': '门店业绩录入',
@@ -108,6 +103,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff'
+  const isAnalysisView = view === 'analysis'
   const isPayrollView = view === 'staff-payroll'
   const isStoreEntryView = view === 'store-entry'
   const isScheduleView = view === 'store-schedule'
@@ -233,7 +229,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             store={store}
             day={day}
             title={view === 'overview' ? null : pageTitles[view]}
-            showOverviewTools={view === 'overview'}
+            showOverviewTools={view === 'overview' || isAnalysisView}
             user={user}
             onNavigate={handleNavigate}
             onDaySelect={(m, d) => {
@@ -254,7 +250,15 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               <Suspense
                 fallback={<PageLoading />}
               >
-              {isStaffView ? (
+              {isAnalysisView ? (
+                <BusinessAnalysisPage
+                  month={month}
+                  store={store}
+                  day={day}
+                  user={user}
+                  onBack={returnToOverview}
+                />
+              ) : isStaffView ? (
                 <PersonnelPage
                   onBack={returnToOverview}
                   canDelete={user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'}
@@ -306,51 +310,10 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                     ))}
                   </section>
 
-                  {/* 图表/表格模块（懒加载：recharts 独立分包，移动端首屏不下载） */}
-                  <Suspense
-                    fallback={
-                      <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                        {[1, 2, 3].map((i) => (
-                          <div key={i} className={`animate-pulse rounded-2xl bg-slate-100 ${i === 1 ? 'xl:col-span-5' : 'xl:col-span-4'} ${i === 3 ? 'xl:col-span-3' : ''}`} style={{ height: 260 }} />
-                        ))}
-                      </section>
-                    }
-                  >
-                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                      <div className="xl:col-span-4">
-                        <StoreRankingTable month={month} store={store} day={day} />
-                      </div>
-                      <div className="xl:col-span-5">
-                        <RevenueTrendChart month={month} store={store} day={day} />
-                      </div>
-                      <div className="xl:col-span-3">
-                        <ChannelChart month={month} store={store} day={day} />
-                      </div>
-                    </section>
-                  </Suspense>
-
-                  {/* 底部业绩与数据模块（懒加载同包） */}
-                  <Suspense
-                    fallback={
-                      <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-4" style={{ height: 260 }} />
-                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-5" style={{ height: 260 }} />
-                        <div className="animate-pulse rounded-2xl bg-slate-100 xl:col-span-3" style={{ height: 260 }} />
-                      </section>
-                    }
-                  >
-                    <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-                      <div className="xl:col-span-4">
-                        <EmployeePerformanceTable store={store} month={month} user={user} />
-                      </div>
-                      <div className="xl:col-span-5">
-                        <ProductSalesTable month={month} store={store} />
-                      </div>
-                      <div className="xl:col-span-3">
-                        <NotificationPanel month={month} day={day} user={user} />
-                      </div>
-                    </section>
-                  </Suspense>
+                  {/* 首页只保留提醒；经营图表统一在“经营分析”中按需加载。 */}
+                  <section className="w-full">
+                    <NotificationPanel month={month} day={day} user={user} />
+                  </section>
                 </>
               )}
               </Suspense>

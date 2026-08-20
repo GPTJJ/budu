@@ -83,6 +83,17 @@ try {
       }),
       ['首页概览', '门店经营'],
     ],
+    [
+      'BusinessAnalysisPage',
+      await render('/src/components/BusinessAnalysisPage.jsx', {
+        month: '2026-08',
+        store: 'all',
+        day: null,
+        user: { username: 'budu', role: 'developer' },
+        onBack: () => {},
+      }),
+      ['经营分析', '返回首页'],
+    ],
     ['PersonnelPage', await render('/src/components/PersonnelPage.jsx', { type: 'fulltime', onTypeChange: () => {}, onBack: () => {} }), ['人员管理', '全职人员']],
     [
       'PayrollPage',

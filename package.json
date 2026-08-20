@@ -17,6 +17,7 @@
     "test:camera": "node --test scripts/test-camera-scanner.mjs",
     "test:swipe-back": "node --test scripts/test-swipe-back.mjs",
     "test:startup": "node --test scripts/test-startup-performance.mjs",
+    "test:homepage": "node --test scripts/test-homepage-lightweight.mjs",
     "test:pos-daily": "node --test scripts/test-pos-daily.mjs",
     "test:product-excel": "node --test scripts/test-product-excel.mjs",
     "test:employee-excel": "node --test scripts/test-employee-pay-excel.mjs",
