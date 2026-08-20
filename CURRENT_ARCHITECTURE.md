@@ -61,7 +61,7 @@
 | `wechat-alert.js` | 企业微信群机器人告警（`sendWechatMarkdown`，通知中心 `broadcast` 收口） |
 | `payroll-notice.js` | 工资条发放：已发放工资条快照的持久化、签收、查询（PostgreSQL） |
 | `products.js` | 商品主档（PostgreSQL InventoryItem，POS 与商品中心共用） |
-| `v2.js` | `/api/v2` 业务接口：员工镜像、库存申请、发票、邮寄、资产、调货、采购、日薪调整、大单奖、告警等 |
+| `v2.js` | `/api/v2` 业务接口：员工镜像、库存申请、发票、邮寄、调货、采购、日薪调整、大单奖、告警等（**资产接口不在本文件**） |
 | `asset-center.js` / `asset-storage.js` / `asset-reminders.js` | 档案馆：文件、分类、版本、访问授权、到期提醒、COS 存储适配 |
 | `daily-entry-upgrade.js` | 门店业绩录入（PostgreSQL DailyEntry/DailyStoreStaff/DailyEntryAuditLog）与兼容同步 |
 | `analysis.js` | **Excel/分析文件解析相关逻辑**（读取商家报表 xlsx，映射门店/员工名称等），非运行中的经营分析聚合服务 |
@@ -84,7 +84,7 @@
 
 ### User（账号）
 - **权威源**：KV/JSON（`server/store.js` → Upstash `budu-db` 或本地 `db.json` 的 `users[]`）
-- **兼容/镜像**：Prisma `User` 模型（`prisma/schema.prisma`）——**迁移目标与部分关联用，非当前正式账号权威源**；登录/权限/账号管理全部走 `store.js`（`server/app.js` 的 `loadDb().users`）
+- **兼容/镜像**：Prisma `User` 模型存在于 `prisma/schema.prisma`（迁移目标）；**当前运行时无任何业务代码实际调用 `prisma.user`**（Model 存在 ≠ 运行时使用）；登录/权限/账号管理全部走 `store.js`（`server/app.js` 的 `loadDb().users`）
 - **迁移状态**：`scripts/migrate-kv-to-pg.mjs` 提供迁移能力，但**当前运行仍以 KV/JSON 为权威**
 
 ### Staff（员工主档）——多源兼容合并
@@ -93,7 +93,7 @@
 - **运行时员工列表**（`src/utils/selectors.js` `employeeList()`）存在**多源兼容合并**，按代码顺序为：
   1. `analysisEmployees()`（Analysis 员工数据）或 `analysisEmployeeMonthly(monthKey)`（按月），**兜底 `BASE_EMPLOYEES`（`src/data/baseEmployees.js` 静态主档）**
   2. `localStaffList()`（KV staff，经 userData），标记 `local: true`
-  3. 按**姓名**用 `Map` 合并（云端 Analysis/兜底数据 + KV staff，云端同名覆盖兜底），再过滤已删除员工（`removedStaff`）
+  3. 合并顺序（`[...source, ...local]` 按姓名 `Map`，后者覆盖前者）：**先以 Analysis 员工列表或 BASE_EMPLOYEES 静态兜底作为基础集合，再以 KV Staff（local）按同名员工覆盖/合并**；最终过滤已删除员工（`removedStaff`）。即优先级为：**KV Staff > Analysis 员工 > BASE_EMPLOYEES 静态兜底**（同名时 KV Staff 生效）
 - **结论**：**PG `Staff` 当前不是正式运行时权威读取源**，更接近**单向镜像 / 迁移准备层**；当前不存在完整的正式 PG Staff 主读取链路
 
 ### Schedule（排班）——区分周排班与按日值班
@@ -126,9 +126,9 @@
 
 ### Inventory（库存申请/调货/采购）
 - **权威源**：PostgreSQL `TransferRequest`/`TransferItem`/`PurchaseRequest`/`PurchaseItem`/`Supplier`（`server/v2.js`）
-- **兼容层**：KV/JSON `inventoryRequests{}`/`inventory{}`（`server/store.js`，旧数据/降级）；前端 `src/utils/inventoryAlerts.js` 轮询聚合
+- **兼容层**：KV/JSON `inventoryRequests[]`、`inventory[]`（`server/store.js` 中均为**数组**，旧数据/降级）；前端 `src/utils/inventoryAlerts.js` 轮询聚合
 - **库存余额/流水**：PostgreSQL `StockBalance`/`StockLedger`（采购入库等写入）
-- **特殊授权**：`hasInventoryTransferAll`（`shared/accountPermissions.js`，独立于模块授权的库存调拨全权限）
+- **跨门店能力**：`hasInventoryTransferAll`（`shared/accountPermissions.js`）在**调货模块权限**基础上扩展调货门店范围（详见第 5 节）
 
 ### Payroll（工资）——区分"工资计算"与"工资条发放"
 - **工资计算**：当前主要由**前端 selector/计算逻辑**（`src/utils/selectors.js`、`src/utils/payrollSlip.js`）结合多种输入完成：
@@ -149,7 +149,8 @@
 - **前端聚合**：`src/utils/inventoryAlerts.js` 8 秒轮询：调货/采购/发票/邮寄/资产/工资条/审批/通知中心多源合并（**兼容层**）
 
 ### 资产（档案馆）
-- **权威源**：PostgreSQL `AssetFile`/`AssetCategory`/`AssetFileVersion`/`AssetAccessGrant`/`AssetOperationLog`/`AssetReminder`（`server/asset-center.js`）
+- **权威源**：PostgreSQL `AssetFile`/`AssetCategory`/`AssetFileVersion`/`AssetAccessGrant`/`AssetOperationLog`/`AssetReminder`
+- **路由实现**：资产相关路由（config/categories/overview/files/reminders 等）由 **`server/asset-center.js`** 实现，经 `assetCenterRouter` 挂载至 `/api/v2` API 空间（`server/app.js` 的 v2 路由组）——**URL 前缀（/api/v2/asset-center/...）与实现文件（asset-center.js）需区分，不要误认为由 `v2.js` 实现**
 - **文件内容**：腾讯云 COS（`server/asset-storage.js`，`COS_BUCKET/REGION/SECRET_ID/SECRET_KEY` **配置后启用**；未配置则 dataUrl 直接入库）
 
 ### 发票 / 邮寄 / 大单奖 / 日薪调整
@@ -176,14 +177,19 @@
 
 - **角色**（`shared/accountPermissions.js` `ACTIVE_ROLES`）：
   `developer`（开发者）｜`admin`（管理员）｜`finance`（财务）｜`manager`（店长）｜`staff`（员工）｜`cashier`（门店收银）｜另有 `public`（**停用状态**：`status` 默认为 `disabled`，登录中间件对 `role === 'public'` 直接返回 403"账号已停用"——**不是当前可正常登录的展示角色**）
-- **Developer**：固定拥有**全部模块**（`normalizeModules` 对 developer 直接返回全 true，不受账号级调整影响）；拥有**完整账号治理能力**——可创建/管理账号、角色、模块/功能授权（`/api/admin/users` 系列接口仅 `requireDeveloper`）
+- **Developer**：固定拥有**全部模块**（`normalizeModules` 对 developer 直接返回全 true，不受账号级调整影响）；拥有**完整账号治理能力**——可创建/管理账号、角色、模块/功能授权。代码事实：账号管理接口使用中间件 **`requireAccountAdmin`**（`server/app.js`，实现为 `user.role !== 'developer'` 即拒绝，"仅开发者可管理账号与授权"）；注意业务事实（仅 Developer 可治理账号）与代码中间件名称（`requireAccountAdmin`）是两个层面，文档分别表述。另有 `requireDeveloper` 中间件（developer/finance/admin 均通过）用于门店创建等业务接口
 - **Admin / Finance**：默认拥有较完整模块权限（`defaultModuleKeys` 默认全模块）；但**不等于与 Developer 完全相同**——其模块权限经 `normalizeModules` 支持按账号调整/撤销（`source ? source[key] === true : defaults.has(key)`），且**不具备 Developer 专属的账号治理能力**
 - **Manager / Staff**：可见能力由 **账号模块授权（`user.permissions.modules`）+ 门店绑定（`storeKeys`）+ 数据范围（`scopeUserData`/`storeFilter`）** 共同决定，**不是统一固定全权限**（manager/staff 有各自默认模块集，可被开发者调整）
 - **Staff 的 POS 权限**：若账号获得 `store-pos` 模块授权，则**可以实际点单、收款**（`PosPage` 对具备 POS 权限的账号开放），**不是"POS 只读"**
 - **Cashier**：绑定**单一门店**（`validateCashierRole`：必须且仅绑定一家门店、不绑定员工）；模块权限固定为 **仅 `store-pos`**（`normalizeModules` 对 cashier 固定 POS）；POS 点单范围 = 绑定门店
-- **特殊库存权限**：`hasInventoryTransferAll`（`shared/accountPermissions.js`）是独立于模块授权的**调货/库存特殊授权**，可单独赋予
+- **调货跨门店权限（inventoryTransferAll）**：`hasInventoryTransferAll`（`shared/accountPermissions.js`）**不是脱离模块授权独立可用的完整功能**——调货路由仍受调货**模块权限**约束（`/api/v2` 统一中间件 `requireAnyModule([INVENTORY_TRANSFER])`，见 `server/app.js`）；`inventoryTransferAll` 仅**扩展调货业务的门店范围/跨门店能力**（`server/v2.js` 中 `sf = hasInventoryTransferAll(user) ? null : storeFilter(user)`，有该权限则不受绑定门店限制）。即：模块权限是基础授权条件，inventoryTransferAll 是调货范围内门店范围的扩展
 - **工资条权限**（`server/payroll-notice.js`）：超管（developer/finance/admin）全量；其余仅本人（绑定员工或 targetUsername）；发放仅超管；签收仅本人（开发者可代签）
-- **审批权限**（`server/approvals-core.js`）：提交人=发起账号；审批人=admin 角色（无 admin 账号回退超管）；抄送=提交人+财务+手动添加；归档/删除草稿仅超管
+- **审批权限**（`server/approvals-core.js`，以 `can*` 函数为准）：
+  - **草稿**：创建人（提交人）**可编辑、可删除自己的草稿**（`canDelete` = 草稿状态且（超管 或 提交人））；超管也可删除任意草稿
+  - **已驳回**：提交人可编辑并**重新提交**（`canEdit`/`canSubmit` 允许 rejected → pending）
+  - **待审批**：仅审批人可**通过/驳回**（`canDecide` = isApproverFor + pending）；提交人可**撤回**（`canWithdraw` = pending 且提交人）
+  - **已通过/已驳回**：仅超管可**归档**（`canArchive` = isSuperUser）
+  - **结论**：普通申请提交人**可以删除自己的草稿**，不是"删除草稿仅超管可执行"
 
 ---
 
@@ -221,11 +227,11 @@
 3. **DailyEntry 非事务双写**：`commitEntries()` 写 KV（`/api/userdata`）+ 逐条 upsert PG（`/api/v2/daily-entries`），**不是同一数据库事务**——KV/PG 之间可能短暂或长期不一致
 4. **PG 空结果与 KV 镜像残留**：PG 查询返回空数组时，前端兼容逻辑可能**不会完全清除已有 KV Entry 镜像**——旧 KV 数据可能继续显示
 5. **审批通知双写**：`server/approvals.js` 同时写 `approval_notifications`（旧表，兼容接口 `/v2/approvals/notifications`）与通知中心 `notifications`——两表独立、无事务联动，异常时可能不一致（旧表仅兼容用途，权威为通知中心）
-6. **Store 多源并存**：门店数据可能同时存在于**静态门店配置（`BASE_EMPLOYEES`/前端常量）、KV `stores[]`、PostgreSQL `Store`**——多源并存风险
+6. **Store 多源并存**：门店数据可能同时存在于**静态门店配置（`BASE_STORES`，`src/data/baseStores.js`）、KV `stores[]`、PostgreSQL `Store`**——多源并存风险
 7. **KV ↔ PG 迁移中**：`store.js`（users/staff/schedules/analysis/entries 兼容层）与 PG（DailyEntry 已升级）并存；`migrate-kv-to-pg.mjs` 提供迁移/对账能力，但**未全量完成**，存在同一业务两种读路径的风险
 8. **POS 会话**：购物车/待支付单存 `sessionStorage`（可丢失）；订单/支付以 PG 为准
 9. **资产文件**：COS 与 dataUrl 双模式，未配置 COS 时大文件直接入库（DB 膨胀风险）
-10. **工资条快照口径**：前端生成快照（`payrollSlip.js`）POST 入库，若前后端口径不一致（节假日规则等）可能生成不同结果；快照以入库值为准
+10. **工资条快照缺少服务端完整重算校验**：后端在工资条发放（`server/payroll-notice.js` POST /payroll-notices）过程中，**仅验证请求结构、periodKey 格式、snapshot 形状与 totalCents 为非负整数**，**没有基于服务器端完整工资规则重新计算并独立校验客户端提交的工资快照**。因此：如果客户端使用旧规则、数据被错误计算、数据被篡改，或前端逻辑与后端规则不同步，就可能生成错误的已发放工资条快照（PayrollNotice 以客户端提交的快照为准入库）。真正的技术整改（服务端完整重算与交叉校验）属于后续独立 Task，本文档仅记录风险
 11. **前端铃铛多源聚合**：`inventoryAlerts.js` 轮询多个接口合并展示，与通知中心存在重复通知可能（同一事件既走旧业务通知又走通知中心）
 
 ---
@@ -245,11 +251,11 @@
 - ✅ DailyEntry：PG = 权威方向；兼容双写仍存在（userdata + v2/daily-entries）；userdata.entries 仍可写；PG 空结果不清 KV 镜像风险；localStorage = 缓存/镜像
 - ✅ Analysis：未迁移 PG（migrate-kv-to-pg.mjs 不迁移 db.analysis）；server/analysis.js = Excel/文件解析；写入走 POST /api/analysis/upload、DELETE /api/analysis；userdata 可读但不可 PUT 写
 - ✅ Payroll：拆开"工资计算"（前端 selector + PG DailyEntry/经营快照 + KV/静态员工 + PG 大单奖/日薪调整）与"工资条发放"（PayrollNotice = 已发放快照）；DailyPayAdjustment/BigOrderBonus 属 PG
-- ✅ 权限：Developer 固定全模块 + 账号治理；Admin/Finance 默认较完整但可被按账号调整，无 Developer 治理能力；Manager/Staff 按模块授权+门店绑定+数据范围；Staff 有 POS 授权可实际点单收款；Cashier 单一门店固定 POS；Public 已停用（登录 403）；inventoryTransferAll 特殊授权单独说明
+- ✅ 权限：Developer 固定全模块 + 账号治理（中间件 `requireAccountAdmin`，仅 developer）；Admin/Finance 默认较完整但可被按账号调整，无 Developer 治理能力；Manager/Staff 按模块授权+门店绑定+数据范围；Staff 有 POS 授权可实际点单收款；Cashier 单一门店固定 POS；Public 已停用（登录 403）；inventoryTransferAll 是调货模块权限之内的门店范围扩展（非独立功能）；审批提交人可删除自己的草稿（canDelete = 草稿且超管或提交人），已驳回可重新提交、待审批可撤回、已通过/已驳回仅超管归档
 - ✅ /api/userdata：区分 GET 读取字段与 PUT 可写字段（9 个，不含 analysis）；非"纯废弃兼容层"
 - ✅ POS 核心域 = Product/Order/OrderItem/Payment/Refund/RefundItem/PaymentLog；StockBalance/StockLedger/WasteRecord/Expense/Member 分属 Inventory/Finance/Member 域；明确"销售后自动扣库存闭环未完成"
 - ✅ 基础设施：dbOk 仅检查 DATABASE_URL 存在；Sentry/COS/微信 = 配置后启用；GitHub Actions = 手动 workflow_dispatch；备份脚本存在（无法证明 Cron 启用）；Nginx 路径 = `deploy/nginx/`
-- ✅ 风险章节：补充 KV 整库覆盖、Staff 镜像失败、DailyEntry 非事务双写、PG 空结果 KV 残留、Store 多源
-- ✅ 引用修正：`src/utils/text.js`（无 src/i18n）、删除 NotificationPanel、`.env.local`、`docs/ARCHITECTURE_ANALYSIS.md`、auth.js 职责（utility，路由在 app.js）、analysis.js 职责
+- ✅ 风险章节：KV 整库覆盖、Staff KV→PG 镜像失败被忽略、DailyEntry 非事务双写、PG 空结果可能残留 KV 镜像、Store 静态（BASE_STORES）/KV/PG 多源、工资条客户端快照缺少服务端完整重算校验
+- ✅ 引用修正：`src/utils/text.js`（无 src/i18n）、删除 NotificationPanel、`.env.local`、`docs/ARCHITECTURE_ANALYSIS.md`、auth.js 职责（utility，路由在 app.js）、analysis.js 职责、资产路由由 `server/asset-center.js` 实现并挂载 `/api/v2`（非 v2.js）、inventory 兼容层为数组（inventoryRequests[]/inventory[]）
 - ✅ 删除硬编码数量（"13 处 broadcast"等）→ 改为"多个业务流程通过 broadcast/notification 兼容通知"；删除无法稳定证明的 OAuth Scope 限制描述
 - ✅ 不包含推测性结论、"应该已经/可能已经迁移"、未来计划写成现状、配置存在写成生产启用、Prisma Model 存在写成运行时权威源
