@@ -51,7 +51,7 @@ test('PWA 导航使用本地壳优先并后台更新', () => {
   const source = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
   assert.match(source, /caches\.match\('\/'\)/)
   assert.match(source, /return cached \|\| update/)
-  assert.match(source, /budu-shell-v9/)
+  assert.match(source, /budu-shell-v10/)
 })
 
 test('业务数据接口采用并行拉取', () => {

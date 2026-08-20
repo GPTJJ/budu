@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budu-shell-v9'
+const CACHE_NAME = 'budu-shell-v10'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
