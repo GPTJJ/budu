@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import Card from './Card'
-import { dailyRows, aggregate, storeName, monthLabel } from '../utils/selectors'
+import { dailyRows, periodDailyRows, periodStats, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
@@ -43,14 +43,14 @@ function TrendTooltip({ active, payload, label }) {
   )
 }
 
-export default function RevenueTrendChart({ month, store, day }) {
+export default function RevenueTrendChart({ month, store, day, weekStart }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
-  const rows = dailyRows(month, store)
-  const agg = aggregate(month, store)
-  const data = rows.map((r) => ({ d: r.d, revenue: r.inc, orders: r.ord }))
+  const rows = weekStart ? periodDailyRows(month, store, null, weekStart) : dailyRows(month, store)
+  const agg = periodStats(month, store, day, weekStart)
+  const data = rows.map((r) => ({ d: r.date ? r.date.slice(5) : r.d, revenue: r.inc, orders: r.ord }))
   const focus = day ? data.find((x) => x.d === day) : null
   const peak = Math.max(1, ...data.map((d) => d.revenue))
   const peakOrders = Math.max(1, ...data.map((d) => d.orders))
@@ -59,7 +59,9 @@ export default function RevenueTrendChart({ month, store, day }) {
     <Card
       title={t('营业额趋势')}
       subtitle={
-        day
+        weekStart
+          ? t('{start} 起 · {store} 自然周趋势', { start: weekStart, store: storeName(store) })
+          : day
           ? t('{month} · {store} 聚焦 {day}', {
               month: monthLabel(month, lang),
               store: storeName(store),
@@ -95,7 +97,9 @@ export default function RevenueTrendChart({ month, store, day }) {
           {t('订单数（单）')}
         </span>
     <span className="ml-auto hidden rounded-lg bg-slate-100 px-2 py-1 font-semibold text-slate-600 sm:block">
-          {day
+          {weekStart
+            ? t('周收入 ¥{inc} · {ord} 单', { inc: formatMoney(agg.inc), ord: agg.ord })
+            : day
             ? t('当日 ¥{inc} · {ord} 单', {
                 inc: formatMoney(focus ? focus.revenue : 0),
                 ord: focus ? focus.orders : 0,

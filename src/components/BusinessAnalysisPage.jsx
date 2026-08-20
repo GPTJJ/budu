@@ -21,7 +21,7 @@ function AnalysisSkeleton() {
   )
 }
 
-export default function BusinessAnalysisPage({ month, store, day, user, onBack }) {
+export default function BusinessAnalysisPage({ month, store, day, weekStart, user, onBack }) {
   const { t } = useI18n()
 
   return (
@@ -49,13 +49,13 @@ export default function BusinessAnalysisPage({ month, store, day, user, onBack }
       <Suspense fallback={<AnalysisSkeleton />}>
         <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
           <div className="xl:col-span-4">
-            <StoreRankingTable month={month} store={store} day={day} />
+            <StoreRankingTable month={month} store={store} day={day} weekStart={weekStart} />
           </div>
           <div className="xl:col-span-5">
-            <RevenueTrendChart month={month} store={store} day={day} />
+            <RevenueTrendChart month={month} store={store} day={day} weekStart={weekStart} />
           </div>
           <div className="xl:col-span-3">
-            <ChannelChart month={month} store={store} day={day} />
+            <ChannelChart month={month} store={store} day={day} weekStart={weekStart} />
           </div>
         </section>
       </Suspense>
@@ -63,10 +63,10 @@ export default function BusinessAnalysisPage({ month, store, day, user, onBack }
       <Suspense fallback={<AnalysisSkeleton />}>
         <section className="grid grid-cols-1 gap-5 xl:grid-cols-12">
           <div className="xl:col-span-5">
-            <EmployeePerformanceTable store={store} month={month} user={user} />
+            <EmployeePerformanceTable store={store} month={month} day={day} weekStart={weekStart} user={user} />
           </div>
           <div className="xl:col-span-7">
-            <ProductSalesTable month={month} store={store} />
+            <ProductSalesTable month={month} store={store} day={day} weekStart={weekStart} />
           </div>
         </section>
       </Suspense>

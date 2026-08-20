@@ -150,13 +150,13 @@ function StoreModal({ month, store, onClose }) {
   )
 }
 
-export default function StoreRankingTable({ month, store, day }) {
+export default function StoreRankingTable({ month, store, day, weekStart }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
   const [showModal, setShowModal] = useState(false)
-  const rows = ranking(month, store, day)
+  const rows = ranking(month, store, day, weekStart)
   const single = store !== 'all'
 
   return (
@@ -164,7 +164,9 @@ export default function StoreRankingTable({ month, store, day }) {
       <Card
         title={t('门店经营排行榜')}
         subtitle={
-          day
+          weekStart
+            ? t('{start} 起 · 按自然周营业收入排序', { start: weekStart })
+            : day
             ? t('{month} · {day} 按日', { month: monthLabel(month, lang), day })
             : t('{month} · 按营业收入排序', { month: monthLabel(month, lang) })
         }

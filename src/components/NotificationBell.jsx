@@ -15,6 +15,7 @@ import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
 import { api } from '../utils/api'
 import { useI18n } from '../i18n'
+import { notificationTargetView } from '../utils/notificationNavigation'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -44,18 +45,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
     if (item.type === 'center') {
       api(`/v2/notifications/read`, { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).catch(() => {})
       if (onNavigate) {
-        const target = item.target || ''
-        const viewMap = {
-          'staff-payroll': 'staff-payroll',
-          approval: 'approval',
-          'inventory-transfer': 'inventory-transfer',
-          'inventory-purchase': 'inventory-purchase',
-          'finance-invoice': 'finance-invoice',
-          'store-mailing': 'store-mailing',
-          'asset-center': 'asset-center',
-          staff: 'staff',
-        }
-        onNavigate(viewMap[target] || 'overview')
+        onNavigate(notificationTargetView(item.target))
       }
       return
     }

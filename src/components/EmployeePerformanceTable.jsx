@@ -19,14 +19,14 @@ function roiStyle(roi) {
   return 'bg-amber-50 text-amber-600'
 }
 
-export default function EmployeePerformanceTable({ store, month, user }) {
+export default function EmployeePerformanceTable({ store, month, day, weekStart, user }) {
   const { t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidden = isPublic || !user || user.role !== 'developer'
   const hidePersonal = isStore
   const hideBusiness = isStore
-  const entryRows = entryEmployeePerformance(store, month)
+  const entryRows = entryEmployeePerformance(store, month, day, weekStart)
   const hasEntryData = entryRows.length > 0
   const list = (hasEntryData ? entryRows : employeeList(store)).slice(0, 5)
 

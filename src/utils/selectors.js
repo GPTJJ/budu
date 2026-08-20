@@ -19,6 +19,7 @@ import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll
 import { APP_VERSION } from '../version'
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
+import { addWeeks, getWeekDays } from './schedule.js'
 
 export { STORES, MONTHS, EMPLOYEES, EMPLOYEE_MONTHLY, EMPLOYEE_MONTHS }
 
@@ -100,7 +101,17 @@ export function monthLabel(key, lang = 'zh') {
 
 export function prevMonthKey(monthKey) {
   const i = MONTHS.findIndex((m) => m.key === monthKey)
-  return i > 0 ? MONTHS[i - 1].key : null
+  if (i > 0) return MONTHS[i - 1].key
+  const [year, month] = String(monthKey).split('-').map(Number)
+  if (!year || !month) return null
+  const date = new Date(year, month - 2, 1)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function sameDayInMonth(day, targetMonth) {
+  const date = String(day || '')
+  const dayOfMonth = date.includes('-') ? date.slice(-2) : date.padStart(2, '0')
+  return `${targetMonth.slice(5)}-${dayOfMonth}`
 }
 
 export function allMonths() {
@@ -217,16 +228,52 @@ export function dailyRows(monthKey, storeKey) {
   return [...map.values()].sort((a, b) => a.d.localeCompare(b.d))
 }
 
-
-/** 某月某门店（或全部门店）的汇总指标 */
-export function aggregate(monthKey, storeKey) {
-  const rows = dailyRows(monthKey, storeKey)
+function aggregateRows(rows) {
   const agg = { days: rows.length }
   for (const f of SUM_FIELDS) agg[f] = 0
-  for (const r of rows) for (const f of SUM_FIELDS) agg[f] += r[f]
+  for (const r of rows) for (const f of SUM_FIELDS) agg[f] += Number(r[f]) || 0
   agg.avgOrder = agg.ord > 0 ? agg.inc / agg.ord : 0
   agg.dailyAvg = agg.days > 0 ? agg.inc / agg.days : 0
   return agg
+}
+
+/** 当前经营周期包含的完整业务日期；weekStart 优先于 day。 */
+export function periodDates(monthKey, day = null, weekStart = null) {
+  if (weekStart) return getWeekDays(weekStart).map((item) => item.date)
+  if (day) return [fullDateOf(monthKey, day)]
+  return dailyRows(monthKey, 'all').map((row) => `${monthKey}-${row.d.slice(3)}`)
+}
+
+/** 按日/自然周/整月读取每日经营数据；自然周允许跨月。 */
+export function periodDailyRows(monthKey, storeKey, day = null, weekStart = null) {
+  if (!weekStart) {
+    const rows = dailyRows(monthKey, storeKey)
+    return (day ? rows.filter((row) => row.d === day) : rows).map((row) => ({
+      ...row,
+      date: `${monthKey}-${row.d.slice(3)}`,
+    }))
+  }
+  const dates = getWeekDays(weekStart).map((item) => item.date)
+  const wanted = new Set(dates)
+  const months = [...new Set(dates.map((date) => date.slice(0, 7)))]
+  const rows = []
+  for (const key of months) {
+    for (const row of dailyRows(key, storeKey)) {
+      const date = `${key}-${row.d.slice(3)}`
+      if (wanted.has(date)) rows.push({ ...row, date })
+    }
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export function periodStats(monthKey, storeKey, day = null, weekStart = null) {
+  return aggregateRows(periodDailyRows(monthKey, storeKey, day, weekStart))
+}
+
+
+/** 某月某门店（或全部门店）的汇总指标 */
+export function aggregate(monthKey, storeKey) {
+  return aggregateRows(dailyRows(monthKey, storeKey))
 }
 
 export function changePct(cur, prev) {
@@ -240,13 +287,17 @@ export function pctText(pct) {
 }
 
 /** 门店经营排行（可按单店过滤） */
-export function ranking(monthKey, storeKey, day = null) {
+export function ranking(monthKey, storeKey, day = null, weekStart = null) {
   const rows = []
   const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   const pk = prevMonthKey(monthKey)
   for (const k of keys) {
-    const cur = day ? dayStats(monthKey, k, day) : aggregate(monthKey, k)
-    const prev = pk ? (day ? dayStats(pk, k, day) : aggregate(pk, k)) : null
+    const cur = periodStats(monthKey, k, day, weekStart)
+    const prev = weekStart
+      ? periodStats(monthKey, k, null, addWeeks(weekStart, -1))
+      : pk
+        ? periodStats(pk, k, day ? sameDayInMonth(day, pk) : null, null)
+        : null
     const st = allStores().find((s) => s.key === k)
     rows.push({
       key: k,
@@ -265,24 +316,20 @@ export function ranking(monthKey, storeKey, day = null) {
 }
 /** 按日统计（day 为 'MM-DD' 或 null；null 时统计整月） */
 export function dayStats(monthKey, storeKey, day) {
-  const rows = day
-    ? dailyRows(monthKey, storeKey).filter((r) => r.d === day)
-    : dailyRows(monthKey, storeKey)
-  const agg = { days: rows.length }
-  for (const f of SUM_FIELDS) agg[f] = 0
-  for (const r of rows) for (const f of SUM_FIELDS) agg[f] += r[f]
-  agg.avgOrder = agg.ord > 0 ? agg.inc / agg.ord : 0
-  agg.dailyAvg = agg.days > 0 ? agg.inc / agg.days : 0
-  return agg
+  return periodStats(monthKey, storeKey, day)
 }
 
-export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
-  const agg = day ? dayStats(monthKey, storeKey, day) : aggregate(monthKey, storeKey)
+export function kpiCards(monthKey, storeKey, day = null, lang = 'zh', weekStart = null) {
+  const agg = periodStats(monthKey, storeKey, day, weekStart)
   const monthAgg = aggregate(monthKey, storeKey)
   const pk = prevMonthKey(monthKey)
-  const prev = pk ? (day ? dayStats(pk, storeKey, day) : aggregate(pk, storeKey)) : null
+  const prev = weekStart
+    ? periodStats(monthKey, storeKey, null, addWeeks(weekStart, -1))
+    : pk
+      ? periodStats(pk, storeKey, day ? sameDayInMonth(day, pk) : null)
+      : null
   const prevMonthAgg = pk ? aggregate(pk, storeKey) : null
-  const rows = dailyRows(monthKey, storeKey)
+  const rows = weekStart ? periodDailyRows(monthKey, storeKey, null, weekStart) : dailyRows(monthKey, storeKey)
   const spark = (fn) => rows.map((r) => Math.round(fn(r) * 100) / 100)
   const fmt = (n) => n.toLocaleString('zh-CN')
   const pct = (cur, pv) => (prev && pv != null ? changePct(cur, pv) : null)
@@ -301,7 +348,9 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
       unit: '元',
       prefix: '¥',
       change: pct(agg.inc, prevInc),
-      note: day
+      note: weekStart
+        ? localize(lang, '自然周 {start} 起 · 对比上一自然周', { start: weekStart })
+        : day
         ? localize(lang, '当日 {day} · 环比上月同日', { day })
         : localize(lang, '营业 {days} 天 · 日均 ¥{money}', {
             days: agg.days,
@@ -331,7 +380,7 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
     },
     {
       key: 'dish',
-      label: localize(lang, '菜品销量'),
+      label: localize(lang, '商品销量'),
       value: fmt(agg.dish),
       unit: '份',
       prefix: '',
@@ -351,7 +400,7 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
       }),
       spark: spark((r) => r.dis),
     },
-    day
+    day || weekStart
       ? {
           key: 'monthTotal',
           label: localize(lang, '本月累计'),
@@ -374,8 +423,8 @@ export function kpiCards(monthKey, storeKey, day = null, lang = 'zh') {
         },
   ]
 }
-export function channelData(monthKey, storeKey, day = null) {
-  const agg = day ? dayStats(monthKey, storeKey, day) : aggregate(monthKey, storeKey)
+export function channelData(monthKey, storeKey, day = null, weekStart = null) {
+  const agg = periodStats(monthKey, storeKey, day, weekStart)
   return [
     { name: '店内销售', value: agg.inStore, color: '#A855F7' },
     { name: '美团外卖', value: agg.mt, color: '#F472B6' },
@@ -595,15 +644,18 @@ export function employeeList(storeKey, monthKey = null) {
 }
 
 /** 员工绩效（根据每日门店业绩录入实时分析：营业额/订单按值班人数均摊） */
-export function entryEmployeePerformance(storeKey = 'all', monthKey = null) {
+export function entryEmployeePerformance(storeKey = 'all', monthKey = null, day = null, weekStart = null) {
   const entries = localEntries()
   const map = new Map()
-  const payrollMap = monthKey ? entryMonthPayroll(monthKey) : new Map()
+  const selectedDates = day || weekStart ? new Set(periodDates(monthKey, day, weekStart)) : null
+  const payrollMap = monthKey && !selectedDates ? entryMonthPayroll(monthKey) : new Map()
   const hasPayroll = monthKey != null && payrollMap.size > 0
   for (const [key, v] of Object.entries(entries)) {
     const parts = key.split('|')
     if (parts.length !== 3 || parts[1] === 'all') continue
-    if (monthKey && parts[0] !== monthKey) continue
+    if (monthKey && !selectedDates && parts[0] !== monthKey) continue
+    const fullDate = `${parts[0]}-${parts[2].slice(3)}`
+    if (selectedDates && !selectedDates.has(fullDate)) continue
     if (storeKey !== 'all' && parts[1] !== storeKey) continue
     if (!Array.isArray(v.staff) || v.staff.length === 0) continue
     const inc = Number(v.inc) || 0
@@ -622,8 +674,32 @@ export function entryEmployeePerformance(storeKey = 'all', monthKey = null) {
     .map((e) => {
       const info = infoMap.get(e.name)
       const pr = payrollMap.get(e.name)
-      const salary = hasPayroll ? (info ? info.salary || 0 : 0) : info ? info.salary || 0 : 0
-      const hours = hasPayroll ? (info ? info.hours || 0 : 0) : info ? (info.baseHours || 0) + (info.otHours || 0) : 0
+      const periodPay = selectedDates
+        ? [...selectedDates].reduce(
+            (sum, date) => {
+              const status = employeeDayStatus(date.slice(0, 7), date.slice(5), e.name)
+              if (status) {
+                sum.salary += status.pay || 0
+                sum.hours += status.hours || 0
+                sum.commission += status.commission || 0
+              }
+              return sum
+            },
+            { salary: 0, hours: 0, commission: 0 },
+          )
+        : null
+      const salary = periodPay
+        ? periodPay.salary
+        : hasPayroll
+          ? info?.salary || 0
+          : info?.salary || 0
+      const hours = periodPay
+        ? periodPay.hours
+        : hasPayroll
+          ? info?.hours || 0
+          : info
+            ? (info.baseHours || 0) + (info.otHours || 0)
+            : 0
       return {
         ...e,
         workedDays: hasPayroll ? (pr ? pr.workedDays : 0) : e.workedDays,
@@ -631,7 +707,7 @@ export function entryEmployeePerformance(storeKey = 'all', monthKey = null) {
         storeName: pr ? pr.storeName : info ? info.storeName : '多店支援',
         salary,
         hours,
-        commission: hasPayroll ? (pr ? pr.commission : 0) : 0,
+        commission: periodPay ? periodPay.commission : hasPayroll ? (pr ? pr.commission : 0) : 0,
         roi: e.workedRevenue > 0 && salary > 0 ? e.workedRevenue / salary : 0,
         workedRevenue: Math.round(e.workedRevenue * 100) / 100,
         orders: Math.round(e.orders * 100) / 100,
@@ -769,42 +845,46 @@ export function notices(monthKey, day = null, lang = 'zh') {
   return out.slice(0, 5)
 }
 /** 菜品销售明细（按所选月份/门店合并，按销售额降序；all 表示跨店同名合并） */
-export function products(monthKey, storeKey) {
+export function products(monthKey, storeKey, day = null, weekStart = null) {
   const keys = storeKey === 'all' ? allStoreKeys() : [storeKey]
   const map = new Map()
-  for (const k of keys) {
-    for (const p of (getAnalysis().products || {})[monthKey]?.[k] || (PRODUCTS[monthKey] || {})[k] || []) {
-      let cur = map.get(p.name)
-      if (!cur) {
-        cur = { name: p.name, sales: 0, amount: 0, income: 0, discount: 0 }
-        map.set(p.name, cur)
+  const selectedDates = day || weekStart ? new Set(periodDates(monthKey, day, weekStart)) : null
+  if (!selectedDates) {
+    for (const k of keys) {
+      for (const p of (getAnalysis().products || {})[monthKey]?.[k] || (PRODUCTS[monthKey] || {})[k] || []) {
+        let cur = map.get(p.name)
+        if (!cur) {
+          cur = { name: p.name, sales: 0, amount: 0, income: 0, discount: 0 }
+          map.set(p.name, cur)
+        }
+        cur.sales += p.sales
+        cur.amount += p.amount
+        cur.income += p.income
+        cur.discount += p.discount
       }
-      cur.sales += p.sales
-      cur.amount += p.amount
-      cur.income += p.income
-      cur.discount += p.discount
+    }
+    // 自定义商品：按门店独立展示；单店视图下同名商品覆盖报表商品
+    for (const p of getProducts()) {
+      if (storeKey !== 'all' && p.storeKey !== storeKey) continue
+      const key = storeKey === 'all' ? `${p.storeKey}::${p.name}` : p.name
+      map.set(key, {
+        id: p.id,
+        name: p.name,
+        storeKey: p.storeKey,
+        storeName: storeName(p.storeKey),
+        price: p.price || 0,
+        note: p.note || '',
+        sales: 0,
+        amount: 0,
+        income: 0,
+        discount: 0,
+        custom: true,
+      })
     }
   }
-  // 自定义商品：按门店独立展示；单店视图下同名商品覆盖报表商品
-  for (const p of getProducts()) {
-    if (storeKey !== 'all' && p.storeKey !== storeKey) continue
-    const key = storeKey === 'all' ? `${p.storeKey}::${p.name}` : p.name
-    map.set(key, {
-      id: p.id,
-      name: p.name,
-      storeKey: p.storeKey,
-      storeName: storeName(p.storeKey),
-      price: p.price || 0,
-      note: p.note || '',
-      sales: 0,
-      amount: 0,
-      income: 0,
-      discount: 0,
-      custom: true,
-    })
-  }
   for (const row of getPosProductSales()) {
-    if (!String(row.date || '').startsWith(monthKey)) continue
+    const rowDate = String(row.date || '').slice(0, 10)
+    if (selectedDates ? !selectedDates.has(rowDate) : !rowDate.startsWith(monthKey)) continue
     if (storeKey !== 'all' && row.storeKey !== storeKey) continue
     const amount = Number(row.amountCents) / 100
     const cur = map.get(row.name)

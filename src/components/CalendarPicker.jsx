@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { CalendarDays, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { useI18n, WEEK_EN } from '../i18n'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
+import { getWeekDays } from '../utils/schedule'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -49,7 +50,7 @@ function mondayOf(dateStr) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
+export default function CalendarPicker({ month, day, weekStart, onSelect, onWeekSelect }) {
   const { lang, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(month)
@@ -63,6 +64,9 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
 
   const cells = buildMonthCells(viewMonth)
   const jumpToday = () => setViewMonth(today.slice(0, 7))
+  const weekDays = weekStart ? getWeekDays(weekStart) : []
+  const selectedWeek = new Set(weekDays.map((item) => item.date))
+  const weekEnd = weekDays[6]?.date || ''
 
   return (
     <div className="relative block shrink-0">
@@ -74,11 +78,15 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
       >
         <CalendarDays className={`h-4 w-4 ${day ? 'text-budu-500' : 'text-budu-500'}`} />
         <span className="font-semibold text-slate-600">
-          {day ? `${fmtMonth(month, lang)} · ${day}` : fmtMonth(month, lang)}
+          {weekStart
+            ? `${weekStart.slice(5)} ~ ${weekEnd.slice(5)}`
+            : day
+              ? `${fmtMonth(month, lang)} · ${day}`
+              : fmtMonth(month, lang)}
         </span>
-        {day && (
+        {(day || weekStart) && (
           <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">
-            {t('按日')}
+            {t(weekStart ? '按周' : '按日')}
           </span>
         )}
         <ChevronDown className={`h-3.5 w-3.5 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -145,6 +153,7 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
                 const full = fullDateOf(viewMonth, d)
                 const isToday = fullDateOf(viewMonth, d) === today
                 const selected = day === d && month === viewMonth
+                const inSelectedWeek = selectedWeek.has(full)
                 const isHolidayDay = HOLIDAYS_2026.has(full)
                 const isMakeupDay = WORKDAYS_2026.has(full)
                 const dow = new Date(`${full}T00:00:00`).getDay()
@@ -159,6 +168,8 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
                     className={`relative mx-auto grid h-9 w-9 place-items-center rounded-xl text-[13px] font-medium transition ${
                       selected
                         ? 'bg-budu-500 text-white shadow-sm/60'
+                        : inSelectedWeek
+                          ? 'bg-budu-100 text-budu-700 ring-1 ring-budu-200'
                         : isToday
                           ? 'text-budu-600 ring-2 ring-budu-200 hover:bg-budu-50'
                           : isMakeupDay
@@ -198,11 +209,13 @@ export default function CalendarPicker({ month, day, onSelect, onWeekSelect }) {
               {onWeekSelect && (
                 <button
                   onClick={() => {
-                    const base = fullDateOf(
-                      viewMonth,
-                      day || (viewMonth === today.slice(0, 7) ? today.slice(8) : '01'),
-                    )
-                    onWeekSelect(mondayOf(base))
+                    const base = weekStart && weekDays.some((item) => item.date.startsWith(viewMonth))
+                      ? weekStart
+                      : fullDateOf(
+                          viewMonth,
+                          day || (viewMonth === today.slice(0, 7) ? today.slice(8) : '01'),
+                        )
+                    onWeekSelect(mondayOf(base), viewMonth)
                     setOpen(false)
                   }}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-budu-100 bg-budu-50/60 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"

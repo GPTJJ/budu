@@ -9,10 +9,12 @@ export default function Header({
   month,
   store,
   day,
+  weekStart,
   title,
   showOverviewTools = false,
   onDaySelect,
   onMonthChange,
+  onWeekSelect,
   onStoreChange,
   onMenuClick,
   onNavigate,
@@ -84,7 +86,13 @@ export default function Header({
           {showOverviewTools && (
             <>
               {/* 日历选择（月 / 日双模式） */}
-              <CalendarPicker month={month} day={day} onSelect={onDaySelect} />
+              <CalendarPicker
+                month={month}
+                day={day}
+                weekStart={weekStart}
+                onSelect={onDaySelect}
+                onWeekSelect={onWeekSelect}
+              />
 
               {/* 门店选择 */}
               <label className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-200/70 bg-white/80 px-3 py-2 text-sm shadow-sm transition hover:border-slate-300">

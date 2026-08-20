@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>BUDU Home Workspace Test</title>
+  </head>
+  <body class="m-0 bg-canvas">
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import HomeWorkspace from '/src/components/HomeWorkspace.jsx'
+      import { I18nProvider } from '/src/i18n.jsx'
+      import { PublicModeProvider } from '/src/visibility.jsx'
+      import '/src/index.css'
+
+      const data = {
+        entries: {
+          '2026-08|tongying|08-20': { inc: 12800, ord: 128, staff: ['测试员工'] },
+          '2026-08|guanshe|08-20': { inc: 6800, ord: 72, staff: ['测试员工'] },
+          '2026-08|chaowai|08-20': { inc: 5300, ord: 60, staff: ['测试员工'] },
+        },
+        staff: [],
+        removedStaff: [],
+        stores: [{ key: 'xidan', name: '北京西单店', district: '北京' }],
+        schedules: {},
+        products: [],
+        inventoryRequests: [],
+        inventory: [],
+        analysis: {},
+        productImages: {},
+        bigBonuses: [],
+        dailyPayAdjustments: [],
+        posDaily: [],
+        posProductSales: [],
+      }
+      localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify(data))
+      const role = new URLSearchParams(location.search).get('role') || 'developer'
+
+      const onNavigate = (view) => {
+        document.documentElement.dataset.navigation = view
+      }
+
+      createRoot(document.getElementById('root')).render(
+        React.createElement(I18nProvider, null,
+          React.createElement(PublicModeProvider, { isPublic: role === 'public', isStore: role === 'store' },
+            React.createElement('main', { className: 'mx-auto w-full max-w-[720px] px-3 py-4' },
+              React.createElement(HomeWorkspace, {
+                month: '2026-08',
+                store: 'all',
+                day: '08-20',
+                weekStart: null,
+                user: { id: 'dev-1', username: role === 'public' ? 'public' : 'developer', role, storeKeys: role === 'store' ? ['tongying'] : [] },
+                onNavigate,
+                onSelectStore: (store) => { document.documentElement.dataset.store = store },
+              }),
+            ),
+          ),
+        ),
+      )
+    </script>
+  </body>
+</html>

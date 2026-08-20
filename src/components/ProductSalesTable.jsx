@@ -61,11 +61,11 @@ const THUMB_BG = [
 const isGiftLike = (name) => /赠品|临时商品/.test(name)
 
 /** 商品销售明细弹窗 */
-function ProductModal({ month, store, onClose, onOpenProduct }) {
+function ProductModal({ month, store, day, weekStart, onClose, onOpenProduct }) {
   const { lang, t } = useI18n()
   const [showGift, setShowGift] = useState(false)
   const images = getProductImages()
-  const all = products(month, store)
+  const all = products(month, store, day, weekStart)
   const list = showGift ? all : all.filter((p) => !isGiftLike(p.name))
   const totalAmount = list.reduce((s, p) => s + p.amount, 0)
   const maxAmount = list[0]?.amount || 1
@@ -94,8 +94,8 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('商品销售明细')}</h3>
             <p className="mt-1 text-xs text-slate-400">
-              {t('{month} · {store} · 按销售额排序', {
-                month: monthLabel(month, lang),
+              {t('{period} · {store} · 按销售额排序', {
+                period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month, lang),
                 store: storeName(store),
               })}
             </p>
@@ -224,14 +224,14 @@ function ProductModal({ month, store, onClose, onOpenProduct }) {
   )
 }
 
-export default function ProductSalesTable({ month, store, onOpenProduct }) {
+export default function ProductSalesTable({ month, store, day, weekStart, onOpenProduct }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
   const images = getProductImages()
   const [showModal, setShowModal] = useState(false)
-  const all = products(month, store)
+  const all = products(month, store, day, weekStart)
   const visible = all.filter((p) => !isGiftLike(p.name))
   const rows = visible.slice(0, 10)
   const summary = visible.reduce(
@@ -251,8 +251,8 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
     <>
       <Card
         title={t('商品销售 TOP10')}
-        subtitle={t('{month} · {store} · 按销售额排序', {
-          month: monthLabel(month, lang),
+        subtitle={t('{period} · {store} · 按销售额排序', {
+          period: weekStart ? `${weekStart} 起自然周` : day ? `${month}-${day.slice(3)}` : monthLabel(month, lang),
           store: storeName(store),
         })}
         action={
@@ -364,6 +364,8 @@ export default function ProductSalesTable({ month, store, onOpenProduct }) {
         <ProductModal
           month={month}
           store={store}
+          day={day}
+          weekStart={weekStart}
           onClose={() => setShowModal(false)}
           onOpenProduct={onOpenProduct}
         />

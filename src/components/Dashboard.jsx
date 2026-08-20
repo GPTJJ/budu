@@ -1,14 +1,13 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
-import KpiCard from './KpiCard'
-import NotificationPanel from './NotificationPanel'
+import HomeWorkspace from './HomeWorkspace'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import PageLoading from './LoadingSkeleton'
 import PullToRefresh from './PullToRefresh'
 import { APP_VERSION } from '../version'
-import { allStores, kpiCards } from '../utils/selectors'
+import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { useI18n } from '../i18n'
 import { PublicModeProvider } from '../visibility'
@@ -77,6 +76,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     const d = new Date()
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` // 默认当天
   })
+  const [weekStart, setWeekStart] = useState(null)
   const [view, setView] = useState(() => (
     user?.role !== 'public' && typeof window !== 'undefined' && window.location.hash === '#pos' ? 'store-pos' : 'overview'
   ))
@@ -101,7 +101,6 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return () => window.clearTimeout(timer)
   }, [])
 
-  const cards = kpiCards(month, store, day, lang)
   const isStaffView = view === 'staff'
   const isAnalysisView = view === 'analysis'
   const isPayrollView = view === 'staff-payroll'
@@ -228,6 +227,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             month={month}
             store={store}
             day={day}
+            weekStart={weekStart}
             title={view === 'overview' ? null : pageTitles[view]}
             showOverviewTools={view === 'overview' || isAnalysisView}
             user={user}
@@ -235,10 +235,17 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             onDaySelect={(m, d) => {
               setMonth(m)
               setDay(d)
+              setWeekStart(null)
+            }}
+            onWeekSelect={(start, anchorMonth) => {
+              setMonth(anchorMonth || start.slice(0, 7))
+              setDay(null)
+              setWeekStart(start)
             }}
             onMonthChange={(m) => {
               setMonth(m)
               setDay(null)
+              setWeekStart(null)
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
@@ -255,6 +262,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   month={month}
                   store={store}
                   day={day}
+                  weekStart={weekStart}
                   user={user}
                   onBack={returnToOverview}
                 />
@@ -303,17 +311,15 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <AssetCenterPage user={user} onBack={returnToOverview} />
               ) : (
                 <>
-                  {/* 核心 KPI 统计（首屏立即渲染，零图表依赖） */}
-                  <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-3 2xl:grid-cols-6">
-                    {cards.map((card, i) => (
-                      <KpiCard key={card.key} card={card} featured={i === 0} />
-                    ))}
-                  </section>
-
-                  {/* 首页只保留提醒；经营图表统一在“经营分析”中按需加载。 */}
-                  <section className="w-full">
-                    <NotificationPanel month={month} day={day} user={user} />
-                  </section>
+                  <HomeWorkspace
+                    month={month}
+                    store={store}
+                    day={day}
+                    weekStart={weekStart}
+                    user={user}
+                    onNavigate={handleNavigate}
+                    onSelectStore={setStore}
+                  />
                 </>
               )}
               </Suspense>

@@ -1,7 +1,7 @@
 import { MoreHorizontal } from 'lucide-react'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import Card from './Card'
-import { channelData, aggregate, storeName, monthLabel } from '../utils/selectors'
+import { channelData, periodStats, storeName, monthLabel } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { useI18n } from '../i18n'
 import { usePublicMode, useStorePrivacy } from '../visibility'
@@ -34,13 +34,13 @@ function ChannelTooltip({ active, payload }) {
   )
 }
 
-export default function ChannelChart({ month, store, day }) {
+export default function ChannelChart({ month, store, day, weekStart }) {
   const { lang, t } = useI18n()
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hide = isPublic || isStore
-  const data = channelData(month, store, day)
-  const agg = aggregate(month, store)
+  const data = channelData(month, store, day, weekStart)
+  const agg = periodStats(month, store, day, weekStart)
   const total = data.reduce((s, x) => s + x.value, 0) || 1
   const withPct = data.map((x) => ({ ...x, pct: ((x.value / total) * 100).toFixed(1), displayColor: colorFor(x.name) }))
 
@@ -48,7 +48,9 @@ export default function ChannelChart({ month, store, day }) {
     <Card
       title={t('渠道销售构成')}
       subtitle={
-        day
+        weekStart
+          ? t('{start} 起 · {store} 按自然周', { start: weekStart, store: storeName(store) })
+          : day
           ? t('{month} · {store} {day} 按日', {
               month: monthLabel(month, lang),
               store: storeName(store),
