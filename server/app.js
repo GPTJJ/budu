@@ -13,7 +13,7 @@ import { posRouter } from './pos.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
 import { approvalRouter, ensureApprovalTemplates } from './approvals.js'
 import { notificationRouter } from './notifications.js'
-import { wechatBindRouter } from './wechat-bind.js'
+import { wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { assetCenterRouter } from './asset-center.js'
@@ -508,6 +508,8 @@ export function createApp() {
     dbOk: dbReady(),
   }))
   app.use('/api/payments', paymentCallbackRouter)
+  // 企业微信接收消息服务器验证（公开：企业微信服务器回调，无登录态）
+  app.use('/api/v2/wechat/recv', wechatRecvRouter)
   // v2 路由组：POS 对门店收银开放；其余业务接口（业绩/库存/发票/资产/商品中心等）对收银隐藏
   app.use('/api/v2', requireAuth)
   app.use('/api/v2', posRouter)

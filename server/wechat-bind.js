@@ -8,6 +8,8 @@ import { httpError } from './pos-core.js'
 import { wechatPersonalConfig } from './notification-center.js'
 
 export const wechatBindRouter = Router()
+/** 企业微信接收消息服务器验证（公开，无需登录）：GET 校验签名并解密 echostr 应答 */
+export const wechatRecvRouter = Router()
 
 const wrap = (fn) => async (req, res) => {
   try {
@@ -134,3 +136,49 @@ async function wecomToken(cfg) {
     return ''
   }
 }
+
+// ---------------- 企业微信接收消息服务器验证（URL/Token/EncodingAESKey 校验） ----------------
+const RECV_TOKEN = process.env.WXWORK_RECV_TOKEN || 'budu2025'
+const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || 'HkmvnowRA81CWOVk7nPPvzpDyhfwZEU8gGNoCUCuS'
+
+/** sha1 签名校验（企业微信标准：token/timestamp/nonce/echostr 字典序拼接） */
+function wecomSign(token, timestamp, nonce, echostr) {
+  const str = [token, timestamp, nonce, echostr].sort().join('')
+  return crypto.createHash('sha1').update(str).digest('hex')
+}
+
+/** AES-256-CBC 解密（EncodingAESKey → key，IV = key 前 16 字节；PKCS7） */
+function decryptWecomMsg(encodingAESKey, encryptedBase64) {
+  const aesKey = Buffer.from(`${encodingAESKey}=`, 'base64')
+  const iv = aesKey.subarray(0, 16)
+  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv)
+  decipher.setAutoPadding(false)
+  const decrypted = Buffer.concat([decipher.update(Buffer.from(encryptedBase64, 'base64')), decipher.final()])
+  // 格式：16 字节 random + 4 字节网络序 msgLen + msg + receiveId
+  const content = decrypted.subarray(16)
+  const msgLen = content.readUInt32BE(0)
+  return content.subarray(4, 4 + msgLen).toString('utf8')
+}
+
+/** 验证 URL：GET ?msg_signature&timestamp&nonce&echostr → 返回解密后的 echostr 明文 */
+wechatRecvRouter.get('/', (req, res) => {
+  const { msg_signature, timestamp, nonce, echostr } = req.query
+  if (!msg_signature || !timestamp || !nonce || !echostr) {
+    return res.status(400).send('invalid params')
+  }
+  const sign = wecomSign(RECV_TOKEN, String(timestamp), String(nonce), String(echostr))
+  if (sign !== String(msg_signature)) {
+    return res.status(403).send('sign mismatch')
+  }
+  try {
+    const plain = decryptWecomMsg(RECV_AES_KEY, String(echostr))
+    res.send(plain)
+  } catch (e) {
+    res.status(500).send('decrypt error')
+  }
+})
+
+/** 消息推送（POST 加密 JSON）——通知中心二期可接收企微事件；先应答 success 保证验证通过 */
+wechatRecvRouter.post('/', (req, res) => {
+  res.send('success')
+})

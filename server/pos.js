@@ -250,7 +250,12 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
 
   const store = await prisma.store.findUnique({ where: { key: storeId } })
   if (!store) throw httpError('门店不存在，请先同步门店资料', 404)
-  const products = await prisma.inventoryItem.findMany({ where: { id: { in: normalizedItems.map((item) => item.productId) } } })
+  // 查询商品 + combo 口味商品（口味名解析需要）
+  const needIds = new Set(normalizedItems.map((item) => item.productId))
+  for (const item of normalizedItems) {
+    if (Array.isArray(item.comboFlavorIds)) for (const id of item.comboFlavorIds) needIds.add(id)
+  }
+  const products = await prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
   const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
   const now = new Date()
   const businessDate = new Date(`${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00.000Z`)

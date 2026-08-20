@@ -33,9 +33,12 @@ export const giftLineKey = (productId) => `${productId}::g`
 
 export function parseLineKey(key) {
   const text = String(key || '')
-  const idx = text.lastIndexOf('::')
-  if (idx <= 0) return { productId: text, gift: false }
-  return { productId: text.slice(0, idx), gift: text.slice(idx + 2) === 'g' }
+  // combo 行形如 `${productId}::n::bb,id1,id2,id3,id4`（或 gift 版 ::g::bb,...）
+  const comboIdx = text.indexOf('::bb,')
+  const base = comboIdx > 0 ? text.slice(0, comboIdx) : text
+  const idx = base.lastIndexOf('::')
+  if (idx <= 0) return { productId: base, gift: false }
+  return { productId: base.slice(0, idx), gift: base.slice(idx + 2) === 'g' }
 }
 
 /** 兼容旧购物车格式：{ productId: 数量 } → { productId::n: 数量 } */

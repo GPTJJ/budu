@@ -25,19 +25,24 @@ export function normalizeCartItems(raw) {
     const productId = String(row.productId ?? '').trim()
     const quantity = Number(row.quantity)
     const gift = row.gift === true
+    const comboFlavorIds = Array.isArray(row.comboFlavorIds)
+      ? row.comboFlavorIds.map((id) => String(id ?? '').trim()).filter(Boolean).slice(0, 20)
+      : []
     if (!productId || productId.length > 100) throw httpError('商品 ID 不正确')
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
       throw httpError('商品数量应为 1-999 的整数')
     }
+    if (comboFlavorIds.length > 0 && comboFlavorIds.length !== 4) throw httpError('礼盒搭配需选择 4 款口味')
     // 收费与赠送分开归并：同一商品可同时存在“收费行”和“赠送行”
-    const key = `${productId}\u0000${gift ? 'gift' : 'normal'}`
-    const prev = lines.get(key) || { productId, quantity: 0, gift }
+    const comboKey = comboFlavorIds.length ? `\u0001${comboFlavorIds.join(',')}` : ''
+    const key = `${productId}\u0000${gift ? 'gift' : 'normal'}${comboKey}`
+    const prev = lines.get(key) || { productId, quantity: 0, gift, comboFlavorIds }
     const next = prev.quantity + quantity
     if (next > 999) throw httpError('同一商品数量不能超过 999')
-    lines.set(key, { productId, quantity: next, gift })
+    lines.set(key, { productId, quantity: next, gift, comboFlavorIds })
   }
   return [...lines.values()]
-    .map((line) => ({ productId: line.productId, quantity: line.quantity, gift: line.gift }))
+    .map((line) => ({ productId: line.productId, quantity: line.quantity, gift: line.gift, comboFlavorIds: line.comboFlavorIds }))
     .sort((a, b) => a.productId.localeCompare(b.productId) || Number(a.gift) - Number(b.gift))
 }
 
@@ -53,7 +58,7 @@ export function buildOrderSnapshot(products, items, options = {}) {
   }
   const remark = String(options.remark ?? '').slice(0, 200)
   const byId = new Map(products.map((product) => [product.id, product]))
-  const lines = items.map(({ productId, quantity, gift }) => {
+  const lines = items.map(({ productId, quantity, gift, comboFlavorIds }) => {
     const product = byId.get(productId)
     if (!product || !product.isActive || !product.sku || product.salePriceCents == null || product.costPriceCents == null) {
       throw httpError('订单中包含不存在、未上架或资料不完整的商品', 409)
@@ -62,9 +67,18 @@ export function buildOrderSnapshot(products, items, options = {}) {
     const costPriceSnapshot = BigInt(product.costPriceCents)
     const isGift = gift === true
     const lineAmount = isGift ? 0n : unitPrice * BigInt(quantity)
+    // Balls 礼盒搭配：口味明细拼进商品名快照（订单/小票可追溯）
+    let productNameSnapshot = product.name
+    if (Array.isArray(comboFlavorIds) && comboFlavorIds.length > 0) {
+      const flavorNames = comboFlavorIds.map((id) => {
+        const f = byId.get(id)
+        return f ? String(f.name).replace(/^巧克力豆\./, '') : id
+      })
+      productNameSnapshot = `${product.name}（${flavorNames.join(' / ')}）`
+    }
     return {
       productId: product.id,
-      productNameSnapshot: product.name,
+      productNameSnapshot,
       skuSnapshot: product.sku,
       skuId: product.sku || '',
       unitSnapshot: product.unit || '',

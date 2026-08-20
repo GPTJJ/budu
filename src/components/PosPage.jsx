@@ -72,6 +72,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [cashConfirm, setCashConfirm] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
   const [showOrders, setShowOrders] = useState(false)
+  // Balls 礼盒搭配面板
+  const [comboProduct, setComboProduct] = useState(null)
+  const [comboSlots, setComboSlots] = useState([])
+  const [comboActiveSlot, setComboActiveSlot] = useState(0)
+  const [comboReady, setComboReady] = useState(false)
   const [discount, setDiscount] = useState('10')
   const [remark, setRemark] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => (
@@ -202,10 +207,20 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       return !q || [product.name, product.sku, product.barcode].some((value) => String(value || '').toLowerCase().includes(q))
     })
   }, [products, query, category])
+  // Balls 礼盒：SKU 前缀识别 combo 商品；口味候选 = 同分类非 combo 商品
+  const isComboProduct = (product) => /BUDU-CHOC-BALLS/i.test(String(product?.sku || ''))
+  const comboFlavors = useMemo(() => products.filter((p) => p.posCategory === '巧克力豆' && !isComboProduct(p)), [products])
   const cartLines = useMemo(() => Object.entries(cart)
     .map(([key, quantity]) => {
       const { productId, gift } = parseLineKey(key)
-      return { key, product: productMap.get(productId), quantity: Number(quantity), gift }
+      // combo 行 key 形如 `${productId}::n::bb,id1,id2,id3,id4`
+      const comboPart = String(key).split('::')[2]
+      const comboIds = comboPart && comboPart.startsWith('bb,') ? comboPart.split(',').slice(1) : []
+      const comboNames = comboIds.map((id) => {
+        const f = productMap.get(id)
+        return f ? String(f.name).replace(/^巧克力豆\./, '') : id
+      })
+      return { key, product: productMap.get(productId), quantity: Number(quantity), gift, comboIds, comboNames }
     })
     .filter((line) => line.product && Number.isInteger(line.quantity) && line.quantity > 0), [cart, productMap])
   const cartCount = cartLines.reduce((sum, line) => sum + line.quantity, 0)
@@ -229,6 +244,25 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     invalidateCheckout()
     setCart(changeCartQuantity(cart, lineKey, delta))
   }
+  /** 商品点击加购：combo 商品（Balls 礼盒）打开搭配面板，其余直接 +1 */
+  const addProduct = (product) => {
+    if (isComboProduct(product)) {
+      setComboProduct(product)
+      setComboSlots(['', '', '', ''])
+      setComboActiveSlot(0)
+      setComboReady(false)
+      return
+    }
+    changeQuantity(normalLineKey(product.productId), 1)
+  }
+  /** combo 行加减：同口味组合合并数量 */
+  const changeComboQuantity = (line, delta) => {
+    const key = comboLineKey(line.product.productId, line.comboIds)
+    invalidateCheckout()
+    setCart(changeCartQuantity(cart, key, delta))
+  }
+  /** combo 行 key：productId::n::bb,id1,id2,id3,id4 */
+  const comboLineKey = (productId, ids) => `${productId}::n::bb,${(ids || []).join(',')}`
   const removeLine = (lineKey) => {
     invalidateCheckout()
     setCart((current) => { const next = { ...current }; delete next[lineKey]; return next })
@@ -260,15 +294,18 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   const renderCartLine = (line) => {
-    const { product, quantity, gift } = line
+    const { product, quantity, gift, comboNames } = line
     const giftQty = gift ? quantity : 0
     const isGift = gift
+    const isCombo = Array.isArray(line.comboIds) && line.comboIds.length > 0
     const lineAmount = gift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
     return (
       <div key={line.key} className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
+            <p className="truncate text-[13px] font-bold text-slate-800">
+              {isCombo ? `Balls-礼盒（${(comboNames || []).join(' / ')}）` : product.name}
+            </p>
             <p className="mt-1 text-xs text-slate-400">{formatCents(product.salePriceCents)} / {product.unit}{isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠 {giftQty}</span>}</p>
           </div>
           <button onClick={() => toggleGift(line)} className={`flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${isGift ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400 hover:text-rose-500'}`} aria-label={`赠送 ${product.name}`}><Gift className="h-3.5 w-3.5" />赠</button>
@@ -277,9 +314,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         <div className="mt-2 flex items-center">
           <strong className={`text-sm ${isGift ? 'text-rose-500' : 'text-budu-600'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
           <div className="ml-auto flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <button onClick={() => changeQuantity(line.key, -1)} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
+            <button onClick={() => (isCombo ? changeComboQuantity(line, -1) : changeQuantity(line.key, -1))} className="grid h-8 w-8 place-items-center text-slate-500 active:bg-slate-100"><Minus className="h-3.5 w-3.5" /></button>
             <span className="w-8 text-center text-sm font-bold">{quantity}</span>
-            <button onClick={() => changeQuantity(line.key, 1)} className="grid h-8 w-8 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-3.5 w-3.5" /></button>
+            <button onClick={() => (isCombo ? changeComboQuantity(line, 1) : changeQuantity(line.key, 1))} className="grid h-8 w-8 place-items-center text-budu-600 active:bg-budu-50"><Plus className="h-3.5 w-3.5" /></button>
           </div>
         </div>
       </div>
@@ -287,24 +324,27 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }
 
   const renderDesktopCartLine = (line, index) => {
-    const { product, quantity, gift } = line
+    const { product, quantity, gift, comboNames } = line
     const giftQty = gift ? quantity : 0
     const isGift = gift
+    const isCombo = Array.isArray(line.comboIds) && line.comboIds.length > 0
     const lineAmount = gift ? 0n : BigInt(product.salePriceCents) * BigInt(quantity)
     return (
       <div key={line.key} className="group grid grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 px-3 py-2.5 transition hover:bg-slate-50">
         <span className="text-center text-xs font-semibold text-slate-300">{index + 1}</span>
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-[13px] font-bold text-slate-800">{product.name}</p>
+            <p className="truncate text-[13px] font-bold text-slate-800">
+              {isCombo ? `Balls-礼盒（${(comboNames || []).join(' / ')}）` : product.name}
+            </p>
             {isGift && <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠 {giftQty}</span>}
           </div>
           <p className="mt-0.5 truncate text-[11px] text-slate-400">{product.sku || '无 SKU'} · {formatCents(product.salePriceCents)}/{product.unit}</p>
         </div>
         <div className="flex h-8 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <button onClick={() => changeQuantity(line.key, -1)} className="grid h-full w-7 place-items-center text-slate-500 active:bg-slate-100" aria-label={`减少 ${product.name}`}><Minus className="h-3 w-3" /></button>
+          <button onClick={() => (isCombo ? changeComboQuantity(line, -1) : changeQuantity(line.key, -1))} className="grid h-full w-7 place-items-center text-slate-500 active:bg-slate-100" aria-label={`减少 ${product.name}`}><Minus className="h-3 w-3" /></button>
           <span className="min-w-7 flex-1 text-center text-xs font-black text-slate-700">{quantity}</span>
-          <button onClick={() => changeQuantity(line.key, 1)} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
+          <button onClick={() => (isCombo ? changeComboQuantity(line, 1) : changeQuantity(line.key, 1))} className="grid h-full w-7 place-items-center text-budu-600 active:bg-budu-50" aria-label={`增加 ${product.name}`}><Plus className="h-3 w-3" /></button>
         </div>
         <div className="flex items-center justify-end gap-1">
           <strong className={`min-w-0 truncate text-right text-xs ${isGift ? 'text-rose-500' : 'text-slate-800'}`}>{isGift ? (giftQty === quantity ? '¥0.00 赠送' : `${formatCents(lineAmount)} 赠${giftQty}`) : formatCents(lineAmount)}</strong>
@@ -349,7 +389,12 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
         body: JSON.stringify({
           storeId,
           checkoutKey: key,
-          items: cartLines.map((line) => ({ productId: line.product.productId, quantity: line.quantity, gift: line.gift })),
+          items: cartLines.map((line) => ({
+            productId: line.product.productId,
+            quantity: line.quantity,
+            gift: line.gift,
+            ...(Array.isArray(line.comboIds) && line.comboIds.length > 0 ? { comboFlavorIds: line.comboIds } : {}),
+          })),
           discountPercent,
           remark,
         }),
@@ -690,7 +735,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                       key={product.productId}
                       data-testid="pos-product-card"
                       data-product-id={product.productId}
-                      onClick={() => changeQuantity(normalLineKey(product.productId), 1)}
+                      onClick={() => addProduct(product)}
                       className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop || isIpad ? `flex items-center ${isIpad ? 'min-h-24 rounded-xl p-2.5' : 'min-h-[82px] rounded-lg p-2'}` : 'rounded-xl'}`}
                     >
                       <div className={isDesktop || isIpad ? `${isIpad ? 'h-16 w-16 rounded-xl' : 'h-12 w-12 rounded-lg'} shrink-0 overflow-hidden bg-slate-100` : 'aspect-square bg-slate-100'}>
@@ -761,6 +806,93 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 <div className="text-right"><button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>{cartDiscountAmount > 0n && <p className="mt-1 text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
               </div>
               <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="w-full rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Balls 礼盒搭配面板（点单/支付任意阶段可用） */}
+      {comboProduct && (
+        <div className="fixed inset-0 z-[105] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label="Balls 礼盒搭配">
+          <div className="max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-6 shadow-2xl sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Balls-礼盒 · 自由搭配</h3>
+                <p className="mt-1 text-xs text-slate-400">¥299 / 盒 · 请选满 4 款口味（可重复）</p>
+              </div>
+              <button onClick={() => setComboProduct(null)} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100" aria-label="关闭搭配面板"><X className="h-5 w-5" /></button>
+            </div>
+
+            {/* 4 个槽位 */}
+            <div className="mt-4 grid grid-cols-4 gap-2">
+              {comboSlots.map((slot, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setComboActiveSlot(idx)}
+                  className={`flex min-h-12 flex-col items-center justify-center rounded-xl border-2 transition ${
+                    comboActiveSlot === idx ? 'border-budu-500 bg-budu-50' : 'border-slate-100 bg-slate-50'
+                  } ${slot ? 'text-slate-800' : 'text-slate-300'}`}
+                >
+                  <span className="text-[10px] font-bold text-slate-400">口味 {idx + 1}</span>
+                  <span className="mt-0.5 line-clamp-2 px-1 text-center text-[11px] font-semibold">{slot || '未选'}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* 口味候选 */}
+            <p className="mt-4 pb-1 text-xs font-semibold text-slate-400">选择口味（当前第 {comboActiveSlot + 1} 格）</p>
+            <div className="grid max-h-[38dvh] grid-cols-2 gap-2 overflow-y-auto">
+              {comboFlavors.map((f) => {
+                const picked = comboSlots.filter((x) => x === String(f.name).replace(/^巧克力豆\./, '')).length
+                const imageSrc = f.hasImage ? `/api/v2/pos/products/${f.productId}/image?v=${encodeURIComponent(f.updatedAt || '')}` : ''
+                return (
+                  <button
+                    key={f.productId}
+                    onClick={() => {
+                      const name = String(f.name).replace(/^巧克力豆\./, '')
+                      const slots = [...comboSlots]
+                      slots[comboActiveSlot] = name
+                      setComboSlots(slots)
+                      setComboReady(slots.every((x) => !!x))
+                      const nextEmpty = slots.findIndex((x, i) => i > comboActiveSlot && !x)
+                      if (nextEmpty >= 0) setComboActiveSlot(nextEmpty)
+                    }}
+                    className={`flex items-center gap-2 rounded-xl border p-2 text-left transition ${
+                      picked > 0 ? 'border-budu-300 bg-budu-50/60' : 'border-slate-100 bg-white hover:border-budu-200'
+                    }`}
+                  >
+                    {imageSrc ? (
+                      <img src={imageSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                    ) : (
+                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100"><Package className="h-4 w-4 text-slate-300" /></div>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-semibold text-slate-700">{String(f.name).replace(/^巧克力豆\./, '')}</span>
+                      <span className="block text-[10px] text-slate-400">{formatCents(f.salePriceCents)}/{f.unit}</span>
+                    </span>
+                    {picked > 0 && <span className="shrink-0 rounded bg-budu-500 px-1 py-0.5 text-[9px] font-bold text-white">x{picked}</span>}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button onClick={() => setComboProduct(null)} className="rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-500">取消</button>
+              <button
+                onClick={() => {
+                  const ids = comboSlots.map((name) => {
+                    const f = comboFlavors.find((x) => String(x.name).replace(/^巧克力豆\./, '') === name)
+                    return f ? f.productId : ''
+                  })
+                  if (ids.some((id) => !id)) return
+                  changeQuantity(comboLineKey(comboProduct.productId, ids), 1)
+                  setComboProduct(null)
+                }}
+                disabled={!comboReady}
+                className="rounded-xl bg-budu-500 py-3 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {comboReady ? '加入购物车 · ¥299' : `请选满 4 款口味（${comboSlots.filter(Boolean).length}/4）`}
+              </button>
             </div>
           </div>
         </div>
