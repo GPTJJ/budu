@@ -35,6 +35,7 @@ const NODE_TEST_SUITE = [
   'test-system-slimming.mjs',       // 系统瘦身（单元）
   'test-item-category.mjs',         // 商品分类（单元）
   'test-ocr-map.mjs',               // OCR 映射（单元）
+  'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
 ]
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [
