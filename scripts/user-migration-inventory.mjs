@@ -157,7 +157,12 @@ function defaultModuleKeys(role, legacyAssetCenter) {
   if (legacyAssetCenter && !base.includes(MODULE_ASSET_CENTER)) base.push(MODULE_ASSET_CENTER)
   return base
 }
-/** 复现 normalizeModules + hasModuleAccess 的账号级有效模块集（shared/accountPermissions.js L87-109） */
+/** 复现 normalizeModules + hasModuleAccess 的账号级有效模块集（shared/accountPermissions.js L87-109）
+ * 真实语义：source ? source[key] === true : defaults.has(key)
+ * - 存在合法 permissions.modules source → 只按存储值 source[key]===true，绝不恢复角色默认模块（含 assetCenter fallback）
+ * - 无 source → 才使用 defaultModuleKeys(role, legacyAssetCenter) 默认集
+ * - developer / cashier 固定（normalizeModules 对二者不看 source）
+ */
 function runtimeEffectiveModules(u) {
   const role = String(u.role ?? '')
   const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active') // loadDb 补全语义
@@ -167,9 +172,13 @@ function runtimeEffectiveModules(u) {
   if (!ACTIVE_ROLES.has(role)) return { modules: [], basis: 'unknown-role' }
   const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
   const source = p && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules) ? p.modules : null
+  if (source) {
+    // 严格 source 语义：只保留 source[key] === true；被 false/未 true 的默认模块不得恢复
+    const modules = [...ALL_MODULE_KEYS].filter((key) => source[key] === true)
+    return { modules, basis: 'stored' }
+  }
   const defaults = defaultModuleKeys(role, u.assetCenter === true)
-  const modules = [...ALL_MODULE_KEYS].filter((key) => (source ? source[key] === true : false) || defaults.includes(key))
-  return { modules, basis: source ? 'stored+defaults' : 'defaults' }
+  return { modules: [...ALL_MODULE_KEYS].filter((key) => defaults.includes(key)), basis: 'defaults' }
 }
 /** 复现 hasInventoryTransferAll（shared/accountPermissions.js L119-127）：isSuperUser 或存储值；disabled/public 恒 false */
 function runtimeInventoryTransferAll(u) {
@@ -285,6 +294,7 @@ const report = {
   storeBindingCheck: {},
   schemaGaps: [],
   perAccountPermissions: [],
+  accountValidations: [],
   accountAdminCheck: {},
   persistenceNotes: [],
   idReferenceMap: ID_REFERENCE_MAP,
@@ -332,11 +342,22 @@ if (staffMasterPresent) {
 // staffKey 分类统计（bound / legacyExempt / unboundInvalid）
 const staffKeyCategories = { bound: [], legacyExempt: [], unboundInvalid: [] }
 
+const accountValidations = []
+
 for (const u of users) {
-  let userInvalid = false
+  const accountErrors = []
+  const accountWarnings = []
+  const pushError = (reason) => {
+    invalidate(reason)
+    accountErrors.push(reason)
+  }
+  const pushWarn = (reason) => {
+    warn(reason)
+    accountWarnings.push(reason)
+  }
   if (!u || typeof u !== 'object' || Array.isArray(u)) {
-    invalidate('non-object entry')
-    report.invalidUsers += 1 // 直接计入：continue 前必须落账，否则会被 validUsers 吞掉
+    pushError('non-object entry')
+    accountValidations.push({ id: null, username: '(non-object entry)', valid: false, errors: accountErrors, warnings: accountWarnings })
     continue
   }
   for (const f of KV_PERSISTED_FIELDS) {
@@ -346,55 +367,49 @@ for (const u of users) {
   const id = u.id
   if (id === undefined || id === null || id === '') {
     report.missingIds.push(String(u.username ?? '(no username)'))
-    invalidate('missing id')
-    userInvalid = true
+    pushError('missing id')
   } else if (typeof id !== 'string') {
     report.malformedIds.push(String(id))
-    invalidate('id not string')
-    userInvalid = true
+    pushError('id not string')
   } else {
     if (seenId.has(id)) {
       report.duplicateIds.push(id)
-      invalidate('duplicate id')
-      userInvalid = true
+      pushError('duplicate id')
     }
     seenId.set(id, (seenId.get(id) || 0) + 1)
     // 代码生成规则为 UUID v4（crypto.randomUUID），读取端不解析格式；非 UUID 仅记软异常（legacy/手工数据）
     if (!UUID_V4_RE.test(id)) {
       report.nonUuidV4Ids.push(id)
-      warn('non-UUID v4 id')
+      pushWarn('non-UUID v4 id')
     }
   }
   // username：存在/类型/空/空格/大小写
   const uname = u.username
   if (uname === undefined || uname === null || uname === '') {
     report.missingUsernames.push(String(id || '(no id)'))
-    invalidate('missing username')
-    userInvalid = true
+    pushError('missing username')
   } else if (typeof uname !== 'string') {
     report.typeAnomalies.push({ id: String(id), username: String(uname).slice(0, 20), issue: 'username not string' })
-    invalidate('username not string')
-    userInvalid = true
+    pushError('username not string')
   } else {
     if (uname !== uname.trim()) {
       report.whitespaceAnomalies.push({ id: String(id), username: `[${uname}]`, issue: 'leading/trailing whitespace' })
-      warn('username whitespace anomaly')
+      pushWarn('username whitespace anomaly')
     }
     if (uname.length < USERNAME_MIN_LEN || uname.length > USERNAME_MAX_LEN) {
       // 创建/改名规则为 2-20 字符（app.js）；越界仅记软异常
       report.usernameLengthAnomalies.push({ id: String(id), username: `[${uname}]` })
-      warn('username length anomaly')
+      pushWarn('username length anomaly')
     }
     const exactKey = uname
     const foldKey = uname.toLowerCase()
     if (seenExact.has(exactKey)) {
       report.exactDuplicateUsernames.push(uname)
-      invalidate('duplicate username')
-      userInvalid = true
+      pushError('duplicate username')
     }
     if (seenFold.has(foldKey) && seenFold.get(foldKey) !== uname) {
       report.caseFoldCollisions.push({ a: seenFold.get(foldKey), b: uname })
-      warn('case-fold collision')
+      pushWarn('case-fold collision')
     }
     seenExact.set(exactKey, uname)
     if (!seenFold.has(foldKey)) seenFold.set(foldKey, uname)
@@ -403,23 +418,18 @@ for (const u of users) {
   const ph = u.passwordHash
   if (ph === undefined || ph === null || ph === '') {
     report.missingPasswordHashes.push(String(uname ?? id ?? '(no username)'))
-    invalidate('missing passwordHash')
-    userInvalid = true
+    pushError('missing passwordHash')
   } else if (typeof ph !== 'string') {
-    invalidate('passwordHash not string')
-    userInvalid = true
+    pushError('passwordHash not string')
   } else if (!PASSWORD_HASH_RE.test(ph)) {
-    invalidate('passwordHash format invalid')
-    userInvalid = true
+    pushError('passwordHash format invalid')
   }
   // secondPasswordHash：可选字段；存在时按 auth.js hashPassword 格式验证（非字符串/格式错误 → invalid）
   if (u.secondPasswordHash !== undefined && u.secondPasswordHash !== null && u.secondPasswordHash !== '') {
     if (typeof u.secondPasswordHash !== 'string') {
-      invalidate('secondPasswordHash not string')
-      userInvalid = true
+      pushError('secondPasswordHash not string')
     } else if (!PASSWORD_HASH_RE.test(u.secondPasswordHash)) {
-      invalidate('secondPasswordHash format invalid')
-      userInvalid = true
+      pushError('secondPasswordHash format invalid')
     }
   }
   // permissions：结构与值类型（normalizeAccountPermissions 语义；严重结构错误 → invalid）
@@ -427,24 +437,21 @@ for (const u of users) {
   if (p !== undefined && p !== null && p !== '') {
     if (typeof p !== 'object' || Array.isArray(p)) {
       permIssues.notObject += 1
-      invalidate('permissions not object')
-      userInvalid = true
+      pushError('permissions not object')
     } else {
       if (p.modules !== undefined && p.modules !== null && p.modules !== '') {
         if (typeof p.modules !== 'object' || Array.isArray(p.modules)) {
           permIssues.modulesNotObject += 1
-          invalidate('permissions.modules not object')
-          userInvalid = true
+          pushError('permissions.modules not object')
         } else {
           for (const [k, v] of Object.entries(p.modules)) {
             if (!ALL_MODULE_KEYS.has(k)) {
               permIssues.unknownModuleKeys.push(k)
-              warn('unknown module key') // normalizeModules 会忽略未知 key，不进入 effective modules
+              pushWarn('unknown module key') // normalizeModules 会忽略未知 key，不进入 effective modules
             }
             if (typeof v !== 'boolean') {
               permIssues.nonBooleanModuleValues += 1
-              invalidate('permissions.modules value not boolean')
-              userInvalid = true
+              pushError('permissions.modules value not boolean')
             }
           }
         }
@@ -452,8 +459,7 @@ for (const u of users) {
       if (p.inventoryTransferAll !== undefined && p.inventoryTransferAll !== null && p.inventoryTransferAll !== '') {
         if (typeof p.inventoryTransferAll !== 'boolean') {
           permIssues.inventoryTransferAllInvalid += 1
-          invalidate('inventoryTransferAll not boolean')
-          userInvalid = true
+          pushError('inventoryTransferAll not boolean')
         }
       }
     }
@@ -468,56 +474,50 @@ for (const u of users) {
     report.legacyRoles.push(`${uname ?? id}:${role}`)
   } else {
     report.unknownRoles.push(role || '(empty)')
-    invalidate('unknown role')
-    userInvalid = true
+    pushError('unknown role')
   }
   // status：真实取值 active|disabled（app.js 创建 'active'；store.js loadDb 对 public 强制 'disabled'）
   if (u.status !== undefined && u.status !== null && u.status !== '') {
     if (!['active', 'disabled'].includes(u.status)) {
-      invalidate('invalid status')
-      userInvalid = true
+      pushError('invalid status')
     } else if (role === PUBLIC_ROLE && u.status !== 'disabled') {
-      invalidate('public role must be disabled')
-      userInvalid = true
+      pushError('public role must be disabled')
     }
   }
   if (u.status === 'disabled' || role === PUBLIC_ROLE) report.disabledUsers.push(String(uname ?? id ?? '(no username)'))
   // storeKeys 结构与元素校验（真实规则：app.js normalizeStoreKeys L541-553；元素必须 string、trim 非空、
-  // ≤30 字符、不重复；store 创建路径另拒绝 __proto__/constructor/prototype）—— 对所有账号执行，违反 → error
+  // ≤30 字符、不重复、数量 ≤50；store 创建路径另拒绝 __proto__/constructor/prototype）—— 对所有账号执行
   const storeKeysVal = u.storeKeys
   let skValid = { ok: false, keys: [] }
   if (storeKeysVal === undefined || storeKeysVal === null || storeKeysVal === '') {
     skValid = { ok: true, keys: [] } // loadDb 会补 []，视为空数组
   } else if (!Array.isArray(storeKeysVal)) {
-    invalidate('storeKeys not array')
-    userInvalid = true
+    pushError('storeKeys not array')
+  } else if (storeKeysVal.length > 50) {
+    pushError('too many storeKeys') // normalizeStoreKeys：raw.length > 50 → 整体拒绝
   } else {
     const seen = new Set()
     const keys = []
     let structOk = true
     for (const v of storeKeysVal) {
       if (typeof v !== 'string') {
-        invalidate('storeKeys element not string')
-        userInvalid = true
+        pushError('storeKeys element not string')
         structOk = false
         break
       }
       const t = v.trim()
       if (!t) {
-        invalidate('empty storeKey')
-        userInvalid = true
+        pushError('empty storeKey')
         structOk = false
         break
       }
       if (t.length > STORE_KEY_MAX_LEN || BAD_STORE_KEY_RE.test(t)) {
-        invalidate('storeKey format invalid')
-        userInvalid = true
+        pushError('storeKey format invalid')
         structOk = false
         break
       }
       if (seen.has(t)) {
-        invalidate('duplicate storeKeys')
-        userInvalid = true
+        pushError('duplicate storeKeys')
         structOk = false
         break
       }
@@ -529,63 +529,58 @@ for (const u of users) {
   // 角色门店硬约束（validateBoundRole / validateCashierRole 语义，基于有效 storeKeys）
   if (role === 'cashier') {
     if (skValid.ok && skValid.keys.length !== 1) {
-      invalidate('cashier storeKeys violation')
-      userInvalid = true
+      pushError('cashier storeKeys violation')
     }
     if (u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '') {
-      invalidate('cashier staffKey violation')
-      userInvalid = true
+      pushError('cashier staffKey violation')
     }
   } else if (role === 'manager' || role === 'staff') {
     if (skValid.ok && skValid.keys.length < 1) {
-      invalidate('manager/staff storeKeys violation')
-      userInvalid = true
+      pushError('manager/staff storeKeys violation')
     }
   }
   // stores 主档存在性核验（输入含 stores 时逐 key 核对；缺失 → unverifiable，不判 invalid）
   if (skValid.ok && skValid.keys.length > 0 && storeMasterPresent) {
     for (const k of skValid.keys) {
       if (!storeMasterKeys.has(k)) {
-        invalidate('storeKey not in stores master')
-        userInvalid = true
+        pushError('storeKey not in stores master')
       }
     }
   }
-  // staffKey 统一规则（manager/staff）：
-  //   有有效 staffKey（string/非空/storeKey::name/storeKey ∈ storeKeys/staff 主档存在（可验证时））→ bound
-  //   无 staffKey + bindingLegacyExempt === true → legacyExempt（valid + warning，迁移风险标记）
-  //   无 staffKey + 非 exempt（false/缺失）→ unboundInvalid（invalid）
+  // staffKey 统一规则（manager/staff）——分类互斥：任何相关 ERROR（含 storeKeys 结构/数量）都不得进入 bound
   if (role === 'manager' || role === 'staff') {
     const hasSk = u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== ''
     if (hasSk) {
       let skOk = true
       if (typeof u.staffKey !== 'string') {
-        invalidate('staffKey not string')
-        userInvalid = true
+        pushError('staffKey not string')
         skOk = false
-      } else if (skValid.ok) {
+      } else {
         const [skStore, skName] = u.staffKey.split('::')
         if (!skStore || !skName) {
-          invalidate('staffKey malformed')
-          userInvalid = true
+          pushError('staffKey malformed')
+          skOk = false
+        } else if (!skValid.ok) {
+          // storeKeys 结构无效 → 归属无法验证 → 不 bound（storeKeys 错误已单独记录）
           skOk = false
         } else if (!skValid.keys.includes(skStore)) {
-          invalidate('staffKey store not in storeKeys')
-          userInvalid = true
+          pushError('staffKey store not in storeKeys')
           skOk = false
         } else if (staffMasterPresent && !staffKeySet.has(u.staffKey)) {
-          invalidate('staffKey staff not in master')
-          userInvalid = true
+          pushError('staffKey staff not in master')
           skOk = false
         }
       }
-      if (skOk) staffKeyCategories.bound.push(String(u.id ?? ''))
+      if (skOk && skValid.ok && skValid.keys.length >= 1) {
+        staffKeyCategories.bound.push(String(u.id ?? ''))
+      }
     } else if (u.bindingLegacyExempt === true) {
-      warn('legacy exempt binding')
-      staffKeyCategories.legacyExempt.push({ id: String(u.id ?? ''), username: String(uname ?? '') })
+      if (skValid.ok && skValid.keys.length >= 1) {
+        pushWarn('legacy exempt binding')
+        staffKeyCategories.legacyExempt.push({ id: String(u.id ?? ''), username: String(uname ?? '') })
+      }
     } else {
-      invalidate('missing staffKey non-exempt')
-      userInvalid = true
+      pushError('missing staffKey non-exempt')
       staffKeyCategories.unboundInvalid.push({ id: String(u.id ?? ''), username: String(uname ?? '') })
     }
   }
@@ -593,24 +588,30 @@ for (const u of users) {
   for (const tf of ['createdAt', 'disabledAt', 'permissionsUpdatedAt']) {
     if (u[tf] !== undefined && u[tf] !== null && u[tf] !== '') {
       const r = isIsoString(u[tf])
-      if (!r.ok) {
-        invalidate(`unparseable ${tf}`)
-        userInvalid = true
-      }
+      if (!r.ok) pushError(`unparseable ${tf}`)
     }
   }
-  if (userInvalid) report.invalidUsers += 1
+  accountValidations.push({
+    id: String(u.id ?? ''),
+    username: String(uname ?? ''),
+    valid: accountErrors.length === 0,
+    errors: accountErrors,
+    warnings: accountWarnings,
+  })
 }
 
-report.validUsers = users.length - report.invalidUsers
+// 唯一有效性来源：accountValidations（valid === errors.length === 0）
+report.accountValidations = accountValidations
+report.invalidUsers = accountValidations.filter((a) => !a.valid).length
+report.validUsers = accountValidations.filter((a) => a.valid).length
 report.invalidReasons = invalidReasonsCount
-// 统一验证原则：errors.length > 0 → invalid；warnings 不影响 valid（单一账号验证结果）
+// 统一验证原则：唯一有效性来源是 accountValidations（valid === errors.length === 0）
 report.validation = {
   errors: invalidReasonsCount,
   warnings: warningReasonsCount,
   errorReasonCount: Object.keys(invalidReasonsCount).length,
   warningReasonCount: Object.keys(warningReasonsCount).length,
-  consistencyNote: 'invalidUsers = 存在至少一个 ERROR 的账号数；WARNINGS（case-fold/legacy exempt/unverifiable/软异常）不判 invalid',
+  consistencyNote: 'validUsers/invalidUsers 完全从 accountValidations 汇总（valid === errors.length === 0）；WARNINGS（case-fold/legacy exempt/unverifiable/软异常）不判 invalid',
 }
 
 // 仅对象条目参与后续结构化检查（null/数组/标量条目已在主循环计为 invalid）
@@ -681,7 +682,8 @@ report.perAccountPermissions = objectUsers.map((u) => {
     status,
     effectiveModules: eff.modules,
     effectiveBasis: eff.basis,
-    assetCenterFallbackApplied: (role === 'manager' || role === 'staff') && u.assetCenter === true,
+    // assetCenter 存储标志（真实运行时仅「无 source」时经 defaultModuleKeys 生效为 fallback）
+    assetCenterStored: u.assetCenter === true,
     inventoryTransferAllStored: itaStored,
     inventoryTransferAllEffective: runtimeInventoryTransferAll(u), // 跨门店调拨范围能力，非模块访问权
     canManageAccounts: runtimeCanManageAccounts(u),

@@ -417,7 +417,7 @@ test('非法 JSON 输入 → exit 2 明确报错（不打印原生栈/文件内�
   assert.ok(!r.stderr.includes('user-migration-inventory.mjs')) // 无原生异常栈
 })
 
-test('每账号有效权限盘点（运行时复现：developer/cashier 固定，admin 默认全模块）', () => {
+test('每账号有效权限盘点（运行时复现：developer/cashier 固定；有 source 时严格按 source）', () => {
   const f = path.join(tmp, 'eff-perm.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
     { id: 'x1', username: 'dev', role: 'developer', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { overview: false } }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
@@ -426,15 +426,15 @@ test('每账号有效权限盘点（运行时复现：developer/cashier 固定�
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  // developer：固定全模块，存储值不影响
+  // developer：固定全模块（normalizeModules 对 developer 不看 source）
   assert.equal(byName.dev.effectiveBasis, 'fixed-all')
   assert.equal(byName.dev.effectiveModules.length, 16)
-  // cashier：固定仅 store-pos
+  // cashier：固定仅 store-pos（normalizeModules 对 cashier 不看 source）
   assert.equal(byName.cash.effectiveBasis, 'fixed-pos')
   assert.deepEqual(byName.cash.effectiveModules, ['store-pos'])
-  // admin：默认全模块（defaults 兜底，存储值不影响全量）
-  assert.equal(byName.adm.effectiveModules.length, 16)
-  assert.ok(byName.adm.effectiveModules.includes('finance'))
+  // admin：有 source {store-pos:true} → 严格按 source，只含 store-pos，不恢复默认 16 模块
+  assert.equal(byName.adm.effectiveBasis, 'stored')
+  assert.deepEqual(byName.adm.effectiveModules, ['store-pos'])
 })
 
 test('accountAdminCheck：仅 developer 且未停用可管理账号', () => {
@@ -686,20 +686,26 @@ test('unknown module 过滤：不进 effectiveModules，且记为 warning', () =
   assert.ok(out.validation.warnings['unknown module key'])
 })
 
-test('assetCenter legacy fallback：manager/staff 且 assetCenter=true → defaults 追加 asset-center', () => {
+test('assetCenter legacy fallback：仅无 source 时经 defaults 生效；有 source 时不恢复', () => {
   const f = path.join(tmp, 'asset-fallback.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
     { id: 's1', username: 's1', role: 'staff', storeKeys: ['s1'], staffKey: 's1::a', status: 'active', assetCenter: true, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
     { id: 's2', username: 's2', role: 'staff', storeKeys: ['s1'], staffKey: 's1::b', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 's3', username: 's3', role: 'staff', storeKeys: ['s1'], staffKey: 's1::c', status: 'active', assetCenter: true, permissions: { modules: { 'store-pos': true } }, passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  assert.equal(byName.s1.assetCenterFallbackApplied, true)
-  assert.ok(byName.s1.effectiveModules.includes('asset-center')) // 13 + 1 = 14
+  // s1：无 source + assetCenter=true → defaults 追加 asset-center（13 + 1 = 14）
+  assert.equal(byName.s1.assetCenterStored, true)
+  assert.ok(byName.s1.effectiveModules.includes('asset-center'))
   assert.equal(byName.s1.effectiveModules.length, 14)
-  assert.equal(byName.s2.assetCenterFallbackApplied, false)
+  // s2：无 source 无 assetCenter → 13（不含 asset-center）
+  assert.equal(byName.s2.assetCenterStored, false)
   assert.ok(!byName.s2.effectiveModules.includes('asset-center'))
   assert.equal(byName.s2.effectiveModules.length, 13)
+  // s3：有 source + assetCenter=true → 严格按 source，不恢复 asset-center（normalizeModules source 分支不用 defaults）
+  assert.equal(byName.s3.assetCenterStored, true)
+  assert.deepEqual(byName.s3.effectiveModules, ['store-pos'])
 })
 
 test('inventoryTransferAll：stored vs effective（跨门店调拨范围，非模块访问权）', () => {
@@ -748,4 +754,119 @@ test('validUsers 与 validation.errors 一致性（errors>0 → invalid）', () 
   assert.equal(out.validation.errorReasonCount, 2)
   // warnings 不判 invalid：ok 无 warning 且 valid
   assert.equal(out.invalidReasons['case-fold collision'], undefined)
+})
+
+// ================= 第四轮：runtime source 语义 =================
+
+test('runtime source 语义：Admin 无 source → defaults；有 source → 仅 source true；false 不恢复', () => {
+  const f = path.join(tmp, 'adm-source.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'a1', username: 'adm-none', role: 'admin', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'a2', username: 'adm-src', role: 'admin', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { 'store-pos': true, finance: false } }, passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'a3', username: 'adm-false', role: 'admin', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { overview: false } }, passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
+  assert.equal(byName['adm-none'].effectiveBasis, 'defaults')
+  assert.equal(byName['adm-none'].effectiveModules.length, 16) // 无 source → 默认全模块
+  assert.equal(byName['adm-src'].effectiveBasis, 'stored')
+  assert.deepEqual(byName['adm-src'].effectiveModules, ['store-pos']) // finance:false 不恢复
+  assert.deepEqual(byName['adm-false'].effectiveModules, []) // 全部 false → 空
+})
+
+test('runtime source 语义：Finance/Manager/Staff 有 source → 不恢复 defaults', () => {
+  const f = path.join(tmp, 'role-source.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'f1', username: 'fin', role: 'finance', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { 'store-pos': true } }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'm1', username: 'mgr', role: 'manager', storeKeys: ['s1'], staffKey: 's1::a', status: 'active', permissions: { modules: { 'store-pos': true } }, assetCenter: true, passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 's1', username: 'stf', role: 'staff', storeKeys: ['s1'], staffKey: 's1::b', status: 'active', permissions: { modules: { overview: true } }, passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
+  // Finance：source 存在 → 不恢复默认 16
+  assert.deepEqual(byName.fin.effectiveModules, ['store-pos'])
+  // Manager：source 存在 → 不恢复默认 14；assetCenter=true 也不恢复 asset-center
+  assert.deepEqual(byName.mgr.effectiveModules, ['store-pos'])
+  assert.equal(byName.mgr.assetCenterStored, true)
+  // Staff：source 存在 → 只按 source（overview:true），不恢复默认 13
+  assert.deepEqual(byName.stf.effectiveModules, ['overview'])
+})
+
+// ================= 第四轮：accountValidations =================
+
+test('accountValidations：valid === errors.length === 0；validUsers/invalidUsers 完全由此汇总', () => {
+  const f = path.join(tmp, 'acct-validations.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'ok', username: 'ok1', role: 'staff', storeKeys: ['s1'], staffKey: 's1::a', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'warn1', username: 'warn', role: 'staff', storeKeys: ['s1'], staffKey: 's1::b', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'warn2', username: 'WARN', role: 'staff', storeKeys: ['s1'], staffKey: 's1::c', status: 'active', passwordHash: h('v'), createdAt: '2026-01-05T00:00:00.000Z' }, // case-fold warning
+    { id: 'bad', username: 'bad', role: 'cashier', storeKeys: ['s1', 's1'], staffKey: '', status: 'active', passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+    { id: 'nulluser', username: 'x', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('w'), createdAt: '2026-01-04T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const av = out.accountValidations
+  assert.equal(av.length, out.sourceUserCount) // 每个条目都有账号级结果
+  for (const a of av) {
+    assert.equal(a.valid, a.errors.length === 0) // 唯一有效性规则
+    assert.ok(!('passwordHash' in a) && !('secondPasswordHash' in a) && !('permissions' in a)) // 无敏感字段
+  }
+  // ok：valid 且无 errors
+  const ok = av.find((a) => a.username === 'ok1')
+  assert.equal(ok.valid, true)
+  assert.deepEqual(ok.errors, [])
+  // warn：case-fold warning 但无 error → valid
+  const warnAcct = av.find((a) => a.username === 'WARN')
+  assert.equal(warnAcct.valid, true)
+  assert.ok(warnAcct.warnings.includes('case-fold collision'))
+  assert.deepEqual(warnAcct.errors, [])
+  // bad：duplicate storeKeys → invalid 且有明确 errors
+  const bad = av.find((a) => a.username === 'bad')
+  assert.equal(bad.valid, false)
+  assert.ok(bad.errors.includes('duplicate storeKeys'))
+  // validUsers/invalidUsers 完全来源于 accountValidations
+  assert.equal(out.validUsers, av.filter((a) => a.valid).length)
+  assert.equal(out.invalidUsers, av.filter((a) => !a.valid).length)
+  assert.equal(out.sourceUserCount, out.validUsers + out.invalidUsers)
+})
+
+// ================= 第四轮：bound 互斥 =================
+
+test('bound 互斥：invalid storeKeys（[null] / 重复）+ 外观合法 staffKey → 不 bound', () => {
+  const f = path.join(tmp, 'bound-mutex.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'b1', username: 'm-null', role: 'manager', storeKeys: [null], staffKey: 's1::张三', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'b2', username: 's-dup', role: 'staff', storeKeys: ['s1', 's1'], staffKey: 's1::张三', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'b3', username: 'ok', role: 'staff', storeKeys: ['s1'], staffKey: 's1::李四', status: 'active', passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const av = out.accountValidations
+  assert.equal(av.find((a) => a.id === 'b1').valid, false)
+  assert.ok(!out.staffBindingCheck.bound.includes('b1')) // invalid store 不得 bound
+  assert.ok(av.find((a) => a.id === 'b1').errors.includes('storeKeys element not string'))
+  assert.equal(av.find((a) => a.id === 'b2').valid, false)
+  assert.ok(!out.staffBindingCheck.bound.includes('b2')) // duplicate store 不得 bound
+  assert.ok(av.find((a) => a.id === 'b2').errors.includes('duplicate storeKeys'))
+  assert.equal(av.find((a) => a.id === 'b3').valid, true)
+  assert.ok(out.staffBindingCheck.bound.includes('b3'))
+})
+
+// ================= 第四轮：storeKeys 数量上限 50 =================
+
+test('storeKeys 数量上限：50 个唯一 key 合法；51 个 → invalid（too many storeKeys）', () => {
+  const keys50 = Array.from({ length: 50 }, (_, i) => `s${String(i).padStart(2, '0')}`)
+  const keys51 = Array.from({ length: 51 }, (_, i) => `s${String(i).padStart(2, '0')}`)
+  const f = path.join(tmp, 'store-max.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'n50', username: 'n50', role: 'staff', storeKeys: keys50, staffKey: 's00::a', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'n51', username: 'n51', role: 'staff', storeKeys: keys51, staffKey: 's00::b', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const av = out.accountValidations
+  // 50：通过长度限制；无 stores 主档 → 存在性 unverifiable 但不因长度 invalid
+  assert.equal(av.find((a) => a.id === 'n50').valid, true)
+  assert.equal(out.storeBindingCheck.storeExistence, 'unverifiable')
+  // 51：invalid，明确 too many storeKeys
+  assert.equal(av.find((a) => a.id === 'n51').valid, false)
+  assert.ok(av.find((a) => a.id === 'n51').errors.includes('too many storeKeys'))
+  assert.equal(out.validation.errors['too many storeKeys'], 1)
 })
