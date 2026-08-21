@@ -168,28 +168,32 @@ test('public role 正确分类（非 unknown）', () => {
   assert.ok(out.disabledUsers.includes('public1'))
 })
 
-test('invalid user → invalidUsers 计数（缺 id/username/hash/unknown role）', () => {
+test('invalid user → invalidUsers 计数（缺 id/username/hash/unknown role/重复 id）', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
-  assert.ok(out.invalidUsers >= 3) // u-5 缺 username, u-6 缺 hash, u-7 unknown role, u-1 dup id 判 invalid
+  assert.equal(out.invalidUsers, 4) // u-5 缺 username, u-6 缺 hash, u-7 unknown role, u-1 重复 id
+  assert.equal(out.validUsers, out.sourceUserCount - out.invalidUsers)
   assert.ok(out.invalidReasons['missing username'])
   assert.ok(out.invalidReasons['missing passwordHash'])
   assert.ok(out.invalidReasons['unknown role'])
+  assert.ok(out.invalidReasons['duplicate id'])
   assert.ok(out.invalidReasons['missing id'] === undefined || out.invalidReasons['missing id'] === 0) // 测试数据都有 id
 })
 
-test('ID reference map 输出', () => {
+test('ID reference map 输出（含 v2.js operatorId）', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
   assert.ok(Array.isArray(out.idReferenceMap))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('auth.js') && r.field.includes('sub')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('pos.js') && r.field.includes('cashierId')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('daily-entry-upgrade.js')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('v2.js') && r.field.includes('operatorId')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('asset-center.js')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('pos.js') && r.field.includes('localStorage')))
 })
 
-test('bindingComplete 不在持久字段（派生字段排除）', () => {
+test('bindingComplete 不在持久字段（派生）；bindingLegacyExempt 是持久字段', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
   assert.ok(!('bindingComplete' in out.fieldPresence))
+  assert.ok('bindingLegacyExempt' in out.fieldPresence) // store.js loadDb 写入记录，非派生
 })
 
 test('permissions 结构检查（unknown module key 检测）', () => {
@@ -222,7 +226,95 @@ test('store binding 检查（重复值/非法值）', () => {
   assert.ok(out.storeBindingCheck.issues.invalidValues.length >= 1)
 })
 
-test('secondPasswordHash 与时间字段验证', () => {
+test('P0: report 为 input 的硬链接（同 inode）→ exit 2', { skip: process.platform === 'win32' }, () => {
+  const link = path.join(tmp, 'db-hardlink.json')
+  try {
+    fs.linkSync(inputFile, link)
+  } catch {
+    return // 文件系统不支持硬链接则跳过
+  }
+  const r = runTool(inputFile, ['--report', link])
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /inode/)
+})
+
+test('P0: users 含 null 条目 → exit 0、invalidUsers 计入（不崩溃不吞计数）', () => {
+  const bad = path.join(tmp, 'null-entry.json')
+  fs.writeFileSync(bad, JSON.stringify({ users: [
+    null,
+    { id: 'x1', username: 'ok', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    'not-an-object',
+  ] }))
+  const r = runTool(bad)
+  assert.equal(r.status, 0)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.invalidUsers, 2)
+  assert.equal(out.validUsers, 1)
+  assert.equal(out.invalidReasons['non-object entry'], 2)
+})
+
+test('User ID：非 UUID v4 仅记软异常，不判 invalid（代码不强制 UUID 解析）', () => {
+  const f = path.join(tmp, 'ids.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'c8f1c2b0-0000-4000-8000-000000000000', username: 'uuid-user', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'legacy-1', username: 'legacy', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.deepEqual(out.nonUuidV4Ids, ['legacy-1'])
+  assert.equal(out.invalidUsers, 0)
+  assert.equal(out.idCheck.nonUuidV4Count, 1)
+  assert.match(out.idCheck.generation, /crypto\.randomUUID/)
+})
+
+test('重复 id → 后续记录 invalid（duplicate id）', () => {
+  const f = path.join(tmp, 'dup-id.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'same', username: 'a1', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'same', username: 'a2', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.deepEqual(out.duplicateIds, ['same'])
+  assert.equal(out.invalidUsers, 1)
+  assert.ok(out.invalidReasons['duplicate id'])
+})
+
+test('username 长度异常（真实规则 2-20 字符）仅记软异常', () => {
+  const f = path.join(tmp, 'ulen.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'x', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'a'.repeat(21), role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.usernameLengthAnomalies.length, 2)
+  assert.equal(out.usernameCheck.usernameLengthAnomalyCount, 2)
+  assert.equal(out.invalidUsers, 0) // 异常不判 invalid（仅记录）
+})
+
+test('staff binding：输入含 staff 主档时按真实规则核对（validateBoundRole）', () => {
+  const f = path.join(tmp, 'staff-master.json')
+  fs.writeFileSync(f, JSON.stringify({
+    users: [
+      { id: 'x1', username: 's1', role: 'staff', storeKeys: ['store-1'], staffKey: 'store-1::张三', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'x2', username: 's2', role: 'staff', storeKeys: ['store-1'], staffKey: 'store-1::李四', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+      { id: 'x3', username: 'm1', role: 'manager', storeKeys: ['store-1'], staffKey: '', status: 'active', passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+      { id: 'x4', username: 'cash', role: 'cashier', storeKeys: ['store-1'], staffKey: 'store-1::张三', status: 'active', passwordHash: h('w'), createdAt: '2026-01-04T00:00:00.000Z' },
+    ],
+    staff: [
+      { id: 'st-1', name: '张三', storeKey: 'store-1' },
+      { id: 'st-2', name: '王五', storeKey: 'store-1' },
+    ],
+  }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.staffBindingCheck.masterPresent, true)
+  assert.equal(out.staffBindingCheck.localStaffVerifiable, true)
+  // 李四不在主档 → issue；cashier 携带 staffKey → issue
+  assert.ok(out.staffBindingCheck.issues.some((i) => /主档/.test(i.issue)))
+  assert.ok(out.staffBindingCheck.issues.some((i) => /cashier/.test(i.issue)))
+  // manager 未绑定员工 → 单列 legacy-exempt 可能态
+  assert.ok(out.staffBindingCheck.unboundManagerStaff.some((e) => e.id === 'x3'))
+})
+
+test('secondPasswordHash 与时间字段真实验证（非字符串/不可解析 → invalid）', () => {
   const bad = path.join(tmp, 'fields.json')
   fs.writeFileSync(bad, JSON.stringify({ users: [
     { id: 'x1', username: 'f1', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), secondPasswordHash: 123, createdAt: 'not-a-date' },
@@ -230,18 +322,20 @@ test('secondPasswordHash 与时间字段验证', () => {
   const out = JSON.parse(runTool(bad).stdout)
   assert.ok(out.invalidReasons['secondPasswordHash not string'])
   assert.ok(out.invalidReasons['unparseable createdAt'])
+  assert.equal(out.invalidUsers, 1)
 })
 
-test('schema gap 字段级输出（LOST / SEMANTIC / OK）', () => {
+test('schema gap 字段级输出（LOST / SEMANTIC / OK，含 assetCenter）', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
   assert.ok(out.schemaGaps.some((g) => g.sourceField === 'storeKeys' && g.mappingStatus === 'LOST'))
   assert.ok(out.schemaGaps.some((g) => g.sourceField === 'permissions' && g.mappingStatus === 'LOST'))
   assert.ok(out.schemaGaps.some((g) => g.sourceField === 'status' && g.mappingStatus === 'LOST'))
+  assert.ok(out.schemaGaps.some((g) => g.sourceField === 'assetCenter' && g.mappingStatus === 'LOST'))
   assert.ok(out.schemaGaps.some((g) => g.sourceField === 'id' && g.mappingStatus === 'OK'))
   assert.ok(out.schemaGaps.some((g) => g.sourceField === 'role' && g.mappingStatus === 'SEMANTIC'))
 })
 
-test('fake env 隔离：父进程带假凭证，stdout/stderr 不打印 fake token', () => {
+test('fake env 隔离：父进程带假凭证，stdout/stderr 不打印任何 fake 值', () => {
   const r = runTool(inputFile, [], {
     DATABASE_URL: 'postgres://fake-prod',
     UPSTASH_REDIS_REST_URL: 'https://fake-prod',
@@ -249,11 +343,20 @@ test('fake env 隔离：父进程带假凭证，stdout/stderr 不打印 fake tok
     KV_REST_API_URL: 'https://fake-kv',
     KV_REST_API_TOKEN: 'fake-token-xyz',
     KV_REST_API_READ_ONLY_TOKEN: 'fake-ro-token',
+    COS_SECRET_KEY: 'fake-cos-key',
+    TENCENT_OCR_SECRET_KEY: 'fake-ocr-key',
+    WXWORK_SECRET: 'fake-wxwork-secret',
+    MP_APP_SECRET: 'fake-mp-secret',
+    SENTRY_DSN: 'https://fake@sentry.example/1',
+    JWT_SECRET: 'fake-jwt-secret',
   })
   assert.equal(r.status, 0)
   assert.ok(!r.stdout.includes('fake-secret-abc'))
   assert.ok(!r.stdout.includes('fake-token-xyz'))
   assert.ok(!r.stdout.includes('fake-ro-token'))
+  assert.ok(!r.stdout.includes('fake-cos-key'))
+  assert.ok(!r.stdout.includes('fake-wxwork-secret'))
+  assert.ok(!r.stdout.includes('fake-jwt-secret'))
 })
 
 test('正确 exit code：正常输入返回 0', () => {

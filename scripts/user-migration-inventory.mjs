@@ -2,7 +2,7 @@
 // V3-004A（Review 修复版）：User KV/JSON → PostgreSQL 迁移前只读事实清单（User Migration Inventory）
 // 安全原则：Offline / Local Only
 //   - 默认不连接任何远程服务（不读 DATABASE_URL / Upstash / KV / COS / 微信 / 支付 / Sentry）
-//   - 不写源 JSON / 不修改任何数据；report 路径不得与 input 指向同一文件（realpath + symlink 校验）
+//   - 不写源 JSON / 不修改任何数据；report 路径不得与 input 指向同一文件（realpath + symlink + inode 硬链接校验）
 //   - 必须显式传入本地 JSON 输入：--input <local-json>；未传则退出并提示安全用法
 //   - passwordHash 完全脱敏：任何输出（stdout/stderr/JSON/Markdown）不含 hash 的任何片段
 // 用法：
@@ -30,11 +30,28 @@ if (!fs.existsSync(inputFile)) {
   process.exit(2)
 }
 
-// 确保不读取远程环境（防御性：即使父进程带生产变量也不使用）
+// 确保不读取远程环境（防御性：即使父进程带生产变量也不使用；与 scripts/run-tests.mjs STRIPPED_ENV_KEYS 对齐）
 for (const k of [
+  // 数据库
   'DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
+  // Upstash / KV / Redis
   'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN',
   'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_REST_API_READ_ONLY_TOKEN',
+  // 支付
+  'PAYMENT_MODE', 'ENABLE_MOCK_CALLBACK_API', 'EMAIL_NOTIFY_ENABLED',
+  // COS / 对象存储
+  'COS_BUCKET', 'COS_REGION', 'COS_SECRET_ID', 'COS_SECRET_KEY',
+  // OCR
+  'TENCENT_OCR_REGION', 'TENCENT_OCR_SECRET_ID', 'TENCENT_OCR_SECRET_KEY',
+  // 微信 / 企业微信
+  'WXWORK_CORP_ID', 'WXWORK_AGENT_ID', 'WXWORK_SECRET',
+  'WXWORK_RECV_TOKEN', 'WXWORK_RECV_AES_KEY',
+  'MP_APP_ID', 'MP_APP_SECRET', 'MP_TEMPLATE_ID',
+  'WECHAT_WORK_WEBHOOK_URL',
+  // Sentry
+  'SENTRY_DSN', 'VITE_SENTRY_DSN',
+  // 其他外部服务 / 密钥
+  'PUBLIC_BASE_URL', 'JWT_SECRET',
 ]) {
   delete process.env[k]
 }
@@ -60,6 +77,19 @@ if (reportFile) {
     console.error('拒绝执行：--report 与 --input 指向同一文件（含 symlink 解析后），会覆盖源数据')
     process.exit(2)
   }
+  // 硬链接防护：不同路径但同一 inode（realpath 无法区分硬链接）；报告文件尚不存在则无需检查
+  let reportStat = null
+  let inputStat = null
+  try {
+    reportStat = fs.statSync(reportFile)
+    inputStat = fs.statSync(inputFile)
+  } catch {
+    /* 报告文件尚不存在 */
+  }
+  if (reportStat && inputStat && reportStat.ino && inputStat.ino && reportStat.ino === inputStat.ino && reportStat.dev === inputStat.dev) {
+    console.error('拒绝执行：--report 与 --input 为同一文件（硬链接，相同 inode），会覆盖源数据')
+    process.exit(2)
+  }
 }
 
 // ---------------- 常量（与当前代码一致） ----------------
@@ -78,17 +108,23 @@ const PRISMA_USER_FIELDS = {
   avatar: { type: 'String', required: false, default: "''" },
   createdAt: { type: 'DateTime', required: false, default: 'now()' },
 }
-// KV User 持久字段（store.js DEFAULT + loadDb 迁移 + 创建账号逻辑）
+// KV User 持久字段（store.js DEFAULT + loadDb 迁移 + 创建账号/更新逻辑，app.js /api/auth/register、/api/admin/users、/api/admin/users/:id/*）
 const KV_PERSISTED_FIELDS = [
   'id', 'username', 'displayName', 'role', 'status', 'disabledAt',
   'storeKeys', 'staffKey', 'permissions', 'assetCenter',
   'bindingLegacyExempt', 'permissionsUpdatedAt', 'permissionsUpdatedBy',
   'passwordHash', 'secondPasswordHash', 'avatar', 'createdAt',
 ]
-// 派生字段（userPublic() 计算，不持久化）
-const DERIVED_FIELDS = ['bindingComplete', 'bindingLegacyExempt']
+// 派生字段（实时计算、不写入记录）：bindingComplete
+// 注意：bindingLegacyExempt 是持久字段（store.js loadDb 写入记录；app.js 创建/角色变更时设置），不属于派生字段
+const DERIVED_FIELDS = ['bindingComplete']
 // 密码哈希格式：scrypt `salt:hash`（auth.js hashPassword：32hex:128hex）
 const PASSWORD_HASH_RE = /^[0-9a-f]{32}:[0-9a-f]{128}$/
+// 代码生成规则：crypto.randomUUID() → UUID v4（app.js L617/L671）；读取端不解析格式，此处仅作软异常记录
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+// username 真实规则：app.js 创建/改名均 trim 后要求 2-20 字符
+const USERNAME_MIN_LEN = 2
+const USERNAME_MAX_LEN = 20
 // module 权限 key（shared/accountPermissions.js ALL_MODULE_KEYS）
 const ALL_MODULE_KEYS = new Set([
   'overview', 'analysis', 'staff', 'staff-payroll',
@@ -102,6 +138,7 @@ const ID_REFERENCE_MAP = [
   { file: 'server/auth.js', field: 'JWT payload sub', purpose: '登录令牌主体', strong: true, risk: 'JWT 30d 有效期；迁移需保持 id 不变' },
   { file: 'server/pos.js', field: 'Order.cashierId / 支付查询 where.cashierId', purpose: 'POS 收银员归属与订单查询', strong: true, risk: 'PG 字符串存储；迁移需 id 稳定' },
   { file: 'server/daily-entry-upgrade.js', field: 'DailyEntryAuditLog.operatorId', purpose: '业绩录入审计操作人', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
+  { file: 'server/v2.js', field: 'DailyEntryAuditLog.operatorId（业绩录入 v2 路由 sales_manual）', purpose: '业绩录入审计操作人（v2 统一入口）', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
   { file: 'server/asset-center.js', field: 'AssetFile.uploaderId / userId / 操作日志', purpose: '档案上传人/访问人', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
   { file: 'server/app.js', field: 'userPublic(id) / cookie 会话', purpose: '会话与账号管理', strong: true, risk: 'id 为账号主键，迁移必须保留原值' },
   { file: 'server/approvals.js', field: 'createdBy（未发现 req.user.id 直接引用）', purpose: '审批单据关联', strong: false, risk: '以 username/自建 id 关联，User.id 迁移影响低' },
@@ -149,7 +186,9 @@ const report = {
   duplicateIds: [],
   missingIds: [],
   malformedIds: [],
+  nonUuidV4Ids: [],
   missingUsernames: [],
+  usernameLengthAnomalies: [],
   missingPasswordHashes: [],
   unknownRoles: [],
   legacyRoles: [],
@@ -182,7 +221,7 @@ for (const u of users) {
   let userInvalid = false
   if (!u || typeof u !== 'object' || Array.isArray(u)) {
     invalidate('non-object entry')
-    userInvalid = true
+    report.invalidUsers += 1 // 直接计入：continue 前必须落账，否则会被 validUsers 吞掉
     continue
   }
   for (const f of KV_PERSISTED_FIELDS) {
@@ -199,8 +238,14 @@ for (const u of users) {
     invalidate('id not string')
     userInvalid = true
   } else {
-    if (seenId.has(id)) report.duplicateIds.push(id)
+    if (seenId.has(id)) {
+      report.duplicateIds.push(id)
+      invalidate('duplicate id')
+      userInvalid = true
+    }
     seenId.set(id, (seenId.get(id) || 0) + 1)
+    // 代码生成规则为 UUID v4（crypto.randomUUID），读取端不解析格式；非 UUID 仅记软异常（legacy/手工数据）
+    if (!UUID_V4_RE.test(id)) report.nonUuidV4Ids.push(id)
   }
   // username：存在/类型/空/空格/大小写
   const uname = u.username
@@ -215,6 +260,10 @@ for (const u of users) {
   } else {
     if (uname !== uname.trim()) {
       report.whitespaceAnomalies.push({ id: String(id), username: `[${uname}]`, issue: 'leading/trailing whitespace' })
+    }
+    if (uname.length < USERNAME_MIN_LEN || uname.length > USERNAME_MAX_LEN) {
+      // 创建/改名规则为 2-20 字符（app.js）；越界仅记软异常
+      report.usernameLengthAnomalies.push({ id: String(id), username: `[${uname}]` })
     }
     const exactKey = uname
     const foldKey = uname.toLowerCase()
@@ -242,9 +291,14 @@ for (const u of users) {
     invalidate('passwordHash format invalid')
     userInvalid = true
   }
-  // secondPasswordHash：仅记录类型问题（可选字段，不判 invalid）
+  // secondPasswordHash：可选字段；存在时按 auth.js hashPassword 格式验证（非字符串 → invalid；格式异常 → 仅记录）
   if (u.secondPasswordHash !== undefined && u.secondPasswordHash !== null && u.secondPasswordHash !== '') {
-    if (typeof u.secondPasswordHash !== 'string') invalidate('secondPasswordHash not string')
+    if (typeof u.secondPasswordHash !== 'string') {
+      invalidate('secondPasswordHash not string')
+      userInvalid = true
+    } else if (!PASSWORD_HASH_RE.test(u.secondPasswordHash)) {
+      invalidate('secondPasswordHash format invalid')
+    }
   }
   // role：分类（六角色 / public / legacy / unknown）
   const role = String(u.role ?? '')
@@ -261,11 +315,14 @@ for (const u of users) {
   }
   // status：public 强制 disabled；其余 active/disabled
   if (u.status === 'disabled' || role === PUBLIC_ROLE) report.disabledUsers.push(String(uname ?? id ?? '(no username)'))
-  // 时间字段：真正验证可解析性
+  // 时间字段：真正验证可解析性（不可解析 → invalid）
   for (const tf of ['createdAt', 'disabledAt', 'permissionsUpdatedAt']) {
     if (u[tf] !== undefined && u[tf] !== null && u[tf] !== '') {
       const r = isIsoString(u[tf])
-      if (!r.ok) invalidate(`unparseable ${tf}`)
+      if (!r.ok) {
+        invalidate(`unparseable ${tf}`)
+        userInvalid = true
+      }
     }
   }
   if (userInvalid) report.invalidUsers += 1
@@ -274,8 +331,11 @@ for (const u of users) {
 report.validUsers = users.length - report.invalidUsers
 report.invalidReasons = invalidReasonsCount
 
+// 仅对象条目参与后续结构化检查（null/数组/标量条目已在主循环计为 invalid）
+const objectUsers = users.filter((u) => u && typeof u === 'object' && !Array.isArray(u))
+
 // ---------------- 密码检查（完全脱敏） ----------------
-const hashSamples = users.map((u) => String(u.passwordHash ?? '')).filter(Boolean)
+const hashSamples = objectUsers.map((u) => String(u.passwordHash ?? '')).filter(Boolean)
 report.passwordCheck = {
   present: users.length - report.missingPasswordHashes.length,
   type: 'string',
@@ -285,15 +345,16 @@ report.passwordCheck = {
   note: 'scrypt salt:hash（32hex:128hex）；不输出任何 hash 片段',
 }
 
-// ---------------- ID 检查 ----------------
+// ---------------- ID 检查（按真实代码规则：crypto.randomUUID() 生成，读取端不解析格式） ----------------
 report.idCheck = {
-  actualType: 'string (crypto.randomUUID() V4)',
-  generation: 'server/app.js 创建账号/注册时 crypto.randomUUID()；会话以 id 为主键',
+  actualType: 'string（crypto.randomUUID() → UUID v4）',
+  generation: 'app.js /api/auth/register（L617）与 /api/admin/users（L671）创建时均 crypto.randomUUID()；loadDb/requireAuth 仅按字符串比较，不解析 UUID 格式',
   stable: true,
   duplicateCount: report.duplicateIds.length,
   emptyCount: report.missingIds.length,
   malformedCount: report.malformedIds.length,
-  note: '代码不强制 UUID 格式解析；仅检查存在/类型/重复',
+  nonUuidV4Count: report.nonUuidV4Ids.length,
+  note: '不强制 UUID v4：仅存在/类型/重复判 invalid；非 UUID 格式记为软异常（nonUuidV4Ids，legacy/手工数据可能非 UUID）',
 }
 
 // ---------------- Username 检查（登录为大小写敏感精确匹配） ----------------
@@ -303,12 +364,13 @@ report.usernameCheck = {
   caseFoldCollisionCount: report.caseFoldCollisions.length,
   whitespaceAnomalyCount: report.whitespaceAnomalies.length,
   typeAnomalyCount: report.typeAnomalies.length,
-  note: '登录为大小写敏感精确匹配（app.js u.username === username）；case-fold 冲突是迁移风险（PG @unique 大小写敏感），不等同于当前运行重复账号',
+  usernameLengthAnomalyCount: report.usernameLengthAnomalies.length,
+  note: '登录为大小写敏感精确匹配（app.js u.username === username）；case-fold 冲突是迁移风险（PG @unique 大小写敏感），不等同于当前运行重复账号；创建/改名规则为 trim 后 2-20 字符（app.js）',
 }
 
-// ---------------- Permissions 检查 ----------------
+// ---------------- Permissions 检查（按 shared/accountPermissions.js normalizeAccountPermissions 结构） ----------------
 const permIssues = { notObject: 0, unknownModuleKeys: [], modulesNotObject: 0, inventoryTransferAllInvalid: 0 }
-for (const u of users) {
+for (const u of objectUsers) {
   const p = u.permissions
   if (p === undefined || p === null) continue
   if (typeof p !== 'object' || Array.isArray(p)) {
@@ -332,33 +394,66 @@ report.permissionsCheck = {
     developer: '固定全部模块（normalizeModules 对 developer 直接全 true，不受 source 影响）',
     cashier: '固定仅 store-pos（normalizeModules 对 cashier 固定）',
     adminFinance: '默认全模块，但可按账号调整（source ? source[key] === true : defaults.has(key)）',
+    managerStaff: '默认集合非全模块（manager=MANAGER_DEFAULTS 14 项，staff=去 product-center 13 项）；显式 permissions 存在时以 source[key]===true 为准',
   },
 }
 
-// ---------------- Staff Binding 检查 ----------------
-const staffKeys = users.filter((u) => u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '')
+// ---------------- Staff Binding 检查（按真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364） ----------------
+// validateBoundRole 对 manager/staff：staffKey 必须存在、格式 storeKey::name、门店在 storeKeys 中、员工必须存在于 db.staff 主档
+// 输入若为完整 db.json 导出（含 staff 数组），可真正核对员工存在性；否则标记 unverifiable
+const staffMaster = Array.isArray(raw.staff) ? raw.staff : null
+const staffMasterPresent = staffMaster !== null
+const staffKeySet = new Set()
+if (staffMasterPresent) {
+  for (const s of staffMaster) {
+    if (s && typeof s === 'object' && !Array.isArray(s) && typeof s.storeKey === 'string' && typeof s.name === 'string' && s.storeKey && s.name) {
+      staffKeySet.add(`${s.storeKey}::${s.name}`)
+    }
+  }
+}
+const staffKeys = objectUsers.filter((u) => u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '')
 const staffBindingIssues = []
-for (const u of staffKeys) {
+const unboundManagerStaff = []
+for (const u of objectUsers) {
+  const role = String(u.role ?? '')
+  const hasSk = u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== ''
+  // manager/staff 按 validateBoundRole 必须绑定员工；缺绑定属 legacy-exempt 可能态（bindingComplete=false），单列不判 issue
+  if (['manager', 'staff'].includes(role) && !hasSk) {
+    unboundManagerStaff.push({ id: String(u.id ?? ''), username: String(u.username ?? ''), bindingLegacyExempt: u.bindingLegacyExempt === true })
+    continue
+  }
+  if (!hasSk) continue
+  if (typeof u.staffKey !== 'string') { staffBindingIssues.push({ id: String(u.id ?? ''), issue: 'staffKey not string' }); continue }
   const sk = u.staffKey
-  if (typeof sk !== 'string') { staffBindingIssues.push({ id: String(u.id), issue: 'staffKey not string' }); continue }
+  if (!['manager', 'staff'].includes(role)) {
+    // validateCashierRole 拒绝收银绑定员工；角色变更（app.js L875）会清空非 manager/staff 的 staffKey → 存量携带即脏数据
+    staffBindingIssues.push({ id: String(u.id ?? ''), issue: `staffKey 存在于 ${role || '(empty)'} 角色（真实规则仅 manager/staff 可绑定；cashier 禁止，其他角色变更时清空）` })
+    continue
+  }
   const [storeKey, name] = String(sk).split('::')
-  if (!storeKey || !name) staffBindingIssues.push({ id: String(u.id), issue: 'staffKey 缺少 storeKey::name 结构' })
+  if (!storeKey || !name) staffBindingIssues.push({ id: String(u.id ?? ''), issue: 'staffKey 缺少 storeKey::name 结构' })
   else if (!Array.isArray(u.storeKeys) || !u.storeKeys.includes(storeKey)) {
-    staffBindingIssues.push({ id: String(u.id), issue: 'staffKey 门店不在 storeKeys 中（validateBoundRole 规则）' })
+    staffBindingIssues.push({ id: String(u.id ?? ''), issue: 'staffKey 门店不在 storeKeys 中（validateBoundRole 规则）' })
+  } else if (staffMasterPresent && !staffKeySet.has(String(sk))) {
+    staffBindingIssues.push({ id: String(u.id ?? ''), issue: 'staffKey 员工不在 staff 主档（validateBoundRole：绑定员工不存在或已离职）' })
   }
 }
 report.staffBindingCheck = {
   count: staffKeys.length,
   format: 'staffKey = "storeKey::员工名"（名称软关联，非稳定 ID）',
+  masterPresent: staffMasterPresent,
+  localStaffVerifiable: staffMasterPresent,
   issues: staffBindingIssues,
-  localStaffVerifiable: false,
-  unverifiableNote: '输入仅含 users，不含 staff 主档；员工是否真实存在无法核对（unverifiable，非 PASS）',
+  unboundManagerStaff,
+  unverifiableNote: staffMasterPresent
+    ? ''
+    : '输入不含 staff 主档；员工是否真实存在无法核对（unverifiable，非 PASS）',
   risk: '员工重命名/门店 key 变化会导致绑定失效；Prisma User 无 staffKey 字段',
 }
 
-// ---------------- Store Binding 检查 ----------------
+// ---------------- Store Binding 检查（按真实规则：validateBoundRole/validateCashierRole 门店约束） ----------------
 const storeIssues = { notArray: 0, emptyArray: 0, duplicates: [], invalidValues: [] }
-const storeUsers = users.filter((u) => u.storeKeys !== undefined)
+const storeUsers = objectUsers.filter((u) => u.storeKeys !== undefined)
 for (const u of storeUsers) {
   const sk = u.storeKeys
   if (!Array.isArray(sk)) { storeIssues.notArray += 1; continue }
@@ -395,6 +490,7 @@ const kvRuntimeShape = {
   storeKeys: 'string[]',
   staffKey: 'string (storeKey::name)',
   permissions: 'object { modules, inventoryTransferAll }',
+  assetCenter: 'boolean',
   secondPasswordHash: 'string',
   permissionsUpdatedAt: 'string (ISO)',
   permissionsUpdatedBy: 'string',
@@ -461,8 +557,10 @@ if (reportFile) {
     `- case-fold collisions: ${report.caseFoldCollisions.length}`,
     `- whitespace anomalies: ${report.whitespaceAnomalies.length}`,
     `- duplicate ids: ${report.duplicateIds.length}`,
+    `- non-UUID v4 ids: ${report.idCheck.nonUuidV4Count}`,
     `- missing ids: ${report.missingIds.length}`,
     `- missing usernames: ${report.missingUsernames.length}`,
+    `- username length anomalies: ${report.usernameLengthAnomalies.length}`,
     `- missing passwordHash: ${report.missingPasswordHashes.length}`,
     `- unknown roles: ${report.unknownRoles.length}`,
     `- legacy roles: ${report.legacyRoles.length}`,
@@ -482,7 +580,7 @@ if (reportFile) {
     `## ID / Username / Binding 风险`,
     `- ID: ${report.idCheck.actualType}，重复 ${report.idCheck.duplicateCount}，空 ${report.idCheck.emptyCount}`,
     `- Username 大小写敏感登录；exact 重复 ${report.usernameCheck.exactDuplicateCount}，case-fold ${report.usernameCheck.caseFoldCollisionCount}`,
-    `- Staff 绑定: ${report.staffBindingCheck.count} 个（unverifiable，缺 staff 主档）`,
+    `- Staff 绑定: ${report.staffBindingCheck.count} 个（masterPresent=${report.staffBindingCheck.masterPresent}，verifiable=${report.staffBindingCheck.localStaffVerifiable}）`,
     `- Store 绑定规则: ${JSON.stringify(report.storeBindingCheck.rules)}`,
     ``,
     `## User ID 外部引用`,
