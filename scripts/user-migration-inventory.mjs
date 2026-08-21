@@ -134,19 +134,87 @@ const ALL_MODULE_KEYS = new Set([
   'finance', 'finance-invoice',
   'approval', 'asset-center', 'settings',
 ])
-// User.id 外部引用（经当前代码扫描）
+// storeKey 真实规则：app.js normalizeStoreKeys（L541-553）元素 String(k||'').trim() 后非空、≤30 字符、不重复；
+// store 创建路径（L103/L1124）另拒绝 __proto__/constructor/prototype
+const STORE_KEY_MAX_LEN = 30
+const BAD_STORE_KEY_RE = /^(__proto__|constructor|prototype)$/
+// 角色默认模块集（复现 shared/accountPermissions.js defaultModuleKeys / MANAGER_DEFAULTS / STAFF_DEFAULTS）
+const MODULE_STORE_POS = 'store-pos'
+const MODULE_ASSET_CENTER = 'asset-center'
+const MANAGER_DEFAULTS = [
+  'overview', 'analysis', 'staff', 'staff-payroll',
+  'store-entry', 'store-schedule', 'store-mailing', 'store-pos',
+  'product-center', 'inventory-transfer', 'inventory-purchase',
+  'finance-invoice', 'approval', 'settings',
+]
+const STAFF_DEFAULTS = MANAGER_DEFAULTS.filter((k) => k !== 'product-center')
+const SUPER_ROLES = new Set(['developer', 'finance', 'admin'])
+/** 复现 defaultModuleKeys(role, legacyAssetCenter)（shared/accountPermissions.js L79-85） */
+function defaultModuleKeys(role, legacyAssetCenter) {
+  if (role === 'developer' || role === 'admin' || role === 'finance') return [...ALL_MODULE_KEYS]
+  if (role === 'cashier') return [MODULE_STORE_POS]
+  const base = role === 'manager' ? [...MANAGER_DEFAULTS] : role === 'staff' ? [...STAFF_DEFAULTS] : []
+  if (legacyAssetCenter && !base.includes(MODULE_ASSET_CENTER)) base.push(MODULE_ASSET_CENTER)
+  return base
+}
+/** 复现 normalizeModules + hasModuleAccess 的账号级有效模块集（shared/accountPermissions.js L87-109） */
+function runtimeEffectiveModules(u) {
+  const role = String(u.role ?? '')
+  const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active') // loadDb 补全语义
+  if (status === 'disabled' || role === PUBLIC_ROLE) return { modules: [], basis: 'disabled' }
+  if (role === 'developer') return { modules: [...ALL_MODULE_KEYS], basis: 'fixed-all' }
+  if (role === 'cashier') return { modules: [MODULE_STORE_POS], basis: 'fixed-pos' }
+  if (!ACTIVE_ROLES.has(role)) return { modules: [], basis: 'unknown-role' }
+  const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
+  const source = p && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules) ? p.modules : null
+  const defaults = defaultModuleKeys(role, u.assetCenter === true)
+  const modules = [...ALL_MODULE_KEYS].filter((key) => (source ? source[key] === true : false) || defaults.includes(key))
+  return { modules, basis: source ? 'stored+defaults' : 'defaults' }
+}
+/** 复现 hasInventoryTransferAll（shared/accountPermissions.js L119-127）：isSuperUser 或存储值；disabled/public 恒 false */
+function runtimeInventoryTransferAll(u) {
+  const role = String(u.role ?? '')
+  const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active')
+  if (status === 'disabled' || role === PUBLIC_ROLE) return false
+  const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
+  const stored = Boolean(p && p.inventoryTransferAll === true)
+  return (SUPER_ROLES.has(role) || stored)
+}
+/** 复现 canManageAccounts（shared/accountPermissions.js L134-136）：仅 developer 且 status !== disabled */
+function runtimeCanManageAccounts(u) {
+  const role = String(u.role ?? '')
+  const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active')
+  return role === 'developer' && status !== 'disabled'
+}
+// User.id 外部引用（经当前代码重扫；hardOrSoftReference：hard=直接存 User.id，soft=存 username/自建键）
 const ID_REFERENCE_MAP = [
-  { file: 'server/auth.js', field: 'JWT payload sub', purpose: '登录令牌主体', strong: true, risk: 'JWT 30d 有效期；迁移需保持 id 不变' },
-  { file: 'server/pos.js', field: 'Order.cashierId（PG orders.cashier_id）', purpose: 'POS 收银员归属与订单查询', strong: true, risk: '写入 req.user.id；PG 字符串存储；迁移需 id 稳定' },
-  { file: 'server/payments/payment-service.js', field: 'PaymentLog.cashierId（PG payment_logs.cashier_id，从 order.cashierId 拷贝）', purpose: '支付流水收银员', strong: true, risk: 'PG 字符串存储；迁移需 id 稳定' },
-  { file: 'server/daily-entry-upgrade.js', field: 'DailyEntryAuditLog.operatorId', purpose: '业绩录入审计操作人', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
-  { file: 'server/v2.js', field: 'DailyEntryAuditLog.operatorId（业绩录入 v2 路由 sales_manual）', purpose: '业绩录入审计操作人（v2 统一入口）', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
-  { file: 'server/asset-center.js', field: 'AssetFileVersion.uploaderId / AssetAccessGrant.userId / AssetOperationLog.userId（PG asset_file_versions.uploader_id / asset_access_grants.user_id / asset_operation_logs.user_id）', purpose: '档案版本上传人/档案授权账号/档案操作账号', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
-  { file: 'server/app.js', field: 'userPublic(id) / cookie 会话 / 账号管理路由定位', purpose: '会话与账号管理', strong: true, risk: 'id 为账号主键，迁移必须保留原值' },
-  { file: 'server/approvals.js', field: 'createdBy（未发现 req.user.id 直接引用）', purpose: '审批单据关联', strong: false, risk: '以 username/自建 id 关联，User.id 迁移影响低' },
-  { file: 'server/notifications.js', field: 'target 关联（未发现 req.user.id 直接引用）', purpose: '通知接收人', strong: false, risk: '以 username/自建 id 关联，User.id 迁移影响低' },
-  { file: 'server/payroll-notice.js', field: 'targetUsername（未发现 req.user.id 直接引用）', purpose: '工资条接收人', strong: false, risk: '以 username 关联，User.id 迁移影响低' },
-  { file: 'src/utils/pos.js', field: 'sessionStorage key budu-pos:{userId}（sessionStorage，非 localStorage）', purpose: '前端 POS 会话隔离缓存', strong: true, risk: 'id 变化会导致历史会话缓存失效（可重建）' },
+  // ---- hard：直接写入/关联 User.id ----
+  { sourceFile: 'server/auth.js', entity: 'JWT token', field: 'sub', usage: '登录令牌主体（signToken { sub: user.id }；requireAuth 按 payload.sub 定位账号）', hardOrSoftReference: 'hard', migrationRisk: 'JWT 30d 有效期；迁移必须保持 id 不变' },
+  { sourceFile: 'server/pos.js', entity: 'Order (PG orders)', field: 'cashierId', usage: 'POS 收银员归属与订单查询（写 req.user.id）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/payments/payment-service.js', entity: 'PaymentLog (PG payment_logs)', field: 'cashierId', usage: '支付流水收银员（从 order.cashierId 拷贝）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/daily-entry-upgrade.js', entity: 'DailyEntryAuditLog (PG daily_entry_audit_logs)', field: 'operatorId', usage: '业绩录入审计操作人（写 req.user.id）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/v2.js', entity: 'DailyEntryAuditLog (PG daily_entry_audit_logs)', field: 'operatorId', usage: '业绩录入 v2 路由审计操作人（sales_manual，写 req.user.id）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/asset-center.js', entity: 'AssetFileVersion (PG asset_file_versions)', field: 'uploaderId', usage: '档案版本上传人（写 req.user.id）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/asset-center.js', entity: 'AssetAccessGrant (PG asset_access_grants)', field: 'userId', usage: '档案授权账号（写 req.user.id，@unique）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/asset-center.js', entity: 'AssetOperationLog (PG asset_operation_logs)', field: 'userId', usage: '档案操作账号（写 user.id）', hardOrSoftReference: 'hard', migrationRisk: 'PG 字符串存储；迁移需 id 稳定' },
+  { sourceFile: 'server/app.js', entity: 'cookie 会话 / 账号管理路由', field: 'sub（JWT）/ :id', usage: '登录态会话；账号管理按 id 定位目标账号', hardOrSoftReference: 'hard', migrationRisk: 'id 为账号主键，迁移必须保留原值' },
+  { sourceFile: 'src/utils/userData.js', entity: 'localStorage', field: 'MIRROR_OWNER_KEY（budu-os-cloud-mirror-owner-v1）', usage: '云端数据镜像 ownership key（值=userId，防止切换账号串显上一账号数据）', hardOrSoftReference: 'hard', migrationRisk: 'id 变化导致镜像归属失效（可重建）' },
+  { sourceFile: 'src/utils/pos.js', entity: 'sessionStorage', field: 'budu-pos:{userId} 系列 key', usage: 'POS 会话/购物车用户隔离缓存（sessionStorage）', hardOrSoftReference: 'hard', migrationRisk: 'id 变化导致历史会话缓存失效（可重建）' },
+  { sourceFile: 'src/components/PosPage.jsx', entity: 'sessionStorage', field: 'budu-pos-products:{userId}（productsCacheKey L29）', usage: 'POS 商品缓存用户隔离（读/写 sessionStorage）', hardOrSoftReference: 'hard', migrationRisk: 'id 变化导致商品缓存失效（可重建）' },
+  // ---- soft：username 软引用（User.id 迁移影响低，username 必须保持唯一） ----
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalRequest (PG approval_requests)', field: 'submitterUsername', usage: '审批单提交人（req.user.username）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联；改名后历史单据归属变化' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalNode (PG approval_nodes)', field: 'approverUsername', usage: '审批节点审批人（按 username 匹配）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联；改名后待办匹配失效' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalCc (PG approval_ccs)', field: 'ccUsername', usage: '审批抄送人', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalComment (PG approval_comments)', field: 'username', usage: '审批意见作者（userRole 一并快照）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalLog (PG approval_logs)', field: 'username', usage: '审批操作日志操作人', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalNotification (PG approval_notifications)', field: 'username', usage: '审批通知接收人', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/approvals.js', entity: 'ApprovalAttachment (PG approval_attachments)', field: 'uploaderUsername', usage: '审批附件上传人', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/notifications.js', entity: 'Notification (PG notifications)', field: 'username', usage: '站内通知接收人（target 为业务跳转目标，非用户引用）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联；改名后通知归属变化' },
+  { sourceFile: 'server/wechat-bind.js', entity: 'WechatBinding (PG wechat_bindings)', field: 'username', usage: '微信/企微绑定账号（@unique [username, channel]）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/payroll-notice.js', entity: 'PayrollNotice (PG payroll_notices)', field: 'targetUsername', usage: '工资条接收人', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
+  { sourceFile: 'server/pos.js', entity: 'Order (PG orders)', field: 'cashierNameSnapshot', usage: '收银员姓名快照（req.user.username）', hardOrSoftReference: 'soft', migrationRisk: '快照，无关联性' },
+  { sourceFile: 'server/daily-entry-upgrade.js', entity: 'DailyEntryAuditLog', field: 'operatorName', usage: '操作人姓名快照（req.user.username）', hardOrSoftReference: 'soft', migrationRisk: '快照，无关联性' },
+  { sourceFile: 'server/asset-center.js', entity: 'AssetFile (PG asset_files)', field: 'createdBy / updatedBy', usage: '档案创建/更新人（req.user.username）', hardOrSoftReference: 'soft', migrationRisk: 'username 关联' },
 ]
 
 // ---------------- 工具函数 ----------------
@@ -165,6 +233,11 @@ try {
 } catch (err) {
   // 明确、脱敏的输入错误：不打印文件内容与原生异常栈
   console.error(`输入文件不是合法 JSON（${inputFile}）：${err.message}`)
+  process.exit(2)
+}
+// P0：根节点必须是 plain object（null / 数组 / 字符串 / 数字 / 布尔 一律拒绝）
+if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+  console.error('Invalid input structure: root must be an object.')
   process.exit(2)
 }
 const users = raw.users
@@ -224,12 +297,40 @@ const seenExact = new Map()
 const seenFold = new Map()
 const seenId = new Map()
 const invalidReasonsCount = {}
+const warningReasonsCount = {}
 // permissions 问题计数（在主循环内累积，严重结构错误同时判 invalid）
 const permIssues = { notObject: 0, unknownModuleKeys: [], modulesNotObject: 0, nonBooleanModuleValues: 0, inventoryTransferAllInvalid: 0 }
 
 function invalidate(reason) {
   invalidReasonsCount[reason] = (invalidReasonsCount[reason] || 0) + 1
 }
+function warn(reason) {
+  warningReasonsCount[reason] = (warningReasonsCount[reason] || 0) + 1
+}
+
+// stores / staff 主档准备（输入为完整 db.json 导出时可用；缺失 → unverifiable）
+const storeMaster = Array.isArray(raw.stores) ? raw.stores : null
+const storeMasterKeys = new Set()
+if (storeMaster) {
+  for (const s of storeMaster) {
+    if (s && typeof s === 'object' && !Array.isArray(s) && typeof s.key === 'string' && s.key.trim()) {
+      storeMasterKeys.add(s.key.trim())
+    }
+  }
+}
+const storeMasterPresent = storeMaster !== null
+const staffMaster = Array.isArray(raw.staff) ? raw.staff : null
+const staffMasterPresent = staffMaster !== null
+const staffKeySet = new Set()
+if (staffMasterPresent) {
+  for (const s of staffMaster) {
+    if (s && typeof s === 'object' && !Array.isArray(s) && typeof s.storeKey === 'string' && typeof s.name === 'string' && s.storeKey && s.name) {
+      staffKeySet.add(`${s.storeKey}::${s.name}`)
+    }
+  }
+}
+// staffKey 分类统计（bound / legacyExempt / unboundInvalid）
+const staffKeyCategories = { bound: [], legacyExempt: [], unboundInvalid: [] }
 
 for (const u of users) {
   let userInvalid = false
@@ -259,7 +360,10 @@ for (const u of users) {
     }
     seenId.set(id, (seenId.get(id) || 0) + 1)
     // 代码生成规则为 UUID v4（crypto.randomUUID），读取端不解析格式；非 UUID 仅记软异常（legacy/手工数据）
-    if (!UUID_V4_RE.test(id)) report.nonUuidV4Ids.push(id)
+    if (!UUID_V4_RE.test(id)) {
+      report.nonUuidV4Ids.push(id)
+      warn('non-UUID v4 id')
+    }
   }
   // username：存在/类型/空/空格/大小写
   const uname = u.username
@@ -274,10 +378,12 @@ for (const u of users) {
   } else {
     if (uname !== uname.trim()) {
       report.whitespaceAnomalies.push({ id: String(id), username: `[${uname}]`, issue: 'leading/trailing whitespace' })
+      warn('username whitespace anomaly')
     }
     if (uname.length < USERNAME_MIN_LEN || uname.length > USERNAME_MAX_LEN) {
       // 创建/改名规则为 2-20 字符（app.js）；越界仅记软异常
       report.usernameLengthAnomalies.push({ id: String(id), username: `[${uname}]` })
+      warn('username length anomaly')
     }
     const exactKey = uname
     const foldKey = uname.toLowerCase()
@@ -288,6 +394,7 @@ for (const u of users) {
     }
     if (seenFold.has(foldKey) && seenFold.get(foldKey) !== uname) {
       report.caseFoldCollisions.push({ a: seenFold.get(foldKey), b: uname })
+      warn('case-fold collision')
     }
     seenExact.set(exactKey, uname)
     if (!seenFold.has(foldKey)) seenFold.set(foldKey, uname)
@@ -330,7 +437,10 @@ for (const u of users) {
           userInvalid = true
         } else {
           for (const [k, v] of Object.entries(p.modules)) {
-            if (!ALL_MODULE_KEYS.has(k)) permIssues.unknownModuleKeys.push(k)
+            if (!ALL_MODULE_KEYS.has(k)) {
+              permIssues.unknownModuleKeys.push(k)
+              warn('unknown module key') // normalizeModules 会忽略未知 key，不进入 effective modules
+            }
             if (typeof v !== 'boolean') {
               permIssues.nonBooleanModuleValues += 1
               invalidate('permissions.modules value not boolean')
@@ -372,13 +482,53 @@ for (const u of users) {
     }
   }
   if (u.status === 'disabled' || role === PUBLIC_ROLE) report.disabledUsers.push(String(uname ?? id ?? '(no username)'))
-  // 角色绑定约束（真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364）账号级执行
-  // - cashier：必须且仅绑定一家门店、不得绑定员工
-  // - manager/staff：必须绑定至少一家门店；staffKey（若存在）必须为 string、格式 storeKey::name、门店在 storeKeys 中
-  // - manager/staff 完全无 staffKey：legacy-exempt 可能态（bindingLegacyExempt），不判 invalid（unboundManagerStaff 单列）
+  // storeKeys 结构与元素校验（真实规则：app.js normalizeStoreKeys L541-553；元素必须 string、trim 非空、
+  // ≤30 字符、不重复；store 创建路径另拒绝 __proto__/constructor/prototype）—— 对所有账号执行，违反 → error
   const storeKeysVal = u.storeKeys
+  let skValid = { ok: false, keys: [] }
+  if (storeKeysVal === undefined || storeKeysVal === null || storeKeysVal === '') {
+    skValid = { ok: true, keys: [] } // loadDb 会补 []，视为空数组
+  } else if (!Array.isArray(storeKeysVal)) {
+    invalidate('storeKeys not array')
+    userInvalid = true
+  } else {
+    const seen = new Set()
+    const keys = []
+    let structOk = true
+    for (const v of storeKeysVal) {
+      if (typeof v !== 'string') {
+        invalidate('storeKeys element not string')
+        userInvalid = true
+        structOk = false
+        break
+      }
+      const t = v.trim()
+      if (!t) {
+        invalidate('empty storeKey')
+        userInvalid = true
+        structOk = false
+        break
+      }
+      if (t.length > STORE_KEY_MAX_LEN || BAD_STORE_KEY_RE.test(t)) {
+        invalidate('storeKey format invalid')
+        userInvalid = true
+        structOk = false
+        break
+      }
+      if (seen.has(t)) {
+        invalidate('duplicate storeKeys')
+        userInvalid = true
+        structOk = false
+        break
+      }
+      seen.add(t)
+      keys.push(t)
+    }
+    if (structOk) skValid = { ok: true, keys }
+  }
+  // 角色门店硬约束（validateBoundRole / validateCashierRole 语义，基于有效 storeKeys）
   if (role === 'cashier') {
-    if (!Array.isArray(storeKeysVal) || storeKeysVal.length !== 1 || !storeKeysVal[0]) {
+    if (skValid.ok && skValid.keys.length !== 1) {
       invalidate('cashier storeKeys violation')
       userInvalid = true
     }
@@ -387,24 +537,56 @@ for (const u of users) {
       userInvalid = true
     }
   } else if (role === 'manager' || role === 'staff') {
-    if (!Array.isArray(storeKeysVal) || storeKeysVal.length < 1) {
+    if (skValid.ok && skValid.keys.length < 1) {
       invalidate('manager/staff storeKeys violation')
       userInvalid = true
     }
-    if (u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '') {
+  }
+  // stores 主档存在性核验（输入含 stores 时逐 key 核对；缺失 → unverifiable，不判 invalid）
+  if (skValid.ok && skValid.keys.length > 0 && storeMasterPresent) {
+    for (const k of skValid.keys) {
+      if (!storeMasterKeys.has(k)) {
+        invalidate('storeKey not in stores master')
+        userInvalid = true
+      }
+    }
+  }
+  // staffKey 统一规则（manager/staff）：
+  //   有有效 staffKey（string/非空/storeKey::name/storeKey ∈ storeKeys/staff 主档存在（可验证时））→ bound
+  //   无 staffKey + bindingLegacyExempt === true → legacyExempt（valid + warning，迁移风险标记）
+  //   无 staffKey + 非 exempt（false/缺失）→ unboundInvalid（invalid）
+  if (role === 'manager' || role === 'staff') {
+    const hasSk = u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== ''
+    if (hasSk) {
+      let skOk = true
       if (typeof u.staffKey !== 'string') {
         invalidate('staffKey not string')
         userInvalid = true
-      } else {
-        const [skStore, skName] = String(u.staffKey).split('::')
+        skOk = false
+      } else if (skValid.ok) {
+        const [skStore, skName] = u.staffKey.split('::')
         if (!skStore || !skName) {
           invalidate('staffKey malformed')
           userInvalid = true
-        } else if (!Array.isArray(storeKeysVal) || !storeKeysVal.includes(skStore)) {
+          skOk = false
+        } else if (!skValid.keys.includes(skStore)) {
           invalidate('staffKey store not in storeKeys')
           userInvalid = true
+          skOk = false
+        } else if (staffMasterPresent && !staffKeySet.has(u.staffKey)) {
+          invalidate('staffKey staff not in master')
+          userInvalid = true
+          skOk = false
         }
       }
+      if (skOk) staffKeyCategories.bound.push(String(u.id ?? ''))
+    } else if (u.bindingLegacyExempt === true) {
+      warn('legacy exempt binding')
+      staffKeyCategories.legacyExempt.push({ id: String(u.id ?? ''), username: String(uname ?? '') })
+    } else {
+      invalidate('missing staffKey non-exempt')
+      userInvalid = true
+      staffKeyCategories.unboundInvalid.push({ id: String(u.id ?? ''), username: String(uname ?? '') })
     }
   }
   // 时间字段：真正验证可解析性（不可解析 → invalid）
@@ -422,6 +604,14 @@ for (const u of users) {
 
 report.validUsers = users.length - report.invalidUsers
 report.invalidReasons = invalidReasonsCount
+// 统一验证原则：errors.length > 0 → invalid；warnings 不影响 valid（单一账号验证结果）
+report.validation = {
+  errors: invalidReasonsCount,
+  warnings: warningReasonsCount,
+  errorReasonCount: Object.keys(invalidReasonsCount).length,
+  warningReasonCount: Object.keys(warningReasonsCount).length,
+  consistencyNote: 'invalidUsers = 存在至少一个 ERROR 的账号数；WARNINGS（case-fold/legacy exempt/unverifiable/软异常）不判 invalid',
+}
 
 // 仅对象条目参与后续结构化检查（null/数组/标量条目已在主循环计为 invalid）
 const objectUsers = users.filter((u) => u && typeof u === 'object' && !Array.isArray(u))
@@ -477,30 +667,30 @@ report.permissionsCheck = {
   },
 }
 
-// 每账号有效权限盘点：固定能力（developer/cashier）vs 存储值 vs 默认集
+// 每账号有效权限盘点：严格复现运行时 normalizeModules + hasModuleAccess + hasInventoryTransferAll + canManageAccounts
 report.perAccountPermissions = objectUsers.map((u) => {
   const role = String(u.role ?? '')
-  const p = u.permissions
-  let effective
-  if (role === 'developer') {
-    effective = { basis: 'fixed', modules: [...ALL_MODULE_KEYS], note: 'developer 固定全部模块（normalizeModules 不受存储值影响）' }
-  } else if (role === 'cashier') {
-    effective = { basis: 'fixed', modules: ['store-pos'], note: 'cashier 固定仅 store-pos' }
-  } else if (p && typeof p === 'object' && !Array.isArray(p) && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules)) {
-    effective = {
-      basis: 'stored',
-      modules: Object.entries(p.modules).filter(([, v]) => v === true).map(([k]) => k),
-      note: '按存储 source[key]===true 盘点',
-    }
-  } else {
-    effective = { basis: 'defaults', modules: [], note: '无有效 permissions 记录 → 迁移后按角色默认集（admin/finance 全模块；manager 14；staff 13）' }
+  const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active') // loadDb 补全语义
+  const eff = runtimeEffectiveModules(u)
+  const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
+  const itaStored = Boolean(p && p.inventoryTransferAll === true)
+  return {
+    id: String(u.id ?? ''),
+    username: String(u.username ?? ''),
+    role,
+    status,
+    effectiveModules: eff.modules,
+    effectiveBasis: eff.basis,
+    assetCenterFallbackApplied: (role === 'manager' || role === 'staff') && u.assetCenter === true,
+    inventoryTransferAllStored: itaStored,
+    inventoryTransferAllEffective: runtimeInventoryTransferAll(u), // 跨门店调拨范围能力，非模块访问权
+    canManageAccounts: runtimeCanManageAccounts(u),
   }
-  return { id: String(u.id ?? ''), username: String(u.username ?? ''), role, effective }
 })
 
 // 账号治理能力判定：hasPageAccess('account-admin') = canManageAccounts = developer && status !== disabled
 report.accountAdminCheck = {
-  rule: 'canManageAccounts：仅 developer 且 status !== disabled（shared/accountPermissions.js canManageAccounts；hasPageAccess(account-admin) 同规则）；public 恒 false（status=disabled）',
+  rule: 'canManageAccounts：仅 developer 且 status !== disabled（shared/accountPermissions.js canManageAccounts L134-136；hasPageAccess(account-admin) 同规则）；public 恒 false（status=disabled）',
   accounts: objectUsers.map((u) => {
     const role = String(u.role ?? '')
     const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active') // loadDb 补全语义
@@ -509,35 +699,18 @@ report.accountAdminCheck = {
       username: String(u.username ?? ''),
       role,
       status,
-      canManageAccounts: role === 'developer' && status !== 'disabled',
+      canManageAccounts: runtimeCanManageAccounts(u),
     }
   }),
 }
 
-// ---------------- Staff Binding 检查（按真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364） ----------------
-// validateBoundRole 对 manager/staff：staffKey 必须存在、格式 storeKey::name、门店在 storeKeys 中、员工必须存在于 db.staff 主档
-// 输入若为完整 db.json 导出（含 staff 数组），可真正核对员工存在性；否则标记 unverifiable
-const staffMaster = Array.isArray(raw.staff) ? raw.staff : null
-const staffMasterPresent = staffMaster !== null
-const staffKeySet = new Set()
-if (staffMasterPresent) {
-  for (const s of staffMaster) {
-    if (s && typeof s === 'object' && !Array.isArray(s) && typeof s.storeKey === 'string' && typeof s.name === 'string' && s.storeKey && s.name) {
-      staffKeySet.add(`${s.storeKey}::${s.name}`)
-    }
-  }
-}
+// ---------------- Staff Binding 检查（真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364） ----------------
+// 分类统计已在主循环完成（bound / legacyExempt / unboundInvalid）；此处仅保留诊断级 issues
 const staffKeys = objectUsers.filter((u) => u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '')
 const staffBindingIssues = []
-const unboundManagerStaff = []
 for (const u of objectUsers) {
   const role = String(u.role ?? '')
   const hasSk = u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== ''
-  // manager/staff 按 validateBoundRole 必须绑定员工；缺绑定属 legacy-exempt 可能态（bindingComplete=false），单列不判 issue
-  if (['manager', 'staff'].includes(role) && !hasSk) {
-    unboundManagerStaff.push({ id: String(u.id ?? ''), username: String(u.username ?? ''), bindingLegacyExempt: u.bindingLegacyExempt === true })
-    continue
-  }
   if (!hasSk) continue
   if (typeof u.staffKey !== 'string') { staffBindingIssues.push({ id: String(u.id ?? ''), issue: 'staffKey not string' }); continue }
   const sk = u.staffKey
@@ -559,15 +732,17 @@ report.staffBindingCheck = {
   format: 'staffKey = "storeKey::员工名"（名称软关联，非稳定 ID）',
   masterPresent: staffMasterPresent,
   localStaffVerifiable: staffMasterPresent,
+  bound: staffKeyCategories.bound,
+  legacyExempt: staffKeyCategories.legacyExempt,
+  unboundInvalid: staffKeyCategories.unboundInvalid,
   issues: staffBindingIssues,
-  unboundManagerStaff,
   unverifiableNote: staffMasterPresent
     ? ''
     : '输入不含 staff 主档；员工是否真实存在无法核对（unverifiable，非 PASS）',
   risk: '员工重命名/门店 key 变化会导致绑定失效；Prisma User 无 staffKey 字段',
 }
 
-// ---------------- Store Binding 检查（按真实规则：validateBoundRole/validateCashierRole 门店约束） ----------------
+// ---------------- Store Binding 检查（结构诊断 + 主档存在性状态） ----------------
 const storeIssues = { notArray: 0, emptyArray: 0, duplicates: [], invalidValues: [] }
 const storeUsers = objectUsers.filter((u) => u.storeKeys !== undefined)
 for (const u of storeUsers) {
@@ -584,6 +759,8 @@ for (const u of storeUsers) {
 report.storeBindingCheck = {
   format: 'storeKeys = string[]（KV 门店 key 引用）',
   issues: storeIssues,
+  storeExistence: storeMasterPresent ? 'verified' : 'unverifiable',
+  storeMasterCount: storeMaster ? storeMaster.length : 0,
   rules: {
     managerStaff: '必须绑定至少一家门店 + staffKey（validateBoundRole；已账号级执行，违反 → invalidUsers）',
     cashier: '必须且仅绑定一家门店、不得绑定员工（validateCashierRole；已账号级执行，违反 → invalidUsers）',
@@ -713,11 +890,12 @@ if (reportFile) {
     `## ID / Username / Binding 风险`,
     `- ID: ${report.idCheck.actualType}，重复 ${report.idCheck.duplicateCount}，空 ${report.idCheck.emptyCount}`,
     `- Username 大小写敏感登录；exact 重复 ${report.usernameCheck.exactDuplicateCount}，case-fold ${report.usernameCheck.caseFoldCollisionCount}`,
-    `- Staff 绑定: ${report.staffBindingCheck.count} 个（masterPresent=${report.staffBindingCheck.masterPresent}，verifiable=${report.staffBindingCheck.localStaffVerifiable}）`,
+    `- Staff 绑定: bound=${report.staffBindingCheck.bound.length} / legacyExempt=${report.staffBindingCheck.legacyExempt.length} / unboundInvalid=${report.staffBindingCheck.unboundInvalid.length}（masterPresent=${report.staffBindingCheck.masterPresent}）`,
+    `- Store 存在性: ${report.storeBindingCheck.storeExistence}（stores 主档 ${report.storeBindingCheck.storeMasterCount} 条）`,
     `- Store 绑定规则: ${JSON.stringify(report.storeBindingCheck.rules)}`,
     ``,
-    `## User ID 外部引用`,
-    report.idReferenceMap.map((r) => `- ${r.file} · ${r.field}：${r.purpose}（强关联=${r.strong}；${r.risk}）`).join('\n'),
+    `## User ID 外部引用（hard=直接存 User.id / soft=username 软引用）`,
+    report.idReferenceMap.map((r) => `- **${r.sourceFile}** · ${r.entity}.${r.field}（${r.hardOrSoftReference}）：${r.usage} → ${r.migrationRisk}`).join('\n'),
     ``,
     `## 账号治理 / 持久化说明`,
     `- 可管理账号（canManageAccounts，仅 developer 且未停用）: ${report.accountAdminCheck.accounts.filter((a) => a.canManageAccounts).length} 个`,
