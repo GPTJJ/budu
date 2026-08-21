@@ -131,8 +131,8 @@ test('P0: users 空数组 → 合法 exit 0', () => {
 test('exact duplicate username 检测（大小写敏感）', () => {
   const dup = path.join(tmp, 'exact-dup.json')
   fs.writeFileSync(dup, JSON.stringify({ users: [
-    { id: 'x1', username: 'bob', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x') },
-    { id: 'x2', username: 'bob', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y') },
+    { id: 'x1', username: 'bob', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x') },
+    { id: 'x2', username: 'bob', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y') },
   ] }))
   const out = JSON.parse(runTool(dup).stdout)
   assert.ok(out.exactDuplicateUsernames.includes('bob'))
@@ -143,8 +143,8 @@ test('exact duplicate username 检测（大小写敏感）', () => {
 test('case-fold collision 检测（大小写不同不算 exact duplicate）', () => {
   const cf = path.join(tmp, 'casefold.json')
   fs.writeFileSync(cf, JSON.stringify({ users: [
-    { id: 'x1', username: 'Admin', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x') },
-    { id: 'x2', username: 'admin', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y') },
+    { id: 'x1', username: 'Admin', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x') },
+    { id: 'x2', username: 'admin', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y') },
   ] }))
   const out = JSON.parse(runTool(cf).stdout)
   assert.equal(out.exactDuplicateUsernames.length, 0)
@@ -155,7 +155,7 @@ test('case-fold collision 检测（大小写不同不算 exact duplicate）', ()
 test('whitespace anomaly 检测', () => {
   const ws = path.join(tmp, 'ws.json')
   fs.writeFileSync(ws, JSON.stringify({ users: [
-    { id: 'x1', username: ' bob ', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x') },
+    { id: 'x1', username: ' bob ', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x') },
   ] }))
   const out = JSON.parse(runTool(ws).stdout)
   assert.equal(out.whitespaceAnomalies.length, 1)
@@ -168,26 +168,30 @@ test('public role 正确分类（非 unknown）', () => {
   assert.ok(out.disabledUsers.includes('public1'))
 })
 
-test('invalid user → invalidUsers 计数（缺 id/username/hash/unknown role/重复 id）', () => {
+test('invalid user → invalidUsers 计数（缺 id/username/hash/unknown role/重复 id/角色门店约束）', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
-  assert.equal(out.invalidUsers, 4) // u-5 缺 username, u-6 缺 hash, u-7 unknown role, u-1 重复 id
+  assert.equal(out.invalidUsers, 6) // u-5 缺 username, u-6 缺 hash, u-7 unknown role, u-1 重复 id, u-4/u-10 staff 无门店
   assert.equal(out.validUsers, out.sourceUserCount - out.invalidUsers)
   assert.ok(out.invalidReasons['missing username'])
   assert.ok(out.invalidReasons['missing passwordHash'])
   assert.ok(out.invalidReasons['unknown role'])
   assert.ok(out.invalidReasons['duplicate id'])
+  assert.ok(out.invalidReasons['manager/staff storeKeys violation'])
   assert.ok(out.invalidReasons['missing id'] === undefined || out.invalidReasons['missing id'] === 0) // 测试数据都有 id
 })
 
-test('ID reference map 输出（含 v2.js operatorId）', () => {
+test('ID reference map 输出（完整性：PaymentLog/AssetFileVersion/资产 userId/sessionStorage）', () => {
   const out = JSON.parse(runTool(inputFile).stdout)
   assert.ok(Array.isArray(out.idReferenceMap))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('auth.js') && r.field.includes('sub')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('pos.js') && r.field.includes('cashierId')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('payment-service.js') && r.field.includes('PaymentLog.cashierId')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('daily-entry-upgrade.js')))
   assert.ok(out.idReferenceMap.some((r) => r.file.includes('v2.js') && r.field.includes('operatorId')))
-  assert.ok(out.idReferenceMap.some((r) => r.file.includes('asset-center.js')))
-  assert.ok(out.idReferenceMap.some((r) => r.file.includes('pos.js') && r.field.includes('localStorage')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('asset-center.js') && r.field.includes('AssetFileVersion.uploaderId')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('asset-center.js') && r.field.includes('AssetAccessGrant.userId')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('asset-center.js') && r.field.includes('AssetOperationLog.userId')))
+  assert.ok(out.idReferenceMap.some((r) => r.file.includes('pos.js') && r.field.includes('sessionStorage')))
 })
 
 test('bindingComplete 不在持久字段（派生）；bindingLegacyExempt 是持久字段', () => {
@@ -242,7 +246,7 @@ test('P0: users 含 null 条目 → exit 0、invalidUsers 计入（不崩溃不�
   const bad = path.join(tmp, 'null-entry.json')
   fs.writeFileSync(bad, JSON.stringify({ users: [
     null,
-    { id: 'x1', username: 'ok', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x1', username: 'ok', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
     'not-an-object',
   ] }))
   const r = runTool(bad)
@@ -256,8 +260,8 @@ test('P0: users 含 null 条目 → exit 0、invalidUsers 计入（不崩溃不�
 test('User ID：非 UUID v4 仅记软异常，不判 invalid（代码不强制 UUID 解析）', () => {
   const f = path.join(tmp, 'ids.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
-    { id: 'c8f1c2b0-0000-4000-8000-000000000000', username: 'uuid-user', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
-    { id: 'legacy-1', username: 'legacy', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'c8f1c2b0-0000-4000-8000-000000000000', username: 'uuid-user', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'legacy-1', username: 'legacy', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   assert.deepEqual(out.nonUuidV4Ids, ['legacy-1'])
@@ -269,8 +273,8 @@ test('User ID：非 UUID v4 仅记软异常，不判 invalid（代码不强制 U
 test('重复 id → 后续记录 invalid（duplicate id）', () => {
   const f = path.join(tmp, 'dup-id.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
-    { id: 'same', username: 'a1', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
-    { id: 'same', username: 'a2', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'same', username: 'a1', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'same', username: 'a2', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   assert.deepEqual(out.duplicateIds, ['same'])
@@ -281,13 +285,159 @@ test('重复 id → 后续记录 invalid（duplicate id）', () => {
 test('username 长度异常（真实规则 2-20 字符）仅记软异常', () => {
   const f = path.join(tmp, 'ulen.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
-    { id: 'x1', username: 'x', role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
-    { id: 'x2', username: 'a'.repeat(21), role: 'staff', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'x1', username: 'x', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'a'.repeat(21), role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   assert.equal(out.usernameLengthAnomalies.length, 2)
   assert.equal(out.usernameCheck.usernameLengthAnomalyCount, 2)
   assert.equal(out.invalidUsers, 0) // 异常不判 invalid（仅记录）
+})
+
+test('P0: --report 目标为已存在普通文件 → exit 2 且内容不变（排他创建）', () => {
+  const exist = path.join(tmp, 'exist.md')
+  fs.writeFileSync(exist, 'PRECIOUS')
+  const r = runTool(inputFile, ['--report', exist])
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /已存在/)
+  assert.equal(fs.readFileSync(exist, 'utf8'), 'PRECIOUS') // 未被覆盖/截断
+})
+
+test('P0: --report 为 symlink（含损坏 symlink）→ exit 2 且目标不变', { skip: process.platform === 'win32' }, () => {
+  const target = path.join(tmp, 'sym-target.md')
+  fs.writeFileSync(target, 'TARGET')
+  const link = path.join(tmp, 'sym-link.md')
+  try {
+    fs.symlinkSync(target, link)
+  } catch {
+    return
+  }
+  let r = runTool(inputFile, ['--report', link])
+  assert.equal(r.status, 2)
+  assert.equal(fs.readFileSync(target, 'utf8'), 'TARGET')
+  // 损坏 symlink（指向不存在的目标）同样拒绝
+  const broken = path.join(tmp, 'sym-broken.md')
+  try {
+    fs.symlinkSync(path.join(tmp, 'no-such-target.md'), broken)
+  } catch {
+    return
+  }
+  r = runTool(inputFile, ['--report', broken])
+  assert.equal(r.status, 2)
+})
+
+test('角色约束：Cashier 多门店 → invalid（validateCashierRole）', () => {
+  const f = path.join(tmp, 'cashier-multi.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'c1', role: 'cashier', storeKeys: ['s1', 's2'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'c2', role: 'cashier', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.invalidUsers, 1)
+  assert.ok(out.invalidReasons['cashier storeKeys violation'])
+  assert.ok(out.invalidReasons['cashier staffKey violation'] === undefined)
+})
+
+test('角色约束：Manager/Staff 无门店 → invalid（validateBoundRole）', () => {
+  const f = path.join(tmp, 'mgr-nostore.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'm1', role: 'manager', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 's1', role: 'staff', storeKeys: ['s1'], staffKey: 's1::张三', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.invalidUsers, 1)
+  assert.ok(out.invalidReasons['manager/staff storeKeys violation'])
+})
+
+test('permissions.modules 非布尔值 / inventoryTransferAll 非布尔 → invalid', () => {
+  const f = path.join(tmp, 'perm-bool.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'p1', role: 'manager', storeKeys: ['s1'], staffKey: 's1::n', status: 'active', permissions: { modules: { overview: 'yes', finance: true }, inventoryTransferAll: 1 }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.invalidUsers, 1)
+  assert.ok(out.invalidReasons['permissions.modules value not boolean'])
+  assert.ok(out.invalidReasons['inventoryTransferAll not boolean'])
+  assert.equal(out.permissionsCheck.issues.nonBooleanModuleValues, 1)
+})
+
+test('非法 status → invalid；public 必须 disabled（loadDb 语义）', () => {
+  const f = path.join(tmp, 'status.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 's1', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'weird', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'p1', role: 'public', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'x3', username: 'p2', role: 'public', storeKeys: [], staffKey: '', status: 'disabled', passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.invalidUsers, 2)
+  assert.ok(out.invalidReasons['invalid status'])
+  assert.ok(out.invalidReasons['public role must be disabled'])
+})
+
+test('secondPasswordHash 格式错误 → invalid', () => {
+  const f = path.join(tmp, 'sec-hash.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 's1', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', secondPasswordHash: 'not-a-hash', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.invalidUsers, 1)
+  assert.ok(out.invalidReasons['secondPasswordHash format invalid'])
+})
+
+test('非法 JSON 输入 → exit 2 明确报错（不打印原生栈/文件内容）', () => {
+  const bad = path.join(tmp, 'bad-json.json')
+  fs.writeFileSync(bad, '{ not valid json')
+  const r = runTool(bad)
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /不是合法 JSON/)
+  assert.ok(!r.stderr.includes('user-migration-inventory.mjs')) // 无原生异常栈
+})
+
+test('每账号有效权限盘点（developer/cashier 固定能力）', () => {
+  const f = path.join(tmp, 'eff-perm.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'dev', role: 'developer', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { overview: false } }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'cash', role: 'cashier', storeKeys: ['s1'], staffKey: '', status: 'active', permissions: { modules: { finance: true } }, passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'x3', username: 'adm', role: 'admin', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { 'store-pos': true } }, passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const dev = out.perAccountPermissions.find((a) => a.username === 'dev')
+  assert.equal(dev.effective.basis, 'fixed')
+  assert.equal(dev.effective.modules.length, 16) // ALL_MODULE_KEYS
+  const cash = out.perAccountPermissions.find((a) => a.username === 'cash')
+  assert.equal(cash.effective.basis, 'fixed')
+  assert.deepEqual(cash.effective.modules, ['store-pos'])
+  const adm = out.perAccountPermissions.find((a) => a.username === 'adm')
+  assert.equal(adm.effective.basis, 'stored')
+  assert.deepEqual(adm.effective.modules, ['store-pos'])
+})
+
+test('accountAdminCheck：仅 developer 且未停用可管理账号', () => {
+  const f = path.join(tmp, 'account-admin.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 'dev1', role: 'developer', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 'dev2', role: 'developer', storeKeys: [], staffKey: '', status: 'disabled', passwordHash: h('y'), createdAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'x3', username: 'adm', role: 'admin', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('z'), createdAt: '2026-01-03T00:00:00.000Z' },
+    { id: 'x4', username: 'pub', role: 'public', storeKeys: [], staffKey: '', status: 'disabled', passwordHash: h('w'), createdAt: '2026-01-04T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  const byName = Object.fromEntries(out.accountAdminCheck.accounts.map((a) => [a.username, a.canManageAccounts]))
+  assert.equal(byName.dev1, true)
+  assert.equal(byName.dev2, false)
+  assert.equal(byName.adm, false)
+  assert.equal(byName.pub, false)
+})
+
+test('passwordCheck.types 反映混合 hash 类型', () => {
+  const f = path.join(tmp, 'hash-types.json')
+  fs.writeFileSync(f, JSON.stringify({ users: [
+    { id: 'x1', username: 's1', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'x2', username: 's2', role: 'staff', storeKeys: ['s1'], staffKey: '', status: 'active', passwordHash: 12345, createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }))
+  const out = JSON.parse(runTool(f).stdout)
+  assert.equal(out.passwordCheck.type, 'mixed')
+  assert.deepEqual(out.passwordCheck.types, { string: 1, number: 1 })
+  assert.equal(out.passwordCheck.formatValid, false)
 })
 
 test('staff binding：输入含 staff 主档时按真实规则核对（validateBoundRole）', () => {

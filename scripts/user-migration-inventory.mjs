@@ -3,6 +3,7 @@
 // 安全原则：Offline / Local Only
 //   - 默认不连接任何远程服务（不读 DATABASE_URL / Upstash / KV / COS / 微信 / 支付 / Sentry）
 //   - 不写源 JSON / 不修改任何数据；report 路径不得与 input 指向同一文件（realpath + symlink + inode 硬链接校验）
+//   - report 目标已存在（普通文件/symlink/硬链接/目录）即拒绝：排他创建（flag 'wx' + mode 0600），绝不覆盖/截断/改权限
 //   - 必须显式传入本地 JSON 输入：--input <local-json>；未传则退出并提示安全用法
 //   - passwordHash 完全脱敏：任何输出（stdout/stderr/JSON/Markdown）不含 hash 的任何片段
 // 用法：
@@ -136,15 +137,16 @@ const ALL_MODULE_KEYS = new Set([
 // User.id 外部引用（经当前代码扫描）
 const ID_REFERENCE_MAP = [
   { file: 'server/auth.js', field: 'JWT payload sub', purpose: '登录令牌主体', strong: true, risk: 'JWT 30d 有效期；迁移需保持 id 不变' },
-  { file: 'server/pos.js', field: 'Order.cashierId / 支付查询 where.cashierId', purpose: 'POS 收银员归属与订单查询', strong: true, risk: 'PG 字符串存储；迁移需 id 稳定' },
+  { file: 'server/pos.js', field: 'Order.cashierId（PG orders.cashier_id）', purpose: 'POS 收银员归属与订单查询', strong: true, risk: '写入 req.user.id；PG 字符串存储；迁移需 id 稳定' },
+  { file: 'server/payments/payment-service.js', field: 'PaymentLog.cashierId（PG payment_logs.cashier_id，从 order.cashierId 拷贝）', purpose: '支付流水收银员', strong: true, risk: 'PG 字符串存储；迁移需 id 稳定' },
   { file: 'server/daily-entry-upgrade.js', field: 'DailyEntryAuditLog.operatorId', purpose: '业绩录入审计操作人', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
   { file: 'server/v2.js', field: 'DailyEntryAuditLog.operatorId（业绩录入 v2 路由 sales_manual）', purpose: '业绩录入审计操作人（v2 统一入口）', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
-  { file: 'server/asset-center.js', field: 'AssetFile.uploaderId / userId / 操作日志', purpose: '档案上传人/访问人', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
-  { file: 'server/app.js', field: 'userPublic(id) / cookie 会话', purpose: '会话与账号管理', strong: true, risk: 'id 为账号主键，迁移必须保留原值' },
+  { file: 'server/asset-center.js', field: 'AssetFileVersion.uploaderId / AssetAccessGrant.userId / AssetOperationLog.userId（PG asset_file_versions.uploader_id / asset_access_grants.user_id / asset_operation_logs.user_id）', purpose: '档案版本上传人/档案授权账号/档案操作账号', strong: true, risk: '写入 req.user.id；迁移需 id 稳定' },
+  { file: 'server/app.js', field: 'userPublic(id) / cookie 会话 / 账号管理路由定位', purpose: '会话与账号管理', strong: true, risk: 'id 为账号主键，迁移必须保留原值' },
   { file: 'server/approvals.js', field: 'createdBy（未发现 req.user.id 直接引用）', purpose: '审批单据关联', strong: false, risk: '以 username/自建 id 关联，User.id 迁移影响低' },
   { file: 'server/notifications.js', field: 'target 关联（未发现 req.user.id 直接引用）', purpose: '通知接收人', strong: false, risk: '以 username/自建 id 关联，User.id 迁移影响低' },
   { file: 'server/payroll-notice.js', field: 'targetUsername（未发现 req.user.id 直接引用）', purpose: '工资条接收人', strong: false, risk: '以 username 关联，User.id 迁移影响低' },
-  { file: 'src/utils/pos.js', field: 'localStorage key budu-pos:{userId}', purpose: '前端 POS 会话隔离缓存', strong: true, risk: 'id 变化会导致历史会话缓存失效（可重建）' },
+  { file: 'src/utils/pos.js', field: 'sessionStorage key budu-pos:{userId}（sessionStorage，非 localStorage）', purpose: '前端 POS 会话隔离缓存', strong: true, risk: 'id 变化会导致历史会话缓存失效（可重建）' },
 ]
 
 // ---------------- 工具函数 ----------------
@@ -157,7 +159,14 @@ function isIsoString(v) {
 // ---------------- 主流程 ----------------
 const runId = `v3-004a-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
 const timestamp = new Date().toISOString()
-const raw = JSON.parse(fs.readFileSync(inputFile, 'utf8'))
+let raw
+try {
+  raw = JSON.parse(fs.readFileSync(inputFile, 'utf8'))
+} catch (err) {
+  // 明确、脱敏的输入错误：不打印文件内容与原生异常栈
+  console.error(`输入文件不是合法 JSON（${inputFile}）：${err.message}`)
+  process.exit(2)
+}
 const users = raw.users
 
 // P0：users 必须是数组；缺失/非数组 → 明确报错 exit != 0；空数组合法
@@ -202,6 +211,9 @@ const report = {
   staffBindingCheck: {},
   storeBindingCheck: {},
   schemaGaps: [],
+  perAccountPermissions: [],
+  accountAdminCheck: {},
+  persistenceNotes: [],
   idReferenceMap: ID_REFERENCE_MAP,
 }
 
@@ -212,6 +224,8 @@ const seenExact = new Map()
 const seenFold = new Map()
 const seenId = new Map()
 const invalidReasonsCount = {}
+// permissions 问题计数（在主循环内累积，严重结构错误同时判 invalid）
+const permIssues = { notObject: 0, unknownModuleKeys: [], modulesNotObject: 0, nonBooleanModuleValues: 0, inventoryTransferAllInvalid: 0 }
 
 function invalidate(reason) {
   invalidReasonsCount[reason] = (invalidReasonsCount[reason] || 0) + 1
@@ -291,13 +305,47 @@ for (const u of users) {
     invalidate('passwordHash format invalid')
     userInvalid = true
   }
-  // secondPasswordHash：可选字段；存在时按 auth.js hashPassword 格式验证（非字符串 → invalid；格式异常 → 仅记录）
+  // secondPasswordHash：可选字段；存在时按 auth.js hashPassword 格式验证（非字符串/格式错误 → invalid）
   if (u.secondPasswordHash !== undefined && u.secondPasswordHash !== null && u.secondPasswordHash !== '') {
     if (typeof u.secondPasswordHash !== 'string') {
       invalidate('secondPasswordHash not string')
       userInvalid = true
     } else if (!PASSWORD_HASH_RE.test(u.secondPasswordHash)) {
       invalidate('secondPasswordHash format invalid')
+      userInvalid = true
+    }
+  }
+  // permissions：结构与值类型（normalizeAccountPermissions 语义；严重结构错误 → invalid）
+  const p = u.permissions
+  if (p !== undefined && p !== null && p !== '') {
+    if (typeof p !== 'object' || Array.isArray(p)) {
+      permIssues.notObject += 1
+      invalidate('permissions not object')
+      userInvalid = true
+    } else {
+      if (p.modules !== undefined && p.modules !== null && p.modules !== '') {
+        if (typeof p.modules !== 'object' || Array.isArray(p.modules)) {
+          permIssues.modulesNotObject += 1
+          invalidate('permissions.modules not object')
+          userInvalid = true
+        } else {
+          for (const [k, v] of Object.entries(p.modules)) {
+            if (!ALL_MODULE_KEYS.has(k)) permIssues.unknownModuleKeys.push(k)
+            if (typeof v !== 'boolean') {
+              permIssues.nonBooleanModuleValues += 1
+              invalidate('permissions.modules value not boolean')
+              userInvalid = true
+            }
+          }
+        }
+      }
+      if (p.inventoryTransferAll !== undefined && p.inventoryTransferAll !== null && p.inventoryTransferAll !== '') {
+        if (typeof p.inventoryTransferAll !== 'boolean') {
+          permIssues.inventoryTransferAllInvalid += 1
+          invalidate('inventoryTransferAll not boolean')
+          userInvalid = true
+        }
+      }
     }
   }
   // role：分类（六角色 / public / legacy / unknown）
@@ -313,8 +361,52 @@ for (const u of users) {
     invalidate('unknown role')
     userInvalid = true
   }
-  // status：public 强制 disabled；其余 active/disabled
+  // status：真实取值 active|disabled（app.js 创建 'active'；store.js loadDb 对 public 强制 'disabled'）
+  if (u.status !== undefined && u.status !== null && u.status !== '') {
+    if (!['active', 'disabled'].includes(u.status)) {
+      invalidate('invalid status')
+      userInvalid = true
+    } else if (role === PUBLIC_ROLE && u.status !== 'disabled') {
+      invalidate('public role must be disabled')
+      userInvalid = true
+    }
+  }
   if (u.status === 'disabled' || role === PUBLIC_ROLE) report.disabledUsers.push(String(uname ?? id ?? '(no username)'))
+  // 角色绑定约束（真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364）账号级执行
+  // - cashier：必须且仅绑定一家门店、不得绑定员工
+  // - manager/staff：必须绑定至少一家门店；staffKey（若存在）必须为 string、格式 storeKey::name、门店在 storeKeys 中
+  // - manager/staff 完全无 staffKey：legacy-exempt 可能态（bindingLegacyExempt），不判 invalid（unboundManagerStaff 单列）
+  const storeKeysVal = u.storeKeys
+  if (role === 'cashier') {
+    if (!Array.isArray(storeKeysVal) || storeKeysVal.length !== 1 || !storeKeysVal[0]) {
+      invalidate('cashier storeKeys violation')
+      userInvalid = true
+    }
+    if (u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '') {
+      invalidate('cashier staffKey violation')
+      userInvalid = true
+    }
+  } else if (role === 'manager' || role === 'staff') {
+    if (!Array.isArray(storeKeysVal) || storeKeysVal.length < 1) {
+      invalidate('manager/staff storeKeys violation')
+      userInvalid = true
+    }
+    if (u.staffKey !== undefined && u.staffKey !== null && u.staffKey !== '') {
+      if (typeof u.staffKey !== 'string') {
+        invalidate('staffKey not string')
+        userInvalid = true
+      } else {
+        const [skStore, skName] = String(u.staffKey).split('::')
+        if (!skStore || !skName) {
+          invalidate('staffKey malformed')
+          userInvalid = true
+        } else if (!Array.isArray(storeKeysVal) || !storeKeysVal.includes(skStore)) {
+          invalidate('staffKey store not in storeKeys')
+          userInvalid = true
+        }
+      }
+    }
+  }
   // 时间字段：真正验证可解析性（不可解析 → invalid）
   for (const tf of ['createdAt', 'disabledAt', 'permissionsUpdatedAt']) {
     if (u[tf] !== undefined && u[tf] !== null && u[tf] !== '') {
@@ -334,15 +426,20 @@ report.invalidReasons = invalidReasonsCount
 // 仅对象条目参与后续结构化检查（null/数组/标量条目已在主循环计为 invalid）
 const objectUsers = users.filter((u) => u && typeof u === 'object' && !Array.isArray(u))
 
-// ---------------- 密码检查（完全脱敏） ----------------
-const hashSamples = objectUsers.map((u) => String(u.passwordHash ?? '')).filter(Boolean)
+// ---------------- 密码检查（完全脱敏；type/types 反映实际混合类型） ----------------
+const hashSamples = objectUsers.map((u) => u.passwordHash).filter((v) => v !== undefined && v !== null && v !== '')
+const stringHashes = hashSamples.filter((v) => typeof v === 'string')
+const hashTypeCounts = {}
+for (const v of hashSamples) hashTypeCounts[typeof v] = (hashTypeCounts[typeof v] || 0) + 1
+const hashTypeKeys = Object.keys(hashTypeCounts)
 report.passwordCheck = {
   present: users.length - report.missingPasswordHashes.length,
-  type: 'string',
-  length: hashSamples.length ? Math.min(...hashSamples.map((h) => h.length)) : 0,
-  formatValid: hashSamples.every((h) => PASSWORD_HASH_RE.test(h)),
-  compatibleWithCurrentAuth: hashSamples.every((h) => PASSWORD_HASH_RE.test(h)),
-  note: 'scrypt salt:hash（32hex:128hex）；不输出任何 hash 片段',
+  type: hashTypeKeys.length <= 1 ? (hashTypeKeys[0] || 'string') : 'mixed',
+  types: hashTypeCounts,
+  length: stringHashes.length ? Math.min(...stringHashes.map((h) => h.length)) : 0,
+  formatValid: stringHashes.length === hashSamples.length && stringHashes.every((h) => PASSWORD_HASH_RE.test(h)),
+  compatibleWithCurrentAuth: stringHashes.length === hashSamples.length && stringHashes.every((h) => PASSWORD_HASH_RE.test(h)),
+  note: 'scrypt salt:hash（32hex:128hex）；不输出任何 hash 片段；非字符串 hash 计入 types 并使 formatValid=false',
 }
 
 // ---------------- ID 检查（按真实代码规则：crypto.randomUUID() 生成，读取端不解析格式） ----------------
@@ -368,25 +465,7 @@ report.usernameCheck = {
   note: '登录为大小写敏感精确匹配（app.js u.username === username）；case-fold 冲突是迁移风险（PG @unique 大小写敏感），不等同于当前运行重复账号；创建/改名规则为 trim 后 2-20 字符（app.js）',
 }
 
-// ---------------- Permissions 检查（按 shared/accountPermissions.js normalizeAccountPermissions 结构） ----------------
-const permIssues = { notObject: 0, unknownModuleKeys: [], modulesNotObject: 0, inventoryTransferAllInvalid: 0 }
-for (const u of objectUsers) {
-  const p = u.permissions
-  if (p === undefined || p === null) continue
-  if (typeof p !== 'object' || Array.isArray(p)) {
-    permIssues.notObject += 1
-    continue
-  }
-  if (p.modules !== undefined) {
-    if (typeof p.modules !== 'object' || Array.isArray(p.modules)) permIssues.modulesNotObject += 1
-    else {
-      for (const k of Object.keys(p.modules)) {
-        if (!ALL_MODULE_KEYS.has(k)) permIssues.unknownModuleKeys.push(k)
-      }
-    }
-  }
-  if (p.inventoryTransferAll !== undefined && typeof p.inventoryTransferAll !== 'boolean') permIssues.inventoryTransferAllInvalid += 1
-}
+// ---------------- Permissions 检查（结构问题已在主循环账号级执行并判 invalid） ----------------
 report.permissionsCheck = {
   structure: 'normalizeAccountPermissions: { modules: {key:bool}, inventoryTransferAll: bool }',
   issues: permIssues,
@@ -396,6 +475,43 @@ report.permissionsCheck = {
     adminFinance: '默认全模块，但可按账号调整（source ? source[key] === true : defaults.has(key)）',
     managerStaff: '默认集合非全模块（manager=MANAGER_DEFAULTS 14 项，staff=去 product-center 13 项）；显式 permissions 存在时以 source[key]===true 为准',
   },
+}
+
+// 每账号有效权限盘点：固定能力（developer/cashier）vs 存储值 vs 默认集
+report.perAccountPermissions = objectUsers.map((u) => {
+  const role = String(u.role ?? '')
+  const p = u.permissions
+  let effective
+  if (role === 'developer') {
+    effective = { basis: 'fixed', modules: [...ALL_MODULE_KEYS], note: 'developer 固定全部模块（normalizeModules 不受存储值影响）' }
+  } else if (role === 'cashier') {
+    effective = { basis: 'fixed', modules: ['store-pos'], note: 'cashier 固定仅 store-pos' }
+  } else if (p && typeof p === 'object' && !Array.isArray(p) && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules)) {
+    effective = {
+      basis: 'stored',
+      modules: Object.entries(p.modules).filter(([, v]) => v === true).map(([k]) => k),
+      note: '按存储 source[key]===true 盘点',
+    }
+  } else {
+    effective = { basis: 'defaults', modules: [], note: '无有效 permissions 记录 → 迁移后按角色默认集（admin/finance 全模块；manager 14；staff 13）' }
+  }
+  return { id: String(u.id ?? ''), username: String(u.username ?? ''), role, effective }
+})
+
+// 账号治理能力判定：hasPageAccess('account-admin') = canManageAccounts = developer && status !== disabled
+report.accountAdminCheck = {
+  rule: 'canManageAccounts：仅 developer 且 status !== disabled（shared/accountPermissions.js canManageAccounts；hasPageAccess(account-admin) 同规则）；public 恒 false（status=disabled）',
+  accounts: objectUsers.map((u) => {
+    const role = String(u.role ?? '')
+    const status = u.status || (role === PUBLIC_ROLE ? 'disabled' : 'active') // loadDb 补全语义
+    return {
+      id: String(u.id ?? ''),
+      username: String(u.username ?? ''),
+      role,
+      status,
+      canManageAccounts: role === 'developer' && status !== 'disabled',
+    }
+  }),
 }
 
 // ---------------- Staff Binding 检查（按真实规则：app.js validateBoundRole L366-374 / validateCashierRole L355-364） ----------------
@@ -469,8 +585,8 @@ report.storeBindingCheck = {
   format: 'storeKeys = string[]（KV 门店 key 引用）',
   issues: storeIssues,
   rules: {
-    managerStaff: '必须绑定至少一家门店 + staffKey（validateBoundRole）',
-    cashier: '必须且仅绑定一家门店、不得绑定员工（validateCashierRole）',
+    managerStaff: '必须绑定至少一家门店 + staffKey（validateBoundRole；已账号级执行，违反 → invalidUsers）',
+    cashier: '必须且仅绑定一家门店、不得绑定员工（validateCashierRole；已账号级执行，违反 → invalidUsers）',
     developerAdminFinance: '无门店绑定要求（isSuperUser 全量）',
   },
   risk: 'Prisma User 无 storeKeys 字段；迁移后门店范围需独立设计',
@@ -535,12 +651,29 @@ report.schemaGaps.push(
   { sourceField: 'staffKey', sourceType: 'string', pgField: '(missing)', pgType: '-', required: '-', mappingStatus: 'LOST', risk: '员工绑定（名称软关联）迁移丢失' },
   { sourceField: 'secondPasswordHash', sourceType: 'string', pgField: '(missing)', pgType: '-', required: '-', mappingStatus: 'LOST', risk: '二次密码哈希迁移丢失' },
 )
+// 持久化说明（真实代码核对）
+report.persistenceNotes = [
+  'KV User 当前不存在统一持久化 updatedAt：仅 permissionsUpdatedAt 记录授权变更；账号资料（用户名/头像/二级密码）变更时间不可追溯',
+  'PG User（prisma/schema.prisma L33-40）亦无 updatedAt 字段；KV→PG 迁移无该字段问题，但迁移后需自行设计资料变更审计',
+]
 
 // ---------------- 输出（JSON + 可选 Markdown） ----------------
 const output = JSON.stringify(report, null, 2)
 console.log(output)
 
 if (reportFile) {
+  // 排他安全创建：目标已存在（普通文件/symlink/硬链接/目录，含损坏 symlink）一律拒绝，绝不覆盖/截断/修改已有文件
+  let reportExists = false
+  try {
+    fs.lstatSync(reportFile)
+    reportExists = true
+  } catch {
+    /* 目标不存在，可安全创建 */
+  }
+  if (reportExists) {
+    console.error(`拒绝执行：--report 目标已存在（${reportFile}），不会覆盖/截断/修改任何已有文件；请删除或更换路径`)
+    process.exit(2)
+  }
   const md = [
     `# User Migration Inventory（V3-004A）`,
     ``,
@@ -569,7 +702,7 @@ if (reportFile) {
     ``,
     `## 密码检查（完全脱敏）`,
     `- present: ${report.passwordCheck.present}`,
-    `- type: ${report.passwordCheck.type}`,
+    `- type: ${report.passwordCheck.type}（types=${JSON.stringify(report.passwordCheck.types)}）`,
     `- length: ${report.passwordCheck.length}`,
     `- formatValid: ${report.passwordCheck.formatValid}`,
     `- compatibleWithCurrentAuth: ${report.passwordCheck.compatibleWithCurrentAuth}`,
@@ -586,8 +719,22 @@ if (reportFile) {
     `## User ID 外部引用`,
     report.idReferenceMap.map((r) => `- ${r.file} · ${r.field}：${r.purpose}（强关联=${r.strong}；${r.risk}）`).join('\n'),
     ``,
+    `## 账号治理 / 持久化说明`,
+    `- 可管理账号（canManageAccounts，仅 developer 且未停用）: ${report.accountAdminCheck.accounts.filter((a) => a.canManageAccounts).length} 个`,
+    report.persistenceNotes.map((n) => `- ${n}`).join('\n'),
+    ``,
   ].join('\n')
-  fs.writeFileSync(reportFile, md, 'utf8')
-  fs.chmodSync(reportFile, 0o600) // 显式 chmod：不依赖 umask，报告仅当前用户可读写
-  console.error(`\nMarkdown 报告已写入：${reportFile}（mode 0600）`)
+  try {
+    // flag 'wx'：排他创建（O_CREAT|O_EXCL），目标不存在才成功；mode 0600 创建即生效
+    fs.writeFileSync(reportFile, md, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    fs.chmodSync(reportFile, 0o600) // 文件为本轮创建，强制 0600 不依赖 umask
+    console.error(`\nMarkdown 报告已写入：${reportFile}（mode 0600，排他创建）`)
+  } catch (err) {
+    if (err && err.code === 'EEXIST') {
+      console.error(`拒绝执行：--report 目标已存在（${reportFile}），不会覆盖/截断/修改任何已有文件；请删除或更换路径`)
+      process.exit(2)
+    }
+    console.error(`无法写入报告文件 ${reportFile}：${err.message}`)
+    process.exit(2)
+  }
 }
