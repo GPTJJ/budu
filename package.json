@@ -5,6 +5,8 @@
   "type": "module",
   "description": "BUDU 甜品门店管理系统 Dashboard",
   "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "test:critical": "node scripts/run-tests.mjs critical",
     "dev": "vite",
     "build": "vite build",
     "postinstall": "npm run build",
