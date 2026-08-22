@@ -1,4 +1,4 @@
-// 未决微信支付后台自动核对器（R1：崩溃恢复 + 稳定撤销计时 + 跨进程租约）
+// 未决微信支付后台自动核对器（R2：崩溃恢复 + 稳定撤销计时 + 跨进程租约 + nextActionAt 门控）
 //
 // 规则：
 // - 可恢复支付 = provider=wechat_pay 且 reconciliationRequired=true 且
@@ -9,21 +9,29 @@
 //   反复查询不会推迟撤销期限。
 // - 查询采用数据库原子条件更新租约（reconcileLeaseOwner/reconcileLeaseUntil）：
 //   同一支付在同一租约窗口内只有一个执行者；租约到期可被其他实例回收，进程死亡不悬挂。
+// - nextActionAt 门控：发现（pendingPayments）与认领（两条条件更新）都要求
+//   nextActionAt 为空或已到期，避免同一支付在排期时间前被重复执行。
 // - 应用重启后自动扫描未决支付并恢复核对。
 // - 撤销结果不明确（含 recall=Y）时保持 reconciliationRequired 并告警。
 import crypto from 'node:crypto'
+import { WECHAT_V2_PROVIDER_MAX_OP_MS } from './wechat-v2-client.js'
 import { paymentService } from './index.js'
 
 const DEFAULT_INTERVAL_MS = 5000
 const DEFAULT_MAX_QUERIES = 12
 const DEFAULT_REVERSE_AFTER_MS = 60000
-const DEFAULT_LEASE_MS = 15000
+// 租约必须覆盖单次 Provider 调用最坏耗时（closePayment = orderquery + reverse + 复查，
+// 每请求含主备域名回退），否则慢请求期间租约提前到期会被其他实例重复认领。
+// 推导见 wechat-v2-client.js：WECHAT_V2_PROVIDER_MAX_OP_MS = 3 × 2 × (5s + 10s) = 90s。
+const DEFAULT_LEASE_MS = WECHAT_V2_PROVIDER_MAX_OP_MS
 const MIN_INTERVAL_MS = 1000
 const MAX_INTERVAL_MS = 60000
 const MAX_QUERIES_MIN = 3
 const MAX_QUERIES_MAX = 600
 const REVERSE_AFTER_MIN_MS = 5000
 const REVERSE_AFTER_MAX_MS = 3600000
+const LEASE_MIN_MS = 3000
+const LEASE_MAX_MS = 120000
 
 function boundedInt(value, fallback, min, max) {
   const parsed = Number(value)
@@ -37,7 +45,7 @@ export function reconcilerEnvConfig(env = process.env) {
     intervalMs: boundedInt(env.WECHAT_PAY_QUERY_INTERVAL_MS, DEFAULT_INTERVAL_MS, MIN_INTERVAL_MS, MAX_INTERVAL_MS),
     maxQueries: boundedInt(env.WECHAT_PAY_MAX_QUERIES, DEFAULT_MAX_QUERIES, MAX_QUERIES_MIN, MAX_QUERIES_MAX),
     reverseAfterMs: boundedInt(env.WECHAT_PAY_REVERSE_AFTER_MS, DEFAULT_REVERSE_AFTER_MS, REVERSE_AFTER_MIN_MS, REVERSE_AFTER_MAX_MS),
-    leaseMs: boundedInt(env.WECHAT_PAY_LEASE_MS, DEFAULT_LEASE_MS, 3000, 120000),
+    leaseMs: boundedInt(env.WECHAT_PAY_LEASE_MS, DEFAULT_LEASE_MS, LEASE_MIN_MS, LEASE_MAX_MS),
   }
 }
 
@@ -98,7 +106,7 @@ export class PaymentReconciler {
     }
   }
 
-  /** 列出可恢复且租约已过期/空闲的未决支付。 */
+  /** 列出可恢复、已到排期（nextActionAt 为空或已到期）且租约已过期/空闲的未决支付。 */
   async pendingPayments(now) {
     return this.service.prisma.payment.findMany({
       where: {
@@ -114,6 +122,9 @@ export class PaymentReconciler {
           {
             OR: [{ reconcileLeaseUntil: null }, { reconcileLeaseUntil: { lt: now } }],
           },
+          {
+            OR: [{ nextActionAt: null }, { nextActionAt: { lte: now } }],
+          },
         ],
       },
       orderBy: { requestedAt: 'asc' },
@@ -123,7 +134,8 @@ export class PaymentReconciler {
 
   /**
    * 原子认领（租约 + 查询计数 + 状态提升一次完成）并查询。
-   * 条件更新保证同一支付在同一租约窗口内只有一个执行者。
+   * 条件更新保证同一支付在同一租约窗口内只有一个执行者；
+   * nextActionAt 未到期时条件不命中，防止排期前的重复执行。
    */
   async reconcileQuery(payment, now) {
     const claimed = await this.service.prisma.payment.updateMany({
@@ -133,6 +145,7 @@ export class PaymentReconciler {
           { reconciliationRequired: true },
           { OR: [{ status: 'pending' }, { status: 'created' }] },
           { OR: [{ reconcileLeaseUntil: null }, { reconcileLeaseUntil: { lt: now } }] },
+          { OR: [{ nextActionAt: null }, { nextActionAt: { lte: now } }] },
         ],
       },
       data: {
@@ -165,6 +178,7 @@ export class PaymentReconciler {
           { reconciliationRequired: true },
           { OR: [{ status: 'pending' }, { status: 'created' }] },
           { OR: [{ reconcileLeaseUntil: null }, { reconcileLeaseUntil: { lt: now } }] },
+          { OR: [{ nextActionAt: null }, { nextActionAt: { lte: now } }] },
         ],
       },
       data: {

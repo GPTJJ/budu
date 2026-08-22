@@ -10,7 +10,7 @@ const CONFIG = {
   configured: true,
   mchId: '1900000109',
   appId: 'wx8888888888888888',
-  terminalIp: '127.0.0.1',
+  terminalIp: '203.0.113.10',
   enabledStores: [],
   apiV2Key: '0123456789abcdef0123456789abcdef',
   certPem: 'cert',
@@ -208,6 +208,42 @@ test('未启用/未配置时 Provider 拒绝（501）且不调用任何接口', 
   const provider = new WechatPayProvider({ config: { ...CONFIG, enabled: false }, clientFactory: () => fake })
   await assert.rejects(() => provider.createPayment(payment(), { authCode: '130123456789012345' }), (error) => error.status === 501)
   assert.equal(fake.calls.length, 0)
+})
+
+test('R2：终端 IP 边界——缺失/回环/私网/链路本地/非法值一律 501，且零网络调用（无 127.0.0.1 回退）', async () => {
+  const BAD_IPS = [
+    undefined, // 未配置
+    '', // 空串
+    '127.0.0.1', // 回环（R1 曾回退到此值）
+    '127.0.0.2',
+    '0.0.0.0', // 未指定
+    '10.1.2.3', // RFC1918
+    '172.16.0.1', // RFC1918
+    '172.31.255.254', // RFC1918
+    '192.168.1.1', // RFC1918
+    '169.254.1.1', // 链路本地
+    '255.255.255.255', // 广播
+    'not-an-ip', // 非 IP
+    '203.0.113.999', // 越界
+    '1.2.3', // 缺段
+    '2001:db8::1', // IPv6 不接受
+  ]
+  for (const terminalIp of BAD_IPS) {
+    const fake = new FakeClient()
+    const provider = new WechatPayProvider({ config: { ...CONFIG, terminalIp }, clientFactory: () => fake })
+    await assert.rejects(() => provider.createPayment(payment(), { authCode: '130123456789012345' }), (error) => error.status === 501, `createPayment terminalIp=${String(terminalIp)}`)
+    await assert.rejects(() => provider.queryPayment(payment()), (error) => error.status === 501, `queryPayment terminalIp=${String(terminalIp)}`)
+    await assert.rejects(() => provider.closePayment(payment()), (error) => error.status === 501, `closePayment terminalIp=${String(terminalIp)}`)
+    assert.equal(fake.calls.length, 0, `terminalIp=${String(terminalIp)} 不得发起任何传输调用`)
+  }
+  // 合法公网 IPv4：spbill_create_ip 使用配置值，绝不出现回环回退
+  const fake = new FakeClient()
+  fake.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', transaction_id: 'WX-IP', sign: 'x' })
+  const provider = providerWith(fake)
+  const result = await provider.createPayment(payment(), { authCode: '130123456789012345' })
+  assert.equal(result.callbacks[0].status, 'success')
+  assert.equal(fake.calls[0].params.spbill_create_ip, '203.0.113.10')
+  assert.ok(!String(fake.calls[0].params.spbill_create_ip).startsWith('127.'), 'spbill_create_ip 不得为回环地址')
 })
 
 test('I：reverse recall=Y → 绝不 closed，保持待核对并标记重试（重启后可继续撤销）', async () => {

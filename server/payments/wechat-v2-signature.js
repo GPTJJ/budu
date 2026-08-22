@@ -120,8 +120,11 @@ export function parseV2Xml(xml) {
     if (used.has(key)) throw new Error('XML 包含重复字段')
     used.add(key)
     // CDATA 仅允许完整包裹整个值（微信 V2 常见）；CDATA 内按字面处理，不做实体解码。
+    // 严格性（R2）：XML 规范禁止 CDATA 内容出现 "]]>"；贪婪匹配会把
+    // `<![CDATA[x]]>]]>` 之类畸形输入吞进内容，必须显式拒绝。
     const cdataMatch = rawValue.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/)
     if (cdataMatch) {
+      if (cdataMatch[1].includes(']]>')) throw new Error('XML CDATA 内容包含禁止的 ]]>')
       out[key] = cdataMatch[1]
     } else {
       if (/<!\[CDATA\[|\]\]>/.test(rawValue)) throw new Error('XML CDATA 必须完整包裹整个值')

@@ -375,3 +375,28 @@ test('POS 点单内可打开订单记录并返回', async ({ page }) => {
   await expect(page.getByPlaceholder('搜索商品名称 / SKU / 条码')).toBeVisible()
   await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
 })
+
+test('R2：POS 配置按当前门店拉取（携带 storeId），切换门店重拉并丢弃过期响应', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=store-config&stores=2&configStale=1')
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
+  // 1) 首次配置请求必须携带当前门店 storeId（服务端按门店返回微信可用性）
+  await expect.poll(() => page.evaluate(() => window.__posConfigRequests[0]?.storeId)).toBe('test-store')
+  // 2) 切换到第二门店 → 立即触发携带新 storeId 的配置请求
+  await page.getByRole('combobox').selectOption('store-2')
+  await expect.poll(() => page.evaluate(() => window.__posConfigRequests.length)).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => page.evaluate(() => window.__posConfigRequests.at(-1)?.storeId)).toBe('store-2')
+  // 3) 进入结算页：通道必须跟随 store-2 配置（未授权微信 → 仅现金，微信/支付宝禁用）
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()
+  // 4) 过期响应防护：store-1 的慢响应（300ms）在切换后到达，必须被丢弃，不得覆盖 store-2 配置
+  await page.waitForTimeout(600)
+  await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()
+  // 5) 现金仍可用，完成订单收尾
+  await page.getByRole('button', { name: '现金收款', exact: true }).click()
+  await page.getByRole('dialog', { name: '现金收款确认' }).getByRole('button', { name: '确认收款', exact: true }).click()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+})

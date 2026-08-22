@@ -16,8 +16,18 @@ import { buildV2Xml, parseV2Xml, signV2Params, verifyV2Signature, WECHAT_V2_SIGN
 
 const PRIMARY_HOST = 'api.mch.weixin.qq.com'
 const FALLBACK_HOST = 'api2.mch.weixin.qq.com'
-const DEFAULT_CONNECT_TIMEOUT_MS = 5000
-const DEFAULT_REQUEST_TIMEOUT_MS = 10000
+export const WECHAT_V2_CONNECT_TIMEOUT_MS = 5000
+export const WECHAT_V2_REQUEST_TIMEOUT_MS = 10000
+const DEFAULT_CONNECT_TIMEOUT_MS = WECHAT_V2_CONNECT_TIMEOUT_MS
+const DEFAULT_REQUEST_TIMEOUT_MS = WECHAT_V2_REQUEST_TIMEOUT_MS
+// 最坏耗时推导（供核对租约等外部安全参数取用）：
+// - 单次 request()：主域名超时后回退备用域名，每域名最多 连接超时 + 请求超时
+//   → WECHAT_V2_MAX_OP_MS = 2 × (5s + 10s) = 30s
+// - 单次 Provider 调用（closePayment = orderquery + reverse + 撤销后复查，最多 3 次
+//   request()）→ WECHAT_V2_PROVIDER_MAX_OP_MS = 3 × 30s = 90s
+export const WECHAT_V2_HOST_ATTEMPT_MS = WECHAT_V2_CONNECT_TIMEOUT_MS + WECHAT_V2_REQUEST_TIMEOUT_MS
+export const WECHAT_V2_MAX_OP_MS = 2 * WECHAT_V2_HOST_ATTEMPT_MS
+export const WECHAT_V2_PROVIDER_MAX_OP_MS = 3 * WECHAT_V2_MAX_OP_MS
 
 export class WechatV2Error extends Error {
   constructor(code, message, extra = {}) {

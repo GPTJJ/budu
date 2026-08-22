@@ -36,9 +36,14 @@ function isValidTerminalIp(value) {
   if (!value) return false
   if (net.isIP(value) !== 4) return false
   const parts = String(value).split('.').map(Number)
-  if (parts[0] === 127) return false // 回环
-  if (parts[0] === 0) return false // 未指定
-  if (parts[0] >= 224) return false // 组播/保留
+  const [a, b] = parts
+  if (a === 127) return false // 回环
+  if (a === 0) return false // 未指定
+  if (a === 10) return false // RFC1918 10/8
+  if (a === 172 && b >= 16 && b <= 31) return false // RFC1918 172.16/12
+  if (a === 192 && b === 168) return false // RFC1918 192.168/16
+  if (a === 169 && b === 254) return false // 链路本地
+  if (a >= 224) return false // 组播/保留/广播
   return true
 }
 

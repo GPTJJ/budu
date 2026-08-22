@@ -46,12 +46,12 @@ function makeTransport(responder) {
 
 const cdata = (value) => `<![CDATA[${value}]]>`
 
-function buildService(transport) {
+function buildService(transport, db) {
   const client = new WechatV2Client({ mchId: MCH_ID, appId: APP_ID, apiV2Key: API_V2_KEY, certPem: 'cert', keyPem: 'key', transport })
   const provider = new WechatPayProvider({ config: CONFIG, clientFactory: () => client })
-  const db = new MemoryPrisma()
-  const service = new PaymentService(db, new Map([['wechat_pay', provider], ['cash', provider]]))
-  return { service, db }
+  const memory = db || new MemoryPrisma()
+  const service = new PaymentService(memory, new Map([['wechat_pay', provider], ['cash', provider]]))
+  return { service, db: memory }
 }
 
 async function withLiveMode(fn) {
@@ -81,6 +81,8 @@ test('E2E：MICROPAY 即时 SUCCESS → 支付 success、订单 completed（真�
     assert.equal(result.payment.providerTradeNo, 'WX-E2E-1')
     assert.equal(result.order.status, 'completed')
     assert.equal(result.order.paymentStatus, 'paid')
+    // R2：终态必须退出核对队列（创建时原子置位的 reconciliationRequired 已被清除）
+    assert.equal(result.payment.reconciliationRequired, false)
   })
 })
 
@@ -233,4 +235,46 @@ test('L：公开微信回调在本阶段无法改动支付状态（伪造回调�
     // 合法签名但走公开回调路径同样不允许在本阶段生效（路由已 404；服务层仍验签）
     assert.equal(db.paymentLogs.filter((log) => log.event === 'payment.success').length >= 1, true)
   })
+})
+
+test('R2：createPayment 崩溃窗口——原子标记落库后进程死亡，核对器重启后按 orderquery 恢复', async () => {
+  // —— 进程 A：micropay 传输永不返回（模拟发出请求后进程崩溃，响应与回调全部丢失）——
+  const { service: serviceA, db } = buildService(async () => new Promise(() => {}))
+  let created = null
+  await withLiveMode(async () => {
+    const pending = serviceA.createPayment({ orderId: 'order-1', channel: 'wechat', requestKey: 'e2e-crash-1', authCode: AUTH_CODE })
+    // 等待崩溃标记落库（标记写入先于传输调用；传输被调用即代表标记已持久化）
+    for (let i = 0; i < 200 && !db.payments.some((row) => row.requestKey === 'e2e-crash-1' && row.networkAttemptStartedAt); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+    created = db.payments.find((row) => row.requestKey === 'e2e-crash-1')
+    assert.ok(created, '支付记录必须已创建')
+    // 崩溃状态：created + 已发起 + 进核对队列 + 立即可核对（原子标记三字段同批落库）
+    assert.equal(created.status, 'created')
+    assert.ok(created.networkAttemptStartedAt, 'networkAttemptStartedAt 必须已持久化')
+    assert.equal(created.reconciliationRequired, true, '崩溃标记必须置 reconciliationRequired')
+    assert.equal(created.nextActionAt, null, '崩溃标记必须把 nextActionAt 置空（立即可核对）')
+    // 崩溃：createPayment 永久挂起（进程死亡），放弃该 Promise
+    pending.catch(() => {})
+  })
+
+  // —— 进程 B：重启后同一数据库 + 正常工作传输 + 核对器 ——
+  const transportB = makeTransport((path, req) => {
+    if (path === '/pay/orderquery') {
+      return { return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'SUCCESS', transaction_id: 'WX-CRASH-RECOVER', out_trade_no: req.out_trade_no, total_fee: req.total_fee }
+    }
+    throw new Error(`崩溃恢复不应再发起 ${path}`)
+  })
+  const { PaymentReconciler } = await import('../server/payments/payment-reconciler.js')
+  // 进程 B 复用同一数据库实例（模拟重启后读同一持久化状态）
+  const { service: serviceB } = buildService(transportB, db)
+  const reconciler = new PaymentReconciler({ service: serviceB, instanceId: 'reconciler-restart' })
+  await reconciler.tick()
+  const recovered = await serviceB.result(created.id)
+  assert.equal(recovered.payment.status, 'success')
+  assert.equal(recovered.payment.providerTradeNo, 'WX-CRASH-RECOVER')
+  assert.equal(recovered.payment.reconciliationRequired, false, '恢复后必须退出核对队列')
+  assert.equal(recovered.order.status, 'completed')
+  assert.equal(recovered.order.paymentStatus, 'paid')
+  reconciler.stop()
 })

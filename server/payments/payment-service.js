@@ -250,12 +250,19 @@ export class PaymentService {
     await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
     const provider = this.provider(providerName)
-    // C：外部网络请求发出前持久化“已尝试发起”证据（不落付款码），
-    // 保证 created 状态在进程崩溃后也可由核对器按 orderquery 恢复。
+    // C：外部网络请求发出前，以单条原子更新持久化「已尝试发起」崩溃标记：
+    //   networkAttemptStartedAt（核对器只恢复 created+已发起 的支付）、
+    //   reconciliationRequired=true（进入核对队列）、nextActionAt=null（立即可核对）。
+    // 三条字段必须同一条语句写入；进程在标记落库后、响应应用前崩溃时，
+    // 核对器重启后即可按 orderquery 恢复，绝不盲查本地未发起的支付。
     if (providerName === 'wechat_pay') {
       await this.prisma.payment.update({
         where: { id: payment.id },
-        data: { networkAttemptStartedAt: new Date() },
+        data: {
+          networkAttemptStartedAt: new Date(),
+          reconciliationRequired: true,
+          nextActionAt: null,
+        },
       })
     }
     let response
@@ -547,6 +554,9 @@ export class PaymentService {
             failureCode: '',
             failureMessage: '',
             paidAt: verified.occurredAt ? new Date(verified.occurredAt) : new Date(),
+            // 终态：退出核对队列（崩溃标记在创建时即置 reconciliationRequired=true）
+            reconciliationRequired: false,
+            reconciledAt: new Date(),
           },
         })
         if (won.count !== 1) return
@@ -599,6 +609,9 @@ export class PaymentService {
           failureMessage: String(verified.failureMessage || '').slice(0, 300),
           ...(eventStatus === 'failed' || eventStatus === 'timeout' ? { failedAt: new Date() } : {}),
           ...(eventStatus === 'closed' ? { closedAt: new Date() } : {}),
+          ...(eventStatus === 'failed' || eventStatus === 'timeout' || eventStatus === 'closed'
+            ? { reconciliationRequired: false, reconciledAt: new Date() }
+            : {}),
         },
       })
       if (current.order.status !== 'pending_payment' || current.order.paymentStatus === 'paid') return

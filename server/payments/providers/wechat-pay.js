@@ -24,6 +24,30 @@ import { parseV2Xml, verifyV2Signature } from '../wechat-v2-signature.js'
 // 微信付款码：18 位纯数字，官方允许前缀 10-15
 export const WECHAT_AUTH_CODE_RE = /^(1[0-5])\d{16}$/
 
+// 收银终端公网 IPv4（spbill_create_ip 必填；拒绝回环/私网/链路本地等不可路由地址）
+export const TERMINAL_IP_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+
+export function isValidTerminalIp(ip) {
+  const value = String(ip || '').trim()
+  if (!TERMINAL_IP_RE.test(value)) return false
+  const [a, b] = value.split('.').map(Number)
+  if (a === 0 || a === 10) return false // 未指定 / RFC1918 10/8
+  if (a === 127) return false // 回环
+  if (a === 169 && b === 254) return false // 链路本地
+  if (a === 172 && b >= 16 && b <= 31) return false // RFC1918 172.16/12
+  if (a === 192 && b === 168) return false // RFC1918 192.168/16
+  if (a === 255 && b === 255 && value === '255.255.255.255') return false // 广播
+  return true
+}
+
+/** 终端 IP 安全边界：缺失/非法/回环一律 fail closed，绝不回退 127.0.0.1。 */
+function assertTerminalIp(config) {
+  const ip = String(config.terminalIp || '').trim()
+  if (!isValidTerminalIp(ip)) {
+    throw httpError('收银终端 IP 未配置或无效（微信 MICROPAY 要求公网 IPv4，且不接受回环地址），请联系管理员', 501)
+  }
+}
+
 // 明确不会扣款的终态错误码
 const TERMINAL_ERR_CODES = new Set([
   'AUTHCODEEXPIRE', // 付款码过期
@@ -86,6 +110,9 @@ export class WechatPayProvider extends PaymentProvider {
     if (!config.enabled || !config.configured) {
       throw httpError('微信支付尚未开通或配置不完整', 501)
     }
+    // 终端 IP 是 MICROPAY 必填且不得为回环地址；缺失/非法时在发起任何
+    // 网络请求之前 fail closed（R2：删除 127.0.0.1 回退）。
+    assertTerminalIp(config)
   }
 
   async createPayment(payment, options = {}) {
@@ -108,7 +135,8 @@ export class WechatPayProvider extends PaymentProvider {
           body: 'BUDU',
           total_fee: totalFee,
           auth_code: authCode,
-          spbill_create_ip: config.terminalIp || '127.0.0.1',
+          // assertUsable() 已保证 terminalIp 为合法公网 IPv4；此处不得有任何回环回退。
+          spbill_create_ip: config.terminalIp,
         },
         { checkTradeFields: { outTradeNo, totalFee } },
       )

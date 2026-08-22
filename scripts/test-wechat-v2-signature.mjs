@@ -115,6 +115,44 @@ test('CDATA：完整包裹值的 CDATA 按字面解析（微信 V2 真实格式�
   assert.throws(() => parseV2Xml('<xml><a><![CDATA[y]]>x</a></xml>'))
 })
 
+test('R2：严格 CDATA 畸形夹具清单——全部必须拒绝（含内容内多余 ]]>）', () => {
+  // 每一条都代表一种「看似 CDATA、实际畸形」的输入；解析器必须逐一拒绝，
+  // 不得被贪婪匹配吞掉，也不得把畸形内容当合法值返回。
+  const REJECT_FIXTURES = [
+    // 1. CDATA 结束符后残留垃圾（含多余 ]]>）
+    '<xml><a><![CDATA[x]]>garbage]]></a></xml>',
+    // 2. 双 CDATA 相邻（第一个被贪婪吞并后内容含 ]]>）
+    '<xml><a><![CDATA[x]]><![CDATA[y]]></a></xml>',
+    // 3. CDATA 前有裸文本（部分包裹）
+    '<xml><a>x<![CDATA[y]]></a></xml>',
+    // 4. CDATA 前有头部文本（部分包裹）
+    '<xml><a>head<![CDATA[x]]></a></xml>',
+    // 5. CDATA 后有多余 ]]>（内容内出现禁止的 ]]>）
+    '<xml><a><![CDATA[x]]>]]></a></xml>',
+    // 6. 未闭合 CDATA（缺右界）
+    '<xml><a><![CDATA[x]></a></xml>',
+    // 7. 右界书写错误（缺一个 ]，只剩单个 ]>）
+    '<xml><a><![CDATA[]></a></xml>',
+    // 8. 仅右界符
+    '<xml><a>]]></a></xml>',
+    // 9. 仅左界符
+    '<xml><a><![CDATA[</a></xml>',
+    // 10. 内容中间插入 ]]> 再闭合（真实非法：CDATA 内容禁止 ]]>）
+    '<xml><a><![CDATA[x]]>y]]></a></xml>',
+    // 11. CDATA 正常闭合后残留文本（部分包裹）
+    '<xml><a><![CDATA[<b>1</b>]]>x</a></xml>',
+    // 12. CDATA 出现在元素级（非值包裹）
+    '<xml><![CDATA[x]]></xml>',
+  ]
+  for (const xml of REJECT_FIXTURES) {
+    assert.throws(() => parseV2Xml(xml), `必须拒绝: ${xml}`)
+  }
+  // 合法全包裹 CDATA 仍然放行（回归）
+  assert.deepEqual(parseV2Xml('<xml><a><![CDATA[x]]></a></xml>'), { a: 'x' })
+  assert.deepEqual(parseV2Xml('<xml><a><![CDATA[ ]]></a></xml>'), { a: ' ' })
+  assert.deepEqual(parseV2Xml('<xml><a><![CDATA[&amp;]]></a></xml>'), { a: '&amp;' })
+})
+
 test('签名错误消息不泄露密钥或原始数据', () => {
   try {
     signV2Params('not-an-object', KEY)

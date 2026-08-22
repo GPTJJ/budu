@@ -1,5 +1,6 @@
 // 测试共享：内存版 prisma（支付域子集），供支付/微信支付/对账测试复用。
 export function matches(row, where = {}) {
+  if (where.AND) return where.AND.every((part) => matches(row, part))
   if (where.OR) return where.OR.some((part) => matches(row, part))
   return Object.entries(where).every(([key, expected]) => {
     const actual = row[key]
