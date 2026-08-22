@@ -202,11 +202,11 @@
     border-radius: inherit;
     background:
       radial-gradient(circle at 30% 10%, rgba(255, 255, 255, 0.94), transparent 58%),
-      linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(221, 191, 235, 0.38));
+      linear-gradient(135deg, #fff2f7, #fde4ef);
     box-shadow:
-      0 5px 14px rgba(108, 66, 130, 0.13),
+      0 5px 14px rgba(188, 79, 126, 0.13),
       inset 0 1px 0 rgba(255, 255, 255, 0.92),
-      inset 0 -1px 0 rgba(112, 80, 134, 0.08);
+      inset 0 -1px 0 rgba(188, 79, 126, 0.08);
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
