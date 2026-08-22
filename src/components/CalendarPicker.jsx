@@ -68,15 +68,15 @@ export default function CalendarPicker({ month, day, weekStart, onSelect, onWeek
   const weekEnd = weekDays[6]?.date || ''
 
   return (
-    <div className="relative block shrink-0">
+    <div className="relative block w-full min-w-0 md:w-auto md:shrink-0">
       <button
         onClick={toggle}
-        className={`flex items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover ${
+        className={`flex w-full min-w-0 items-center gap-2 rounded-2xl bg-white px-3.5 py-2.5 text-sm shadow-card transition hover:shadow-card-hover md:w-auto ${
           open ? 'ring-2 ring-budu-200' : ''
         }`}
       >
         <CalendarDays className={`h-4 w-4 ${day ? 'text-budu-500' : 'text-budu-500'}`} />
-        <span className="font-semibold text-slate-600">
+        <span className="min-w-0 flex-1 truncate text-left font-semibold text-slate-600 md:flex-none">
           {weekStart
             ? `${weekStart.slice(5)} ~ ${weekEnd.slice(5)}`
             : day

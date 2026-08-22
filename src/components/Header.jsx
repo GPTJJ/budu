@@ -81,7 +81,12 @@ export default function Header({
         <NotificationBell variant="mobile" user={user} onNavigate={onNavigate} />
 
         {/* 右侧工具栏 */}
-        <div className="no-scrollbar order-3 flex w-full shrink-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 sm:gap-3 md:order-none md:w-auto md:overflow-visible md:pb-0">
+        <div
+          data-testid="overview-toolbar"
+          className={`order-3 w-full shrink-0 items-center gap-2 pb-0.5 sm:gap-3 md:order-none md:flex md:w-auto md:flex-nowrap md:overflow-visible md:pb-0 ${
+            showOverviewTools ? 'grid grid-cols-1 sm:grid-cols-2' : 'hidden'
+          }`}
+        >
           {showOverviewTools && (
             <>
               {/* 日历选择（月 / 日双模式） */}
@@ -94,12 +99,12 @@ export default function Header({
               />
 
               {/* 门店选择 */}
-              <label className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-200/70 bg-white/80 px-3 py-2 text-sm shadow-sm transition hover:border-slate-300">
+              <label data-testid="overview-store-picker" className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-slate-200/70 bg-white/80 px-3 py-2 text-sm shadow-sm transition hover:border-slate-300 md:w-auto md:shrink-0">
                 <MapPin className="h-4 w-4 text-budu-500" />
                 <select
                   value={store}
                   onChange={(e) => onStoreChange(e.target.value)}
-                  className="max-w-[120px] cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none sm:max-w-[160px]"
+                  className="min-w-0 flex-1 cursor-pointer appearance-none bg-transparent pr-1 text-sm font-semibold text-slate-600 outline-none md:max-w-[160px]"
                 >
                   {(user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin') && (
                     <option value="all">{t('全部门店')}</option>

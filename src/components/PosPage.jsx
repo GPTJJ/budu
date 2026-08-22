@@ -462,8 +462,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     const paymentMethod = scannerChannel
     setScannerChannel('')
     if (!paymentMethod) return
-    // 真实微信付款码仅接受 18 位数字（前缀 10-15）；不合法直接提示并重新等待扫码
-    if (paymentMethod === 'wechat' && !isValidWechatAuthCode(authCode)) {
+    // 真实微信付款码仅接受 18 位数字（前缀 10-15）；mock 模式保持向后兼容
+    if (paymentMethod === 'wechat' && !mockMode && !isValidWechatAuthCode(authCode)) {
       setError('付款码无效，请重新扫描顾客的微信付款码')
       setScannerChannel('wechat')
       return

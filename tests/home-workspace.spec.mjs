@@ -52,6 +52,26 @@ for (const width of [375, 390, 430]) {
     await expect(page.getByText('待办事项')).toBeVisible()
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     expect(overflow).toBeLessThanOrEqual(0)
+    const toolbar = page.getByTestId('overview-toolbar')
+    const toolbarLayout = await toolbar.evaluate((element) => {
+      const storePicker = element.querySelector('[data-testid="overview-store-picker"]')
+      const toolbarRect = element.getBoundingClientRect()
+      const storeRect = storePicker.getBoundingClientRect()
+      return {
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        toolbarLeft: toolbarRect.left,
+        toolbarRight: toolbarRect.right,
+        storeLeft: storeRect.left,
+        storeRight: storeRect.right,
+        viewportWidth: window.innerWidth,
+      }
+    })
+    expect(toolbarLayout.scrollWidth).toBeLessThanOrEqual(toolbarLayout.clientWidth)
+    expect(toolbarLayout.toolbarLeft).toBeGreaterThanOrEqual(0)
+    expect(toolbarLayout.toolbarRight).toBeLessThanOrEqual(toolbarLayout.viewportWidth)
+    expect(toolbarLayout.storeLeft).toBeGreaterThanOrEqual(0)
+    expect(toolbarLayout.storeRight).toBeLessThanOrEqual(toolbarLayout.viewportWidth)
     const todoTop = await page.getByText('待办事项').boundingBox()
     expect(todoTop?.y).toBeLessThan(844)
   })
