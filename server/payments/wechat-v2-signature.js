@@ -99,7 +99,7 @@ export function buildV2Xml(params) {
 export function parseV2Xml(xml) {
   if (typeof xml !== 'string' || xml.length === 0) throw new Error('XML 响应为空')
   if (Buffer.byteLength(xml, 'utf8') > WECHAT_V2_MAX_XML_BYTES) throw new Error('XML 响应超出大小限制')
-  if (/<!DOCTYPE|<!ENTITY|<!\[CDATA\[|<!--|<\?|<!\[/i.test(xml)) {
+  if (/<!DOCTYPE|<!ENTITY|<!--|<\?/i.test(xml)) {
     throw new Error('XML 包含禁止的声明或实体')
   }
   const trimmed = xml.trim()
@@ -112,22 +112,32 @@ export function parseV2Xml(xml) {
   const out = {}
   const pairRe = /<([a-zA-Z0-9_-]+)>([\s\S]*?)<\/\1>/g
   let match
-  let consumed = 0
   const used = new Set()
+  const compact = body.replace(/\s+/g, '')
+  let remaining = compact
   while ((match = pairRe.exec(body)) !== null) {
     const [, key, rawValue] = match
     if (used.has(key)) throw new Error('XML 包含重复字段')
     used.add(key)
-    if (/<[a-zA-Z0-9_-]+>/.test(rawValue)) throw new Error('XML 不支持嵌套元素')
-    if (/&(#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/.test(rawValue)) {
-      const unknown = rawValue.match(/&(#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g) || []
-      const safe = unknown.filter((entity) => ENTITY_MAP[entity.slice(1, -1)] !== undefined)
-      if (safe.length !== unknown.length) throw new Error('XML 包含不支持的实体引用')
+    // CDATA 仅允许完整包裹整个值（微信 V2 常见）；CDATA 内按字面处理，不做实体解码。
+    const cdataMatch = rawValue.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/)
+    if (cdataMatch) {
+      out[key] = cdataMatch[1]
+    } else {
+      if (/<!\[CDATA\[|\]\]>/.test(rawValue)) throw new Error('XML CDATA 必须完整包裹整个值')
+      if (/<[a-zA-Z0-9_-]+>/.test(rawValue)) throw new Error('XML 不支持嵌套元素')
+      if (/&(#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/.test(rawValue)) {
+        const unknown = rawValue.match(/&(#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g) || []
+        const safe = unknown.filter((entity) => ENTITY_MAP[entity.slice(1, -1)] !== undefined)
+        if (safe.length !== unknown.length) throw new Error('XML 包含不支持的实体引用')
+      }
+      out[key] = rawValue.replace(ENTITY_RE, (_, name) => ENTITY_MAP[name])
     }
-    out[key] = rawValue.replace(ENTITY_RE, (_, name) => ENTITY_MAP[name])
-    consumed = match.index + match[0].length
+    // 覆盖校验在去空白后的紧凑体上进行（配对内空白随值保留）
+    remaining = remaining.replace(match[0].replace(/\s+/g, ''), '')
   }
-  const leftover = body.slice(consumed).replace(/[\s]+/g, '')
-  if (leftover) throw new Error('XML 包含无法解析的内容')
+  // K：严格全量消费——去除全部配对后必须不剩任何内容
+  // （前缀垃圾、后缀垃圾、双根、元素间文本都会残留而被拒绝）
+  if (remaining) throw new Error('XML 包含无法解析的内容')
   return out
 }

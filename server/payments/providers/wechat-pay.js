@@ -318,12 +318,22 @@ export class WechatPayProvider extends PaymentProvider {
       }
     }
     if (String(result.result_code || '') === 'SUCCESS') {
-      // 撤销受理成功：再查询一次确认终态
+      // recall=Y：按官方撤销协议必须继续重试撤销，绝不标记 closed；
+      // 保持待核对并进入重试队列（状态持久化，重启后可继续）。
+      if (String(result.recall || '') === 'Y') {
+        return {
+          providerTradeNo: null,
+          metadata: { wechat: { resultCode: 'SUCCESS', recall: 'Y', errCode: '', tradeState: 'REVOKE_RETRY' } },
+          callbacks: [event(payment, 'pending', { failureCode: 'REVOKE_RETRY', failureMessage: '微信撤销需重试，继续核对' })],
+          reconciliation: { providerStatus: 'REVOKE_RETRY', reconciliationRequired: true },
+        }
+      }
+      // recall=N：撤销已定案，再查询一次确认终态
       const after = await this.queryPayment(payment)
       if (after.callbacks?.[0]?.status === 'closed' || after.callbacks?.[0]?.status === 'failed') return after
       return {
         providerTradeNo: null,
-        metadata: { wechat: { resultCode: 'SUCCESS', errCode: '', tradeState: 'REVOKED_ACCEPTED' } },
+        metadata: { wechat: { resultCode: 'SUCCESS', recall: 'N', errCode: '', tradeState: 'REVOKED_ACCEPTED' } },
         callbacks: [event(payment, 'closed', { failureCode: 'REVOKED', failureMessage: '微信支付已撤销' })],
       }
     }

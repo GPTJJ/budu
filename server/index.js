@@ -1,7 +1,7 @@
 import { createApp } from './app.js'
 import { validateConfig, APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
 import { paymentService } from './payments/index.js'
-import { startWechatReconciler } from './payments/payment-reconciler.js'
+import { startWechatReconciler, reconcilerEnvConfig } from './payments/payment-reconciler.js'
 import { wechatPayStatus } from './payments/wechat-config.js'
 import * as Sentry from '@sentry/node'
 
@@ -38,8 +38,9 @@ createApp().listen(PORT, '0.0.0.0', () => {
   // 启动即扫描，覆盖服务重启后的未决支付恢复。
   const wechat = wechatPayStatus()
   if (wechat.enabled) {
-    startWechatReconciler({ service: paymentService })
-    console.log('微信付款码支付后台核对已启动')
+    const options = reconcilerEnvConfig()
+    startWechatReconciler({ service: paymentService, ...options })
+    console.log(`微信付款码支付后台核对已启动（interval=${options.intervalMs}ms maxQueries=${options.maxQueries} reverseAfter=${options.reverseAfterMs}ms lease=${options.leaseMs}ms）`)
   } else {
     console.log(`微信付款码支付未启用（configured=${wechat.configured} enabled=${wechat.enabled}）`)
   }

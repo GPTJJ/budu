@@ -115,3 +115,29 @@ export function httpError(message, status = 400) {
   error.status = status
   return error
 }
+
+/**
+ * 订单删除守卫（真实支付审计要求）：
+ * - 存在任何支付记录的订单禁止删除；
+ * - 已完成/处理中订单禁止删除；
+ * - 删除不得级联清除 PaymentLog/支付历史（因此这里直接拒绝而非清理）。
+ */
+export function assertOrderDeletable(order) {
+  if ((order.payments || []).length > 0) {
+    throw httpError('存在支付记录的订单不可删除', 409)
+  }
+  if (['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'].includes(order.status)) {
+    throw httpError('已完成或处理中的订单不可删除', 409)
+  }
+}
+
+/**
+ * 订单取消守卫：存在未解决的微信支付（可能已扣款）时禁止取消，
+ * 必须等查询/撤销到明确终态（failed/closed/revoked）后才能取消。
+ */
+export function assertOrderCancelable(order, unresolvedWechatPayment) {
+  if (order.status === 'cancelled') return
+  if (unresolvedWechatPayment) {
+    throw httpError('订单存在未核对的微信支付，请先完成核对后再操作', 409)
+  }
+}

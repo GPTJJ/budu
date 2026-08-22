@@ -12,7 +12,7 @@
 // - 业务错误只携带安全错误码与安全描述。
 import crypto from 'node:crypto'
 import https from 'node:https'
-import { buildV2Xml, parseV2Xml, signV2Params, verifyV2Signature, WECHAT_V2_SIGN_HMAC_SHA256 } from './wechat-v2-signature.js'
+import { buildV2Xml, parseV2Xml, signV2Params, verifyV2Signature, WECHAT_V2_SIGN_HMAC_SHA256, WECHAT_V2_SIGN_MD5 } from './wechat-v2-signature.js'
 
 const PRIMARY_HOST = 'api.mch.weixin.qq.com'
 const FALLBACK_HOST = 'api2.mch.weixin.qq.com'

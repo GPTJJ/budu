@@ -31,8 +31,11 @@ const NODE_TEST_SUITE = [
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
+  'test-wechat-config.mjs',         // 微信配置 fail-closed 校验（单元）
   'test-wechat-pay-provider.mjs',   // 微信付款码 Provider（假传输，不连真实接口）
+  'test-wechat-pay-e2e.mjs',        // 微信付款码真实栈 E2E（假网络传输 + 真实签名 XML）
   'test-payment-reconciliation.mjs', // 未决支付自动核对（单元）
+  'test-order-protection.mjs',      // 订单删除/取消保护（单元）
   'test-camera-scanner.mjs',        // 扫码（单元）
   'test-swipe-back.mjs',            // 滑动返回（单元）
   'test-system-slimming.mjs',       // 系统瘦身（单元）

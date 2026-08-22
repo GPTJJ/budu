@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { serializeProduct } from './products.js'
-import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
+import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
@@ -40,8 +40,8 @@ function canReadOrder(user, order) {
 function paymentAuthCode(body, channel) {
   if (!['wechat', 'alipay'].includes(channel)) return ''
   const authCode = String(body?.authCode ?? '').trim()
-  if (channel === 'wechat') {
-    // 真实微信付款码：18 位纯数字，官方允许前缀 10-15
+  if (channel === 'wechat' && paymentMode() === 'live') {
+    // 真实微信付款码：18 位纯数字，官方允许前缀 10-15（仅真实支付模式）
     if (!WECHAT_AUTH_CODE_RE.test(authCode)) {
       throw httpError('请扫描有效的微信付款码（18 位数字）')
     }
@@ -190,9 +190,19 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   requirePosUser(req.user)
   const mode = paymentMode()
   const channels = ['cash']
-  // 微信付款码支付：仅当显式开启 + 配置完整 + 门店在灰度名单 + 真实支付模式时开放。
-  // 任一条件不满足即 fail closed，绝不回退为可用状态。
-  const wechat = wechatPayFrontendStatus(String(req.user?.storeKeys?.[0] || ''), mode)
+  // 按「当前所选/请求的门店」返回微信可用性；未传门店时回退账号首个门店。
+  // 请求了门店但无权访问时按不可用处理（fail closed），绝不把 UI 当安全边界。
+  const requestedStore = String(req.query?.storeId || '').trim()
+  let storeKey = ''
+  if (requestedStore) {
+    if (!canStore(req.user, requestedStore)) {
+      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false } })
+    }
+    storeKey = requestedStore
+  } else {
+    storeKey = String(req.user?.storeKeys?.[0] || '')
+  }
+  const wechat = wechatPayFrontendStatus(storeKey, mode)
   if (wechat.enabled) channels.push('wechat')
   res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled } })
 }))
@@ -244,10 +254,7 @@ posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
   if (!order) throw httpError('订单不存在', 404)
   // 真实支付审计要求：已完成或存在支付记录的订单禁止删除；
   // PaymentLog / 支付历史不得被订单删除级联清除。
-  if (order.payments.length > 0) throw httpError('存在支付记录的订单不可删除', 409)
-  if (['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'].includes(order.status)) {
-    throw httpError('已完成或处理中的订单不可删除', 409)
-  }
+  assertOrderDeletable(order)
   await prisma.$transaction(async (tx) => {
     await tx.orderItem.deleteMany({ where: { orderId: order.id } })
     await tx.order.delete({ where: { id: order.id } })
@@ -420,6 +427,9 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   assertOrderTransition(current.status, 'cancelled')
   const active = await paymentService.activePayment(current.id)
   if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
+  // E：存在未解决的微信支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
+  const unresolvedWechat = await paymentService.unresolvedWechatPayment(current.id)
+  assertOrderCancelable(current, unresolvedWechat)
   if (active) await paymentService.closePayment(active.id)
   current = await prisma.order.findUnique({ where: { id: current.id } })
   const changed = await prisma.order.updateMany({

@@ -462,8 +462,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     const paymentMethod = scannerChannel
     setScannerChannel('')
     if (!paymentMethod) return
-    // 真实微信付款码仅接受 18 位数字（前缀 10-15）；不合法直接提示并重新等待扫码
-    if (paymentMethod === 'wechat' && !isValidWechatAuthCode(authCode)) {
+    // 真实微信付款码仅接受 18 位数字（前缀 10-15）；mock 模式保持向后兼容
+    if (paymentMethod === 'wechat' && !mockMode && !isValidWechatAuthCode(authCode)) {
       setError('付款码无效，请重新扫描顾客的微信付款码')
       setScannerChannel('wechat')
       return
@@ -555,7 +555,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     }
   }
 
+  const hasUnresolvedWechat = () =>
+    Boolean(payment && payment.provider === 'wechat_pay' && ['created', 'pending'].includes(payment.status))
+
   const returnToOrdering = () => {
+    if (hasUnresolvedWechat()) {
+      setError('存在未核对的微信支付，请先完成核对（继续核对，或取消并核对）')
+      return
+    }
     savePendingOrder(user.id, storeId, '')
     setScannerChannel('')
     setCashConfirm(false)
@@ -626,7 +633,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             {payment && !['success'].includes(payment.status) && (
               <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-3">
                 <button disabled={queryingPayment} onClick={queryCurrentPayment} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-                  {queryingPayment ? '查询中…' : '查询支付结果'}
+                  {queryingPayment ? '查询中…' : (payment?.provider === 'wechat_pay' ? '继续核对' : '查询支付结果')}
                 </button>
                 {pendingPayment && (
                   <button disabled={queryingPayment} onClick={closeCurrentPayment} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">

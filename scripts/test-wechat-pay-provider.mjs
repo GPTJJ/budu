@@ -209,3 +209,34 @@ test('未启用/未配置时 Provider 拒绝（501）且不调用任何接口', 
   await assert.rejects(() => provider.createPayment(payment(), { authCode: '130123456789012345' }), (error) => error.status === 501)
   assert.equal(fake.calls.length, 0)
 })
+
+test('I：reverse recall=Y → 绝不 closed，保持待核对并标记重试（重启后可继续撤销）', async () => {
+  // 第一次撤销：recall=Y（需按官方协议重试撤销）
+  const fake1 = new FakeClient()
+  fake1.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'USERPAYING', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  fake1.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', recall: 'Y', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  const provider1 = providerWith(fake1)
+  const first = await provider1.closePayment(payment())
+  assert.equal(first.callbacks[0].status, 'pending', 'recall=Y 不得标记 closed')
+  assert.equal(first.reconciliation.providerStatus, 'REVOKE_RETRY')
+  assert.equal(first.reconciliation.reconciliationRequired, true)
+  // 第二次（模拟重启后的重试）：recall=N + 查询 CLOSED → 终态 closed
+  const fake2 = new FakeClient()
+  fake2.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'USERPAYING', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  fake2.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', recall: 'N', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  fake2.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'CLOSED', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  const provider2 = providerWith(fake2)
+  const second = await provider2.closePayment(payment())
+  assert.equal(second.callbacks[0].status, 'closed')
+})
+
+test('I：撤销网络歧义 → 保持 pending + 人工核对，不 cancel 订单', async () => {
+  const fake = new FakeClient()
+  fake.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'USERPAYING', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', sign: 'x' })
+  fake.responses.push(new WechatV2Error('NETWORK_ERROR', '网络错误', { retryable: true, ambiguous: true }))
+  const provider = providerWith(fake)
+  const result = await provider.closePayment(payment())
+  assert.equal(result.callbacks[0].status, 'pending')
+  assert.equal(result.reconciliation.providerStatus, 'REVERSE_UNKNOWN')
+  assert.equal(result.reconciliation.reconciliationRequired, true)
+})

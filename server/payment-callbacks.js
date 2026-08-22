@@ -15,6 +15,11 @@ const handle = async (req, res, rawProvider) => {
   try {
     const provider = PROVIDER_ALIASES[String(rawProvider || '').toLowerCase()] || ''
     if (!provider) return res.status(404).json({ error: '接口不存在' })
+    // L：MICROPAY 阶段依赖同步响应 + 主动查询/撤销，不依赖异步回调。
+    // 微信支付公开回调在本阶段显式关闭（fail closed），绝不参与订单完成判定。
+    if (provider === 'wechat_pay') {
+      return res.status(404).json({ error: '微信支付回调未启用（当前为 MICROPAY 查询/撤销阶段）' })
+    }
     if (provider === 'mock' && process.env.ENABLE_MOCK_CALLBACK_API !== '1' && process.env.NODE_ENV !== 'test') {
       return res.status(404).json({ error: '接口不存在' })
     }

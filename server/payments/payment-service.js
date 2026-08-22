@@ -5,6 +5,7 @@ import { MockPaymentProvider } from './providers/mock.js'
 import { CashPaymentProvider } from './providers/cash.js'
 import { WechatPayProvider } from './providers/wechat-pay.js'
 import { AlipayProvider } from './providers/alipay.js'
+import { wechatPayConfig, wechatPayStoreAllowed } from './wechat-config.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
@@ -83,6 +84,21 @@ export class PaymentService {
   async activePayment(orderId) {
     return this.prisma.payment.findFirst({
       where: { orderId, status: { in: ACTIVE_PAYMENT_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  /**
+   * 订单是否存在未解决的微信支付（created 已发起 / pending / 待核对）。
+   * 存在时订单不得取消、不得开启其他支付渠道。
+   */
+  async unresolvedWechatPayment(orderId) {
+    return this.prisma.payment.findFirst({
+      where: {
+        orderId,
+        provider: 'wechat_pay',
+        OR: [{ status: 'created' }, { status: 'pending' }, { reconciliationRequired: true }],
+      },
       orderBy: { createdAt: 'desc' },
     })
   }
@@ -174,6 +190,18 @@ export class PaymentService {
       throw httpError('当前订单状态不可创建支付', 409)
     }
     if (order.payableAmount <= 0n) throw httpError('订单应付金额必须大于 0')
+    // D：真实微信付款码支付必须服务端按 ORDER storeId 强制校验灰度名单。
+    // 客户端/UI 状态不是安全边界。
+    if (providerName === 'wechat_pay') {
+      const provider = this.provider(providerName)
+      const config = typeof provider.config === 'function' ? provider.config() : wechatPayConfig()
+      if (!config.enabled || !config.configured || paymentMode() !== 'live') {
+        throw httpError('微信支付未开通或配置不完整', 501)
+      }
+      if (!wechatPayStoreAllowed(order.storeId, config)) {
+        throw httpError('当前门店未授权微信支付', 403)
+      }
+    }
 
     const no = paymentNo()
     let payment
@@ -222,6 +250,14 @@ export class PaymentService {
     await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
     const provider = this.provider(providerName)
+    // C：外部网络请求发出前持久化“已尝试发起”证据（不落付款码），
+    // 保证 created 状态在进程崩溃后也可由核对器按 orderquery 恢复。
+    if (providerName === 'wechat_pay') {
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: { networkAttemptStartedAt: new Date() },
+      })
+    }
     let response
     try {
       response = await provider.createPayment(payment, {
@@ -253,10 +289,10 @@ export class PaymentService {
       status: response.callbacks?.[0]?.status || payment.status,
       providerTradeNo: payment.providerTradeNo,
     })
-    for (const callback of response.callbacks || []) await this.handleCallback(providerName, callback)
+    for (const callback of response.callbacks || []) await this.applyProviderResult(providerName, callback)
     if (response.scheduledCallback) {
       const timer = setTimeout(() => {
-        this.handleCallback(providerName, response.scheduledCallback).catch((error) => console.error('[mock-payment-delay]', error.message))
+        this.applyProviderResult(providerName, response.scheduledCallback).catch((error) => console.error('[mock-payment-delay]', error.message))
       }, response.callbackDelayMs)
       if (typeof timer.unref === 'function') timer.unref()
     }
@@ -268,8 +304,8 @@ export class PaymentService {
     if (!payment) throw httpError('支付记录不存在', 404)
     const response = await this.provider(payment.provider).queryPayment(payment)
     await this.applyProviderResponse(payment, response)
-    if (response.callback) await this.handleCallback(payment.provider, response.callback)
-    for (const callback of response.callbacks || []) await this.handleCallback(payment.provider, callback)
+    if (response.callback) await this.applyProviderResult(payment.provider, response.callback)
+    for (const callback of response.callbacks || []) await this.applyProviderResult(payment.provider, callback)
     const result = await this.result(payment.id)
     await this.logEvent(result.payment, result.order, 'payment.query', {
       status: result.payment.status,
@@ -285,8 +321,8 @@ export class PaymentService {
     if (payment.status === 'closed') return this.result(payment.id)
     const response = await this.provider(payment.provider).closePayment(payment)
     await this.applyProviderResponse(payment, response)
-    if (response.callback) await this.handleCallback(payment.provider, response.callback)
-    for (const callback of response.callbacks || []) await this.handleCallback(payment.provider, callback)
+    if (response.callback) await this.applyProviderResult(payment.provider, response.callback)
+    for (const callback of response.callbacks || []) await this.applyProviderResult(payment.provider, callback)
     const result = await this.result(payment.id)
     await this.logEvent(result.payment, result.order, 'payment.closed', {
       status: result.payment.status,
@@ -446,9 +482,26 @@ export class PaymentService {
     return this.provider(providerName).verifyCallback(payload)
   }
 
+  /**
+   * 公开回调路径（不可信输入）：先经 Provider 回调验签，再进入状态机。
+   * 仅用于微信支付平台等外部回调；MICROPAY 阶段微信回调已被禁用（见 payment-callbacks.js）。
+   */
   async handleCallback(providerName, payload) {
     const verified = await this.verifyCallback(providerName, payload)
     return this.applyPaymentEvent(providerName, { ...verified, raw: payload })
+  }
+
+  /**
+   * 内部可信结果路径（Provider 已通过微信 V2 客户端验签/交叉校验）：
+   * 直接进入支付状态机，绝不重新执行公开回调验签。
+   * 适用于 MICROPAY 同步响应、orderquery、reverse 等内部结果。
+   */
+  async applyProviderResult(providerName, eventResult) {
+    // 信任边界 = 调用路径本身：只有 PaymentService 内部在收到 Provider
+    // 的 createPayment/queryPayment/closePayment 返回值后才会调用本方法；
+    // 公开回调仍必须走 handleCallback → verifyCallback 验签。
+    if (!eventResult || typeof eventResult !== 'object') throw httpError('Provider 结果格式不正确', 500)
+    return this.applyPaymentEvent(providerName, eventResult)
   }
 
   async applyPaymentEvent(providerName, verified) {

@@ -1,14 +1,22 @@
-// 微信支付配置读取（付款码支付 V2 MICROPAY）
+// 微信支付配置读取与严格校验（付款码支付 V2 MICROPAY）
 //
 // 安全约定：
-// - APIv2 密钥与商户私钥只从 Secret 文件读取（WECHAT_PAY_API_V2_KEY_FILE 等），
-//   不支持多行环境变量直接注入。
-// - 本模块只对外暴露“已配置/未配置/是否启用”等布尔与安全元数据，
-//   绝不暴露密钥、证书或私钥内容。
+// - APIv2 密钥与商户私钥只从 Secret 文件读取，不支持多行环境变量直接注入。
+// - 校验失败即 configured=false，真实微信支付保持不可用（fail closed）。
+// - 本模块绝不打印/暴露 APIv2 密钥、私钥、证书私密材料；对外只暴露布尔与安全元数据。
 // - 默认 WECHAT_PAY_ENABLED=0：未显式开启时任何通道开关都返回关闭。
 import fs from 'node:fs'
+import crypto from 'node:crypto'
+import net from 'node:net'
 
 export const WECHAT_PAY_PROTOCOL = 'v2_micropay'
+
+// APIv2 密钥：微信官方要求 32 位数字+字母
+const API_V2_KEY_RE = /^[A-Za-z0-9]{32}$/
+// 商户号：数字，8-16 位
+const MCH_ID_RE = /^\d{8,16}$/
+// AppID：wx + 16 位字母数字
+const APP_ID_RE = /^wx[A-Za-z0-9]{16}$/
 
 function readSecretFile(envName, label) {
   const filePath = String(process.env[envName] || '').trim()
@@ -24,8 +32,53 @@ function readSecretFile(envName, label) {
   }
 }
 
+function isValidTerminalIp(value) {
+  if (!value) return false
+  if (net.isIP(value) !== 4) return false
+  const parts = String(value).split('.').map(Number)
+  if (parts[0] === 127) return false // 回环
+  if (parts[0] === 0) return false // 未指定
+  if (parts[0] >= 224) return false // 组播/保留
+  return true
+}
+
+export function validateCertificate(certPem, nowMs = Date.now()) {
+  try {
+    const cert = new crypto.X509Certificate(certPem)
+    const now = nowMs
+    const notBefore = Date.parse(cert.validFrom)
+    const notAfter = Date.parse(cert.validTo)
+    if (!Number.isFinite(notBefore) || !Number.isFinite(notAfter)) return { ok: false, reason: '证书日期无法解析' }
+    if (now < notBefore) return { ok: false, reason: '证书尚未生效' }
+    if (now > notAfter) return { ok: false, reason: '证书已过期' }
+    return { ok: true, value: cert }
+  } catch {
+    return { ok: false, reason: '证书不是有效 X.509 PEM' }
+  }
+}
+
+function validatePrivateKey(keyPem) {
+  try {
+    const key = crypto.createPrivateKey(keyPem)
+    return { ok: true, value: key }
+  } catch {
+    return { ok: false, reason: '私钥无法解析' }
+  }
+}
+
+function certificatesMatch(cert, key) {
+  try {
+    const certPublic = cert.publicKey.export({ type: 'spki', format: 'der' })
+    // 私钥 KeyObject 需先派生公钥（Node 26 语义），再导出 SPKI 比较
+    const keyPublic = crypto.createPublicKey(key).export({ type: 'spki', format: 'der' })
+    return certPublic.equals(keyPublic)
+  } catch {
+    return false
+  }
+}
+
 /**
- * 读取完整微信支付配置。绝不返回密钥内容到调用方以外的任何输出。
+ * 读取并严格校验微信支付配置。绝不输出密钥内容。
  * @returns {{enabled:boolean, protocol:string, configured:boolean,
  *            mchId:string, appId:string, terminalIp:string,
  *            enabledStores:string[], apiV2Key:string, certPem:string, keyPem:string,
@@ -48,11 +101,45 @@ export function wechatPayConfig() {
 
   const problems = []
   if (!mchId) problems.push('商户号未配置')
+  else if (!MCH_ID_RE.test(mchId)) problems.push('商户号格式无效（须 8-16 位数字）')
   if (!appId) problems.push('AppID 未配置')
-  if (!keyFile.ok) problems.push(keyFile.reason)
-  if (!certFile.ok) problems.push(certFile.reason)
-  if (!privateKeyFile.ok) problems.push(privateKeyFile.reason)
+  else if (!APP_ID_RE.test(appId)) problems.push('AppID 格式无效（须 wx 开头共 18 位字母数字）')
+  if (!terminalIp) problems.push('终端 IP 未配置（MICROPAY 必填）')
+  else if (!isValidTerminalIp(terminalIp)) problems.push('终端 IP 无效（须非回环公网 IPv4）')
   if (protocol !== WECHAT_PAY_PROTOCOL) problems.push(`协议必须为 ${WECHAT_PAY_PROTOCOL}`)
+
+  let apiV2Key = ''
+  if (!keyFile.ok) problems.push(keyFile.reason)
+  else if (!API_V2_KEY_RE.test(keyFile.value)) problems.push('APIv2 密钥无效（须恰好 32 位数字+字母）')
+  else apiV2Key = keyFile.value
+
+  let certPem = ''
+  let cert = null
+  if (!certFile.ok) problems.push(certFile.reason)
+  else {
+    const certResult = validateCertificate(certFile.value)
+    if (!certResult.ok) problems.push(certResult.reason)
+    else {
+      certPem = certFile.value
+      cert = certResult.value
+    }
+  }
+
+  let keyPem = ''
+  let privateKey = null
+  if (!privateKeyFile.ok) problems.push(privateKeyFile.reason)
+  else {
+    const keyResult = validatePrivateKey(privateKeyFile.value)
+    if (!keyResult.ok) problems.push(keyResult.reason)
+    else {
+      keyPem = privateKeyFile.value
+      privateKey = keyResult.value
+    }
+  }
+
+  if (cert && privateKey && !certificatesMatch(cert, privateKey)) {
+    problems.push('商户证书与私钥不匹配')
+  }
 
   const configured = problems.length === 0
   return {
@@ -63,9 +150,9 @@ export function wechatPayConfig() {
     appId,
     terminalIp,
     enabledStores,
-    apiV2Key: keyFile.ok ? keyFile.value : '',
-    certPem: certFile.ok ? certFile.value : '',
-    keyPem: privateKeyFile.ok ? privateKeyFile.value : '',
+    apiV2Key,
+    certPem,
+    keyPem,
     reason: configured ? '' : problems.join('；'),
   }
 }
