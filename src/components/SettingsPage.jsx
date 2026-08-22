@@ -38,6 +38,7 @@ export default function SettingsPage({ user, onBack }) {
   const [manualBusy, setManualBusy] = useState(false)
   const [manualTip, setManualTip] = useState('')
   const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
+  const canManageWechatBindings = user?.role === 'developer'
   const customStores = getStores()
 
   const addStore = () => {
@@ -91,7 +92,7 @@ export default function SettingsPage({ user, onBack }) {
     setWxTip('')
     try {
       const res = await api('/v2/wechat/bind-qrcode', { method: 'POST', body: JSON.stringify({}) })
-      window.open(res.url, '_blank')
+      window.open(res.url, '_blank', 'noopener,noreferrer')
       setWxTip(t('请在打开的微信授权页扫码，授权成功后回到本页刷新查看绑定状态'))
     } catch (err) {
       setWxTip(t(err.message))
@@ -120,11 +121,12 @@ export default function SettingsPage({ user, onBack }) {
     setManualBusy(true)
     setManualTip('')
     try {
-      await api('/v2/wechat/bindings/manual', {
+      const res = await api('/v2/wechat/bindings/manual', {
         method: 'POST',
         body: JSON.stringify({ username: manualUsername.trim(), userid: manualUserid.trim() }),
       })
-      setManualTip(`已绑定 ${manualUsername.trim()} → ${manualUserid.trim()}，推送立即生效`)
+      setManualUserid('')
+      setManualTip(`已绑定 ${manualUsername.trim()} → ${res.identityHint}，推送立即生效`)
       loadWxBindings()
     } catch (err) {
       setManualTip(err.message)
@@ -144,7 +146,7 @@ export default function SettingsPage({ user, onBack }) {
       const res = await api(`/v2/wechat/bindings/lookup?username=${encodeURIComponent(manualUsername.trim())}`)
       const active = (res.rows || []).filter((r) => r.status === 'active')
       setManualTip(active.length
-        ? `${manualUsername.trim()} 已绑定企微：${active[0].nickname}`
+        ? `${manualUsername.trim()} 已绑定企微：${active[0].identityHint}`
         : `${manualUsername.trim()} 当前未绑定`)
     } catch (err) {
       setManualTip(err.message)
@@ -330,7 +332,7 @@ export default function SettingsPage({ user, onBack }) {
                     <div key={b.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50/80 px-4 py-2.5">
                       <span className="grid h-8 w-8 place-items-center rounded-full bg-budu-500 text-xs font-bold text-white">微</span>
                       <span className="text-sm font-semibold text-slate-700">
-                        {b.nickname || t('微信')} · {b.channel === 'wecom' ? t('企业微信') : t('公众号')}
+                        {b.identityHint || t('微信')} · {b.channel === 'wecom' ? t('企业微信') : t('公众号')}
                       </span>
                       <span className="text-[11px] text-emerald-600">{t('已绑定')}</span>
                       <span className="ml-auto flex items-center gap-2">
@@ -355,9 +357,9 @@ export default function SettingsPage({ user, onBack }) {
           )}
           {wxTip && <p className="mt-3 text-xs font-medium text-slate-500">{wxTip}</p>}
 
-          {isDeveloper && (
+          {canManageWechatBindings && (
             <div className="mt-4 rounded-xl border border-dashed border-budu-200 bg-budu-50/40 px-4 py-3">
-              <p className="text-xs font-bold text-slate-600">管理员手动绑定企微 userid（跳过扫码）</p>
+              <p className="text-xs font-bold text-slate-600">开发者手动绑定企微 userid（跳过扫码）</p>
               <p className="mt-1 text-[11px] text-slate-400">
                 用于扫码绑定被域名校验拦截或员工不便扫码时：填系统账号 + 员工企业微信 userid（企微通讯录 → 成员资料可见），保存后推送立即生效
               </p>

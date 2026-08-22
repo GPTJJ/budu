@@ -20,9 +20,24 @@ export function wechatPersonalConfig() {
     secret: process.env.MP_APP_SECRET || '',
     templateId: process.env.MP_TEMPLATE_ID || '',
   }
-  if (wecom.corpId && wecom.agentId && wecom.secret) return { channel: 'wecom', ...wecom }
+  if (wecom.corpId && /^\d+$/.test(wecom.agentId) && wecom.secret) return { channel: 'wecom', ...wecom }
   if (mp.appId && mp.secret && mp.templateId) return { channel: 'mp', ...mp }
   return null
+}
+
+/** 外部跳转的唯一基址。生产只允许 HTTPS；本地测试可使用 loopback HTTP。 */
+export function publicBaseUrl() {
+  const raw = String(process.env.PUBLIC_BASE_URL || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    const loopback = url.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+    if (url.protocol !== 'https:' && !loopback) return ''
+    if (url.username || url.password) return ''
+    return url.origin
+  } catch {
+    return ''
+  }
 }
 
 /** 模板占位符渲染：{key} → 数据值（缺失留空） */
@@ -153,8 +168,11 @@ export async function pushWechat(notification, title, content, target) {
  */
 export async function sendWechatPersonal(cfg, binding, { title, content, target }) {
   try {
-    const baseUrl = process.env.PUBLIC_BASE_URL || ''
-    const jumpUrl = `${baseUrl}${target ? `/?nav=${encodeURIComponent(target)}` : ''}`
+    const baseUrl = publicBaseUrl()
+    if (!baseUrl) return { ok: false, errcode: 'CONFIG_ERROR', errmsg: 'PUBLIC_BASE_URL 未配置或不安全' }
+    const jump = new URL('/', baseUrl)
+    if (target) jump.searchParams.set('nav', String(target))
+    const jumpUrl = jump.toString()
     if (cfg.channel === 'wecom') {
       return await sendWecomTextcard(cfg, binding, title, content, jumpUrl)
     }
@@ -174,6 +192,7 @@ async function sendWecomTextcard(cfg, binding, title, content, jumpUrl) {
     const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify({
         touser: binding.openId, // 企业微信 userid
         msgtype: 'textcard',
@@ -181,7 +200,7 @@ async function sendWecomTextcard(cfg, binding, title, content, jumpUrl) {
         textcard: {
           title: title.slice(0, 120),
           description: content.slice(0, 500),
-          url: jumpUrl || 'https://budu-hk.online',
+          url: jumpUrl,
           btntxt: '查看详情',
         },
       }),
@@ -212,10 +231,11 @@ async function sendMpTemplate(cfg, binding, title, content, jumpUrl) {
     const res = await fetch(`https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify({
         touser: binding.openId,
         template_id: cfg.templateId,
-        url: jumpUrl || 'https://budu-hk.online',
+        url: jumpUrl,
         data: {
           first: { value: title.slice(0, 60) },
           keyword1: { value: content.slice(0, 100) },
@@ -246,7 +266,10 @@ let wecomTokenCache = { token: '', at: 0 }
 export async function wecomAccessToken(corpId, secret) {
   if (wecomTokenCache.token && Date.now() - wecomTokenCache.at < 7000 * 1000) return wecomTokenCache.token
   try {
-    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${secret}`)
+    const url = new URL('https://qyapi.weixin.qq.com/cgi-bin/gettoken')
+    url.searchParams.set('corpid', corpId)
+    url.searchParams.set('corpsecret', secret)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     const j = await res.json()
     if (j.errcode === 0 && j.access_token) {
       wecomTokenCache = { token: j.access_token, at: Date.now() }
@@ -262,7 +285,11 @@ let mpTokenCache = { token: '', at: 0 }
 export async function mpAccessToken(appId, secret) {
   if (mpTokenCache.token && Date.now() - mpTokenCache.at < 7000 * 1000) return mpTokenCache.token
   try {
-    const res = await fetch(`https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${secret}`)
+    const url = new URL('https://api.weixin.qq.com/cgi-bin/token')
+    url.searchParams.set('grant_type', 'client_credential')
+    url.searchParams.set('appid', appId)
+    url.searchParams.set('secret', secret)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     const j = await res.json()
     if (j.access_token) {
       mpTokenCache = { token: j.access_token, at: Date.now() }

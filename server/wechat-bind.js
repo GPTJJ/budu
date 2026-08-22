@@ -4,13 +4,86 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
+import { loadDb } from './store.js'
 import { httpError } from './pos-core.js'
-import { isSuperUser } from '../shared/accountPermissions.js'
-import { wechatPersonalConfig, wecomAccessToken } from './notification-center.js'
+import { canManageAccounts } from '../shared/accountPermissions.js'
+import { publicBaseUrl, wechatPersonalConfig, wecomAccessToken } from './notification-center.js'
 
 export const wechatBindRouter = Router()
+/** OAuth 回调是公开端点；安全性由数据库一次性 state 保证，不依赖登录 Cookie。 */
+export const wechatBindCallbackRouter = Router()
 /** 企业微信接收消息服务器验证（公开，无需登录）：GET 校验签名并解密 echostr 应答 */
 export const wechatRecvRouter = Router()
+
+const BIND_STATE_TTL_MS = 10 * 60 * 1000
+const sha256 = (value) => crypto.createHash('sha256').update(String(value)).digest('hex')
+
+export function maskWechatIdentity(value) {
+  const text = String(value || '')
+  if (!text) return ''
+  if (text.length <= 2) return '*'.repeat(text.length)
+  if (text.length <= 4) return `${text[0]}**${text.at(-1)}`
+  return `${text.slice(0, 2)}***${text.slice(-2)}`
+}
+
+function htmlEscape(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+async function findSystemUser(username, { requireActive = false } = {}) {
+  const user = (await loadDb()).users.find((item) => item.username === username)
+  if (!user) throw httpError('系统账号不存在', 404)
+  if (requireActive && (user.status === 'disabled' || user.role === 'public')) {
+    throw httpError('系统账号已停用，不能绑定', 409)
+  }
+  return user
+}
+
+async function saveBinding({ username, channel, openId, nickname, actorUsername, action, stateHash = '' }) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (stateHash) {
+        const consumed = await tx.wechatBindState.updateMany({
+          where: { stateHash, usedAt: null, expiresAt: { gt: new Date() } },
+          data: { usedAt: new Date() },
+        })
+        if (consumed.count !== 1) throw httpError('绑定请求已失效或已使用，请重新发起', 400)
+      }
+      const conflict = await tx.wechatBinding.findFirst({
+        where: { channel, openId, status: 'active', NOT: { username } },
+        select: { id: true },
+      })
+      if (conflict) throw httpError('该微信身份已绑定其他系统账号，请先解绑', 409)
+      const binding = await tx.wechatBinding.upsert({
+        where: { username_channel: { username, channel } },
+        create: { id: `wb-${crypto.randomUUID()}`, username, channel, openId, nickname, status: 'active' },
+        update: { openId, nickname, status: 'active', revokedAt: null, boundAt: new Date() },
+      })
+      await tx.wechatBindingAuditLog.create({
+        data: {
+          id: `wba-${crypto.randomUUID()}`,
+          bindingId: binding.id,
+          targetUsername: username,
+          channel,
+          action,
+          actorUsername,
+          identityHint: maskWechatIdentity(openId),
+        },
+      })
+      return binding
+    }, { isolationLevel: 'Serializable' })
+  } catch (error) {
+    if (error?.code === 'P2002' || error?.meta?.code === '23505') {
+      throw httpError('该微信身份已绑定其他系统账号，请先解绑', 409)
+    }
+    throw error
+  }
+}
 
 const wrap = (fn) => async (req, res) => {
   try {
@@ -34,7 +107,7 @@ wechatBindRouter.get('/wechat/bindings', wrap(async (req, res) => {
     ok: true,
     configured: Boolean(cfg),
     channel: cfg ? cfg.channel : '',
-    rows: rows.map((r) => ({ id: r.id, channel: r.channel, nickname: r.nickname, status: r.status, boundAt: r.boundAt })),
+    rows: rows.map((r) => ({ id: r.id, channel: r.channel, identityHint: maskWechatIdentity(r.openId), status: r.status, boundAt: r.boundAt })),
   })
 }))
 
@@ -43,8 +116,21 @@ wechatBindRouter.post('/wechat/bind-qrcode', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const cfg = wechatPersonalConfig()
   if (!cfg) throw httpError('微信提醒通道未配置（需要企业微信自建应用或公众号资质）', 400)
-  const baseUrl = process.env.PUBLIC_BASE_URL || ''
-  const state = `${req.user.username}::${crypto.randomBytes(8).toString('hex')}`
+  const baseUrl = publicBaseUrl()
+  if (!baseUrl) throw httpError('PUBLIC_BASE_URL 未配置或不安全，无法生成绑定链接', 503)
+  const state = crypto.randomBytes(32).toString('base64url')
+  await prisma.wechatBindState.create({
+    data: {
+      id: `wbs-${crypto.randomUUID()}`,
+      stateHash: sha256(state),
+      username: req.user.username,
+      channel: cfg.channel,
+      expiresAt: new Date(Date.now() + BIND_STATE_TTL_MS),
+    },
+  })
+  prisma.wechatBindState.deleteMany({
+    where: { OR: [{ expiresAt: { lt: new Date() } }, { usedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }] },
+  }).catch(() => {})
   let url = ''
   if (cfg.channel === 'wecom') {
     // 企业微信扫码登录（用户扫码授权 → 回调 code）
@@ -55,42 +141,55 @@ wechatBindRouter.post('/wechat/bind-qrcode', wrap(async (req, res) => {
     const redirect = `${baseUrl}/api/v2/wechat/bind/callback`
     url = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${cfg.appId}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=snsapi_base&state=${encodeURIComponent(state)}#wechat_redirect`
   }
-  res.json({ ok: true, url, state })
+  res.json({ ok: true, url })
 }))
 
 /** 扫码回调：code → 换取 openid → 建立绑定（回调页展示绑定结果） */
-wechatBindRouter.get('/wechat/bind/callback', wrap(async (req, res) => {
+wechatBindCallbackRouter.get('/', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const cfg = wechatPersonalConfig()
   if (!cfg) throw httpError('微信提醒通道未配置', 400)
   const code = String(req.query.code || '')
   const state = String(req.query.state || '')
-  const [username, nonce] = state.split('::')
-  if (!code || !username || !nonce) {
+  if (!code || !/^[A-Za-z0-9_-]{40,64}$/.test(state)) {
     return res.status(400).send('<html><body><h3>绑定参数不完整</h3></body></html>')
   }
+  const stateHash = sha256(state)
+  const stateRow = await prisma.wechatBindState.findUnique({ where: { stateHash } })
+  if (!stateRow || stateRow.usedAt || stateRow.expiresAt <= new Date() || stateRow.channel !== cfg.channel) {
+    return res.status(400).send('<html><body><h3>绑定请求已失效，请重新发起</h3></body></html>')
+  }
+  const username = stateRow.username
+  await findSystemUser(username, { requireActive: true })
   let openId = ''
   let nickname = ''
   if (cfg.channel === 'wecom') {
     // code 换 userid（企业微信）
-    const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${await wecomAccessToken(cfg.corpId, cfg.secret)}&code=${encodeURIComponent(code)}`).then((x) => x.json()).catch(() => ({}))
-    openId = r.userid || r.openid || ''
+    const token = await wecomAccessToken(cfg.corpId, cfg.secret)
+    if (!token) throw httpError('企业微信授权服务暂不可用', 502)
+    const url = new URL('https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo')
+    url.searchParams.set('access_token', token)
+    url.searchParams.set('code', code)
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) }).then((x) => x.json()).catch(() => ({}))
+    // 应用消息 touser 只接受企业内部 userid；外部联系人的 openid 不能用于此通道。
+    openId = r.userid || ''
     nickname = r.userid || ''
   } else {
     // code 换 openid（公众号）
-    const r = await fetch(`https://api.weixin.qq.com/sns/oauth2/access_token?appid=${cfg.appId}&secret=${cfg.secret}&code=${encodeURIComponent(code)}&grant_type=authorization_code`).then((x) => x.json()).catch(() => ({}))
+    const url = new URL('https://api.weixin.qq.com/sns/oauth2/access_token')
+    url.searchParams.set('appid', cfg.appId)
+    url.searchParams.set('secret', cfg.secret)
+    url.searchParams.set('code', code)
+    url.searchParams.set('grant_type', 'authorization_code')
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) }).then((x) => x.json()).catch(() => ({}))
     openId = r.openid || ''
     nickname = r.nickname || ''
   }
   if (!openId) {
     return res.status(400).send('<html><body><h3>微信授权失败，请重试</h3></body></html>')
   }
-  await prisma.wechatBinding.upsert({
-    where: { username_channel: { username, channel: cfg.channel } },
-    create: { id: `wb-${crypto.randomUUID()}`, username, channel: cfg.channel, openId, nickname, status: 'active' },
-    update: { openId, nickname, status: 'active', revokedAt: null },
-  })
-  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding-top:80px"><h3>✅ 微信绑定成功（${username}）</h3><p>通知中心将向该微信发送站内消息提醒，可关闭此页面返回 budu</p></body></html>`)
+  await saveBinding({ username, channel: cfg.channel, openId, nickname, actorUsername: username, action: 'oauth_bind', stateHash })
+  res.send(`<html><body style="font-family:sans-serif;text-align:center;padding-top:80px"><h3>✅ 微信绑定成功（${htmlEscape(username)}）</h3><p>通知中心将向该微信发送站内消息提醒，可关闭此页面返回 budu</p></body></html>`)
 }))
 
 /** 解绑 */
@@ -98,47 +197,65 @@ wechatBindRouter.post('/wechat/bindings/:id/revoke', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const row = await prisma.wechatBinding.findUnique({ where: { id: req.params.id } })
   if (!row || row.username !== req.user.username) throw httpError('绑定不存在', 404)
-  await prisma.wechatBinding.update({
-    where: { id: row.id },
-    data: { status: 'revoked', revokedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.wechatBinding.update({
+      where: { id: row.id },
+      data: { status: 'revoked', revokedAt: new Date() },
+    })
+    await tx.wechatBindingAuditLog.create({
+      data: {
+        id: `wba-${crypto.randomUUID()}`,
+        bindingId: row.id,
+        targetUsername: row.username,
+        channel: row.channel,
+        action: 'self_revoke',
+        actorUsername: req.user.username,
+        identityHint: maskWechatIdentity(row.openId),
+      },
+    })
   })
   res.json({ ok: true })
 }))
 
 /**
  * 管理员手动绑定企微 userid（绕过扫码；域名主体校验未通过/员工不便扫码时使用）。
- * 仅超管（developer/finance/admin）可操作；写入 wechat_bindings(channel=wecom, openId=userid)。
+ * 仅 Developer 可操作；写入 wechat_bindings(channel=wecom, openId=userid)。
  */
 wechatBindRouter.post('/wechat/bindings/manual', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可手动绑定', 403)
+  if (!canManageAccounts(req.user)) throw httpError('仅开发者可手动绑定', 403)
   const cfg = wechatPersonalConfig()
   if (!cfg || cfg.channel !== 'wecom') throw httpError('企业微信通道未配置，无法手动绑定', 400)
   const username = String(req.body?.username || '').trim()
   const userid = String(req.body?.userid || '').trim()
-  if (!username || username.length > 80) throw httpError('系统账号不正确', 400)
-  if (!userid || userid.length > 64) throw httpError('企微 userid 不正确', 400)
-  await prisma.wechatBinding.upsert({
-    where: { username_channel: { username, channel: 'wecom' } },
-    create: { id: `wb-${crypto.randomUUID()}`, username, channel: 'wecom', openId: userid, nickname: userid, status: 'active' },
-    update: { openId: userid, nickname: userid, status: 'active', revokedAt: null },
+  if (!username || username.length > 20) throw httpError('系统账号不正确', 400)
+  if (!/^[A-Za-z0-9._@-]{1,64}$/.test(userid)) throw httpError('企微 userid 格式不正确', 400)
+  await findSystemUser(username, { requireActive: true })
+  const binding = await saveBinding({
+    username,
+    channel: 'wecom',
+    openId: userid,
+    nickname: userid,
+    actorUsername: req.user.username,
+    action: 'manual_bind',
   })
-  res.json({ ok: true, username, userid })
+  res.json({ ok: true, username, identityHint: maskWechatIdentity(userid), bindingId: binding.id })
 }))
 
 /** 管理员查询任意账号的微信绑定状态 */
 wechatBindRouter.get('/wechat/bindings/lookup', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可查询', 403)
+  if (!canManageAccounts(req.user)) throw httpError('仅开发者可查询', 403)
   const username = String(req.query.username || '').trim()
-  if (!username || username.length > 80) throw httpError('系统账号不正确', 400)
+  if (!username || username.length > 20) throw httpError('系统账号不正确', 400)
+  await findSystemUser(username)
   const rows = await prisma.wechatBinding.findMany({
     where: { username },
     orderBy: { boundAt: 'desc' },
   })
   res.json({
     ok: true,
-    rows: rows.map((r) => ({ id: r.id, channel: r.channel, nickname: r.nickname, status: r.status, boundAt: r.boundAt })),
+    rows: rows.map((r) => ({ channel: r.channel, identityHint: maskWechatIdentity(r.openId), status: r.status, boundAt: r.boundAt })),
   })
 }))
 
@@ -161,9 +278,17 @@ wechatBindRouter.post('/wechat/test', wrap(async (req, res) => {
 }))
 
 // ---------------- 企业微信接收消息服务器验证（URL/Token/EncodingAESKey 校验） ----------------
-const RECV_TOKEN = process.env.WXWORK_RECV_TOKEN || 'budu2025'
-// 企微 EncodingAESKey 必须为 43 位 base64（解码后 32 字节）；旧默认值位数不足会解密失败
-const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || '485ZsDsNMczLjxyCwWT2P3YIwayesGyq41oFVf2daii'
+export function wecomReceiveConfig() {
+  const token = String(process.env.WXWORK_RECV_TOKEN || '').trim()
+  const aesKey = String(process.env.WXWORK_RECV_AES_KEY || '').trim()
+  if (!token || !/^[A-Za-z0-9]{43}$/.test(aesKey)) return null
+  try {
+    if (Buffer.from(`${aesKey}=`, 'base64').length !== 32) return null
+  } catch {
+    return null
+  }
+  return { token, aesKey }
+}
 
 /** sha1 签名校验（企业微信标准：token/timestamp/nonce/echostr 字典序拼接） */
 export function wecomSign(token, timestamp, nonce, echostr) {
@@ -174,28 +299,33 @@ export function wecomSign(token, timestamp, nonce, echostr) {
 /** AES-256-CBC 解密（EncodingAESKey → key，IV = key 前 16 字节；PKCS7） */
 export function decryptWecomMsg(encodingAESKey, encryptedBase64) {
   const aesKey = Buffer.from(`${encodingAESKey}=`, 'base64')
+  if (aesKey.length !== 32) throw new Error('invalid aes key')
   const iv = aesKey.subarray(0, 16)
   const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv)
   decipher.setAutoPadding(false)
   const decrypted = Buffer.concat([decipher.update(Buffer.from(encryptedBase64, 'base64')), decipher.final()])
+  if (decrypted.length < 20) throw new Error('invalid encrypted message')
   // 格式：16 字节 random + 4 字节网络序 msgLen + msg + receiveId
   const content = decrypted.subarray(16)
   const msgLen = content.readUInt32BE(0)
+  if (msgLen < 0 || msgLen > content.length - 4) throw new Error('invalid message length')
   return content.subarray(4, 4 + msgLen).toString('utf8')
 }
 
 /** 验证 URL：GET ?msg_signature&timestamp&nonce&echostr → 返回解密后的 echostr 明文 */
 wechatRecvRouter.get('/', (req, res) => {
+  const recv = wecomReceiveConfig()
+  if (!recv) return res.status(503).send('callback disabled')
   const { msg_signature, timestamp, nonce, echostr } = req.query
   if (!msg_signature || !timestamp || !nonce || !echostr) {
     return res.status(400).send('invalid params')
   }
-  const sign = wecomSign(RECV_TOKEN, String(timestamp), String(nonce), String(echostr))
+  const sign = wecomSign(recv.token, String(timestamp), String(nonce), String(echostr))
   if (sign !== String(msg_signature)) {
     return res.status(403).send('sign mismatch')
   }
   try {
-    const plain = decryptWecomMsg(RECV_AES_KEY, String(echostr))
+    const plain = decryptWecomMsg(recv.aesKey, String(echostr))
     res.send(plain)
   } catch (e) {
     res.status(500).send('decrypt error')
@@ -204,5 +334,6 @@ wechatRecvRouter.get('/', (req, res) => {
 
 /** 消息推送（POST 加密 JSON）——通知中心二期可接收企微事件；先应答 success 保证验证通过 */
 wechatRecvRouter.post('/', (req, res) => {
+  if (!wecomReceiveConfig()) return res.status(503).send('callback disabled')
   res.send('success')
 })

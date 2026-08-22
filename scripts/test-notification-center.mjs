@@ -6,10 +6,12 @@
 //   - sendWechatPersonal 企业微信 textcard 适配器（请求体/截断/跳转 URL）
 //   - access_token 缓存复用；token 失效（40014/42001/40001）自动重取重发一次
 //   - 非 token 错误不重试；公众号模板消息适配器
+//   - PUBLIC_BASE_URL 严格校验、企微回调缺配置即关闭
 //   - 企微接收消息服务器验证：wecomSign 签名 + AES 解密 + GET 验证 URL 端到端
 // 集成部分（真实 PostgreSQL 一次性 schema）：
 //   - notify() 完整链路：站内消息 + wechat 投递记录（sent / skipped no binding /
 //     skipped channel not configured）
+//   - OAuth state 防伪造/防重放；手动绑定仅 Developer、账号校验、身份唯一、审计与脱敏
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -31,6 +33,25 @@ const schemaUrl = (() => {
   return url.toString()
 })()
 process.env.DATABASE_URL = schemaUrl
+process.env.PUBLIC_BASE_URL = 'https://budu.example'
+
+// 手动绑定的账号权威源仍是 KV/JSON；测试使用一次性本地数据目录，绝不读取真实账号库。
+const TEST_DATA_DIR = process.env.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'budu-wechat-bind-'))
+process.env.DATA_DIR = TEST_DATA_DIR
+fs.mkdirSync(TEST_DATA_DIR, { recursive: true })
+fs.writeFileSync(path.join(TEST_DATA_DIR, 'db.json'), JSON.stringify({
+  meta: { secret: 'test-only-secret' },
+  users: [
+    { id: 'dev-1', username: 'dev-1', role: 'developer', status: 'active', storeKeys: [] },
+    { id: 'admin-1', username: 'admin-1', role: 'admin', status: 'active', storeKeys: [] },
+    { id: 'finance-1', username: 'finance-1', role: 'finance', status: 'active', storeKeys: [] },
+    { id: 'staff-1', username: 'staff-1', role: 'staff', status: 'active', storeKeys: [], bindingLegacyExempt: true },
+    { id: 'zhangsan-1', username: 'zhangsan', role: 'staff', status: 'active', storeKeys: [], bindingLegacyExempt: true },
+    { id: 'lisi-1', username: 'lisi', role: 'staff', status: 'active', storeKeys: [], bindingLegacyExempt: true },
+    { id: 'wangwu-1', username: 'wangwu', role: 'staff', status: 'active', storeKeys: [], bindingLegacyExempt: true },
+    { id: 'disabled-1', username: 'disabled-1', role: 'staff', status: 'disabled', storeKeys: [] },
+  ],
+}, null, 2))
 
 // ---------------- 环境辅助 ----------------
 async function withEnv(env, fn) {
@@ -56,9 +77,10 @@ function mockFetch(routes) {
   global.fetch = async (url, options = {}) => {
     const text = String(url)
     const body = options.body ? JSON.parse(options.body) : null
-    calls.push({ url: text, body })
     const hit = routes.find((r) => text.includes(r.match))
-    const payload = hit ? hit.respond(calls) : { errcode: -1, errmsg: 'unexpected url' }
+    if (!hit) return original(url, options)
+    calls.push({ url: text, body })
+    const payload = hit.respond(calls)
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
   return { calls, restore: () => { global.fetch = original } }
@@ -106,6 +128,23 @@ test('通知中心：renderTpl 占位符渲染（缺失留空，不抛错）', a
   assert.equal(renderTpl('实发 {amount} 元', {}), '实发  元')
   assert.equal(renderTpl('', { a: 1 }), '')
   assert.equal(renderTpl('无占位', null), '无占位')
+})
+
+test('通知中心：PUBLIC_BASE_URL 仅接受 HTTPS 或本机 HTTP，缺失时推送安全失败', async () => {
+  const { publicBaseUrl, sendWechatPersonal, _resetWechatTokenCaches } = await import('../server/notification-center.js')
+  await withEnv({ PUBLIC_BASE_URL: 'http://unsafe.example/path' }, async () => {
+    assert.equal(publicBaseUrl(), '')
+    const result = await sendWechatPersonal(WECOM_CFG, BINDING, { title: 't', content: 'c', target: '' })
+    assert.equal(result.ok, false)
+    assert.equal(result.errcode, 'CONFIG_ERROR')
+  })
+  await withEnv({ PUBLIC_BASE_URL: 'http://127.0.0.1:3000/path' }, () => {
+    assert.equal(publicBaseUrl(), 'http://127.0.0.1:3000')
+  })
+  await withEnv({ PUBLIC_BASE_URL: 'https://buducandy.cn/path?x=1' }, () => {
+    assert.equal(publicBaseUrl(), 'https://buducandy.cn')
+  })
+  _resetWechatTokenCaches()
 })
 
 // ---------------- 单元：企业微信应用消息适配器 ----------------
@@ -245,9 +284,9 @@ function encryptWecomMsg(encodingAESKey, plain, receiveId) {
   return Buffer.concat([cipher.update(padded), cipher.final()]).toString('base64')
 }
 
-test('企微接收消息：签名校验 + AES 解密往返 + GET 验证 URL 端到端（含篡改拒绝）', async () => {
+test('企微接收消息：显式配置、签名校验 + AES 解密 + GET 验证（含缺配置关闭/篡改拒绝）', async () => {
   const { wecomSign, decryptWecomMsg, wechatRecvRouter } = await import('../server/wechat-bind.js')
-  const TOKEN = 'budu2025' // 与 wechat-bind.js 默认 RECV_TOKEN 一致
+  const TOKEN = 'test-recv-token'
   const AES_KEY = '485ZsDsNMczLjxyCwWT2P3YIwayesGyq41oFVf2daii'
   const plain = 'budu-wecom-verify-ok'
   const echostr = encryptWecomMsg(AES_KEY, plain, 'ww-corp-1')
@@ -266,11 +305,17 @@ test('企微接收消息：签名校验 + AES 解密往返 + GET 验证 URL 端�
   await once(server, 'listening')
   const base = `http://127.0.0.1:${server.address().port}`
   try {
-    const okRes = await fetch(`${base}/api/v2/wechat/recv/?msg_signature=${msgSignature}&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`)
-    assert.equal(okRes.status, 200)
-    assert.equal(await okRes.text(), plain)
-    const badRes = await fetch(`${base}/api/v2/wechat/recv/?msg_signature=deadbeef&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`)
-    assert.equal(badRes.status, 403, '签名不匹配必须拒绝')
+    await withEnv({ WXWORK_RECV_TOKEN: '', WXWORK_RECV_AES_KEY: '' }, async () => {
+      const disabled = await fetch(`${base}/api/v2/wechat/recv/?msg_signature=${msgSignature}&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`)
+      assert.equal(disabled.status, 503, '缺少显式配置时回调必须关闭')
+    })
+    await withEnv({ WXWORK_RECV_TOKEN: TOKEN, WXWORK_RECV_AES_KEY: AES_KEY }, async () => {
+      const okRes = await fetch(`${base}/api/v2/wechat/recv/?msg_signature=${msgSignature}&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`)
+      assert.equal(okRes.status, 200)
+      assert.equal(await okRes.text(), plain)
+      const badRes = await fetch(`${base}/api/v2/wechat/recv/?msg_signature=deadbeef&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`)
+      assert.equal(badRes.status, 403, '签名不匹配必须拒绝')
+    })
   } finally {
     server.close()
   }
@@ -375,7 +420,73 @@ test('通知中心集成（真实 PostgreSQL，一次性 schema；不可用 → 
     }
   })
 
-  await t.test('管理员手动绑定企微 userid（跳过扫码）——超管可绑、非超管 403、参数校验、查询', async () => {
+  await t.test('扫码绑定：数据库一次性 state 绑定真实账号，伪造/过期/重放均拒绝', async () => {
+    if (!requireStarted(t)) return
+    const { wechatBindRouter, wechatBindCallbackRouter } = await import('../server/wechat-bind.js')
+    const { _resetWechatTokenCaches } = await import('../server/notification-center.js')
+    _resetWechatTokenCaches()
+    const expressModule = await import('express')
+    const app = expressModule.default()
+    app.use(expressModule.json())
+    app.use((req, res, next) => { req.user = JSON.parse(req.headers['x-test-user'] || 'null'); next() })
+    app.use(wechatBindRouter)
+    app.use('/callback', wechatBindCallbackRouter)
+    const server = app.listen(0)
+    await once(server, 'listening')
+    const base = `http://127.0.0.1:${server.address().port}`
+    const m = mockFetch([
+      { match: '/cgi-bin/gettoken', respond: () => ({ errcode: 0, access_token: 'TOK-OAUTH' }) },
+      { match: '/cgi-bin/auth/getuserinfo', respond: () => ({ errcode: 0, userid: 'staff-one-wx' }) },
+    ])
+    try {
+      await withEnv({ ...WECOM_ENV, PUBLIC_BASE_URL: 'https://budu.example' }, async () => {
+        const qrRes = await fetch(`${base}/wechat/bind-qrcode`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-test-user': JSON.stringify({ id: 'staff-1', username: 'staff-1', role: 'staff', status: 'active' }) },
+          body: '{}',
+        })
+        assert.equal(qrRes.status, 200)
+        const qr = await qrRes.json()
+        assert.equal(qr.state, undefined, 'state 只应存在于授权 URL，不额外返回字段')
+        const state = new URL(qr.url).searchParams.get('state')
+        assert.match(state, /^[A-Za-z0-9_-]{40,64}$/)
+        const stored = await prisma.wechatBindState.findFirst({ where: { username: 'staff-1' } })
+        assert.ok(stored)
+        assert.notEqual(stored.stateHash, state, '数据库只能保存 state 哈希')
+
+        const forged = crypto.randomBytes(32).toString('base64url')
+        const forgedRes = await fetch(`${base}/callback?code=CODE&state=${forged}`)
+        assert.equal(forgedRes.status, 400)
+
+        const callbackRes = await fetch(`${base}/callback?code=CODE&state=${state}`)
+        assert.equal(callbackRes.status, 200)
+        const binding = await prisma.wechatBinding.findFirst({ where: { username: 'staff-1', channel: 'wecom' } })
+        assert.equal(binding.openId, 'staff-one-wx')
+        const audit = await prisma.wechatBindingAuditLog.findFirst({ where: { targetUsername: 'staff-1', action: 'oauth_bind' } })
+        assert.ok(audit)
+        assert.notEqual(audit.identityHint, binding.openId)
+
+        const replayRes = await fetch(`${base}/callback?code=CODE2&state=${state}`)
+        assert.equal(replayRes.status, 400, '同一 state 不得重放')
+
+        const expiringQrRes = await fetch(`${base}/wechat/bind-qrcode`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-test-user': JSON.stringify({ id: 'staff-1', username: 'staff-1', role: 'staff', status: 'active' }) },
+          body: '{}',
+        })
+        const expiringState = new URL((await expiringQrRes.json()).url).searchParams.get('state')
+        await prisma.wechatBindState.updateMany({ where: { username: 'staff-1', usedAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } })
+        const expiredRes = await fetch(`${base}/callback?code=CODE3&state=${expiringState}`)
+        assert.equal(expiredRes.status, 400, '过期 state 必须拒绝')
+      })
+    } finally {
+      m.restore()
+      _resetWechatTokenCaches()
+      server.close()
+    }
+  })
+
+  await t.test('手动绑定：仅 Developer、账号有效、userid 唯一、操作审计、查询脱敏', async () => {
     if (!requireStarted(t)) return
     const { wechatBindRouter } = await import('../server/wechat-bind.js')
     const expressModule = await import('express')
@@ -397,16 +508,26 @@ test('通知中心集成（真实 PostgreSQL，一次性 schema；不可用 → 
     try {
       await withEnv(WECOM_ENV, async () => {
         const dev = { id: 'dev-1', username: 'dev-1', role: 'developer', status: 'active' }
-        const staff = { id: 'st-1', username: 'st-1', role: 'staff', status: 'active', storeKeys: [] }
+        const staff = { id: 'staff-1', username: 'staff-1', role: 'staff', status: 'active', storeKeys: [] }
+        const admin = { id: 'admin-1', username: 'admin-1', role: 'admin', status: 'active' }
+        const finance = { id: 'finance-1', username: 'finance-1', role: 'finance', status: 'active' }
         // 参数校验
         const empty = await call('/wechat/bindings/manual', dev, { method: 'POST', body: {} })
         assert.equal(empty.status, 400)
-        // 非超管 403
+        // 账号治理权限仅 Developer；Admin/Finance/Staff 均拒绝
         const forbidden = await call('/wechat/bindings/manual', staff, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan' } })
         assert.equal(forbidden.status, 403)
-        // 超管绑定成功
+        assert.equal((await call('/wechat/bindings/manual', admin, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan' } })).status, 403)
+        assert.equal((await call('/wechat/bindings/manual', finance, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan' } })).status, 403)
+        // 目标账号与 userid 校验
+        assert.equal((await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'missing-user', userid: 'missing-wx' } })).status, 404)
+        assert.equal((await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'disabled-1', userid: 'disabled-wx' } })).status, 409)
+        assert.equal((await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'zhangsan', userid: '<bad>' } })).status, 400)
+        // Developer 绑定成功
         const ok = await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan-wx' } })
         assert.equal(ok.status, 200)
+        assert.equal(ok.body.userid, undefined, '响应不得回显完整 userid')
+        assert.notEqual(ok.body.identityHint, 'zhangsan-wx')
         const row = await prisma.wechatBinding.findFirst({ where: { username: 'zhangsan', channel: 'wecom' } })
         assert.ok(row)
         assert.equal(row.openId, 'zhangsan-wx')
@@ -415,11 +536,19 @@ test('通知中心集成（真实 PostgreSQL，一次性 schema；不可用 → 
         await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan-wx2' } })
         const row2 = await prisma.wechatBinding.findFirst({ where: { username: 'zhangsan', channel: 'wecom' } })
         assert.equal(row2.openId, 'zhangsan-wx2')
+        // 同一活动企微身份不能绑定到另一个系统账号
+        const duplicate = await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'lisi', userid: 'zhangsan-wx2' } })
+        assert.equal(duplicate.status, 409)
+        // 每次写入均有脱敏审计
+        const audits = await prisma.wechatBindingAuditLog.findMany({ where: { targetUsername: 'zhangsan', action: 'manual_bind' } })
+        assert.ok(audits.length >= 2)
+        assert.ok(audits.every((item) => item.actorUsername === 'dev-1' && item.identityHint !== 'zhangsan-wx2'))
         // 查询
         const lookup = await call(`/wechat/bindings/lookup?username=${encodeURIComponent('zhangsan')}`, dev)
         assert.equal(lookup.status, 200)
-        assert.equal(lookup.body.rows[0].nickname, 'zhangsan-wx2')
-        // 非超管查询 403
+        assert.equal(lookup.body.rows[0].identityHint, 'zh***x2')
+        assert.equal(lookup.body.rows[0].nickname, undefined)
+        // 非 Developer 查询 403
         const lookupForbidden = await call(`/wechat/bindings/lookup?username=${encodeURIComponent('zhangsan')}`, staff)
         assert.equal(lookupForbidden.status, 403)
       })
