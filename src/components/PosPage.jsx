@@ -4,6 +4,7 @@ import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
+import { isValidWechatAuthCode } from '../utils/cameraScanner'
 import OrderRecordsPage from './OrderRecordsPage'
 import useSwipeBack from '../hooks/useSwipeBack'
 import {
@@ -110,7 +111,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     let active = true
     api('/v2/pos/config')
       .then((data) => { if (active) setPosConfig(data) })
-      .catch(() => { /* 配置读取失败时按订单模式回退 */ })
+      .catch(() => { /* 配置读取失败时 fail closed：只保留现金，绝不回退为可用的模拟微信支付 */ })
     const cached = (() => {
       try {
         const raw = sessionStorage.getItem(productsCacheKey(user.id))
@@ -234,7 +235,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const cartTotal = (chargeableSubtotal * BigInt(discountPercent) + 50n) / 100n
   const cartDiscountAmount = cartSubtotal - cartTotal
   const mockMode = posConfig ? posConfig.mock : (order ? order.paymentMode === 'mock' : true)
-  const channels = posConfig?.channels?.length ? posConfig.channels : (mockMode ? ['wechat', 'alipay', 'cash'] : ['cash'])
+  // 通道完全以服务端 /pos/config 为准；读取失败时 fail closed（仅现金）。
+  const channels = posConfig?.channels?.length ? posConfig.channels : ['cash']
 
   const invalidateCheckout = () => {
     setCheckoutKeyState('')
@@ -459,7 +461,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const acceptScannedCode = (authCode) => {
     const paymentMethod = scannerChannel
     setScannerChannel('')
-    if (paymentMethod) completePayment(paymentMethod, authCode)
+    if (!paymentMethod) return
+    // 真实微信付款码仅接受 18 位数字（前缀 10-15）；不合法直接提示并重新等待扫码
+    if (paymentMethod === 'wechat' && !isValidWechatAuthCode(authCode)) {
+      setError('付款码无效，请重新扫描顾客的微信付款码')
+      setScannerChannel('wechat')
+      return
+    }
+    completePayment(paymentMethod, authCode)
   }
 
   const queryCurrentPayment = async () => {
@@ -608,7 +617,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
-              <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">正在确认支付，请勿重复付款</div>
+              <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">
+                {payment?.provider === 'wechat_pay'
+                  ? '正在核对微信扣款结果，请勿再次扫码或改用其他支付方式'
+                  : '正在确认支付，请勿重复付款'}
+              </div>
             )}
             {payment && !['success'].includes(payment.status) && (
               <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-3">
@@ -617,7 +630,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
                 </button>
                 {pendingPayment && (
                   <button disabled={queryingPayment} onClick={closeCurrentPayment} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">
-                    关闭当前支付
+                    {payment?.provider === 'wechat_pay' ? '取消并核对' : '关闭当前支付'}
                   </button>
                 )}
               </div>
@@ -644,7 +657,18 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             </div>
           </div>
         )}
-        {scannerChannel && <CameraScanner channel={scannerChannel} onDetected={acceptScannedCode} onCancel={() => setScannerChannel('')} decoderFactory={scannerDecoderFactory} />}
+        {scannerChannel && (
+          <>
+            <CameraScanner channel={scannerChannel} onDetected={acceptScannedCode} onCancel={() => setScannerChannel('')} decoderFactory={scannerDecoderFactory} />
+            {scannerChannel === 'wechat' && (
+              <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[120] flex justify-center">
+                <p className="rounded-full bg-slate-900/85 px-5 py-2.5 text-sm font-semibold text-white shadow-xl">
+                  请顾客输入微信支付密码，或等待扣款结果
+                </p>
+              </div>
+            )}
+          </>
+        )}
       </>
     )
   }

@@ -31,6 +31,9 @@ services:
       GIT_SHA: ${GIT_SHA:-}
     volumes:
       - budu_data:/app/server/data
+      # 微信支付 Secret 文件（可选；目录只读挂载，文件权限最小化）。
+      # 生产在 /opt/budu/.env 设置 WECHAT_PAY_API_V2_KEY_FILE=/run/secrets/wechat/apiv2.key 等。
+      # - ${WECHAT_PAY_SECRETS_DIR:-./deploy/wechat-secrets}:/run/secrets/wechat:ro
 
   nginx:
     image: nginx:1.27-alpine

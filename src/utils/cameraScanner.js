@@ -6,6 +6,13 @@ export function normalizeAuthCode(value) {
   return code
 }
 
+// 微信付款码：18 位纯数字，官方允许前缀 10-15（与后端保持一致，前端先行拦截）
+const WECHAT_AUTH_CODE_RE = /^(1[0-5])\d{16}$/
+
+export function isValidWechatAuthCode(value) {
+  return WECHAT_AUTH_CODE_RE.test(String(value ?? '').trim())
+}
+
 export function cameraErrorMessage(error) {
   const name = String(error?.name || '')
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {

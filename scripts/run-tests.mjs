@@ -30,6 +30,9 @@ const NODE_TEST_SUITE = [
   'test-product-excel.mjs',         // 商品 Excel 导入（单元）
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
+  'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
+  'test-wechat-pay-provider.mjs',   // 微信付款码 Provider（假传输，不连真实接口）
+  'test-payment-reconciliation.mjs', // 未决支付自动核对（单元）
   'test-camera-scanner.mjs',        // 扫码（单元）
   'test-swipe-back.mjs',            // 滑动返回（单元）
   'test-system-slimming.mjs',       // 系统瘦身（单元）
@@ -78,6 +81,11 @@ const STRIPPED_ENV_KEYS = [
   'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_REST_API_READ_ONLY_TOKEN',
   // 支付
   'PAYMENT_MODE', 'ENABLE_MOCK_CALLBACK_API', 'EMAIL_NOTIFY_ENABLED',
+  // 微信付款码支付（V2 MICROPAY）——测试一律剥离，绝不继承生产密钥
+  'WECHAT_PAY_ENABLED', 'WECHAT_PAY_PROTOCOL', 'WECHAT_PAY_MCHID', 'WECHAT_PAY_APPID',
+  'WECHAT_PAY_API_V2_KEY_FILE', 'WECHAT_PAY_CERT_FILE', 'WECHAT_PAY_PRIVATE_KEY_FILE',
+  'WECHAT_PAY_TERMINAL_IP', 'WECHAT_PAY_ENABLED_STORES',
+  'WECHAT_PAY_QUERY_INTERVAL_MS', 'WECHAT_PAY_MAX_QUERIES', 'WECHAT_PAY_REVERSE_AFTER_MS',
   // COS / 对象存储
   'COS_BUCKET', 'COS_REGION', 'COS_SECRET_ID', 'COS_SECRET_KEY',
   // OCR

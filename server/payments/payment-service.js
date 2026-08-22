@@ -8,7 +8,7 @@ import { AlipayProvider } from './providers/alipay.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
-const SENSITIVE_KEYS = /^(authcode|code|secret|apikey|api_key|privatekey|private_key|password|cert|key)$/i
+const SENSITIVE_KEYS = /^(authcode|auth_code|code|secret|apikey|api_key|privatekey|private_key|password|cert|key)$/i
 
 const paymentNo = () => `PAY${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 14).toUpperCase()}`
 
@@ -117,6 +117,36 @@ export class PaymentService {
     }
   }
 
+  /** 应用 Provider 返回的核对提示（未决支付持久化字段）。 */
+  async applyReconciliation(paymentId, hint) {
+    if (!hint || typeof hint !== 'object') return
+    const data = {
+      providerStatus: String(hint.providerStatus || '').slice(0, 64),
+      reconciliationRequired: hint.reconciliationRequired === true,
+    }
+    if (hint.nextActionAt) data.nextActionAt = new Date(hint.nextActionAt)
+    if (hint.reconciledAt) data.reconciledAt = new Date(hint.reconciledAt)
+    await this.prisma.payment.update({ where: { id: paymentId }, data })
+  }
+
+  /** 统一应用 Provider 响应：交易号、安全元数据、核对提示。 */
+  async applyProviderResponse(payment, response) {
+    if (!response) return
+    const data = {}
+    if (response.providerTradeNo) data.providerTradeNo = response.providerTradeNo
+    if (response.metadata) {
+      data.providerMetadata = response.metadata
+      data.responsePayload = sanitizePayload(response.metadata)
+    }
+    if (Object.keys(data).length > 0) {
+      payment = await this.prisma.payment.update({ where: { id: payment.id }, data })
+    }
+    if (response.reconciliation) {
+      await this.applyReconciliation(payment.id, response.reconciliation)
+    }
+    return payment
+  }
+
   async createPayment(input) {
     const orderId = String(input.orderId || '').trim()
     const channel = String(input.channel || '')
@@ -212,14 +242,13 @@ export class PaymentService {
       throw error
     }
 
-    payment = await this.prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        providerTradeNo: response.providerTradeNo || null,
-        providerMetadata: response.metadata || {},
-        responsePayload: sanitizePayload(response.metadata || {}),
-      },
-    })
+    payment = await this.applyProviderResponse(payment, response)
+    if (response.reconciliation) {
+      await this.logEvent(payment, order, 'payment.reconciliation.required', {
+        status: payment.status,
+        providerTradeNo: payment.providerTradeNo,
+      })
+    }
     await this.logEvent(payment, order, 'payment.provider.response', {
       status: response.callbacks?.[0]?.status || payment.status,
       providerTradeNo: payment.providerTradeNo,
@@ -238,7 +267,9 @@ export class PaymentService {
     const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } })
     if (!payment) throw httpError('支付记录不存在', 404)
     const response = await this.provider(payment.provider).queryPayment(payment)
+    await this.applyProviderResponse(payment, response)
     if (response.callback) await this.handleCallback(payment.provider, response.callback)
+    for (const callback of response.callbacks || []) await this.handleCallback(payment.provider, callback)
     const result = await this.result(payment.id)
     await this.logEvent(result.payment, result.order, 'payment.query', {
       status: result.payment.status,
@@ -253,7 +284,9 @@ export class PaymentService {
     if (payment.status === 'success') throw httpError('已支付成功的支付单不能关闭', 409)
     if (payment.status === 'closed') return this.result(payment.id)
     const response = await this.provider(payment.provider).closePayment(payment)
+    await this.applyProviderResponse(payment, response)
     if (response.callback) await this.handleCallback(payment.provider, response.callback)
+    for (const callback of response.callbacks || []) await this.handleCallback(payment.provider, callback)
     const result = await this.result(payment.id)
     await this.logEvent(result.payment, result.order, 'payment.closed', {
       status: result.payment.status,
@@ -293,6 +326,7 @@ export class PaymentService {
     if (!['paid', 'completed', 'partially_refunded'].includes(order.status)) throw httpError('当前订单状态不可退款', 409)
     const payment = order.payments.find((item) => ['success', 'partially_refunded'].includes(item.status))
     if (!payment) throw httpError('订单没有成功支付的支付单，无法退款', 409)
+    if (payment.provider === 'wechat_pay') throw httpError('微信真实退款尚未开放', 501)
 
     const refundedTotal = order.refunds
       .filter((refund) => refund.status === 'completed')
@@ -553,6 +587,12 @@ export function serializePayment(payment) {
     paidAt: payment.paidAt,
     failedAt: payment.failedAt,
     closedAt: payment.closedAt,
+    providerStatus: payment.providerStatus || '',
+    queryAttempts: payment.queryAttempts || 0,
+    lastQueriedAt: payment.lastQueriedAt,
+    nextActionAt: payment.nextActionAt,
+    reconciliationRequired: payment.reconciliationRequired === true,
+    reconciledAt: payment.reconciledAt,
     createdAt: payment.createdAt,
     updatedAt: payment.updatedAt,
   }

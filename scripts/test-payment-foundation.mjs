@@ -53,6 +53,8 @@ class MemoryPrisma {
         const row = {
           providerTradeNo: null, failureCode: '', failureMessage: '', providerMetadata: {}, callbackCount: 0,
           lastCallbackId: '', lastCallbackAt: null, requestedAt: new Date(), paidAt: null, failedAt: null, closedAt: null,
+          providerStatus: '', queryAttempts: 0, lastQueriedAt: null, nextActionAt: null,
+          reconciliationRequired: false, reconciledAt: null,
           createdAt: new Date(), updatedAt: new Date(), ...data,
         }
         this.payments.push(row)
@@ -385,4 +387,41 @@ test('未支付订单不可退款', async () => {
     () => service.createRefund({ orderId: 'order-1', requestKey: 'refund-req-pending-1' }),
     /当前订单状态不可退款/,
   )
+})
+
+test('sanitizePayload 同时脱敏 authCode 与 auth_code', () => {
+  const cleaned = sanitizePayload({ authCode: '130123456789012345', auth_code: '130123456789012345', other: { nestedAuthCode: 'x' } })
+  assert.equal(cleaned.authCode, '[REDACTED]')
+  assert.equal(cleaned.auth_code, '[REDACTED]')
+  assert.equal(cleaned.other.nestedAuthCode, 'x')
+})
+
+test('微信真实退款被拒绝（501），本地退款不受影响', async () => {
+  const db = new MemoryPrisma()
+  const service = new PaymentService(db)
+  const created = await service.createPayment({ orderId: 'order-1', channel: 'cash', requestKey: 'request-refund-wechat-guard' })
+  assert.equal(created.payment.status, 'success')
+  // 将支付伪造为微信 Provider 支付（模拟已存在微信支付记录）
+  const paymentRow = db.payments.find((item) => item.id === created.payment.id)
+  paymentRow.provider = 'wechat_pay'
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'order-1', requestKey: 'refund-wechat-1', operator: 'tester' }),
+    (error) => error.status === 501 && /微信真实退款尚未开放/.test(error.message),
+  )
+})
+
+test('Provider 返回核对提示时 PaymentService 持久化 reconciliation 字段', async () => {
+  const db = new MemoryPrisma()
+  const capturing = new (class extends MockPaymentProvider {
+    async createPayment(payment, options) {
+      const base = await super.createPayment(payment, { ...options, scenario: 'pending' })
+      return { ...base, reconciliation: { providerStatus: 'USERPAYING', reconciliationRequired: true } }
+    }
+  })()
+  const service = new PaymentService(db, new Map([['mock', capturing], ['cash', new CashPaymentProvider()]]))
+  const result = await service.createPayment({ orderId: 'order-1', channel: 'cash', requestKey: 'request-reconciliation-1' })
+  assert.equal(result.payment.status, 'pending')
+  assert.equal(result.payment.reconciliationRequired, true)
+  assert.equal(result.payment.providerStatus, 'USERPAYING')
+  assert.equal(db.payments.find((item) => item.id === result.payment.id).queryAttempts, 0)
 })

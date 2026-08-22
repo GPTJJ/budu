@@ -6,6 +6,8 @@ import { serializeProduct } from './products.js'
 import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
+import { wechatPayFrontendStatus } from './payments/wechat-config.js'
+import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
@@ -38,6 +40,13 @@ function canReadOrder(user, order) {
 function paymentAuthCode(body, channel) {
   if (!['wechat', 'alipay'].includes(channel)) return ''
   const authCode = String(body?.authCode ?? '').trim()
+  if (channel === 'wechat') {
+    // 真实微信付款码：18 位纯数字，官方允许前缀 10-15
+    if (!WECHAT_AUTH_CODE_RE.test(authCode)) {
+      throw httpError('请扫描有效的微信付款码（18 位数字）')
+    }
+    return authCode
+  }
   if (authCode.length < 6 || authCode.length > 512 || /[\u0000-\u001f\u007f]/.test(authCode)) {
     throw httpError('请扫描有效的顾客付款码')
   }
@@ -180,9 +189,12 @@ export function composeOrderSummary(total, paidStats, refundStats, itemStats, re
 posRouter.get('/pos/config', wrap(async (req, res) => {
   requirePosUser(req.user)
   const mode = paymentMode()
-  // 微信/支付宝扫码支付尚未开通：结算界面两通道显示「暂未开通」且不可点击；开通后在 channels 中放开
   const channels = ['cash']
-  res.json({ mode, mock: mode === 'mock', channels })
+  // 微信付款码支付：仅当显式开启 + 配置完整 + 门店在灰度名单 + 真实支付模式时开放。
+  // 任一条件不满足即 fail closed，绝不回退为可用状态。
+  const wechat = wechatPayFrontendStatus(String(req.user?.storeKeys?.[0] || ''), mode)
+  if (wechat.enabled) channels.push('wechat')
+  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled } })
 }))
 
 posRouter.get('/pos/orders', wrap(async (req, res) => {
@@ -228,12 +240,15 @@ posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可删除订单', 403)
-  const order = await prisma.order.findUnique({ where: { id: req.params.id } })
+  const order = await prisma.order.findUnique({ where: { id: req.params.id }, include: { payments: true } })
   if (!order) throw httpError('订单不存在', 404)
+  // 真实支付审计要求：已完成或存在支付记录的订单禁止删除；
+  // PaymentLog / 支付历史不得被订单删除级联清除。
+  if (order.payments.length > 0) throw httpError('存在支付记录的订单不可删除', 409)
+  if (['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'].includes(order.status)) {
+    throw httpError('已完成或处理中的订单不可删除', 409)
+  }
   await prisma.$transaction(async (tx) => {
-    await tx.paymentLog.deleteMany({ where: { orderId: order.id } })
-    await tx.refund.deleteMany({ where: { orderId: order.id } })
-    await tx.payment.deleteMany({ where: { orderId: order.id } })
     await tx.orderItem.deleteMany({ where: { orderId: order.id } })
     await tx.order.delete({ where: { id: order.id } })
   })
