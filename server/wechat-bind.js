@@ -125,7 +125,7 @@ wechatBindRouter.post('/wechat/test', wrap(async (req, res) => {
 // ---------------- 企业微信接收消息服务器验证（URL/Token/EncodingAESKey 校验） ----------------
 const RECV_TOKEN = process.env.WXWORK_RECV_TOKEN || 'budu2025'
 // 企微 EncodingAESKey 必须为 43 位 base64（解码后 32 字节）；旧默认值位数不足会解密失败
-const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || 'WOEs16DWhc0hW3U4u4knxGuxRVOHowN+eKrX8Hl+gxU'
+const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || '485ZsDsNMczLjxyCwWT2P3YIwayesGyq41oFVf2daii'
 
 /** sha1 签名校验（企业微信标准：token/timestamp/nonce/echostr 字典序拼接） */
 export function wecomSign(token, timestamp, nonce, echostr) {

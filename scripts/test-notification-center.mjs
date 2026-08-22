@@ -248,7 +248,7 @@ function encryptWecomMsg(encodingAESKey, plain, receiveId) {
 test('企微接收消息：签名校验 + AES 解密往返 + GET 验证 URL 端到端（含篡改拒绝）', async () => {
   const { wecomSign, decryptWecomMsg, wechatRecvRouter } = await import('../server/wechat-bind.js')
   const TOKEN = 'budu2025' // 与 wechat-bind.js 默认 RECV_TOKEN 一致
-  const AES_KEY = 'WOEs16DWhc0hW3U4u4knxGuxRVOHowN+eKrX8Hl+gxU'
+  const AES_KEY = '485ZsDsNMczLjxyCwWT2P3YIwayesGyq41oFVf2daii'
   const plain = 'budu-wecom-verify-ok'
   const echostr = encryptWecomMsg(AES_KEY, plain, 'ww-corp-1')
   const timestamp = '1755849600'
