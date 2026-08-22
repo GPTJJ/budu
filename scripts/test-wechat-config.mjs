@@ -13,7 +13,7 @@ const VALID_ENV = {
   WECHAT_PAY_PROTOCOL: 'v2_micropay',
   WECHAT_PAY_MCHID: '1900000109',
   WECHAT_PAY_APPID: 'wx8888888888888888',
-  WECHAT_PAY_TERMINAL_IP: '203.0.113.10',
+  WECHAT_PAY_TERMINAL_IP: '8.8.8.8',
 }
 
 let fixture = null
@@ -146,8 +146,8 @@ test('F：证书过期 / 尚未生效（注入时间确定性验证）', { skip:
   assert.match(notYet.reason, /尚未生效/)
 })
 
-test('F：终端 IP 为空/回环 → configured=false', { skip: !fixture }, () => {
-  for (const ip of ['', '127.0.0.1', '0.0.0.0', '::1', 'abc']) {
+test('F：终端 IP 为空/回环/私网/保留段/IPv6 → configured=false', { skip: !fixture }, () => {
+  for (const ip of ['', '127.0.0.1', '0.0.0.0', '::1', 'abc', '224.0.0.1', '240.0.0.1', '255.0.0.1', '10.1.2.3', '100.64.0.1', '192.168.1.1', '169.254.1.1', '192.0.2.1', '198.51.100.1', '203.0.113.10', 'localhost']) {
     withEnv(
       {
         WECHAT_PAY_TERMINAL_IP: ip,

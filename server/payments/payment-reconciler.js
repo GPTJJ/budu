@@ -1,4 +1,5 @@
-// 未决微信支付后台自动核对器（R2：崩溃恢复 + 稳定撤销计时 + 跨进程租约 + nextActionAt 门控）
+// 未决微信支付后台自动核对器（R3：崩溃恢复 + 稳定撤销计时 + 跨进程租约 +
+// nextActionAt 门控 + 正常完成即释放租约）
 //
 // 规则：
 // - 可恢复支付 = provider=wechat_pay 且 reconciliationRequired=true 且
@@ -11,27 +12,31 @@
 //   同一支付在同一租约窗口内只有一个执行者；租约到期可被其他实例回收，进程死亡不悬挂。
 // - nextActionAt 门控：发现（pendingPayments）与认领（两条条件更新）都要求
 //   nextActionAt 为空或已到期，避免同一支付在排期时间前被重复执行。
+// - R3 租约释放：每次「正常完成」的操作（查询/撤销，含 pending/USERPAYING/
+//   recall 重试/歧义/终态）立即按「所有者身份」条件释放租约（owner 匹配才清空），
+//   旧 worker 不得清除已被其他 worker 合法认领的租约；真正的节奏由 nextActionAt 控制。
+//   进程崩溃/操作未到达清理：租约保持到过期，由其他实例按过期回收。
 // - 应用重启后自动扫描未决支付并恢复核对。
 // - 撤销结果不明确（含 recall=Y）时保持 reconciliationRequired 并告警。
 import crypto from 'node:crypto'
-import { WECHAT_V2_PROVIDER_MAX_OP_MS } from './wechat-v2-client.js'
+import { SAFE_MINIMUM_LEASE_MS } from './wechat-v2-client.js'
 import { paymentService } from './index.js'
 
 const DEFAULT_INTERVAL_MS = 5000
 const DEFAULT_MAX_QUERIES = 12
 const DEFAULT_REVERSE_AFTER_MS = 60000
-// 租约必须覆盖单次 Provider 调用最坏耗时（closePayment = orderquery + reverse + 复查，
-// 每请求含主备域名回退），否则慢请求期间租约提前到期会被其他实例重复认领。
-// 推导见 wechat-v2-client.js：WECHAT_V2_PROVIDER_MAX_OP_MS = 3 × 2 × (5s + 10s) = 90s。
-const DEFAULT_LEASE_MS = WECHAT_V2_PROVIDER_MAX_OP_MS
+// R3：安全最小租约 = Provider 绝对时限（90s）+ 安全边际（30s）= 120s。
+// 推导见 wechat-v2-client.js；租约绝不允许被环境配置降到安全最小值以下
+//（非法/不安全取值一律回退或钳制到 SAFE_MINIMUM_LEASE_MS）。
+const DEFAULT_LEASE_MS = SAFE_MINIMUM_LEASE_MS
 const MIN_INTERVAL_MS = 1000
 const MAX_INTERVAL_MS = 60000
 const MAX_QUERIES_MIN = 3
 const MAX_QUERIES_MAX = 600
 const REVERSE_AFTER_MIN_MS = 5000
 const REVERSE_AFTER_MAX_MS = 3600000
-const LEASE_MIN_MS = 3000
-const LEASE_MAX_MS = 120000
+const LEASE_MIN_MS = SAFE_MINIMUM_LEASE_MS
+const LEASE_MAX_MS = 3600000
 
 function boundedInt(value, fallback, min, max) {
   const parsed = Number(value)
@@ -167,6 +172,9 @@ export class PaymentReconciler {
       await this.service.applyReconciliation(payment.id, response.reconciliation)
     }
     await this.markReconciledIfTerminal(payment.id)
+    // R3：正常完成（含 pending/USERPAYING/歧义结果）→ 按所有者身份立即释放租约，
+    // 真实节奏交给 nextActionAt；进程崩溃时租约保持到过期。
+    await this.releaseLease(payment.id)
   }
 
   /** 最后查询仍不明确或超过撤销时限 → 撤销。 */
@@ -206,6 +214,20 @@ export class PaymentReconciler {
         data: { nextActionAt: new Date(now.getTime() + 30 * 1000) },
       })
     }
+    // R3：正常完成（含 recall=Y 重试排期/歧义结果）→ 按所有者身份立即释放租约
+    await this.releaseLease(payment.id)
+  }
+
+  /**
+   * R3：按「所有者身份」条件释放租约。
+   * 只清空本实例持有的租约；绝不清除已被其他 worker 合法认领的租约。
+   * （进程崩溃时不会走到这里，租约自然保持到过期由其他实例回收。）
+   */
+  async releaseLease(paymentId) {
+    await this.service.prisma.payment.updateMany({
+      where: { id: paymentId, reconcileLeaseOwner: this.instanceId },
+      data: { reconcileLeaseOwner: '', reconcileLeaseUntil: null },
+    })
   }
 
   async markReconciledIfTerminal(paymentId) {
@@ -218,8 +240,7 @@ export class PaymentReconciler {
           reconciliationRequired: false,
           reconciledAt: this.now(),
           providerStatus: current.status,
-          reconcileLeaseOwner: '',
-          reconcileLeaseUntil: null,
+          // 租约一律交给 releaseLease()（按所有者身份）清理，此处不触碰
         },
       })
     }

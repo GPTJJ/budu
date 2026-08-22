@@ -10,7 +10,7 @@ const CONFIG = {
   configured: true,
   mchId: '1900000109',
   appId: 'wx8888888888888888',
-  terminalIp: '203.0.113.10',
+  terminalIp: '8.8.8.8',
   enabledStores: [],
   apiV2Key: '0123456789abcdef0123456789abcdef',
   certPem: 'cert',
@@ -218,15 +218,26 @@ test('R2：终端 IP 边界——缺失/回环/私网/链路本地/非法值一�
     '127.0.0.2',
     '0.0.0.0', // 未指定
     '10.1.2.3', // RFC1918
+    '100.64.0.1', // CGNAT
     '172.16.0.1', // RFC1918
     '172.31.255.254', // RFC1918
     '192.168.1.1', // RFC1918
     '169.254.1.1', // 链路本地
+    '192.0.0.1', // IETF 协议分配
+    '192.0.2.1', // TEST-NET-1
+    '198.18.0.1', // 基准测试
+    '198.51.100.1', // TEST-NET-2
+    '203.0.113.1', // TEST-NET-3
+    '224.0.0.1', // 组播（R3 评审清单）
+    '240.0.0.1', // 保留（R3 评审清单）
+    '255.0.0.1', // 保留段 240/4（R3 评审清单）
     '255.255.255.255', // 广播
     'not-an-ip', // 非 IP
+    'localhost',
+    '::1', // IPv6 回环
+    '2001:db8::1', // IPv6
     '203.0.113.999', // 越界
     '1.2.3', // 缺段
-    '2001:db8::1', // IPv6 不接受
   ]
   for (const terminalIp of BAD_IPS) {
     const fake = new FakeClient()
@@ -236,13 +247,13 @@ test('R2：终端 IP 边界——缺失/回环/私网/链路本地/非法值一�
     await assert.rejects(() => provider.closePayment(payment()), (error) => error.status === 501, `closePayment terminalIp=${String(terminalIp)}`)
     assert.equal(fake.calls.length, 0, `terminalIp=${String(terminalIp)} 不得发起任何传输调用`)
   }
-  // 合法公网 IPv4：spbill_create_ip 使用配置值，绝不出现回环回退
+  // 合法公网 IPv4：spbill_create_ip 使用配置值原样传递，绝不出现回环回退
   const fake = new FakeClient()
   fake.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', transaction_id: 'WX-IP', sign: 'x' })
   const provider = providerWith(fake)
   const result = await provider.createPayment(payment(), { authCode: '130123456789012345' })
   assert.equal(result.callbacks[0].status, 'success')
-  assert.equal(fake.calls[0].params.spbill_create_ip, '203.0.113.10')
+  assert.equal(fake.calls[0].params.spbill_create_ip, '8.8.8.8')
   assert.ok(!String(fake.calls[0].params.spbill_create_ip).startsWith('127.'), 'spbill_create_ip 不得为回环地址')
 })
 
@@ -275,4 +286,68 @@ test('I：撤销网络歧义 → 保持 pending + 人工核对，不 cancel 订�
   assert.equal(result.callbacks[0].status, 'pending')
   assert.equal(result.reconciliation.providerStatus, 'REVERSE_UNKNOWN')
   assert.equal(result.reconciliation.reconciliationRequired, true)
+})
+
+// ============ R3：绝对时限（ABSOLUTE_DEADLINE） ============
+
+/** 挂起客户端：请求永不返回，但监听中止信号（模拟真实 socket 被 destroy 前的中止传播）。 */
+class HangingClient {
+  constructor() {
+    this.calls = []
+    this.aborted = null
+  }
+
+  async request(path, params, opts = {}) {
+    this.calls.push(path)
+    this.aborted = new Promise((resolve) => {
+      if (opts.signal?.aborted) resolve(true)
+      else opts.signal?.addEventListener('abort', () => resolve(true), { once: true })
+    })
+    await this.aborted
+    throw new WechatV2Error('ABSOLUTE_DEADLINE', 'aborted', { retryable: true, ambiguous: true })
+  }
+}
+
+test('R3：绝对时限——挂起请求在 deadline 到期后被主动中止，返回受控歧义结果（pending+核对），不回退备用域名', async () => {
+  const client = new HangingClient()
+  const provider = new WechatPayProvider({ config: CONFIG, clientFactory: () => client, deadlineMs: 60 })
+  const started = Date.now()
+  const result = await provider.queryPayment(payment())
+  const elapsed = Date.now() - started
+  assert.ok(elapsed >= 50, `应在 deadline 附近返回（实际 ${elapsed}ms）`)
+  assert.equal(result.callbacks[0].status, 'pending')
+  assert.equal(result.callbacks[0].failureCode, 'ABSOLUTE_DEADLINE')
+  assert.equal(result.reconciliation.providerStatus, 'ABSOLUTE_DEADLINE')
+  assert.equal(result.reconciliation.reconciliationRequired, true)
+  await client.aborted // 底层请求已被主动中止（真实传输会 destroy socket）
+  assert.equal(client.calls.length, 1, '中止后不得再回退备用域名')
+})
+
+test('R3：绝对时限覆盖整次 closePayment（查询+撤销）——超时返回歧义结果，绝不虚构终态', async () => {
+  const client = new HangingClient()
+  const provider = new WechatPayProvider({ config: CONFIG, clientFactory: () => client, deadlineMs: 60 })
+  const result = await provider.closePayment(payment())
+  assert.equal(result.callbacks[0].status, 'pending', '不得返回 closed/failed 等终态')
+  assert.equal(result.callbacks[0].failureCode, 'ABSOLUTE_DEADLINE')
+  assert.equal(result.reconciliation.reconciliationRequired, true)
+  assert.equal(client.calls.length, 1, '撤销请求不得在绝对时限后启动')
+  await client.aborted
+})
+
+test('R3：createPayment 同样受绝对时限约束（歧义结果，不虚构终态）', async () => {
+  const client = new HangingClient()
+  const provider = new WechatPayProvider({ config: CONFIG, clientFactory: () => client, deadlineMs: 60 })
+  const result = await provider.createPayment(payment(), { authCode: '130123456789012345' })
+  assert.equal(result.callbacks[0].status, 'pending')
+  assert.equal(result.callbacks[0].failureCode, 'ABSOLUTE_DEADLINE')
+  assert.equal(result.reconciliation.reconciliationRequired, true)
+  await client.aborted
+})
+
+test('R3：正常快速响应不受绝对时限影响', async () => {
+  const fake = new FakeClient()
+  fake.responses.push({ return_code: 'SUCCESS', result_code: 'SUCCESS', trade_state: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', total_fee: '7200', transaction_id: 'WX-FAST', sign: 'x' })
+  const provider = new WechatPayProvider({ config: CONFIG, clientFactory: () => fake, deadlineMs: 5000 })
+  const result = await provider.queryPayment(payment())
+  assert.equal(result.callbacks[0].status, 'success')
 })

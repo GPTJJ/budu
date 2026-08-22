@@ -14,37 +14,31 @@
 //   金额/商户号/订单号不一致        → pending + reconciliationRequired + 告警
 //
 // 安全：付款码只存在于本 Provider 调用栈内存，绝不进入 metadata/日志/持久化。
+//
+// R3 绝对时限：单次 Provider 操作（一次 createPayment / queryPayment / closePayment，
+// 覆盖其内部全部顺序子调用）受 WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS 硬性墙钟上限约束：
+//  - 上限到期 → AbortController.abort() 主动中止底层 HTTP 请求（真实传输 destroy socket），
+//    且不再回退备用域名；
+//  - 操作返回受控的「歧义/可重试」结果（pending + reconciliationRequired），
+//    绝不虚构终态、绝不取消订单。
+//  该上限与核对租约的关系（lease > deadline + margin）见 wechat-v2-client.js。
 import crypto from 'node:crypto'
 import { PaymentProvider } from './base.js'
 import { httpError } from '../../pos-core.js'
-import { WechatV2Client, WechatV2Error } from '../wechat-v2-client.js'
+import { WechatV2Client, WechatV2Error, WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS } from '../wechat-v2-client.js'
 import { wechatPayConfig } from '../wechat-config.js'
+import { isValidPublicIpv4 } from '../terminal-ip.js'
 import { parseV2Xml, verifyV2Signature } from '../wechat-v2-signature.js'
 
 // 微信付款码：18 位纯数字，官方允许前缀 10-15
 export const WECHAT_AUTH_CODE_RE = /^(1[0-5])\d{16}$/
 
-// 收银终端公网 IPv4（spbill_create_ip 必填；拒绝回环/私网/链路本地等不可路由地址）
-export const TERMINAL_IP_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
-
-export function isValidTerminalIp(ip) {
-  const value = String(ip || '').trim()
-  if (!TERMINAL_IP_RE.test(value)) return false
-  const [a, b] = value.split('.').map(Number)
-  if (a === 0 || a === 10) return false // 未指定 / RFC1918 10/8
-  if (a === 127) return false // 回环
-  if (a === 169 && b === 254) return false // 链路本地
-  if (a === 172 && b >= 16 && b <= 31) return false // RFC1918 172.16/12
-  if (a === 192 && b === 168) return false // RFC1918 192.168/16
-  if (a === 255 && b === 255 && value === '255.255.255.255') return false // 广播
-  return true
-}
-
-/** 终端 IP 安全边界：缺失/非法/回环一律 fail closed，绝不回退 127.0.0.1。 */
+/** 终端 IP 安全边界：缺失/非法/保留段一律 fail closed，绝不回退 127.0.0.1。
+ *  规则唯一权威实现：terminal-ip.js（与配置层共用同一套逻辑）。 */
 function assertTerminalIp(config) {
   const ip = String(config.terminalIp || '').trim()
-  if (!isValidTerminalIp(ip)) {
-    throw httpError('收银终端 IP 未配置或无效（微信 MICROPAY 要求公网 IPv4，且不接受回环地址），请联系管理员', 501)
+  if (!isValidPublicIpv4(ip)) {
+    throw httpError('收银终端 IP 未配置或无效（微信 MICROPAY 要求公网可路由 IPv4），请联系管理员', 501)
   }
 }
 
@@ -87,6 +81,7 @@ export class WechatPayProvider extends PaymentProvider {
     super('wechat_pay')
     this._clientFactory = options.clientFactory || null
     this._config = options.config || null
+    this._deadlineMs = options.deadlineMs || WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS
   }
 
   config() {
@@ -110,9 +105,43 @@ export class WechatPayProvider extends PaymentProvider {
     if (!config.enabled || !config.configured) {
       throw httpError('微信支付尚未开通或配置不完整', 501)
     }
-    // 终端 IP 是 MICROPAY 必填且不得为回环地址；缺失/非法时在发起任何
-    // 网络请求之前 fail closed（R2：删除 127.0.0.1 回退）。
+    // 终端 IP 是 MICROPAY 必填且必须为公网可路由 IPv4；缺失/非法时在发起任何
+    // 网络请求之前 fail closed（R2 起已删除 127.0.0.1 回退；R3 使用共享严格校验）。
     assertTerminalIp(config)
+  }
+
+  /**
+   * R3：单次 Provider 操作的绝对墙钟上限。
+   * 覆盖 DNS/TCP/TLS/请求/响应/主备域名回退/操作内全部顺序子调用。
+   * 到期：abort() 主动中止底层请求（真实传输 → req.destroy/socket 销毁），
+   * 并返回受控歧义结果（pending + reconciliationRequired，绝不虚构终态）。
+   */
+  async _bounded(payment, fn) {
+    const controller = new AbortController()
+    let timer = null
+    const deadline = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort() // 主动中止底层 HTTP 请求（真实传输 → req.destroy）
+        reject(new WechatV2Error('ABSOLUTE_DEADLINE', '微信支付操作超过绝对时限，结果未知，需要核对', { retryable: true, ambiguous: true }))
+      }, this._deadlineMs)
+    })
+    if (typeof timer.unref === 'function') timer.unref()
+    try {
+      return await Promise.race([fn(controller.signal), deadline])
+    } catch (error) {
+      // 绝对时限到期 → 受控歧义结果（支付保持待核对，订单绝不被取消/虚构终态）
+      if (error instanceof WechatV2Error && error.code === 'ABSOLUTE_DEADLINE') {
+        return {
+          providerTradeNo: null,
+          metadata: { wechat: { resultCode: '', errCode: 'ABSOLUTE_DEADLINE', error: true } },
+          callbacks: [event(payment, 'pending', { failureCode: 'ABSOLUTE_DEADLINE', failureMessage: '微信支付操作超过绝对时限，结果未知，需要核对' })],
+          reconciliation: { providerStatus: 'ABSOLUTE_DEADLINE', reconciliationRequired: true },
+        }
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   async createPayment(payment, options = {}) {
@@ -121,6 +150,10 @@ export class WechatPayProvider extends PaymentProvider {
     if (!WECHAT_AUTH_CODE_RE.test(authCode)) {
       throw httpError('请扫描有效的微信付款码（18 位数字）', 400)
     }
+    return this._bounded(payment, (signal) => this._createPaymentWithSignal(payment, options, signal))
+  }
+
+  async _createPaymentWithSignal(payment, options, signal) {
     const config = this.config()
     const outTradeNo = payment.merchantTradeNo
     const totalFee = payment.amount.toString()
@@ -134,13 +167,16 @@ export class WechatPayProvider extends PaymentProvider {
           out_trade_no: outTradeNo,
           body: 'BUDU',
           total_fee: totalFee,
-          auth_code: authCode,
+          auth_code: String(options.authCode || ''),
           // assertUsable() 已保证 terminalIp 为合法公网 IPv4；此处不得有任何回环回退。
           spbill_create_ip: config.terminalIp,
         },
-        { checkTradeFields: { outTradeNo, totalFee } },
+        { checkTradeFields: { outTradeNo, totalFee }, signal },
       )
     } catch (error) {
+      // R3：绝对时限已到 → 立即中止本操作，交由 _bounded 返回受控歧义结果，
+      // 绝不继续执行后续顺序子调用。
+      if (signal?.aborted) throw error
       return this.mapMicroPayError(payment, error)
     }
 
@@ -158,8 +194,8 @@ export class WechatPayProvider extends PaymentProvider {
 
     const errCode = String(result.err_code || '')
     if (errCode === 'ORDERPAID') {
-      // 商户订单号已支付：立即查询确认最终状态
-      const query = await this.queryPayment(payment)
+      // 商户订单号已支付：立即查询确认最终状态（同一绝对时限内）
+      const query = await this._queryPaymentWithSignal(payment, signal)
       return {
         ...query,
         metadata: { ...query.metadata, wechat: { ...(query.metadata?.wechat || {}), initialErrCode: 'ORDERPAID' } },
@@ -213,7 +249,7 @@ export class WechatPayProvider extends PaymentProvider {
         }
       }
       if (error.ambiguous || error.retryable) {
-        // 网络超时/系统异常/响应不明确：可能已扣款，必须待核对
+        // 网络超时/绝对时限/系统异常/响应不明确：可能已扣款，必须待核对
         return {
           providerTradeNo: null,
           metadata: { wechat: { resultCode: '', errCode: error.code, error: true } },
@@ -239,6 +275,10 @@ export class WechatPayProvider extends PaymentProvider {
 
   async queryPayment(payment) {
     this.assertUsable()
+    return this._bounded(payment, (signal) => this._queryPaymentWithSignal(payment, signal))
+  }
+
+  async _queryPaymentWithSignal(payment, signal) {
     const client = this.client()
     const outTradeNo = payment.merchantTradeNo
     const totalFee = payment.amount ? payment.amount.toString() : undefined
@@ -250,9 +290,11 @@ export class WechatPayProvider extends PaymentProvider {
           out_trade_no: outTradeNo,
           ...(payment.providerTradeNo ? { transaction_id: payment.providerTradeNo } : {}),
         },
-        { checkTradeFields: { outTradeNo, totalFee } },
+        { checkTradeFields: { outTradeNo, totalFee }, signal },
       )
     } catch (error) {
+      // R3：绝对时限已到 → 立即中止本操作，交由 _bounded 返回受控歧义结果
+      if (signal?.aborted) throw error
       if (error instanceof WechatV2Error && !error.ambiguous && !error.retryable) {
         return {
           providerTradeNo: null,
@@ -320,66 +362,71 @@ export class WechatPayProvider extends PaymentProvider {
 
   async closePayment(payment) {
     this.assertUsable()
-    const query = await this.queryPayment(payment)
-    const eventStatus = query.callbacks?.[0]?.status
-    if (eventStatus === 'success' || eventStatus === 'failed' || eventStatus === 'closed') {
-      return query
-    }
-    // USERPAYING / 未知：执行撤销（双向 TLS）
-    const client = this.client()
-    let result
-    try {
-      result = await client.request(
-        '/secapi/pay/reverse',
-        { out_trade_no: payment.merchantTradeNo },
-        { useMtls: true, checkTradeFields: { outTradeNo: payment.merchantTradeNo } },
-      )
-    } catch (error) {
-      if (error instanceof WechatV2Error && !error.retryable && !error.ambiguous) {
-        throw error
+    // 整次 closePayment（查询 + 撤销 + 撤销后复查）共享同一个绝对时限与中止信号
+    return this._bounded(payment, async (signal) => {
+      const query = await this._queryPaymentWithSignal(payment, signal)
+      const eventStatus = query.callbacks?.[0]?.status
+      if (eventStatus === 'success' || eventStatus === 'failed' || eventStatus === 'closed') {
+        return query
       }
-      return {
-        providerTradeNo: null,
-        metadata: { wechat: { resultCode: '', errCode: error.code || 'REVERSE_NETWORK_ERROR', error: true } },
-        callbacks: [event(payment, 'pending', { failureCode: error.code || 'REVERSE_NETWORK_ERROR', failureMessage: '撤销结果未知，禁止重新支付，需要人工核对' })],
-        reconciliation: { providerStatus: 'REVERSE_UNKNOWN', reconciliationRequired: true },
-      }
-    }
-    if (String(result.result_code || '') === 'SUCCESS') {
-      // recall=Y：按官方撤销协议必须继续重试撤销，绝不标记 closed；
-      // 保持待核对并进入重试队列（状态持久化，重启后可继续）。
-      if (String(result.recall || '') === 'Y') {
+      // USERPAYING / 未知：执行撤销（双向 TLS）
+      const client = this.client()
+      let result
+      try {
+        result = await client.request(
+          '/secapi/pay/reverse',
+          { out_trade_no: payment.merchantTradeNo },
+          { useMtls: true, checkTradeFields: { outTradeNo: payment.merchantTradeNo }, signal },
+        )
+      } catch (error) {
+        // R3：绝对时限已到 → 立即中止本操作，交由 _bounded 返回受控歧义结果
+        if (signal?.aborted) throw error
+        if (error instanceof WechatV2Error && !error.retryable && !error.ambiguous) {
+          throw error
+        }
         return {
           providerTradeNo: null,
-          metadata: { wechat: { resultCode: 'SUCCESS', recall: 'Y', errCode: '', tradeState: 'REVOKE_RETRY' } },
-          callbacks: [event(payment, 'pending', { failureCode: 'REVOKE_RETRY', failureMessage: '微信撤销需重试，继续核对' })],
-          reconciliation: { providerStatus: 'REVOKE_RETRY', reconciliationRequired: true },
+          metadata: { wechat: { resultCode: '', errCode: error.code || 'REVERSE_NETWORK_ERROR', error: true } },
+          callbacks: [event(payment, 'pending', { failureCode: error.code || 'REVERSE_NETWORK_ERROR', failureMessage: '撤销结果未知，禁止重新支付，需要人工核对' })],
+          reconciliation: { providerStatus: 'REVERSE_UNKNOWN', reconciliationRequired: true },
         }
       }
-      // recall=N：撤销已定案，再查询一次确认终态
-      const after = await this.queryPayment(payment)
-      if (after.callbacks?.[0]?.status === 'closed' || after.callbacks?.[0]?.status === 'failed') return after
-      return {
-        providerTradeNo: null,
-        metadata: { wechat: { resultCode: 'SUCCESS', recall: 'N', errCode: '', tradeState: 'REVOKED_ACCEPTED' } },
-        callbacks: [event(payment, 'closed', { failureCode: 'REVOKED', failureMessage: '微信支付已撤销' })],
+      if (String(result.result_code || '') === 'SUCCESS') {
+        // recall=Y：按官方撤销协议必须继续重试撤销，绝不标记 closed；
+        // 保持待核对并进入重试队列（状态持久化，重启后可继续）。
+        if (String(result.recall || '') === 'Y') {
+          return {
+            providerTradeNo: null,
+            metadata: { wechat: { resultCode: 'SUCCESS', recall: 'Y', errCode: '', tradeState: 'REVOKE_RETRY' } },
+            callbacks: [event(payment, 'pending', { failureCode: 'REVOKE_RETRY', failureMessage: '微信撤销需重试，继续核对' })],
+            reconciliation: { providerStatus: 'REVOKE_RETRY', reconciliationRequired: true },
+          }
+        }
+        // recall=N：撤销已定案，再查询一次确认终态（同一绝对时限内）
+        const after = await this._queryPaymentWithSignal(payment, signal)
+        if (after.callbacks?.[0]?.status === 'closed' || after.callbacks?.[0]?.status === 'failed') return after
+        return {
+          providerTradeNo: null,
+          metadata: { wechat: { resultCode: 'SUCCESS', recall: 'N', errCode: '', tradeState: 'REVOKED_ACCEPTED' } },
+          callbacks: [event(payment, 'closed', { failureCode: 'REVOKED', failureMessage: '微信支付已撤销' })],
+        }
       }
-    }
-    const errCode = String(result.err_code || '')
-    if (errCode === 'ORDERNOTEXIST') {
+      const errCode = String(result.err_code || '')
+      if (errCode === 'ORDERNOTEXIST') {
+        return {
+          providerTradeNo: null,
+          metadata: safeMetadata(result),
+          callbacks: [event(payment, 'closed', { failureCode: 'ORDERNOTEXIST', failureMessage: '微信订单不存在，视为未支付' })],
+        }
+      }
+      // 撤销结果不明确：继续阻止二次支付并告警
       return {
         providerTradeNo: null,
         metadata: safeMetadata(result),
-        callbacks: [event(payment, 'closed', { failureCode: 'ORDERNOTEXIST', failureMessage: '微信订单不存在，视为未支付' })],
+        callbacks: [event(payment, 'pending', { failureCode: errCode || 'REVERSE_FAIL', failureMessage: '撤销结果不明确，禁止重新支付，需要人工核对' })],
+        reconciliation: { providerStatus: 'REVERSE_FAIL', reconciliationRequired: true },
       }
-    }
-    // 撤销结果不明确：继续阻止二次支付并告警
-    return {
-      providerTradeNo: null,
-      metadata: safeMetadata(result),
-      callbacks: [event(payment, 'pending', { failureCode: errCode || 'REVERSE_FAIL', failureMessage: '撤销结果不明确，禁止重新支付，需要人工核对' })],
-      reconciliation: { providerStatus: 'REVERSE_FAIL', reconciliationRequired: true },
-    }
+    })
   }
 
   async refundPayment() {

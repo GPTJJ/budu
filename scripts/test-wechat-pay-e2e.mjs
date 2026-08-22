@@ -22,7 +22,7 @@ const CONFIG = {
   configured: true,
   mchId: MCH_ID,
   appId: APP_ID,
-  terminalIp: '203.0.113.10',
+  terminalIp: '8.8.8.8',
   enabledStores: ['store-1'],
   apiV2Key: API_V2_KEY,
   certPem: 'cert',

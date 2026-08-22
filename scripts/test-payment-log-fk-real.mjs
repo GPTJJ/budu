@@ -40,28 +40,41 @@ async function probeDatabase() {
   await probe.$disconnect()
 }
 
-test('B7 前置：连接本地 PostgreSQL 并部署完整迁移链（不可用则整体跳过）', async () => {
+test('B7 前置：连接本地 PostgreSQL 并部署完整迁移链（不可用 → 测试套件 FAIL，绝不静默跳过）', async () => {
   try {
     await probeDatabase()
   } catch (error) {
-    console.error(`[B7] 本地 PostgreSQL 不可用（${error.message}）→ REAL_DB_HISTORY_TEST_NOT_RUN`)
-    return
+    // R3：发布门禁必须 fail closed——数据库不可用 = 测试失败 = 非零退出
+    throw new Error(`REAL_DB_HISTORY_TEST_NOT_RUN — 本地 PostgreSQL 不可用：${error.message}`)
   }
   process.env.DATABASE_URL = TEST_URL
   const prismaBin = path.join(root, 'node_modules', '.bin', 'prisma')
-  execFileSync(prismaBin, ['migrate', 'deploy'], {
-    cwd: root,
-    env: { ...process.env, DATABASE_URL: TEST_URL },
-    stdio: 'inherit',
-    timeout: 180000,
-  })
+  try {
+    execFileSync(prismaBin, ['migrate', 'deploy'], {
+      cwd: root,
+      env: { ...process.env, DATABASE_URL: TEST_URL },
+      stdio: 'inherit',
+      timeout: 180000,
+    })
+  } catch (error) {
+    throw new Error(`REAL_DB_HISTORY_TEST_NOT_RUN — 迁移链部署失败：${error.message}`)
+  }
   const { prisma: p } = await import('../server/pg.js')
   prisma = p
   started = true
 })
 
+/** R3：数据库不可用时后续断言一律失败（不跳过、不静默），保证发布门禁非零退出。 */
+function requireStarted(t) {
+  if (!started) {
+    assert.fail('REAL_DB_HISTORY_TEST_NOT_RUN — 前置步骤失败（PostgreSQL 不可用），本断言必须失败而非跳过')
+    return false
+  }
+  return true
+}
+
 test('B7：DELETE /pos/orders/:id 路由 → 409，订单/支付/日志计数全部不变', async (t) => {
-  if (!started) return t.skip('REAL_DB_HISTORY_TEST_NOT_RUN')
+  if (!requireStarted(t)) return
   await prisma.store.create({ data: { key: 'store-b7', name: `B7 门店 ${process.pid}` } })
   await prisma.order.create({
     data: {
@@ -118,7 +131,7 @@ test('B7：DELETE /pos/orders/:id 路由 → 409，订单/支付/日志计数全
 })
 
 test('B7：直接 DELETE payments → 外键 RESTRICT 拒绝（23001），日志不被级联清除', async (t) => {
-  if (!started) return t.skip('REAL_DB_HISTORY_TEST_NOT_RUN')
+  if (!requireStarted(t)) return
   // Prisma 将 raw 查询错误包装为 P2010，SQLSTATE 内嵌在 message（RESTRICT 违反=23001）
   const isRestrictViolation = (error) => {
     const sqlState = (String(error.message || '').match(/Code: `?(\d{5})`?/) || [])[1] || ''
@@ -134,7 +147,7 @@ test('B7：直接 DELETE payments → 外键 RESTRICT 拒绝（23001），日志
 })
 
 test('B7：直接 DELETE orders → 外键拒绝（23001），日志保留', async (t) => {
-  if (!started) return t.skip('REAL_DB_HISTORY_TEST_NOT_RUN')
+  if (!requireStarted(t)) return
   const isRestrictViolation = (error) => {
     const sqlState = (String(error.message || '').match(/Code: `?(\d{5})`?/) || [])[1] || ''
     return String(error.code || '') === 'P2010' && ['23001', '23503'].includes(sqlState)
@@ -149,7 +162,7 @@ test('B7：直接 DELETE orders → 外键拒绝（23001），日志保留', asy
 })
 
 test('B7：数据库目录级证明——payment_logs 两个外键均为 RESTRICT（confdeltype=r）', async (t) => {
-  if (!started) return t.skip('REAL_DB_HISTORY_TEST_NOT_RUN')
+  if (!requireStarted(t)) return
   const rows = await prisma.$queryRaw`
     SELECT conname, confdeltype
     FROM pg_constraint
@@ -164,7 +177,7 @@ test('B7：数据库目录级证明——payment_logs 两个外键均为 RESTRIC
 })
 
 test('B7：清理——删除一次性 schema', async (t) => {
-  if (!started) return t.skip('REAL_DB_HISTORY_TEST_NOT_RUN')
+  if (!requireStarted(t)) return
   await prisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`)
   await prisma.$disconnect()
   started = false

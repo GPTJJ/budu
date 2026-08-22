@@ -7,7 +7,7 @@
 // - 默认 WECHAT_PAY_ENABLED=0：未显式开启时任何通道开关都返回关闭。
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import net from 'node:net'
+import { isValidPublicIpv4 } from './terminal-ip.js'
 
 export const WECHAT_PAY_PROTOCOL = 'v2_micropay'
 
@@ -32,20 +32,7 @@ function readSecretFile(envName, label) {
   }
 }
 
-function isValidTerminalIp(value) {
-  if (!value) return false
-  if (net.isIP(value) !== 4) return false
-  const parts = String(value).split('.').map(Number)
-  const [a, b] = parts
-  if (a === 127) return false // 回环
-  if (a === 0) return false // 未指定
-  if (a === 10) return false // RFC1918 10/8
-  if (a === 172 && b >= 16 && b <= 31) return false // RFC1918 172.16/12
-  if (a === 192 && b === 168) return false // RFC1918 192.168/16
-  if (a === 169 && b === 254) return false // 链路本地
-  if (a >= 224) return false // 组播/保留/广播
-  return true
-}
+// 终端 IP 规则唯一权威实现见 terminal-ip.js（配置层与 Provider 边界共用）
 
 export function validateCertificate(certPem, nowMs = Date.now()) {
   try {
@@ -110,7 +97,7 @@ export function wechatPayConfig() {
   if (!appId) problems.push('AppID 未配置')
   else if (!APP_ID_RE.test(appId)) problems.push('AppID 格式无效（须 wx 开头共 18 位字母数字）')
   if (!terminalIp) problems.push('终端 IP 未配置（MICROPAY 必填）')
-  else if (!isValidTerminalIp(terminalIp)) problems.push('终端 IP 无效（须非回环公网 IPv4）')
+  else if (!isValidPublicIpv4(terminalIp)) problems.push('终端 IP 无效（须公网可路由 IPv4，拒绝回环/私网/保留段）')
   if (protocol !== WECHAT_PAY_PROTOCOL) problems.push(`协议必须为 ${WECHAT_PAY_PROTOCOL}`)
 
   let apiV2Key = ''
