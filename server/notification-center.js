@@ -118,7 +118,7 @@ export async function notify(opt) {
 }
 
 /** 微信个人提醒：查绑定 → 按通道推送；未配置通道/未绑定 → skipped */
-async function pushWechat(notification, title, content, target) {
+export async function pushWechat(notification, title, content, target) {
   const cfg = wechatPersonalConfig()
   if (!cfg) {
     await prisma.notificationDelivery.create({
@@ -135,70 +135,115 @@ async function pushWechat(notification, title, content, target) {
     }).catch(() => {})
     return
   }
-  const ok = await sendWechatPersonal(cfg, binding, { title, content, target })
+  const result = await sendWechatPersonal(cfg, binding, { title, content, target })
+  // 失败时记录通道侧错误码（errcode/errmsg 安全、不泄露密钥），便于排查
+  const errDetail = result.ok
+    ? ''
+    : `send failed (errcode=${result.errcode}${result.errmsg ? ` ${String(result.errmsg).slice(0, 200)}` : ''})`.slice(0, 300)
   await prisma.notificationDelivery.create({
-    data: { id: uid('nld'), notificationId: notification.id, channel: 'wechat', status: ok ? 'sent' : 'failed', error: ok ? '' : 'send failed' },
+    data: { id: uid('nld'), notificationId: notification.id, channel: 'wechat', status: result.ok ? 'sent' : 'failed', error: errDetail },
   }).catch(() => {})
 }
 
-/** 微信个人通道适配器：企业微信应用文本卡片（带跳转 url） / 公众号模板消息 */
+/**
+ * 微信个人通道适配器：企业微信应用文本卡片（带跳转 url） / 公众号模板消息。
+ * @returns {Promise<{ok:boolean, errcode?:number|string, errmsg?:string}>}
+ *   errcode/errmsg 来自通道侧响应（不含任何密钥），供投递记录与测试接口排查。
+ *   token 失效类错误（企微 40001/40014/42001、公众号 40001/40014）自动重取后重发一次。
+ */
 export async function sendWechatPersonal(cfg, binding, { title, content, target }) {
   try {
     const baseUrl = process.env.PUBLIC_BASE_URL || ''
     const jumpUrl = `${baseUrl}${target ? `/?nav=${encodeURIComponent(target)}` : ''}`
     if (cfg.channel === 'wecom') {
-      // 企业微信应用消息：textcard 卡片，点击跳转 budu 页面
-      const token = await wecomAccessToken(cfg.corpId, cfg.secret)
-      if (!token) return false
-      const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          touser: binding.openId, // 企业微信 userid
-          msgtype: 'textcard',
-          agentid: Number(cfg.agentId),
-          textcard: {
-            title: title.slice(0, 120),
-            description: content.slice(0, 500),
-            url: jumpUrl || 'https://budu-hk.online',
-            btntxt: '查看详情',
-          },
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      return res.ok && j.errcode === 0
+      return await sendWecomTextcard(cfg, binding, title, content, jumpUrl)
     }
     if (cfg.channel === 'mp') {
-      // 公众号模板消息
-      const token = await mpAccessToken(cfg.appId, cfg.secret)
-      if (!token) return false
-      const res = await fetch(`https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          touser: binding.openId,
-          template_id: cfg.templateId,
-          url: jumpUrl || 'https://budu-hk.online',
-          data: {
-            first: { value: title.slice(0, 60) },
-            keyword1: { value: content.slice(0, 100) },
-            keyword2: { value: 'budu' },
-            remark: { value: '点击查看详情' },
-          },
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      return res.ok && j.errcode === 0
+      return await sendMpTemplate(cfg, binding, title, content, jumpUrl)
     }
-    return false
+    return { ok: false, errcode: 'NO_CHANNEL', errmsg: 'unknown channel' }
   } catch (e) {
     console.error('[notification-center] wechat send', e.message)
-    return false
+    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: String(e.message).slice(0, 200) }
   }
 }
 
+/** 企业微信自建应用消息：textcard 卡片，点击跳转 budu 页面（touser = 企微 userid） */
+async function sendWecomTextcard(cfg, binding, title, content, jumpUrl) {
+  const doSend = async (token) => {
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        touser: binding.openId, // 企业微信 userid
+        msgtype: 'textcard',
+        agentid: Number(cfg.agentId),
+        textcard: {
+          title: title.slice(0, 120),
+          description: content.slice(0, 500),
+          url: jumpUrl || 'https://budu-hk.online',
+          btntxt: '查看详情',
+        },
+      }),
+    })
+    const j = await res.json().catch(() => ({}))
+    return { ok: res.ok && j.errcode === 0, errcode: j.errcode, errmsg: String(j.errmsg || '').slice(0, 200) }
+  }
+  const token = await wecomAccessToken(cfg.corpId, cfg.secret)
+  if (!token) return { ok: false, errcode: 'TOKEN_FETCH_FAILED', errmsg: '获取企业微信 access_token 失败' }
+  const first = await doSend(token)
+  if (first.ok) return first
+  // access_token 失效类错误：清缓存重取后重发一次
+  if ([40001, 40014, 42001].includes(first.errcode)) {
+    wecomTokenCache = { token: '', at: 0 }
+    const retryToken = await wecomAccessToken(cfg.corpId, cfg.secret)
+    if (retryToken) {
+      const second = await doSend(retryToken)
+      if (second.ok) return { ...second, retried: true }
+      return { ...second, retried: true }
+    }
+  }
+  return first
+}
+
+/** 公众号模板消息 */
+async function sendMpTemplate(cfg, binding, title, content, jumpUrl) {
+  const doSend = async (token) => {
+    const res = await fetch(`https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        touser: binding.openId,
+        template_id: cfg.templateId,
+        url: jumpUrl || 'https://budu-hk.online',
+        data: {
+          first: { value: title.slice(0, 60) },
+          keyword1: { value: content.slice(0, 100) },
+          keyword2: { value: 'budu' },
+          remark: { value: '点击查看详情' },
+        },
+      }),
+    })
+    const j = await res.json().catch(() => ({}))
+    return { ok: res.ok && j.errcode === 0, errcode: j.errcode, errmsg: String(j.errmsg || '').slice(0, 200) }
+  }
+  const token = await mpAccessToken(cfg.appId, cfg.secret)
+  if (!token) return { ok: false, errcode: 'TOKEN_FETCH_FAILED', errmsg: '获取公众号 access_token 失败' }
+  const first = await doSend(token)
+  if (first.ok) return first
+  if ([40001, 40014].includes(first.errcode)) {
+    mpTokenCache = { token: '', at: 0 }
+    const retryToken = await mpAccessToken(cfg.appId, cfg.secret)
+    if (retryToken) {
+      const second = await doSend(retryToken)
+      return { ...second, retried: true }
+    }
+  }
+  return first
+}
+
 let wecomTokenCache = { token: '', at: 0 }
-async function wecomAccessToken(corpId, secret) {
+export async function wecomAccessToken(corpId, secret) {
   if (wecomTokenCache.token && Date.now() - wecomTokenCache.at < 7000 * 1000) return wecomTokenCache.token
   try {
     const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${secret}`)
@@ -214,7 +259,7 @@ async function wecomAccessToken(corpId, secret) {
 }
 
 let mpTokenCache = { token: '', at: 0 }
-async function mpAccessToken(appId, secret) {
+export async function mpAccessToken(appId, secret) {
   if (mpTokenCache.token && Date.now() - mpTokenCache.at < 7000 * 1000) return mpTokenCache.token
   try {
     const res = await fetch(`https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${secret}`)
@@ -227,6 +272,12 @@ async function mpAccessToken(appId, secret) {
   } catch {
     return ''
   }
+}
+
+/** 测试辅助：重置 access_token 缓存（企微/公众号；仅测试使用） */
+export function _resetWechatTokenCaches() {
+  wecomTokenCache = { token: '', at: 0 }
+  mpTokenCache = { token: '', at: 0 }
 }
 
 /** 企微群机器人广播（兼容现状：与 sendWechatMarkdown 行为一致，统一入口） */

@@ -30,6 +30,7 @@ const NODE_TEST_SUITE = [
   'test-product-excel.mjs',         // 商品 Excel 导入（单元）
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
+  'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
   'test-wechat-pay-provider.mjs',   // 微信付款码 Provider（假传输，不连真实接口）
   'test-payment-reconciliation.mjs', // 未决支付自动核对（单元）

@@ -5,7 +5,7 @@ import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
-import { wechatPersonalConfig } from './notification-center.js'
+import { wechatPersonalConfig, wecomAccessToken } from './notification-center.js'
 
 export const wechatBindRouter = Router()
 /** 企业微信接收消息服务器验证（公开，无需登录）：GET 校验签名并解密 echostr 应答 */
@@ -72,7 +72,7 @@ wechatBindRouter.get('/wechat/bind/callback', wrap(async (req, res) => {
   let nickname = ''
   if (cfg.channel === 'wecom') {
     // code 换 userid（企业微信）
-    const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${await wecomToken(cfg)}&code=${encodeURIComponent(code)}`).then((x) => x.json()).catch(() => ({}))
+    const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${await wecomAccessToken(cfg.corpId, cfg.secret)}&code=${encodeURIComponent(code)}`).then((x) => x.json()).catch(() => ({}))
     openId = r.userid || r.openid || ''
     nickname = r.userid || ''
   } else {
@@ -114,41 +114,27 @@ wechatBindRouter.post('/wechat/test', wrap(async (req, res) => {
   })
   if (!binding) throw httpError('尚未绑定微信，请先扫码绑定', 400)
   const { sendWechatPersonal } = await import('./notification-center.js')
-  const ok = await sendWechatPersonal(cfg, binding, {
+  const result = await sendWechatPersonal(cfg, binding, {
     title: 'budu 通知测试',
     content: '这是一条微信提醒测试消息。绑定成功，后续业务通知将通过微信提醒您。',
     target: '',
   })
-  res.json({ ok, configured: true })
+  res.json({ ok: result.ok, configured: true, errcode: result.errcode, errmsg: result.errmsg })
 }))
-
-let wecomTokenCache = { token: '', at: 0 }
-async function wecomToken(cfg) {
-  if (wecomTokenCache.token && Date.now() - wecomTokenCache.at < 7000 * 1000) return wecomTokenCache.token
-  try {
-    const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${cfg.corpId}&corpsecret=${cfg.secret}`).then((x) => x.json())
-    if (r.errcode === 0 && r.access_token) {
-      wecomTokenCache = { token: r.access_token, at: Date.now() }
-      return r.access_token
-    }
-    return ''
-  } catch {
-    return ''
-  }
-}
 
 // ---------------- 企业微信接收消息服务器验证（URL/Token/EncodingAESKey 校验） ----------------
 const RECV_TOKEN = process.env.WXWORK_RECV_TOKEN || 'budu2025'
-const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || 'HkmvnowRA81CWOVk7nPPvzpDyhfwZEU8gGNoCUCuS'
+// 企微 EncodingAESKey 必须为 43 位 base64（解码后 32 字节）；旧默认值位数不足会解密失败
+const RECV_AES_KEY = process.env.WXWORK_RECV_AES_KEY || 'WOEs16DWhc0hW3U4u4knxGuxRVOHowN+eKrX8Hl+gxU'
 
 /** sha1 签名校验（企业微信标准：token/timestamp/nonce/echostr 字典序拼接） */
-function wecomSign(token, timestamp, nonce, echostr) {
+export function wecomSign(token, timestamp, nonce, echostr) {
   const str = [token, timestamp, nonce, echostr].sort().join('')
   return crypto.createHash('sha1').update(str).digest('hex')
 }
 
 /** AES-256-CBC 解密（EncodingAESKey → key，IV = key 前 16 字节；PKCS7） */
-function decryptWecomMsg(encodingAESKey, encryptedBase64) {
+export function decryptWecomMsg(encodingAESKey, encryptedBase64) {
   const aesKey = Buffer.from(`${encodingAESKey}=`, 'base64')
   const iv = aesKey.subarray(0, 16)
   const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv)
