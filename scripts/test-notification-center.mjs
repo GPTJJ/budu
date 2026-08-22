@@ -375,6 +375,59 @@ test('通知中心集成（真实 PostgreSQL，一次性 schema；不可用 → 
     }
   })
 
+  await t.test('管理员手动绑定企微 userid（跳过扫码）——超管可绑、非超管 403、参数校验、查询', async () => {
+    if (!requireStarted(t)) return
+    const { wechatBindRouter } = await import('../server/wechat-bind.js')
+    const expressModule = await import('express')
+    const app = expressModule.default()
+    app.use(expressModule.json())
+    app.use((req, res, next) => { req.user = JSON.parse(req.headers['x-test-user'] || 'null'); next() })
+    app.use(wechatBindRouter)
+    const server = app.listen(0)
+    await once(server, 'listening')
+    const base = `http://127.0.0.1:${server.address().port}`
+    const call = (path, user, options = {}) => {
+      const headers = { 'x-test-user': JSON.stringify(user), ...(options.body ? { 'Content-Type': 'application/json' } : {}) }
+      return fetch(`${base}${path}`, {
+        method: options.method || 'GET',
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      }).then(async (res) => ({ status: res.status, body: await res.json().catch(() => ({})) }))
+    }
+    try {
+      await withEnv(WECOM_ENV, async () => {
+        const dev = { id: 'dev-1', username: 'dev-1', role: 'developer', status: 'active' }
+        const staff = { id: 'st-1', username: 'st-1', role: 'staff', status: 'active', storeKeys: [] }
+        // 参数校验
+        const empty = await call('/wechat/bindings/manual', dev, { method: 'POST', body: {} })
+        assert.equal(empty.status, 400)
+        // 非超管 403
+        const forbidden = await call('/wechat/bindings/manual', staff, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan' } })
+        assert.equal(forbidden.status, 403)
+        // 超管绑定成功
+        const ok = await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan-wx' } })
+        assert.equal(ok.status, 200)
+        const row = await prisma.wechatBinding.findFirst({ where: { username: 'zhangsan', channel: 'wecom' } })
+        assert.ok(row)
+        assert.equal(row.openId, 'zhangsan-wx')
+        assert.equal(row.status, 'active')
+        // 幂等：重复绑定更新 userid
+        await call('/wechat/bindings/manual', dev, { method: 'POST', body: { username: 'zhangsan', userid: 'zhangsan-wx2' } })
+        const row2 = await prisma.wechatBinding.findFirst({ where: { username: 'zhangsan', channel: 'wecom' } })
+        assert.equal(row2.openId, 'zhangsan-wx2')
+        // 查询
+        const lookup = await call(`/wechat/bindings/lookup?username=${encodeURIComponent('zhangsan')}`, dev)
+        assert.equal(lookup.status, 200)
+        assert.equal(lookup.body.rows[0].nickname, 'zhangsan-wx2')
+        // 非超管查询 403
+        const lookupForbidden = await call(`/wechat/bindings/lookup?username=${encodeURIComponent('zhangsan')}`, staff)
+        assert.equal(lookupForbidden.status, 403)
+      })
+    } finally {
+      server.close()
+    }
+  })
+
   await t.test('未绑定 → skipped(no binding)；未配置通道 → skipped(channel not configured)', async () => {
     if (!requireStarted(t)) return
     const { pushWechat, _resetWechatTokenCaches } = await import('../server/notification-center.js')

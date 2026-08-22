@@ -32,6 +32,11 @@ export default function SettingsPage({ user, onBack }) {
   const [wxBindings, setWxBindings] = useState(null)
   const [wxTip, setWxTip] = useState('')
   const [wxBusy, setWxBusy] = useState(false)
+  // 管理员手动绑定（企微 userid，跳过扫码）
+  const [manualUsername, setManualUsername] = useState('')
+  const [manualUserid, setManualUserid] = useState('')
+  const [manualBusy, setManualBusy] = useState(false)
+  const [manualTip, setManualTip] = useState('')
   const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
   const customStores = getStores()
 
@@ -103,6 +108,48 @@ export default function SettingsPage({ user, onBack }) {
       loadWxBindings()
     } catch (err) {
       setWxTip(t(err.message))
+    }
+  }
+
+  // 管理员手动绑定：绕过扫码，直接写企微 userid（域名主体校验未通过/员工不便扫码时使用）
+  const bindWechatManual = async () => {
+    if (!manualUsername.trim() || !manualUserid.trim()) {
+      setManualTip('请填写系统账号和企微 userid')
+      return
+    }
+    setManualBusy(true)
+    setManualTip('')
+    try {
+      await api('/v2/wechat/bindings/manual', {
+        method: 'POST',
+        body: JSON.stringify({ username: manualUsername.trim(), userid: manualUserid.trim() }),
+      })
+      setManualTip(`已绑定 ${manualUsername.trim()} → ${manualUserid.trim()}，推送立即生效`)
+      loadWxBindings()
+    } catch (err) {
+      setManualTip(err.message)
+    } finally {
+      setManualBusy(false)
+    }
+  }
+
+  const lookupWechatManual = async () => {
+    if (!manualUsername.trim()) {
+      setManualTip('请先填写系统账号')
+      return
+    }
+    setManualBusy(true)
+    setManualTip('')
+    try {
+      const res = await api(`/v2/wechat/bindings/lookup?username=${encodeURIComponent(manualUsername.trim())}`)
+      const active = (res.rows || []).filter((r) => r.status === 'active')
+      setManualTip(active.length
+        ? `${manualUsername.trim()} 已绑定企微：${active[0].nickname}`
+        : `${manualUsername.trim()} 当前未绑定`)
+    } catch (err) {
+      setManualTip(err.message)
+    } finally {
+      setManualBusy(false)
     }
   }
 
@@ -307,6 +354,44 @@ export default function SettingsPage({ user, onBack }) {
             </>
           )}
           {wxTip && <p className="mt-3 text-xs font-medium text-slate-500">{wxTip}</p>}
+
+          {isDeveloper && (
+            <div className="mt-4 rounded-xl border border-dashed border-budu-200 bg-budu-50/40 px-4 py-3">
+              <p className="text-xs font-bold text-slate-600">管理员手动绑定企微 userid（跳过扫码）</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                用于扫码绑定被域名校验拦截或员工不便扫码时：填系统账号 + 员工企业微信 userid（企微通讯录 → 成员资料可见），保存后推送立即生效
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  value={manualUsername}
+                  onChange={(e) => setManualUsername(e.target.value)}
+                  placeholder="系统账号"
+                  className="input w-40"
+                />
+                <input
+                  value={manualUserid}
+                  onChange={(e) => setManualUserid(e.target.value)}
+                  placeholder="企微 userid"
+                  className="input w-40"
+                />
+                <button
+                  onClick={bindWechatManual}
+                  disabled={manualBusy}
+                  className="rounded-lg bg-budu-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {manualBusy ? '处理中…' : '保存绑定'}
+                </button>
+                <button
+                  onClick={lookupWechatManual}
+                  disabled={manualBusy}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  查询
+                </button>
+              </div>
+              {manualTip && <p className="mt-2 text-[11px] font-medium text-slate-500">{manualTip}</p>}
+            </div>
+          )}
         </div>
       </div>
 

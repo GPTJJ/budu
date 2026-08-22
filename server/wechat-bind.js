@@ -5,6 +5,7 @@ import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
+import { isSuperUser } from '../shared/accountPermissions.js'
 import { wechatPersonalConfig, wecomAccessToken } from './notification-center.js'
 
 export const wechatBindRouter = Router()
@@ -102,6 +103,43 @@ wechatBindRouter.post('/wechat/bindings/:id/revoke', wrap(async (req, res) => {
     data: { status: 'revoked', revokedAt: new Date() },
   })
   res.json({ ok: true })
+}))
+
+/**
+ * 管理员手动绑定企微 userid（绕过扫码；域名主体校验未通过/员工不便扫码时使用）。
+ * 仅超管（developer/finance/admin）可操作；写入 wechat_bindings(channel=wecom, openId=userid)。
+ */
+wechatBindRouter.post('/wechat/bindings/manual', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可手动绑定', 403)
+  const cfg = wechatPersonalConfig()
+  if (!cfg || cfg.channel !== 'wecom') throw httpError('企业微信通道未配置，无法手动绑定', 400)
+  const username = String(req.body?.username || '').trim()
+  const userid = String(req.body?.userid || '').trim()
+  if (!username || username.length > 80) throw httpError('系统账号不正确', 400)
+  if (!userid || userid.length > 64) throw httpError('企微 userid 不正确', 400)
+  await prisma.wechatBinding.upsert({
+    where: { username_channel: { username, channel: 'wecom' } },
+    create: { id: `wb-${crypto.randomUUID()}`, username, channel: 'wecom', openId: userid, nickname: userid, status: 'active' },
+    update: { openId: userid, nickname: userid, status: 'active', revokedAt: null },
+  })
+  res.json({ ok: true, username, userid })
+}))
+
+/** 管理员查询任意账号的微信绑定状态 */
+wechatBindRouter.get('/wechat/bindings/lookup', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可查询', 403)
+  const username = String(req.query.username || '').trim()
+  if (!username || username.length > 80) throw httpError('系统账号不正确', 400)
+  const rows = await prisma.wechatBinding.findMany({
+    where: { username },
+    orderBy: { boundAt: 'desc' },
+  })
+  res.json({
+    ok: true,
+    rows: rows.map((r) => ({ id: r.id, channel: r.channel, nickname: r.nickname, status: r.status, boundAt: r.boundAt })),
+  })
 }))
 
 /** 测试推送（仅对本人已绑定通道发送一条测试消息） */
