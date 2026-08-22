@@ -580,11 +580,19 @@ export default function AccountAdminPage({ currentUser, onBack }) {
                             (u.username || '?').slice(0, 2).toUpperCase()
                           )}
                         </span>
-                        <div className="leading-tight">
-                          <p className="font-semibold text-slate-700">
-                            {u.displayName || u.username}
-                            {u.displayName && <span className="ml-1.5 text-[11px] font-normal text-slate-400">@{u.username}</span>}
-                          </p>
+                        <div className="min-w-0 leading-tight">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="truncate text-sm font-bold text-slate-800">
+                              {u.displayName || u.username}
+                            </p>
+                            {/* 用户名徽章：弱化主名之下，一眼可辨的账号标识（无显示名时不重复展示） */}
+                            {u.displayName && (
+                              <span className="inline-flex max-w-[160px] items-center gap-0.5 truncate rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200/70">
+                                <span className="text-slate-400">@</span>
+                                <span className="truncate">{u.username}</span>
+                              </span>
+                            )}
+                          </div>
                           {isSelf && <p className="text-[11px] font-medium text-budu-500">{t('当前账号')}</p>}
                           {u.role !== 'developer' && u.role !== 'public' && (
                             <p className="text-[11px] text-slate-400">
