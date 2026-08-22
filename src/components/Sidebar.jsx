@@ -89,8 +89,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         </div>
       </div>
 
-      {/* 菜单 */}
-      <nav className="flex-1 space-y-1.5 overflow-y-auto px-4">
+      {/* 菜单（移动端内容超出时可滚动，底部渐变提示可继续滑动） */}
+      <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-4">
         <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
           {t('运营管理')}
         </p>
@@ -106,7 +106,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
               <div key={item.key}>
                 <button
                   onClick={() => toggleExpand(item.key)}
-                  className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition ${
+                  className={`group flex min-h-10 w-full items-center gap-3 rounded-2xl px-3.5 py-2 text-sm font-medium transition lg:min-h-11 lg:py-2.5 ${
                     active
                       ? 'bg-budu-50 text-budu-700'
                       : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
@@ -129,7 +129,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
                         <button
                           key={sub.key}
                           onClick={() => handleNavigate(sub.key)}
-                          className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition ${
+                          className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 py-1.5 text-[13px] font-medium transition lg:min-h-11 lg:py-2 ${
                             subActive
                               ? 'bg-budu-50 text-budu-700'
                               : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
@@ -151,7 +151,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
             <button
               key={item.key}
               onClick={() => handleNavigate(item.key)}
-              className={`group flex min-h-11 w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium transition ${
+              className={`group flex min-h-10 w-full items-center gap-3 rounded-2xl px-3.5 py-2 text-sm font-medium transition lg:min-h-11 lg:py-2.5 ${
                 active
                       ? 'bg-budu-50 text-budu-700'
                       : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
@@ -163,6 +163,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
             </button>
           )
         })}
+        {/* 移动端滚动提示：底部渐变淡出，暗示菜单可继续滑动（不影响点击） */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-7 rounded-b-2xl bg-gradient-to-t from-white via-white/70 to-transparent lg:hidden" />
       </nav>
 
       {/* 底部用户卡片 */}
