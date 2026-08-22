@@ -4,9 +4,9 @@ import Header from './Header'
 import HomeWorkspace from './HomeWorkspace'
 import MobileBottomNav from './MobileBottomNav'
 import PwaInstallPrompt from './PwaInstallPrompt'
+import ComplianceFooter from './ComplianceFooter'
 import PageLoading from './LoadingSkeleton'
 import PullToRefresh from './PullToRefresh'
-import { APP_VERSION } from '../version'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { t } from '../utils/text'
@@ -338,9 +338,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               </Suspense>
             </ErrorBoundary>
 
-            <footer className="pb-2 pt-1 text-center text-[11px] text-slate-300">
-              {t('© 2026 budu 甜品 · budu Operating System {version}', { version: APP_VERSION })}
-            </footer>
+            <ComplianceFooter className="pb-2 pt-1" />
           </main>
         </div>
         <MobileBottomNav

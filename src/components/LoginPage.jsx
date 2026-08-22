@@ -3,7 +3,7 @@ import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
 import PwaInstallPrompt from './PwaInstallPrompt'
-import { APP_VERSION } from '../version'
+import ComplianceFooter from './ComplianceFooter'
 
 /** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
@@ -99,9 +99,7 @@ export default function LoginPage({ onLogin }) {
             {t('新账号由开发者创建，如需开通请联系管理员')}
           </p>
         </div>
-        <p className="mt-4 text-center text-[11px] text-slate-300">
-          {t('© 2026 budu 甜品 · budu Operating System {version}', { version: APP_VERSION })}
-        </p>
+        <ComplianceFooter className="mt-4" />
       </div>
       <PwaInstallPrompt />
     </div>
