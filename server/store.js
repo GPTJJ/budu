@@ -34,6 +34,8 @@ const DEFAULT_DB = {
 let cached = null
 
 function redisConfig() {
+  // 自建服务器可显式选择持久卷文件存储；避免同时存在历史 KV 变量时悄悄切换数据源。
+  if (String(process.env.DATA_STORE || '').trim().toLowerCase() === 'file') return null
   // 兼容两套变量名：Vercel KV 标准命名（KV_REST_API_*）与 Upstash 原生命名（UPSTASH_REDIS_REST_*）
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN

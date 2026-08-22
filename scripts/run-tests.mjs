@@ -20,6 +20,7 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-config.mjs',                // 生产环境配置与数据存储 fail-closed
   'test-account-permissions.mjs',   // Auth / Permission（单元）→ critical
   'test-daily-entry-upgrade.mjs',   // DailyEntry（单元）→ critical
   'test-pos-core.mjs',              // POS 核心快照/归并（单元）→ critical
