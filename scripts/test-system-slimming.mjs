@@ -56,12 +56,9 @@ test('月份列表只从云端分析、每日录入和 POS 汇总派生', async 
     appType: 'custom',
     logLevel: 'silent',
   })
-  globalThis.localStorage = {
-    getItem: (key) => key === 'budu-os-cloud-mirror-v1' ? JSON.stringify(mirror) : null,
-    setItem: () => {},
-    removeItem: () => {},
-  }
   try {
+    const { seedCachedDataForTest } = await server.ssrLoadModule('/src/utils/userData.js')
+    seedCachedDataForTest(mirror)
     const { allMonths, employeeList } = await server.ssrLoadModule('/src/utils/selectors.js')
     assert.deepEqual(allMonths().map((row) => row.key), ['2026-09', '2026-10', '2026-11'])
     const staff = employeeList('all', '2026-10')
@@ -69,6 +66,5 @@ test('月份列表只从云端分析、每日录入和 POS 汇总派生', async 
     assert.equal(staff.filter((row) => row.type === 'parttime').length, 7)
   } finally {
     await server.close()
-    delete globalThis.localStorage
   }
 })
