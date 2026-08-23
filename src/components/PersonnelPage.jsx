@@ -532,10 +532,16 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const list = filter === 'all' ? scopedAll : filter === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
 
-  const handleAddStaff = (emp) => {
+  const handleAddStaff = async (emp) => {
     saveLocalStaffList([...localStaffList(), emp])
     setStaffVersion((v) => v + 1)
     setShowAdd(false)
+    // 自动生成员工档案（幂等：已存在的跳过），让「员工档案」页立即可见新员工
+    try {
+      await api('/v2/employees/backfill', { method: 'POST' })
+    } catch {
+      /* 档案生成失败不影响员工名单保存；可稍后在档案页手动「回填档案」 */
+    }
   }
 
   const handleDeleteStaff = (name) => {
