@@ -95,7 +95,7 @@ export default function CameraScanner({ channel, onDetected, onCancel, decoderFa
             }
             handledRef.current = true
             setPhase('detected')
-            setMessage('已识别付款码，正在提交模拟支付…')
+            setMessage(channel === 'wechat' ? '已识别付款码，正在提交支付…' : '已识别付款码，正在提交模拟支付…')
             releaseCamera()
             onDetectedRef.current(authCode)
           },

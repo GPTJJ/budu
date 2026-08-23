@@ -12,12 +12,31 @@
 // - 业务错误只携带安全错误码与安全描述。
 import crypto from 'node:crypto'
 import https from 'node:https'
-import { buildV2Xml, parseV2Xml, signV2Params, verifyV2Signature, WECHAT_V2_SIGN_HMAC_SHA256 } from './wechat-v2-signature.js'
+import { buildV2Xml, parseV2Xml, signV2Params, verifyV2Signature, WECHAT_V2_SIGN_HMAC_SHA256, WECHAT_V2_SIGN_MD5 } from './wechat-v2-signature.js'
 
 const PRIMARY_HOST = 'api.mch.weixin.qq.com'
 const FALLBACK_HOST = 'api2.mch.weixin.qq.com'
-const DEFAULT_CONNECT_TIMEOUT_MS = 5000
-const DEFAULT_REQUEST_TIMEOUT_MS = 10000
+export const WECHAT_V2_CONNECT_TIMEOUT_MS = 5000
+export const WECHAT_V2_REQUEST_TIMEOUT_MS = 10000
+const DEFAULT_CONNECT_TIMEOUT_MS = WECHAT_V2_CONNECT_TIMEOUT_MS
+const DEFAULT_REQUEST_TIMEOUT_MS = WECHAT_V2_REQUEST_TIMEOUT_MS
+
+// ============ R3：数学显式的硬性时限推导 ============
+// 单次 request() 的硬上限：主域名 + 备用域名，每域名最多（连接 5s + 请求 10s）
+export const WECHAT_V2_HOST_ATTEMPT_MS = WECHAT_V2_CONNECT_TIMEOUT_MS + WECHAT_V2_REQUEST_TIMEOUT_MS // 15000
+export const WECHAT_V2_MAX_OP_MS = 2 * WECHAT_V2_HOST_ATTEMPT_MS // 30000
+
+// 单次 Provider 操作的「绝对墙钟上限」：覆盖 DNS/TCP/TLS/请求/响应/主备回退，
+// 以及操作内部最多 3 次顺序 request()（closePayment = orderquery + reverse + 撤销后复查）。
+// 到期由 Provider 的 _bounded() 主动 abort 底层请求，返回受控歧义结果。
+export const WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS = 3 * WECHAT_V2_MAX_OP_MS // 90000
+// 数学显式别名（Codex 术语）
+export const MAX_PROVIDER_OPERATION_MS = WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS
+
+// 租约安全边际与安全最小租约：lease 必须严格大于 Provider 绝对时限，
+// 保证租约绝不在合法有界调用尚未返回前到期。
+export const WECHAT_PAY_LEASE_SAFETY_MARGIN_MS = 30000 // 30s 显式边际
+export const SAFE_MINIMUM_LEASE_MS = MAX_PROVIDER_OPERATION_MS + WECHAT_PAY_LEASE_SAFETY_MARGIN_MS // 120000
 
 export class WechatV2Error extends Error {
   constructor(code, message, extra = {}) {
@@ -30,8 +49,9 @@ export class WechatV2Error extends Error {
   }
 }
 
-function httpRequest({ host, path, body, cert, key, connectTimeoutMs, requestTimeoutMs, maxResponseBytes }) {
+function httpRequest({ host, path, body, cert, key, connectTimeoutMs, requestTimeoutMs, maxResponseBytes, signal }) {
   return new Promise((resolve, reject) => {
+    let timedOut = false
     const req = https.request(
       {
         host,
@@ -47,7 +67,6 @@ function httpRequest({ host, path, body, cert, key, connectTimeoutMs, requestTim
       (res) => {
         const chunks = []
         let received = 0
-        let timedOut = false
         const timer = setTimeout(() => {
           timedOut = true
           req.destroy(new Error('response timeout'))
@@ -77,6 +96,15 @@ function httpRequest({ host, path, body, cert, key, connectTimeoutMs, requestTim
     req.setTimeout(connectTimeoutMs, () => {
       req.destroy(new Error('connect timeout'))
     })
+    // R3：绝对时限中止——主动 destroy 底层 socket（含 DNS/TCP/TLS/请求/响应全阶段）
+    const onAbort = () => {
+      timedOut = true
+      req.destroy(new WechatV2Error('ABSOLUTE_DEADLINE', '微信支付请求超过绝对时限', { retryable: true, ambiguous: true }))
+    }
+    if (signal) {
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
     req.on('error', (error) => reject(error))
     req.end(body)
   })
@@ -114,7 +142,7 @@ export class WechatV2Client {
    * 发送微信 V2 请求并完成安全校验。
    * @param {string} path 例如 /pay/micropay
    * @param {Record<string,string|number>} params
-   * @param {{useMtls?:boolean, checkTradeFields?:{outTradeNo?:string, totalFee?:string|number}}} [opts]
+   * @param {{useMtls?:boolean, checkTradeFields?:{outTradeNo?:string, totalFee?:string|number}, signal?:AbortSignal}} [opts]
    * @returns {Promise<Record<string,string>>} 校验后的响应参数
    */
   async request(path, params, opts = {}) {
@@ -131,7 +159,7 @@ export class WechatV2Client {
     for (const host of [PRIMARY_HOST, FALLBACK_HOST]) {
       try {
         if (this._transport) {
-          xmlText = await this._transport(path, xmlBody, useMtls, host)
+          xmlText = await this._transport(path, xmlBody, useMtls, host, opts.signal)
         } else {
           xmlText = await httpRequest({
             host,
@@ -142,6 +170,7 @@ export class WechatV2Client {
             connectTimeoutMs: this.connectTimeoutMs,
             requestTimeoutMs: this.requestTimeoutMs,
             maxResponseBytes: this.maxResponseBytes,
+            signal: opts.signal,
           })
         }
         break
@@ -149,6 +178,8 @@ export class WechatV2Client {
         lastError = error
         // 网络类错误允许回退备用域名；解析后不再回退
         if (error instanceof WechatV2Error) throw error
+        // R3：绝对时限已到（signal 已中止）→ 不再回退备用域名，立即向上抛出
+        if (opts.signal?.aborted) throw error
       }
     }
     if (xmlText == null) {

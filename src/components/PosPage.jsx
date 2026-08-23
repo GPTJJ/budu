@@ -107,11 +107,20 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     }
   }, [])
 
+  // POS 配置与「当前所选门店」强绑定：切换门店立即重置为 fail-closed（仅现金），
+  // 并按新门店重新拉取；过期响应由 active 守卫丢弃（门店切换后旧响应不得覆盖新配置）。
   useEffect(() => {
     let active = true
-    api('/v2/pos/config')
+    setPosConfig(null)
+    const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : ''
+    api(`/v2/pos/config${query}`)
       .then((data) => { if (active) setPosConfig(data) })
       .catch(() => { /* 配置读取失败时 fail closed：只保留现金，绝不回退为可用的模拟微信支付 */ })
+    return () => { active = false }
+  }, [user.id, storeId])
+
+  useEffect(() => {
+    let active = true
     const cached = (() => {
       try {
         const raw = sessionStorage.getItem(productsCacheKey(user.id))
@@ -555,7 +564,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     }
   }
 
+  const hasUnresolvedWechat = () =>
+    Boolean(payment && payment.provider === 'wechat_pay' && ['created', 'pending'].includes(payment.status))
+
   const returnToOrdering = () => {
+    if (hasUnresolvedWechat()) {
+      setError('存在未核对的微信支付，请先完成核对（继续核对，或取消并核对）')
+      return
+    }
     savePendingOrder(user.id, storeId, '')
     setScannerChannel('')
     setCashConfirm(false)
@@ -626,7 +642,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
             {payment && !['success'].includes(payment.status) && (
               <div className="mx-auto mt-4 flex max-w-sm items-center justify-center gap-3">
                 <button disabled={queryingPayment} onClick={queryCurrentPayment} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-                  {queryingPayment ? '查询中…' : '查询支付结果'}
+                  {queryingPayment ? '查询中…' : (payment?.provider === 'wechat_pay' ? '继续核对' : '查询支付结果')}
                 </button>
                 {pendingPayment && (
                   <button disabled={queryingPayment} onClick={closeCurrentPayment} className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">

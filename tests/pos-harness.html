@@ -14,10 +14,15 @@
     const scanDelay = Number(params.get('scanDelay') || 20)
     const duplicateScan = params.get('duplicate') === '1'
     const payMode = params.get('paymode') || 'success'
+    // R2：双门店（验证 POS 配置按当前门店拉取）与过期配置响应（验证门店切换丢弃旧响应）
+    const twoStores = params.get('stores') === '2'
+    const configStale = params.get('configStale') === '1'
+    const storeKeys = twoStores ? ['test-store', 'store-2'] : ['test-store']
     let scanIndex = 0
     window.__paymentRequestCount = 0
     window.__cameraTrackStops = 0
     window.__cameraStarts = 0
+    window.__posConfigRequests = []
 
     Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { configurable: true, get() { return this.__srcObject || null }, set(value) { this.__srcObject = value } })
     HTMLMediaElement.prototype.play = async function () {}
@@ -57,13 +62,25 @@
       { productId: 'p-3', name: '蓝莓酸奶杯', sku: 'BUDU-003', barcode: '', posCategory: '饮品', salePriceCents: '2600', costPriceCents: '900', unit: '杯', image: '', isActive: true, trackInventory: false, sortOrder: 3, version: 1 },
       { productId: 'p-4', name: '法式海盐焦糖巧克力千层蛋糕', sku: 'BUDU-004', barcode: '690000000004', posCategory: '蛋糕', salePriceCents: '4500', costPriceCents: '1600', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 4, version: 1 },
     ]
-    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: [{ key: 'test-store', name: '测试门店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
+    const mirrorStores = [{ key: 'test-store', name: '测试门店' }]
+    if (twoStores) mirrorStores.push({ key: 'store-2', name: '第二门店' })
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: mirrorStores, schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
     let order = JSON.parse(sessionStorage.getItem('__budu-pos-test-order') || 'null')
     let payment = JSON.parse(sessionStorage.getItem('__budu-pos-test-payment') || 'null')
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/v2/pos/config') {
+        const storeId = new URL(url, location.origin).searchParams.get('storeId') || ''
+        window.__posConfigRequests.push({ storeId, at: Date.now() })
+        if (configStale) {
+          // store-2：未授权微信 → 仅现金，立即返回；store-1：慢 300ms 返回（过期响应场景）
+          const respond = () => json(storeId === 'store-2'
+            ? { mode: 'mock', mock: true, channels: ['cash'] }
+            : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
+          if (storeId === 'store-2') return respond()
+          return new Promise((resolve) => setTimeout(() => resolve(respond()), 300))
+        }
         const live = params.get('posmode') === 'live'
         return json(live
           ? { mode: 'live', mock: false, channels: ['cash'] }
@@ -120,6 +137,6 @@
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
     window.__posExitCount = 0
-    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys: ['test-store'] }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }))
+    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }))
   </script></body>
 </html>
