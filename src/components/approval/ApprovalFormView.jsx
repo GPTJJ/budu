@@ -138,7 +138,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
   const [slipNotice, setSlipNotice] = useState(null) // 当前导入的工资条（用于生成图片附件）
   const [candidates, setCandidates] = useState([]) // 账号姓名映射（抄送人/审批人显示）
   const [bankInfo, setBankInfo] = useState(null) // 员工档案银行卡（工资审批自动代入）
-  const autoBankRef = useRef('') // 上次自动代入的银行卡文本（避免覆盖手动修改）
+  const autoBankRef = useRef({ bankName: '', bankBranch: '', cardNumber: '' }) // 上次自动代入值（避免覆盖手动修改）
   const slipCardRef = useRef(null)
 
   useEffect(() => {
@@ -194,14 +194,24 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
         const bank = res && res.bank
         setBankInfo(bank || null)
         if (!bank) return
-        const text = [bank.bankName, bank.cardNumber || bank.maskedNumber, bank.cardLast4 ? `尾号${bank.cardLast4}` : '']
-          .filter(Boolean)
-          .join(' ')
+        const next = {
+          bankName: bank.bankName || '',
+          bankBranch: bank.bankBranch || '',
+          cardNumber: bank.cardNumber || bank.maskedNumber || '',
+        }
         setFormData((s) => {
-          // 仅当字段为空或仍是上次自动代入值时覆盖，避免覆盖手动修改
-          if (!s.bankCard || s.bankCard === autoBankRef.current) {
-            autoBankRef.current = text
-            return { ...s, bankCard: text }
+          const merged = { ...s }
+          let changed = false
+          for (const key of ['bankName', 'bankBranch', 'cardNumber']) {
+            // 仅当字段为空或仍是上次自动代入值时覆盖，避免覆盖手动修改
+            if (!s[key] || s[key] === autoBankRef.current[key]) {
+              merged[key] = next[key]
+              changed = true
+            }
+          }
+          if (changed) {
+            autoBankRef.current = next
+            return merged
           }
           return s
         })
@@ -384,7 +394,11 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
             type="number"
           />
         )
-      case 'bankCard':
+      case 'bankCard': {
+        // 银行卡信息组：银行名 / 支行名 / 卡号 独立展示；来源提示显示在最后一个字段下
+        const idx = schema.indexOf(field)
+        const isLastBank = !schema[idx + 1] || schema[idx + 1].type !== 'bankCard'
+        const hasEmployee = Boolean(String(formData.employee || '').split('::')[1])
         return (
           <div key={field.key}>
             <InputFieldRow
@@ -395,15 +409,16 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
               placeholder={bankInfo ? '可修改' : '自动代入自员工档案，未填写可留空'}
               maxLength={100}
             />
-            {String(formData.employee || '').split('::')[1] && (
+            {isLastBank && hasEmployee && (
               <p className="px-4 py-1.5 text-[11px] text-slate-400">
                 {bankInfo
-                  ? `信息来源员工档案 · ${bankInfo.bankName}${bankInfo.cardLast4 ? ` · 尾号 ${bankInfo.cardLast4}` : ''}${bankInfo.isPayroll ? ' · 工资卡' : ''}`
+                  ? `信息来源员工档案${bankInfo.cardLast4 ? ` · 尾号 ${bankInfo.cardLast4}` : ''}${bankInfo.isPayroll ? ' · 工资卡' : ''}`
                   : '员工档案暂无银行卡信息，可手动填写（不强制）'}
               </p>
             )}
           </div>
         )
+      }
       case 'textarea':
         return (
           <TextAreaRow
