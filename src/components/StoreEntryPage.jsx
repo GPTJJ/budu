@@ -83,7 +83,12 @@ function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled
 
 export default function StoreEntryPage({ user, onBack }) {
   const isManager = ['developer', 'admin', 'finance', 'manager'].includes(user?.role)
-  const [store, setStore] = useState(() => (allStores()[0] ? allStores()[0].key : ''))
+  // 门店范围：与全局 Header 同口径——超管/财务/管理员全量，其余角色仅限账号绑定门店
+  const visibleStores = useMemo(() => {
+    if (user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin') return allStores()
+    return allStores().filter((s) => (user?.storeKeys || []).includes(s.key))
+  }, [user])
+  const [store, setStore] = useState(() => (visibleStores[0] ? visibleStores[0].key : ''))
   const [date, setDate] = useState(todayStr)
   const [overview, setOverview] = useState(null)
   const [loadingOverview, setLoadingOverview] = useState(true)
@@ -362,11 +367,21 @@ export default function StoreEntryPage({ user, onBack }) {
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
       {savedTip && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-600">{savedTip}</div>}
 
+      {visibleStores.length === 0 && (
+        <div className="card grid place-items-center p-10 text-center">
+          <div>
+            <Building2 className="mx-auto h-8 w-8 text-slate-200" />
+            <p className="mt-3 text-sm font-semibold text-slate-600">{t('当前账号未绑定门店，请联系开发者绑定后再录入')}</p>
+          </div>
+        </div>
+      )}
+
+      {visibleStores.length > 0 && (<>
       <div className="card p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={t('门店')} icon={Building2}>
             <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
-              {allStores().map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+              {visibleStores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
             </select>
           </Field>
           <Field label={t('日期')} icon={CalendarDays}>
@@ -511,6 +526,7 @@ export default function StoreEntryPage({ user, onBack }) {
       <p className="text-center text-[11px] text-slate-300">
         {t('营业数据以门店来源为准（POS 自动同步 / 人工录入）；值班与工时以每日实际确认为准，用于工资与人效计算')}
       </p>
+      </>)}
 
       {exportOpen && <StoreEntryExportModal storeKey={store} storeName={storeInfo ? storeInfo.name : ''} onClose={() => setExportOpen(false)} />}
     </div>
