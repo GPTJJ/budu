@@ -55,6 +55,8 @@ const BUILTIN_TEMPLATES = [
   { key: 'approval_cc', name: '审批抄送', description: '审批通过后抄送相关人', titleTpl: '抄送：{title} 已通过', contentTpl: '{templateName}申请「{title}」已通过审批，请查收', target: 'approval', defaultPriority: 'normal' },
   { key: 'payroll_pending', name: '工资条待签收', description: '员工有新的工资条待签收', titleTpl: '工资条待签收：{employeeName} {period}', contentTpl: '工资周期 {period} · 实发 {amount} 元，请核对并签收', target: 'staff-payroll', defaultPriority: 'high' },
   { key: 'payroll_confirmed', name: '工资条已签收', description: '员工签收工资条通知', titleTpl: '{employeeName} 已签收工资条 {period}', contentTpl: '{employeeName} 已于 {time} 签收工资周期 {period} 的工资条', target: 'staff-payroll', defaultPriority: 'normal' },
+  { key: 'payroll_recalled', name: '工资条已撤回', description: '工资条被管理员撤回通知', titleTpl: '工资条已撤回：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条已被撤回，不再需要签收；如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'high' },
+  { key: 'payroll_deleted', name: '工资条已删除', description: '工资条记录被管理员删除通知', titleTpl: '工资条已删除：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条记录已删除，如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'normal' },
   { key: 'transfer_new', name: '新调货申请', description: '有新的调货申请', titleTpl: '新调货申请：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'normal' },
   { key: 'transfer_shipped', name: '调货已发货', description: '调货已发货通知', titleTpl: '调货已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
   { key: 'purchase_new', name: '新采购申请', description: '有新的采购申请', titleTpl: '新采购申请：{store}', contentTpl: '货品 {count} 种{supplier} · 提交人 {submitter}', target: 'inventory-purchase', defaultPriority: 'normal' },

@@ -112,6 +112,7 @@ export default function PayrollPage({ user, onBack, onOpenProfile }) {
           ['all', t('全部')],
           ['pending', t('待签收')],
           ['confirmed', t('已签收')],
+          ['recalled', t('已撤回')],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -128,7 +129,9 @@ export default function PayrollPage({ user, onBack, onOpenProfile }) {
                     ? 'bg-white/25 text-white'
                     : v === 'pending'
                       ? 'bg-amber-100 text-amber-600'
-                      : 'bg-emerald-100 text-emerald-600'
+                      : v === 'confirmed'
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-rose-100 text-rose-600'
                 }`}
               >
                 {countOf(v)}
@@ -168,10 +171,14 @@ export default function PayrollPage({ user, onBack, onOpenProfile }) {
                   <span>{isDev ? `${r.employeeName} · ` : ''}{periodLabel(r.periodType, r.periodKey)}</span>
                   <span
                     className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
-                      r.status === 'confirmed' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                      r.status === 'confirmed'
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : r.status === 'recalled'
+                          ? 'bg-rose-50 text-rose-600'
+                          : 'bg-amber-50 text-amber-600'
                     }`}
                   >
-                    {r.status === 'confirmed' ? t('已签收') : t('待签收')}
+                    {r.status === 'confirmed' ? t('已签收') : r.status === 'recalled' ? t('已撤回') : t('待签收')}
                   </span>
                   {isDev && <span className="text-[11px] font-normal text-slate-400">{r.storeKey}</span>}
                 </p>
@@ -181,6 +188,10 @@ export default function PayrollPage({ user, onBack, onOpenProfile }) {
                     <span className="ml-2 text-[11px] text-slate-400">
                       <CheckCircle2 className="mr-0.5 inline h-3 w-3 text-emerald-500" />
                       {r.confirmedBy} {t('于')} {r.confirmedAt ? new Date(r.confirmedAt).toLocaleString('zh-CN', { hour12: false }) : ''} {t('签收')}
+                    </span>
+                  ) : r.status === 'recalled' ? (
+                    <span className="ml-2 text-[11px] text-slate-400">
+                      {r.recalledBy} {t('于')} {r.recalledAt ? new Date(r.recalledAt).toLocaleString('zh-CN', { hour12: false }) : ''} {t('撤回')}
                     </span>
                   ) : (
                     <span className="ml-2 text-[11px] text-slate-400">
@@ -205,7 +216,8 @@ export default function PayrollPage({ user, onBack, onOpenProfile }) {
           notice={detail}
           onClose={() => setDetail(null)}
           onConfirmed={handleConfirmed}
-          onOpenProfile={hasModuleAccess(user, 'employee-profile') ? openEmployeeProfile : undefined}
+          onOpenProfile={hasModuleAccess(user, 'employee-profile') ? onOpenProfile : undefined}
+          canManage={isDev}
         />
       )}
 

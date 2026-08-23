@@ -31,9 +31,20 @@ function serialize(row) {
     status: row.status,
     confirmedAt: row.confirmedAt,
     confirmedBy: row.confirmedBy,
+    recalledAt: row.recalledAt,
+    recalledBy: row.recalledBy,
+    deletedAt: row.deletedAt,
+    deletedBy: row.deletedBy,
     createdBy: row.createdBy,
     createdAt: row.createdAt,
   }
+}
+
+/** 周期文案（通知用）：'2026-08' → 2026年8月；周/自定义 → '2026-08-10 ~ 2026-08-16' */
+function periodText(row) {
+  return row.periodType === 'week' || row.periodType === 'custom'
+    ? String(row.periodKey).replace('~', ' ~ ')
+    : `${row.periodKey.slice(0, 4)}年${Number(row.periodKey.slice(5, 7))}月`
 }
 
 /** 查看范围：开发者全量；其它账号（含店长）仅本人（绑定员工或 username 直配） */
@@ -57,6 +68,8 @@ function noticeWhere(user, query = {}) {
 payrollNoticeRouter.get('/payroll-notices', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const where = noticeWhere(req.user, req.query)
+  // 已删除的工资条不再展示（撤回的仍可见，便于追溯）
+  where.status = req.query.status ? String(req.query.status) : { not: 'deleted' }
   const rows = await prisma.payrollNotice.findMany({
     where,
     orderBy: { createdAt: 'desc' },
@@ -98,9 +111,9 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
     payloads.push({ employeeName, storeKey, targetUsername, snapshot, totalCents })
   }
 
-  // 同员工同周期重复发放 → 409
+  // 同员工同周期重复发放 → 409（已撤回/已删除的工资条不占用周期，可重新发放修正）
   const existing = await prisma.payrollNotice.findMany({
-    where: { periodType: ptype, periodKey },
+    where: { periodType: ptype, periodKey, status: { notIn: ['recalled', 'deleted'] } },
     select: { id: true, employeeName: true, storeKey: true },
   })
   const existed = new Set(existing.map((r) => `${r.storeKey}::${r.employeeName}`))
@@ -129,9 +142,7 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
   }
   // 通知中心：发放工资条 → 员工站内消息 + 微信提醒（待签收）
   for (const r of created) {
-    const period = r.periodType === 'week' || r.periodType === 'custom'
-      ? String(r.periodKey).replace('~', ' ~ ')
-      : `${r.periodKey.slice(0, 4)}年${Number(r.periodKey.slice(5, 7))}月`
+    const period = periodText(r)
     const total = (Number(r.totalCents) / 100).toFixed(2)
     if (r.targetUsername) {
       notify({
@@ -162,6 +173,9 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
       row.employeeName === (req.user.staffKey || '').split('::')[1]) ||
     isSuperUser(req.user)
   if (!isOwner) throw httpError('无权签收该工资条', 403)
+  if (row.status === 'recalled' || row.status === 'deleted') {
+    throw httpError(row.status === 'recalled' ? '该工资条已被撤回，无法签收' : '该工资条已被删除', 400)
+  }
   if (row.status === 'confirmed') {
     return res.json({ ok: true, row: serialize(row) })
   }
@@ -170,9 +184,7 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
     data: { status: 'confirmed', confirmedAt: new Date(), confirmedBy: req.user.username },
   })
   // 通知中心：签收留痕通知发放人（开发者/管理员/财务）
-  const period = row.periodType === 'week' || row.periodType === 'custom'
-    ? String(row.periodKey).replace('~', ' ~ ')
-    : `${row.periodKey.slice(0, 4)}年${Number(row.periodKey.slice(5, 7))}月`
+  const period = periodText(row)
   if (row.createdBy) {
     notify({
       username: row.createdBy,
@@ -182,6 +194,60 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
         period,
         time: new Date().toLocaleString('zh-CN', { hour12: false }),
       },
+      target: 'staff-payroll',
+      refType: 'payroll',
+      refId: row.id,
+    }).catch(() => {})
+  }
+  res.json({ ok: true, row: serialize(updated) })
+}))
+
+/** 撤回工资条：仅开发者/管理员/财务；已签收的不可撤回（避免签收留痕被抹掉） */
+payrollNoticeRouter.post('/payroll-notices/:id/recall', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可撤回工资条', 403)
+  const row = await prisma.payrollNotice.findUnique({ where: { id: req.params.id } })
+  if (!row) throw httpError('工资条不存在', 404)
+  if (row.status === 'confirmed') throw httpError('该工资条已被员工签收，无法撤回', 409)
+  if (row.status === 'recalled') throw httpError('该工资条已撤回', 400)
+  if (row.status === 'deleted') throw httpError('该工资条已删除', 400)
+  const updated = await prisma.payrollNotice.update({
+    where: { id: row.id },
+    data: { status: 'recalled', recalledAt: new Date(), recalledBy: req.user.username },
+  })
+  // 通知员工：工资条已撤回
+  if (row.targetUsername) {
+    notify({
+      username: row.targetUsername,
+      templateKey: 'payroll_recalled',
+      data: { employeeName: row.employeeName, period: periodText(row) },
+      priority: 'high',
+      target: 'staff-payroll',
+      refType: 'payroll',
+      refId: row.id,
+    }).catch(() => {})
+  }
+  res.json({ ok: true, row: serialize(updated) })
+}))
+
+/** 删除工资条（软删除）：仅开发者/管理员/财务；删除后同周期可重新发放 */
+payrollNoticeRouter.post('/payroll-notices/:id/delete', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可删除工资条', 403)
+  const row = await prisma.payrollNotice.findUnique({ where: { id: req.params.id } })
+  if (!row) throw httpError('工资条不存在', 404)
+  if (row.status === 'deleted') throw httpError('该工资条已删除', 400)
+  const updated = await prisma.payrollNotice.update({
+    where: { id: row.id },
+    data: { status: 'deleted', deletedAt: new Date(), deletedBy: req.user.username },
+  })
+  // 通知员工：工资条记录已删除
+  if (row.targetUsername) {
+    notify({
+      username: row.targetUsername,
+      templateKey: 'payroll_deleted',
+      data: { employeeName: row.employeeName, period: periodText(row) },
+      priority: 'normal',
       target: 'staff-payroll',
       refType: 'payroll',
       refId: row.id,

@@ -676,9 +676,13 @@ model PayrollNotice {
   targetUsername String    @default("") @map("target_username")
   snapshot       Json // 每日明细数组 + 汇总快照（发放时固定）
   totalCents     BigInt    @map("total_cents")
-  status         String    @default("pending") // pending | confirmed
+  status         String    @default("pending") // pending | confirmed | recalled | deleted
   confirmedAt    DateTime? @map("confirmed_at")
   confirmedBy    String    @default("") @map("confirmed_by")
+  recalledAt     DateTime? @map("recalled_at")
+  recalledBy     String    @default("") @map("recalled_by")
+  deletedAt      DateTime? @map("deleted_at")
+  deletedBy      String    @default("") @map("deleted_by")
   createdBy      String    @default("") @map("created_by")
   createdAt      DateTime  @default(now()) @map("created_at")
 
