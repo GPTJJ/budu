@@ -373,9 +373,22 @@ export async function commitEntries(entries) {
 
 export async function commitStaff(staff) {
   getUserData().staff = staff
-  syncUserData(['staff'])
+  writeMirror()
+  // 直接以本次快照写服务端（不依赖 saveTimer 读 cached）：
+  // 登录时 loadUserData 异步返回的旧数据可能覆盖 cached.staff，
+  // 若走 syncUserData 定时器会把空 staff 推给服务端，导致新增员工
+  // 在其他页面/设备（如账号管理绑定员工）不可见。
+  const snapshot = Array.isArray(staff) ? staff : []
+  let kvOk = false
   try {
-    await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff }) })
+    await api('/userdata', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
+    kvOk = true
+  } catch {
+    /* 服务端不可用时回退本地镜像 */
+  }
+  if (!kvOk) syncUserData(['staff'])
+  try {
+    await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
   } catch {
     /* PostgreSQL 不可用时仅同步 KV */
   }
