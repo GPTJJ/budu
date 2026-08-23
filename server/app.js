@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { loadDb, persist } from './store.js'
+import { getUserById, getUserByUsername, listUsers, createUser, updateUser, deleteUser } from './user-store.js'
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
@@ -302,7 +303,8 @@ export function createApp() {
     const token = req.cookies[COOKIE]
     const payload = token ? verifyToken(token, await getSecret()) : null
     if (!payload || !payload.sub) return res.status(401).json({ error: '未登录或登录已过期' })
-    const user = (await loadDb()).users.find((u) => u.id === payload.sub)
+    // Data Authority DA-2：账号权威 = PostgreSQL
+    const user = await getUserById(payload.sub)
     if (!user) return res.status(401).json({ error: '账号不存在' })
     if (user.status === 'disabled' || user.role === 'public') return res.status(403).json({ error: '账号已停用，请联系开发者' })
     req.user = user
@@ -612,16 +614,17 @@ export function createApp() {
     const password = String(req.body.password || '')
     if (username.length < 2 || username.length > 20) return res.status(400).json({ error: '用户名需为 2-20 个字符' })
     if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' })
-    const db = await loadDb()
+    // Data Authority DA-2：账号权威 = PostgreSQL
+    const existing = await listUsers()
     // 自助注册已关闭：仅当系统还没有任何账号时允许注册（首个开发者引导）
-    if (db.users.length > 0) {
+    if (existing.length > 0) {
       return res.status(403).json({ error: '注册已关闭，新账号请联系开发者创建' })
     }
-    if (db.users.some((u) => u.username === username)) return res.status(409).json({ error: '用户名已存在' })
+    if (existing.some((u) => u.username === username)) return res.status(409).json({ error: '用户名已存在' })
     const user = {
       id: crypto.randomUUID(),
       username,
-      role: db.users.length === 0 ? 'developer' : 'store',
+      role: 'developer',
       storeKeys: [],
       staffKey: '',
       status: 'active',
@@ -630,8 +633,7 @@ export function createApp() {
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
-    db.users.push(user)
-    await persist()
+    await createUser(user)
     setAuthCookie(res, signToken(user, await getSecret()))
     res.json({ user: userPublic(user) })
   })
@@ -669,7 +671,9 @@ export function createApp() {
     }
     const bindingError = validateBoundRole(db, role, storeKeys, staffKey)
     if (bindingError) return res.status(400).json({ error: bindingError })
-    if (db.users.some((u) => u.username === username)) {
+    // Data Authority DA-2：账号权威 = PostgreSQL
+    const existing = await listUsers()
+    if (existing.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
     const user = {
@@ -685,8 +689,7 @@ export function createApp() {
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     }
-    db.users.push(user)
-    await persist()
+    await createUser(user)
     res.json({ user: userPublic(user) })
   })
 
@@ -694,7 +697,8 @@ export function createApp() {
   app.post('/api/auth/login', async (req, res) => {
     const username = String(req.body.username || '').trim()
     const password = String(req.body.password || '')
-    const user = (await loadDb()).users.find((u) => u.username === username)
+    // Data Authority DA-2：账号权威 = PostgreSQL
+    const user = await getUserByUsername(username)
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
     }
@@ -728,17 +732,17 @@ export function createApp() {
       if (newPassword.length < 6) {
         return res.status(400).json({ error: '密码至少 6 位' })
       }
+      await updateUser(req.user.id, { passwordHash: hashPassword(newPassword) })
       req.user.passwordHash = hashPassword(newPassword)
-      await persist()
       return res.json({ ok: true })
     }
-    const db = await loadDb()
     if (body.username !== undefined) {
       const username = String(body.username || '').trim()
       if (username.length < 2 || username.length > 20) {
         return res.status(400).json({ error: '用户名需为 2-20 个字符' })
       }
-      if (db.users.some((u) => u.id !== req.user.id && u.username === username)) {
+      const all = await listUsers()
+      if (all.some((u) => u.id !== req.user.id && u.username === username)) {
         return res.status(409).json({ error: '用户名已存在' })
       }
       req.user.username = username
@@ -753,7 +757,7 @@ export function createApp() {
       }
       req.user.avatar = avatar
     }
-    await persist()
+    await updateUser(req.user.id, { username: req.user.username, avatar: req.user.avatar })
     res.json({ user: userPublic(req.user) })
   })
 
@@ -768,8 +772,8 @@ export function createApp() {
     if (newSecondPassword.length < 6) {
       return res.status(400).json({ error: '二级密码至少 6 位' })
     }
+    await updateUser(req.user.id, { secondPasswordHash: hashPassword(newSecondPassword) })
     req.user.secondPasswordHash = hashPassword(newSecondPassword)
-    await persist()
     res.json({ ok: true })
   })
 
@@ -788,13 +792,13 @@ export function createApp() {
   // ---------- 修改用户名 / 头像 ----------
   app.put('/api/auth/profile', requireAuth, async (req, res) => {
     const body = req.body || {}
-    const db = await loadDb()
     if (body.username !== undefined) {
       const username = String(body.username || '').trim()
       if (username.length < 2 || username.length > 20) {
         return res.status(400).json({ error: '用户名需为 2-20 个字符' })
       }
-      if (db.users.some((u) => u.id !== req.user.id && u.username === username)) {
+      const all = await listUsers()
+      if (all.some((u) => u.id !== req.user.id && u.username === username)) {
         return res.status(409).json({ error: '用户名已存在' })
       }
       req.user.username = username
@@ -809,7 +813,7 @@ export function createApp() {
       }
       req.user.avatar = avatar
     }
-    await persist()
+    await updateUser(req.user.id, { username: req.user.username, avatar: req.user.avatar })
     res.json({ user: userPublic(req.user) })
   })
 
@@ -823,15 +827,15 @@ export function createApp() {
     if (newPassword.length < 6) {
       return res.status(400).json({ error: '密码至少 6 位' })
     }
+    await updateUser(req.user.id, { passwordHash: hashPassword(newPassword) })
     req.user.passwordHash = hashPassword(newPassword)
-    await persist()
     res.json({ ok: true })
   })
 
   // ---------- 账号管理（最高权限） ----------
   app.get('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
-    const db = await loadDb()
-    res.json({ users: db.users.map(userPublic) })
+    const users = await listUsers()
+    res.json({ users: users.map(userPublic) })
   })
 
   app.put('/api/admin/users/:id/role', requireAuth, requireAccountAdmin, async (req, res) => {
@@ -852,7 +856,9 @@ export function createApp() {
       staffKey = normalizeStaffKey(req.body.staffKey)
       if (staffKey === null) return res.status(400).json({ error: 'staffKey 格式错误' })
     }
-    const target = db.users.find((u) => u.id === req.params.id)
+    // Data Authority DA-2：账号权威 = PostgreSQL
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能修改自己的权限' })
@@ -860,7 +866,7 @@ export function createApp() {
     // 降级保护：若目标当前是超管且将变为非超管，需保证至少还剩一个超管
     const superRoles = ['developer', 'finance', 'admin']
     if (superRoles.includes(target.role) && !superRoles.includes(role)) {
-      const superCount = db.users.filter((u) => superRoles.includes(u.role)).length
+      const superCount = users.filter((u) => superRoles.includes(u.role)).length
       if (superCount <= 1) {
         return res.status(400).json({ error: '至少保留一个最高权限账号' })
       }
@@ -874,41 +880,43 @@ export function createApp() {
     }
     const bindingError = validateBoundRole(db, role, effStoreKeys, effStaffKey)
     if (bindingError) return res.status(400).json({ error: bindingError })
-    target.role = role
-    if (storeKeys !== null) target.storeKeys = storeKeys
-    if (staffKey !== null) target.staffKey = staffKey
-    if (!['manager', 'staff'].includes(role)) target.staffKey = ''
-    target.status = 'active'
-    target.disabledAt = ''
-    target.bindingLegacyExempt = false
-    target.permissions = normalizeAccountPermissions(null, role, target.assetCenter === true)
-    target.assetCenter = target.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
-    await persist()
-    res.json({ user: userPublic(target) })
+    const next = {
+      role,
+      status: 'active',
+      disabledAt: null,
+      bindingLegacyExempt: false,
+      storeKeys: effStoreKeys,
+      staffKey: !['manager', 'staff'].includes(role) ? '' : effStaffKey,
+      permissions: normalizeAccountPermissions(null, role, target.assetCenter === true),
+    }
+    next.assetCenter = next.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
+    const updated = await updateUser(target.id, next)
+    res.json({ user: userPublic(updated) })
   })
 
   app.put('/api/admin/users/:id/permissions', requireAuth, requireAccountAdmin, async (req, res) => {
-    const db = await loadDb()
-    const target = db.users.find((u) => u.id === req.params.id)
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.role === 'developer') return res.status(400).json({ error: '开发者固定拥有全部权限' })
     if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
-    target.permissions = normalizeAccountPermissions(req.body, target.role, target.assetCenter === true)
-    target.assetCenter = target.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
-    target.permissionsUpdatedAt = new Date().toISOString()
-    target.permissionsUpdatedBy = req.user.username
-    await persist()
-    res.json({ user: userPublic(target) })
+    const permissions = normalizeAccountPermissions(req.body, target.role, target.assetCenter === true)
+    const updated = await updateUser(target.id, {
+      permissions,
+      assetCenter: permissions.modules[MODULE_KEYS.ASSET_CENTER] === true,
+      permissionsUpdatedAt: new Date().toISOString(),
+      permissionsUpdatedBy: req.user.username,
+    })
+    res.json({ user: userPublic(updated) })
   })
 
   app.put('/api/admin/users/:id/name', requireAuth, requireAccountAdmin, async (req, res) => {
-    const db = await loadDb()
-    const target = db.users.find((u) => u.id === req.params.id)
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     const displayName = String(req.body.name || '').trim().slice(0, 20)
-    target.displayName = displayName
-    await persist()
-    res.json({ user: userPublic(target) })
+    const updated = await updateUser(target.id, { displayName })
+    res.json({ user: userPublic(updated) })
   })
 
   app.put('/api/admin/users/:id/password', requireAuth, requireAccountAdmin, async (req, res) => {
@@ -916,27 +924,25 @@ export function createApp() {
     if (newPassword.length < 6) {
       return res.status(400).json({ error: '密码至少 6 位' })
     }
-    const db = await loadDb()
-    const target = db.users.find((u) => u.id === req.params.id)
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
-    target.passwordHash = hashPassword(newPassword)
-    await persist()
+    await updateUser(target.id, { passwordHash: hashPassword(newPassword) })
     res.json({ ok: true })
   })
 
   app.delete('/api/admin/users/:id', requireAuth, requireAccountAdmin, async (req, res) => {
-    const db = await loadDb()
-    const target = db.users.find((u) => u.id === req.params.id)
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能删除自己' })
     }
-    const superCount = db.users.filter((u) => ['developer', 'finance', 'admin'].includes(u.role)).length
+    const superCount = users.filter((u) => ['developer', 'finance', 'admin'].includes(u.role)).length
     if (['developer', 'finance', 'admin'].includes(target.role) && superCount <= 1) {
       return res.status(400).json({ error: '至少保留一个最高权限账号' })
     }
-    db.users = db.users.filter((u) => u.id !== target.id)
-    await persist()
+    await deleteUser(target.id)
     res.json({ ok: true })
   })
 

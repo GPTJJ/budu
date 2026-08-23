@@ -6,7 +6,7 @@ import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
-import { loadDb } from './store.js'
+import { listUsers, getUserByUsername } from './user-store.js'
 import { notify } from './notification-center.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
@@ -132,8 +132,7 @@ export async function ensureApprovalTemplates() {
 
 /** 用户上下文：角色用户列表 + 员工绑定账号映射（来源 KV 共享数据） */
 async function userCtx() {
-  const db = await loadDb()
-  const users = Array.isArray(db.users) ? db.users : []
+  const users = await listUsers()
   const roleUsers = {}
   const staffKeyMap = {}
   for (const u of users) {
@@ -191,10 +190,8 @@ approvalRouter.get('/approvals/templates', wrap(async (req, res) => {
 approvalRouter.get('/approvals/cc-candidates', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   if (!canCreate(req.user)) throw httpError('无权限', 403)
-  const db = await loadDb()
-  const users = (Array.isArray(db.users) ? db.users : []).filter(
-    (u) => u.role !== 'public' && u.role !== 'cashier',
-  )
+  const all = await listUsers()
+  const users = all.filter((u) => u.role !== 'public' && u.role !== 'cashier')
   res.json({
     ok: true,
     rows: users.map((u) => ({ username: u.username, role: u.role, name: u.displayName || u.username })),
@@ -244,8 +241,7 @@ approvalRouter.get('/approvals/payroll-bank-info', wrap(async (req, res) => {
 /** 校验额外抄送人账号列表（去重；仅保留存在的非公开/收银账号） */
 async function validateCcUsernames(rawList) {
   if (!Array.isArray(rawList) || rawList.length === 0) return []
-  const db = await loadDb()
-  const users = Array.isArray(db.users) ? db.users : []
+  const users = await listUsers()
   const seen = new Set()
   const out = []
   for (const name of rawList.slice(0, 20)) {

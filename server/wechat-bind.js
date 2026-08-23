@@ -4,7 +4,7 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
-import { loadDb } from './store.js'
+import { getUserByUsername } from './user-store.js'
 import { httpError } from './pos-core.js'
 import { canManageAccounts } from '../shared/accountPermissions.js'
 import { publicBaseUrl, wechatPersonalConfig, wecomAccessToken } from './notification-center.js'
@@ -36,7 +36,7 @@ function htmlEscape(value) {
 }
 
 async function findSystemUser(username, { requireActive = false } = {}) {
-  const user = (await loadDb()).users.find((item) => item.username === username)
+  const user = await getUserByUsername(username)
   if (!user) throw httpError('系统账号不存在', 404)
   if (requireActive && (user.status === 'disabled' || user.role === 'public')) {
     throw httpError('系统账号已停用，不能绑定', 409)

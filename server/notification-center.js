@@ -3,7 +3,7 @@
 // 设计原则：纯增量，不改变现有业务逻辑；微信通道未配置时优雅降级为仅站内
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
-import { loadDb } from './store.js'
+import { listUsers } from './user-store.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
@@ -316,6 +316,6 @@ export async function broadcast(title, content) {
 
 /** 辅助：获取账号用户列表（供抄送/绑定使用） */
 export async function listUsernames() {
-  const db = await loadDb()
-  return (Array.isArray(db.users) ? db.users : []).map((u) => ({ username: u.username, role: u.role, name: u.displayName || u.username }))
+  const users = await listUsers()
+  return users.map((u) => ({ username: u.username, role: u.role, name: u.displayName || u.username }))
 }

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
-import { loadDb, persist } from './store.js'
+import { listUsers, updateUser } from './user-store.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser, normalizeAccountPermissions } from '../shared/accountPermissions.js'
@@ -517,8 +517,8 @@ assetCenterRouter.get('/asset-center/reminders', wrap(async (req, res) => {
 
 assetCenterRouter.get('/asset-center/grants', wrap(async (req, res) => {
   if (req.user?.role !== 'developer') throw httpError('无权限', 403)
-  const db = await loadDb()
-  const users = (Array.isArray(db.users) ? db.users : []).map((u) => ({
+  const all = await listUsers()
+  const users = all.map((u) => ({
     id: u.id,
     username: u.username,
     role: u.role,
@@ -531,21 +531,19 @@ assetCenterRouter.put('/asset-center/grants', wrap(async (req, res) => {
   if (req.user?.role !== 'developer') throw httpError('无权限', 403)
   const userId = String(req.body?.userId || '')
   const granted = req.body?.granted === true
-  const db = await loadDb()
-  const target = (db.users || []).find((u) => u.id === userId)
+  const users = await listUsers()
+  const target = users.find((u) => u.id === userId)
   if (!target) throw httpError('账号不存在', 404)
-  target.assetCenter = granted
-  const permissions = normalizeAccountPermissions(target.permissions, target.role, target.assetCenter === true)
+  const permissions = normalizeAccountPermissions(target.permissions, target.role, granted)
   permissions.modules[MODULE_KEYS.ASSET_CENTER] = granted
-  target.permissions = normalizeAccountPermissions(permissions, target.role)
-  await persist()
+  const updated = await updateUser(target.id, { assetCenter: granted, permissions: normalizeAccountPermissions(permissions, target.role) })
   await prisma.assetAccessGrant.upsert({
     where: { userId },
-    update: { username: target.username, grantedBy: req.user.username },
-    create: { id: `aag-${crypto.randomUUID()}`, userId, username: target.username, grantedBy: req.user.username },
+    update: { username: updated.username, grantedBy: req.user.username },
+    create: { id: `aag-${crypto.randomUUID()}`, userId, username: updated.username, grantedBy: req.user.username },
   })
-  await logAction(req.user, granted ? 'grant' : 'revoke', { fileName: target.username, detail: `资产中心${granted ? '授权' : '取消授权'}` })
-  res.json({ ok: true, user: { id: target.id, username: target.username, assetCenter: hasModuleAccess(target, MODULE_KEYS.ASSET_CENTER) } })
+  await logAction(req.user, granted ? 'grant' : 'revoke', { fileName: updated.username, detail: `资产中心${granted ? '授权' : '取消授权'}` })
+  res.json({ ok: true, user: { id: updated.id, username: updated.username, assetCenter: hasModuleAccess(updated, MODULE_KEYS.ASSET_CENTER) } })
 }))
 
 assetCenterRouter.get('/asset-center/logs', wrap(async (req, res) => {

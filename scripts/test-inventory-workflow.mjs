@@ -46,6 +46,9 @@ if (!blocked) throw new Error('库存不足时未禁止发货')
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-inventory-'))
 process.env.DATA_DIR = dataDir
+// Data Authority DA-2：账号权威 = PostgreSQL → 测试使用一次性 PG schema（全量迁移）
+import { createDisposablePgSchema } from './helpers/test-pg-schema.mjs'
+process.env.DATABASE_URL = await createDisposablePgSchema('da_inv')
 const { createApp } = await import('../server/app.js')
 const server = createApp().listen(0)
 try {

@@ -30,13 +30,28 @@ model Store {
   orders                       Order[]
 }
 
+/// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
 model User {
-  id           String   @id
-  username     String   @unique
-  passwordHash String
-  role         String   @default("staff")
-  avatar       String   @default("")
-  createdAt    DateTime @default(now())
+  id                  String    @id
+  username            String    @unique
+  passwordHash        String
+  role                String    @default("staff") // developer | admin | finance | manager | staff | cashier | public
+  displayName         String    @default("") @map("display_name")
+  avatar              String    @default("")
+  storeKeys           Json      @default("[]") @map("store_keys") // 绑定门店 key 列表
+  staffKey            String    @default("") @map("staff_key") // storeKey::name（DA-2.4 过渡期保留；后续换 employeeId）
+  status              String    @default("active") // active | disabled
+  secondPasswordHash  String    @default("") @map("second_password_hash")
+  bindingLegacyExempt Boolean   @default(false) @map("binding_legacy_exempt")
+  assetCenter         Boolean   @default(false) @map("asset_center")
+  permissions         Json      @default("{}") // 模块授权（normalizeAccountPermissions 产物）
+  disabledAt          DateTime? @map("disabled_at")
+  permissionsUpdatedAt DateTime? @map("permissions_updated_at")
+  permissionsUpdatedBy String    @default("") @map("permissions_updated_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("User")
 }
 
 model Staff {
