@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Swipe Back Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import Dashboard from '/src/components/Dashboard.jsx'
+    import '/src/index.css'
+
+    const MODE = new URLSearchParams(location.search).get('mode') || 'mobile'
+    // 桌面模式模拟鼠标（isTouchDevice=false → 不启用 swipe-back），移动模式模拟触屏
+    if (MODE === 'desktop') {
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, configurable: true })
+      delete window.ontouchstart
+    } else {
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
+    }
+
+    const ALL_MODULES = ['overview','analysis','staff','staff-payroll','employee-profile','store-entry','store-schedule','store-mailing','store-pos','product-center','inventory-transfer','inventory-purchase','finance','finance-invoice','approval','asset-center','settings']
+    const user = {
+      id: 'u-dev', username: 'budu', displayName: 'budu', role: 'developer',
+      storeKeys: [], staffKey: '', assetCenter: true, status: 'active',
+      bindingComplete: true, bindingLegacyExempt: false,
+      permissions: { modules: Object.fromEntries(ALL_MODULES.map((k) => [k, true])), inventoryTransferAll: true },
+    }
+
+    const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+    window.fetch = async (input, options = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.origin)
+      const p = url.pathname
+      if (p === '/api/userdata') {
+        return json({
+          users: [user], staff: [
+            { name: '隋晓', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店', salary: 0 },
+            { name: '叶芷辰', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店', salary: 0 },
+          ], removedStaff: [],
+          stores: [
+            { key: 'tongying', name: '北京通盈中心店' },
+            { key: 'guanshe', name: '北京官舍店' },
+          ],
+          schedules: {}, products: [], inventoryRequests: [], inventory: [],
+          analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [],
+          posDaily: [], posProductSales: [], entries: {},
+        })
+      }
+      if (p === '/api/v2/daily-entries' || p === '/api/v2/daily-pay-adjustments'
+        || p === '/api/v2/pos/daily-summary' || p === '/api/v2/pos/product-sales'
+        || p === '/api/v2/transfer-requests' || p === '/api/v2/purchase-requests'
+        || p === '/api/v2/stock' || p === '/api/v2/big-bonuses'
+        || p === '/api/v2/payroll-notices'
+        || p === '/api/v2/staff' || p === '/api/notifications') {
+        return json({ rows: [] })
+      }
+      if (p === '/api/v2/employees') {
+        return json({ rows: [
+          { id: 'emp-1', employeeNo: 'BUDU-0001', name: '隋晓', status: 'ACTIVE', employmentType: 'fulltime', currentStoreKey: 'tongying', position: '店员', level: '', phone: '13800000000' },
+        ] })
+      }
+      if (p === '/api/auth/me') return json({ user })
+      return json({ ok: true })
+    }
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(Dashboard, { user, onLogout: () => {}, onUserChange: () => {} }),
+    )
+  </script></body>
+</html>

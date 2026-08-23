@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import HomeWorkspace from './HomeWorkspace'
@@ -85,6 +85,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [pageKey, setPageKey] = useState(0)
   // 从人员管理跳转员工档案时的初始搜索目标（员工姓名）
   const [profileTarget, setProfileTarget] = useState('')
+  // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
+  const viewStackRef = useRef([])
 
   const openEmployeeProfile = (name) => {
     setProfileTarget(name || '')
@@ -130,6 +132,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isAssetCenterView = view === 'asset-center'
 
   const returnToOverview = () => {
+    viewStackRef.current = []
     setView(hasModuleAccess(user, 'overview') ? 'overview' : firstAccessibleModule(user))
     if (typeof window !== 'undefined' && window.location.hash === '#pos') {
       window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
@@ -137,11 +140,22 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     window.scrollTo?.({ top: 0, behavior: 'smooth' })
   }
 
-  useSwipeBack({
+  // 右滑返回：优先回到进入当前页之前的“上一页”（与动画快照一致），栈空则回首页
+  const handleSwipeBack = () => {
+    const prev = viewStackRef.current.pop()
+    if (prev && hasPageAccess(user, prev)) {
+      setView(prev)
+      window.scrollTo?.({ top: 0, behavior: 'smooth' })
+    } else {
+      returnToOverview()
+    }
+  }
+
+  const swipeBack = useSwipeBack({
     enabled: Boolean(view) && view !== 'overview' && !isPosView,
     onBack: () => {
       if (sidebarOpen) setSidebarOpen(false)
-      else returnToOverview()
+      else handleSwipeBack()
     },
   })
 
@@ -186,6 +200,11 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const handleNavigate = (nextView) => {
     if (!hasPageAccess(user, nextView)) return
+    if (nextView !== view) {
+      // 记录来源页并捕获其快照（右滑返回时作为“上一页”真实参与过渡）
+      viewStackRef.current.push(view)
+      swipeBack.capture()
+    }
     setView(nextView)
     if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
     else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)

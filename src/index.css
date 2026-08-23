@@ -65,62 +65,51 @@
 }
 
 @layer components {
+  /* ===== 移动端右滑返回（Interactive Pop Gesture）=====
+     双层页面：上一页快照层（z-1）+ 当前页 #root（z-2）
+     拖动阶段无 transition（1:1 跟手），松手后 settling 播放完成/回弹动画 */
   html.swipe-back-active,
   html.swipe-back-active body {
     overflow-x: hidden;
     overscroll-behavior-x: none;
   }
 
-  html.swipe-back-active body {
-    background:
-      radial-gradient(circle at 0 50%, rgba(188, 79, 126, 0.16), transparent 42%),
-      linear-gradient(90deg, #eee9f2, #f6f7f9 45%);
-  }
-
-  html.swipe-back-active #root {
+  /* 上一页快照层：默认隐藏，手势开始时露出 */
+  #swipe-prev-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
     overflow: hidden;
-    border-radius: var(--swipe-back-radius, 0);
-    box-shadow: -18px 0 42px rgba(39, 24, 52, calc(var(--swipe-back-progress, 0) * 0.2));
-    transform: translate3d(var(--swipe-back-x, 0), 0, 0) scale(var(--swipe-back-scale, 1));
-    transform-origin: right center;
-    will-change: transform, border-radius, box-shadow;
+    background: #f5f5f7;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate3d(var(--swipe-prev-x, -30px), 0, 0);
+    will-change: transform;
   }
 
+  html.swipe-back-active #swipe-prev-layer {
+    visibility: visible;
+  }
+
+  /* 当前页：浮在上一页上方，左边缘轻阴影随进度淡入 */
+  html.swipe-back-active #root {
+    position: relative;
+    z-index: 2;
+    overflow: hidden;
+    box-shadow: -8px 0 20px rgba(0, 0, 0, calc(var(--swipe-back-progress, 0) * 0.06));
+    transform: translate3d(var(--swipe-back-x, 0), 0, 0);
+    will-change: transform;
+  }
+
+  /* 松手后的完成/回弹动画（仅 settling 阶段启用 transition） */
   html.swipe-back-settling #root {
     transition:
-      transform 280ms cubic-bezier(0.22, 0.82, 0.22, 1),
-      border-radius 280ms cubic-bezier(0.22, 0.82, 0.22, 1),
-      box-shadow 280ms ease-out;
+      transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+      box-shadow 220ms ease-out;
   }
 
-  html.swipe-back-active::after {
-    content: '‹';
-    position: fixed;
-    z-index: 9999;
-    left: max(0.5rem, env(safe-area-inset-left));
-    top: 50%;
-    display: grid;
-    width: 2.45rem;
-    height: 2.45rem;
-    place-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.82);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.72);
-    box-shadow: 0 7px 24px rgba(39, 24, 52, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.94);
-    color: #a33f6b;
-    font: 300 2rem/1 -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
-    opacity: var(--swipe-back-progress, 0);
-    pointer-events: none;
-    transform: translate3d(var(--swipe-back-indicator-x, -46px), -50%, 0);
-    transition: opacity 60ms linear;
-    -webkit-backdrop-filter: blur(18px) saturate(180%);
-    backdrop-filter: blur(18px) saturate(180%);
-  }
-
-  html.swipe-back-settling::after {
-    transition:
-      transform 240ms cubic-bezier(0.22, 0.82, 0.22, 1),
-      opacity 180ms ease-out;
+  html.swipe-back-settling #swipe-prev-layer {
+    transition: transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
   }
 
   .card {
