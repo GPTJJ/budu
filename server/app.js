@@ -367,7 +367,7 @@ export function createApp() {
     return null
   }
 
-  // Data Authority DA-2.2：绑定校验权威 = PG employees（不再读 KV staff）
+  // Data Authority DA-2.2/2.4：绑定校验权威 = PG employees；返回 { error } 或 { employeeId }
   async function validateBoundRole(role, storeKeys, staffKey) {
     if (!['manager', 'staff'].includes(role)) return null
     if (!Array.isArray(storeKeys) || storeKeys.length < 1) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定至少一家门店`
@@ -380,10 +380,10 @@ export function createApp() {
         where: { name: staffName, currentStoreKey: staffStoreKey, status: { not: 'RESIGNED' } },
       })
       if (!emp) return '绑定员工不存在或已离职'
+      return { employeeId: emp.id }
     } catch {
       return '绑定员工校验失败，请稍后重试'
     }
-    return null
   }
 
   function boundStores(user) {
@@ -678,8 +678,8 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingError = await validateBoundRole(role, storeKeys, staffKey)
-    if (bindingError) return res.status(400).json({ error: bindingError })
+    const bindingResult = await validateBoundRole(role, storeKeys, staffKey)
+    if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
     // Data Authority DA-2：账号权威 = PostgreSQL
     const existing = await listUsers()
     if (existing.some((u) => u.username === username)) {
@@ -692,6 +692,7 @@ export function createApp() {
       role,
       storeKeys,
       staffKey,
+      employeeId: bindingResult ? bindingResult.employeeId : '',
       status: 'active',
       bindingLegacyExempt: false,
       permissions: normalizeAccountPermissions(req.body.permissions, role),
@@ -887,8 +888,8 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingError = await validateBoundRole(role, effStoreKeys, effStaffKey)
-    if (bindingError) return res.status(400).json({ error: bindingError })
+    const bindingResult = await validateBoundRole(role, effStoreKeys, effStaffKey)
+    if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
     const next = {
       role,
       status: 'active',
@@ -896,6 +897,7 @@ export function createApp() {
       bindingLegacyExempt: false,
       storeKeys: effStoreKeys,
       staffKey: !['manager', 'staff'].includes(role) ? '' : effStaffKey,
+      employeeId: bindingResult && ['manager', 'staff'].includes(role) ? bindingResult.employeeId : '',
       permissions: normalizeAccountPermissions(null, role, target.assetCenter === true),
     }
     next.assetCenter = next.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true

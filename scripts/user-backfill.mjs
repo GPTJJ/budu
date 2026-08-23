@@ -88,6 +88,20 @@ async function run() {
       errors.push(`${username}: ${e.message.slice(0, 120)}`)
     }
   }
+  // DA-2.4：按 staffKey(storeKey::name) 解析稳定 employeeId（幂等：已匹配则 SKIP）
+  if (!dryRun) {
+    const users = await prisma.user.findMany()
+    for (const u of users) {
+      const sk = String(u.staffKey || '')
+      if (!sk.includes('::')) continue
+      const [storeKey, name] = sk.split('::')
+      const emp = await prisma.employee.findFirst({ where: { name, currentStoreKey: storeKey } })
+      if (emp && u.employeeId !== emp.id) {
+        await prisma.user.update({ where: { id: u.id }, data: { employeeId: emp.id } })
+        counters.UPDATE++
+      }
+    }
+  }
   console.log(JSON.stringify({ mode: dryRun ? 'dry-run' : 'apply', counters, errorCount: errors.length }))
   if (errors.length) {
     console.error('ERRORS:\n' + errors.slice(0, 10).join('\n'))

@@ -26,6 +26,7 @@ export function toAppUser(row) {
     role: row.role,
     storeKeys: Array.isArray(row.storeKeys) ? row.storeKeys : [],
     staffKey: row.staffKey || '',
+    employeeId: row.employeeId || '',
     status: row.status || 'active',
     secondPasswordHash: row.secondPasswordHash || '',
     bindingLegacyExempt: Boolean(row.bindingLegacyExempt),
@@ -49,6 +50,7 @@ function toPgData(user) {
     avatar: String(user.avatar || ''),
     storeKeys: Array.isArray(user.storeKeys) ? user.storeKeys : [],
     staffKey: String(user.staffKey || ''),
+    employeeId: String(user.employeeId || ''),
     status: String(user.status || 'active'),
     secondPasswordHash: String(user.secondPasswordHash || ''),
     bindingLegacyExempt: Boolean(user.bindingLegacyExempt),
@@ -94,7 +96,7 @@ export async function createUser(user) {
 
 export async function updateUser(id, patch) {
   const data = {}
-  for (const key of ['username', 'passwordHash', 'role', 'displayName', 'avatar', 'storeKeys', 'staffKey', 'status', 'secondPasswordHash', 'bindingLegacyExempt', 'assetCenter', 'permissions', 'disabledAt', 'permissionsUpdatedAt', 'permissionsUpdatedBy']) {
+  for (const key of ['username', 'passwordHash', 'role', 'displayName', 'avatar', 'storeKeys', 'staffKey', 'employeeId', 'status', 'secondPasswordHash', 'bindingLegacyExempt', 'assetCenter', 'permissions', 'disabledAt', 'permissionsUpdatedAt', 'permissionsUpdatedBy']) {
     if (patch[key] !== undefined) data[key] = patch[key]
   }
   const row = await prisma.user.update({ where: { id }, data })

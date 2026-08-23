@@ -63,3 +63,9 @@ test('DA-2.3: 门店目录权威 = PG /v2/stores（SettingsPage 走 PG，基础�
   assert.match(v2, /基础门店不可删除/, '基础门店受防删保护')
   assert.match(v2, /已被业务数据引用，不可删除/, '被引用门店受防删保护')
 })
+
+test('DA-2.4: 绑定写入稳定 employeeId（服务端由 staffKey 解析，User.employee_id 持久化）', () => {
+  assert.match(userStore, /employeeId: row\.employeeId \|\| ''/, 'user-store 透传 employeeId')
+  assert.match(app, /employeeId: bindingResult \? bindingResult\.employeeId : ''/, '创建账号时持久化 employeeId')
+  assert.match(app, /employeeId: bindingResult && \['manager', 'staff'\]\.includes\(role\) \? bindingResult\.employeeId : ''/, '角色更新时持久化 employeeId')
+})

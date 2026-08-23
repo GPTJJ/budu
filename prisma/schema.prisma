@@ -40,7 +40,8 @@ model User {
   displayName         String    @default("") @map("display_name")
   avatar              String    @default("")
   storeKeys           Json      @default("[]") @map("store_keys") // 绑定门店 key 列表
-  staffKey            String    @default("") @map("staff_key") // storeKey::name（DA-2.4 过渡期保留；后续换 employeeId）
+  staffKey            String    @default("") @map("staff_key") // storeKey::name（兼容快照；DA-2.4 起以 employeeId 为准）
+  employeeId          String    @default("") @map("employee_id") // 绑定员工稳定 ID（employees.id）
   status              String    @default("active") // active | disabled
   secondPasswordHash  String    @default("") @map("second_password_hash")
   bindingLegacyExempt Boolean   @default(false) @map("binding_legacy_exempt")
