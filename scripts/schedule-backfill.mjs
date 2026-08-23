@@ -47,8 +47,13 @@ async function run() {
           const existing = await prisma.schedule.findUnique({ where: { weekStart_storeKey_date: key } })
           if (!dryRun) {
             if (existing) {
-              const same = JSON.stringify(existing.shifts) === JSON.stringify(list)
-              if (same) counters.SKIP++
+              // 规范化比较（键序无关），值相同则 SKIP
+              const norm = (arr) => JSON.stringify((Array.isArray(arr) ? arr : []).map((s) => ({
+                staff: String((s && s.staff) || ''),
+                time: String((s && s.time) || ''),
+                note: String((s && s.note) || ''),
+              })))
+              if (norm(existing.shifts) === norm(list)) counters.SKIP++
               else {
                 await prisma.schedule.update({ where: { weekStart_storeKey_date: key }, data: { shifts: list } })
                 counters.UPDATE++
