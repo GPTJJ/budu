@@ -42,3 +42,13 @@ test('DA-2: 服务端账号读者（审批/通知/企微绑定/资产）不再�
     assert.ok(!/loadDb\(\)\.users/.test(src), `${f} 不读 KV users`)
   }
 })
+
+test('DA-2.2: 员工名单权威 = PG employees（前端 /v2/staff-list，绑定校验 prisma.employee）', () => {
+  const userData = read('src/utils/userData.js')
+  const ep = read('server/employee-profile.js')
+  assert.ok(userData.includes("api('/v2/staff-list')"), '前端从 PG 拉取员工名单')
+  assert.ok(ep.includes("employeeProfileRouter.get('/staff-list'") && ep.includes("employeeProfileRouter.put('/staff-list'"), '服务端 staff-list 路由存在')
+  assert.match(app, /prisma\.employee\.findFirst[\s\S]{0,200}绑定员工不存在或已离职/, '绑定校验使用 PG employees')
+  assert.ok(!/\(db\.staff \|\| \[\]\)\.some/.test(app), '绑定校验不再读 KV staff')
+  assert.ok(!/loadDb\(\)\.users/.test(ep), 'staff-list 路由不读 KV users')
+})

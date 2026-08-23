@@ -123,10 +123,11 @@ export async function loadUserData(options = {}) {
     if (activeUserId && activeUserId !== nextUserId) cached = null
     activeUserId = nextUserId
   }
-  // Data Authority DA-4：entries 的唯一权威是 PostgreSQL。
+  // Data Authority DA-4/DA-2.2：entries 与 staff 的唯一权威是 PostgreSQL。
   // 先暂存进入本函数前的内存缓存（上一次会话内成功的 PG 数据），
-  // 基础 KV 数据中的 entries 不再作为初始值/回退。
+  // 基础 KV 数据中的 entries/staff 不再作为初始值/回退。
   const prevEntries = cached && cached.entries ? cached.entries : {}
+  const prevStaff = cached && Array.isArray(cached.staff) ? cached.staff : []
   const data = await api('/userdata').catch(() => null)
   if (!data || typeof data !== 'object') return
   let previousMirror = null
@@ -144,6 +145,7 @@ export async function loadUserData(options = {}) {
     posProductSales: previousMirror?.posProductSales,
   })
   cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
+  cached.staff = [] // staff 权威为 PG /v2/staff-list：不以 KV 初始值/回退
   // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
   writeMirror()
   if (onBaseReady) {
@@ -163,6 +165,7 @@ export async function loadUserData(options = {}) {
     api('/v2/purchase-requests'),
     api('/v2/stock'),
     api('/v2/big-bonuses'),
+    api('/v2/staff-list'),
   ])
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
@@ -184,6 +187,15 @@ export async function loadUserData(options = {}) {
   } else if (Object.keys(prevEntries).length > 0) {
     cached.entries = prevEntries
     console.error('[data-authority] DailyEntry 读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
+  }
+
+  // DA-2.2：员工名单权威 = PG /v2/staff-list
+  const staffRes = result(9)
+  if (staffRes && Array.isArray(staffRes.rows)) {
+    cached.staff = staffRes.rows
+  } else if (prevStaff.length > 0) {
+    cached.staff = prevStaff
+    console.error('[data-authority] 员工名单读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
   }
 
   const adjustments = result(1)
@@ -414,25 +426,27 @@ export async function commitEntries(entries) {
 }
 
 export async function commitStaff(staff) {
+  // Data Authority DA-2.2：员工名单权威 = PG employees（先写）；KV staff / PG Staff 为镜像（后写，best-effort）
+  const snapshot = Array.isArray(staff) ? staff : []
+  try {
+    await api('/v2/staff-list', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
+  } catch (e) {
+    throw new Error(`员工名单保存失败（PostgreSQL 不可用）：${e.message}`)
+  }
   getUserData().staff = staff
   writeMirror()
-  // 直接以本次快照写服务端（不依赖 saveTimer 读 cached）：
-  // 登录时 loadUserData 异步返回的旧数据可能覆盖 cached.staff，
-  // 若走 syncUserData 定时器会把空 staff 推给服务端，导致新增员工
-  // 在其他页面/设备（如账号管理绑定员工）不可见。
-  const snapshot = Array.isArray(staff) ? staff : []
   let kvOk = false
   try {
     await api('/userdata', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
     kvOk = true
   } catch {
-    /* 服务端不可用时回退本地镜像 */
+    /* 镜像失败不影响权威 */
   }
   if (!kvOk) syncUserData(['staff'])
   try {
     await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
   } catch {
-    /* PostgreSQL 不可用时仅同步 KV */
+    /* 镜像失败不影响权威 */
   }
 }
 

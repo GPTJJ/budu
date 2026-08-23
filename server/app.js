@@ -367,13 +367,22 @@ export function createApp() {
     return null
   }
 
-  function validateBoundRole(db, role, storeKeys, staffKey) {
+  // Data Authority DA-2.2：绑定校验权威 = PG employees（不再读 KV staff）
+  async function validateBoundRole(role, storeKeys, staffKey) {
     if (!['manager', 'staff'].includes(role)) return null
     if (!Array.isArray(storeKeys) || storeKeys.length < 1) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定至少一家门店`
     if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
     const [staffStoreKey, staffName] = String(staffKey).split('::')
     if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
-    if (!(db.staff || []).some((item) => item.storeKey === staffStoreKey && item.name === staffName)) return '绑定员工不存在或已离职'
+    try {
+      const { prisma } = await import('./pg.js')
+      const emp = await prisma.employee.findFirst({
+        where: { name: staffName, currentStoreKey: staffStoreKey, status: { not: 'RESIGNED' } },
+      })
+      if (!emp) return '绑定员工不存在或已离职'
+    } catch {
+      return '绑定员工校验失败，请稍后重试'
+    }
     return null
   }
 
@@ -669,7 +678,7 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingError = validateBoundRole(db, role, storeKeys, staffKey)
+    const bindingError = await validateBoundRole(role, storeKeys, staffKey)
     if (bindingError) return res.status(400).json({ error: bindingError })
     // Data Authority DA-2：账号权威 = PostgreSQL
     const existing = await listUsers()
@@ -878,7 +887,7 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingError = validateBoundRole(db, role, effStoreKeys, effStaffKey)
+    const bindingError = await validateBoundRole(role, effStoreKeys, effStaffKey)
     if (bindingError) return res.status(400).json({ error: bindingError })
     const next = {
       role,

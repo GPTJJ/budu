@@ -495,8 +495,9 @@ export function entryMonthPayroll(monthKey) {
 }
 
 /** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
-export function removeStaff(name) {
-  commitStaff(localStaffList().filter((e) => e.name !== name))
+export async function removeStaff(name) {
+  const next = localStaffList().filter((e) => e.name !== name)
+  await commitStaff(next)
   commitRemovedStaff([...getRemovedStaff().filter((n) => n !== name), name])
 }
 

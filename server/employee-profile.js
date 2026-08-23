@@ -406,6 +406,72 @@ employeeProfileRouter.get('/employees/:id/bank-account', wrap(async (req, res) =
 }))
 
 /** 编辑工资银行卡（卡号加密；审计只记 last4） */
+/** Data Authority DA-2.2：员工名单权威 = PG employees（KV staff / PG Staff 降级为镜像） */
+employeeProfileRouter.get('/staff-list', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  // 员工名单目录对全部业务账号开放（按角色收敛范围），与旧 KV userdata 口径一致
+  if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
+  const where = { status: { not: 'RESIGNED' } }
+  if (req.user.role === 'staff') {
+    // 员工账号沿用旧口径：仅本人
+    const own = String(req.user.staffKey || '')
+    if (own.includes('::')) {
+      const [sk, nm] = own.split('::')
+      where.currentStoreKey = sk
+      where.name = nm
+    } else {
+      return res.json({ ok: true, rows: [] })
+    }
+  } else if (!isSuperUser(req.user) && req.user.role !== 'manager' && req.user.role !== 'finance') {
+    const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys : []
+    where.currentStoreKey = { in: keys }
+  }
+  const rows = await prisma.employee.findMany({ where, orderBy: [{ currentStoreKey: 'asc' }, { name: 'asc' }] })
+  res.json({ ok: true, rows: rows.map((e) => ({ id: e.id, name: e.name, type: e.employmentType, storeKey: e.currentStoreKey, employeeNo: e.employeeNo })) })
+}))
+
+/** Data Authority DA-2.2：员工名单全量替换（仅开发者）；名单外全职/兼职员工标记 RESIGNED（档案保留） */
+employeeProfileRouter.put('/staff-list', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProfileAccess(req.user)
+  if (!isSuperUser(req.user)) throw httpError('仅开发者可维护员工名单', 403)
+  const list = Array.isArray(req.body && req.body.staff) ? req.body.staff : []
+  if (list.length > 2000) throw httpError('员工数量过多')
+  const pairs = new Set(list.map((s) => `${String((s && s.name) || '').trim()}::${String((s && s.storeKey) || '').trim()}`))
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.employee.findMany({ where: { employmentType: { in: ['fulltime', 'parttime'] } } })
+    for (const e of existing) {
+      if (!pairs.has(`${e.name}::${e.currentStoreKey}`) && e.status !== 'RESIGNED') {
+        await tx.employee.update({ where: { id: e.id }, data: { status: 'RESIGNED' } })
+      }
+    }
+    for (const s of list) {
+      const name = String((s && s.name) || '').trim().slice(0, 30)
+      const storeKey = String((s && s.storeKey) || '').trim().slice(0, 30)
+      const type = (s && s.type) === 'parttime' ? 'parttime' : 'fulltime'
+      if (!name || !storeKey) throw httpError('员工数据不正确')
+      const row = await tx.employee.findFirst({ where: { name, currentStoreKey: storeKey } })
+      if (row) {
+        await tx.employee.update({ where: { id: row.id }, data: { employmentType: type, status: 'ACTIVE' } })
+      } else {
+        const maxNo = await tx.employee.aggregate({ _max: { employeeNo: true } })
+        const seq = maxNo._max.employeeNo ? Number(String(maxNo._max.employeeNo).split('-')[1] || 0) + 1 : (await tx.employee.count()) + 1
+        await tx.employee.create({
+          data: {
+            id: `emp-${crypto.randomUUID()}`,
+            employeeNo: `BUDU-${String(seq).padStart(4, '0')}`,
+            name,
+            employmentType: type,
+            currentStoreKey: storeKey,
+            status: 'ACTIVE',
+          },
+        })
+      }
+    }
+  })
+  res.json({ ok: true, count: list.length })
+}))
+
 employeeProfileRouter.put('/employees/:id/bank-account', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProfileAccess(req.user)

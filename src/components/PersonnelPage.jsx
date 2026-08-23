@@ -538,20 +538,24 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     if (getRemovedStaff().includes(emp.name)) {
       commitRemovedStaff(getRemovedStaff().filter((n) => n !== emp.name))
     }
-    saveLocalStaffList([...localStaffList(), emp])
-    setStaffVersion((v) => v + 1)
     setShowAdd(false)
-    // 自动生成员工档案（幂等：已存在的跳过），让「员工档案」页立即可见新员工
     try {
+      await saveLocalStaffList([...localStaffList(), emp])
+      setStaffVersion((v) => v + 1)
+      // 自动生成员工档案（幂等：已存在的跳过），让「员工档案」页立即可见新员工
       await api('/v2/employees/backfill', { method: 'POST' })
-    } catch {
-      /* 档案生成失败不影响员工名单保存；可稍后在档案页手动「回填档案」 */
+    } catch (e) {
+      setError(t('员工名单保存失败（PostgreSQL 不可用），请重试'))
     }
   }
 
-  const handleDeleteStaff = (name) => {
-    removeStaff(name)
-    setStaffVersion((v) => v + 1)
+  const handleDeleteStaff = async (name) => {
+    try {
+      await removeStaff(name)
+      setStaffVersion((v) => v + 1)
+    } catch (e) {
+      setError(t('员工名单保存失败（PostgreSQL 不可用），请重试'))
+    }
   }
 
   return (

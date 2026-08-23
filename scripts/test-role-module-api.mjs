@@ -9,6 +9,13 @@ process.env.DATA_DIR = dataDir
 // Data Authority DA-2：账号权威 = PostgreSQL → 测试使用一次性 PG schema（全量迁移）
 import { createDisposablePgSchema } from './helpers/test-pg-schema.mjs'
 process.env.DATABASE_URL = await createDisposablePgSchema('da_role')
+// DA-2.2：绑定校验权威 = PG employees → 种子员工进 PG
+const { PrismaClient } = await import('@prisma/client')
+const seed = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } })
+await seed.employee.create({
+  data: { id: 'emp-test-1', employeeNo: 'BUDU-9001', name: '测试员工', employmentType: 'fulltime', currentStoreKey: 'guanshe', status: 'ACTIVE' },
+})
+await seed.$disconnect()
 const { createApp } = await import('../server/app.js')
 const server = createApp().listen(0)
 
