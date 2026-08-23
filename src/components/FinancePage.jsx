@@ -3,6 +3,7 @@ import { ArrowLeft, Download, Plus, Trash2, Wallet } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
+import { downloadFile } from '../utils/downloadFile'
 
 const inputCls = 'input'
 const CATEGORIES = ['房租', '人工', '水电', '原料', '平台佣金', '其他']
@@ -12,11 +13,15 @@ const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { min
 async function downloadCsv(url) {
   const res = await fetch(url, { credentials: 'same-origin' })
   const blob = await res.blob()
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = url.split('/').pop().split('?')[0] || 'export.csv'
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+  const name = url.split('/').pop().split('?')[0] || 'export.csv'
+  // 统一下载工具：iOS 走 Web Share API（存到「文件」），非 iOS 保持 <a download>
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('导出失败'))
+    reader.readAsDataURL(blob)
+  })
+  await downloadFile({ dataUrl, name, mimeType: 'text/csv' })
 }
 
 export default function FinancePage({ currentUser, onBack }) {

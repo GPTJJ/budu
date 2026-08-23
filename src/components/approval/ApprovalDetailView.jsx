@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, CheckCircle2, ClipboardCheck, Download, RotateCcw, Send, Trash2, XCircle } from 'lucide-react'
 import { api } from '../../utils/api'
 import { storeName } from '../../utils/selectors'
+import { downloadFile } from '../../utils/downloadFile'
 import { ExcelPreview, PdfPreview, StatusBadge, fileIcon, fmtShortTime, templateName, yuan } from './ApprovalShared'
 
 const ACTION_LABEL = {
@@ -149,16 +150,12 @@ export default function ApprovalDetailView({ detail, user, onBack, onChanged, on
   }
 
   const download = (a) => {
-    try {
-      const link = document.createElement('a')
-      link.href = a.dataUrl
-      link.download = a.name
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-    } catch {
-      /* 忽略 */
-    }
+    // 统一下载工具：iOS 走 Web Share API（存到「文件」），非 iOS 保持 <a download>
+    downloadFile({
+      dataUrl: a.dataUrl,
+      name: a.name,
+      mimeType: a.fileType || (String(a.dataUrl).match(/^data:([^;,]+)/) || [])[1],
+    }).catch(() => { /* 忽略 */ })
   }
 
   const showBottomBar = canDecide || isSubmitter || (isSuper && (request.status === 'approved' || request.status === 'rejected'))

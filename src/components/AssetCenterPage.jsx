@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
+import { downloadFile as downloadFileAsset } from '../utils/downloadFile'
 
 const STATUS_META = {
   normal: { label: '正常', cls: 'bg-emerald-50 text-emerald-600' },
@@ -148,10 +149,7 @@ export default function AssetCenterPage({ user, onBack }) {
   const downloadFile = async (file) => {
     try {
       const data = await api(`/v2/asset-center/files/${file.id}/download`)
-      const link = document.createElement('a')
-      link.href = data.dataUrl
-      link.download = data.name || file.name
-      link.click()
+      await downloadFileAsset({ dataUrl: data.dataUrl, name: data.name || file.name, mimeType: data.fileType })
       showTip(`已下载 ${file.name}`)
     } catch (e) {
       setError(e.message)
@@ -184,11 +182,18 @@ export default function AssetCenterPage({ user, onBack }) {
     const now = new Date()
     const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
     const blob = await zip.generateAsync({ type: 'blob' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `budu档案馆资料包-${ymd}.zip`
-    link.click()
-    setTimeout(() => URL.revokeObjectURL(link.href), 5000)
+    // 统一走下载工具：iOS 用 Web Share API 存到「文件」，非 iOS 保持 <a download>
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(new Error('生成文件失败'))
+      reader.readAsDataURL(blob)
+    })
+    await downloadFileAsset({
+      dataUrl,
+      name: `budu档案馆资料包-${ymd}.zip`,
+      mimeType: 'application/zip',
+    })
     await api('/v2/asset-center/package-log', {
       method: 'POST',
       body: JSON.stringify({ files: names }),
@@ -516,10 +521,11 @@ function PreviewModal({ file, onClose }) {
     setError('')
     try {
       const d = await api(`/v2/asset-center/files/${file.id}/download`)
-      const link = document.createElement('a')
-      link.href = d.dataUrl
-      link.download = d.name || file.name
-      link.click()
+      await downloadFileAsset({
+        dataUrl: d.dataUrl,
+        name: d.name || file.name,
+        mimeType: d.fileType,
+      })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -540,7 +546,7 @@ function PreviewModal({ file, onClose }) {
         ) : isPdfType(data.fileType) ? (
           <iframe title={file.name} src={pdfUrl || ''} className="h-[60vh] w-full rounded-lg" />
         ) : (
-          <a href={data.dataUrl} download={data.name} className="btn-primary px-5 py-2"><Download className="h-4 w-4" />该格式不支持内嵌预览，点击下载查看</a>
+          <button onClick={download} disabled={downloading} className="btn-primary px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '该格式不支持内嵌预览，点击下载查看'}</button>
         )}
       </div>
     </ModalShell>
