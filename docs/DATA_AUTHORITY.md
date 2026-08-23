@@ -13,13 +13,13 @@
 | DA-0 Production Data Authority Audit | ✅ PASS | 2026-08-24 | 《BUDU Data Authority 1.0 — DA-0 Audit Report》（只读；生产对账：Staff 12/12/12 全等、DailyEntry PG 92⊇KV 65、Users KV16 vs PG 遗留 3） |
 | DA-1 Existing PostgreSQL Authority Freeze | ✅ PASS | 2026-08-24 | 本文档 + `scripts/test-data-authority-freeze.mjs`（4 静态 + 1 DB 冒烟 = 5/5 通过） |
 | DA-2 Identity Authority | ⏸ 未开始 | — | 等待批准 |
-| DA-3 Schedule Authority | ⏸ 未开始 | — | 等待批准 |
+| DA-3 Schedule Authority | ✅ PASS | 2026-08-24 | PG schedules 表+迁移+路由；幂等回填 112 条（复跑 SKIP 112）；对账 CONTENT_MATCH=112/DIFF=0/KV_ONLY=0；SchedulePage 改读/写 PG；test-schedule-authority.mjs 3/3；critical 13/13；生产 cdf9f39 验收 |
 | DA-4 DailyEntry Authority | ✅ PASS | 2026-08-24 | commitEntries 写序翻转（PG 先/KV 镜像后）+ PG 失败显式抛错；loadUserData entries 仅取 PG（移除 PG 空→KV 回退，legacy 迁移仅限 !v2）；`test-daily-entry-authority.mjs` 4/4；critical 12/12；生产 8875ea2 部署验收：PG 92 行权威、KV entries 镜像冻结 65 条、旧回退条件 0 处 |
 | DA-5 Legacy Runtime Decoupling | ⏸ 未开始 | — | — |
 | DA-6 Failure Acceptance | ⏸ 未开始 | — | — |
 | DA-7 Production Authority Declaration | ⏸ 未开始 | — | — |
 
-基线：Production SHA = Development SHA = `4abc3f9`（V2.20）。生产 `DATA_STORE=file`（KV = db.json），PG 63 表 / 33 迁移。
+基线：Production SHA = Development SHA = `cdf9f39`。生产 `DATA_STORE=file`（KV = db.json），PG 64 表 / 34 迁移。
 
 ---
 
