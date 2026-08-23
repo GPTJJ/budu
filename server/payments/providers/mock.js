@@ -71,7 +71,7 @@ export class MockPaymentProvider extends PaymentProvider {
 
   async refundPayment(payment, options = {}) {
     const refundNo = String(options.refundNo || payment.paymentNo)
-    return { providerRefundNo: `MOCKRF${refundNo}` }
+    return { status: 'completed', providerRefundNo: `MOCKRF${refundNo}` }
   }
 
   async verifyCallback(payload) {

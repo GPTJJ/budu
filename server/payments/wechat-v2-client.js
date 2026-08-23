@@ -2,7 +2,8 @@
 //
 // 能力：
 // - POST /pay/micropay、/pay/orderquery（明文 https）
-// - POST /secapi/pay/reverse（双向 TLS，商户 API 证书）
+// - POST /secapi/pay/reverse、/secapi/pay/refund（双向 TLS，商户 API 证书）
+// - POST /pay/refundquery（退款结果查询）
 // - 主域名失败后受控回退到备用域名
 // - 请求/连接超时、响应大小上限
 // - 对响应中的 appid、mch_id、out_trade_no、金额与签名做交叉验证
@@ -142,7 +143,10 @@ export class WechatV2Client {
    * 发送微信 V2 请求并完成安全校验。
    * @param {string} path 例如 /pay/micropay
    * @param {Record<string,string|number>} params
-   * @param {{useMtls?:boolean, checkTradeFields?:{outTradeNo?:string, totalFee?:string|number}, signal?:AbortSignal}} [opts]
+   * @param {{useMtls?:boolean,
+   *          checkTradeFields?:{outTradeNo?:string, totalFee?:string|number},
+   *          checkRefundFields?:{outRefundNo?:string, refundFee?:string|number, transactionId?:string},
+   *          signal?:AbortSignal}} [opts]
    * @returns {Promise<Record<string,string>>} 校验后的响应参数
    */
   async request(path, params, opts = {}) {
@@ -217,6 +221,18 @@ export class WechatV2Client {
       }
       if (totalFee !== undefined && totalFee !== null && parsed.total_fee !== undefined && String(parsed.total_fee) !== String(totalFee)) {
         throw new WechatV2Error('TOTAL_FEE_MISMATCH', '微信响应金额与请求不一致', { retryable: false, ambiguous: true })
+      }
+    }
+    if (opts.checkRefundFields) {
+      const { outRefundNo, refundFee, transactionId } = opts.checkRefundFields
+      if (outRefundNo && parsed.out_refund_no && String(parsed.out_refund_no) !== String(outRefundNo)) {
+        throw new WechatV2Error('OUT_REFUND_NO_MISMATCH', '微信响应商户退款单号与请求不一致', { retryable: false, ambiguous: true })
+      }
+      if (refundFee !== undefined && refundFee !== null && parsed.refund_fee !== undefined && String(parsed.refund_fee) !== String(refundFee)) {
+        throw new WechatV2Error('REFUND_FEE_MISMATCH', '微信响应退款金额与请求不一致', { retryable: false, ambiguous: true })
+      }
+      if (transactionId && parsed.transaction_id && String(parsed.transaction_id) !== String(transactionId)) {
+        throw new WechatV2Error('TRANSACTION_ID_MISMATCH', '微信响应交易号与请求不一致', { retryable: false, ambiguous: true })
       }
     }
     return parsed

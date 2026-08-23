@@ -280,6 +280,18 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   res.status(201).json({ ok: true, refund: serializeRefund(result.refund), order: serializeOrder(order) })
 }))
 
+posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const refund = await prisma.refund.findUnique({ where: { id: req.params.id }, include: { order: true } })
+  if (!refund) throw httpError('退款记录不存在', 404)
+  if (!canStore(req.user, refund.order.storeId)) throw httpError('无权限', 403)
+  await paymentService.reconcileRefund(refund.id)
+  const order = await prisma.order.findUnique({ where: { id: refund.orderId }, include: orderInclude() })
+  const current = order.refunds.find((item) => item.id === refund.id)
+  res.json({ ok: true, refund: serializeRefund(current), order: serializeOrder(order) })
+}))
+
 posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)

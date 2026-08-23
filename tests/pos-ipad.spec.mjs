@@ -273,7 +273,10 @@ test('移动端右滑按页面层级返回，并释放扫码摄像头', async ({
 
   await page.getByRole('button', { name: '打开购物车', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '购物车' })).toBeVisible()
-  await beginSwipeRightFromEdge(page)
+  await beginSwipeRightFromEdge(page, { distance: 240 })
+  await expect.poll(() => page.evaluate(() => Number(
+    getComputedStyle(document.documentElement).getPropertyValue('--swipe-back-progress'),
+  ))).toBeGreaterThan(0.5)
   const tracking = await page.evaluate(() => ({
     active: document.documentElement.classList.contains('swipe-back-active'),
     transform: getComputedStyle(document.getElementById('root')).transform,
@@ -374,6 +377,24 @@ test('POS 点单内可打开订单记录并返回', async ({ page }) => {
   await page.getByRole('button', { name: '返回', exact: true }).click()
   await expect(page.getByPlaceholder('搜索商品名称 / SKU / 条码')).toBeVisible()
   await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
+})
+
+test('待支付订单可从订单记录点击去支付并重新打开付款界面', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=resume-payment')
+  await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '返回点单', exact: true }).click()
+  await page.getByRole('button', { name: /订单记录/ }).click()
+  await page.getByRole('button', { name: /去支付 POS-TEST-resume-payment/ }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  await expect(page.getByText('订单号 POS-TEST-resume-payment', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '微信扫码', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '现金收款', exact: true }).click()
+  await page.getByRole('dialog', { name: '现金收款确认' }).getByRole('button', { name: '确认收款', exact: true }).click()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '开始下一笔订单', exact: true }).click()
+  await expect(page.getByText('还没有选择商品', { exact: true })).toBeVisible()
 })
 
 test('R2：POS 配置按当前门店拉取（携带 storeId），切换门店重拉并丢弃过期响应', async ({ page }) => {

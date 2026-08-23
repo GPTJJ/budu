@@ -179,9 +179,61 @@ test('撤销结果不明确 → pending + 禁止二次支付 + 告警标记', as
   assert.equal(result.reconciliation.reconciliationRequired, true)
 })
 
-test('真实退款保持关闭（501）', async () => {
-  const provider = providerWith(new FakeClient())
-  await assert.rejects(() => provider.refundPayment(), (error) => error.status === 501 && /尚未开放/.test(error.message))
+test('微信退款申请：双向 TLS 提交，受理成功仍保持 pending', async () => {
+  const fake = new FakeClient()
+  fake.responses.push({
+    return_code: 'SUCCESS', result_code: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId,
+    out_trade_no: 'BUDUPAY1', transaction_id: 'WX-REFUND-TRADE', out_refund_no: 'RFTEST1',
+    total_fee: '7200', refund_fee: '3600', refund_id: 'WXRF1', sign: 'x',
+  })
+  const provider = providerWith(fake)
+  const result = await provider.refundPayment(payment({ providerTradeNo: 'WX-REFUND-TRADE' }), {
+    refundNo: 'RFTEST1', refundAmount: 3600n, totalAmount: 7200n, reason: '部分退款',
+  })
+  assert.equal(fake.calls[0].path, '/secapi/pay/refund')
+  assert.equal(fake.calls[0].mtls, true, '申请退款必须使用双向 TLS')
+  assert.equal(fake.calls[0].params.out_refund_no, 'RFTEST1')
+  assert.equal(fake.calls[0].params.refund_fee, '3600')
+  assert.equal(result.status, 'pending', '申请受理不等于退款完成')
+  assert.equal(result.providerRefundNo, 'WXRF1')
+})
+
+test('微信退款申请：系统错误/频率限制保持 pending，必须沿用原退款单号核对', async () => {
+  for (const errCode of ['SYSTEMERROR', 'BIZERR_NEED_RETRY', 'FREQUENCY_LIMITED', 'INVALID_REQ_TOO_MUCH']) {
+    const fake = new FakeClient()
+    fake.responses.push({
+      return_code: 'SUCCESS', result_code: 'FAIL', err_code: errCode, err_code_des: '请重试',
+      mch_id: CONFIG.mchId, appid: CONFIG.appId, out_trade_no: 'BUDUPAY1', sign: 'x',
+    })
+    const result = await providerWith(fake).refundPayment(payment(), {
+      refundNo: `RF${errCode}`, refundAmount: 3600n, totalAmount: 7200n,
+    })
+    assert.equal(result.status, 'pending', `${errCode} 不得误判失败`)
+    assert.equal(result.failureCode, errCode)
+  }
+})
+
+test('微信退款查询：PROCESSING 保持 pending，SUCCESS 才完成', async () => {
+  const processing = new FakeClient()
+  processing.responses.push({
+    return_code: 'SUCCESS', result_code: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId,
+    out_trade_no: 'BUDUPAY1', total_fee: '7200', refund_count: '1',
+    out_refund_no_0: 'RFTEST2', refund_id_0: 'WXRF2', refund_fee_0: '3600', refund_status_0: 'PROCESSING', sign: 'x',
+  })
+  let result = await providerWith(processing).queryRefund(payment(), { refundNo: 'RFTEST2', refundAmount: 3600n })
+  assert.equal(processing.calls[0].path, '/pay/refundquery')
+  assert.equal(processing.calls[0].mtls, false)
+  assert.equal(result.status, 'pending')
+
+  const success = new FakeClient()
+  success.responses.push({
+    return_code: 'SUCCESS', result_code: 'SUCCESS', mch_id: CONFIG.mchId, appid: CONFIG.appId,
+    out_trade_no: 'BUDUPAY1', total_fee: '7200', refund_count: '1',
+    out_refund_no_0: 'RFTEST2', refund_id_0: 'WXRF2', refund_fee_0: '3600', refund_status_0: 'SUCCESS', sign: 'x',
+  })
+  result = await providerWith(success).queryRefund(payment(), { refundNo: 'RFTEST2', refundAmount: 3600n })
+  assert.equal(result.status, 'completed')
+  assert.equal(result.providerRefundNo, 'WXRF2')
 })
 
 test('回调验签：错误签名/商户号不匹配拒绝；合法签名映射状态', async () => {

@@ -32,13 +32,18 @@
       {
         id: 'order-3', orderNo: 'POS-TEST-ORDER-003', storeId: 'store-1', storeName: '测试门店',
         cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '18200', discountAmount: '0', payableAmount: '18200',
-        status: 'completed', paymentStatus: 'paid', paymentMethod: 'cash', paymentMode: 'cash',
+        status: 'completed', paymentStatus: 'paid', paymentMethod: 'wechat', paymentMode: 'wechat_pay',
         createdAt: '2026-08-11T05:00:00.000Z', updatedAt: '2026-08-11T05:00:00.000Z', completedAt: '2026-08-11T05:00:05.000Z',
-        payments: [{ id: 'pay-3', paymentNo: 'PAY-TEST-3', channel: 'cash', amount: '18200', status: 'success', paidAt: '2026-08-11T05:00:05.000Z', createdAt: '2026-08-11T05:00:00.000Z' }],
+        payments: [{ id: 'pay-3', paymentNo: 'PAY-TEST-3', channel: 'wechat', provider: 'wechat_pay', amount: '18200', status: 'success', paidAt: '2026-08-11T05:00:05.000Z', createdAt: '2026-08-11T05:00:00.000Z' }],
         refunds: [],
         items: [{ id: 'oi-4', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitPrice: '7200', quantity: 2, lineAmount: '14400' }, { id: 'oi-5', productId: 'p-2', productNameSnapshot: '草莓奶油蛋糕', skuSnapshot: 'BUDU-002', unitPrice: '3800', quantity: 1, lineAmount: '3800' }],
       },
     ]
+
+    if (new URLSearchParams(location.search).get('deletable') === '1') {
+      orders[1].status = 'failed'
+      orders[1].paymentStatus = 'failed'
+    }
 
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
@@ -117,6 +122,7 @@
     createRoot(document.getElementById('root')).render(React.createElement(OrderRecordsPage, {
       user: { id: 'user-1', username: 'dev', role: 'developer', storeKeys: ['store-1'] },
       onBack: () => {},
+      onPay: (order) => { window.__payOrder = { id: order.id, orderNo: order.orderNo } },
     }))
   </script></body>
 </html>

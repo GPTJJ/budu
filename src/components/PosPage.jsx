@@ -49,9 +49,10 @@ function allowedStores(user) {
   return stores.filter((store) => allowed.has(store.key))
 }
 
-export default function PosPage({ user, onExit, scannerDecoderFactory }) {
+export default function PosPage({ user, onExit, scannerDecoderFactory, initialOrder = null }) {
   const stores = useMemo(() => allowedStores(user), [user])
   const [storeId, setStoreId] = useState(() => {
+    if (initialOrder?.storeId && stores.some((store) => store.key === initialOrder.storeId)) return initialOrder.storeId
     const saved = getSelectedPosStore(user.id)
     return stores.some((store) => store.key === saved) ? saved : stores[0]?.key || ''
   })
@@ -73,6 +74,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   const [cashConfirm, setCashConfirm] = useState(false)
   const [cartOpen, setCartOpen] = useState(false)
   const [showOrders, setShowOrders] = useState(false)
+  const [resumedSession, setResumedSession] = useState(null)
   // Balls 礼盒搭配面板
   const [comboProduct, setComboProduct] = useState(null)
   const [comboSlots, setComboSlots] = useState([])
@@ -165,11 +167,20 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     setPayment(null)
     setScannerChannel('')
     setError('')
-    const restoreId = session.successOrderId || session.pendingOrderId
+    const initialOrderId = initialOrder?.storeId === storeId ? initialOrder.id : ''
+    const restoreId = initialOrderId || session.successOrderId || session.pendingOrderId
     if (!restoreId) {
       setStage('ordering')
       setSessionLoaded(true)
       return
+    }
+    if (initialOrderId) {
+      const sameCheckout = session.pendingOrderId === initialOrderId
+        || (session.checkoutKey && session.checkoutKey === initialOrder?.checkoutKey)
+      setResumedSession(sameCheckout ? null : {
+        cart: migratePosCart(session.cart && typeof session.cart === 'object' ? session.cart : {}),
+        checkoutKey: session.checkoutKey || '',
+      })
     }
     setStage('loading')
     api(`/v2/pos/orders/${restoreId}`)
@@ -195,7 +206,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       })
       .finally(() => { if (active) setSessionLoaded(true) })
     return () => { active = false }
-  }, [storeId, user.id])
+  }, [storeId, user.id, initialOrder?.id, initialOrder?.storeId])
 
   useEffect(() => {
     if (sessionLoaded && storeId) savePosCart(user.id, storeId, cart)
@@ -441,8 +452,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       setOrder(data.order)
       setPayment(data.payment)
       if (data.order.status === 'completed' && data.order.paymentStatus === 'paid') {
-        setCart({})
-        savePosCart(user.id, storeId, {})
+        if (resumedSession === null) {
+          setCart({})
+          savePosCart(user.id, storeId, {})
+        }
         savePendingOrder(user.id, storeId, '')
         saveSuccessOrder(user.id, storeId, data.order.id)
         saveCheckoutKey(user.id, storeId, '')
@@ -489,8 +502,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
       setPayment(data.payment)
       setOrder(data.order)
       if (data.order.status === 'completed' && data.order.paymentStatus === 'paid') {
-        setCart({})
-        savePosCart(user.id, storeId, {})
+        if (resumedSession === null) {
+          setCart({})
+          savePosCart(user.id, storeId, {})
+        }
         savePendingOrder(user.id, storeId, '')
         saveSuccessOrder(user.id, storeId, data.order.id)
         setStage('success')
@@ -539,6 +554,20 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
   }, [stage, payment?.id, payment?.status])
 
   const startNext = () => {
+    if (resumedSession !== null) {
+      savePendingOrder(user.id, storeId, '')
+      saveSuccessOrder(user.id, storeId, '')
+      saveCheckoutKey(user.id, storeId, resumedSession.checkoutKey)
+      savePosCart(user.id, storeId, resumedSession.cart)
+      setCheckoutKeyState(resumedSession.checkoutKey)
+      setCart(resumedSession.cart)
+      setResumedSession(null)
+      setOrder(null)
+      setPayment(null)
+      setScannerChannel('')
+      setStage('ordering')
+      return
+    }
     clearPosTransaction(user.id, storeId)
     setCart({})
     setOrder(null)
@@ -575,7 +604,37 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     savePendingOrder(user.id, storeId, '')
     setScannerChannel('')
     setCashConfirm(false)
+    setResumedSession(null)
     setStage('ordering')
+  }
+
+  const resumePendingOrder = async (selectedOrder) => {
+    if (!selectedOrder || selectedOrder.status !== 'pending_payment') return
+    setShowOrders(false)
+    setError('')
+    savePendingOrder(user.id, selectedOrder.storeId, selectedOrder.id)
+    saveSuccessOrder(user.id, selectedOrder.storeId, '')
+    const targetSession = loadPosStoreSession(user.id, selectedOrder.storeId)
+    const sameCheckout = targetSession.pendingOrderId === selectedOrder.id
+      || (targetSession.checkoutKey && targetSession.checkoutKey === selectedOrder.checkoutKey)
+    setResumedSession(sameCheckout ? null : {
+      cart: migratePosCart(targetSession.cart && typeof targetSession.cart === 'object' ? targetSession.cart : {}),
+      checkoutKey: targetSession.checkoutKey || '',
+    })
+    if (selectedOrder.storeId !== storeId) {
+      setStoreId(selectedOrder.storeId)
+      return
+    }
+    try {
+      const data = await api(`/v2/pos/orders/${selectedOrder.id}`)
+      setOrder(data.order)
+      setPayment(data.order.payments?.[0] || null)
+      setStage('payment')
+    } catch (e) {
+      savePendingOrder(user.id, selectedOrder.storeId, '')
+      setResumedSession(null)
+      setError(e.message)
+    }
   }
 
   useSwipeBack({
@@ -599,7 +658,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory }) {
     return (
       <div className="h-screen h-[100dvh] overflow-y-auto bg-slate-100" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <div className="mx-auto w-full max-w-[1600px] p-3 sm:p-5 lg:p-6">
-          <OrderRecordsPage user={user} onBack={() => setShowOrders(false)} />
+          <OrderRecordsPage user={user} onBack={() => setShowOrders(false)} onPay={resumePendingOrder} />
         </div>
       </div>
     )

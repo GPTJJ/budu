@@ -85,6 +85,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [pageKey, setPageKey] = useState(0)
   // 从人员管理跳转员工档案时的初始搜索目标（员工姓名）
   const [profileTarget, setProfileTarget] = useState('')
+  const [pendingPosOrder, setPendingPosOrder] = useState(null)
   // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
   const viewStackRef = useRef([])
 
@@ -212,6 +213,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   const exitPos = () => {
+    setPendingPosOrder(null)
     returnToOverview()
   }
 
@@ -230,7 +232,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
       <PublicModeProvider isPublic={false} isStore={false}>
         <ErrorBoundary>
           <Suspense fallback={<PageLoading />}>
-            <PosPage user={user} onExit={exitPos} />
+            <PosPage user={user} onExit={exitPos} initialOrder={pendingPosOrder} />
           </Suspense>
         </ErrorBoundary>
       </PublicModeProvider>
@@ -331,7 +333,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
                 <StoreMailingPage onBack={returnToOverview} />
               ) : isOrdersView && hasModuleAccess(user, 'store-pos') ? (
-                <OrderRecordsPage user={user} onBack={returnToOverview} />
+                <OrderRecordsPage
+                  user={user}
+                  onBack={returnToOverview}
+                  onPay={(order) => {
+                    setPendingPosOrder(order)
+                    handleNavigate('store-pos')
+                  }}
+                />
               ) : isProductCenterView && hasModuleAccess(user, 'product-center') ? (
                 <ProductCenterPage user={user} onBack={returnToOverview} />
               ) : isSettingsView && hasModuleAccess(user, 'settings') ? (

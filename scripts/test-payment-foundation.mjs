@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { PaymentService, paymentMode, sanitizePayload } from '../server/payments/payment-service.js'
 import { CashPaymentProvider } from '../server/payments/providers/cash.js'
 import { MockPaymentProvider } from '../server/payments/providers/mock.js'
+import { RefundReconciler, refundReconcilerEnvConfig } from '../server/payments/refund-reconciler.js'
 import { canTransitionOrder, canTransitionOrderPayment } from '../server/order-state.js'
 
 import { MemoryPrisma } from './helpers/memory-prisma.mjs'
@@ -267,6 +268,30 @@ test('退款幂等：相同 requestKey 只创建一条退款；超量退款被�
   )
 })
 
+test('折扣订单分次退款按行实付金额分摊，累计不多退也不少退', async () => {
+  const db = refundDb()
+  db.orders[0].subtotal = 303n
+  db.orders[0].discountAmount = 45n
+  db.orders[0].payableAmount = 258n
+  db.orders[0].discountPercent = 85
+  db.orders[0].items = [{
+    ...db.orders[0].items[0],
+    quantity: 3,
+    unitPrice: 101n,
+    lineAmount: 303n,
+    discountAmount: 45n,
+    actualAmount: 258n,
+  }]
+  db.payments[0].amount = 258n
+  const service = new PaymentService(db)
+  const first = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-discount-1', items: [{ orderItemId: 'oi-1', quantity: 1 }] })
+  const second = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-discount-2', items: [{ orderItemId: 'oi-1', quantity: 2 }] })
+  assert.equal(first.refund.refundAmount, 86n)
+  assert.equal(second.refund.refundAmount, 172n)
+  assert.equal(first.refund.refundAmount + second.refund.refundAmount, 258n)
+  assert.equal(db.orders[0].status, 'refunded')
+})
+
 test('未支付订单不可退款', async () => {
   const db = new MemoryPrisma()
   const service = new PaymentService(db)
@@ -283,17 +308,48 @@ test('sanitizePayload 同时脱敏 authCode 与 auth_code', () => {
   assert.equal(cleaned.other.nestedAuthCode, 'x')
 })
 
-test('微信真实退款被拒绝（501），本地退款不受影响', async () => {
-  const db = new MemoryPrisma()
-  const service = new PaymentService(db)
-  const created = await service.createPayment({ orderId: 'order-1', channel: 'cash', requestKey: 'request-refund-wechat-guard' })
-  assert.equal(created.payment.status, 'success')
-  // 将支付伪造为微信 Provider 支付（模拟已存在微信支付记录）
-  const paymentRow = db.payments.find((item) => item.id === created.payment.id)
-  paymentRow.provider = 'wechat_pay'
+test('微信退款先 pending，查询 SUCCESS 后才更新订单状态', async () => {
+  const db = refundDb()
+  db.payments[0].provider = 'wechat_pay'
+  const calls = []
+  const wechat = {
+    async refundPayment(payment, options) {
+      calls.push({ type: 'apply', payment, options })
+      return { status: 'pending', providerRefundNo: 'WXRF-PENDING' }
+    },
+    async queryRefund(payment, options) {
+      calls.push({ type: 'query', payment, options })
+      return { status: 'completed', providerRefundNo: 'WXRF-PENDING' }
+    },
+  }
+  const service = new PaymentService(db, new Map([['wechat_pay', wechat]]))
+  const requested = await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-wechat-1', operator: 'tester' })
+  assert.equal(requested.refund.status, 'pending')
+  assert.equal(db.orders[0].status, 'completed', '受理时不得提前标记订单已退款')
+  assert.equal(calls[0].options.totalAmount, 18200n)
   await assert.rejects(
-    () => service.createRefund({ orderId: 'order-1', requestKey: 'refund-wechat-1', operator: 'tester' }),
-    (error) => error.status === 501 && /微信真实退款尚未开放/.test(error.message),
+    () => service.createRefund({ orderId: 'refund-order', requestKey: 'refund-wechat-2', operator: 'tester' }),
+    /已有退款处理中/,
+  )
+
+  const completed = await service.reconcileRefund(requested.refund.id)
+  assert.equal(completed.refund.status, 'completed')
+  assert.equal(db.orders[0].status, 'refunded')
+  assert.equal(db.payments[0].status, 'refunded')
+  assert.equal(calls[1].type, 'query')
+})
+
+test('同一真实微信订单的多次退款强制间隔一分钟', async () => {
+  const db = refundDb()
+  db.payments[0].provider = 'wechat_pay'
+  const provider = {
+    refundPayment: async () => ({ status: 'completed', providerRefundNo: `WXRF-${db.refunds.length + 1}` }),
+  }
+  const service = new PaymentService(db, new Map([['wechat_pay', provider]]))
+  await service.createRefund({ orderId: 'refund-order', requestKey: 'refund-wechat-gap-1', items: [{ orderItemId: 'oi-1', quantity: 1 }] })
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'refund-order', requestKey: 'refund-wechat-gap-2', items: [{ orderItemId: 'oi-1', quantity: 1 }] }),
+    /需间隔 1 分钟/,
   )
 })
 
@@ -311,4 +367,22 @@ test('Provider 返回核对提示时 PaymentService 持久化 reconciliation 字
   assert.equal(result.payment.reconciliationRequired, true)
   assert.equal(result.payment.providerStatus, 'USERPAYING')
   assert.equal(db.payments.find((item) => item.id === result.payment.id).queryAttempts, 0)
+})
+
+test('微信退款核对器只扫描 pending 微信退款，并限制轮询间隔', async () => {
+  const queried = []
+  const whereSeen = []
+  const service = {
+    prisma: { refund: { findMany: async (query) => {
+      whereSeen.push(query.where)
+      return [{ id: 'refund-pending-1', refundNo: 'RF-PENDING-1' }]
+    } } },
+    reconcileRefund: async (id) => queried.push(id),
+  }
+  const reconciler = new RefundReconciler({ service, intervalMs: 5000 })
+  await reconciler.tick()
+  assert.deepEqual(whereSeen[0], { status: 'pending', payment: { provider: 'wechat_pay' } })
+  assert.deepEqual(queried, ['refund-pending-1'])
+  assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '1000' }).intervalMs, 30000)
+  assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '45000' }).intervalMs, 45000)
 })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, X } from 'lucide-react'
+import { ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
@@ -43,7 +43,7 @@ const emptySummary = {
   averageAmount: '0',
 }
 
-export default function OrderRecordsPage({ user, onBack }) {
+export default function OrderRecordsPage({ user, onBack, onPay }) {
   const stores = useMemo(() => {
     const list = allStores()
     if (['developer', 'finance', 'admin'].includes(user.role)) return list
@@ -61,6 +61,7 @@ export default function OrderRecordsPage({ user, onBack }) {
   const [summary, setSummary] = useState(emptySummary)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [detail, setDetail] = useState(null)
   const [refundOrder, setRefundOrder] = useState(null)
   const [refundMode, setRefundMode] = useState('full')
@@ -147,12 +148,14 @@ export default function OrderRecordsPage({ user, onBack }) {
     }
   }
 
-  const wechatPaidOrder = (order) => (order.payments || []).some((payment) => payment.provider === 'wechat_pay')
-
   const orderRefundedCents = (order) => (order.refunds || [])
     .filter((refund) => refund.status === 'completed')
     .reduce((sum, refund) => sum + BigInt(refund.amount), 0n)
-  const orderRemainingCents = (order) => BigInt(order.payableAmount) - orderRefundedCents(order)
+  const orderReservedRefundCents = (order) => (order.refunds || [])
+    .filter((refund) => ['pending', 'completed'].includes(refund.status))
+    .reduce((sum, refund) => sum + BigInt(refund.amount), 0n)
+  const orderRemainingCents = (order) => BigInt(order.payableAmount) - orderReservedRefundCents(order)
+  const hasPendingRefund = (order) => (order.refunds || []).some((refund) => refund.status === 'pending')
   const itemRefundedQty = (order, orderItemId) => (order.refunds || [])
     .filter((refund) => refund.status === 'completed')
     .reduce((sum, refund) => sum + (refund.items || [])
@@ -168,7 +171,18 @@ export default function OrderRecordsPage({ user, onBack }) {
   }
 
   const partialTotal = refundOrder
-    ? refundOrder.items.reduce((sum, item) => sum + BigInt(item.unitPrice) * BigInt(Number(refundQty[item.id] || 0)), 0n)
+    ? refundOrder.items.reduce((sum, item) => {
+      const selected = Number(refundQty[item.id] || 0)
+      if (selected <= 0) return sum
+      const refundedBefore = itemRefundedQty(refundOrder, item.id)
+      const lineActual = item.actualAmount == null
+        ? (BigInt(item.unitPrice) * BigInt(item.quantity) * BigInt(refundOrder.discountPercent ?? 100) + 50n) / 100n
+        : BigInt(item.actualAmount)
+      const totalQuantity = BigInt(item.quantity)
+      const before = lineActual * BigInt(refundedBefore) / totalQuantity
+      const after = lineActual * BigInt(refundedBefore + selected) / totalQuantity
+      return sum + after - before
+    }, 0n)
     : 0n
 
   const submitRefund = async () => {
@@ -186,16 +200,30 @@ export default function OrderRecordsPage({ user, onBack }) {
       : undefined
     const key = globalThis.crypto?.randomUUID?.() || `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`
     try {
-      await api(`/v2/pos/orders/${refundOrder.id}/refunds`, {
+      const data = await api(`/v2/pos/orders/${refundOrder.id}/refunds`, {
         method: 'POST',
         body: JSON.stringify({ items, reason: refundReason, requestKey: key }),
       })
       setRefundOrder(null)
+      setNotice(data.refund?.status === 'pending' ? '微信退款申请已受理，系统正在查询最终退款结果' : '退款已完成')
       await load()
     } catch (e) {
       setError(e.message)
     } finally {
       setRefunding(false)
+    }
+  }
+
+  const queryRefund = async (refund) => {
+    setError('')
+    setNotice('')
+    try {
+      const data = await api(`/v2/pos/refunds/${refund.id}/query`, { method: 'POST' })
+      setNotice(data.refund?.status === 'completed' ? '退款已完成' : data.refund?.status === 'failed' ? '退款未完成，请联系管理员处理' : '退款仍在处理中，系统会继续自动查询')
+      if (detail?.id === data.order?.id) setDetail(data.order)
+      await load()
+    } catch (e) {
+      setError(e.message)
     }
   }
 
@@ -216,6 +244,7 @@ export default function OrderRecordsPage({ user, onBack }) {
         </button>
       </div>
 
+      {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
 
       <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
@@ -289,9 +318,13 @@ export default function OrderRecordsPage({ user, onBack }) {
                       {['developer', 'finance', 'admin'].includes(user.role) && !['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'].includes(order.status) && (
                         <button onClick={() => removeOrder(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50" aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-3.5 w-3.5" />删除</button>
                       )}
-                      {user.role !== 'public' && !wechatPaidOrder(order) && orderRemainingCents(order) > 0n && (
+                      {order.status === 'pending_payment' && typeof onPay === 'function' && (
+                        <button onClick={() => onPay(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100" aria-label={`去支付 ${order.orderNo}`}><WalletCards className="h-3.5 w-3.5" />去支付</button>
+                      )}
+                      {user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
                         <button onClick={() => openRefund(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-orange-600 hover:bg-orange-50" aria-label={`退款 ${order.orderNo}`}><Download className="h-3.5 w-3.5" />退款</button>
                       )}
+                      {hasPendingRefund(order) && <span className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">退款处理中</span>}
                       <button onClick={() => setDetail(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-budu-600 hover:bg-budu-50"><Package className="h-3.5 w-3.5" />明细</button>
                     </div>
                   </td>
@@ -433,8 +466,9 @@ export default function OrderRecordsPage({ user, onBack }) {
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                           <span className="font-mono text-xs font-semibold text-slate-600">{refund.refundNo}</span>
                           <span className="font-semibold tabular-nums text-orange-700">-{Number(centsToYuan(refund.amount)).toFixed(2)} 元</span>
-                          <span className="text-xs text-slate-500">{refund.status === 'completed' ? '已退款' : refund.status}</span>
+                          <span className="text-xs text-slate-500">{refund.status === 'completed' ? '已退款' : refund.status === 'pending' ? '退款处理中' : refund.status === 'failed' ? '退款异常' : refund.status}</span>
                           <span className="ml-auto text-xs text-slate-400">{localTime(refund.completedAt || refund.createdAt)}</span>
+                          {refund.status === 'pending' && <button onClick={() => queryRefund(refund)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">查询退款结果</button>}
                         </div>
                         {refund.reason && <p className="mt-1 text-xs text-slate-500">原因：{refund.reason}</p>}
                         <p className="mt-1 text-xs text-slate-500">{(refund.items || []).map((item) => `${item.productName}×${item.quantity}`).join('、')}</p>

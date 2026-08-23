@@ -347,6 +347,103 @@ export class PaymentService {
     return { refund }
   }
 
+  /**
+   * 将退款 Provider 的安全状态应用到本地。
+   * 微信申请接口只表示受理，因此 pending 时绝不改订单/支付状态；只有查询确认
+   * SUCCESS 后才原子完成退款并更新订单为部分退款或已退款。
+   */
+  async applyRefundProviderResult(refundId, providerResult = {}) {
+    const status = String(providerResult.status || 'pending')
+    const providerRefundNo = providerResult.providerRefundNo || undefined
+    if (status === 'pending') {
+      if (providerRefundNo) {
+        await this.prisma.refund.update({ where: { id: refundId }, data: { providerRefundNo } })
+      }
+      return this.refundResult(refundId)
+    }
+    if (status === 'failed') {
+      await this.prisma.refund.updateMany({
+        where: { id: refundId, status: 'pending' },
+        data: { status: 'failed', ...(providerRefundNo ? { providerRefundNo } : {}) },
+      })
+      return this.refundResult(refundId)
+    }
+    if (status !== 'completed') throw httpError('退款 Provider 返回了未知状态', 502)
+
+    await this.prisma.$transaction(async (tx) => {
+      const current = await tx.refund.findUnique({ where: { id: refundId } })
+      if (!current || current.status === 'completed') return
+      if (current.status !== 'pending') throw httpError('当前退款状态不可完成', 409)
+      const won = await tx.refund.updateMany({
+        where: { id: refundId, status: 'pending' },
+        data: {
+          status: 'completed',
+          ...(providerRefundNo ? { providerRefundNo } : {}),
+          completedAt: new Date(),
+        },
+      })
+      if (won.count !== 1) return
+
+      const order = await tx.order.findUnique({
+        where: { id: current.orderId },
+        include: { payments: true, refunds: true },
+      })
+      if (!order) throw httpError('退款订单不存在', 404)
+      const refundedTotal = (order.refunds || [])
+        .filter((refund) => refund.status === 'completed')
+        .reduce((sum, refund) => sum + refund.refundAmount, 0n)
+      const fullyRefunded = refundedTotal >= order.payableAmount
+      const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
+      const nextPaymentStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
+      assertOrderTransition(order.status, nextOrderStatus)
+      assertOrderPaymentTransition(order.paymentStatus, nextPaymentStatus)
+      const updated = await tx.order.updateMany({
+        where: { id: order.id, status: order.status, paymentStatus: order.paymentStatus },
+        data: { status: nextOrderStatus, paymentStatus: nextPaymentStatus, version: { increment: 1 } },
+      })
+      if (updated.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
+      await tx.payment.updateMany({
+        where: { id: current.paymentId, status: { in: ['success', 'partially_refunded'] } },
+        data: { status: nextPaymentStatus },
+      })
+      const payment = (order.payments || []).find((item) => item.id === current.paymentId) || { id: current.paymentId, orderId: order.id }
+      await this.logEvent(payment, order, 'refund.completed', {
+        status: nextPaymentStatus,
+        providerTradeNo: payment.providerTradeNo,
+        failureCode: '',
+        failureMessage: '',
+        callbackAt: new Date(),
+      }, tx)
+    })
+    return this.refundResult(refundId)
+  }
+
+  /** 查询并推进一条微信退款；查询不到且申请已超过 60 秒时，用原退款单号安全重提。 */
+  async reconcileRefund(refundId, { resubmitIfMissing = true } = {}) {
+    const refund = await this.prisma.refund.findUnique({ where: { id: refundId } })
+    if (!refund) throw httpError('退款记录不存在', 404)
+    if (refund.status !== 'pending') return this.refundResult(refund.id)
+    const payment = await this.prisma.payment.findUnique({ where: { id: refund.paymentId } })
+    if (!payment) throw httpError('退款对应的支付记录不存在', 404)
+    if (payment.provider !== 'wechat_pay') return this.refundResult(refund.id)
+    const provider = this.provider(payment.provider)
+    let result = await provider.queryRefund(payment, {
+      refundNo: refund.refundNo,
+      providerRefundNo: refund.providerRefundNo,
+      refundAmount: refund.refundAmount,
+    })
+    const ageMs = Date.now() - new Date(refund.createdAt).getTime()
+    if (result.notFound && resubmitIfMissing && ageMs >= 60_000) {
+      result = await provider.refundPayment(payment, {
+        refundNo: refund.refundNo,
+        refundAmount: refund.refundAmount,
+        totalAmount: payment.amount,
+        reason: refund.reason,
+      })
+    }
+    return this.applyRefundProviderResult(refund.id, result)
+  }
+
   async createRefund(input) {
     const orderId = String(input.orderId || '').trim()
     const requestKey = String(input.requestKey || '').trim()
@@ -355,7 +452,7 @@ export class PaymentService {
     if (!orderId || requestKey.length < 8 || requestKey.length > 160) throw httpError('退款参数不正确')
 
     const replay = await this.prisma.refund.findUnique({ where: { requestKey } })
-    if (replay) return this.refundResult(replay.id)
+    if (replay) return replay.status === 'pending' ? this.reconcileRefund(replay.id) : this.refundResult(replay.id)
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -369,7 +466,15 @@ export class PaymentService {
     if (!['paid', 'completed', 'partially_refunded'].includes(order.status)) throw httpError('当前订单状态不可退款', 409)
     const payment = order.payments.find((item) => ['success', 'partially_refunded'].includes(item.status))
     if (!payment) throw httpError('订单没有成功支付的支付单，无法退款', 409)
-    if (payment.provider === 'wechat_pay') throw httpError('微信真实退款尚未开放', 501)
+    const pendingRefund = order.refunds.find((refund) => refund.status === 'pending')
+    if (pendingRefund) throw httpError('该订单已有退款处理中，请等待退款结果后再操作', 409)
+    if (payment.provider === 'wechat_pay' && order.refunds.length > 0) {
+      const latestAt = Math.max(...order.refunds.map((refund) => new Date(refund.createdAt).getTime()).filter(Number.isFinite))
+      const waitMs = latestAt + 60_000 - Date.now()
+      if (Number.isFinite(waitMs) && waitMs > 0) {
+        throw httpError(`同一微信订单的多次退款需间隔 1 分钟，请约 ${Math.ceil(waitMs / 1000)} 秒后重试`, 409)
+      }
+    }
 
     const refundedTotal = order.refunds
       .filter((refund) => refund.status === 'completed')
@@ -390,16 +495,21 @@ export class PaymentService {
     const lines = []
     let amount = 0n
     const discountPercent = BigInt(order.discountPercent ?? 100)
-    const lineRefundAmount = (unitPrice, quantity) => {
-      const base = BigInt(unitPrice) * BigInt(quantity) * discountPercent
-      return (base + 50n) / 100n
+    const lineRefundAmount = (item, refundedBefore, quantity) => {
+      const lineActual = item.actualAmount == null
+        ? (BigInt(item.unitPrice) * BigInt(item.quantity) * discountPercent + 50n) / 100n
+        : BigInt(item.actualAmount)
+      const totalQuantity = BigInt(item.quantity)
+      const before = lineActual * BigInt(refundedBefore) / totalQuantity
+      const after = lineActual * BigInt(refundedBefore + quantity) / totalQuantity
+      return after - before
     }
     if (rawItems.length === 0) {
       for (const item of order.items) {
         if (item.isGift === true) continue
         const remainingQty = item.quantity - (refundedQty.get(item.id) || 0)
         if (remainingQty <= 0) continue
-        const lineAmount = lineRefundAmount(item.unitPrice, remainingQty)
+        const lineAmount = lineRefundAmount(item, refundedQty.get(item.id) || 0, remainingQty)
         lines.push({ orderItemId: item.id, quantity: remainingQty, amountCents: lineAmount })
         amount += lineAmount
       }
@@ -418,7 +528,7 @@ export class PaymentService {
         if (!Number.isInteger(quantity) || quantity < 1) throw httpError('退款数量必须是正整数', 400)
         const remainingQty = item.quantity - (refundedQty.get(item.id) || 0)
         if (quantity > remainingQty) throw httpError(`「${item.productNameSnapshot}」可退数量不足`, 409)
-        const lineAmount = lineRefundAmount(item.unitPrice, quantity)
+        const lineAmount = lineRefundAmount(item, refundedQty.get(item.id) || 0, quantity)
         lines.push({ orderItemId, quantity, amountCents: lineAmount })
         amount += lineAmount
       }
@@ -427,62 +537,53 @@ export class PaymentService {
     if (amount > remainingOrder) throw httpError('退款金额超出订单可退金额', 409)
 
     const no = `RF${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`
-    const providerResult = await this.provider(payment.provider).refundPayment(payment, {
-      refundNo: no,
-      refundAmount: amount,
-      reason,
-    })
-
-    const refund = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.refund.create({
-        data: {
-          id: `ref-${crypto.randomUUID()}`,
-          refundNo: no,
-          orderId: order.id,
-          paymentId: payment.id,
-          refundAmount: amount,
-          reason,
-          status: 'completed',
-          providerRefundNo: providerResult.providerRefundNo || `LOCAL${no}`,
-          requestKey,
-          requestedBy: operator,
-          approvedBy: operator,
-          completedAt: new Date(),
-          items: {
-            create: lines.map((line) => ({
-              id: `ri-${crypto.randomUUID()}`,
-              orderItemId: line.orderItemId,
-              quantity: line.quantity,
-              amountCents: line.amountCents,
-            })),
+    let refund
+    try {
+      refund = await this.prisma.$transaction(async (tx) => {
+        return tx.refund.create({
+          data: {
+            id: `ref-${crypto.randomUUID()}`,
+            refundNo: no,
+            orderId: order.id,
+            paymentId: payment.id,
+            refundAmount: amount,
+            reason,
+            status: 'pending',
+            requestKey,
+            requestedBy: operator,
+            approvedBy: operator,
+            completedAt: null,
+            items: {
+              create: lines.map((line) => ({
+                id: `ri-${crypto.randomUUID()}`,
+                orderItemId: line.orderItemId,
+                quantity: line.quantity,
+                amountCents: line.amountCents,
+              })),
+            },
           },
-        },
-        include: { items: true },
+          include: { items: true },
+        })
       })
-      const fullyRefunded = amount >= remainingOrder
-      const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      const nextPaymentStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      assertOrderTransition(order.status, nextOrderStatus)
-      assertOrderPaymentTransition(order.paymentStatus, nextPaymentStatus)
-      const updated = await tx.order.updateMany({
-        where: { id: order.id, status: order.status, paymentStatus: order.paymentStatus },
-        data: { status: nextOrderStatus, paymentStatus: nextPaymentStatus, version: { increment: 1 } },
+    } catch (error) {
+      if (error?.code !== 'P2002') throw error
+      const sameRequest = await this.prisma.refund.findUnique({ where: { requestKey } })
+      if (sameRequest) return sameRequest.status === 'pending' ? this.reconcileRefund(sameRequest.id) : this.refundResult(sameRequest.id)
+      throw httpError('该订单已有退款处理中，请等待退款结果后再操作', 409)
+    }
+    let providerResult
+    try {
+      providerResult = await this.provider(payment.provider).refundPayment(payment, {
+        refundNo: no,
+        refundAmount: amount,
+        totalAmount: order.payableAmount,
+        reason,
       })
-      if (updated.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
-      await tx.payment.updateMany({
-        where: { id: payment.id, status: 'success' },
-        data: { status: nextPaymentStatus },
-      })
-      await this.logEvent(payment, order, 'refund.completed', {
-        status: nextPaymentStatus,
-        providerTradeNo: payment.providerTradeNo,
-        failureCode: '',
-        failureMessage: '',
-        callbackAt: new Date(),
-      }, tx)
-      return created
-    })
-    return this.refundResult(refund.id)
+    } catch (error) {
+      await this.prisma.refund.updateMany({ where: { id: refund.id, status: 'pending' }, data: { status: 'failed' } })
+      throw error
+    }
+    return this.applyRefundProviderResult(refund.id, providerResult)
   }
 
   async verifyCallback(providerName, payload) {

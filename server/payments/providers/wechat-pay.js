@@ -4,7 +4,8 @@
 //   createPayment() → /pay/micropay
 //   queryPayment()  → /pay/orderquery
 //   closePayment()  → 先查询，再按规则 /secapi/pay/reverse（双向 TLS）
-//   refundPayment() → 本阶段明确返回「微信真实退款尚未开放」
+//   refundPayment() → /secapi/pay/refund（受理后保持 pending）
+//   queryRefund()   → /pay/refundquery（仅 SUCCESS 才确认完成）
 //
 // 状态规则（同步响应与查询结果统一转换为已验证 Provider Event）：
 //   SUCCESS                        → success
@@ -32,6 +33,9 @@ import { parseV2Xml, verifyV2Signature } from '../wechat-v2-signature.js'
 
 // 微信付款码：18 位纯数字，官方允许前缀 10-15
 export const WECHAT_AUTH_CODE_RE = /^(1[0-5])\d{16}$/
+const WECHAT_REFUND_NO_RE = /^[A-Za-z0-9_\-|*@]{1,64}$/
+// 官方要求这些结果使用原商户退款单号查询/重试，不能直接判定失败或更换单号。
+const REFUND_RETRY_ERR_CODES = new Set(['SYSTEMERROR', 'BIZERR_NEED_RETRY', 'FREQUENCY_LIMITED', 'INVALID_REQ_TOO_MUCH'])
 
 /** 终端 IP 安全边界：缺失/非法/保留段一律 fail closed，绝不回退 127.0.0.1。
  *  规则唯一权威实现：terminal-ip.js（与配置层共用同一套逻辑）。 */
@@ -429,8 +433,128 @@ export class WechatPayProvider extends PaymentProvider {
     })
   }
 
-  async refundPayment() {
-    throw httpError('微信真实退款尚未开放', 501)
+  async _boundedRefund(fn) {
+    const controller = new AbortController()
+    let timer = null
+    const deadline = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new WechatV2Error('ABSOLUTE_DEADLINE', '微信退款操作超过绝对时限，结果未知，需要查询', { retryable: true, ambiguous: true }))
+      }, this._deadlineMs)
+    })
+    if (typeof timer.unref === 'function') timer.unref()
+    try {
+      return await Promise.race([fn(controller.signal), deadline])
+    } catch (error) {
+      if (error instanceof WechatV2Error && (error.ambiguous || error.retryable)) {
+        return {
+          status: 'pending',
+          providerRefundNo: error.providerTradeNo || null,
+          providerStatus: error.code || 'REFUND_UNKNOWN',
+          failureCode: error.code || 'REFUND_UNKNOWN',
+          failureMessage: '微信退款结果未知，系统将继续查询',
+        }
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async refundPayment(payment, options = {}) {
+    this.assertUsable()
+    const refundNo = String(options.refundNo || '').trim()
+    const refundAmount = BigInt(options.refundAmount || 0)
+    const totalAmount = BigInt(options.totalAmount || payment.amount || 0)
+    if (!WECHAT_REFUND_NO_RE.test(refundNo)) throw httpError('商户退款单号格式不正确', 400)
+    if (refundAmount <= 0n || totalAmount <= 0n || refundAmount > totalAmount) throw httpError('微信退款金额不正确', 400)
+
+    return this._boundedRefund(async (signal) => {
+      const result = await this.client().request(
+        '/secapi/pay/refund',
+        {
+          ...(payment.providerTradeNo ? { transaction_id: payment.providerTradeNo } : { out_trade_no: payment.merchantTradeNo }),
+          out_refund_no: refundNo,
+          total_fee: totalAmount.toString(),
+          refund_fee: refundAmount.toString(),
+          refund_fee_type: 'CNY',
+          ...(String(options.reason || '').trim() ? { refund_desc: String(options.reason).trim().slice(0, 80) } : {}),
+        },
+        {
+          useMtls: true,
+          checkTradeFields: { outTradeNo: payment.merchantTradeNo, totalFee: totalAmount.toString() },
+          checkRefundFields: {
+            outRefundNo: refundNo,
+            refundFee: refundAmount.toString(),
+            transactionId: payment.providerTradeNo || undefined,
+          },
+          signal,
+        },
+      )
+      if (String(result.result_code || '') !== 'SUCCESS') {
+        const code = String(result.err_code || 'REFUND_FAIL').slice(0, 64)
+        const message = String(result.err_code_des || '微信退款申请失败').slice(0, 120)
+        if (REFUND_RETRY_ERR_CODES.has(code)) {
+          return {
+            status: 'pending',
+            providerRefundNo: result.refund_id || null,
+            providerStatus: code,
+            failureCode: code,
+            failureMessage: '微信退款结果未定，系统将使用原退款单号继续查询或重试',
+          }
+        }
+        throw httpError(`微信退款申请失败（${code}）：${message}`, 409)
+      }
+      // 官方定义：申请成功只代表受理，最终结果必须经 refundquery/通知确认。
+      return {
+        status: 'pending',
+        providerRefundNo: result.refund_id || null,
+        providerStatus: 'ACCEPTED',
+        failureCode: '',
+        failureMessage: '',
+      }
+    })
+  }
+
+  async queryRefund(payment, options = {}) {
+    this.assertUsable()
+    const refundNo = String(options.refundNo || '').trim()
+    if (!WECHAT_REFUND_NO_RE.test(refundNo)) throw httpError('商户退款单号格式不正确', 400)
+    return this._boundedRefund(async (signal) => {
+      const result = await this.client().request(
+        '/pay/refundquery',
+        { out_refund_no: refundNo },
+        { checkTradeFields: { outTradeNo: payment.merchantTradeNo, totalFee: payment.amount?.toString() }, signal },
+      )
+      if (String(result.result_code || '') !== 'SUCCESS') {
+        const code = String(result.err_code || 'REFUND_QUERY_FAIL').slice(0, 64)
+        if (code === 'REFUNDNOTEXIST') {
+          return { status: 'pending', notFound: true, providerStatus: code, failureCode: code, failureMessage: '微信暂未查询到退款单' }
+        }
+        return { status: 'pending', providerStatus: code, failureCode: code, failureMessage: '微信退款状态暂时无法确认' }
+      }
+
+      const count = Math.max(0, Number(result.refund_count || 0))
+      let index = -1
+      for (let i = 0; i < count; i += 1) {
+        if (String(result[`out_refund_no_${i}`] || '') === refundNo) { index = i; break }
+      }
+      if (index < 0) {
+        return { status: 'pending', providerStatus: 'REFUND_RECORD_MISMATCH', failureCode: 'REFUND_RECORD_MISMATCH', failureMessage: '微信退款查询结果不匹配，需要继续核对' }
+      }
+      const expectedAmount = options.refundAmount == null ? null : String(options.refundAmount)
+      const actualAmount = String(result[`refund_fee_${index}`] || '')
+      if (expectedAmount && actualAmount && actualAmount !== expectedAmount) {
+        return { status: 'pending', providerStatus: 'REFUND_FEE_MISMATCH', failureCode: 'REFUND_FEE_MISMATCH', failureMessage: '微信退款金额校验不一致，需要人工核对' }
+      }
+      const status = String(result[`refund_status_${index}`] || '')
+      const providerRefundNo = result[`refund_id_${index}`] || options.providerRefundNo || null
+      if (status === 'SUCCESS') return { status: 'completed', providerRefundNo, providerStatus: status, failureCode: '', failureMessage: '' }
+      if (status === 'CHANGE' || status === 'REFUNDCLOSE') {
+        return { status: 'failed', providerRefundNo, providerStatus: status, failureCode: status, failureMessage: status === 'CHANGE' ? '退款异常，请到微信商户平台人工处理' : '微信退款已关闭' }
+      }
+      return { status: 'pending', providerRefundNo, providerStatus: status || 'PROCESSING', failureCode: '', failureMessage: '微信退款处理中' }
+    })
   }
 
   async verifyCallback(payload) {

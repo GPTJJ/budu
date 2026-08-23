@@ -2,6 +2,7 @@ import { createApp } from './app.js'
 import { validateConfig, APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
 import { paymentService } from './payments/index.js'
 import { startWechatReconciler, reconcilerEnvConfig } from './payments/payment-reconciler.js'
+import { startWechatRefundReconciler, refundReconcilerEnvConfig } from './payments/refund-reconciler.js'
 import { wechatPayStatus } from './payments/wechat-config.js'
 import * as Sentry from '@sentry/node'
 
@@ -40,7 +41,10 @@ createApp().listen(PORT, '0.0.0.0', () => {
   if (wechat.enabled) {
     const options = reconcilerEnvConfig()
     startWechatReconciler({ service: paymentService, ...options })
+    const refundOptions = refundReconcilerEnvConfig()
+    startWechatRefundReconciler({ service: paymentService, ...refundOptions })
     console.log(`微信付款码支付后台核对已启动（interval=${options.intervalMs}ms maxQueries=${options.maxQueries} reverseAfter=${options.reverseAfterMs}ms lease=${options.leaseMs}ms）`)
+    console.log(`微信退款后台核对已启动（interval=${refundOptions.intervalMs}ms）`)
   } else {
     console.log(`微信付款码支付未启用（configured=${wechat.configured} enabled=${wechat.enabled}）`)
   }

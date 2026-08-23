@@ -45,7 +45,7 @@ export class CashPaymentProvider extends PaymentProvider {
 
   async refundPayment(payment, options = {}) {
     const refundNo = String(options.refundNo || payment.paymentNo)
-    return { providerRefundNo: `CASHRF${refundNo}` }
+    return { status: 'completed', providerRefundNo: `CASHRF${refundNo}` }
   }
 
   async verifyCallback(payload) {

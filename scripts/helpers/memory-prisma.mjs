@@ -90,13 +90,37 @@ export class MemoryPrisma {
         return { ...row, ...(items ? { items } : {}) }
       },
       create: async ({ data, include }) => {
-        const row = { ...data }
+        const duplicate = this.refunds.some((item) => item.requestKey === data.requestKey
+          || item.refundNo === data.refundNo
+          || (item.orderId === data.orderId && item.status === 'pending' && data.status === 'pending'))
+        if (duplicate) { const error = new Error('unique'); error.code = 'P2002'; throw error }
+        const row = { providerRefundNo: null, createdAt: new Date(), completedAt: null, ...data }
         const nested = row.items
         delete row.items
         this.refunds.push(row)
         for (const item of nested?.create || []) this.refundItems.push({ ...item, refundId: row.id })
         const items = include?.items ? this.refundItems.filter((item) => item.refundId === row.id) : undefined
         return { ...row, ...(items ? { items } : {}) }
+      },
+      findMany: async ({ where, orderBy, take }) => {
+        let rows = this.refunds.filter((item) => {
+          if (where?.payment?.provider) {
+            const payment = this.payments.find((candidate) => candidate.id === item.paymentId)
+            if (payment?.provider !== where.payment.provider) return false
+          }
+          const plainWhere = { ...(where || {}) }
+          delete plainWhere.payment
+          return matches(item, plainWhere)
+        })
+        if (orderBy?.createdAt === 'asc') rows = [...rows].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        if (take) rows = rows.slice(0, take)
+        return rows
+      },
+      update: async ({ where, data }) => applyData(this.refunds.find((item) => matches(item, where)), data),
+      updateMany: async ({ where, data }) => {
+        const rows = this.refunds.filter((item) => matches(item, where))
+        rows.forEach((row) => applyData(row, data))
+        return { count: rows.length }
       },
     }
     this.order = {

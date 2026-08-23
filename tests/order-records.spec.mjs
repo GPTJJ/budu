@@ -22,7 +22,7 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
 
   await page.getByLabel('支付方式').selectOption('cash')
   await page.getByRole('button', { name: '查询', exact: true }).click()
-  await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
+  await expect(page.getByText('共 1 笔订单', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
 
@@ -57,12 +57,12 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
 
 test('开发者可删除订单，删除后列表刷新', async ({ page }) => {
   page.on('dialog', (dialog) => dialog.accept())
-  await page.goto('/tests/order-records-harness.html')
+  await page.goto('/tests/order-records-harness.html?deletable=1')
   await expect(page.getByText('共 3 笔订单', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: /删除/ }).first().click()
+  await page.getByRole('button', { name: '删除 POS-TEST-ORDER-002' }).click()
   await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
-  await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toBeVisible()
+  await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
+  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
 })
 
 test('整单退款后订单变为已退款', async ({ page }) => {
@@ -96,6 +96,15 @@ test('部分退款按商品退指定数量', async ({ page }) => {
   const detail = page.getByRole('dialog', { name: '订单明细' })
   await expect(detail.getByText('退款记录', { exact: true })).toBeVisible()
   await expect(detail.getByText(/卡皮巴拉布丁×1/)).toBeVisible()
+})
+
+test('微信支付订单支持部分退款，待支付订单显示去支付', async ({ page }) => {
+  await page.goto('/tests/order-records-harness.html')
+  await expect(page.getByRole('button', { name: /退款 POS-TEST-ORDER-003/ })).toBeVisible()
+  const payButton = page.getByRole('button', { name: /去支付 POS-TEST-ORDER-002/ })
+  await expect(payButton).toBeVisible()
+  await payButton.click()
+  await expect.poll(() => page.evaluate(() => window.__payOrder)).toEqual({ id: 'order-2', orderNo: 'POS-TEST-ORDER-002' })
 })
 
 test('手机底部导航包含 POS点单并可跳转', async ({ page }) => {
