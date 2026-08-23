@@ -1,4 +1,4 @@
-import { api } from './api'
+import { api } from './api.js'
 
 /**
  * 共享数据层：登录后从服务端加载「业绩录入 + 员工名单」，
@@ -7,14 +7,8 @@ import { api } from './api'
  * 首次登录会把旧版 localStorage 数据自动迁移到服务端。
  */
 
-const MIRROR_KEY = 'budu-os-cloud-mirror-v1'
-const MIRROR_OWNER_KEY = 'budu-os-cloud-mirror-owner-v1'
-const LEGACY_ENTRIES_KEY = 'budu-os-store-entries-v1'
-const LEGACY_STAFF_KEY = 'budu-os-staff-v1'
 
 let cached = null
-let saveTimer = null
-const pendingFields = new Set()
 
 // 数据更新通知：后台拉取/合并完成后回调订阅者，让已挂载的页面重新渲染最新缓存
 const dataListeners = new Set()
@@ -53,65 +47,16 @@ function normalizeCachedData(value) {
   }
 }
 
-function readMirror() {
-  if (typeof localStorage === 'undefined') return null
-  try {
-    const v = JSON.parse(localStorage.getItem(MIRROR_KEY))
-    return v && typeof v === 'object' ? v : null
-  } catch {
-    return null
-  }
-}
-
-function readLegacy() {
-  if (typeof localStorage === 'undefined') return { entries: null, staff: null }
-  try {
-    const entriesRaw = localStorage.getItem(LEGACY_ENTRIES_KEY)
-    const staffRaw = localStorage.getItem(LEGACY_STAFF_KEY)
-    let entries = null
-    let staff = null
-    if (entriesRaw) {
-      const v = JSON.parse(entriesRaw)
-      if (v && typeof v === 'object' && !Array.isArray(v)) entries = v
-    }
-    if (staffRaw) {
-      const v = JSON.parse(staffRaw)
-      if (Array.isArray(v)) staff = v
-    }
-    return { entries, staff }
-  } catch {
-    return { entries: null, staff: null }
-  }
-}
-
-function writeMirror() {
-  if (typeof localStorage === 'undefined' || !cached) return
-  try {
-    localStorage.setItem(MIRROR_KEY, JSON.stringify(cached))
-    if (activeUserId) localStorage.setItem(MIRROR_OWNER_KEY, activeUserId)
-  } catch {
-    /* 忽略写入失败 */
-  }
-}
-
 /**
  * 仅在镜像明确属于当前登录账号时恢复数据，避免同一台设备切换账号时短暂显示上一账号数据。
  * 返回 true 表示可以先展示镜像，再在后台刷新服务端数据。
  */
 export function prepareUserDataForUser(userId) {
+  // DA-5：JSON/localStorage 镜像不再作为业务数据源（读权威 = PostgreSQL）
   const nextUserId = String(userId || '')
   if (activeUserId && activeUserId !== nextUserId) cached = null
   activeUserId = nextUserId
-  if (!nextUserId || typeof localStorage === 'undefined') return false
-  try {
-    if (localStorage.getItem(MIRROR_OWNER_KEY) !== nextUserId) return false
-    const mirror = readMirror()
-    if (!mirror) return false
-    cached = normalizeCachedData(mirror)
-    return true
-  } catch {
-    return false
-  }
+  return false
 }
 
 /** 登录成功后拉取共享数据；首次登录自动迁移旧版本地数据 */
@@ -130,24 +75,11 @@ export async function loadUserData(options = {}) {
   const prevStaff = cached && Array.isArray(cached.staff) ? cached.staff : []
   const data = await api('/userdata').catch(() => null)
   if (!data || typeof data !== 'object') return
-  let previousMirror = null
-  try {
-    const owner = typeof localStorage !== 'undefined' ? localStorage.getItem(MIRROR_OWNER_KEY) : ''
-    if (!activeUserId || owner === activeUserId) previousMirror = readMirror()
-  } catch {
-    previousMirror = null
-  }
-  cached = normalizeCachedData({
-    ...data,
-    bigBonuses: previousMirror?.bigBonuses,
-    dailyPayAdjustments: previousMirror?.dailyPayAdjustments,
-    posDaily: previousMirror?.posDaily,
-    posProductSales: previousMirror?.posProductSales,
-  })
+  // DA-5：JSON 镜像不再作为业务数据源；bigBonuses/调整/POS 汇总等一律以 PG 接口为准
+  cached = normalizeCachedData(data)
   cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
   cached.staff = [] // staff 权威为 PG /v2/staff-list：不以 KV 初始值/回退
   // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
-  writeMirror()
   if (onBaseReady) {
     try {
       onBaseReady(cached)
@@ -302,43 +234,14 @@ export async function loadUserData(options = {}) {
       bonusCents: Number(r.bonusCents) || 0,
     }))
   }
-  const legacy = readLegacy()
-  let migrated = false
-  // 仅当 PostgreSQL 不可用（v2 请求失败）时才允许 legacy 本地数据作为迁移源；
-  // PG 可用时 entries 权威一律为 PG（即使为空）。
-  if (!v2 && legacy.entries && Object.keys(legacy.entries).length > 0 && Object.keys(cached.entries).length === 0) {
-    cached.entries = legacy.entries
-    migrated = true
-  }
-  if (legacy.staff && legacy.staff.length > 0 && cached.staff.length === 0) {
-    cached.staff = legacy.staff
-    migrated = true
-  }
-  writeMirror()
-  if (migrated) {
-    try {
-      await api('/userdata', { method: 'PUT', body: JSON.stringify(cached) })
-    } catch {
-      /* 迁移失败不阻塞登录 */
-    }
-  }
+  // DA-5：legacy localStorage 迁移已退役（数据权威 = PG）
   // 后台并行数据（含 PostgreSQL 业绩权威源）合并完成后，通知已挂载页面刷新
   notifyUserDataUpdated()
   return cached
 }
 
 export function getUserData() {
-  if (cached) return cached
-  let mirror = null
-  try {
-    const owner = typeof localStorage !== 'undefined' ? localStorage.getItem(MIRROR_OWNER_KEY) : ''
-    if (!activeUserId || owner === activeUserId) mirror = readMirror()
-  } catch {
-    mirror = null
-  }
-  if (mirror) {
-    cached = normalizeCachedData(mirror)
-  }
+  // DA-5：JSON/localStorage 镜像不再作为业务数据源（读权威 = PostgreSQL）
   return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] }
 }
 
@@ -348,22 +251,6 @@ export function getEntries() {
 
 export function getStaff() {
   return getUserData().staff
-}
-
-function syncUserData(fields = []) {
-  if (!cached) return
-  for (const field of fields) pendingFields.add(field)
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    writeMirror()
-    const names = [...pendingFields]
-    pendingFields.clear()
-    const payload = Object.fromEntries(names.map((field) => [field, cached[field]]))
-    if (names.length === 0) return
-    api('/userdata', { method: 'PUT', body: JSON.stringify(payload) }).catch(() => {
-      console.warn('数据同步失败，已保存在本机缓存，将在下次变更时自动重试')
-    })
-  }, 250)
 }
 
 /**
@@ -426,10 +313,8 @@ export async function commitEntries(entries) {
     // 显式失败：PostgreSQL 权威写入未全部成功，不更新缓存、不写 KV 镜像
     throw new Error(`业绩保存失败（PostgreSQL 不可用），未保存 ${failures.length} 条，请稍后重试`)
   }
-  // 权威写全部成功 → 更新本地缓存 + KV 镜像（镜像失败不影响权威）
+  // 权威写全部成功 → 仅更新本地缓存（DA-5：不再写 KV 镜像，KV 为只读存档）
   getUserData().entries = entries
-  syncUserData(['entries'])
-  writeMirror()
 }
 
 export async function commitStaff(staff) {
@@ -441,19 +326,11 @@ export async function commitStaff(staff) {
     throw new Error(`员工名单保存失败（PostgreSQL 不可用）：${e.message}`)
   }
   getUserData().staff = staff
-  writeMirror()
-  let kvOk = false
-  try {
-    await api('/userdata', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
-    kvOk = true
-  } catch {
-    /* 镜像失败不影响权威 */
-  }
-  if (!kvOk) syncUserData(['staff'])
+  // DA-5：KV staff 镜像写已退役（KV 为只读存档）；PG Staff 为日值班派生表镜像（保留，供 staffId 引用）
   try {
     await api('/v2/staff', { method: 'PUT', body: JSON.stringify({ staff: snapshot }) })
   } catch {
-    /* 镜像失败不影响权威 */
+    /* 派生表镜像失败不影响员工名单权威 */
   }
 }
 
@@ -471,38 +348,18 @@ export function getProductImages() {
     : {}
 }
 
-export function commitProductImages(images) {
-  getUserData().productImages = images
-  syncUserData(['productImages'])
-}
-
 export function getStores() {
   return Array.isArray(getUserData().stores) ? getUserData().stores : []
 }
 
 export function commitStores(stores) {
+  // DA-5：门店目录权威 = PG；本函数仅更新本地缓存
   getUserData().stores = stores
-  syncUserData(['stores'])
-}
-
-export function getSchedules() {
-  const d = getUserData().schedules
-  return d && typeof d === 'object' ? d : {}
-}
-
-export function commitSchedules(schedules) {
-  getUserData().schedules = schedules
-  syncUserData(['schedules'])
 }
 
 export function getProducts() {
   const p = getUserData().products
   return Array.isArray(p) ? p : []
-}
-
-export function commitProducts(products) {
-  getUserData().products = products
-  syncUserData(['products'])
 }
 
 export function getInventoryRequests() {
@@ -523,7 +380,6 @@ export function getDailyPayAdjustments() {
 /** 仅更新 PostgreSQL 权威数据的本地镜像，不写入 KV userdata。 */
 export function replaceDailyPayAdjustments(rows) {
   getUserData().dailyPayAdjustments = Array.isArray(rows) ? rows : []
-  writeMirror()
 }
 
 export function upsertDailyPayAdjustment(row) {
@@ -535,32 +391,23 @@ export function removeDailyPayAdjustment(id) {
   replaceDailyPayAdjustments(getDailyPayAdjustments().filter((row) => row.id !== id))
 }
 
-export function commitInventoryRequests(requests) {
-  getUserData().inventoryRequests = requests
-  syncUserData(['inventoryRequests'])
-}
-
 export function getInventory() {
   const rows = getUserData().inventory
   return Array.isArray(rows) ? rows : []
 }
 
-/** 同步提交库存和申请单，保证发货/收货时两份数据一起保存。 */
-export function commitInventoryState(inventory, requests) {
-  const data = getUserData()
-  data.inventory = inventory
-  data.inventoryRequests = requests
-  syncUserData(['inventory', 'inventoryRequests'])
-}
-
 export function commitRemovedStaff(removedStaff) {
+  // DA-5：removedStaff 仅为前端过滤缓存（删除权威 = PG employees.status）；不再写 KV
   getUserData().removedStaff = removedStaff
-  syncUserData(['removedStaff'])
 }
 
 export function resetUserData() {
   cached = null
   activeUserId = ''
-  if (saveTimer) clearTimeout(saveTimer)
-  pendingFields.clear()
+}
+
+/** 测试专用：注入内存缓存（DA-5 后 localStorage 镜像播种已移除，仅集成测试使用） */
+export function seedCachedDataForTest(data) {
+  cached = normalizeCachedData(data)
+  return cached
 }

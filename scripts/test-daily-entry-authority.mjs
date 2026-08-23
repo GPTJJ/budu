@@ -10,17 +10,16 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const userData = fs.readFileSync(path.join(root, 'src/utils/userData.js'), 'utf8')
 const selectors = fs.readFileSync(path.join(root, 'src/utils/selectors.js'), 'utf8')
 
-test('DA-4: commitEntries 写序为 PG 先、KV 镜像后', () => {
+test('DA-4/DA-5: commitEntries 写序为 PG 先，且不再写 KV 镜像', () => {
   // 提取 commitEntries 函数体
   const start = userData.indexOf('export async function commitEntries')
   assert.ok(start >= 0, 'commitEntries 存在')
   const end = userData.indexOf('\n}\n', start)
   const body = userData.slice(start, end)
   const pgPos = body.indexOf("api('/v2/daily-entries'")
-  const kvPos = body.indexOf("syncUserData(['entries'])")
   assert.ok(pgPos >= 0, 'commitEntries 调用 PG 写入')
-  assert.ok(kvPos >= 0, 'commitEntries 调用 KV 镜像')
-  assert.ok(pgPos < kvPos, `写序错误：PG(${pgPos}) 必须在 KV(${kvPos}) 之前`)
+  assert.ok(!body.includes('syncUserData'), 'commitEntries 不再写 KV 镜像（DA-5）')
+  assert.ok(!body.includes('/userdata'), 'commitEntries 不再写 KV 总入口（DA-5）')
 })
 
 test('DA-4: commitEntries 在 PG 失败时显式抛错（不写 KV 镜像）', () => {
@@ -29,7 +28,7 @@ test('DA-4: commitEntries 在 PG 失败时显式抛错（不写 KV 镜像）', (
   const body = userData.slice(start, end)
   assert.match(body, /failures\.length > 0/, '存在失败计数')
   assert.match(body, /throw new Error\(/, 'PG 失败显式抛错')
-  assert.ok(body.indexOf('syncUserData') > body.indexOf('throw new Error'), '抛错发生在 KV 镜像写之前')
+  assert.ok(body.indexOf('throw new Error') >= 0, 'PG 失败显式抛错')
 })
 
 test('DA-4: loadUserData entries 仅以 PG 为权威（无 KV 初始值/回退）', () => {
@@ -41,8 +40,8 @@ test('DA-4: loadUserData entries 仅以 PG 为权威（无 KV 初始值/回退�
   assert.match(userData, /if \(v2 && Array\.isArray\(v2\.rows\)\)/, 'PG 返回（含空）即事实')
   // 4) PG 失败仅回退"上一次成功的 PG 缓存"并告警，非 KV 回退
   assert.match(userData, /展示上次 PG 成功缓存/, '失败时保留上次 PG 缓存并告警')
-  // 5) legacy 迁移仅在 PG 不可用（!v2）时介入
-  assert.match(userData, /if \(!v2 && legacy\.entries/, 'legacy 迁移受 !v2 门控')
+  // 5) legacy localStorage 迁移已退役（DA-5）
+  assert.ok(!userData.includes('readLegacy('), 'legacy 迁移函数已移除')
 })
 
 test('DA-4: saveLocalEntry/deleteLocalEntry 返回 promise（调用方可感知 PG 失败）', () => {

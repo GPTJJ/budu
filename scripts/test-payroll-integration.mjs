@@ -14,29 +14,28 @@ globalThis.localStorage = {
   },
 }
 
-globalThis.localStorage.setItem(
-  'budu-os-cloud-mirror-v1',
-  JSON.stringify({
-    entries: {
-      '2026-08|tongying|10': { inc: 3500, ord: 80, staff: ['叶芷辰'] },
-      '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
-      '2026-08|guanshe|08-07': { inc: 0, ord: 0, staff: ['隋晓'] },
-      '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
-      '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
-    },
-    staff: [],
-    removedStaff: [],
-    analysis: {},
-    productImages: {},
-    stores: [{ key: 'store-abc', name: '北京朝外店' }],
-  }),
-)
+const SEED = {
+  entries: {
+    '2026-08|tongying|10': { inc: 3500, ord: 80, staff: ['叶芷辰'] },
+    '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
+    '2026-08|guanshe|08-07': { inc: 0, ord: 0, staff: ['隋晓'] },
+    '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
+    '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
+  },
+  staff: [],
+  removedStaff: [],
+  analysis: {},
+  productImages: {},
+  stores: [{ key: 'store-abc', name: '北京朝外店' }],
+}
 
 const server = await createServer({
   server: { middlewareMode: true },
   appType: 'custom',
   logLevel: 'silent',
 })
+const { seedCachedDataForTest } = await server.ssrLoadModule('/src/utils/userData.js')
+seedCachedDataForTest(SEED)
 const { employeeList, entryEmployeePerformance, employeeDayStatus, employeeDailyPayDetail, employeeWeekStatus } =
   await server.ssrLoadModule('/src/utils/selectors.js')
 

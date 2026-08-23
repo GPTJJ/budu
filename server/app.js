@@ -979,67 +979,6 @@ export function createApp() {
     res.json({ store })
   })
 
-  // ---------- 调货状态机：发货（调出门店 manager） / 确认收货（调入门店 manager） ----------
-  app.post('/api/inventory/requests/:id/ship', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
-    const db = await loadDb()
-    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
-    if (!r) return res.status(404).json({ error: '申请不存在' })
-    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可发货' })
-    if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可发货' })
-    if (!canManageTransferStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
-    const at = new Date().toISOString()
-    r.status = 'in_transit'
-    r.updatedAt = at
-    r.history = [
-      ...(Array.isArray(r.history) ? r.history : []),
-      { action: '审核通过并确认发货', status: 'in_transit', operator: req.user.username, at, note: '' },
-    ]
-    await persist()
-    res.json({ ok: true, request: r })
-  })
-
-  app.post('/api/inventory/requests/:id/receive', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
-    const db = await loadDb()
-    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
-    if (!r) return res.status(404).json({ error: '申请不存在' })
-    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可确认收货' })
-    if (r.status !== 'in_transit') return res.status(400).json({ error: '当前状态不可收货' })
-    if (!canManageTransferStore(req.user, r.storeKey)) return res.status(403).json({ error: '无权限' })
-    const at = new Date().toISOString()
-    r.status = 'completed'
-    r.updatedAt = at
-    r.history = [
-      ...(Array.isArray(r.history) ? r.history : []),
-      { action: '确认收货', status: 'completed', operator: req.user.username, at, note: '' },
-    ]
-    await persist()
-    res.json({ ok: true, request: r })
-  })
-
-  app.post('/api/inventory/requests/:id/reject', requireAuth, requireModule(MODULE_KEYS.INVENTORY_TRANSFER), requireTransferManager, async (req, res) => {
-    const db = await loadDb()
-    const r = (db.inventoryRequests || []).find((x) => x.id === req.params.id)
-    if (!r) return res.status(404).json({ error: '申请不存在' })
-    if (r.type !== 'transfer') return res.status(400).json({ error: '仅调货申请可驳回' })
-    if (r.status !== 'pending') return res.status(400).json({ error: '当前状态不可驳回' })
-    if (!canManageTransferStore(req.user, r.fromStoreKey)) return res.status(403).json({ error: '无权限' })
-    const at = new Date().toISOString()
-    r.status = 'rejected'
-    r.updatedAt = at
-    r.history = [
-      ...(Array.isArray(r.history) ? r.history : []),
-      {
-        action: '驳回申请',
-        status: 'rejected',
-        operator: req.user.username,
-        at,
-        note: String(req.body.note || '').trim().slice(0, 100),
-      },
-    ]
-    await persist()
-    res.json({ ok: true, request: r })
-  })
-
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()

@@ -101,6 +101,8 @@ test('DA-1: 前端不得存在冻结域业务数据的 KV 提交调用方', () =
     'commitProducts',
     'commitInventoryRequests',
     'commitInventoryState',
+    'commitProductImages',
+    'commitSchedules',
     'commitBigBonuses',
     'commitPosDaily',
     'commitPosProductSales',
