@@ -5,6 +5,7 @@ server/data
 backups
 docs
 deploy/certs
+deploy/wechat-secrets
 _shot
 _inspect*
 .tmp-*

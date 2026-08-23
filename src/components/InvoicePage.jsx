@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, CalendarClock, Camera, Copy, ImageUp, Loader2, Mail, MapPin, Plus, Receipt, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarClock, Camera, ClipboardPaste, Copy, ImageUp, Loader2, Mail, MapPin, Mic, Plus, Receipt, Sparkles, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
 import { normalizeImage } from '../utils/image'
+import { parseInvoiceText } from '../utils/invoiceParser'
 
 const inputCls = 'input'
 
@@ -103,6 +104,89 @@ export default function InvoicePage({ currentUser, onBack }) {
     const hit = companies.find((c) => c.name.toLowerCase() === value.trim().toLowerCase())
     setField('taxNo', hit ? hit.taxNo || '' : '')
     setFocused(true)
+  }
+
+  // ---------- 智能识别（粘贴 / 语音 → 拆分抬头/税号/金额） ----------
+  const [recognizeText, setRecognizeText] = useState('')
+  const [recognizeBusy, setRecognizeBusy] = useState('') // '' | 'voice'
+  const [recognizeHint, setRecognizeHint] = useState('')
+  const recognitionRef = useRef(null)
+
+  const applyParsed = (text) => {
+    const { companyName, taxNo, amount, email, titleType, matched } = parseInvoiceText(text)
+    if (!matched) {
+      setRecognizeHint('未能从文本中识别出开票信息，请检查后重试或手动填写')
+      return
+    }
+    if (companyName) {
+      setField('companyName', companyName)
+      // 与字典精确匹配时自动补税号
+      const hit = companies.find((c) => c.name.toLowerCase() === companyName.toLowerCase())
+      setField('taxNo', hit ? hit.taxNo || '' : taxNo || '')
+      if (titleType) setField('titleType', titleType)
+    } else if (taxNo) {
+      setField('taxNo', taxNo)
+    }
+    if (amount) setField('amount', amount)
+    if (email) setField('email', email)
+    const parts = []
+    if (companyName) parts.push(`抬头「${companyName}」`)
+    if (taxNo) parts.push(`税号「${taxNo}」`)
+    if (amount) parts.push(`金额「${amount}」`)
+    setRecognizeHint(`已识别${parts.join('、')}（空字段已自动填入）`)
+    setRecognizeText('')
+  }
+
+  const handlePasteRecognize = () => {
+    const text = recognizeText.trim()
+    if (!text) {
+      setRecognizeHint('请先粘贴或输入开票文本')
+      return
+    }
+    applyParsed(text)
+  }
+
+  const handleVoiceRecognize = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      setRecognizeHint('当前浏览器不支持语音识别（请使用 iPhone Safari / 微信内置浏览器）')
+      return
+    }
+    try {
+      const rec = new SR()
+      recognitionRef.current = rec
+      rec.lang = 'zh-CN'
+      rec.interimResults = false
+      rec.maxAlternatives = 1
+      setRecognizeBusy('voice')
+      setRecognizeHint('正在聆听…请说出抬头、税号和金额')
+      rec.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map((r) => r[0].transcript)
+          .join('')
+        setRecognizeBusy('')
+        if (transcript.trim()) applyParsed(transcript)
+        else setRecognizeHint('没有听清，请重试')
+      }
+      rec.onerror = (event) => {
+        setRecognizeBusy('')
+        const msg = {
+          'not-allowed': '麦克风权限被拒绝，请在系统设置中允许访问麦克风',
+          'service-not-allowed': '语音服务不可用',
+          'no-speech': '没有检测到语音，请重试',
+          network: '网络异常，语音识别失败',
+        }[event.error]
+        setRecognizeHint(msg || `语音识别失败（${event.error}）`)
+      }
+      rec.onend = () => {
+        recognitionRef.current = null
+        setRecognizeBusy((busy) => (busy === 'voice' ? '' : busy))
+      }
+      rec.start()
+    } catch {
+      setRecognizeBusy('')
+      setRecognizeHint('语音识别启动失败，请重试')
+    }
   }
 
   const submit = async () => {
@@ -297,6 +381,47 @@ export default function InvoicePage({ currentUser, onBack }) {
 
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+
+        {/* 智能识别：粘贴/语音 → 拆分抬头/税号/金额 */}
+        <div className="mt-3 space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-budu-600" />
+            <p className="text-sm font-bold text-slate-700">智能识别开票信息</p>
+            <span className="text-[11px] text-slate-400">粘贴或说出「抬头+税号+金额」，自动拆分填入</span>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={recognizeText}
+              onChange={(e) => setRecognizeText(e.target.value)}
+              placeholder="「粘贴识别」或输入文本，智能拆分抬头、税号和金额"
+              className={`${inputCls} flex-1`}
+            />
+            <button
+              type="button"
+              onClick={handlePasteRecognize}
+              disabled={recognizeBusy !== ''}
+              className="btn-primary h-10 shrink-0 px-3"
+            >
+              <ClipboardPaste className="h-4 w-4" />
+              粘贴并识别
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleVoiceRecognize}
+              disabled={recognizeBusy !== ''}
+              className="btn-secondary h-9 px-3"
+            >
+              {recognizeBusy === 'voice' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+              {recognizeBusy === 'voice' ? '聆听中…' : '语音识别'}
+            </button>
+            {recognizeHint && (
+              <p className="w-full text-xs font-medium text-budu-600">{recognizeHint}</p>
+            )}
+          </div>
+        </div>
+
         <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <button
             type="button"

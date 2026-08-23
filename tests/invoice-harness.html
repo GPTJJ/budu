@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Invoice Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import InvoicePage from '/src/components/InvoicePage.jsx'
+    import '/src/index.css'
+
+    const rows = []
+    const companies = [
+      { id: 'c1', name: '北京某某科技有限公司', taxNo: '91110108MA01ABCD2X' },
+    ]
+
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/invoices/ocr-status') return json({ ok: true, configured: true })
+      if (path === '/api/v2/invoices/companies') return json({ rows: companies })
+      if (path === '/api/v2/invoices' && (!options.method || options.method === 'GET')) {
+        return json({ rows })
+      }
+      if (path === '/api/v2/invoices' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        rows.push({ id: 'i-' + rows.length, ...body, status: 'pending', createdAt: new Date().toISOString() })
+        return json({ ok: true, invoice: rows[rows.length - 1] }, 201)
+      }
+      return json({ error: `未模拟接口 ${path}` }, 404)
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(InvoicePage, { currentUser: { role: 'developer' }, onBack: () => {} }))
+  </script></body>
+</html>

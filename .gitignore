@@ -29,6 +29,7 @@ _tmp*
 # 备份快照与证书（含敏感数据，切勿提交）
 backups/
 deploy/certs/
+deploy/wechat-secrets/
 
 # 环境变量模板需要入库
 !.env.example
