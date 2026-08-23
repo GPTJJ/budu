@@ -8,6 +8,7 @@ import { AttachmentUploader, templateName } from './ApprovalShared'
 import { EmployeeSheet, FieldRow, InputFieldRow, OptionSheet, TextAreaRow } from './ApprovalSelectors'
 import { CcSheet } from './ApprovalSelectors'
 import PayrollSlipCard from '../PayrollSlipCard'
+import BuduSuccessFeedback from '../feedback/BuduSuccessFeedback'
 import { periodLabel } from '../../utils/payrollSlip'
 import { toPng } from 'html-to-image'
 
@@ -137,6 +138,7 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
   const [importing, setImporting] = useState(false)
   const [slipNotice, setSlipNotice] = useState(null) // 当前导入的工资条（用于生成图片附件）
   const [candidates, setCandidates] = useState([]) // 账号姓名映射（抄送人/审批人显示）
+  const [feedback, setFeedback] = useState(null)
   const [bankInfo, setBankInfo] = useState(null) // 员工档案银行卡（工资审批自动代入）
   const autoBankRef = useRef({ bankName: '', bankBranch: '', cardNumber: '' }) // 上次自动代入值（避免覆盖手动修改）
   const slipCardRef = useRef(null)
@@ -320,6 +322,14 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
         : await api('/v2/approvals/requests', { method: 'POST', body: JSON.stringify(payload) })
       if (submit && initial) {
         await api(`/v2/approvals/requests/${initial.request.id}/submit`, { method: 'POST' })
+      }
+      if (submit) {
+        // 服务端真实成功后才播放卡皮巴拉动画（工资/报销审批提交）
+        setFeedback(
+          template.key === 'payroll'
+            ? { title: t('工资审批已提交'), description: t('等待审批') }
+            : { title: t('报销审批已提交'), description: t('等待审批') },
+        )
       }
       onSaved?.(res.request || initial, submit)
     } catch (e) {

@@ -18,6 +18,7 @@ import { allStores, products } from '../utils/selectors'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
 import { api } from '../utils/api'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { PRODUCT_CATEGORIES, MATERIAL_NAMES, FIXED_BY_CATEGORY, classifyProduct } from '../utils/productCategories'
 import { resolveItemCategory } from '../utils/itemCategory'
 import InventoryListModal from './InventoryListModal'
@@ -101,6 +102,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [expandedIds, setExpandedIds] = useState(new Set())
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
+  const [feedback, setFeedback] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
   const [version, setVersion] = useState(0)
   const [shipEdit, setShipEdit] = useState(null)
 
@@ -157,6 +160,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   }, [isTransfer])
 
   const submit = async () => {
+    if (submitting) return
+    setSubmitting(true)
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
@@ -191,10 +196,15 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       setPicked([])
       setForm((s) => ({ ...s, note: '' }))
       setVersion((v) => v + 1)
-      setSavedTip(t('已提交申请 ✓'))
-      setTimeout(() => setSavedTip(''), 2200)
+      setFeedback(
+        isTransfer
+          ? { title: t('调货申请已提交'), description: t('等待接收门店确认') }
+          : { title: t('采购申请已提交'), description: t('申请已进入处理流程') },
+      )
     } catch (err) {
       setError(t(err.message))
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -865,10 +875,11 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           />
           <button
             onClick={submit}
+            disabled={submitting}
             className="flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             <PackagePlus className="h-4 w-4" />
-            {t('提交申请')}
+            {submitting ? t('提交中…') : t('提交申请')}
           </button>
         </div>
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
@@ -879,10 +890,8 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
           currentUser={currentUser}
           catalog={productNames}
           version={version}
-          onChanged={(message) => {
+          onChanged={() => {
             setVersion((value) => value + 1)
-            setSavedTip(message)
-            setTimeout(() => setSavedTip(''), 2200)
           }}
         />
       )}
@@ -1182,6 +1191,16 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
         />
       )}
       {previewList && <InventoryListModal request={previewList} onClose={() => setPreviewList(null)} />}
+
+      {/* 卡皮巴拉提交成功动画 */}
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
+      )}
     </div>
   )
 }

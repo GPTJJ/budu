@@ -5,6 +5,7 @@ import { getInventory, loadUserData } from '../utils/userData'
 import { inventoryQuantity } from '../utils/inventory'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 
 const inputCls = 'input py-2.5'
 
@@ -37,6 +38,8 @@ function ModalShell({ title, subtitle, onClose, children }) {
 }
 
 export default function InventoryStockPanel({ currentUser, catalog = [], version, onChanged }) {
+  const [feedback, setFeedback] = useState(null)
+  const [adjustSaving, setAdjustSaving] = useState(false)
   const stores = allStores()
   const inventory = getInventory()
   const [storeFilter, setStoreFilter] = useState('all')
@@ -85,6 +88,8 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
   }, [ledgerOpen, ledgerType, storeFilter, version])
 
   const saveAdjust = async () => {
+    if (adjustSaving) return
+    setAdjustSaving(true)
     setError('')
     try {
       if (form.quantity === '') throw new Error('请填写盘点后的库存数量')
@@ -98,9 +103,12 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
       await loadUserData()
       setOpen(false)
       setForm((value) => ({ ...value, productName: '', quantity: '', minQty: '' }))
-      onChanged?.(t('库存已更新'))
+      setFeedback({ title: t('盘点完成'), description: t('库存已更新') })
+      onChanged?.()
     } catch (err) {
       setError(t(err.message))
+    } finally {
+      setAdjustSaving(false)
     }
   }
 
@@ -258,7 +266,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
             <button onClick={() => setOpen(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
               {t('取消')}
             </button>
-            <button onClick={saveAdjust} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
+            <button onClick={saveAdjust} disabled={adjustSaving} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
               {t('保存库存')}
             </button>
           </div>
@@ -369,6 +377,16 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
             {ledgerRows.length === 0 && <p className="grid place-items-center py-10 text-xs text-slate-300">{t('暂无流水')}</p>}
           </div>
         </ModalShell>
+      )}
+
+      {/* 卡皮巴拉提交成功动画 */}
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
       )}
     </div>
   )

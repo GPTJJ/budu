@@ -3,6 +3,7 @@ import { ArrowLeft, Bell, Database, Lock, MapPin, MessageCircle, Plus, Server, S
 import { t } from '../utils/text'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { commitStores, getStores } from '../utils/userData'
 import { allStores } from '../utils/selectors'
 
@@ -31,6 +32,7 @@ export default function SettingsPage({ user, onBack }) {
   // 微信绑定状态
   const [wxBindings, setWxBindings] = useState(null)
   const [wxTip, setWxTip] = useState('')
+  const [feedback, setFeedback] = useState(null)
   const [wxBusy, setWxBusy] = useState(false)
   // 管理员手动绑定（企微 userid，跳过扫码）
   const [manualUsername, setManualUsername] = useState('')
@@ -142,6 +144,7 @@ export default function SettingsPage({ user, onBack }) {
       })
       setManualUserid('')
       setManualTip(`已绑定 ${manualUsername.trim()} → ${res.identityHint}，推送立即生效`)
+      setFeedback({ title: t('绑定成功'), description: `已绑定 ${manualUsername.trim()} → ${res.identityHint}` })
       loadWxBindings()
     } catch (err) {
       setManualTip(err.message)
@@ -562,6 +565,16 @@ export default function SettingsPage({ user, onBack }) {
           {t('PostgreSQL / 云端共享数据 / POS 实时汇总')}
         </div>
       </div>
+
+      {/* 卡皮巴拉提交成功动画 */}
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
+      )}
     </div>
   )
 }

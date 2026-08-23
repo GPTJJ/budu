@@ -7,6 +7,7 @@ import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
 import { loadUserData, onUserDataUpdated } from '../utils/userData'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
@@ -100,6 +101,7 @@ export default function StoreEntryPage({ user, onBack }) {
   const [staffRows, setStaffRows] = useState([])
   const [saving, setSaving] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
+  const [feedback, setFeedback] = useState(null)
   const [version, setVersion] = useState(0)
   const [adjustCents, setAdjustCents] = useState('')
   const [adjustNote, setAdjustNote] = useState('')
@@ -186,7 +188,7 @@ export default function StoreEntryPage({ user, onBack }) {
       })
       await refreshAll()
       await loadOverview()
-      tip(t('营业数据已保存 ✓'))
+      setFeedback({ title: t('提交成功'), description: t('今日数据已保存') })
     } catch (e) {
       setError(e.message)
       if (e.data?.latest) {
@@ -540,6 +542,16 @@ export default function StoreEntryPage({ user, onBack }) {
       </>)}
 
       {exportOpen && <StoreEntryExportModal storeKey={store} storeName={storeInfo ? storeInfo.name : ''} onClose={() => setExportOpen(false)} />}
+
+      {/* 卡皮巴拉提交成功动画 */}
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
+      )}
     </div>
   )
 }

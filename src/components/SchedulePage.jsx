@@ -13,6 +13,7 @@ import {
 import { toPng } from 'html-to-image'
 import { allStores, employeeList } from '../utils/selectors'
 import { api } from '../utils/api'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
 import { t } from '../utils/text'
 
@@ -33,6 +34,8 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const [exporting, setExporting] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
   const [schedules, setSchedules] = useState({}) // PostgreSQL 权威数据（Data Authority DA-3）
+  const [feedback, setFeedback] = useState(null)
+  const [saving, setSaving] = useState(false)
   const exportRef = useRef(null)
 
   const days = getWeekDays(weekStart)
@@ -68,7 +71,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
     Boolean(myName) && myStaffKey === `${shiftStoreKey}::${staffName}`
 
   /** 保存某门店某周排班（PostgreSQL 权威；失败回滚本地视图并显式报错） */
-  const commit = async (store, nextWeek) => {
+  const commit = async (store, nextWeek, { feedback: withFeedback = false } = {}) => {
     const prev = schedules
     const next = { ...schedules, [weekStart]: nextWeek }
     if (Object.keys(nextWeek).length === 0) delete next[weekStart]
@@ -79,6 +82,10 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
         method: 'PUT',
         body: JSON.stringify({ weekStart, storeKey: store, days: nextWeek[store] || {} }),
       })
+      if (withFeedback) {
+        // 排班新增/修改成功（删除班次不触发点头动画）
+        setFeedback({ title: t('排班已保存') })
+      }
     } catch (e) {
       setSchedules(prev)
       setErrorTip(e.message || t('排班保存失败，请重试'))
@@ -98,7 +105,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       if (Object.keys(nextStoreDays).length > 0) nextWeek[store] = nextStoreDays
       else delete nextWeek[store]
     }
-    return commit(store, nextWeek)
+    return commit(store, nextWeek, { feedback: true })
   }
 
   const openEditor = (date, store) => {
@@ -109,11 +116,13 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   }
 
   const confirmAdd = () => {
+    if (saving) return
     const staff = draft.staff.trim()
     if (!staff) {
       setErrorTip(t('请填写员工姓名'))
       return
     }
+    setSaving(true)
     const shifts = [
       ...((schedules[weekStart] || {})[editingStore] || {})[editingDate] || [],
       {
@@ -123,9 +132,9 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       },
     ]
     setWeekShifts(editingStore, editingDate, shifts)
+      .then(() => setSaving(false))
+      .catch(() => setSaving(false))
     setEditingDate(null)
-    setSavedTip(t('已保存 ✓'))
-    setTimeout(() => setSavedTip(''), 2200)
   }
 
   const removeShift = (store, date, index) => {
@@ -394,6 +403,16 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
         {t('排班保存后自动同步到云端，所有登录账号实时可见；可与门店业绩录入中的值班人员互相参照')}
       </p>
 
+      {/* 卡皮巴拉提交成功动画 */}
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
+      )}
+
       {/* 导出图片预览（移动端不支持分享/下载时，长按保存到相册） */}
       {previewUrl && (
         <div
@@ -497,10 +516,11 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
               </button>
               <button
                 onClick={confirmAdd}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+                disabled={saving}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
               >
                 <Check className="h-4 w-4" />
-                {t('确认添加')}
+                {saving ? t('保存中…') : t('确认添加')}
               </button>
             </div>
           </div>

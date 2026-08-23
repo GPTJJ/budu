@@ -31,6 +31,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '../utils/api'
+import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { storeName, allStores } from '../utils/selectors'
 import { hasModuleAccess, MODULE_KEYS } from '../../shared/accountPermissions'
 
@@ -463,6 +464,7 @@ function EmployeeDetail({ employeeId, user, canEdit, canRevealIdentity, canRevea
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
+  const [feedback, setFeedback] = useState(null)
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -482,8 +484,10 @@ function EmployeeDetail({ employeeId, user, canEdit, canRevealIdentity, canRevea
   }, [loadAll])
 
   const notify = (msg) => {
+    // DA 后统一成功反馈：员工资料保存成功 → 卡皮巴拉动画
     setSaved(msg)
     setTimeout(() => setSaved(''), 2500)
+    setFeedback({ title: t('已保存'), description: t('员工资料已更新') })
   }
 
   if (loading && !employee) {
@@ -511,8 +515,13 @@ function EmployeeDetail({ employeeId, user, canEdit, canRevealIdentity, canRevea
 
   return (
     <div>
-      {saved && (
-        <p className="mb-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-600">✓ {saved}</p>
+      {feedback && (
+        <BuduSuccessFeedback
+          open={!!feedback}
+          title={feedback.title}
+          description={feedback.description}
+          onClose={() => setFeedback(null)}
+        />
       )}
 
       {/* 头部信息 */}

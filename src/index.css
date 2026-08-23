@@ -263,3 +263,242 @@
 .sheet-up {
   animation: sheet-up 0.2s ease-out;
 }
+
+/* ================= Budu Success Mascot Feedback System ================= */
+/* 卡皮巴拉提交成功动效（Golden Reference 严格锁定：造型/颜色/动画轨迹/时间轴 2.7s） */
+
+/* 弹层 */
+.budu-feedback-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(3px);
+  transition: opacity 0.22s ease-out;
+}
+.budu-feedback-closing {
+  opacity: 0;
+}
+.budu-feedback-card {
+  width: min(300px, 82vw);
+  border-radius: 26px;
+  background: #fff;
+  padding: 26px 22px 24px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+}
+.budu-capy {
+  width: min(300px, 82vw);
+  max-width: 300px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+/* 睡觉呼吸（轻微，3.2s 循环） */
+.budu-capy {
+  animation: buduCapySleepBreath 3.2s ease-in-out infinite;
+}
+.budu-feedback-overlay[data-stage='animating'] .budu-capy,
+.budu-feedback-overlay--animating .budu-capy {
+  animation: buduCapySleepBreath 3.2s ease-in-out infinite;
+}
+@keyframes buduCapySleepBreath {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(2px) scaleY(0.985);
+  }
+}
+
+/* 成功动画主时间轴：睁眼 / 闭眼 / Z / ✓（组件在 animating 阶段给 svg 加类） */
+.budu-capy--animating .budu-capy__eye-open {
+  opacity: 0;
+  transform: scaleY(0.15);
+  transform-origin: center;
+  animation: buduCapyEyeOpen 2.7s cubic-bezier(0.22, 0.75, 0.25, 1) both;
+}
+.budu-capy--animating .budu-capy__eye-closed {
+  opacity: 1;
+  animation: buduCapyEyeClosed 2.7s cubic-bezier(0.22, 0.75, 0.25, 1) both;
+}
+.budu-capy--animating .budu-capy__sleep-z {
+  opacity: 0.55;
+  animation: buduCapySleepZ 2.7s cubic-bezier(0.22, 0.75, 0.25, 1) both;
+}
+.budu-capy--animating .budu-capy__success-mark {
+  opacity: 0;
+  transform: scale(0.6);
+  transform-origin: center;
+  animation: buduCapySuccessMark 2.7s cubic-bezier(0.22, 0.75, 0.25, 1) both;
+}
+/* 点头：整只卡皮巴拉（svg 根）在 animating 阶段执行 */
+.budu-capy--animating {
+  animation: buduCapyNod 2.7s cubic-bezier(0.22, 0.75, 0.25, 1) both, buduCapySleepBreath 3.2s ease-in-out infinite;
+}
+
+/* 睁眼动画（严格参数） */
+@keyframes buduCapyEyeOpen {
+  0%,
+  25% {
+    opacity: 0;
+    transform: scaleY(0.15);
+  }
+  32%,
+  68% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  75%,
+  100% {
+    opacity: 0;
+    transform: scaleY(0.15);
+  }
+}
+@keyframes buduCapyEyeClosed {
+  0%,
+  25% {
+    opacity: 1;
+  }
+  32%,
+  68% {
+    opacity: 0;
+  }
+  76%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* 睡觉 Z（严格参数） */
+@keyframes buduCapySleepZ {
+  0%,
+  18% {
+    opacity: 0.55;
+    transform: translateY(0);
+  }
+  30%,
+  70% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  82%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+}
+
+/* 成功 ✓（严格参数；budu 红 + 深蓝，无绿色/烟花） */
+@keyframes buduCapySuccessMark {
+  0%,
+  48% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  58% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+  67% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  78%,
+  100% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+/* 点头（严格参数；轻微） */
+@keyframes buduCapyNod {
+  0%,
+  24% {
+    transform: translateY(0) rotate(0deg);
+  }
+  32% {
+    transform: translateY(-2px) rotate(0deg);
+  }
+  43% {
+    transform: translateY(9px) rotate(2.8deg);
+  }
+  52% {
+    transform: translateY(-3px) rotate(-1deg);
+  }
+  61% {
+    transform: translateY(6px) rotate(2deg);
+  }
+  69%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
+/* 结果区 */
+.budu-feedback-body {
+  margin-top: 6px;
+}
+.budu-feedback-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.budu-feedback-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #64748b;
+}
+.budu-feedback-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.budu-feedback-btn {
+  border-radius: 12px;
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.budu-feedback-btn-primary {
+  background: #102c6a;
+  color: #fff;
+}
+.budu-feedback-btn-secondary {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+/* 无障碍：减少动画用户不执行完整点头/缩放 */
+@media (prefers-reduced-motion: reduce) {
+  .budu-capy,
+  .budu-capy--animating {
+    animation: none !important;
+  }
+  .budu-capy__eye-open,
+  .budu-capy__eye-closed,
+  .budu-capy__sleep-z,
+  .budu-capy__success-mark {
+    animation: none !important;
+  }
+  .budu-capy__eye-open {
+    opacity: 0 !important;
+    transform: none !important;
+  }
+  .budu-capy__eye-closed {
+    opacity: 1 !important;
+  }
+  .budu-capy__sleep-z {
+    opacity: 0.55 !important;
+  }
+  .budu-feedback-overlay {
+    transition: none !important;
+  }
+}
