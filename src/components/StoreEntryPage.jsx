@@ -315,9 +315,10 @@ export default function StoreEntryPage({ user, onBack }) {
 
   const handleDelete = async (d) => {
     if (!window.confirm(t('确定删除该日业绩吗？删除后不可恢复'))) return
-    deleteLocalEntry(month, store, d)
     setError('')
     try {
+      // PG 权威删除（KV 不再先写；失败显式提示）
+      await deleteLocalEntry(month, store, d)
       await api('/v2/daily-entries', {
         method: 'DELETE',
         body: JSON.stringify({ storeKey: store, date: `${month}-${d.slice(3)}` }),

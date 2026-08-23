@@ -145,19 +145,17 @@ export function getPosProductSales() {
   return Array.isArray(getUserData().posProductSales) ? getUserData().posProductSales : []
 }
 
-/** 保存一条门店业绩录入（自动同步到服务端共享数据） */
+/** 保存一条门店业绩录入（自动同步到服务端共享数据；PG 权威，失败显式抛错） */
 export function saveLocalEntry(monthKey, storeKey, day, data) {
   const next = { ...getEntries(), [`${monthKey}|${storeKey}|${day}`]: data }
-  commitEntries(next)
-  return next
+  return commitEntries(next)
 }
 
 /** 删除一条门店业绩录入 */
 export function deleteLocalEntry(monthKey, storeKey, day) {
   const next = { ...getEntries() }
   delete next[`${monthKey}|${storeKey}|${day}`]
-  commitEntries(next)
-  return next
+  return commitEntries(next)
 }
 
 /** 某月某门店（或全部门店）的每日合并明细 */

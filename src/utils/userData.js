@@ -123,6 +123,10 @@ export async function loadUserData(options = {}) {
     if (activeUserId && activeUserId !== nextUserId) cached = null
     activeUserId = nextUserId
   }
+  // Data Authority DA-4：entries 的唯一权威是 PostgreSQL。
+  // 先暂存进入本函数前的内存缓存（上一次会话内成功的 PG 数据），
+  // 基础 KV 数据中的 entries 不再作为初始值/回退。
+  const prevEntries = cached && cached.entries ? cached.entries : {}
   const data = await api('/userdata').catch(() => null)
   if (!data || typeof data !== 'object') return
   let previousMirror = null
@@ -139,6 +143,7 @@ export async function loadUserData(options = {}) {
     posDaily: previousMirror?.posDaily,
     posProductSales: previousMirror?.posProductSales,
   })
+  cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
   // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
   writeMirror()
   if (onBaseReady) {
@@ -161,9 +166,10 @@ export async function loadUserData(options = {}) {
   ])
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
-  // v2（PostgreSQL）为业绩数据权威源：合并进缓存，保证首页统计与录入一致
+  // v2（PostgreSQL）为业绩数据唯一权威源：即使 PG 返回空也是事实（无 KV 回退）。
+  // PG 查询失败 → 保留上一次成功加载的 PG 缓存并显式告警（非 KV 回退）。
   const v2 = result(0)
-  if (v2 && Array.isArray(v2.rows) && v2.rows.length > 0) {
+  if (v2 && Array.isArray(v2.rows)) {
     const merged = {}
     for (const row of v2.rows) {
       const key = `${row.date.slice(0, 7)}|${row.storeKey}|${row.date.slice(5)}`
@@ -175,6 +181,9 @@ export async function loadUserData(options = {}) {
       }
     }
     cached.entries = merged
+  } else if (Object.keys(prevEntries).length > 0) {
+    cached.entries = prevEntries
+    console.error('[data-authority] DailyEntry 读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
   }
 
   const adjustments = result(1)
@@ -276,7 +285,9 @@ export async function loadUserData(options = {}) {
   }
   const legacy = readLegacy()
   let migrated = false
-  if (legacy.entries && Object.keys(legacy.entries).length > 0 && Object.keys(cached.entries).length === 0) {
+  // 仅当 PostgreSQL 不可用（v2 请求失败）时才允许 legacy 本地数据作为迁移源；
+  // PG 可用时 entries 权威一律为 PG（即使为空）。
+  if (!v2 && legacy.entries && Object.keys(legacy.entries).length > 0 && Object.keys(cached.entries).length === 0) {
     cached.entries = legacy.entries
     migrated = true
   }
@@ -336,13 +347,16 @@ function syncUserData(fields = []) {
   }, 250)
 }
 
+/**
+ * 保存门店业绩（Data Authority DA-4：PostgreSQL 为唯一写权威）
+ * 写序：先写 PG（单条 upsert + 乐观锁），全部成功后更新本地缓存并做 KV 镜像（best-effort）。
+ * PG 失败 → 显式抛错（不静默回退、不写 KV 镜像，避免 KV 出现 PG 没有的数据）。
+ */
 export async function commitEntries(entries) {
   const prev = { ...(getUserData().entries || {}) }
-  getUserData().entries = entries
-  syncUserData(['entries'])
-  // 同步写入 PostgreSQL（单条 upsert + 乐观锁），避免整库覆盖
   const changed = Object.keys(entries).filter((k) => JSON.stringify(entries[k]) !== JSON.stringify(prev[k]))
   const removed = Object.keys(prev).filter((k) => !(k in entries))
+  const failures = []
   for (const k of changed) {
     const parts = k.split('|')
     if (parts.length !== 3) continue
@@ -363,6 +377,7 @@ export async function commitEntries(entries) {
       if (res && res.row) entries[k] = { ...v, v2version: res.row.version }
     } catch (err) {
       if (err.status === 409 && err.data && err.data.latest) {
+        // 版本冲突：以 PG 最新值为准
         entries[k] = {
           inc: Number(err.data.latest.incCents) / 100,
           ord: err.data.latest.ord,
@@ -370,6 +385,8 @@ export async function commitEntries(entries) {
           v2version: err.data.latest.version,
         }
         console.warn('业绩版本冲突，已加载最新数据')
+      } else {
+        failures.push(k)
       }
     }
   }
@@ -383,9 +400,16 @@ export async function commitEntries(entries) {
         body: JSON.stringify({ storeKey, date: `${month}-${day.slice(3)}` }),
       })
     } catch (err) {
-      console.warn('业绩删除同步失败：', err.message)
+      failures.push(k)
     }
   }
+  if (failures.length > 0) {
+    // 显式失败：PostgreSQL 权威写入未全部成功，不更新缓存、不写 KV 镜像
+    throw new Error(`业绩保存失败（PostgreSQL 不可用），未保存 ${failures.length} 条，请稍后重试`)
+  }
+  // 权威写全部成功 → 更新本地缓存 + KV 镜像（镜像失败不影响权威）
+  getUserData().entries = entries
+  syncUserData(['entries'])
   writeMirror()
 }
 
