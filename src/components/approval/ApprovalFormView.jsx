@@ -137,6 +137,8 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
   const [importing, setImporting] = useState(false)
   const [slipNotice, setSlipNotice] = useState(null) // 当前导入的工资条（用于生成图片附件）
   const [candidates, setCandidates] = useState([]) // 账号姓名映射（抄送人/审批人显示）
+  const [bankInfo, setBankInfo] = useState(null) // 员工档案银行卡（工资审批自动代入）
+  const autoBankRef = useRef('') // 上次自动代入的银行卡文本（避免覆盖手动修改）
   const slipCardRef = useRef(null)
 
   useEffect(() => {
@@ -167,6 +169,44 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
       .catch(() => {
         if (alive) setPayrollNotices([])
       })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.employee, template.key])
+
+  // 工资审批：员工档案银行卡信息自动代入（若有）；不强制填写，可修改
+  useEffect(() => {
+    if (template.key !== 'payroll') return undefined
+    const emp = String(formData.employee || '')
+    const parts = emp.split('::')
+    const storeKey = parts[0] || ''
+    const empName = parts[1] || ''
+    if (!empName || !storeKey) {
+      setBankInfo(null)
+      return undefined
+    }
+    let alive = true
+    setBankInfo(null)
+    api(`/v2/approvals/payroll-bank-info?storeKey=${encodeURIComponent(storeKey)}&employeeName=${encodeURIComponent(empName)}`)
+      .then((res) => {
+        if (!alive) return
+        const bank = res && res.bank
+        setBankInfo(bank || null)
+        if (!bank) return
+        const text = [bank.bankName, bank.cardNumber || bank.maskedNumber, bank.cardLast4 ? `尾号${bank.cardLast4}` : '']
+          .filter(Boolean)
+          .join(' ')
+        setFormData((s) => {
+          // 仅当字段为空或仍是上次自动代入值时覆盖，避免覆盖手动修改
+          if (!s.bankCard || s.bankCard === autoBankRef.current) {
+            autoBankRef.current = text
+            return { ...s, bankCard: text }
+          }
+          return s
+        })
+      })
+      .catch(() => setBankInfo(null))
     return () => {
       alive = false
     }
@@ -343,6 +383,26 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
             placeholder="请输入"
             type="number"
           />
+        )
+      case 'bankCard':
+        return (
+          <div key={field.key}>
+            <InputFieldRow
+              label={field.label}
+              required={field.required}
+              value={value}
+              onChange={setField(field.key)}
+              placeholder={bankInfo ? '可修改' : '自动代入自员工档案，未填写可留空'}
+              maxLength={100}
+            />
+            {String(formData.employee || '').split('::')[1] && (
+              <p className="px-4 py-1.5 text-[11px] text-slate-400">
+                {bankInfo
+                  ? `信息来源员工档案 · ${bankInfo.bankName}${bankInfo.cardLast4 ? ` · 尾号 ${bankInfo.cardLast4}` : ''}${bankInfo.isPayroll ? ' · 工资卡' : ''}`
+                  : '员工档案暂无银行卡信息，可手动填写（不强制）'}
+              </p>
+            )}
+          </div>
         )
       case 'textarea':
         return (

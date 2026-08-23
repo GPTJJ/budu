@@ -60,7 +60,7 @@ export function decryptSensitive(stored) {
 
 // ---------------- 权限 ----------------
 const IDENTITY_REVEAL_ROLES = new Set(['developer', 'admin'])
-const BANK_REVEAL_ROLES = new Set(['developer', 'admin', 'finance'])
+export const BANK_REVEAL_ROLES = new Set(['developer', 'admin', 'finance'])
 const EDIT_ROLES = new Set(['developer', 'admin', 'finance'])
 
 function moduleOk(user) {
@@ -91,7 +91,7 @@ function canViewEmployee(user, employee) {
 }
 
 // ---------------- 审计 ----------------
-async function logAudit(user, employeeId, action, extra = {}) {
+export async function logAudit(user, employeeId, action, extra = {}) {
   await prisma.employeeAuditLog.create({
     data: {
       id: `ea-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`,

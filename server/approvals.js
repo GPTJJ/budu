@@ -10,6 +10,7 @@ import { loadDb } from './store.js'
 import { notify } from './notification-center.js'
 import { httpError } from './pos-core.js'
 import { storeAssetData, readAssetData, assetObjectKey } from './asset-storage.js'
+import { decryptSensitive, maskBank, logAudit, BANK_REVEAL_ROLES } from './employee-profile.js'
 import {
   canViewRequest,
   canCreate,
@@ -81,6 +82,7 @@ export async function ensureApprovalTemplates() {
         { key: 'socialSecurity', label: '社保（元）', type: 'money' },
         { key: 'incomeTax', label: '个税（元）', type: 'money' },
         { key: 'netPay', label: '实发（元）', type: 'money', required: true, amount: true },
+        { key: 'bankCard', label: '银行卡信息', type: 'bankCard' },
         { key: 'remark', label: '备注', type: 'textarea', maxLength: 500 },
       ],
       approverRule: { type: 'role', role: 'admin' },
@@ -195,6 +197,46 @@ approvalRouter.get('/approvals/cc-candidates', wrap(async (req, res) => {
     ok: true,
     rows: users.map((u) => ({ username: u.username, role: u.role, name: u.displayName || u.username })),
   })
+}))
+
+/**
+ * 工资审批：员工档案银行卡信息（自动代入，不强制填写）
+ * 默认返回掩码卡号；developer/admin/finance 返回完整卡号并审计留痕
+ */
+approvalRouter.get('/approvals/payroll-bank-info', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!canCreate(req.user)) throw httpError('无权限', 403)
+  const storeKey = String(req.query.storeKey || '').trim().slice(0, 30)
+  const employeeName = String(req.query.employeeName || '').trim().slice(0, 50)
+  if (!storeKey || !employeeName) throw httpError('员工参数不完整')
+  const row = await prisma.employee.findFirst({
+    where: { name: employeeName, currentStoreKey: storeKey },
+    include: { bankAccounts: true },
+  })
+  if (!row) return res.json({ ok: true, bank: null, full: false })
+  const active = row.bankAccounts
+    .filter((b) => b.status === 'active')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  if (active.length === 0) return res.json({ ok: true, bank: null, full: false })
+  const b = active[0]
+  const masked = {
+    bankName: b.bankName,
+    bankBranch: b.bankBranch,
+    accountName: b.accountName,
+    cardLast4: b.cardLast4,
+    maskedNumber: maskBank('', b.cardLast4),
+    isPayroll: b.isPayroll,
+  }
+  if (BANK_REVEAL_ROLES.has(req.user.role)) {
+    const cardNumber = decryptSensitive(b.cardNumberEnc)
+    await logAudit(req.user, row.id, 'bank.reveal', {
+      targetType: 'bank_account',
+      targetId: b.id,
+      source: 'approval-form',
+    })
+    return res.json({ ok: true, bank: { ...masked, cardNumber }, full: true })
+  }
+  res.json({ ok: true, bank: masked, full: false })
 }))
 
 /** 校验额外抄送人账号列表（去重；仅保留存在的非公开/收银账号） */
