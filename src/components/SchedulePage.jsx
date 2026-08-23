@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   CalendarClock,
@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
 import { allStores, employeeList } from '../utils/selectors'
-import { getSchedules, commitSchedules } from '../utils/userData'
+import { api } from '../utils/api'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
 import { t } from '../utils/text'
 
@@ -32,9 +32,9 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const [savedTip, setSavedTip] = useState('')
   const [exporting, setExporting] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
+  const [schedules, setSchedules] = useState({}) // PostgreSQL 权威数据（Data Authority DA-3）
   const exportRef = useRef(null)
 
-  const schedules = getSchedules()
   const days = getWeekDays(weekStart)
   const today = todayStr()
   const storeInfo = stores.find((s) => s.key === storeKey)
@@ -42,15 +42,47 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
     a.localeCompare(b, 'zh-CN'),
   )
 
+  // 从 PostgreSQL 加载当前周排班（唯一读权威）
+  const loadWeek = useCallback(async (ws) => {
+    try {
+      const res = await api(`/v2/schedules?weekStart=${encodeURIComponent(ws)}`)
+      const nested = {}
+      for (const row of res.rows || []) {
+        nested[row.storeKey] = nested[row.storeKey] || {}
+        nested[row.storeKey][row.date] = row.shifts
+      }
+      setSchedules((prev) => ({ ...prev, [ws]: nested }))
+    } catch (e) {
+      setErrorTip(e.message || t('排班加载失败'))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    loadWeek(weekStart)
+  }, [weekStart, loadWeek])
+
   // 绑定员工（staffKey = storeKey::name）：本人当班名字高亮
   const myStaffKey = String((user && user.staffKey) || '')
   const myName = myStaffKey.includes('::') ? myStaffKey.split('::')[1] : ''
   const isMyShift = (shiftStoreKey, staffName) =>
     Boolean(myName) && myStaffKey === `${shiftStoreKey}::${staffName}`
 
-  const commit = (next) => {
-    commitSchedules(next)
+  /** 保存某门店某周排班（PostgreSQL 权威；失败回滚本地视图并显式报错） */
+  const commit = async (store, nextWeek) => {
+    const prev = schedules
+    const next = { ...schedules, [weekStart]: nextWeek }
+    if (Object.keys(nextWeek).length === 0) delete next[weekStart]
+    setSchedules(next)
     setVersion((v) => v + 1)
+    try {
+      await api('/v2/schedules', {
+        method: 'PUT',
+        body: JSON.stringify({ weekStart, storeKey: store, days: nextWeek[store] || {} }),
+      })
+    } catch (e) {
+      setSchedules(prev)
+      setErrorTip(e.message || t('排班保存失败，请重试'))
+    }
   }
 
   const weekShiftsOf = (store) => (schedules[weekStart] || {})[store] || {}
@@ -66,13 +98,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       if (Object.keys(nextStoreDays).length > 0) nextWeek[store] = nextStoreDays
       else delete nextWeek[store]
     }
-    if (Object.keys(nextWeek).length === 0) {
-      const next = { ...schedules }
-      delete next[weekStart]
-      commit(next)
-    } else {
-      commit({ ...schedules, [weekStart]: nextWeek })
-    }
+    return commit(store, nextWeek)
   }
 
   const openEditor = (date, store) => {

@@ -21,6 +21,7 @@ const PURE_FILES = [
   'server/notifications.js',          // Notification（站内）
   'server/ocr.js',                    // Invoice OCR 辅助
   'server/asset-reminders.js',        // Asset 到期提醒
+  'server/schedule.js',               // Schedule（DA-3 排班权威）
   'server/v2.js',                     // 调货/采购/库存/大单奖/日薪调整/发票/邮寄/资产等 v2 业务域
   'server/payments/payment-reconciler.js',   // Payment 对账
   'server/payments/payment-service.js',      // Payment 服务

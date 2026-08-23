@@ -10,6 +10,7 @@ import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
+import { scheduleRouter } from './schedule.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
 import { approvalRouter, ensureApprovalTemplates } from './approvals.js'
 import { notificationRouter } from './notifications.js'
@@ -586,6 +587,7 @@ export function createApp() {
         : [MODULE_KEYS.STORE_ENTRY])) ||
       (/^\/daily-entry\/overview(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY]) ||
       (/^\/daily-(?:entry|staff)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_ENTRY]) ||
+      (/^\/schedules(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_SCHEDULE]) ||
       (/^\/store-sales-source/.test(pathname) && [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.SETTINGS]) ||
       (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
@@ -602,7 +604,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

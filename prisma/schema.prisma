@@ -1161,3 +1161,18 @@ model EmployeeAuditLog {
   @@index([action, createdAt])
   @@map("employee_audit_logs")
 }
+
+/// 门店排班（Data Authority DA-3：PostgreSQL 唯一权威；KV schedules 为迁移源，迁移后只读存档）
+model Schedule {
+  id        String   @id
+  weekStart String   @map("week_start") // 周一起始日 YYYY-MM-DD
+  storeKey  String   @map("store_key")
+  date      String   // YYYY-MM-DD（周内某天）
+  shifts    Json     // [{ staff, time, note }]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([weekStart, storeKey, date])
+  @@index([weekStart])
+  @@map("schedules")
+}
