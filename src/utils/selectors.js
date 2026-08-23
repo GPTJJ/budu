@@ -77,6 +77,7 @@ export function allStoreKeys() {
 
 export function storeName(key) {
   if (key === 'all') return '全部门店'
+  if (key === 'multi') return '多店支援'
   const s = allStores().find((x) => x.key === key)
   return s ? s.name : key
 }

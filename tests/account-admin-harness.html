@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Account Admin Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import AccountAdminPage from '/src/components/AccountAdminPage.jsx'
+    import '/src/index.css'
+
+    // 共享数据镜像：马婧欣@chaowai（档案门店）、陈荣梅@multi（多店支援）、史璐璐@chaowai
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
+      entries: {},
+      staff: [
+        { name: '马婧欣', type: 'parttime', storeKey: 'chaowai' },
+        { name: '史璐璐', type: 'parttime', storeKey: 'chaowai' },
+        { name: '陈荣梅', type: 'fulltime', storeKey: 'multi' },
+      ],
+      removedStaff: [],
+      stores: [{ key: 'chaowai', name: '北京朝外店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [],
+      analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [],
+      posDaily: [], posProductSales: [],
+    }))
+
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/userdata') return json({ users: [], staff: [], removedStaff: [], stores: [], schedules: {}, entries: {} })
+      if (path === '/api/v2/daily-entries' || path === '/api/v2/daily-pay-adjustments'
+        || path === '/api/v2/pos/daily-summary' || path === '/api/v2/pos/product-sales'
+        || path === '/api/v2/transfer-requests' || path === '/api/v2/purchase-requests'
+        || path === '/api/v2/stock' || path === '/api/v2/big-bonuses') return json({ rows: [] })
+      if (path === '/api/v2/employees') return json({ rows: [] })
+      if (path.startsWith('/api/admin/users')) {
+        if (options.method === 'POST') return json({ ok: true, user: JSON.parse(options.body) }, 201)
+        return json({ rows: [] })
+      }
+      return json({ ok: true })
+    }
+
+    const user = { id: 'u-dev', username: 'budu', displayName: 'budu', role: 'developer', storeKeys: [], staffKey: '', assetCenter: true, status: 'active' }
+    createRoot(document.getElementById('root')).render(React.createElement(AccountAdminPage, { currentUser: user, onBack: () => {} }))
+  </script></body>
+</html>
