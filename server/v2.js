@@ -994,7 +994,10 @@ v2Router.put('/staff', wrap(async (req, res) => {
         update: {},
         create: { key: storeKey, name: resolveStoreName(storeKey) || storeKey },
       })
-      const id = `st-${storeKey}-${name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
+      // id 必须唯一：中文名用 codepoint 编码（与前端 StoreEntryPage.staffIdFor 同规则），
+      // 避免同门店同字数员工（如 叶芷辰/李飞燕）替换成下划线后互相覆盖
+      const encoded = [...String(name)].map((ch) => ch.codePointAt(0).toString(36)).join('')
+      const id = `st-${storeKey}-${encoded.slice(0, 64)}`
       await tx.staff.upsert({
         where: { id },
         update: { name, type: s.type || 'fulltime', salary: Number(s.salary) || 0 },
