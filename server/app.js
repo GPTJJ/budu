@@ -277,6 +277,7 @@ export function createApp() {
       role: u.role,
       storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [],
       staffKey: u.staffKey || '',
+      employeeId: u.employeeId || '',
       permissions: normalizeAccountPermissions(u.permissions, u.role, u.assetCenter === true),
       assetCenter: hasModuleAccess(u, MODULE_KEYS.ASSET_CENTER),
       status: u.status || (u.role === 'public' ? 'disabled' : 'active'),
