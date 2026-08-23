@@ -7,7 +7,7 @@ import { t } from '../utils/text'
 import { periodLabel } from '../utils/payrollSlip'
 import PayrollSlipCard from './PayrollSlipCard'
 
-export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
+export default function PayrollSlipModal({ notice, onClose, onConfirmed, onOpenProfile }) {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const confirmed = notice.status === 'confirmed'
@@ -47,6 +47,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed }) {
             employeeName={notice.employeeName}
             periodText={periodLabel(notice.periodType, notice.periodKey)}
             snapshot={notice.snapshot}
+            onOpenProfile={onOpenProfile}
           />
         </div>
 

@@ -1,275 +1,352 @@
-# BUDU / SmartSteer 项目状态
+# BUDU / SmartSteer 项目状态交接
 
-> 更新时间：2026-08-23（Asia/Shanghai）
-> 用途：供新的 Codex 任务快速接续 BUDU 项目。
-> 事实口径：先以 `CURRENT_ARCHITECTURE.md` 为架构基线，再以本文记录的 Git、线上部署、合规和近期分支状态为补充。本文不构成生产写入、迁移、支付启用或部署授权。
+> 快照时间：2026-08-23 11:26 CST（Asia/Shanghai）
+> 目的：只记录本轮结束时由 Git、代码、测试数据库和北京生产环境实际核实的事实。
+> 本文件不构成生产迁移、部署、支付启用或敏感数据处理授权。
 
 ## 0. 状态总览
 
-| 项目 | 当前事实 |
+| 项目 | 当前真实状态 |
 |---|---|
-| 正式域名 | `https://buducandy.cn` |
-| 公共 DNS 实测 | `154.8.195.42`（北京） |
-| 公网健康状态 | `200 OK`，`/api/health` 返回 `ok: true` |
-| 公网运行提交 | `2d70da1341ae9c543d3b909b7b33efacf99a7fac`（受控部署，尚未合并/推送 main） |
-| 公网环境标识 | `APP_ENV=prod` |
-| 公网应用版本 | `V2.19` |
-| 远端主分支 | `origin/main` = `a2e2519901376e174a61760424ae3f2a8222f6c0` |
-| 当前开发分支 | `feat/wecom-push` |
-| 当前已部署代码 HEAD | `2d70da1341ae9c543d3b909b7b33efacf99a7fac` |
-| 分支关系 | `feat/wecom-push` 比 `origin/main` 多 7 个提交（含本状态文档提交）；功能分支已推送，尚未合并 main |
-| 当前分支迁移 | 27 个 Prisma migration；北京生产恢复库已全部应用，最新为 `20260823000000_wechat_binding_security` |
-| 最近本地验证 | 2026-08-23：Playwright 34/34；企微专项 16/16；`npm run test` PASS 27/27；`npm run test:critical` PASS 10/10；build/SSR PASS；`git diff --check` clean |
-| ICP | 主体备案已完成，备案号 `京ICP备2026054094号-1` |
-| ICP 悬挂 | 已解除：2026-08-23 公网 JS 实测同时包含 `京ICP备2026054094号-1` 与 `beian.miit.gov.cn` |
-| 公安联网备案 | 已进行注册、填写和材料上传；尚无可验证的公安备案号，按待审核/待最终悬挂处理 |
-| 北京迁移 | DNS 已指向北京；生产恢复库完成 25→27 migration；公网 `env=prod`、SHA/前端哈希/守卫验收通过；旧恢复 API 保留为快速回滚目标 |
+| 当前任务 | 员工档案（Employee Master Profile）后端/Schema 草稿；同时存在已提交但未部署的门店业绩权限修复 |
+| 当前阶段 | **IN PROGRESS**：员工档案 Router 已挂载到本地 `app.js`，但无前端、无专项测试、未提交、未迁移生产 |
+| 当前 Branch | `feat/wecom-push` |
+| HEAD | `09d25d94e4c53a0bdc74c9bea177fbfcae1a2f9c` |
+| 远端同步 | HEAD 与 `origin/feat/wecom-push` 一致；已 push |
+| 相对 main | 比 `origin/main` 多 12 个提交 |
+| Working Tree | **DIRTY** |
+| 当前生产 SHA | `49262ad`（公网 `/api/health` 实测） |
+| 当前生产环境 | 北京，`APP_ENV=prod`，容器 healthy |
+| Repository migrations | 28 个目录（第 28 个尚未提交） |
+| Production migrations | 27 APPLIED / 0 failed；员工档案 migration NOT APPLIED |
+| 当前测试结论 | 单元/集成与浏览器通过；SSR 冒烟失败；员工档案无专项测试 |
 
 ## 1. 已完成内容
 
-### 1.1 门店管理与移动端
+### DONE
 
-- 登录、JWT httpOnly Cookie、会话、账号管理。
-- 六个正式角色：开发者、管理员、财务、店长、员工、门店收银；Public 已停用。
-- 账号级模块授权、门店范围、员工绑定、调货跨店范围授权。
-- 移动首页工作台、经营分析、自然周筛选、待办、门店经营、最近动态。
-- 业绩录入、排班、人员、工资、邮寄、财务、发票、审批、库存、档案馆、系统设置、通知中心。
-- PWA、iPhone 安全区、移动底栏、右滑返回、下拉刷新、固定中文界面。
+- 移动端 Header 工具栏溢出修复：375/390/430px 门店选择器与日期工具不再被裁剪；浏览器测试覆盖。
+- POS mock 扫码修复：mock 模式接受测试码；真实微信付款仍校验 18 位付款码。
+- 企业微信个人通知与绑定安全加固：
+  - OAuth state 使用 PostgreSQL 一次性哈希票据，拒绝伪造、过期和重放。
+  - 手工绑定仅 Developer；目标账号校验、活动微信身份唯一约束、审计和脱敏已实现。
+  - `PUBLIC_BASE_URL` 安全校验、回调 Token/AES Key 缺失时 fail-closed。
+  - Migration `20260823000000_wechat_binding_security` 已在生产 APPLIED。
+- 微信支付核对字段 migration `20260822000001_wechat_pay_reconciliation` 已在生产 APPLIED；真实微信支付仍显式关闭。
+- 自建生产文件存储：支持显式 `DATA_STORE=file` + `DATA_DIR`，生产当前使用持久卷文件存储。
+- 北京生产曾完成备份、隔离恢复 migration dry-run、数据库迁移和受控切流；当前生产仍健康。
+- 后续已提交并推送的界面/权限工作：
+  - 移动侧栏矮屏适配（`c93cb6d`）。
+  - 账号管理用户名与卡片化 UI（`6d81c71`、`49262ad`）；生产当前运行到 `49262ad`。
+  - 项目需求与技术亮点文档（`63a7569`，不影响运行时）。
+- 当前工作树重新验证结果：
+  - `npx prisma validate`：PASS（使用无敏感信息的占位 URL，仅校验 Schema）。
+  - `npm run test`：PASS 27 / FAIL 0。
+  - 隔离 PostgreSQL 测试 schema：28 个 migration 全部 APPLIED，测试后 schema 已清理。
+  - `npm run build`：PASS。
+  - `npx playwright test`：PASS 34 / 34。
 
-### 1.2 人员与工资
+### IN PROGRESS
 
-- 全职/兼职员工主档、员工卡片、工时、基础工资、提成、大单奖。
-- 官舍店调货补贴：自 `2026-08-01`（含）起，明确识别为官舍值班的员工额外 `2 元/小时`，全职和兼职均适用。
-- 开发者每日工资调整：不调整时用自动工资；调整后以开发者设定值为准并展示明细。
-- 工资明细与 Excel 导出；工资条生成、正式发放、签收。
-- 已发工资条使用 PostgreSQL `PayrollNotice` 保存快照。
+#### A. 员工档案模块（未提交工作树）
 
-### 1.3 商品、库存与 POS
+- `prisma/schema.prisma` 新增 10 个 Employee 相关 model。
+- 新建 migration `20260823000001_employee_profile`，创建 10 张表。
+- 新建 `server/employee-profile.js`，包含 19 个 Router handler：员工列表/档案、任职信息、身份证、银行卡、调薪、状态历史、时间线、摘要和附件。
+- `server/app.js` 已在本地将 `employeeProfileRouter` 挂到 `/api/v2`。
+- `shared/accountPermissions.js` 新增 `MODULE_KEYS.EMPLOYEE_PROFILE`：Manager 默认包含，Staff 默认不包含；Developer/Admin/Finance 由既有全模块规则获得。
+- 身份证号和银行卡号设计为 AES-256-GCM 密文 + last4 掩码；代码要求 `EMPLOYEE_SENSITIVE_KEY`。
+- 当前没有 Employee Profile 前端页面、导航入口或浏览器测试。
+- 当前没有员工档案专项 API、权限、加密、审计、并发或 migration 测试。
 
-- 商品中心：稳定 `product_id`、唯一 SKU、分类、售价、成本、单位、图片、条码、上下架、库存参与开关、排序。
-- 商品 Excel 导入/导出和自动字段识别。
-- iPad 横屏 POS 三栏点单、每行 3 个商品、搜索、购物车、赠送、折扣、备注、订单记录和当日汇总。
-- PostgreSQL 订单、订单行、支付、退款、支付日志；金额统一以整数“分”持久化，并保存成交快照。
-- 订单/支付状态机、幂等结算、重复支付防护、Mock 支付、现金支付和退款基础能力。
-- `CameraScanner` 使用 `getUserMedia()` + ZXing；付款码设计为仅在内存传递、不长期保存原文。
-- 调拨、采购、库存余额及流水流程已存在。
-- POS 销售尚未自动扣减库存，这是当前明确边界。
+#### B. 门店业绩录入权限修复
 
-### 1.4 审批、通知与档案
+- HEAD `09d25d9` 已提交并 push：门店业绩录入按账号 `storeKeys` 过滤门店，未绑定门店显示空态。
+- 当前尚未部署生产；生产仍为 `49262ad`。
+- 全量测试与浏览器套件通过，但 SSR 冒烟出现 StoreEntryPage 文案断言失败，不能标记为发布完成。
 
-- PostgreSQL 审批中心：草稿、提交、审批、驳回、撤回、归档、抄送、附件和日志。
-- PostgreSQL 通知中心：站内消息、投递记录、个人微信绑定模型和业务通知聚合。
-- 档案馆：分类、文件、版本、访问授权、操作日志和到期提醒。
-- COS 和 Sentry 均为代码已接入、配置后启用。
-- 企业微信群机器人告警已有入口，依赖 Webhook。
+### NOT STARTED
 
-### 1.5 架构、测试、迁移和合规
+- 员工档案前端页面、表单、导航与移动端布局。
+- 员工档案旧 Staff/账号数据 backfill、对账与回滚设计。
+- 员工档案生产 Secret 配置和密钥轮换方案。
+- 员工档案生产 migration Gate、备份恢复演练与部署。
+- 员工档案真实敏感数据验收；不得用真实身份证号或银行卡号做普通测试。
+- 企业微信真实员工闭环验收（绑定 → 测试消息 → 工资条 → 微信收到 → 点击直达）仍为 NOT TESTED。
+- 微信真实支付现场 Gate；功能继续关闭。
 
-- `CURRENT_ARCHITECTURE.md` 已建立当前架构事实基线（基线提交 `c396c9`）。
-- 统一隔离测试入口：`npm run test`、`npm run test:critical`。
-- User KV → PostgreSQL 只读迁移盘点工具完成；正式 Backfill 尚未执行。
-- 北京迁移历史 Gate 已完成：Golden Backup、隔离恢复演练、最终恢复、DNS 切换、写权限交接。
-- ICP 主体备案成功，备案页脚代码提交 `2cadc0d` 已进入 main。
-- 软件著作权申请/实名认证流程已经提交并曾收到认证成功反馈；最终证书以官方平台为准。
+### BLOCKED
 
-### 1.6 当前企微开发分支（已部署公网、尚未合并 main）
-
-- `4269a30`：企微自建应用个人推送，共享 access token 缓存、失效重试、错误详情、测试和配置文档。
-- `d2eda74`：修正 EncodingAESKey 格式。
-- `26ff356`：系统设置新增管理员手动绑定企业微信 userid；新增手动绑定/查询 API 和 PostgreSQL 集成测试。
-
-### 1.7 企微绑定安全加固（2026-08-23，已提交并部署）
-
-- 扫码 OAuth `state` 改为 PostgreSQL 10 分钟一次性随机票据，仅存 SHA-256 哈希；公开回调不再依赖登录 Cookie，伪造、过期和重放均拒绝。
-- 移除回调 Token/EncodingAESKey 硬编码兜底；两项缺失或格式非法时回调端点 fail-closed（503）。
-- 消息卡片与扫码回调只接受安全的 `PUBLIC_BASE_URL`；移除 `budu-hk.online` 运行时 fallback，生产模板明确使用 `https://buducandy.cn`。
-- 手动绑定收紧为仅 Developer；写入前校验系统账号存在且启用、企微 userid 格式和活动身份唯一性。
-- 新增绑定审计表、活动身份部分唯一索引、脱敏 API/UI 展示；本人解绑同步写审计。
-- 新迁移：`20260823000000_wechat_binding_security`。迁移若发现既有重复活动绑定会安全失败，部署前必须先做只读重复检查。
-
-### 1.8 2026-08-23 修复、Gate 与北京受控部署
-
-- P1：移动 Header 工具栏改为手机单列/双列响应式布局，门店选择器不再被横向裁剪；375/390/430px 均有溢出断言。
-- P2：`PosPage` 仅在真实微信付款时校验 18 位付款码，mock 测试码恢复兼容。
-- 生产 Gate：真实恢复库全量备份恢复到隔离临时库，25→27 migration dry-run 成功；37 笔支付、1 条企微绑定行数不变，重复活动微信身份组为 0。
-- 生产迁移：`20260822000001_wechat_pay_reconciliation` 与 `20260823000000_wechat_binding_security` 已应用；失败 migration 为 0。
-- 生产存储：新增显式 `DATA_STORE=file` + `DATA_DIR=/app/server/data`，修复自建服务器文件存储与 `APP_ENV=prod` 校验冲突，避免误接历史 KV。
-- 生产运行：公网容器 `budu-prod-2d70da1-api` 为 healthy；`PAYMENT_MODE=mock`、`WECHAT_PAY_ENABLED=0`；最近日志无 error/fatal/unhandled。
-- 回滚：旧 `c396c997d523` 恢复 API 保持 healthy；迁移前数据库备份及 Nginx 切流前配置备份存放于北京服务器 `~/.budu-backups`。
+- **当前 HEAD/工作树部署 BLOCKED**：`npm run test:ssr` 失败，且工作树包含未提交员工档案代码。
+- **员工档案生产迁移 BLOCKED**：无专项测试、无前端、生产未配置 `EMPLOYEE_SENSITIVE_KEY`、权限/隐私/事务设计尚未 Review。
+- **员工档案生产使用 BLOCKED**：production migration 未应用，`employees` 表不存在。
 
 ## 2. 当前代码结构
 
-```text
-budu OS/
-├── src/
-│   ├── components/
-│   │   ├── Dashboard.jsx              SPA 视图分发中心
-│   │   ├── HomeWorkspace.jsx          移动首页工作台
-│   │   ├── BusinessAnalysisPage.jsx   经营分析
-│   │   ├── PersonnelPage.jsx          人员
-│   │   ├── PayrollPage.jsx            工资
-│   │   ├── StoreEntryPage.jsx         业绩录入
-│   │   ├── SchedulePage.jsx           排班
-│   │   ├── PosPage.jsx                iPad POS
-│   │   ├── OrderRecordsPage.jsx       订单记录
-│   │   ├── ProductCenterPage.jsx      商品中心
-│   │   ├── InventoryRequestPage.jsx   调拨/采购/库存
-│   │   ├── ApprovalCenterPage.jsx     审批
-│   │   ├── AssetCenterPage.jsx        档案馆
-│   │   ├── SettingsPage.jsx           系统设置
-│   │   └── ComplianceFooter.jsx       备案页脚
-│   ├── utils/                         API、selectors、缓存、工资、POS、Excel
-│   └── data/                          静态兼容配置
-├── server/
-│   ├── index.js / app.js              Express 入口、鉴权、路由装配
-│   ├── auth.js / store.js             Auth、Upstash/KV/JSON 兼容层
-│   ├── pg.js                          Prisma Client
-│   ├── daily-entry-upgrade.js         PG 日报
-│   ├── products.js                    商品主档
-│   ├── pos.js / pos-core.js           POS 与结算
-│   ├── payments/                      PaymentService、Provider、微信 V2、核对器
-│   ├── approvals*.js                  审批
-│   ├── payroll-notice.js              工资条快照
-│   ├── notification-center.js         通知/个人微信推送
-│   ├── wechat-bind.js                 企微/公众号绑定
-│   ├── asset-*.js                     档案馆/COS
-│   └── v2.js                          库存、采购、调货、财务、发票、邮寄
-├── shared/accountPermissions.js       共享角色/模块权限
-├── prisma/schema.prisma               PostgreSQL 模型
-├── prisma/migrations/                 additive migrations
-├── scripts/                           测试、部署、备份、迁移、盘点
-├── tests/                             Playwright 手机/iPad 场景
-├── deploy/nginx/                      Nginx
-├── .github/workflows/                 CI、北京生产/香港测试手动部署
-├── CURRENT_ARCHITECTURE.md            权威架构事实基线
-└── SmartSteer_Status.md               本状态文件
-```
+### 2.1 下一轮 Agent 最先读取
 
-### 2.1 数据源事实
+1. `SmartSteer_Status.md`：本快照。
+2. `CURRENT_ARCHITECTURE.md`：已有架构基线；注意它未覆盖本轮未提交员工档案代码。
+3. `git diff -- prisma/schema.prisma server/app.js shared/accountPermissions.js`：所有已跟踪未提交改动。
+4. `server/employee-profile.js`：未跟踪的员工档案 Router、权限、加密、审计和业务逻辑。
+5. `prisma/migrations/20260823000001_employee_profile/migration.sql`：未跟踪 migration。
+6. `src/components/StoreEntryPage.jsx` 与 `scripts/smoke-render.mjs`：当前 SSR 失败相关文件。
+7. `scripts/run-tests.mjs`、`scripts/test-notification-center.mjs`：隔离测试与 migration 测试入口。
 
-| 域 | 当前主要/权威来源 | 兼容层与风险 |
-|---|---|---|
-| User | KV/JSON `users[]` | Prisma User 尚未正式接管运行时 |
-| Staff | KV Staff | PG Staff 是镜像；还合并 Analysis/静态员工 |
-| Schedule | KV 周排班 | PG DailyStoreStaff 是实际按日值班；未统一 ID |
-| DailyEntry | PostgreSQL 为主要权威方向 | 仍双写 KV + PG；localStorage 仅缓存/镜像 |
-| Analysis | KV `analysis{}` | 尚未迁移 PG |
-| POS/Payment/Refund | PostgreSQL | 前端会话用 sessionStorage |
-| Inventory | PostgreSQL | KV 保留旧数组兼容数据 |
-| Payroll | 前端计算 + PG 日报/奖金/调薪 + KV/静态员工 | PayrollNotice 只是已发快照 |
-| Approval | PostgreSQL | 旧审批通知和新通知中心存在双写 |
-| Notification | PostgreSQL | 铃铛仍为多源聚合；微信依赖配置 |
-| Asset | PG 元数据；COS 配置后存文件 | 未配置 COS 时 Data URL 入库 |
+### 2.2 前端
+
+| 文件 | 作用 / 状态 |
+|---|---|
+| `src/components/StoreEntryPage.jsx` | HEAD 的门店范围过滤修复；SSR 文案 Gate 当前失败 |
+| `src/components/AccountAdminPage.jsx` | 已提交的账号管理卡片化 UI |
+| `src/components/Sidebar.jsx` | 已提交的移动端矮屏适配 |
+| `src/components/Header.jsx` | 全局门店/日期工具与移动端响应式布局 |
+| `src/components/CalendarPicker.jsx` | Header 日期选择器 |
+| `src/components/PosPage.jsx` | POS 与 mock/真实付款码分支 |
+| `src/components/SettingsPage.jsx` | 微信绑定、解绑、Developer 手工绑定 UI |
+| `src/components/Dashboard.jsx` | 页面与业务模块分发；目前没有 Employee Profile 页面接入 |
+
+员工档案前端文件：**NOT PRESENT**。
+
+### 2.3 后端 API / Service
+
+- `server/app.js`
+  - 公开：`/api/v2/wechat/bind/callback`、`/api/v2/wechat/recv`。
+  - 鉴权业务路由统一挂在 `/api/v2`。
+  - 当前脏工作树已挂载 `employeeProfileRouter`。
+- `server/employee-profile.js`
+  - 当前相对路径包括 `/employees`、`/employees/:id/profile`、identity/bank reveal、salary/status change、timeline、summary、documents 等；挂载后完整路径为 `/api/v2/...`。
+  - 不是独立 Service 层：Router 直接调用 Prisma。
+- `server/wechat-bind.js`：企业微信/公众号绑定、一次性 state、手工绑定和回调验签。
+- `server/notification-center.js`：站内通知与个人微信推送。
+- `server/payments/`：PaymentService、Provider、微信 V2 客户端与未决支付核对器。
+- `server/store.js`：JSON/Redis 兼容数据层；生产明确使用 file 模式。
+- `server/pg.js`：Prisma Client 与数据库就绪状态。
+
+### 2.4 Prisma Model / 数据库表
+
+已在生产存在的相关 model/table：
+
+- `Payment` / `payments`。
+- `Notification` / `notifications`。
+- `NotificationDelivery` / `notification_deliveries`。
+- `WechatBinding` / `wechat_bindings`。
+- `WechatBindState` / `wechat_bind_states`。
+- `WechatBindingAuditLog` / `wechat_binding_audit_logs`。
+
+仅当前未提交 Schema/migration 中存在：
+
+- `Employee` / `employees`。
+- `EmployeeProfile` / `employee_profiles`。
+- `EmployeeBankAccount` / `employee_bank_accounts`。
+- `EmployeeContract` / `employee_contracts`。
+- `EmployeeSalaryHistory` / `employee_salary_history`。
+- `EmployeeStoreHistory` / `employee_store_history`。
+- `EmployeePositionHistory` / `employee_position_history`。
+- `EmployeeStatusHistory` / `employee_status_history`。
+- `EmployeeDocument` / `employee_documents`。
+- `EmployeeAuditLog` / `employee_audit_logs`。
+
+### 2.5 权限
+
+- 共享权限入口：`shared/accountPermissions.js`。
+- 员工档案模块键：`employee-profile`（当前未提交）。
+- Router 当前规则：
+  - 编辑：Developer / Admin / Finance。
+  - 身份证完整号码 reveal：Developer / Admin。
+  - 银行卡完整号码 reveal：Developer / Admin / Finance。
+  - Manager 默认获得模块，且当前 `canViewEmployee()` 允许 Manager 查看全部员工；必须做隐私范围 Review。
+  - Staff 默认不获得该模块；若未来单独授权，代码仅允许查看关联本人。
+- 账号治理仍仅 `canManageAccounts()` / Developer。
 
 ## 3. 关键参数
 
-### 3.1 公开、非敏感参数
+### 3.1 Git 状态
 
-- 域名：`buducandy.cn`
-- 北京公网 IP：`154.8.195.42`
-- 当前版本：`V2.19`
-- Node：22。
-- PostgreSQL：16；Prisma：`6.19.3`。
-- 金额：人民币整数“分”。
-- 业务日期：北京时间。
-- 官舍调货补贴：`2 元/小时`，生效日 `2026-08-01`。
-- ICP：`京ICP备2026054094号-1`，链接 `https://beian.miit.gov.cn/`。
-- 正式角色：`developer`、`admin`、`finance`、`manager`、`staff`、`cashier`。
-
-### 3.2 环境变量名称（严禁在文档写入实际值）
-
-| 范围 | 名称 |
+| 参数 | 值 |
 |---|---|
-| 应用 | `APP_ENV`、`GIT_SHA`、`PORT`、`PUBLIC_BASE_URL`、`DATA_STORE`、`DATA_DIR` |
-| PostgreSQL | `DATABASE_URL` |
-| KV | `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`、`KV_REST_API_URL`、`KV_REST_API_TOKEN` |
-| 认证 | `JWT_SECRET`、`COOKIE_SECURE` |
-| COS | `COS_BUCKET`、`COS_REGION`、`COS_SECRET_ID`、`COS_SECRET_KEY` |
-| 监控 | `SENTRY_DSN`、`VITE_SENTRY_DSN`、`WECHAT_WORK_WEBHOOK_URL` |
-| 企微个人推送 | `WXWORK_CORP_ID`、`WXWORK_AGENT_ID`、`WXWORK_SECRET`、`WXWORK_RECV_TOKEN`、`WXWORK_RECV_AES_KEY` |
-| 公众号 fallback | `MP_APP_ID`、`MP_APP_SECRET`、`MP_TEMPLATE_ID` |
-| 微信支付 | `PAYMENT_MODE`、`WECHAT_PAY_ENABLED`、`WECHAT_PAY_PROTOCOL`、`WECHAT_PAY_MCHID`、`WECHAT_PAY_APPID`、APIv2 key/证书路径、`WECHAT_PAY_TERMINAL_IP`、`WECHAT_PAY_ENABLED_STORES` |
-| 北京部署 | `BJ_HOST`、`BJ_USER`、`BJ_APP_DIR`、`BJ_SSH_KEY`（GitHub Secrets） |
+| Branch | `feat/wecom-push` |
+| HEAD SHA | `09d25d94e4c53a0bdc74c9bea177fbfcae1a2f9c` |
+| HEAD commit | `fix(store-entry): 门店业绩录入仅限账号绑定门店...` |
+| Working Tree | **DIRTY** |
+| 已 push | YES；HEAD = `origin/feat/wecom-push` |
+| 未提交代码已 push | NO |
 
-安全规则：
+生成本文件后应存在的未提交文件：
 
-- 不得提交或输出 `.env`、SSH 私钥、付款码、JWT、TLS 私钥及第三方 Secret。
-- 微信真实支付保持 `WECHAT_PAY_ENABLED=0`、`PAYMENT_MODE=mock`，直到 Review 和现场 Gate 全部通过。
-- 当前 `/api/health` 的 `dbOk` 只检查 `DATABASE_URL` 是否存在，不是真实数据库探针。
+- `M SmartSteer_Status.md`（本交接文件）。
+- `M prisma/schema.prisma`。
+- `M server/app.js`。
+- `M shared/accountPermissions.js`。
+- `?? prisma/migrations/20260823000001_employee_profile/`。
+- `?? server/employee-profile.js`。
 
-## 4. 未解决问题
+不要把这些文件视为同一来源已 Review 的原子提交；下一轮必须先检查 diff 和文件修改时间。
 
-### P0/P1：版本与生产拓扑
+### 3.2 技术栈
 
-1. 公网提交 `2d70da1` 位于已推送的 `feat/wecom-push`，尚未合并 `origin/main`；必须先 Review/合并，避免线上长期漂移。
-2. 北京当前保留主 compose、恢复栈和新公网 API 三套容器；公网路由已明确指向新 API，但后续应在确认观察期稳定后收敛为单一可重复部署拓扑。
-3. `/opt/budu` 工作树仍停留 `26ff356`，并保留 DeepSeek 的 Nginx 上游切流修改；自动部署脚本不能在未理解该拓扑时直接 `checkout --force`。
-4. 公安联网备案尚无可验证备案号；审核通过后需要增加公安图标、号码和官方链接。
+- Frontend：React 18、Vite 6、Tailwind CSS、Playwright WebKit。
+- Backend：Node.js 22、Express 5。
+- Database：PostgreSQL 16、Prisma 6.19.3。
+- Production：Docker + Nginx，北京公网 `https://buducandy.cn`。
+- 业务金额：整数分；业务日期：Asia/Shanghai。
 
-### P0：微信支付
+### 3.3 Database / Migration
 
-5. 真钱支付继续暂停。生产明确为 `PAYMENT_MODE=mock`、`WECHAT_PAY_ENABLED=0`。
-6. `fix/wechat-pay-review-r1` 尚未最终通过 Review；商户号、AppID、APIv2 密钥、证书、门店灰度、撤销/核对告警仍需独立现场 Gate。
+#### `20260822000001_wechat_pay_reconciliation`
 
-### P1：企业微信个人推送
+| 字段 | 状态 |
+|---|---|
+| Created | YES |
+| Local | UNKNOWN（本机未配置 `DATABASE_URL`） |
+| Test | APPLIED（隔离 schema） |
+| Production | APPLIED |
 
-7. 安全加固已部署并通过技术 Gate，但尚未执行真实员工闭环验收：绑定 → 测试消息 → 工资条 → 微信收取 → 点击直达。
-8. 真实企微验收需控制接收人和消息内容，不能用生产全员广播代替灰度测试。
+#### `20260823000000_wechat_binding_security`
 
-### P1：数据与架构债务
+| 字段 | 状态 |
+|---|---|
+| Created | YES |
+| Local | UNKNOWN（本机未配置 `DATABASE_URL`） |
+| Test | APPLIED（隔离 schema） |
+| Production | APPLIED |
 
-9. User、Staff、Schedule、Analysis 仍由本地 JSON/KV 兼容层承载，尚未完全迁移 PostgreSQL；User Backfill 只有只读盘点。
-10. JSON/KV 整库写入存在并发覆盖；Staff 镜像失败可能被忽略；DailyEntry 双写不在同一事务。
-11. PG 空结果时旧 JSON/localStorage DailyEntry 镜像可能继续显示；门店静态/JSON/PG 多源，审批通知仍双写。
-12. 工资条后端没有按服务端完整工资规则独立重算客户端快照；POS 销售没有自动扣库存闭环。
+#### `20260823000001_employee_profile`
 
-### P1：运维与质量
+| 字段 | 状态 |
+|---|---|
+| Created | YES（未跟踪文件） |
+| Local | UNKNOWN（本机未配置 `DATABASE_URL`；未执行本地 migrate status） |
+| Test | APPLIED（`npm run test` 的一次性 PostgreSQL schema；之后已清理） |
+| Production | **NOT APPLIED** |
 
-13. `/api/health.dbOk` 仍只检查 `DATABASE_URL` 是否存在，需要真实、超时受控的数据库 readiness 探针。
-14. 已验证北京本机备份和一次隔离恢复，但 COS 离机备份、保留策略和持续恢复演练仍需独立核验。
-15. Sentry、COS、告警和个人微信通知的生产配置需继续做脱敏巡检。
-16. `CURRENT_ARCHITECTURE.md` 基线为 `c396c9`，尚未覆盖 ICP、支付初版、企微安全和新的北京恢复拓扑。
-17. 工作区另有非本任务来源的未跟踪文件 `audit-budu.mjs`、`docs/REQUIREMENTS_SPEC.md`、`docs/TECH_HIGHLIGHTS.md`，本次未评估、未提交、未触碰。
+整体状态：Repository 28 migration；Production 27 APPLIED、0 failed，latest = `20260823000000_wechat_binding_security`；生产 `employees` 表 NOT PRESENT。
 
-## 5. 下一步建议
+### 3.4 配置 / Feature Flag（只记录状态）
 
-### 第一优先级：观察、合并与拓扑收敛
+| 配置 | Production 状态 |
+|---|---|
+| `APP_ENV` | `prod` |
+| `DATA_STORE` | `file` |
+| `DATA_DIR` | CONFIGURED |
+| `PUBLIC_BASE_URL` | CONFIGURED |
+| 企业微信 Corp/Agent/Secret/Recv Token/Recv AES Key | CONFIGURED |
+| `EMPLOYEE_SENSITIVE_KEY` | **NOT CONFIGURED** |
+| `PAYMENT_MODE` | `mock` |
+| `WECHAT_PAY_ENABLED` | `0`（关闭） |
+| 微信支付密钥/证书 | UNKNOWN；因功能关闭，本轮未读取 |
+| Sentry / COS | UNKNOWN；本轮未核验 |
 
-1. 观察公网 `2d70da1` 的错误日志、登录和关键业务读写；异常时通过已保留的旧恢复 API 和 Nginx 备份快速回滚。
-2. Review 当前 6 个分支提交，合并并推送 main，使 GitHub 与公网批准版本重新一致。
-3. 把恢复数据库、文件数据卷、Secret 挂载和 Nginx 外部网络固化为正式 Compose/Runbook，再下线冗余 API/PG 容器。
-4. 更新 `scripts/deploy-remote.sh`，使它识别当前恢复拓扑、验证真实数据库 readiness，并避免误切回旧主库。
+### 3.5 已执行测试（当前工作树）
 
-### 第二优先级：企业微信灰度验收
+| 命令 / Gate | 结果 |
+|---|---|
+| `npx prisma validate` | PASS |
+| `npm run test` | PASS 27 / FAIL 0 |
+| 28 migrations → 隔离 PostgreSQL schema | APPLIED；测试后清理 |
+| `npm run build` | PASS |
+| `npx playwright test` | PASS 34 / 34 |
+| `npm run test:ssr` | **FAIL**：`StoreEntryPage missing: 选择值班人员（可多选）` |
+| 员工档案专项 API/权限/加密测试 | NOT PRESENT / NOT TESTED |
+| 员工档案前端测试 | NOT PRESENT / NOT TESTED |
 
-1. 指定一个测试员工，验证企微可见范围、可信域名、userid 绑定、state 防重放、解绑/换绑。
-2. 闭环验收：绑定 → 测试消息 → 发测试工资条 → 微信收到 → 点击直达 → 未授权拒绝。
-3. 小范围灰度；微信失败不得阻断站内通知和工资条正式发放。
+## 4. Production 状态
 
-### 第三优先级：数据与运维治理
+| 参数 | 当前事实 |
+|---|---|
+| Production Modified | **YES**（本轮历史中已迁移数据库并多次受控切流；本次生成交接文件仅做只读核实） |
+| 环境 | 北京生产，`https://buducandy.cn` |
+| 公网 Git SHA | `49262ad` |
+| 部署状态 | `budu-prod-49262ad-api` healthy；Nginx 当前上游明确指向该容器 |
+| Health Check | HTTP 200，`ok=true`、`env=prod`、`appVersion=V2.19`、`gitSha=49262ad` |
+| Migration | 27 APPLIED / 0 failed；员工档案 NOT APPLIED |
+| 支付 | mock；真实微信支付关闭 |
+| 最近日志 | 最近 30 分钟关键 error/fatal/unhandled 匹配数为 0 |
 
-1. V3-004B 只进入 Backfill Technical Design；生产写入另开 Task 和 Review。
-2. 依次收敛 User、Staff、Schedule、Analysis，每次只迁移一个权威域并提供对账/回滚。
-3. 增加真实 DB readiness、备份新鲜度、COS 恢复性和告警投递监控。
-4. 稳定合并后更新 `CURRENT_ARCHITECTURE.md`。
+生产运维不一致风险：
 
-### 暂缓
+- 公网 SHA `49262ad` 比当前 Branch HEAD 少 2 个提交；`09d25d9` 门店业绩修复未部署。
+- `/opt/budu/.current-sha` 仍记录 `2d70da1...`，与公网 `49262ad` 不一致。
+- `/opt/budu` 服务器工作树仍为 `26ff356...`，不是公网镜像源码状态。
+- 北京保留多个旧 API/恢复容器；尚未收敛为单一可重复 Compose 拓扑。
+- `/api/health.dbOk` 只表示数据库配置存在，不是真实 SQL readiness；生产 migration 状态已另用只读 SQL 核实。
 
-- 微信真实支付：继续显式关闭。
-- POS 自动扣库存：等待独立设计。
-- User JSON/KV → PG 正式 Backfill：未获生产执行授权。
-- 旧服务器不可恢复清理：等待北京稳定观察、备份恢复及合规验收完成。
+## 5. 未解决问题
 
-## 6. 新任务接续方式
+### 当前 Bug / 测试失败
 
-新任务开场发送：
+1. `npm run test:ssr` 失败：StoreEntryPage 缺少 smoke test 期待的“选择值班人员（可多选）”文本。尚未判断是产品文案变更还是测试过期。
+2. 员工档案没有专项测试；通用测试 PASS 不能证明该 Router 正确。
 
-> 这是项目状态文件，请先读取 `SmartSteer_Status.md`，并基于它继续开发。
+### 未完成代码
 
-新 Codex 必须：
+3. 员工档案前端与导航不存在。
+4. 员工档案没有旧 Staff/账号数据 backfill、employeeNo 分配和对账方案。
+5. 新 Router/Schema/migration/权限均未提交、未 push。
+6. 生产缺少 `EMPLOYEE_SENSITIVE_KEY`，敏感字段读写会 fail-closed。
 
-1. 读取本文与 `CURRENT_ARCHITECTURE.md`。
-2. `git fetch origin --prune`，重新确认 main、分支、工作区和公网 `/api/health`，不要把本文 SHA 当成永久事实。
-3. 明确需求作用于本地分支、main、测试环境还是北京生产。
-4. 涉及生产写入、迁移、支付、权限、备案或部署时，先给出范围、风险、验证和回滚 Gate。
-5. 绝不读取、复制或输出 Secret 的实际值。
+### 架构与安全风险
+
+7. Manager 默认获得员工档案模块且当前可查看全部员工资料；是否符合隐私最小权限 UNKNOWN，必须 Review。
+8. Router 直接操作 Prisma，调店/调岗/状态历史与主记录更新存在多步骤非事务写入，部分成功风险未测试。
+9. `logAudit()` 捕获审计写入错误后继续业务，敏感 reveal 是否允许审计 fail-open 必须决策。
+10. EmployeeDocument 设计为 base64 写 PostgreSQL；容量上限、恶意文件、备份膨胀和访问审计未完成 Gate。
+11. 状态、用工类型等使用 String，数据库未加枚举/Check Constraint；非法值风险未测试。
+12. Employee `userId` 当前不是数据库外键；与 JSON User/Staff 的权威关系和解绑语义 UNKNOWN。
+
+### 数据兼容 / 生产风险
+
+13. 生产没有 Employee 表；不得让前端或现有流程依赖未迁移模型。
+14. 本地 migration 状态 UNKNOWN；测试仅证明 migration 可在隔离 schema 从零顺序应用。
+15. 当前生产拓扑和 `.current-sha`/服务器工作树不一致，标准 `scripts/deploy-remote.sh` 可能校验或回滚到错误目标。
+16. 当前工作区正被其他进度修改；文件来源和原子提交边界需再次确认。
+
+## 6. 下一步建议
+
+### NEXT STEP
+
+**先只处理一个动作：核对并修复 `StoreEntryPage.jsx` 与 `scripts/smoke-render.mjs` 的 SSR 断言不一致，然后运行 `npm run test:ssr` 恢复绿色基线。**
+
+SSR 恢复后，下一轮再按以下顺序推进员工档案：
+
+1. 阅读本文件及第 2.1 节列出的文件，重新执行 `git status`，确认没有新的并发改动。
+2. 对员工档案权限、隐私范围、审计 fail-open、事务边界、附件容量和 userId 关联做代码 Review。
+3. 补专项测试：加解密/掩码、缺密钥 fail-closed、角色与本人范围、reveal 审计、写入事务、附件权限、API 端到端。
+4. 在隔离 PostgreSQL 中从生产备份副本演练 migration，并验证 10 张表、索引、FK 和回滚方案。
+5. 设计并实现前端页面/导航；运行 `npm run test`、`npm run test:critical`、`npm run test:ssr`、`npm run build`、Playwright。
+6. 只有全部 Gate 通过并完成 Secret 配置/备份/回滚审查后，才可请求员工档案生产 migration 与部署授权。
+
+## 7. DO NOT
+
+- 不要 reset、stash、discard、覆盖或自动提交当前 DIRTY 工作树。
+- 不要重复创建 `20260823000001_employee_profile` migration。
+- 不要把员工档案 migration 应用到生产；当前明确 NOT APPLIED 且 Gate 未通过。
+- 不要部署当前 HEAD/工作树；SSR 失败且存在未提交代码。
+- 不要写入、打印或提交真实身份证号、银行卡号、密码、Token、Secret、完整 `DATABASE_URL` 或 SSH 私钥。
+- 不要用真实员工敏感数据做自动化测试。
+- 不要临时生成弱 `EMPLOYEE_SENSITIVE_KEY` 后直接上线；密钥托管、备份、轮换和恢复必须先设计。
+- 不要开启真实微信支付；保持 `PAYMENT_MODE=mock`、`WECHAT_PAY_ENABLED=0`。
+- 不要擅自修改工资计算规则、现有角色枚举或 Staff/User 权威数据源。
+- 不要删除北京旧容器、恢复库、备份或数据卷；生产拓扑尚未收敛。
+- 不要直接运行现有标准部署脚本，直到它能识别公网 `49262ad` 与恢复数据库拓扑并有正确回滚目标。
+
+## 8. 新窗口接续
+
+新 Agent 开始时必须先运行：
+
+```bash
+git status --short --branch
+git log -5 --oneline --decorate
+git diff -- prisma/schema.prisma server/app.js shared/accountPermissions.js
+```
+
+然后读取：
+
+- `SmartSteer_Status.md`
+- `CURRENT_ARCHITECTURE.md`
+- `server/employee-profile.js`
+- `prisma/migrations/20260823000001_employee_profile/migration.sql`
+- `src/components/StoreEntryPage.jsx`
+- `scripts/smoke-render.mjs`
+
+任何生产读取只输出状态，不输出 Secret；任何生产写入必须重新获得明确授权。

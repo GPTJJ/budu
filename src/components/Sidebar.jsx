@@ -35,6 +35,7 @@ const subMenus = {
   staff: [
     { key: 'staff', label: '雇员' },
     { key: 'staff-payroll', label: '工资条' },
+    { key: 'employee-profile', label: '员工档案' },
   ],
   store: [
     { key: 'store-entry', label: '门店业绩录入' },
@@ -52,7 +53,7 @@ const subMenus = {
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
   const [expandedKeys, setExpandedKeys] = useState({})
   const groupModules = {
-    staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL],
+    staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.EMPLOYEE_PROFILE],
     store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER],
     inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
   }

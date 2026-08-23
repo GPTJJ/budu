@@ -135,7 +135,14 @@ try {
       }),
       ['审批中心', '发起申请', '待我审批', '我发起的', '抄送我的', '全部审批'],
     ],
-    ['StoreEntryPage', await render('/src/components/StoreEntryPage.jsx', { onBack: () => {} }), ['值班人员', '选择值班人员（可多选）']],
+    [
+      'StoreEntryPage',
+      await render('/src/components/StoreEntryPage.jsx', {
+        user: { username: 'budu', role: 'developer' },
+        onBack: () => {},
+      }),
+      ['值班人员', '选择值班人员（可多选）'],
+    ],
     ['SchedulePage', await render('/src/components/SchedulePage.jsx', { onBack: () => {}, canEdit: true }), ['门店排班', '周排班表', '添加排班']],
     ['StoreRankingTable', await render('/src/components/StoreRankingTable.jsx', { month: '2026-07', store: 'all', day: null }), ['门店经营排行榜']],
     ['RevenueTrendChart', await render('/src/components/RevenueTrendChart.jsx', { month: '2026-07', store: 'all', day: null }), ['营业额趋势']],

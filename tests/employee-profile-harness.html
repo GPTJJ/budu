@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Employee Profile Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import EmployeeProfilePage from '/src/components/EmployeeProfilePage.jsx'
+    import '/src/index.css'
+
+    const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
+
+    const USER = {
+      developer: { id: 'u-dev', username: 'budu', role: 'developer' },
+      finance: { id: 'u-fin', username: 'fin1', role: 'finance' },
+      manager: { id: 'u-mgr', username: 'mgr1', role: 'manager' },
+      staff: { id: 'u-staff', username: 'sui', role: 'staff' },
+    }[MODE]
+
+    // 模拟后端：员工档案 API（掩码数据 + reveal 审计）
+    const EMP = {
+      id: 'emp-test-1',
+      employeeNo: 'BUDU-0001',
+      name: '隋晓',
+      status: 'ACTIVE',
+      employmentType: 'fulltime',
+      currentStoreKey: 'tongying',
+      position: '店员',
+      level: '初级',
+      hireDate: '2026-01-15T00:00:00.000Z',
+      profile: {
+        gender: '女',
+        birthDate: '2000-05-20T00:00:00.000Z',
+        phone: '13800000000',
+        email: '',
+        idType: 'identity',
+        idMasked: '110101********1234',
+        idExpiryDate: '2030-01-01T00:00:00.000Z',
+        idPermanent: false,
+        emergency: { name: '李四', relation: '母亲', phone: '13900000000' },
+      },
+    }
+
+    const IDENTITY = {
+      idType: 'identity',
+      idMasked: '110101********1234',
+      idExpiryDate: '2030-01-01T00:00:00.000Z',
+      idPermanent: false,
+      hasFull: true,
+    }
+
+    const BANK = { bank: [{ id: 'eba-1', bankName: '中国工商银行', maskedNumber: '**** **** **** 3445', cardLast4: '3445', accountName: '隋晓', isPayroll: true, status: 'active' }] }
+
+    window.__revealCalls = []
+
+    async function handleApi(path, options) {
+      const method = (options && options.method) || 'GET'
+      const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      const url = new URL(path, location.origin)
+      if (url.pathname === '/api/v2/employees') return json({ rows: [EMP] })
+      if (url.pathname === `/api/v2/employees/${EMP.id}/profile`) return json({ employee: EMP })
+      if (url.pathname === `/api/v2/employees/${EMP.id}/identity` && method === 'GET') return json(IDENTITY)
+      if (url.pathname === `/api/v2/employees/${EMP.id}/identity/reveal` && method === 'POST') {
+        window.__revealCalls.push('identity.reveal')
+        return json({ idNumber: '110101199001011234', idLast4: '1234' })
+      }
+      if (url.pathname === `/api/v2/employees/${EMP.id}/bank-account` && method === 'GET') return json(BANK)
+      if (url.pathname === `/api/v2/employees/${EMP.id}/bank-account/reveal` && method === 'POST') {
+        window.__revealCalls.push('bank.reveal')
+        return json({ bankName: '中国工商银行', cardNumber: '6222020200112233445', cardLast4: '3445' })
+      }
+      if (url.pathname === `/api/v2/employees/${EMP.id}/contracts`) return json({ rows: [] })
+      if (url.pathname === `/api/v2/employees/${EMP.id}/timeline`) {
+        return json({ timeline: [
+          { date: '2026-01-15T00:00:00.000Z', type: 'hire', title: '入职', detail: '隋晓 · tongying' },
+          { date: '2026-03-01T00:00:00.000Z', type: 'salary', title: '薪资调整', detail: '4000 → 4500（转正调薪）', operator: 'budu' },
+        ] })
+      }
+      if (url.pathname === `/api/v2/employees/${EMP.id}/summary`) {
+        return json({ payroll: [{ id: 'pn-1', periodType: 'month', periodKey: '2026-08', totalCents: '450000', status: 'confirmed', createdAt: '2026-09-01T00:00:00.000Z' }], attendance: { days: 22, totalHours: 176 } })
+      }
+      if (url.pathname === `/api/v2/employees/${EMP.id}/documents`) return json({ rows: [] })
+      return json({ ok: true })
+    }
+
+    window.fetch = (input, init) => {
+      const path = typeof input === 'string' ? input : input.url
+      return handleApi(path, init)
+    }
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(EmployeeProfilePage, {
+        user: USER,
+        onBack: () => {},
+        initialQuery: '',
+      }),
+    )
+  </script></body>
+</html>

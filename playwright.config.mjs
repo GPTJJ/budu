@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['pos-ipad.spec.mjs', 'order-records.spec.mjs', 'product-center.spec.mjs', 'mailing.spec.mjs', 'asset-center.spec.mjs', 'personnel.spec.mjs', 'home-workspace.spec.mjs', 'settings.spec.mjs', 'permissions.spec.mjs'],
+  testMatch: ['pos-ipad.spec.mjs', 'order-records.spec.mjs', 'product-center.spec.mjs', 'mailing.spec.mjs', 'asset-center.spec.mjs', 'personnel.spec.mjs', 'home-workspace.spec.mjs', 'settings.spec.mjs', 'permissions.spec.mjs', 'employee-profile.spec.mjs'],
   fullyParallel: false,
   retries: 0,
   reporter: 'line',

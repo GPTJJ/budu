@@ -1,12 +1,13 @@
 // 工资条卡片（纯展示）：员工明细 + 汇总
 // 用于工资条弹窗（PayrollSlipModal）与工资审批图片附件（html-to-image 截图）
-import { BadgeDollarSign } from 'lucide-react'
+// 注意：full=true（截图）时绝不渲染交互元素（onOpenProfile 仅弹窗场景传入）
+import { BadgeDollarSign, IdCard } from 'lucide-react'
 
 function fmt(v) {
   return `¥${Number(v || 0).toFixed(2)}`
 }
 
-export default function PayrollSlipCard({ employeeName, periodText, snapshot, full = false }) {
+export default function PayrollSlipCard({ employeeName, periodText, snapshot, full = false, onOpenProfile }) {
   const snap = snapshot || { days: [], summary: {} }
   return (
     <div className="rounded-2xl bg-white">
@@ -15,10 +16,20 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot, fu
         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-budu-50 text-budu-600">
           <BadgeDollarSign className="h-6 w-6" />
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-lg font-bold text-slate-800">工资条 · {employeeName}</h3>
           <p className="mt-0.5 text-xs text-slate-400">{periodText} · 每日工资明细及汇总</p>
         </div>
+        {!full && onOpenProfile && (
+          <button
+            onClick={() => onOpenProfile(employeeName)}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-budu-50 px-3 py-2 text-xs font-bold text-budu-600 transition hover:bg-budu-100"
+            title="查看员工档案"
+          >
+            <IdCard className="h-4 w-4" />
+            员工档案
+          </button>
+        )}
       </div>
 
       {/* 汇总卡 */}

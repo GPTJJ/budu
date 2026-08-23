@@ -16,6 +16,7 @@ import { notificationRouter } from './notifications.js'
 import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
+import { employeeProfileRouter } from './employee-profile.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
@@ -601,7 +602,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, dailyEntryUpgradeRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

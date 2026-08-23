@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Award, BadgeDollarSign, CalendarDays, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Award, BadgeDollarSign, CalendarDays, FileSpreadsheet, IdCard, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
 import DailyPayAdjustmentModal from './DailyPayAdjustmentModal'
@@ -492,7 +492,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   )
 }
 
-export default function PersonnelPage({ onBack, canDelete = false, canManage = false, user }) {
+export default function PersonnelPage({ onBack, canDelete = false, canManage = false, user, onOpenProfile }) {
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
@@ -713,6 +713,18 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       title={t('删除该员工')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {onOpenProfile && !isPublic && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenProfile(emp.name)
+                      }}
+                      className="absolute right-11 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-budu-50 hover:text-budu-600"
+                      title={t('员工档案')}
+                    >
+                      <IdCard className="h-3.5 w-3.5" />
                     </button>
                   )}
                   <div className="flex items-center gap-3">

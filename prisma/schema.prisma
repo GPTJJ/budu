@@ -933,3 +933,224 @@ model WechatBindingAuditLog {
   @@index([actorUsername, createdAt])
   @@map("wechat_binding_audit_logs")
 }
+
+// ============ 员工档案（Employee Master Profile，增量新增，不影响现有模型） ============
+
+/// 员工唯一主档：employeeNo 对外可读唯一编号；userId 关联登录账号（可空）
+model Employee {
+  id               String   @id
+  employeeNo       String   @unique @map("employee_no") // BUDU-0001 起，唯一、不随调店/调岗/调薪变化
+  name             String
+  status           String   @default("ACTIVE") // PROBATION | ACTIVE | LEAVE | SUSPENDED | RESIGNED
+  employmentType   String   @default("fulltime") // fulltime 全职 | parttime 兼职 | intern 实习 | other 其他（兼容现有枚举）
+  hireDate         DateTime? @map("hire_date")
+  currentStoreKey  String   @default("") @map("current_store_key")
+  userId           String?  @map("user_id")
+  position         String   @default("") // 当前岗位
+  level            String   @default("") // 当前职级
+  avatar           String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  profile          EmployeeProfile?
+  bankAccounts     EmployeeBankAccount[]
+  contracts        EmployeeContract[]
+  salaryHistory    EmployeeSalaryHistory[]
+  storeHistory     EmployeeStoreHistory[]
+  positionHistory  EmployeePositionHistory[]
+  statusHistory    EmployeeStatusHistory[]
+  documents        EmployeeDocument[]
+  auditLogs        EmployeeAuditLog[]
+
+  @@index([status])
+  @@index([currentStoreKey])
+  @@map("employees")
+}
+
+/// 基本资料 + 紧急联系人 + 身份信息（身份证号加密存储）
+model EmployeeProfile {
+  id                 String   @id
+  employeeId         String   @unique @map("employee_id")
+  gender             String   @default("")
+  birthDate          DateTime? @map("birth_date")
+  phone              String   @default("")
+  backupPhone        String   @default("") @map("backup_phone")
+  email              String   @default("")
+  wechat             String   @default("")
+  nationality        String   @default("")
+  city               String   @default("")
+  address            String   @default("")
+  idType             String   @default("identity") @map("id_type") // identity 身份证 | passport 护照 | other
+  idNumberEnc        String   @default("") @map("id_number_enc") // AES-256-GCM 加密
+  idNumberLast4      String   @default("") @map("id_number_last4") // 用于掩码展示 1101********1234
+  idNumberMasked     String   @default("") @map("id_number_masked") // 完整掩码 110101********1234
+  idExpiryDate       DateTime? @map("id_expiry_date")
+  idPermanent        Boolean  @default(false) @map("id_permanent")
+  emergencyName      String   @default("") @map("emergency_name")
+  emergencyRelation  String   @default("") @map("emergency_relation")
+  emergencyPhone     String   @default("") @map("emergency_phone")
+  emergencyBackup    String   @default("") @map("emergency_backup")
+  emergencyNote      String   @default("") @map("emergency_note")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  employee           Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@map("employee_profiles")
+}
+
+/// 工资银行卡（卡号加密存储；默认只返回掩码）
+model EmployeeBankAccount {
+  id             String   @id
+  employeeId     String   @map("employee_id")
+  accountName    String   @default("") @map("account_name")
+  cardNumberEnc  String   @map("card_number_enc") // AES-256-GCM 加密
+  cardLast4      String   @map("card_last4") // 掩码展示 **** **** **** 6288
+  bankName       String   @default("") @map("bank_name")
+  bankBranch     String   @default("") @map("bank_branch")
+  bankCode       String   @default("") @map("bank_code") // 联行号
+  isPayroll      Boolean  @default(true) @map("is_payroll") // 是否工资卡
+  status         String   @default("active") // active | inactive
+  effectiveDate  DateTime? @map("effective_date")
+  note           String   @default("")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, status])
+  @@map("employee_bank_accounts")
+}
+
+/// 劳动合同（一期记录；到期提醒二期）
+model EmployeeContract {
+  id               String   @id
+  employeeId       String   @map("employee_id")
+  contractType     String   @default("") @map("contract_type")
+  contractNo       String   @default("") @map("contract_no")
+  signDate         DateTime? @map("sign_date")
+  startDate        DateTime? @map("start_date")
+  endDate          DateTime? @map("end_date")
+  isIndefinite     Boolean  @default(false) @map("is_indefinite") // 无固定期限
+  probationMonths  Int      @default(0) @map("probation_months")
+  status           String   @default("active") // active 有效 | expiring 即将到期 | expired 已到期 | terminated 已终止
+  note             String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, status])
+  @@map("employee_contracts")
+}
+
+/// 调薪历史（不可覆盖；每次调整追加一条）
+model EmployeeSalaryHistory {
+  id           String   @id
+  employeeId   String   @map("employee_id")
+  effectiveDate DateTime @map("effective_date")
+  oldValue     String   @default("") @map("old_value") // 如 25 元/h
+  newValue     String   @default("") @map("new_value")
+  salaryType   String   @default("") @map("salary_type") // hourly 时薪 | monthly 月薪 | other
+  reason       String   @default("") // 转正调薪 / 年度调薪 ...
+  operatorName String   @default("") @map("operator_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, effectiveDate])
+  @@map("employee_salary_history")
+}
+
+/// 调店历史
+model EmployeeStoreHistory {
+  id           String   @id
+  employeeId   String   @map("employee_id")
+  effectiveDate DateTime @map("effective_date")
+  fromStoreKey String   @default("") @map("from_store_key")
+  toStoreKey   String   @default("") @map("to_store_key")
+  reason       String   @default("")
+  operatorName String   @default("") @map("operator_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, effectiveDate])
+  @@map("employee_store_history")
+}
+
+/// 调岗 / 职级变更历史
+model EmployeePositionHistory {
+  id           String   @id
+  employeeId   String   @map("employee_id")
+  effectiveDate DateTime @map("effective_date")
+  fromPosition String   @default("") @map("from_position")
+  toPosition   String   @default("") @map("to_position")
+  fromLevel    String   @default("") @map("from_level")
+  toLevel      String   @default("") @map("to_level")
+  reason       String   @default("")
+  operatorName String   @default("") @map("operator_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, effectiveDate])
+  @@map("employee_position_history")
+}
+
+/// 在职状态历史（入职/转正/离职/返聘；离职 ≠ 删除）
+model EmployeeStatusHistory {
+  id                String   @id
+  employeeId        String   @map("employee_id")
+  action            String   @map("action") // HIRE | PROBATION_PASS | LEAVE | SUSPEND | RESIGN | REHIRE
+  effectiveDate     DateTime @map("effective_date")
+  fromStatus        String   @default("") @map("from_status")
+  toStatus          String   @default("") @map("to_status")
+  lastWorkDate      DateTime? @map("last_work_date")
+  resignType        String   @default("") @map("resign_type") // voluntary 主动 | company 公司 | other
+  resignReason      String   @default("") @map("resign_reason")
+  handoverStatus    String   @default("") @map("handover_status")
+  salarySettled     Boolean  @default(false) @map("salary_settled")
+  propertyReturned  Boolean  @default(false) @map("property_returned")
+  accountDisabled   Boolean  @default(false) @map("account_disabled")
+  rehireAllowed     Boolean  @default(true) @map("rehire_allowed")
+  note              String   @default("")
+  operatorName      String   @default("") @map("operator_name")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, effectiveDate])
+  @@map("employee_status_history")
+}
+
+/// 员工附件（身份证/合同/健康证等；敏感附件标记，访问必须认证+鉴权）
+model EmployeeDocument {
+  id           String   @id
+  employeeId   String   @map("employee_id")
+  documentType String   @default("") @map("document_type") // identity 身份证 | bank 银行卡 | contract 合同 | health 健康证 | other
+  fileName     String   @default("") @map("file_name")
+  mimeType     String   @default("") @map("mime_type")
+  fileSize     Int      @default(0) @map("file_size")
+  data         String   @default("") // base64 文件字节（存 PG，沿用 asset local 模式）
+  isSensitive  Boolean  @default(false) @map("is_sensitive")
+  note         String   @default("")
+  uploadedBy   String   @default("") @map("uploaded_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, documentType])
+  @@map("employee_documents")
+}
+
+/// 员工档案审计日志（敏感字段只记 last4 变化，不记完整号码）
+model EmployeeAuditLog {
+  id           String   @id
+  employeeId   String   @map("employee_id")
+  action       String   @map("action") // profile.edit | identity.reveal | bank.reveal | bank.edit | salary.change | store.change | position.change | status.change | document.upload | document.delete
+  targetType   String   @default("") @map("target_type")
+  targetId     String   @default("") @map("target_id")
+  beforeValue  Json?    @map("before_value")
+  afterValue   Json?    @map("after_value")
+  operatorName String   @default("") @map("operator_name")
+  operatorRole String   @default("") @map("operator_role")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  @@index([employeeId, createdAt])
+  @@index([action, createdAt])
+  @@map("employee_audit_logs")
+}

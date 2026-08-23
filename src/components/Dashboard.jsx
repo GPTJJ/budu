@@ -19,6 +19,7 @@ import { firstAccessibleModule, hasModuleAccess, hasPageAccess } from '../../sha
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
 const PersonnelPage = lazy(() => import('./PersonnelPage'))
+const EmployeeProfilePage = lazy(() => import('./EmployeeProfilePage'))
 const PayrollPage = lazy(() => import('./PayrollPage'))
 const StoreEntryPage = lazy(() => import('./StoreEntryPage'))
 const SchedulePage = lazy(() => import('./SchedulePage'))
@@ -37,6 +38,7 @@ const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
 const pageTitles = {
   analysis: '经营分析',
   staff: '雇员',
+  'employee-profile': '员工档案',
   'staff-payroll': '工资条',
   'store-entry': '门店业绩录入',
   'store-schedule': '门店排班',
@@ -81,6 +83,13 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
       : firstAccessibleModule(user)
   ))
   const [pageKey, setPageKey] = useState(0)
+  // 从人员管理跳转员工档案时的初始搜索目标（员工姓名）
+  const [profileTarget, setProfileTarget] = useState('')
+
+  const openEmployeeProfile = (name) => {
+    setProfileTarget(name || '')
+    handleNavigate('employee-profile')
+  }
 
   // 桌面端空闲时预加载 POS；移动端/省流网络不抢占首页图表和数据带宽。
   useEffect(() => {
@@ -102,6 +111,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }, [])
 
   const isStaffView = view === 'staff'
+  const isEmployeeProfileView = view === 'employee-profile'
   const isAnalysisView = view === 'analysis'
   const isPayrollView = view === 'staff-payroll'
   const isStoreEntryView = view === 'store-entry'
@@ -285,9 +295,16 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   canDelete={user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'}
                   canManage={user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'}
                   user={user}
+                  onOpenProfile={openEmployeeProfile}
+                />
+              ) : isEmployeeProfileView && hasModuleAccess(user, 'employee-profile') ? (
+                <EmployeeProfilePage
+                  user={user}
+                  onBack={returnToOverview}
+                  initialQuery={profileTarget}
                 />
               ) : isPayrollView && hasModuleAccess(user, 'staff-payroll') ? (
-                <PayrollPage user={user} onBack={returnToOverview} />
+                <PayrollPage user={user} onBack={returnToOverview} onOpenProfile={openEmployeeProfile} />
               ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
                 <StoreEntryPage user={user} onBack={returnToOverview} />
               ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (

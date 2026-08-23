@@ -26,6 +26,7 @@ export const MODULE_KEYS = Object.freeze({
   APPROVAL: 'approval',
   ASSET_CENTER: 'asset-center',
   SETTINGS: 'settings',
+  EMPLOYEE_PROFILE: 'employee-profile',
 })
 
 export const MODULE_GROUPS = Object.freeze([
@@ -36,6 +37,7 @@ export const MODULE_GROUPS = Object.freeze([
   { key: 'personnel', label: '人员管理', modules: [
     { key: MODULE_KEYS.STAFF, label: '雇员' },
     { key: MODULE_KEYS.STAFF_PAYROLL, label: '工资条' },
+    { key: MODULE_KEYS.EMPLOYEE_PROFILE, label: '员工档案' },
   ] },
   { key: 'store', label: '门店经营', modules: [
     { key: MODULE_KEYS.STORE_ENTRY, label: '门店业绩录入' },
@@ -68,9 +70,10 @@ const MANAGER_DEFAULTS = Object.freeze([
   MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS,
   MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE,
   MODULE_KEYS.FINANCE_INVOICE, MODULE_KEYS.APPROVAL, MODULE_KEYS.SETTINGS,
+  MODULE_KEYS.EMPLOYEE_PROFILE,
 ])
 
-const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MODULE_KEYS.PRODUCT_CENTER))
+const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MODULE_KEYS.PRODUCT_CENTER && key !== MODULE_KEYS.EMPLOYEE_PROFILE))
 
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',

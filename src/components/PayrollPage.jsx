@@ -7,6 +7,7 @@ import { api } from '../utils/api'
 import { t } from '../utils/text'
 import { periodLabel } from '../utils/payrollSlip'
 import { refreshAlerts } from '../utils/inventoryAlerts'
+import { hasModuleAccess } from '../../shared/accountPermissions'
 import PayrollSlipModal from './PayrollSlipModal'
 import PayrollIssueModal from './PayrollIssueModal'
 
@@ -15,7 +16,7 @@ const yuan = (cents) => `¥${(Number(cents || 0) / 100).toFixed(2)}`
 
 const POLL_MS = 8000
 
-export default function PayrollPage({ user, onBack }) {
+export default function PayrollPage({ user, onBack, onOpenProfile }) {
   const isDev = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin' // 财务/管理员权限与开发者一致
   const allowed = Boolean(user && user.role !== 'public' && user.role !== 'cashier')
   const [rows, setRows] = useState(null)
@@ -200,7 +201,12 @@ export default function PayrollPage({ user, onBack }) {
 
       {/* 明细 + 签收弹窗 */}
       {detail && (
-        <PayrollSlipModal notice={detail} onClose={() => setDetail(null)} onConfirmed={handleConfirmed} />
+        <PayrollSlipModal
+          notice={detail}
+          onClose={() => setDetail(null)}
+          onConfirmed={handleConfirmed}
+          onOpenProfile={hasModuleAccess(user, 'employee-profile') ? openEmployeeProfile : undefined}
+        />
       )}
 
       {/* 发放弹窗（开发者） */}
