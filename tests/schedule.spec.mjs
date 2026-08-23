@@ -59,3 +59,32 @@ test('经理保持可编辑权限', async ({ page }) => {
   await expect(page.getByRole('button', { name: '添加排班' }).first()).toBeVisible()
   await expect(page.getByText('只读模式')).toHaveCount(0)
 })
+
+test.describe('导出排班图片', () => {
+  test.use({
+    hasTouch: false,
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    viewport: { width: 1280, height: 900 },
+  })
+
+  test('桌面端点击「导出图片」下载整周排班 PNG（含门店名，不含增删按钮）', async ({ page }) => {
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: '导出图片' }).click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toMatch(/排班表-\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}-全部门店\.png$/)
+    const fs = await import('node:fs')
+    const buf = fs.readFileSync(await download.path())
+    // PNG 魔数 + 非空图片
+    expect(buf.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+    expect(buf.length).toBeGreaterThan(5000)
+  })
+
+  test('单店视图导出文件名含门店名', async ({ page }) => {
+    await page.getByRole('button', { name: '北京通盈中心店' }).first().click()
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: '导出图片' }).click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toMatch(/排班表-.*-北京通盈中心店\.png$/)
+  })
+})

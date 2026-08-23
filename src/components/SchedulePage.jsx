@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   ArrowLeft,
   CalendarClock,
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   Plus,
   Trash2,
   X,
 } from 'lucide-react'
+import { toPng } from 'html-to-image'
 import { allStores, employeeList } from '../utils/selectors'
 import { getSchedules, commitSchedules } from '../utils/userData'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
@@ -28,6 +30,9 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const [draft, setDraft] = useState({ staff: '', time: '', note: '' })
   const [errorTip, setErrorTip] = useState('')
   const [savedTip, setSavedTip] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const exportRef = useRef(null)
 
   const schedules = getSchedules()
   const days = getWeekDays(weekStart)
@@ -102,6 +107,52 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
     setWeekShifts(store, date, shifts)
   }
 
+  /** 一键导出当前页面排班为图片（整周表完整宽度，不含增删按钮） */
+  const exportImage = async () => {
+    const node = exportRef.current
+    if (!node || exporting) return
+    setExporting(true)
+    // 临时加宽到整周表完整宽度，避免窄屏截图裁掉右侧列
+    const prevWidth = node.style.width
+    const wide = Math.max(980, ...[...node.querySelectorAll('.card')].map((c) => c.scrollWidth || 0))
+    node.style.width = `${wide}px`
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      const dataUrl = await toPng(node, {
+        pixelRatio: 2,
+        cacheBust: true,
+        backgroundColor: '#ffffff',
+        filter: (el) => !(el instanceof HTMLElement && el.dataset.exportIgnore === '1'),
+      })
+      const storeLabel = storeKey === 'all' ? t('全部门店') : storeInfo ? storeInfo.name : storeKey
+      const fileName = `${t('排班表')}-${weekRangeLabel(weekStart).replace(/ /g, '')}-${storeLabel}.png`
+      const isTouch = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1
+      if (isTouch) {
+        try {
+          const blob = await (await fetch(dataUrl)).blob()
+          const file = new File([blob], fileName, { type: 'image/png' })
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: t('排班表') })
+            return
+          }
+        } catch {
+          /* 用户取消或系统不支持，继续走长按保存 */
+        }
+        setPreviewUrl(dataUrl)
+        return
+      }
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = fileName
+      a.click()
+    } catch {
+      setErrorTip(t('导出失败，请重试或手动截图'))
+    } finally {
+      node.style.width = prevWidth
+      setExporting(false)
+    }
+  }
+
   /** 单个门店的周排班表（全门店视图与单店视图共用） */
   const renderWeekTable = (store) => {
     const weekData = weekShiftsOf(store)
@@ -166,6 +217,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                             </div>
                             {canEdit && (
                               <button
+                                data-export-ignore="1"
                                 onClick={() => removeShift(store, d.date, i)}
                                 className="shrink-0 rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                                 aria-label={t('删除')}
@@ -183,6 +235,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                     )}
                     {canEdit && (
                       <button
+                        data-export-ignore="1"
                         onClick={() => openEditor(d.date, store)}
                         className="mt-auto flex items-center justify-center gap-1 rounded-xl border border-dashed border-budu-200 py-2 text-xs font-semibold text-budu-500 transition hover:bg-budu-50"
                       >
@@ -218,6 +271,14 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={exportImage}
+            disabled={exporting}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {exporting ? t('导出中…') : t('导出图片')}
+          </button>
           {savedTip && (
             <span className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">
               <Check className="h-3.5 w-3.5" />
@@ -295,15 +356,41 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       </div>
 
       {/* 排班表：全部门店视图 或 单店视图 */}
-      {storeKey === 'all' ? (
-        <div className="space-y-5">{stores.map((s) => renderWeekTable(s.key))}</div>
-      ) : (
-        renderWeekTable(storeKey)
-      )}
+      <div ref={exportRef}>
+        {storeKey === 'all' ? (
+          <div className="space-y-5">{stores.map((s) => renderWeekTable(s.key))}</div>
+        ) : (
+          renderWeekTable(storeKey)
+        )}
+      </div>
 
       <p className="text-center text-[11px] text-slate-300">
         {t('排班保存后自动同步到云端，所有登录账号实时可见；可与门店业绩录入中的值班人员互相参照')}
       </p>
+
+      {/* 导出图片预览（移动端不支持分享/下载时，长按保存到相册） */}
+      {previewUrl && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-slate-900/70 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewUrl('')}
+        >
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <p className="text-sm font-bold text-slate-700">{t('排班表图片')}</p>
+              <button
+                onClick={() => setPreviewUrl('')}
+                className="rounded-xl p-1.5 text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-auto bg-slate-100 p-3">
+              <img src={previewUrl} alt={t('排班表图片')} className="w-full rounded-lg shadow-sm" />
+            </div>
+            <p className="px-4 py-3 text-center text-[11px] text-slate-400">{t('长按图片可保存到相册')}</p>
+          </div>
+        </div>
+      )}
 
       {/* 添加排班弹窗 */}
       {editingDate && (
