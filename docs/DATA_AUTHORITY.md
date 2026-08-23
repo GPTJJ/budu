@@ -14,7 +14,7 @@
 | DA-1 Existing PostgreSQL Authority Freeze | ✅ PASS | 2026-08-24 | 本文档 + `scripts/test-data-authority-freeze.mjs`（4 静态 + 1 DB 冒烟 = 5/5 通过） |
 | DA-2 Identity Authority | ⏸ 未开始 | — | 等待批准 |
 | DA-3 Schedule Authority | ⏸ 未开始 | — | 等待批准 |
-| DA-4 DailyEntry Authority | ⏸ 未开始 | — | 等待批准 |
+| DA-4 DailyEntry Authority | ✅ PASS | 2026-08-24 | commitEntries 写序翻转（PG 先/KV 镜像后）+ PG 失败显式抛错；loadUserData entries 仅取 PG（移除 PG 空→KV 回退，legacy 迁移仅限 !v2）；`test-daily-entry-authority.mjs` 4/4；critical 12/12；生产 8875ea2 部署验收：PG 92 行权威、KV entries 镜像冻结 65 条、旧回退条件 0 处 |
 | DA-5 Legacy Runtime Decoupling | ⏸ 未开始 | — | — |
 | DA-6 Failure Acceptance | ⏸ 未开始 | — | — |
 | DA-7 Production Authority Declaration | ⏸ 未开始 | — | — |
@@ -60,7 +60,7 @@
 | Staff（员工名单） | KV（前端名单权威）+ PG Staff 镜像 + PG employees（三源，AMBIGUOUS） | DA-2 |
 | Store（门店目录） | STATIC BASE_STORES + KV custom + PG Store（碎片化） | DA-2 |
 | Schedule（排班） | KV schedules（4 周）；**PG 无表** | DA-3 |
-| DailyEntry 写入端 | KV 先写 + PG 后写（dual write）；读 PG 优先、PG 空回退 KV | DA-4 |
+| DailyEntry 写入端 | ✅ DA-4 已收口：PG 唯一写权威，KV 仅镜像（entries 镜像冻结 65 条不再增长）；读仅 PG | 已完成 |
 | Analysis（报表上传） | KV analysis（生产空置） | DA-5 归档 |
 | Product Images | KV productImages（13 条 dataURL） | DA-5 |
 | removedStaff | KV 专属概念 | DA-2 并入员工状态 |
