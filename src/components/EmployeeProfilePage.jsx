@@ -272,6 +272,8 @@ export default function EmployeeProfilePage({ user, onBack, initialQuery = '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selectedId, setSelectedId] = useState('')
+  // 跳转直达详情只触发一次：返回列表后不再因 initialQuery 自动跳回
+  const [autoOpened, setAutoOpened] = useState(false)
 
   const loadList = useCallback(async (query = q) => {
     setLoading(true)
@@ -293,12 +295,14 @@ export default function EmployeeProfilePage({ user, onBack, initialQuery = '' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasModule])
 
-  // 初始查询（从人员管理/工资条跳转）命中唯一员工时直接进入详情
+  // 初始查询（从人员管理/工资条跳转）命中唯一员工时直接进入详情；
+  // 仅首次生效，且进入详情后清空搜索词，返回列表时展示全部员工
   useEffect(() => {
-    if (initialQuery && rows && rows.length === 1 && !selectedId) {
-      setSelectedId(rows[0].id)
-    }
-  }, [initialQuery, rows, selectedId])
+    if (autoOpened || !initialQuery || !rows || rows.length !== 1 || selectedId) return
+    setSelectedId(rows[0].id)
+    setAutoOpened(true)
+    setQ('')
+  }, [autoOpened, initialQuery, rows, selectedId])
 
   const handleSearch = (e) => {
     e.preventDefault()

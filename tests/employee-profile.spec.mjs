@@ -19,6 +19,20 @@ test('列表展示员工卡片并可进入详情', async ({ page }) => {
   await expect(page.getByRole('button', { name: '附件' })).toBeVisible()
 })
 
+test('跳转直达详情后点返回箭头回到列表（不再自动跳回详情）', async ({ page }) => {
+  // 模拟从人员管理/工资条带员工名跳转：initial=隋晓 命中唯一员工自动进详情
+  await page.goto('/tests/employee-profile-harness.html?mode=developer&initial=隋晓')
+  await expect(page.getByText(/档案详情/)).toBeVisible()
+  // 详情页返回按钮（页面头部左上角箭头，页面第一个按钮）
+  await page.locator('button').first().click()
+  // 应回到列表：搜索框可见、详情标题消失
+  await expect(page.getByPlaceholder('搜索姓名 / 员工编号 / 手机号')).toBeVisible()
+  await expect(page.getByText(/档案详情/)).toHaveCount(0)
+  // 列表仍展示员工卡片（不会再次自动跳进详情）
+  await expect(page.getByText(/BUDU-0001/)).toBeVisible()
+  await expect(page.getByRole('button', { name: '基本信息' })).toHaveCount(0)
+})
+
 test('身份信息默认掩码，reveal 需确认并触发审计请求', async ({ page }) => {
   await page.getByText(/隋晓/).first().click()
   await page.getByRole('button', { name: '身份信息' }).click()
