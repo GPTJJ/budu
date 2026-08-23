@@ -942,7 +942,7 @@ model Employee {
   employeeNo       String   @unique @map("employee_no") // BUDU-0001 起，唯一、不随调店/调岗/调薪变化
   name             String
   status           String   @default("ACTIVE") // PROBATION | ACTIVE | LEAVE | SUSPENDED | RESIGNED
-  employmentType   String   @default("fulltime") // fulltime 全职 | parttime 兼职 | intern 实习 | other 其他（兼容现有枚举）
+  employmentType   String   @default("fulltime") @map("employment_type") // fulltime 全职 | parttime 兼职 | intern 实习 | other 其他（兼容现有枚举）
   hireDate         DateTime? @map("hire_date")
   currentStoreKey  String   @default("") @map("current_store_key")
   userId           String?  @map("user_id")
