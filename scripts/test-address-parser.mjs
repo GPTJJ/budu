@@ -61,3 +61,24 @@ test('11 位手机号与 1 开头的座机区分', () => {
   const r = parseRecipientText('钱九 01012345678 北京市东城区')
   assert.equal(r.phone, '01012345678')
 })
+
+test('手机号带横杠（135-2375-7594）', () => {
+  const r = parseRecipientText('古月 135-2375-7594 河南省武冈市上店镇廖庄壹号')
+  assert.equal(r.phone, '13523757594')
+  assert.equal(r.name, '古月')
+  assert.ok(r.address.includes('河南省武冈市'))
+})
+
+test('紧凑无分隔：地址收件人手机号连写', () => {
+  // 录屏实际场景：无空格无冒号，姓名/电话标签紧贴地址尾部
+  const r = parseRecipientText('河南省武冈市上店镇廖庄壹号收件人古月手机号135-2375-7594')
+  assert.equal(r.name, '古月')
+  assert.equal(r.phone, '13523757594')
+  assert.equal(r.address, '河南省武冈市上店镇廖庄壹号')
+})
+
+test('手机号空格分隔（135 2375 7594）', () => {
+  const r = parseRecipientText('135 2375 7594 古月 河南省武冈市')
+  assert.equal(r.phone, '13523757594')
+  assert.equal(r.name, '古月')
+})
