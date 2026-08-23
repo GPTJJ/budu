@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Schedule Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import SchedulePage from '/src/components/SchedulePage.jsx'
+    import '/src/index.css'
+
+    const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
+
+    // 排班数据：本周（与 getWeekStart 同周）两个门店各两天班次
+    const weekStart = (() => {
+      const d = new Date()
+      const day = (d.getDay() + 6) % 7 // 周一=0
+      d.setDate(d.getDate() - day)
+      const p = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    })()
+    const dateOffset = (offset) => {
+      const d = new Date(weekStart)
+      d.setDate(d.getDate() + offset)
+      const p = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    }
+    const schedules = {
+      [weekStart]: {
+        tongying: {
+          [dateOffset(1)]: [{ staff: '叶芷辰', time: '早班' }, { staff: '隋晓', time: '晚班' }],
+          [dateOffset(3)]: [{ staff: '叶芷辰', time: '通班', note: '主理' }],
+        },
+        guanshe: {
+          [dateOffset(2)]: [{ staff: '龚艺锦', time: '早班' }],
+        },
+      },
+    }
+
+    // 共享数据镜像（userData 读取来源）
+    localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
+      entries: {},
+      staff: [
+        { name: '叶芷辰', type: 'fulltime', storeKey: 'tongying' },
+        { name: '隋晓', type: 'fulltime', storeKey: 'tongying' },
+        { name: '龚艺锦', type: 'parttime', storeKey: 'guanshe' },
+      ],
+      removedStaff: [],
+      stores: [
+        { key: 'tongying', name: '北京通盈中心店' },
+        { key: 'guanshe', name: '北京官舍店' },
+      ],
+      schedules,
+      products: [],
+      inventoryRequests: [],
+      inventory: [],
+      analysis: {},
+      productImages: {},
+      bigBonuses: [],
+      dailyPayAdjustments: [],
+      posDaily: [],
+      posProductSales: [],
+    }))
+
+    const USER = {
+      developer: { id: 'u-dev', username: 'budu', role: 'developer', staffKey: '' },
+      staff: { id: 'u-staff', username: 'ye', role: 'staff', staffKey: 'tongying::叶芷辰' },
+      manager: { id: 'u-mgr', username: 'mgr', role: 'manager', staffKey: '' },
+    }[MODE]
+
+    const canEdit = USER.role !== 'public' && USER.role !== 'staff'
+
+    createRoot(document.getElementById('root')).render(React.createElement(SchedulePage, { user: USER, canEdit, onBack: () => {} }))
+  </script></body>
+</html>

@@ -327,7 +327,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
                 <StoreEntryPage user={user} onBack={returnToOverview} />
               ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (
-                <SchedulePage onBack={returnToOverview} canEdit={user?.role !== 'public'} />
+                <SchedulePage user={user} onBack={returnToOverview} canEdit={user?.role !== 'public' && user?.role !== 'staff'} />
               ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
                 <StoreMailingPage onBack={returnToOverview} />
               ) : isOrdersView && hasModuleAccess(user, 'store-pos') ? (
