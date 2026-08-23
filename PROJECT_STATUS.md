@@ -7,10 +7,31 @@
 
 - 项目路径（本机）：`/Users/apple/Desktop/budu OS`（原 Windows 机：`C:\Users\Administrator\Desktop\budu`）
 - 项目名称：BUDU 甜蜜运营系统（React 18 + Vite + Tailwind + Express + Upstash KV + PostgreSQL/Prisma）
-- 线上正式地址：**https://buducandy.cn**（腾讯云香港轻量 124.156.171.195，Docker + Nginx + HTTPS）
-- GitHub 仓库：https://github.com/GPTJJ/budu （分支 `main`，手动部署到腾讯云 /opt/budu）
+- 线上正式地址：**https://buducandy.cn**（北京服务器 154.8.195.42，Docker + Nginx + HTTPS；容器 `budu-prod-<gitSha>-api`）
+- GitHub 仓库：https://github.com/GPTJJ/budu （**分支 `main` 即最新**，2026-08-23 起 feat 已合并；zip/任意平台 clone 均为最新）
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
+
+## 最新进度快照（2026-08-23：V2.20，分支已合并 main，与线上一致）
+
+当前版本：**V2.20**（提交 `9a12dbf` 之后的最新 HEAD）。**main 分支 = 线上生产**，任何平台/设备 clone 或 GitHub 下载 zip 均为最新代码。
+
+近期完成（2026-08-20 → 08-23）：
+1. 员工显示修复：重新添加曾删除的员工时自动清除 removedStaff，添加后立即可见；生产数据去重（陈荣梅×3 → ×1）（fe890a6）
+2. 门店业绩录入：进入页面自动拉取最新数据并订阅后台合并完成重渲染，首次打开不再停留在旧缓存日期（KV 只到 8-17、PG 到最新）（095b357）
+3. 门店排班：一键导出当前排班为图片（完整周表宽度、不含编辑按钮；移动端系统分享/长按保存，桌面端下载 PNG）（8e8b83e）
+4. 工资条撤回/删除：未签收可撤回；已签收需删除后重发；撤回/删除后同周期可重新发放；员工收到通知；新增留痕字段（迁移 `20260824000000_payroll_notice_recall_delete`）（033b51f）
+5. 工资审批银行卡信息：拆分为银行名/支行名/卡号三个独立字段，选员工自动代入员工档案；开发者/管理员/财务自动代入完整卡号（审计 `bank.reveal` 留痕），其余角色掩码；不强制填写、可修改、保护手动输入（f5818ac / ff7e44c）
+6. 顺手修复：工资条明细弹窗打开即崩溃（`openEmployeeProfile` 未定义，PayrollPage 改为使用 `onOpenProfile` prop）（033b51f）
+7. 版本记录：changelog 更新至 V2.20（src/data/changelog.js 与 server/changelog.js）
+
+线上与部署约定（任何新会话必读）：
+- **SSH**：`ssh -i tools/budu-beijing-deploy_ed25519 ubuntu@154.8.195.42`（仓库 tools/ 下有密钥）
+- **部署流水线**：`git archive <sha>` → scp → 服务器解压到 `/opt/budu-releases/<sha>` → `docker build -t budu-api:<sha>`（umask 022，否则 package.json 0644 问题）→ `docker run`（网络：`budu-bj-006-final-restore-20260822-055653z-net` + `budu-bj-007-final-frontend` + `budu_default`；secrets 从 `/dev/shm/bj-006-final-restore-20260822-055653z/*` 挂载；数据卷 `budu_bj-006-final-restore-20260822-055653z_data`）→ sed 更新 `/opt/budu/deploy/nginx/conf.d/budu.conf.template` 容器名 → `docker restart budu-nginx-1` → 验证 https://buducandy.cn/api/health（看 gitSha）
+- **每次部署必须停掉上一版容器**（旧容器占满 PG 连接池会触发 max_connections 故障）；旧容器/镜像保留不删除，可随时 `docker start` 回滚
+- 数据库迁移：新迁移需在切流量前手动执行 `npx prisma migrate deploy`（容器内跑，DATABASE_URL 由 secrets 拼装）
+- 备份基线：`/home/ubuntu/.budu-backups/` 保留不删；62a3a22 等旧容器已停但可回滚
+- 登录：生产 `budu / Budu2025`；本地开发 `BuduTest2026`（本地库每次测试重置）
 
 ## 最新进度快照（2026-08-19：自查修复轮，V2.03）
 
