@@ -979,7 +979,7 @@ v2Router.get('/waste-records', wrap(async (req, res) => {
 v2Router.get('/stores', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user.role === 'public' || req.user.role === 'cashier') throw bad('无权限', 403)
-  const rows = await prisma.store.findMany({ orderBy: [{ key: 'asc' }] })
+  const rows = await prisma.store.findMany({ where: { active: true }, orderBy: [{ key: 'asc' }] })
   res.json({ ok: true, rows: rows.map((r) => ({ key: r.key, name: r.name, district: r.district || '' })) })
 }))
 

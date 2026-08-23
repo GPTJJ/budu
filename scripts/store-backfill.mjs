@@ -58,6 +58,16 @@ async function run() {
       else { counters.ERROR++; errors.push(`${key}: ${e.message.slice(0, 120)}`) }
     }
   }
+  // 权威集合之外的门店 → 退役（active=false，可逆；不硬删被引用数据）
+  if (!dryRun) {
+    const all = await prisma.store.findMany({ where: { active: true } })
+    for (const row of all) {
+      if (!merged.has(row.key)) {
+        await prisma.store.update({ where: { key: row.key }, data: { active: false } })
+        counters.RETIRE++
+      }
+    }
+  }
   console.log(JSON.stringify({ mode: dryRun ? 'dry-run' : 'apply', sources: merged.size, counters, errorCount: errors.length }))
   if (errors.length) {
     console.error('ERRORS:\n' + errors.slice(0, 10).join('\n'))
