@@ -227,3 +227,58 @@ export async function extractInvoiceFromBase64(imageBase64) {
   }
   return { extracted }
 }
+
+/** 图片文字识别（通用印刷体）：返回纯文本，供前端智能拆分（邮寄收件信息等） */
+export async function generalOcrText(imageBase64) {
+  const raw = String(imageBase64 || '')
+  if (!/^data:image\/(png|jpeg|jpg|webp|bmp);base64,/.test(raw) && !/^[A-Za-z0-9+/=]+$/.test(raw)) {
+    const e = new Error('图片数据格式不正确')
+    e.status = 400
+    throw e
+  }
+  const base64 = raw.includes(',') ? raw.split(',')[1] : raw
+  const buf = Buffer.from(base64, 'base64')
+  if (buf.length === 0) {
+    const e = new Error('图片内容为空，请重新选择图片')
+    e.status = 400
+    throw e
+  }
+  if (buf.length > 8 * 1024 * 1024) {
+    const e = new Error('图片不能超过 8MB')
+    e.status = 400
+    throw e
+  }
+  if (!ocrConfigured()) {
+    const e = new Error('图片识别未配置（缺少腾讯云 OCR 密钥）')
+    e.status = 501
+    throw e
+  }
+  const { ocr } = await import('tencentcloud-sdk-nodejs-ocr')
+  const client = new ocr.v20181119.Client({
+    credential: {
+      secretId: process.env.TENCENT_OCR_SECRET_ID,
+      secretKey: process.env.TENCENT_OCR_SECRET_KEY,
+    },
+    region: process.env.TENCENT_OCR_REGION || 'ap-guangzhou',
+    profile: { httpProfile: { endpoint: 'ocr.tencentcloudapi.com' } },
+  })
+  let resp
+  try {
+    resp = await client.GeneralBasicOCR({ ImageBase64: base64 })
+  } catch (err) {
+    const code = err && err.code ? `（${err.code}）` : ''
+    const e = new Error(`文字识别失败${code}：${(err && err.message) || '腾讯云 OCR 调用异常'}`)
+    e.status = 502
+    throw e
+  }
+  const text = ((resp && (resp.TextDetections || resp.textDetections)) || [])
+    .map((t) => t.DetectedText || t.detectedText || '')
+    .filter(Boolean)
+    .join('\n')
+  if (!text.trim()) {
+    const e = new Error('未识别到文字，请确认照片文字清晰完整')
+    e.status = 422
+    throw e
+  }
+  return { text: text.trim() }
+}

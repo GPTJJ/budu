@@ -43,6 +43,7 @@ const NODE_TEST_SUITE = [
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
+  'test-address-parser.mjs',    // 收件信息智能拆分（单元）
 ]
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [

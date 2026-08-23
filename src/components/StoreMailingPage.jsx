@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { ArrowLeft, Check, Copy, FileSpreadsheet, PackageCheck, Plus, Send } from 'lucide-react'
+import {
+  ArrowLeft, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Loader2, Mic, PackageCheck, Plus, ScanText, Send, Sparkles,
+} from 'lucide-react'
 import { api } from '../utils/api'
+import { parseRecipientText } from '../utils/addressParser'
 import qrUrl from '../assets/mailing-qr.jpg'
 
 const STORAGE_KEY = 'budu-store-mailing'
@@ -138,6 +141,125 @@ export default function StoreMailingPage({ onBack }) {
   const showTip = (text) => {
     setSubmitTip(text)
     setTimeout(() => setSubmitTip(''), 2500)
+  }
+
+  // ---------- 智能识别（粘贴 / 图片 / 语音 → 拆分姓名/电话/地址） ----------
+  const [recognizeText, setRecognizeText] = useState('')
+  const [recognizeBusy, setRecognizeBusy] = useState('') // '' | 'image' | 'voice'
+  const [recognizeHint, setRecognizeHint] = useState('')
+  const fileInputRef = useRef(null)
+  const recognitionRef = useRef(null)
+
+  const applyParsed = (text) => {
+    const { name, phone: parsedPhone, address: parsedAddress, matched } = parseRecipientText(text)
+    if (!matched) {
+      setRecognizeHint('未能从文本中识别出收件信息，请检查后重试或手动填写')
+      return
+    }
+    if (name) setRecipient((v) => v || name)
+    if (parsedPhone) setPhone((v) => v || parsedPhone)
+    if (parsedAddress) setAddress((v) => v || parsedAddress)
+    const parts = []
+    if (name) parts.push(`姓名「${name}」`)
+    if (parsedPhone) parts.push(`电话「${parsedPhone}」`)
+    if (parsedAddress) parts.push(`地址「${parsedAddress}」`)
+    setRecognizeHint(`已识别${parts.join('、')}（空字段已自动填入）`)
+    setRecognizeText('')
+  }
+
+  const handlePasteRecognize = () => {
+    const text = recognizeText.trim()
+    if (!text) {
+      setRecognizeHint('请先粘贴或输入收件文本')
+      return
+    }
+    applyParsed(text)
+  }
+
+  const handleImageFile = async (file) => {
+    if (!file) return
+    setRecognizeBusy('image')
+    setRecognizeHint('')
+    try {
+      // 图片压缩到 1600px 内、JPEG 质量 0.85，控制上传体积
+      const compressed = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const img = new Image()
+          img.onload = () => {
+            const MAX = 1600
+            const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+            const canvas = document.createElement('canvas')
+            canvas.width = Math.round(img.width * scale)
+            canvas.height = Math.round(img.height * scale)
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+            resolve(canvas.toDataURL('image/jpeg', 0.85))
+          }
+          img.onerror = () => reject(new Error('图片读取失败'))
+          img.src = String(reader.result)
+        }
+        reader.onerror = () => reject(new Error('图片读取失败'))
+        reader.readAsDataURL(file)
+      })
+      const data = await api('/v2/ocr/general', {
+        method: 'POST',
+        body: JSON.stringify({ imageBase64: compressed }),
+      })
+      const text = String(data.text || '').trim()
+      if (!text) {
+        setRecognizeHint('未识别到文字，请确认照片文字清晰完整')
+        return
+      }
+      applyParsed(text)
+    } catch (e) {
+      setRecognizeHint(e.message || '图片识别失败')
+    } finally {
+      setRecognizeBusy('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleVoiceRecognize = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      setRecognizeHint('当前浏览器不支持语音识别（请使用 iPhone Safari / 微信内置浏览器）')
+      return
+    }
+    try {
+      const rec = new SR()
+      recognitionRef.current = rec
+      rec.lang = 'zh-CN'
+      rec.interimResults = false
+      rec.maxAlternatives = 1
+      setRecognizeBusy('voice')
+      setRecognizeHint('正在聆听…请说出收件人、电话和地址')
+      rec.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map((r) => r[0].transcript)
+          .join('')
+        setRecognizeBusy('')
+        if (transcript.trim()) applyParsed(transcript)
+        else setRecognizeHint('没有听清，请重试')
+      }
+      rec.onerror = (event) => {
+        setRecognizeBusy('')
+        const msg = {
+          'not-allowed': '麦克风权限被拒绝，请在系统设置中允许访问麦克风',
+          'service-not-allowed': '语音服务不可用',
+          'no-speech': '没有检测到语音，请重试',
+          network: '网络异常，语音识别失败',
+        }[event.error]
+        setRecognizeHint(msg || `语音识别失败（${event.error}）`)
+      }
+      rec.onend = () => {
+        recognitionRef.current = null
+        setRecognizeBusy((busy) => (busy === 'voice' ? '' : busy))
+      }
+      rec.start()
+    } catch {
+      setRecognizeBusy('')
+      setRecognizeHint('语音识别启动失败，请重试')
+    }
   }
 
   const handleSubmit = async () => {
@@ -279,6 +401,62 @@ export default function StoreMailingPage({ onBack }) {
               </button>
             </div>
           )}
+
+          {/* 智能识别：粘贴/图片/语音 → 拆分姓名电话地址 */}
+          <div className="space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-budu-600" />
+              <p className="text-sm font-bold text-slate-700">智能识别收件信息</p>
+              <span className="text-[11px] text-slate-400">粘贴或说出「姓名+电话+地址」，自动拆分填入</span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={recognizeText}
+                onChange={(e) => setRecognizeText(e.target.value)}
+                placeholder="「粘贴识别」或输入文本，智能拆分姓名、电话和地址"
+                className={`${fieldCls} flex-1`}
+              />
+              <button
+                type="button"
+                onClick={handlePasteRecognize}
+                disabled={recognizeBusy !== ''}
+                className="btn-primary h-10 shrink-0 px-3"
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                粘贴并识别
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={recognizeBusy !== ''}
+                className="btn-secondary h-9 px-3"
+              >
+                {recognizeBusy === 'image' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageUp className="h-4 w-4" />}
+                图片识别
+              </button>
+              <button
+                type="button"
+                onClick={handleVoiceRecognize}
+                disabled={recognizeBusy !== ''}
+                className="btn-secondary h-9 px-3"
+              >
+                {recognizeBusy === 'voice' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+                {recognizeBusy === 'voice' ? '聆听中…' : '语音识别'}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleImageFile(e.target.files?.[0])}
+              />
+              {recognizeHint && (
+                <p className="w-full text-xs font-medium text-budu-600">{recognizeHint}</p>
+              )}
+            </div>
+          </div>
 
           <div className="space-y-4 border-t border-slate-100 pt-5">
             <p className="text-sm font-medium text-slate-600">收件信息</p>

@@ -35,7 +35,9 @@
     "reconcile:pg": "node scripts/migrate-kv-to-pg.mjs --reconcile",
     "test:wechat-signature": "node --test scripts/test-wechat-v2-signature.mjs",
     "test:wechat-provider": "node --test scripts/test-wechat-pay-provider.mjs",
-    "test:payment-reconciler": "node --test scripts/test-payment-reconciliation.mjs"
+    "test:payment-reconciler": "node --test scripts/test-payment-reconciliation.mjs",
+    "test:wechat-config": "node --test scripts/test-wechat-config.mjs",
+    "test:wechat-e2e": "node --test scripts/test-wechat-pay-e2e.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

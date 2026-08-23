@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { broadcast } from './notification-center.js'
-import { ocrConfigured, extractInvoiceFromBase64 } from './ocr.js'
+import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
@@ -1148,6 +1148,15 @@ v2Router.post('/invoices/ocr', wrap(async (req, res) => {
   const { imageBase64 } = req.body || {}
   const result = await extractInvoiceFromBase64(String(imageBase64 || ''))
   res.json({ ok: true, extracted: result.extracted })
+}))
+
+/** 通用图片文字识别（门店邮寄等场景）：返回纯文本，前端再做智能拆分 */
+v2Router.post('/ocr/general', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!req.user || req.user.role === 'cashier' || req.user.role === 'public') throw bad('无权限', 403)
+  const { imageBase64 } = req.body || {}
+  const result = await generalOcrText(String(imageBase64 || ''))
+  res.json({ ok: true, text: result.text })
 }))
 
 v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {
