@@ -1,96 +1,67 @@
-# BUDU Data Authority — 权威文档（living document）
+# BUDU Data Authority — 权威文档（living document / 终稿）
 
-> 项目：BUDU Data Authority 1.0
-> 最终目标（DA-7 达成时）：**PostgreSQL 是唯一业务数据权威**；KV/JSON 仅承担缓存 / Session / 限流 / 临时状态 / 迁移工具 / 测试数据。
-> 本文件随 Gate 推进持续更新；任何 Authority 判断必须区分 **Production** 与 **Development**。
+> 项目：BUDU Data Authority 1.0 — **COMPLETE（2026-08-24）**
+> 最终状态：**Production Business Data Authority = PostgreSQL**；KV（db.json）与 JSON（localStorage）仅承担缓存 / 回滚镜像 / 归档存档。
 
----
+## 1. Gate 状态总览
 
-## 1. 当前状态
-
-| Gate | 状态 | 日期 | 证据 |
-|---|---|---|---|
-| DA-0 Production Data Authority Audit | ✅ PASS | 2026-08-24 | 《BUDU Data Authority 1.0 — DA-0 Audit Report》（只读；生产对账：Staff 12/12/12 全等、DailyEntry PG 92⊇KV 65、Users KV16 vs PG 遗留 3） |
-| DA-1 Existing PostgreSQL Authority Freeze | ✅ PASS | 2026-08-24 | 本文档 + `scripts/test-data-authority-freeze.mjs`（4 静态 + 1 DB 冒烟 = 5/5 通过） |
-| DA-2 Identity Authority | ⏸ 未开始 | — | 等待批准 |
-| DA-3 Schedule Authority | ✅ PASS | 2026-08-24 | PG schedules 表+迁移+路由；幂等回填 112 条（复跑 SKIP 112）；对账 CONTENT_MATCH=112/DIFF=0/KV_ONLY=0；SchedulePage 改读/写 PG；test-schedule-authority.mjs 3/3；critical 13/13；生产 cdf9f39 验收 |
-| DA-4 DailyEntry Authority | ✅ PASS | 2026-08-24 | commitEntries 写序翻转（PG 先/KV 镜像后）+ PG 失败显式抛错；loadUserData entries 仅取 PG（移除 PG 空→KV 回退，legacy 迁移仅限 !v2）；`test-daily-entry-authority.mjs` 4/4；critical 12/12；生产 8875ea2 部署验收：PG 92 行权威、KV entries 镜像冻结 65 条、旧回退条件 0 处 |
-| DA-5 Legacy Runtime Decoupling | ⏸ 未开始 | — | — |
-| DA-6 Failure Acceptance | ⏸ 未开始 | — | — |
-| DA-7 Production Authority Declaration | ⏸ 未开始 | — | — |
-
-基线：Production SHA = Development SHA = `cdf9f39`。生产 `DATA_STORE=file`（KV = db.json），PG 64 表 / 34 迁移。
-
----
-
-## 2. DA-1 冻结矩阵（Frozen Domains）
-
-以下域已确认 **READ=PostgreSQL / WRITE=PostgreSQL / Fallback=NONE / 无业务数据 KV 依赖**，正式冻结：
-
-| Domain | PG 表/模型 | 服务端路由 | 冻结依据 |
-|---|---|---|---|
-| Employee Profile（档案/银行卡/合同/审计） | employees + employee_* 子表 | server/employee-profile.js | 纯 PG；无 loadDb/persist |
-| DailyEntry + DailyStoreStaff（业绩/值班） | DailyEntry / daily_store_staff / 审计表 | server/daily-entry-upgrade.js, v2.js | 纯 PG（前端读缓存由 PG 合并覆盖） |
-| Daily Pay Adjustment（日薪调整） | daily_pay_adjustments | server/v2.js | 纯 PG；KV 镜像为陈旧冗余（0 行） |
-| Payroll Notice（工资条） | payroll_notices | server/payroll-notice.js | 纯 PG |
-| POS Product（商品） | InventoryItem | server/products.js, v2.js | 纯 PG；KV products 无调用方（0 行） |
-| POS Order / OrderItem | orders / order_items | server/pos.js | 纯 PG |
-| Payment / PaymentLog / Refund / 对账 | payments / payment_logs / refunds / refund_items | server/pos.js, payments/* | 纯 PG |
-| Inventory（库存） | InventoryItem / StockBalance / StockLedger | server/v2.js | 纯 PG；KV inventory 冗余（0 行） |
-| Transfer / Purchase Request | TransferRequest/Item, PurchaseRequest/Item | server/v2.js | 纯 PG；KV inventoryRequests 镜像（14 行，状态一致，仅缓存） |
-| Supplier | Supplier | server/v2.js | 纯 PG（空表） |
-| Approval 全套（模板/单据/节点/CC/附件/评论/日志） | approval_* | server/approvals.js | 业务纯 PG；KV 仅账号目录（cc 名单，users） |
-| Notification（模板/消息/投递） | notification_* | server/notification-center.js, notifications.js | 业务纯 PG；KV 仅 listUsernames（users） |
-| Invoice / InvoiceCompany | Invoice / InvoiceCompany | server/v2.js, ocr.js | 纯 PG |
-| Mailing Record | MailingRecord | server/v2.js | 纯 PG |
-| Asset Center（文件/版本/提醒/授权） | asset_* | server/asset-center.js, asset-reminders.js | 业务纯 PG；KV 仅 grants 账号目录（users） |
-| Big Order Bonus（大单奖） | BigOrderBonus | server/v2.js | 纯 PG；KV 镜像陈旧（0 vs 1 行） |
-| WeChat Binding | wechat_bindings + 审计 | server/wechat-bind.js | 业务纯 PG；KV 仅系统账号查找（users） |
-| Expense / Waste / Member / AlertLog | 对应空表 | v2.js（休眠） | 冻结为空域，随 DA-5 归档 |
-
-**冻结含义**：不重新迁移；禁止在上述域重新引入 KV/JSON 业务权威（由 `scripts/test-data-authority-freeze.mjs` 持续守卫）。PG 失败时明确报错（无 silent fallback）。
-
----
-
-## 3. Legacy / 待迁移域（后续 Gate 处理）
-
-| Domain | 当前权威 | 处理 Gate |
+| Gate | 状态 | 证据 |
 |---|---|---|
-| User / Account / Role / Permission / Binding | KV（db.json users，16 账号；登录/鉴权/权限全部运行时读 KV） | DA-2 |
-| Staff（员工名单） | KV（前端名单权威）+ PG Staff 镜像 + PG employees（三源，AMBIGUOUS） | DA-2 |
-| Store（门店目录） | STATIC BASE_STORES + KV custom + PG Store（碎片化） | DA-2 |
-| Schedule（排班） | KV schedules（4 周）；**PG 无表** | DA-3 |
-| DailyEntry 写入端 | ✅ DA-4 已收口：PG 唯一写权威，KV 仅镜像（entries 镜像冻结 65 条不再增长）；读仅 PG | 已完成 |
-| Analysis（报表上传） | KV analysis（生产空置） | DA-5 归档 |
-| Product Images | KV productImages（13 条 dataURL） | DA-5 |
-| removedStaff | KV 专属概念 | DA-2 并入员工状态 |
-| 前端共享缓存 | localStorage mirror（KV 失败时静默回退） | DA-5 移除回退 |
+| DA-0 Production Data Authority Audit | ✅ PASS | 《BUDU Data Authority 1.0 — DA-0 Audit Report》（只读审计 + 生产对账） |
+| DA-1 Existing PostgreSQL Authority Freeze | ✅ PASS | `test-data-authority-freeze.mjs`（冻结 18 域，守卫测试 5/5） |
+| DA-4 DailyEntry Authority | ✅ PASS | commitEntries PG 先写、loadUserData entries 仅取 PG；生产验收：PG 92 ⊇ KV 65、KV 镜像冻结 |
+| DA-3 Schedule Authority | ✅ PASS | PG schedules 表 + 幂等回填 112 条（复跑 SKIP 112）+ 对账 MATCH 112；SchedulePage 读/写 PG |
+| DA-2 Identity Authority（2.1-2.4） | ✅ PASS | 账号/登录/鉴权/账号管理 → PG（16 账号回填全等 + 幂等 SKIP）；员工名单 → PG employees（12/12 全等）；门店目录 → PG（5 活跃 + 垃圾键退役）；绑定 → 稳定 employeeId（11/11） |
+| DA-5 Legacy Runtime Decoupling | ✅ PASS | 移除 localStorage 镜像读回退、legacy 迁移、业务字段 KV 镜像写、死代码（legacy 调货路由/commit*）；KV 转只读存档 |
+| DA-6 Failure Acceptance | ✅ PASS | `test-failure-acceptance.mjs` 4/4：KV/JSON Down → 核心业务继续；PG Down → 明确失败无回退；恢复后一致 |
+| DA-7 Production Authority Declaration | ✅ PASS（本文档） | 生产 5f253d6→7f9ce2e 系列 cutover 全部部署验收；全量测试 41/41 |
 
----
+基线：Production SHA = Development SHA = `7b285f2`（main = feat）。生产 `DATA_STORE=file`（KV = db.json，只读存档），PG 65 表 / 36 迁移。
 
-## 4. 已知危险模式（关闭计划）
+## 2. 最终 Authority Matrix（业务域 → 权威）
 
-| 模式 | 位置 | 关闭 Gate |
-|---|---|---|
-| 静默回退：KV /userdata 失败 → localStorage 旧镜像当业务数据 | src/utils/userData.js:126 | DA-5 |
-| 静默回退：PG 空 → KV entries 继续展示 | src/utils/userData.js:150 | DA-4 |
-| 双写：commitEntries KV 先 → PG 后（partial success 无对账） | src/utils/userData.js:339 | DA-4 |
-| 双写：commitStaff KV 先 → PG 镜像后 | src/utils/userData.js:392 | DA-2 |
-| 姓名身份：staffKey=`storeKey::name`、employeeName、staffNameSnapshot、排班 staff 字符串 | 全链路 | DA-2 |
-| PG User 遗留 3 行（孤儿） | User 表 | DA-2 |
-| PG Store 垃圾键（s1 / store-msivyq41 / custom-*） | Store 表 | DA-2 |
-| 死代码：legacy /api/inventory/requests/*、commitProducts/commitInventoryRequests/commitInventoryState | app.js / userData.js | DA-5 |
-| KV 陈旧镜像：bigBonuses(0)/dailyPayAdjustments(0)/inventoryRequests(14)/inventory(0)/posDaily(0)/posProductSales(0) | db.json | DA-5 |
+| Domain | Read Authority | Write Authority | 说明 |
+|---|---|---|---|
+| User / Account / Role / Permission / Binding | PG | PG | 绑定含稳定 employeeId；KV users = 回滚镜像（受控写） |
+| Staff（员工名单） | PG employees（/v2/staff-list） | PG | 删除=RESIGNED（档案保留）；PG Staff 为日值班派生表镜像 |
+| Employee Profile | PG | PG | — |
+| Store（门店目录） | PG（active=true） | PG | 基础门店防删；被引用门店防删；垃圾键已退役 |
+| Schedule | PG schedules | PG | 历史/当前/未来排班均在 PG |
+| DailyEntry / DailyStoreStaff | PG | PG | 无 KV 回退；KV entries 为只读旧存档 |
+| Payroll / Notice / Adjustment | PG | PG | — |
+| POS（Product/Order/Payment/Refund/对账） | PG | PG | — |
+| Inventory（调货/采购/库存/供应商） | PG | PG | KV inventory 字段为只读冗余 |
+| Approval 全套 / Notification | PG | PG | 抄送名单来自 PG 账号 |
+| Invoice / Mailing / Asset | PG | PG | — |
+| Big Order Bonus | PG | PG | — |
+| WeChat Binding | PG | PG | — |
+| Analysis（报表上传） | — | — | 生产空置，归档 |
+| Product Images | PG（InventoryItem.image） | PG | KV productImages = 陈旧存档 |
+| removedStaff | — | — | 前端过滤缓存（删除权威 = PG status） |
 
----
+## 3. 最终验收标准核对（DA-7 十项）
 
-## 5. 证据链（Evidence Chain）
+1. ✅ 所有正式业务域唯一 Authority（剩余 KV 字段均为非权威缓存/存档/回滚镜像）
+2. ✅ 正式业务数据全部 PostgreSQL 权威
+3. ✅ KV Down 不影响核心业务（DA-6 A/B）
+4. ✅ JSON Down 不影响核心业务（DA-6 A/B）
+5. ✅ PostgreSQL Down 时系统明确失败（DA-6 C）
+6. ✅ 无 silent legacy fallback（DA-5 移除 + 守卫测试）
+7. ✅ 无不明确 dual authority（镜像均显式声明：KV=存档/回滚，PG Staff=派生）
+8. ✅ 业务身份使用稳定 ID（跨实体关系：employeeId / employees.id / Staff.id / 表级 PK；姓名仅存在于发放时固定的展示快照字段）
+9. ✅ Authority 文档与代码一致（本文档 + 守卫测试）
+10. ✅ Production 完成真实 cutover 验收（每个 Gate 独立部署 + 对账 + 幂等复跑 + 全量 41/41）
 
-- **DA-1 PASS 证据**：`scripts/test-data-authority-freeze.mjs` 5/5 通过（含本地 PG 冒烟：36 张冻结域表全部存在）；Git SHA 见本文件变更提交；生产 0 变更（DA-1 不触碰生产）。
-- 对账基线（DA-0）：Staff MATCH 12/12/12；DailyEntry PG 92 ⊇ KV 65（PG_ONLY 27 / KV_ONLY 0）；TransferRequest 14/14 MATCH；Users KV 16 vs PG 遗留 3（MISMATCH，DA-2 处理）；Stores UNMAPPABLE（DA-2 处理）。
+## 4. 遗留项（非阻塞，后续可选）
 
----
+- KV db.json 保留为只读存档（含回滚镜像写）；观察期后可按流程归档/停写
+- PG User 表 2 条孤儿行（tongying/budu01，历史迁移产物，未引用）
+- 商品图旧 KV 字段（13 条 dataURL）可归档清理
+- docs/RUNBOOK 与运维脚本可补充 DA 相关恢复演练
 
-## 6. 最终验收标准（DA-7）
+## 5. 证据链
 
-1. 所有正式业务域唯一 Authority；2. 业务数据全部 PG 权威；3. KV Down 不影响核心业务；4. JSON Down 不影响核心业务；5. PG Down 明确失败；6. 无 silent legacy fallback；7. 无 dual authority；8. 业务身份用稳定 ID；9. 本文档与代码一致；10. 生产完成真实 cutover 验收。
+- Git：main = feat = `7b285f2`；各 Gate 提交见 git log
+- 迁移：36 个（含 20260824000000~00004 五个 DA 迁移）
+- 测试：`test-data-authority-freeze / test-daily-entry-authority / test-schedule-authority / test-identity-authority / test-failure-acceptance` + 全量 41/41
+- 生产备份：/home/ubuntu/.budu-backups/{da2,da3,da4}-*（db.json + PG 快照）
