@@ -364,6 +364,23 @@ test('通知中心集成（真实 PostgreSQL，一次性 schema；不可用 → 
     })
     const { prisma: p } = await import('../server/pg.js')
     prisma = p
+    // Data Authority DA-2：账号权威 = PostgreSQL → 把 db.json 种子账号同步进一次性 PG schema
+    const { loadDb } = await import('../server/store.js')
+    const kvUsers = (await loadDb()).users || []
+    for (const u of kvUsers) {
+      await prisma.user.upsert({
+        where: { id: u.id },
+        update: {},
+        create: {
+          id: u.id, username: u.username, passwordHash: u.passwordHash || 'test-hash',
+          role: u.role, displayName: u.displayName || '', avatar: u.avatar || '',
+          storeKeys: Array.isArray(u.storeKeys) ? u.storeKeys : [], staffKey: u.staffKey || '',
+          status: u.status || 'active', secondPasswordHash: u.secondPasswordHash || '',
+          bindingLegacyExempt: Boolean(u.bindingLegacyExempt), assetCenter: Boolean(u.assetCenter),
+          permissions: u.permissions && typeof u.permissions === 'object' ? u.permissions : {},
+        },
+      })
+    }
     started = true
   })
 
