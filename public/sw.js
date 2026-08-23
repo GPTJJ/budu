@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budu-shell-v16'
+const CACHE_NAME = 'budu-shell-v17'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -30,20 +30,17 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return
 
   if (request.mode === 'navigate') {
+    // 网络优先：部署新版本后打开即用新版；离线时回退本地壳。
     event.respondWith(
-      caches.match('/').then((cached) => {
-        const update = fetch(request)
-          .then((response) => {
-            if (response.ok) {
-              const copy = response.clone()
-              caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
-            }
-            return response
-          })
-          .catch(() => null)
-        // 已安装的 PWA 立即使用本地壳，网络响应只负责后台刷新下一次启动。
-        return cached || update
-      }),
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
+          }
+          return response
+        })
+        .catch(() => caches.match('/')),
     )
     return
   }
