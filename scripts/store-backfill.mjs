@@ -27,11 +27,13 @@ const sources = [
   { key: 'tongying', name: '北京通盈中心店', district: '朝阳区 · 三里屯' },
   { key: 'guanshe', name: '北京官舍店', district: '朝阳区 · 亮马桥' },
   { key: 'xidan', name: '北京西单店', district: '西城区 · 西单' },
+  // 虚拟门店（多店支援员工归属）
+  { key: 'multi', name: '多店支援', district: '' },
 ]
 const merged = new Map()
 for (const s of sources) if (s.key && s.name) merged.set(s.key, s)
 
-const counters = { CREATE: 0, UPDATE: 0, SKIP: 0, CONFLICT: 0, ERROR: 0 }
+const counters = { CREATE: 0, UPDATE: 0, SKIP: 0, RETIRE: 0, CONFLICT: 0, ERROR: 0 }
 const errors = []
 
 async function run() {
@@ -41,8 +43,8 @@ async function run() {
       if (!dryRun) {
         if (existing) {
           const same = existing.name === s.name && (existing.district || '') === s.district
-          if (same) counters.SKIP++
-          else { await prisma.store.update({ where: { key }, data: { name: s.name, district: s.district } }); counters.UPDATE++ }
+          if (same && existing.active !== false) counters.SKIP++
+          else { await prisma.store.update({ where: { key }, data: { name: s.name, district: s.district, active: true } }); counters.UPDATE++ }
         } else {
           await prisma.store.create({ data: { key, name: s.name, district: s.district } })
           counters.CREATE++
