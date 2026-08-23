@@ -41,7 +41,7 @@ export default function SettingsPage({ user, onBack }) {
   const canManageWechatBindings = user?.role === 'developer'
   const customStores = getStores()
 
-  const addStore = () => {
+  const addStore = async () => {
     const name = storeName.trim()
     if (!name) {
       setStoreError(t('请输入门店名称'))
@@ -51,17 +51,32 @@ export default function SettingsPage({ user, onBack }) {
       setStoreError(t('该门店已存在'))
       return
     }
-    const key = `store-${Date.now().toString(36)}`
-    commitStores([...customStores, { key, name }])
+    // Data Authority DA-2.3：门店目录权威 = PostgreSQL
+    try {
+      const res = await api('/v2/stores', { method: 'POST', body: JSON.stringify({ name }) })
+      const store = res && res.store
+      if (store) {
+        commitStores([...customStores, store])
+        setVersion((v) => v + 1)
+      }
+    } catch (e) {
+      setStoreError(e.message || t('门店创建失败，请重试'))
+      return
+    }
     setStoreName('')
     setStoreError('')
-    setVersion((v) => v + 1)
   }
 
-  const removeStore = (key, name) => {
+  const removeStore = async (key, name) => {
     if (!window.confirm(t('确定删除门店「{name}」吗？', { name }))) return
-    commitStores(customStores.filter((s) => s.key !== key))
-    setVersion((v) => v + 1)
+    // Data Authority DA-2.3：门店目录权威 = PostgreSQL
+    try {
+      await api(`/v2/stores/${encodeURIComponent(key)}`, { method: 'DELETE' })
+      commitStores(customStores.filter((s) => s.key !== key))
+      setVersion((v) => v + 1)
+    } catch (e) {
+      setStoreError(e.message || t('门店删除失败，请重试'))
+    }
   }
 
   const sendTestAlert = async () => {

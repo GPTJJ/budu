@@ -975,6 +975,44 @@ v2Router.get('/waste-records', wrap(async (req, res) => {
   res.json({ rows: rows.map((r) => ({ id: r.id, storeKey: r.storeKey, itemId: r.itemId, name: r.item.name, quantity: r.quantity, reason: r.reason, operator: r.operator, createdAt: r.createdAt })) })
 }))
 
+// Data Authority DA-2.3：门店目录权威 = PostgreSQL（KV stores / 静态 BASE_STORES 为种子/镜像）
+v2Router.get('/stores', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (req.user.role === 'public' || req.user.role === 'cashier') throw bad('无权限', 403)
+  const rows = await prisma.store.findMany({ orderBy: [{ key: 'asc' }] })
+  res.json({ ok: true, rows: rows.map((r) => ({ key: r.key, name: r.name, district: r.district || '' })) })
+}))
+
+/** 新增自定义门店（仅开发者；key 自动生成） */
+v2Router.post('/stores', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
+  const name = String((req.body || {}).name || '').trim()
+  const district = String((req.body || {}).district || '').trim().slice(0, 50)
+  if (!name || name.length > 30) throw bad('门店名称需为 1-30 个字符')
+  const exists = await prisma.store.findFirst({ where: { name } })
+  if (exists) throw bad('该门店已存在', 409)
+  const key = `store-${Date.now().toString(36)}`
+  const row = await prisma.store.create({ data: { key, name, district } })
+  res.json({ ok: true, store: { key: row.key, name: row.name, district: row.district } })
+}))
+
+/** 删除自定义门店（仅开发者；仅允许 store- 前缀自定义键，且预检业务引用避免级联删数据） */
+v2Router.delete('/stores/:key', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
+  const key = String(req.params.key || '').slice(0, 30)
+  if (!key.startsWith('store-')) throw bad('基础门店不可删除', 400)
+  const [orders, staff, entries] = await Promise.all([
+    prisma.order.count({ where: { storeId: key } }),
+    prisma.staff.count({ where: { storeKey: key } }),
+    prisma.dailyEntry.count({ where: { storeKey: key } }),
+  ])
+  if (orders > 0 || staff > 0 || entries > 0) throw bad('该门店已被业务数据引用，不可删除', 409)
+  await prisma.store.delete({ where: { key } })
+  res.json({ ok: true })
+}))
+
 // 员工名单镜像：KV 员工（人员管理）→ PostgreSQL Staff 表（开发者/店长可写）
 v2Router.put('/staff', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)

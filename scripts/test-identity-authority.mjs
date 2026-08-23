@@ -52,3 +52,14 @@ test('DA-2.2: 员工名单权威 = PG employees（前端 /v2/staff-list，绑定
   assert.ok(!/\(db\.staff \|\| \[\]\)\.some/.test(app), '绑定校验不再读 KV staff')
   assert.ok(!/loadDb\(\)\.users/.test(ep), 'staff-list 路由不读 KV users')
 })
+
+test('DA-2.3: 门店目录权威 = PG /v2/stores（SettingsPage 走 PG，基础门店防删）', () => {
+  const userData = read('src/utils/userData.js')
+  const settings = read('src/components/SettingsPage.jsx')
+  const v2 = read('server/v2.js')
+  assert.ok(userData.includes("api('/v2/stores')"), '前端从 PG 拉取门店目录')
+  assert.ok(settings.includes("api('/v2/stores'") && settings.includes("api(`/v2/stores/"), 'SettingsPage 增删门店走 PG')
+  assert.ok(v2.includes("v2Router.get('/stores'") && v2.includes("v2Router.post('/stores'") && v2.includes("v2Router.delete('/stores/:key'"), '服务端门店目录路由存在')
+  assert.match(v2, /基础门店不可删除/, '基础门店受防删保护')
+  assert.match(v2, /已被业务数据引用，不可删除/, '被引用门店受防删保护')
+})

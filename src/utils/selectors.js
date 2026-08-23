@@ -68,7 +68,10 @@ export function customStores() {
 }
 
 export function allStores() {
-  return [...BASE_STORES, ...customStores()]
+  // Data Authority DA-2.3：门店目录权威 = PostgreSQL（cached.stores 由 /v2/stores 填充）；
+  // BASE_STORES 仅作同步渲染种子，PG 同 key 覆盖。
+  const pg = Array.isArray(getUserData().stores) ? getUserData().stores : []
+  return [...new Map([...BASE_STORES, ...pg].map((s) => [s.key, s])).values()]
 }
 
 export function allStoreKeys() {

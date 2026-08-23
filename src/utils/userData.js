@@ -166,6 +166,7 @@ export async function loadUserData(options = {}) {
     api('/v2/stock'),
     api('/v2/big-bonuses'),
     api('/v2/staff-list'),
+    api('/v2/stores'),
   ])
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
@@ -196,6 +197,12 @@ export async function loadUserData(options = {}) {
   } else if (prevStaff.length > 0) {
     cached.staff = prevStaff
     console.error('[data-authority] 员工名单读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
+  }
+
+  // DA-2.3：门店目录权威 = PG /v2/stores（静态 BASE_STORES 仅作同步渲染种子，PG 覆盖）
+  const storesRes = result(10)
+  if (storesRes && Array.isArray(storesRes.rows)) {
+    cached.stores = storesRes.rows
   }
 
   const adjustments = result(1)
