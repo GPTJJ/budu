@@ -6,7 +6,7 @@ import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry, emplo
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import { loadUserData } from '../utils/userData'
+import { loadUserData, onUserDataUpdated } from '../utils/userData'
 import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
@@ -145,6 +145,16 @@ export default function StoreEntryPage({ user, onBack }) {
   }
 
   useEffect(() => { loadOverview() }, [store, date]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 进入页面时自动拉取最新共享数据（POS 自动同步/他端录入的最新业绩），
+  // 并在后台数据合并完成后重渲染，避免首次打开只看到旧缓存（如 KV 只到 8-17）。
+  useEffect(() => {
+    const unsubscribe = onUserDataUpdated(() => setVersion((v) => v + 1))
+    loadUserData()
+      .then(() => setVersion((v) => v + 1))
+      .catch(() => {})
+    return unsubscribe
+  }, [])
 
   const refreshAll = async () => {
     await loadUserData().catch(() => {})

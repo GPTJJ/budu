@@ -15,6 +15,22 @@ const LEGACY_STAFF_KEY = 'budu-os-staff-v1'
 let cached = null
 let saveTimer = null
 const pendingFields = new Set()
+
+// 数据更新通知：后台拉取/合并完成后回调订阅者，让已挂载的页面重新渲染最新缓存
+const dataListeners = new Set()
+export function onUserDataUpdated(listener) {
+  dataListeners.add(listener)
+  return () => dataListeners.delete(listener)
+}
+function notifyUserDataUpdated() {
+  for (const listener of dataListeners) {
+    try {
+      listener()
+    } catch {
+      /* 单个订阅者异常不影响其他订阅者 */
+    }
+  }
+}
 let activeUserId = ''
 
 function normalizeCachedData(value) {
@@ -276,6 +292,8 @@ export async function loadUserData(options = {}) {
       /* 迁移失败不阻塞登录 */
     }
   }
+  // 后台并行数据（含 PostgreSQL 业绩权威源）合并完成后，通知已挂载页面刷新
+  notifyUserDataUpdated()
   return cached
 }
 
