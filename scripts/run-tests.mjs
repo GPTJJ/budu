@@ -51,6 +51,7 @@ const NODE_TEST_SUITE = [
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
   'test-address-parser.mjs',    // 收件信息智能拆分（单元）
   'test-invoice-parser.mjs',    // 发票开票信息智能拆分（单元）
+  'test-data-authority-freeze.mjs', // Data Authority 1.0 DA-1：冻结 PG 权威域（静态扫描 + 可选 DB 冒烟）→ critical
 ]
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [
@@ -73,6 +74,7 @@ const CRITICAL_NODE_TEST = [
   'test-daily-entry-upgrade.mjs',
   'test-pos-core.mjs',
   'test-homepage-lightweight.mjs',
+  'test-data-authority-freeze.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）
