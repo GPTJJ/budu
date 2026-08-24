@@ -124,8 +124,7 @@ export function evaluatePayrollReadiness(input) {
     }
   }
 
-  const calculationReady = calculationBlockers.length === 0
-
+  // 员工就绪度在计算就绪判定前构建：无任何稳定 payroll 主体（空月）→ 计算不就绪（确定性）
   // ---- 5) 按员工就绪度 ----
   const empMap = new Map()
   for (const day of stable) {
@@ -134,7 +133,15 @@ export function evaluatePayrollReadiness(input) {
     rec.days += 1
     empMap.set(day.employeeId, rec)
   }
-  const employees = [...empMap.values()]
+  const payrollEmployees = [...empMap.values()]
+
+  const calculationReady = calculationBlockers.length === 0 && payrollEmployees.length > 0
+  if (payrollEmployees.length === 0 && calculationBlockers.length === 0) {
+    calculationBlockers.push({ type: CALC, reason: 'NO_PAYROLL_SUBJECTS', detail: `${month} 无任何稳定考勤员工` })
+    bump('NO_PAYROLL_SUBJECTS')
+  }
+
+  const employees = payrollEmployees
     .sort((a, b) => String(a.employeeId).localeCompare(String(b.employeeId)))
     .map((rec) => {
       const blockers = []
