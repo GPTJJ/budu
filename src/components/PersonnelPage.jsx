@@ -26,7 +26,6 @@ import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
-import { commitRemovedStaff, getRemovedStaff } from '../utils/userData'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -533,10 +532,6 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const payrollComputed = all.some((e) => e.payrollComputed)
 
   const handleAddStaff = async (emp) => {
-    // 重新添加曾删除的员工时，需从已删除名单中移除，否则列表/报表会继续过滤掉该员工
-    if (getRemovedStaff().includes(emp.name)) {
-      commitRemovedStaff(getRemovedStaff().filter((n) => n !== emp.name))
-    }
     setShowAdd(false)
     try {
       await saveLocalStaffList([...localStaffList(), emp])

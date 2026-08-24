@@ -3,11 +3,9 @@ import { isFixedStoreKey } from '../../shared/storeDirectory.js'
 import {
   commitEntries,
   commitStaff,
-  commitRemovedStaff,
   getAnalysis,
   getEntries,
   getStaff,
-  getRemovedStaff,
   getStores,
   getProducts,
   getBigBonuses,
@@ -433,7 +431,7 @@ export function localStaffList() {
 
 /** 保存员工名单（自动同步到服务端共享数据） */
 export function saveLocalStaffList(list) {
-  commitStaff(list)
+  return commitStaff(list)
 }
 
 export function analysisEmployees() {
@@ -497,11 +495,10 @@ export function entryMonthPayroll(monthKey) {
   return map
 }
 
-/** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
+/** 删除员工：从 PG 当前名单移除，由 Employee.status 记录离职状态；历史业绩保留。 */
 export async function removeStaff(name) {
   const next = localStaffList().filter((e) => e.name !== name)
   await commitStaff(next)
-  commitRemovedStaff([...getRemovedStaff().filter((n) => n !== name), name])
 }
 
 function monthPayAdjustmentSummary(name, monthKey) {
@@ -526,10 +523,9 @@ function monthPayAdjustmentSummary(name, monthKey) {
 
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
-  const removed = new Set(getRemovedStaff())
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
-    .filter((e) => !removed.has(e.name) && isFixedStoreKey(e.storeKey))
+    .filter((e) => isFixedStoreKey(e.storeKey))
   // 当前人员目录只读取 PostgreSQL employees；历史月份仍可由当月业绩记录补出姓名。
   const base = [...new Map(local.map((e) => [e.name, e])).values()]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
