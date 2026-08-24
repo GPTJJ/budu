@@ -1,6 +1,7 @@
 // 审批中心 · 首页（模板分类网格 + 顶部 Tab + 列表）
 import { useMemo, useState } from 'react'
-import { ChevronRight, Search } from 'lucide-react'
+import { ChevronRight, Search, Trash2 } from 'lucide-react'
+import { api } from '../../utils/api'
 import { CATEGORY_LABEL, StatusBadge, fmtShortTime, templateCategory, templateIcon, templateName, yuan } from './ApprovalShared'
 
 const TABS = [
@@ -10,10 +11,28 @@ const TABS = [
   { key: 'cc', label: '抄送我的' },
 ]
 
-export default function ApprovalHome({ user, templates, scope, onScope, rows, statusFilter, onStatusFilter, onPickTemplate, onOpenDetail }) {
+export default function ApprovalHome({ user, templates, scope, onScope, rows, statusFilter, onStatusFilter, onPickTemplate, onOpenDetail, onDeleted }) {
   const [q, setQ] = useState('')
+  const [deleting, setDeleting] = useState('')
   const isSuper = user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin'
   const tabs = isSuper ? [...TABS, { key: 'all', label: '全部审批' }] : TABS
+  // 删除按钮可见性：仅开发者/管理员，且仅在「全部审批」列表
+  const canDeleteAny = (user?.role === 'developer' || user?.role === 'admin') && scope === 'all'
+
+  const handleDelete = async (e, r) => {
+    e.stopPropagation()
+    if (deleting) return
+    if (!window.confirm(`确认删除该审批单？\n「${r.title}」（${r.status === 'pending' ? '待审批' : r.status === 'approved' ? '已通过' : r.status === 'rejected' ? '已驳回' : r.status === 'draft' ? '草稿' : r.status}）\n删除后不可恢复。`)) return
+    setDeleting(r.id)
+    try {
+      await api(`/v2/approvals/requests/${r.id}`, { method: 'DELETE' })
+      onDeleted?.()
+    } catch (err) {
+      window.alert(err.message || '删除失败')
+    } finally {
+      setDeleting('')
+    }
+  }
 
   // 模板分类分组
   const categories = useMemo(() => {
@@ -156,6 +175,16 @@ export default function ApprovalHome({ user, templates, scope, onScope, rows, st
                     </span>
                   </span>
                   <StatusBadge status={r.status} />
+                  {canDeleteAny && (
+                    <button
+                      onClick={(e) => handleDelete(e, r)}
+                      disabled={Boolean(deleting)}
+                      aria-label={`删除 ${r.title}`}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500 active:opacity-70 disabled:opacity-40"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                   <ChevronRight className="h-4 w-4 shrink-0 text-slate-200" />
                 </button>
               ))}

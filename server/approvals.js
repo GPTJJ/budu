@@ -775,12 +775,12 @@ approvalRouter.post('/approvals/requests/:id/archive', wrap(async (req, res) => 
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })
 }))
 
-/** 删除（仅草稿） */
+/** 删除（开发者/管理员任意状态；其余角色仅自己草稿） */
 approvalRouter.delete('/approvals/requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const request = await prisma.approvalRequest.findUnique({ where: { id: req.params.id } })
   if (!request) throw httpError('审批单不存在', 404)
-  if (!canDelete(req.user, request)) throw httpError('仅草稿可删除', 403)
+  if (!canDelete(req.user, request)) throw httpError('无权限删除该审批单', 403)
   await prisma.approvalRequest.delete({ where: { id: request.id } })
   res.json({ ok: true })
 }))

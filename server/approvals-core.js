@@ -90,10 +90,12 @@ export function canArchive(user, request) {
   return isSuperUser(user) && (request.status === 'approved' || request.status === 'rejected')
 }
 
-/** 删除：仅草稿，创建人或超管（开发者/财务） */
+/** 删除：开发者/管理员可删任意状态（纠错：错误提交/错误审批）；其余角色仅可删自己草稿 */
 export function canDelete(user, request) {
-  if (!canCreate(user) || request.status !== 'draft') return false
-  return isSuperUser(user) || isSubmitter(user, request)
+  if (!canCreate(user)) return false
+  if (user.role === 'developer' || user.role === 'admin') return true
+  if (request.status !== 'draft') return false
+  return isSubmitter(user, request)
 }
 
 /** 金额（元，字符串/数字）→ 分（Number，安全整数范围内） */

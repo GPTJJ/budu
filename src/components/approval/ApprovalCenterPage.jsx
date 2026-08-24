@@ -149,6 +149,10 @@ export default function ApprovalCenterPage({ user, onBack }) {
             setView('form')
           }}
           onOpenDetail={openDetail}
+          onDeleted={() => {
+            setRows(null)
+            load()
+          }}
         />
       )}
 
