@@ -194,6 +194,7 @@ function serializeMailingRecord(r) {
 function serializeBigBonus(r) {
   return {
     id: r.id,
+    employeeId: r.employeeId || '',
     staffKey: r.staffKey,
     staffName: r.staffName,
     storeKey: r.storeKey,
@@ -1386,10 +1387,17 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
 v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canInvoice(req.user)) throw bad('无权限', 403)
-  const { staffName, storeKey, amountCents, receipt, date } = req.body || {}
+  const { staffName, storeKey, amountCents, receipt, date, employeeId } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 30) throw bad('员工姓名不正确')
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  // Gate 10：稳定员工身份（新 UI 必须携带实际 Employee.id；绝不按姓名/门店推导）
+  const stableEmployeeId = employeeId == null ? null : String(employeeId).trim()
+  if (stableEmployeeId) {
+    if (stableEmployeeId.length > 100) throw bad('员工 ID 不正确')
+    const emp = await prisma.employee.findUnique({ where: { id: stableEmployeeId }, select: { id: true } })
+    if (!emp) throw bad('员工不存在', 400)
+  }
   const cents = Number(amountCents)
   if (!Number.isInteger(cents) || cents <= 0 || cents > 999999999999) throw bad('订单金额不正确（单位：分）')
   const receiptStr = String(receipt || '').trim()
@@ -1401,6 +1409,7 @@ v2Router.post('/big-bonuses', wrap(async (req, res) => {
   const row = await prisma.bigOrderBonus.create({
     data: {
       id: uid('bb'),
+      ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
       staffKey: `${storeKey}::${name}`,
       staffName: name,
       storeKey,

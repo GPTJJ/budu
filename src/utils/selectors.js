@@ -28,22 +28,36 @@ function fullDateOf(monthKey, day) {
   return d.includes('-') ? `${monthKey}-${d.slice(3)}` : `${monthKey}-${d}`
 }
 
-function bigBonusesByName(name) {
+/**
+ * Gate 10：大单奖读取（稳定身份优先，legacy 兼容，绝不双计）。
+ * - 有 employeeId 的员工：stable 行按 employeeId 精确匹配；legacy NULL 行沿用旧 endsWith 姓名规则
+ *   （历史奖金按姓名归入该员工——与旧行为一致）。stable 行绝不进入姓名路径，避免双计。
+ * - 无 employeeId 的调用（历史 payroll 合成员工等）：沿用 legacy endsWith("::"+name) 聚合，
+ *   包含 stable 行（其 staffKey 快照仍匹配）与 legacy 行——与旧行为一致。
+ */
+function bigBonusesByName(name, employeeId) {
   const rows = getBigBonuses()
-  return Array.isArray(rows) ? rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`)) : []
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    return rows.filter((r) => {
+      if (r.employeeId) return r.employeeId === stableId
+      return String(r.staffKey || '').endsWith(`::${name}`)
+    })
+  }
+  return rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`))
 }
 
 /** 员工某日大单奖（元） */
-export function bigBonusYuanOn(name, dateStr) {
-  const cents = bigBonusesByName(name)
+export function bigBonusYuanOn(name, dateStr, employeeId) {
+  const cents = bigBonusesByName(name, employeeId)
     .filter((r) => String(r.date || '') === dateStr)
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
   return Math.round((cents / 100) * 100) / 100
 }
 
 /** 员工某月大单奖（元） */
-export function bigBonusYuanMonth(name, monthKey) {
-  const cents = bigBonusesByName(name)
+export function bigBonusYuanMonth(name, monthKey, employeeId) {
+  const cents = bigBonusesByName(name, employeeId)
     .filter((r) => String(r.date || '').startsWith(monthKey))
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
   return Math.round((cents / 100) * 100) / 100
@@ -576,7 +590,7 @@ export function employeeList(storeKey, monthKey = null) {
       list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
       list = list.map((e) => {
         const pr = payroll.get(e.name)
-        const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey) : 0
+        const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey, e.id) : 0
         const automaticSalary = pr ? Math.round((pr.salary + bigBonus) * 100) / 100 : 0
         const adjustments = monthPayAdjustmentSummary(e.name, monthKey)
         return {
@@ -839,8 +853,8 @@ export function storeDetails(storeKey) {
 export function employeesByType(type, monthKey = null) {
   return employeeList('all', monthKey).filter((e) => e.type === type)
 }
-/** 不含人工覆盖的员工当日自动工资，供日/周/月统一计算。 */
-function automaticEmployeeDayStatus(monthKey, day, name) {
+/** 不含人工覆盖的员工当日自动工资，供日/周/月统一计算。employeeId 可选：传入时大单奖按稳定身份读取。 */
+function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
   if (!day) return null
   const entries = localEntries()
   const noPay = isNoPayStaff(name)
@@ -851,7 +865,7 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
-  const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
+  const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day), employeeId)
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -890,9 +904,9 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
   }
 }
 
-/** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。 */
-export function employeeDayStatus(monthKey, day, name) {
-  const automatic = automaticEmployeeDayStatus(monthKey, day, name)
+/** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。employeeId 可选（大单奖稳定身份）。 */
+export function employeeDayStatus(monthKey, day, name, employeeId) {
+  const automatic = automaticEmployeeDayStatus(monthKey, day, name, employeeId)
   const date = fullDateOf(monthKey, day)
   const adjustment = dailyPayAdjustmentOn(name, date)
   if (!automatic && !adjustment) return null
@@ -904,8 +918,8 @@ export function employeeDayStatus(monthKey, day, name) {
   }
 }
 
-/** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载 */
-export function employeeDailyPayDetail(monthKey, day, name) {
+/** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载。employeeId 可选（大单奖稳定身份）。 */
+export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
   if (!day) return null
   const entries = localEntries()
   const rows = []
@@ -915,7 +929,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
-  const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
+  const dayBonuses = bigBonusesByName(name, employeeId).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
   const bonusByStore = new Map()
   let bonusTotalCents = 0
   for (const r of dayBonuses) {
@@ -1027,8 +1041,8 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   }
 }
 
-/** 员工在指定日期区间（如自然周）的汇总薪酬 */
-export function employeeWeekStatus(monthKey, dateList, name) {
+/** 员工在指定日期区间（如自然周）的汇总薪酬。employeeId 可选（大单奖稳定身份）。 */
+export function employeeWeekStatus(monthKey, dateList, name, employeeId) {
   let includedDays = 0
   let workedDays = 0
   let hours = 0
@@ -1045,7 +1059,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   for (const fullDate of dateList) {
     const dateStr = String(fullDate)
     // 自然周可能跨月（如 8.31-9.6），按每个日期的真实月份查业绩
-    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name)
+    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name, employeeId)
     if (!st) continue
     includedDays += 1
     if (!st.adjustmentOnly) workedDays += 1

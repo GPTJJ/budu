@@ -48,7 +48,7 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
   const [error, setError] = useState('')
   const [tip, setTip] = useState('')
   const detail = /^\d{4}-\d{2}-\d{2}$/.test(date)
-    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name)
+    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name, emp.id)
     : null
   const current = detail?.totals?.payAdjustment || null
   const automaticPay = detail?.totals?.automaticPay ?? 0

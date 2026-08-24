@@ -493,20 +493,23 @@ model InvoiceCompany {
 }
 
 model BigOrderBonus {
-  id          String   @id
+  id          String    @id
+  employeeId  String?   @map("employee_id") // Gate 10：稳定员工身份（employees.id）；历史行 NULL；staffKey/staffName/storeKey 为历史快照
   staffKey    String
   staffName   String
   storeKey    String
-  date        DateTime @db.Date
-  amountCents BigInt   @default(0)
-  bonusCents  BigInt   @default(0)
-  receipt     String   @default("")
-  createdBy   String   @default("")
-  createdAt   DateTime @default(now())
-  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  date        DateTime  @db.Date
+  amountCents BigInt    @default(0)
+  bonusCents  BigInt    @default(0)
+  receipt     String    @default("")
+  createdBy   String    @default("")
+  createdAt   DateTime  @default(now())
+  store       Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  employee    Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([staffKey, createdAt])
   @@index([storeKey, createdAt])
+  @@index([employeeId, createdAt])
 }
 
 model DailyPayAdjustment {
@@ -998,6 +1001,7 @@ model Employee {
   auditLogs        EmployeeAuditLog[]
   dailyStoreStaff  DailyStoreStaff[]
   dailyPayAdjustments DailyPayAdjustment[]
+  bigOrderBonuses  BigOrderBonus[]
 
   @@index([status])
   @@index([currentStoreKey])

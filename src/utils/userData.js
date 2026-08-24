@@ -237,7 +237,9 @@ export async function loadUserData(options = {}) {
   if (bb) {
     cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
       id: r.id,
+      employeeId: r.employeeId || '',
       staffKey: r.staffKey,
+      staffName: r.staffName || '',
       storeKey: r.storeKey,
       date: String(r.date || '').slice(0, 10),
       amountCents: Number(r.amountCents) || 0,

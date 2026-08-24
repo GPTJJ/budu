@@ -310,7 +310,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
-    const detail = employeeDailyPayDetail(monthKey, dd, emp.name)
+    const detail = employeeDailyPayDetail(monthKey, dd, emp.name, emp.id)
     // 周末/法定节假日标记（与首页日历一致：假=红+「假」、调休=绿+「班」、普通周末=红）
     const full = String(dd).includes('-') ? `${monthKey}-${String(dd).slice(3)}` : `${monthKey}-${String(dd)}`
     const isHolidayDay = HOLIDAYS_2026.has(full)
@@ -694,10 +694,10 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {list.map((emp, i) => {
               const status = weekStart
                 ? weekDays
-                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name)
+                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name, emp.id)
                   : null
                 : day
-                  ? employeeDayStatus(month, day, emp.name)
+                  ? employeeDayStatus(month, day, emp.name, emp.id)
                   : null
               const onDuty = Boolean((day || weekStart) && status)
               const periodSalary = onDuty ? status.pay : 0

@@ -88,6 +88,9 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
       await api('/v2/big-bonuses', {
         method: 'POST',
         body: JSON.stringify({
+          // Gate 10：直接提交所选 Employee 对象的稳定 id（绝不按姓名/门店推导）；
+          // staffName/storeKey 保留为历史快照。
+          employeeId: emp.id || undefined,
           staffName: emp.name,
           storeKey: emp.storeKey,
           date,

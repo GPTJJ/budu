@@ -60,7 +60,7 @@ function buildRows(employees, startDate, endDate) {
     const monthKey = date.slice(0, 7)
     const day = date.slice(5)
     for (const emp of employees) {
-      const detail = employeeDailyPayDetail(monthKey, day, emp.name)
+      const detail = employeeDailyPayDetail(monthKey, day, emp.name, emp.id)
       if (!detail) continue
       const typeLabel = emp.type === 'fulltime' ? '全职人员' : '兼职人员'
       let rec = summaryMap.get(emp.name)
