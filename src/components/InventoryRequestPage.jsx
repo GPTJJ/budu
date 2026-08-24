@@ -28,6 +28,11 @@ import { t } from '../utils/text'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 
 const inputCls = 'input'
+const TEMP_LOCATION_PREFIX = 'temporary:'
+
+function isTemporaryLocationKey(key) {
+  return String(key || '').startsWith(TEMP_LOCATION_PREFIX)
+}
 
 const CATEGORY_LABEL = { product: '产品', material: '物料', other: '其他' }
 const CATEGORY_STYLE = {
@@ -81,6 +86,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [picker, setPicker] = useState({ category: 'product', productName: '', quantity: '', note: '' })
   const [selectedNames, setSelectedNames] = useState([])
   const [picked, setPicked] = useState([])
+  const [temporaryLocations, setTemporaryLocations] = useState([])
+  const [customSide, setCustomSide] = useState(null)
+  const [customName, setCustomName] = useState('')
   const [suppliers, setSuppliers] = useState([])
   const [supplierId, setSupplierId] = useState('')
   const [expectedAt, setExpectedAt] = useState('')
@@ -162,16 +170,41 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
+      setSubmitting(false)
+      return
+    }
+    const fromTemporary = temporaryLocations.find((location) => location.key === form.fromStoreKey)
+    const toTemporary = temporaryLocations.find((location) => location.key === form.storeKey)
+    if (isTransfer && (form.fromStoreKey === '__temporary__' || form.storeKey === '__temporary__')) {
+      setError(t('请先完成临时地点添加'))
+      setSubmitting(false)
+      return
+    }
+    if (isTransfer && (isTemporaryLocationKey(form.fromStoreKey) && !fromTemporary)) {
+      setError(t('调出临时地点已失效，请重新添加'))
+      setSubmitting(false)
+      return
+    }
+    if (isTransfer && (isTemporaryLocationKey(form.storeKey) && !toTemporary)) {
+      setError(t('调入临时地点已失效，请重新添加'))
+      setSubmitting(false)
       return
     }
     if (picked.length === 0) {
       setError(t('请先添加货品'))
+      setSubmitting(false)
       return
     }
     try {
       const payload = {
-        ...(isTransfer ? { toStoreKey: form.storeKey } : { storeKey: form.storeKey }),
-        ...(isTransfer ? { fromStoreKey: form.fromStoreKey } : {}),
+        ...(isTransfer
+          ? {
+              fromStoreKey: fromTemporary ? null : form.fromStoreKey,
+              toStoreKey: toTemporary ? null : form.storeKey,
+              fromLocationName: fromTemporary?.name || '',
+              toLocationName: toTemporary?.name || '',
+            }
+          : { storeKey: form.storeKey }),
         ...(isTransfer ? {} : { supplierId: supplierId || undefined, expectedAt: expectedAt || undefined }),
         items: picked.map((it) => ({
           name: it.productName,
@@ -187,7 +220,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       })
       await loadUserData()
       setPicked([])
-      setForm((s) => ({ ...s, note: '' }))
+      setTemporaryLocations([])
+      setCustomSide(null)
+      setCustomName('')
+      setForm((s) => ({
+        ...s,
+        ...(isTransfer
+          ? {
+              fromStoreKey: stores[0]?.key || '',
+              storeKey: stores[1]?.key || stores[0]?.key || '',
+              fromStoreName: '',
+              storeName: '',
+            }
+          : {}),
+        note: '',
+      }))
       setVersion((v) => v + 1)
       setFeedback(
         isTransfer
@@ -257,13 +304,53 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     createdAt: new Date().toISOString(),
   })
 
+  const addTemporaryLocation = (side) => {
+    const name = customName.trim()
+    if (!name) {
+      setError(t('请输入临时地点名称'))
+      return
+    }
+    if (name.length > 50) {
+      setError(t('临时地点名称不能超过 50 个字符'))
+      return
+    }
+    if ([...stores, ...temporaryLocations].some((location) => location.name === name)) {
+      setError(t('该地点已存在'))
+      return
+    }
+    const location = {
+      key: `${TEMP_LOCATION_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+    }
+    setTemporaryLocations((list) => [...list, location])
+    setForm((current) => ({
+      ...current,
+      [side]: location.key,
+      [side === 'fromStoreKey' ? 'fromStoreName' : 'storeName']: location.name,
+    }))
+    setCustomSide(null)
+    setCustomName('')
+    setError('')
+    setSavedTip(t('已添加临时地点：{name}', { name }))
+    setTimeout(() => setSavedTip(''), 1800)
+  }
+
   const selectStore = (side, key) => {
+    if (key === '__temporary__') {
+      setCustomSide(side)
+      setCustomName('')
+      setForm((current) => ({ ...current, [side]: key }))
+      return
+    }
+    const temporary = temporaryLocations.find((location) => location.key === key)
     const nameField = side === 'fromStoreKey' ? 'fromStoreName' : 'storeName'
     setForm((s) => ({
       ...s,
       [side]: key,
-      [nameField]: '',
+      [nameField]: temporary?.name || '',
     }))
+    setCustomSide(null)
+    setCustomName('')
   }
 
   const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
@@ -480,12 +567,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 onChange={(e) => selectStore('fromStoreKey', e.target.value)}
                 className={inputCls}
               >
-                {stores.map((s) => (
+                {[...stores, ...temporaryLocations].map((s) => (
                   <option key={s.key} value={s.key}>
-                    {s.name}
+                    {isTemporaryLocationKey(s.key) ? `临时 · ${s.name}` : s.name}
                   </option>
                 ))}
+                <option value="__temporary__">＋ {t('添加临时地点')}</option>
               </select>
+              {customSide === 'fromStoreKey' && (
+                <div className="mt-2 flex gap-2">
+                  <input value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder={t('输入临时调出地点')} className={inputCls} maxLength={50} />
+                  <button type="button" onClick={() => addTemporaryLocation('fromStoreKey')} className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white">
+                    {t('添加')}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <div>
@@ -497,12 +593,21 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               onChange={(e) => selectStore('storeKey', e.target.value)}
               className={inputCls}
             >
-              {stores.map((s) => (
+              {[...stores, ...temporaryLocations].map((s) => (
                 <option key={s.key} value={s.key}>
-                  {s.name}
+                  {isTemporaryLocationKey(s.key) ? `临时 · ${s.name}` : s.name}
                 </option>
               ))}
+              {isTransfer && <option value="__temporary__">＋ {t('添加临时地点')}</option>}
             </select>
+            {isTransfer && customSide === 'storeKey' && (
+              <div className="mt-2 flex gap-2">
+                <input value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder={t('输入临时调入地点')} className={inputCls} maxLength={50} />
+                <button type="button" onClick={() => addTemporaryLocation('storeKey')} className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white">
+                  {t('添加')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

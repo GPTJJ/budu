@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Bell, RefreshCw } from 'lucide-react'
 import {
   getAlerts,
@@ -103,13 +104,16 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
         )}
       </button>
 
-      {open && (
+      {open && createPortal(
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-[129] bg-transparent" onClick={() => setOpen(false)} />
           <div
-            className={`absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-lg ${
-              isDesktop ? 'w-80' : 'w-[calc(100vw-3rem)] max-w-80'
+            className={`fixed top-[calc(env(safe-area-inset-top)+4.5rem)] z-[130] max-h-[calc(100dvh-env(safe-area-inset-top)-5.5rem)] overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl ${
+              isDesktop ? 'right-8 w-80' : 'right-3 w-[calc(100vw-1.5rem)] max-w-80'
             }`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('通知')}
           >
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <p className="text-sm font-bold text-slate-800">
@@ -281,7 +285,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
               </div>
             </div>
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )

@@ -356,17 +356,19 @@ model StockLedger {
 }
 
 model TransferRequest {
-  id           String         @id
-  fromStoreKey String
-  toStoreKey   String
-  status       String         @default("pending")
-  note         String         @default("")
-  createdBy    String         @default("")
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @default(now())
-  items        TransferItem[]
-  fromStore    Store          @relation("TransferFrom", fields: [fromStoreKey], references: [key])
-  toStore      Store          @relation("TransferTo", fields: [toStoreKey], references: [key])
+  id               String         @id
+  fromStoreKey     String?
+  toStoreKey       String?
+  fromLocationName String         @default("")
+  toLocationName   String         @default("")
+  status           String         @default("pending")
+  note             String         @default("")
+  createdBy        String         @default("")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @default(now())
+  items            TransferItem[]
+  fromStore        Store?         @relation("TransferFrom", fields: [fromStoreKey], references: [key])
+  toStore          Store?         @relation("TransferTo", fields: [toStoreKey], references: [key])
 
   @@index([fromStoreKey, status])
   @@index([toStoreKey, status])

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>BUDU Notification Layer Test</title>
+  </head>
+  <body class="m-0 bg-slate-50">
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import NotificationBell from '/src/components/NotificationBell.jsx'
+      import '/src/index.css'
+
+      window.fetch = async () => new Response(JSON.stringify({ rows: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      const user = { id: 'dev-1', username: 'developer', role: 'developer', storeKeys: [] }
+      createRoot(document.getElementById('root')).render(
+        React.createElement(React.Fragment, null,
+          React.createElement('header', { className: 'sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-white px-4' },
+            React.createElement('h1', { className: 'text-xl font-bold text-slate-800' }, '审批中心'),
+            React.createElement(NotificationBell, { variant: 'mobile', user }),
+          ),
+          React.createElement('div', { 'data-testid': 'approval-tabs', className: 'sticky top-16 z-30 flex gap-8 border-b bg-white px-5 py-4 text-slate-500 shadow-sm' },
+            React.createElement('span', { className: 'font-semibold text-budu-500' }, '发起申请'),
+            React.createElement('span', null, '待我审批'),
+            React.createElement('span', null, '我发起的'),
+          ),
+          React.createElement('main', { className: 'p-5' },
+            React.createElement('div', { className: 'h-[900px] rounded-2xl bg-white p-5 text-slate-400' }, '审批内容'),
+          ),
+        ),
+      )
+
+      setTimeout(() => document.querySelector('button[aria-label="查看通知"]')?.click(), 250)
+    </script>
+  </body>
+</html>

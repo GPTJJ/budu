@@ -176,6 +176,8 @@ export async function loadUserData(options = {}) {
         type: 'transfer',
         storeKey: r.storeKey,
         fromStoreKey: r.fromStoreKey,
+        storeName: r.storeName || '',
+        fromStoreName: r.fromStoreName || '',
         status: r.status,
         note: r.note,
         createdBy: r.createdBy,

@@ -19,7 +19,7 @@ test('门店目录精确且只包含四家门店', () => {
   assert.equal(isFixedStoreKey('custom-test'), false)
 })
 
-test('前后端禁止恢复自定义门店和多店支援', () => {
+test('正式门店目录固定为四店，调货临时地点不得写入门店目录', () => {
   const selectors = read('src/utils/selectors.js')
   const settings = read('src/components/SettingsPage.jsx')
   const inventory = read('src/components/InventoryRequestPage.jsx')
@@ -27,7 +27,11 @@ test('前后端禁止恢复自定义门店和多店支援', () => {
   const daily = read('server/daily-entry-upgrade.js')
   assert.doesNotMatch(selectors, /多店支援|key === 'multi'/)
   assert.doesNotMatch(settings, /新增门店|removeStore|addStore/)
-  assert.doesNotMatch(inventory, /自定义门店|customSide|tempStores/)
+  assert.doesNotMatch(inventory, /自定义门店|tempStores|\/v2\/stores.*POST/)
+  assert.match(inventory, /添加临时地点/)
+  assert.match(inventory, /fromLocationName/)
+  assert.match(v2, /fromLocationName/)
+  assert.doesNotMatch(v2, /ensureStore\(fromLocationName\)|ensureStore\(toLocationName\)/)
   assert.match(v2, /isFixedStoreKey/)
   assert.match(daily, /isFixedStoreKey/)
 })

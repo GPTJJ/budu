@@ -10,6 +10,7 @@ import { CcSheet } from './ApprovalSelectors'
 import PayrollSlipCard from '../PayrollSlipCard'
 import BuduSuccessFeedback from '../feedback/BuduSuccessFeedback'
 import { periodLabel } from '../../utils/payrollSlip'
+import { t } from '../../utils/text'
 import { toPng } from 'html-to-image'
 
 /** 审批流程展示：提交人（只读）/ 审批人（管理员）/ 抄送人（默认 + 可添加）；显示账号持有人姓名 */
@@ -327,11 +328,12 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
         // 服务端真实成功后才播放卡皮巴拉动画（工资/报销审批提交）
         setFeedback(
           template.key === 'payroll'
-            ? { title: t('工资审批已提交'), description: t('等待审批') }
-            : { title: t('报销审批已提交'), description: t('等待审批') },
+            ? { title: t('工资审批已提交'), description: t('等待审批'), request: res.request || initial }
+            : { title: t('报销审批已提交'), description: t('等待审批'), request: res.request || initial },
         )
+      } else {
+        onSaved?.(res.request || initial, false)
       }
-      onSaved?.(res.request || initial, submit)
     } catch (e) {
       setError(e.message || '保存失败')
     } finally {
@@ -590,6 +592,17 @@ export default function ApprovalFormView({ template, initial, user, onBack, onSa
           </div>
         </div>
       )}
+
+      <BuduSuccessFeedback
+        open={Boolean(feedback)}
+        title={feedback?.title}
+        description={feedback?.description}
+        onClose={() => {
+          const request = feedback?.request
+          setFeedback(null)
+          onSaved?.(request, true)
+        }}
+      />
     </div>
   )
 }

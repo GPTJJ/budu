@@ -114,8 +114,8 @@ function serializeTransfer(r) {
     type: 'transfer',
     storeKey: r.toStoreKey,
     fromStoreKey: r.fromStoreKey,
-    storeName: r.toStore ? resolveStoreName(r.toStore.key, r.toStore.name) : '',
-    fromStoreName: r.fromStore ? resolveStoreName(r.fromStore.key, r.fromStore.name) : '',
+    storeName: r.toStore ? resolveStoreName(r.toStore.key, r.toStore.name) : r.toLocationName || '',
+    fromStoreName: r.fromStore ? resolveStoreName(r.fromStore.key, r.fromStore.name) : r.fromLocationName || '',
     status: r.status,
     note: r.note,
     createdBy: r.createdBy,
@@ -477,21 +477,32 @@ v2Router.delete('/daily-entries', wrap(async (req, res) => {
 // ---------- 调货 ----------
 v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  const { fromStoreKey, items, note } = req.body || {}
-  const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '')
+  const { items, note } = req.body || {}
+  const fromStoreKey = String((req.body || {}).fromStoreKey || '').trim()
+  const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '').trim()
+  const fromLocationName = String((req.body || {}).fromLocationName || '').trim().slice(0, 50)
+  const toLocationName = String((req.body || {}).toLocationName || '').trim().slice(0, 50)
   if (req.user?.role === 'public') throw bad('无权限', 403)
-  if (!fromStoreKey || !toStoreKey || fromStoreKey === toStoreKey) throw bad('调出/调入门店不正确')
-  if (!canAccessTransferStore(req.user, fromStoreKey) && !canAccessTransferStore(req.user, toStoreKey)) {
+  if (fromStoreKey && !isFixedStoreKey(fromStoreKey)) throw bad('调出门店不在正式门店目录')
+  if (toStoreKey && !isFixedStoreKey(toStoreKey)) throw bad('调入门店不在正式门店目录')
+  if (Boolean(fromStoreKey) === Boolean(fromLocationName)) throw bad('调出地点必须选择正式门店或填写一个临时地点')
+  if (Boolean(toStoreKey) === Boolean(toLocationName)) throw bad('调入地点必须选择正式门店或填写一个临时地点')
+  const fromLabel = fromStoreKey ? resolveStoreName(fromStoreKey) : fromLocationName
+  const toLabel = toStoreKey ? resolveStoreName(toStoreKey) : toLocationName
+  if (fromLabel.localeCompare(toLabel, 'zh-CN', { sensitivity: 'base' }) === 0) throw bad('调出/调入地点不能相同')
+  if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, fromStoreKey) && !canAccessTransferStore(req.user, toStoreKey)) {
     throw bad('无权为所选门店发起调货', 403)
   }
   const rows = itemRows(items)
-  await ensureStore(fromStoreKey)
-  await ensureStore(toStoreKey)
+  if (fromStoreKey) await ensureStore(fromStoreKey)
+  if (toStoreKey) await ensureStore(toStoreKey)
   const created = await prisma.transferRequest.create({
     data: {
       id: `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      fromStoreKey,
-      toStoreKey,
+      fromStoreKey: fromStoreKey || null,
+      toStoreKey: toStoreKey || null,
+      fromLocationName: fromStoreKey ? '' : fromLocationName,
+      toLocationName: toStoreKey ? '' : toLocationName,
       note: String(note || '').trim().slice(0, 200),
       createdBy: req.user.username,
       items: {
@@ -507,7 +518,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
   })
   broadcast(
     '新调货申请',
-    `**${created.fromStoreKey}** → **${created.toStoreKey}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出门店店长尽快审核发货。`,
+    `**${fromLabel}** → **${toLabel}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出地点负责人尽快审核发货。`,
   ).catch(() => {})
   res.json({ ok: true, request: serializeTransfer(created) })
 }))
@@ -541,7 +552,10 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
 }))
 
 async function getTransfer(id) {
-  return prisma.transferRequest.findUnique({ where: { id }, include: { items: { include: { item: true } } } })
+  return prisma.transferRequest.findUnique({
+    where: { id },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  })
 }
 
 v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
@@ -577,7 +591,7 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   const final = await getTransfer(t.id)
   broadcast(
     '调货已发货',
-    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入门店店长留意收货。`,
+    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入地点负责人留意收货。`,
   ).catch(() => {})
   res.json({ ok: true, request: serializeTransfer(final) })
 }))
@@ -602,7 +616,7 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
   const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
   broadcast(
     '调货已收货',
-    `**${t.fromStoreKey}** → **${t.toStoreKey}**\n货品 **${t.items.length}** 种 · 确认人 **${req.user.username}**`,
+    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${t.items.length}** 种 · 确认人 **${req.user.username}**`,
   ).catch(() => {})
   res.json({ ok: true, request: updated })
 }))

@@ -71,6 +71,42 @@ try {
   if (data.inventory?.length !== 2 || data.inventoryRequests?.[0]?.status !== 'completed') {
     throw new Error('库存 API 读取结果错误')
   }
+
+  const temporaryTransfer = await fetch(`${base}/v2/transfer-requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({
+      fromStoreKey: null,
+      toStoreKey: null,
+      fromLocationName: '临时仓 A',
+      toLocationName: '临时展位 B',
+      items: [{ name: '临时调货测试商品', quantity: 2 }],
+      note: '临时地点持久化回归测试',
+    }),
+  })
+  if (!temporaryTransfer.ok) throw new Error(`临时地点调货创建失败：${temporaryTransfer.status} ${await temporaryTransfer.text()}`)
+  const temporaryPayload = await temporaryTransfer.json()
+  if (
+    temporaryPayload.request?.fromStoreKey !== null ||
+    temporaryPayload.request?.storeKey !== null ||
+    temporaryPayload.request?.fromStoreName !== '临时仓 A' ||
+    temporaryPayload.request?.storeName !== '临时展位 B'
+  ) {
+    throw new Error('临时地点调货创建结果未完整保留地点名称')
+  }
+
+  const transferRead = await fetch(`${base}/v2/transfer-requests`, { headers: { Cookie: cookie } })
+  const transferData = await transferRead.json()
+  const persisted = transferData.rows?.find((row) => row.id === temporaryPayload.request.id)
+  if (!persisted || persisted.fromStoreName !== '临时仓 A' || persisted.storeName !== '临时展位 B') {
+    throw new Error('临时地点调货数据未从 PostgreSQL 永久读取')
+  }
+
+  const storesRead = await fetch(`${base}/v2/stores`, { headers: { Cookie: cookie } })
+  const storesData = await storesRead.json()
+  if ((storesData.rows || []).some((store) => ['临时仓 A', '临时展位 B'].includes(store.name))) {
+    throw new Error('临时地点被错误写入正式门店目录')
+  }
 } finally {
   await new Promise((resolve) => server.close(resolve))
   fs.rmSync(dataDir, { recursive: true, force: true })
