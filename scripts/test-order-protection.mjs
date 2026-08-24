@@ -1,7 +1,7 @@
 // 订单删除/取消保护回归（O / Q 不变量）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assertOrderDeletable, assertOrderCancelable } from '../server/pos-core.js'
+import { assertOrderDeletable, assertOrderCancelable, canCancelOrder, normalizeOrderCancelReason } from '../server/pos-core.js'
 import { PaymentService } from '../server/payments/payment-service.js'
 import { MemoryPrisma } from './helpers/memory-prisma.mjs'
 
@@ -29,6 +29,25 @@ test('O：未解决微信支付订单禁止取消；终态后可取消', () => {
   // 明确终态（closed/failed）或不存在未决支付 → 允许取消流程继续
   assert.doesNotThrow(() => assertOrderCancelable(order({ status: 'pending_payment' }), null))
   assert.doesNotThrow(() => assertOrderCancelable(order({ status: 'cancelled' }), unresolved)) // 已取消幂等
+})
+
+test('O：门店作废权限按角色、门店和订单创建人收敛', () => {
+  const target = order({ storeId: 'chaowai', cashierId: 'staff-1', status: 'pending_payment' })
+  assert.equal(canCancelOrder({ id: 'dev-1', role: 'developer', status: 'active', storeKeys: [] }, target), true)
+  assert.equal(canCancelOrder({ id: 'cashier-2', role: 'cashier', status: 'active', storeKeys: ['chaowai'] }, target), true)
+  assert.equal(canCancelOrder({ id: 'manager-2', role: 'manager', status: 'active', storeKeys: ['chaowai'] }, target), true)
+  assert.equal(canCancelOrder({ id: 'staff-1', role: 'staff', status: 'active', storeKeys: ['chaowai'] }, target), true)
+  assert.equal(canCancelOrder({ id: 'staff-2', role: 'staff', status: 'active', storeKeys: ['chaowai'] }, target), false)
+  assert.equal(canCancelOrder({ id: 'cashier-3', role: 'cashier', status: 'active', storeKeys: ['guanshe'] }, target), false)
+  assert.equal(canCancelOrder({ id: 'cashier-4', role: 'cashier', status: 'disabled', storeKeys: ['chaowai'] }, target), false)
+})
+
+test('O：作废原因必填、限长并拒绝控制字符', () => {
+  assert.equal(normalizeOrderCancelReason('  重复下单  '), '重复下单')
+  assert.throws(() => normalizeOrderCancelReason(''), (error) => error.status === 400)
+  assert.throws(() => normalizeOrderCancelReason('a'), (error) => error.status === 400)
+  assert.throws(() => normalizeOrderCancelReason('x'.repeat(101)), (error) => error.status === 400)
+  assert.throws(() => normalizeOrderCancelReason('重复\n下单'), (error) => error.status === 400)
 })
 
 test('Q：unresolvedWechatPayment 只命中未决微信支付，终态不命中', async () => {

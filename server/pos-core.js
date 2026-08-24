@@ -141,3 +141,22 @@ export function assertOrderCancelable(order, unresolvedWechatPayment) {
     throw httpError('订单存在未核对的微信支付，请先完成核对后再操作', 409)
   }
 }
+
+/** 门店作废权限：最高权限可处理全部；收银/店长可处理所属门店；员工仅处理本人订单。 */
+export function canCancelOrder(user, order) {
+  if (!user || !order || user.status === 'disabled' || user.role === 'public') return false
+  if (['developer', 'admin', 'finance'].includes(user.role)) return true
+  const sameStore = Array.isArray(user.storeKeys) && user.storeKeys.includes(order.storeId)
+  if (!sameStore) return false
+  if (user.role === 'cashier' || user.role === 'manager') return true
+  return user.role === 'staff' && order.cashierId === user.id
+}
+
+/** 作废原因必须明确、短文本且不可包含控制字符，供永久审计展示。 */
+export function normalizeOrderCancelReason(value) {
+  const reason = String(value ?? '').trim()
+  if (reason.length < 2) throw httpError('请选择或填写作废原因')
+  if (reason.length > 100) throw httpError('作废原因不能超过 100 个字')
+  if (/[\u0000-\u001f\u007f]/.test(reason)) throw httpError('作废原因包含无效字符')
+  return reason
+}

@@ -181,6 +181,9 @@ model Order {
   createdAt           DateTime    @default(now()) @map("created_at")
   updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at")
   completedAt         DateTime?   @map("completed_at")
+  cancelledAt         DateTime?   @map("cancelled_at")
+  cancelledBy         String      @default("") @map("cancelled_by")
+  cancelReason        String      @default("") @map("cancel_reason")
   store               Store       @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
   payments            Payment[]

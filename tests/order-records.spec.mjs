@@ -147,6 +147,28 @@ test('微信支付订单支持部分退款，待支付订单显示去支付', as
   await expect.poll(() => page.evaluate(() => window.__payOrder)).toEqual({ id: 'order-2', orderNo: 'POS-TEST-ORDER-002' })
 })
 
+test('门店可将点错的待支付订单作废并记录原因', async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1180 })
+  await page.goto('/tests/order-records-harness.html?role=cashier')
+  const order = page.getByRole('row').filter({ hasText: 'POS-TEST-ORDER-002' })
+  await expect(order.getByRole('button', { name: '作废 POS-TEST-ORDER-002' })).toBeVisible()
+  await order.getByRole('button', { name: '作废 POS-TEST-ORDER-002' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '作废订单确认' })
+  await expect(dialog).toBeVisible()
+  const confirmButton = dialog.getByRole('button', { name: '确认作废', exact: true })
+  await expect(confirmButton).toBeDisabled()
+  await dialog.getByRole('button', { name: '重复下单', exact: true }).click()
+  await expect(confirmButton).toBeEnabled()
+  await confirmButton.click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByText('订单 POS-TEST-ORDER-002 已作废', { exact: true })).toBeVisible()
+  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.__cancelledOrders)).toEqual([{ id: 'order-2', reason: '重复下单' }])
+})
+
 test('手机底部导航包含 POS点单并可跳转', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/tests/mobile-nav-harness.html')

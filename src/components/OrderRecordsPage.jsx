@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BadgePercent, Ban, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
@@ -11,10 +11,12 @@ const statusLabels = {
   pending_payment: '待支付',
   paid: '已支付',
   completed: '已完成',
-  cancelled: '已取消',
+  cancelled: '已作废',
   partially_refunded: '部分退款',
   refunded: '已退款',
 }
+
+const cancelReasons = ['重复下单', '点错商品', '选错门店', '顾客取消', '其他']
 
 function localTime(value) {
   if (!value) return '—'
@@ -77,6 +79,10 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
   const [deleteOrder, setDeleteOrder] = useState(null)
   const [deleteConfirmed, setDeleteConfirmed] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [cancelOrder, setCancelOrder] = useState(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelNote, setCancelNote] = useState('')
+  const [cancelling, setCancelling] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -177,6 +183,49 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
     }
   }
 
+  const openCancelConfirm = (order) => {
+    if (!order || order.status !== 'pending_payment') return
+    setCancelOrder(order)
+    setCancelReason('')
+    setCancelNote('')
+    setError('')
+  }
+
+  const closeCancelConfirm = () => {
+    if (cancelling) return
+    setCancelOrder(null)
+    setCancelReason('')
+    setCancelNote('')
+  }
+
+  const voidOrder = async () => {
+    if (!cancelOrder || !cancelReason || cancelling) return
+    const reason = cancelReason === '其他' ? cancelNote.trim() : cancelReason
+    if (reason.length < 2) {
+      setError('请填写作废原因')
+      return
+    }
+    const order = cancelOrder
+    setCancelling(true)
+    setError('')
+    try {
+      await api(`/v2/pos/orders/${order.id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      })
+      if (detail?.id === order.id) setDetail(null)
+      setCancelOrder(null)
+      setCancelReason('')
+      setCancelNote('')
+      setNotice(`订单 ${order.orderNo} 已作废`)
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   const orderRefundedCents = (order) => (order.refunds || [])
     .filter((refund) => refund.status === 'completed')
     .reduce((sum, refund) => sum + BigInt(refund.amount), 0n)
@@ -264,11 +313,14 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       {order.status === 'pending_payment' && typeof onPay === 'function' && (
         <button onClick={() => onPay(order)} className={`${actionButtonClass} bg-emerald-600 text-white shadow-sm shadow-emerald-100 hover:bg-emerald-700`} aria-label={`去支付 ${order.orderNo}`}><WalletCards className="h-4 w-4" />去支付</button>
       )}
+      {order.status === 'pending_payment' && (
+        <button onClick={() => openCancelConfirm(order)} className={`${actionButtonClass} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`} aria-label={`作废 ${order.orderNo}`}><Ban className="h-4 w-4" />作废订单</button>
+      )}
       {user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
         <button onClick={() => openRefund(order)} className={`${actionButtonClass} border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100`} aria-label={`退款 ${order.orderNo}`}><Download className="h-4 w-4" />退款</button>
       )}
       {hasPendingRefund(order) && <span className={`${actionButtonClass} bg-amber-50 text-amber-700`}>退款处理中</span>}
-      {showDetail && <button onClick={() => setDetail(order)} className={`${actionButtonClass} border border-budu-200 bg-budu-50 text-budu-700 hover:bg-budu-100`} aria-label={`查看明细 ${order.orderNo}`}><Package className="h-4 w-4" />订单明细</button>}
+      {showDetail && <button onClick={() => setDetail(order)} className={`${actionButtonClass} ${compact && order.status === 'pending_payment' ? 'col-span-2' : ''} border border-budu-200 bg-budu-50 text-budu-700 hover:bg-budu-100`} aria-label={`查看明细 ${order.orderNo}`}><Package className="h-4 w-4" />订单明细</button>}
       {user.role === 'developer' && isOrderDeletable(order) && (
         <button onClick={() => openDeleteConfirm(order)} className={`${actionButtonClass} border border-rose-200 bg-white text-rose-600 hover:bg-rose-50`} aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-4 w-4" />删除</button>
       )}
@@ -299,7 +351,7 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
           <label className="text-xs font-semibold text-slate-500">结束日期<input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={`mt-1 w-full ${inputClass}`} /></label>
           <label className="text-xs font-semibold text-slate-500">门店<select value={store} onChange={(e) => setStore(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="all">全部门店</option>{stores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>
           <label className="text-xs font-semibold text-slate-500">支付方式<select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="">全部</option><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option></select></label>
-          <label className="text-xs font-semibold text-slate-500">状态<select value={status} onChange={(e) => setStatus(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="">全部</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          <label className="text-xs font-semibold text-slate-500">状态<select value={status} onChange={(e) => setStatus(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="">默认（不含已作废）</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
           <div className="col-span-2 flex items-end gap-2 xl:col-span-1">
             <label className="relative flex-1 text-xs font-semibold text-slate-500">订单号<Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索订单号" className={`mt-1 w-full pl-9 ${inputClass}`} /></label>
             <button onClick={load} disabled={loading} className="h-11 shrink-0 rounded-xl bg-budu-500 px-5 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50">{loading ? '查询中…' : '查询'}</button>
@@ -434,6 +486,45 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
         </div>
       )}
 
+      {cancelOrder && (
+        <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="作废订单确认">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-rose-100"><Ban className="h-6 w-6 text-rose-600" /></div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-black text-slate-900">作废待支付订单</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">订单会保留审计记录，但不再等待付款，也不计入经营数据。</p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs font-bold text-slate-700">{cancelOrder.orderNo}</p>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <div className="text-xs text-slate-500"><p>{cancelOrder.storeName}</p><p className="mt-1">{localTime(cancelOrder.createdAt)}</p></div>
+                  <strong className="text-xl font-black tabular-nums text-slate-900">{formatCents(cancelOrder.payableAmount)}</strong>
+                </div>
+              </div>
+
+              <fieldset className="mt-5">
+                <legend className="text-xs font-bold text-slate-600">请选择作废原因</legend>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {cancelReasons.map((reason) => (
+                    <button key={reason} type="button" onClick={() => setCancelReason(reason)} className={`min-h-11 rounded-xl border px-3 text-sm font-semibold transition ${cancelReason === reason ? 'border-rose-400 bg-rose-50 text-rose-700 ring-2 ring-rose-100' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{reason}</button>
+                  ))}
+                </div>
+              </fieldset>
+              {cancelReason === '其他' && <label className="mt-3 block text-xs font-semibold text-slate-500">具体原因<input autoFocus value={cancelNote} onChange={(event) => setCancelNote(event.target.value.slice(0, 100))} maxLength={100} placeholder="请填写作废原因" className="mt-1 h-11 w-full rounded-xl border border-slate-200 px-3.5 text-sm text-slate-800 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100" /></label>}
+              <p className="mt-4 rounded-xl bg-amber-50 px-3.5 py-3 text-xs leading-5 text-amber-700">若微信支付结果仍在核对中，系统会阻止作废，避免顾客已扣款但订单被误处理。</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/80 p-4 pb-[max(16px,env(safe-area-inset-bottom))] sm:px-6">
+              <button onClick={closeCancelConfirm} disabled={cancelling} className={`${actionButtonClass} border border-slate-200 bg-white text-slate-600`}>返回</button>
+              <button onClick={voidOrder} disabled={!cancelReason || (cancelReason === '其他' && cancelNote.trim().length < 2) || cancelling} className={`${actionButtonClass} bg-rose-600 text-white shadow-sm shadow-rose-200 hover:bg-rose-700`}><Ban className="h-4 w-4" />{cancelling ? '作废中…' : '确认作废'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteOrder && (
         <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="删除订单确认">
           <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
@@ -486,6 +577,12 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
               </div>
               {BigInt(detail.discountAmount || 0) > 0n && <p className="text-xs text-slate-500">{(detail.discountPercent ?? 100) < 100 ? `折扣：${Number(detail.discountPercent) / 10} 折 · ` : ''}优惠（含赠送）{Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
               {detail.remark && <p className="text-xs text-slate-500">备注：{detail.remark}</p>}
+              {detail.status === 'cancelled' && (
+                <div className="rounded-2xl border border-rose-100 bg-rose-50/70 px-4 py-3 text-sm text-rose-800">
+                  <p className="font-bold">订单已作废</p>
+                  <p className="mt-1 text-xs leading-5">原因：{detail.cancelReason || '未记录'} · 操作人：{detail.cancelledBy || '—'} · 时间：{localTime(detail.cancelledAt)}</p>
+                </div>
+              )}
               <div>
                 <h4 className="text-sm font-bold text-slate-800">商品明细</h4>
                 <div className="mt-2 overflow-hidden rounded-2xl border border-slate-100">

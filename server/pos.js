@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { serializeProduct } from './products.js'
-import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
+import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
@@ -107,6 +107,9 @@ function serializeOrder(order) {
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelledBy: order.cancelledBy || '',
+    cancelReason: order.cancelReason || '',
     payments: (order.payments || []).map(serializePayment),
     refunds: (order.refunds || []).map(serializeRefund),
     items: order.items.map((item) => ({
@@ -133,7 +136,7 @@ function replayOrder(existing, user, storeId, cartHash) {
   return existing
 }
 
-function buildOrderWhere(user, query = {}) {
+export function buildOrderWhere(user, query = {}) {
   const where = {}
   const allowed = Array.isArray(user.storeKeys) ? user.storeKeys : []
   if (!isSuperUser(user)) {
@@ -160,6 +163,9 @@ function buildOrderWhere(user, query = {}) {
   const status = String(query.status || '').trim()
   if (['draft', 'pending_payment', 'paid', 'completed', 'cancelled', 'partially_refunded', 'refunded'].includes(status)) {
     where.status = status
+  } else {
+    // 正常视图默认隐藏已作废订单；仍可通过 status=cancelled 查询完整审计记录。
+    where.status = { not: 'cancelled' }
   }
   const q = String(query.q || '').trim()
   if (q) where.orderNo = { contains: q, mode: 'insensitive' }
@@ -431,11 +437,12 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   requirePosUser(req.user)
   let current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
-  if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  if (!canCancelOrder(req.user, current)) throw httpError('无权作废该订单', 403)
   if (current.status === 'cancelled') {
     const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
     return res.json({ ok: true, order: serializeOrder(order) })
   }
+  const cancelReason = normalizeOrderCancelReason(req.body?.reason)
   assertOrderTransition(current.status, 'cancelled')
   const active = await paymentService.activePayment(current.id)
   if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
@@ -446,7 +453,13 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   current = await prisma.order.findUnique({ where: { id: current.id } })
   const changed = await prisma.order.updateMany({
     where: { id: current.id, status: current.status },
-    data: { status: 'cancelled', version: { increment: 1 } },
+    data: {
+      status: 'cancelled',
+      cancelledAt: new Date(),
+      cancelledBy: req.user.username,
+      cancelReason,
+      version: { increment: 1 },
+    },
   })
   if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })

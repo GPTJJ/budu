@@ -57,6 +57,7 @@
         const filtered = orders.filter((order) => {
           if (qs.get('paymentMethod') && order.paymentMethod !== qs.get('paymentMethod')) return false
           if (qs.get('status') && order.status !== qs.get('status')) return false
+          if (!qs.get('status') && order.status === 'cancelled') return false
           if (qs.get('q') && !order.orderNo.toLowerCase().includes(qs.get('q').toLowerCase())) return false
           return true
         })
@@ -85,6 +86,19 @@
           },
           rows: filtered,
         })
+      }
+      const cancelMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)\/cancel$/)
+      if (cancelMatch && options.method === 'POST') {
+        const id = decodeURIComponent(cancelMatch[1])
+        const order = orders.find((item) => item.id === id)
+        if (!order) return json({ error: '订单不存在' }, 404)
+        const body = JSON.parse(options.body)
+        window.__cancelledOrders = [...(window.__cancelledOrders || []), { id, reason: body.reason }]
+        order.status = 'cancelled'
+        order.cancelReason = body.reason
+        order.cancelledBy = 'dev'
+        order.cancelledAt = new Date().toISOString()
+        return json({ ok: true, order })
       }
       const deleteMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)$/)
       if (deleteMatch && options.method === 'DELETE') {
