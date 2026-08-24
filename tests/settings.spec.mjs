@@ -3,6 +3,18 @@ import { expect, test } from '@playwright/test'
 test('系统设置保留全部业务配置并移除语言入口', async ({ page }) => {
   let salesSourcePayload = null
   let secondPasswordPayload = null
+  const authorityStores = []
+
+  await page.route('**/api/v2/stores', async (route) => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON()
+      const store = { key: 'test-new-store', name: body.name, district: '', active: true }
+      authorityStores.push(store)
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, store }) })
+      return
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ rows: authorityStores }) })
+  })
 
   await page.route('**/api/v2/wechat/bindings', (route) => route.fulfill({
     contentType: 'application/json',

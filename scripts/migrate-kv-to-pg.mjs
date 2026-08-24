@@ -1,5 +1,5 @@
 // KV(Upstash/本地 JSON) → PostgreSQL 迁移脚本（幂等，支持 --dry-run / --reconcile）
-// 用法：DATABASE_URL=... node scripts/migrate-kv-to-pg.mjs [--dry-run] [--reconcile]
+// 用法：DATABASE_URL=... node scripts/migrate-kv-to-pg.mjs [--db /path/to/db.json] [--dry-run] [--reconcile]
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,11 @@ if (fs.existsSync(envPath)) {
 
 const dryRun = process.argv.includes('--dry-run')
 const reconcile = process.argv.includes('--reconcile')
+const dbArgIndex = process.argv.indexOf('--db')
+const explicitDbFile = dbArgIndex >= 0 && process.argv[dbArgIndex + 1]
+const localDbFile = explicitDbFile
+  ? path.resolve(process.argv[dbArgIndex + 1])
+  : path.join(root, 'server/data/db.json')
 
 if (!process.env.DATABASE_URL) {
   console.error('缺少 DATABASE_URL')
@@ -29,6 +34,12 @@ const prisma = new PrismaClient()
 const REDIS_KEY = 'budu-db'
 
 async function loadKv() {
+  // 显式 --db 是审计/恢复时选定的权威迁移源，必须优先于环境中的 KV 凭据，
+  // 否则运维机残留的 .env.local 可能让脚本静默读取另一份远程数据。
+  if (explicitDbFile) {
+    if (!fs.existsSync(localDbFile)) throw new Error(`指定的 db.json 不存在：${localDbFile}`)
+    return JSON.parse(fs.readFileSync(localDbFile, 'utf8'))
+  }
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
   const token =
     process.env.KV_REST_API_READ_ONLY_TOKEN ||
@@ -42,8 +53,7 @@ async function loadKv() {
     const data = await res.json()
     return data && data.result ? JSON.parse(data.result) : { users: [], stores: [], staff: [], entries: {}, inventoryRequests: [], inventory: [], products: [] }
   }
-  const local = path.join(root, 'server/data/db.json')
-  if (fs.existsSync(local)) return JSON.parse(fs.readFileSync(local, 'utf8'))
+  if (fs.existsSync(localDbFile)) return JSON.parse(fs.readFileSync(localDbFile, 'utf8'))
   throw new Error('未找到 KV 配置或本地 db.json')
 }
 
@@ -77,11 +87,15 @@ async function main() {
       const [month, storeKey, day] = key.split('|')
       if (!month || !storeKey || !day) continue
       const eid = id('de', `${month}-${storeKey}-${day}`)
+      const date = new Date(`${month}-${day.slice(3)}T00:00:00.000Z`)
       await prisma.store.upsert({ where: { key: storeKey }, update: {}, create: { key: storeKey, name: storeKey } })
       await prisma.dailyEntry.upsert({
-        where: { id: eid },
+        // 生产历史中同一门店/日期可能已由 API 使用随机 id 创建。
+        // 数据库真实业务唯一键是 (storeKey, date)，按 legacy id upsert 会在
+        // create 分支撞上唯一约束，导致整批迁移中止。
+        where: { storeKey_date: { storeKey, date } },
         update: { incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
-        create: { id: eid, storeKey, date: new Date(`${month}-${day.slice(3)}T00:00:00.000Z`), incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
+        create: { id: eid, storeKey, date, incCents: BigInt(Math.round((Number(v.inc) || 0) * 100)), ord: Number(v.ord) || 0, staffNames: Array.isArray(v.staff) ? v.staff : [] },
       })
       counts.entries += 1
     }

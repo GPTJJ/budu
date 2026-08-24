@@ -4,18 +4,16 @@ import { createServer } from 'vite'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 
-const ssrStorage = new Map([
-  [
-    'budu-os-cloud-mirror-v1',
-    JSON.stringify({
-      entries: {
-        '2026-08|guanshe|08-10': { inc: 3000, ord: 20, staff: ['测试员工'] },
-      },
-      staff: [
-        { name: '测试员工', type: 'fulltime', storeKey: 'guanshe', storeName: '官舍店' },
-      ],
-    }),
+const fixtureData = {
+  entries: {
+    '2026-08|guanshe|08-10': { inc: 3000, ord: 20, staff: ['测试员工'] },
+  },
+  staff: [
+    { name: '测试员工', type: 'fulltime', storeKey: 'guanshe', storeName: '官舍店' },
   ],
+}
+const ssrStorage = new Map([
+  ['budu-os-cloud-mirror-v1', JSON.stringify(fixtureData)],
 ])
 globalThis.localStorage = {
   getItem: (key) => ssrStorage.get(key) ?? null,
@@ -38,6 +36,9 @@ const render = async (path, props = {}) => {
 try {
   // SSR 不再依赖仓库内置的历史员工/报表样本；用仅存在于本测试进程内的
   // 实时数据形态校验员工绩效及门店隐私，避免测试误把静态样本当成业务数据源。
+  // DA-5 后 localStorage 不再是运行时数据源，测试必须通过显式缓存播种入口注入。
+  const fixtureUserData = await server.ssrLoadModule('/src/utils/userData.js')
+  fixtureUserData.seedCachedDataForTest(fixtureData)
   const fixtureSelectors = await server.ssrLoadModule('/src/utils/selectors.js')
   if (fixtureSelectors.entryEmployeePerformance('all', '2026-08').length !== 1) {
     throw new Error('SSR fixture failed to produce employee performance data')

@@ -6,6 +6,7 @@
     import { createRoot } from 'react-dom/client'
     import PersonnelPage from '/src/components/PersonnelPage.jsx'
     import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
@@ -38,6 +39,7 @@
       posDaily: [],
       posProductSales: [],
     }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
 
     createRoot(document.getElementById('root')).render(
       React.createElement(PublicModeProvider, { isPublic: false, isStore: false },

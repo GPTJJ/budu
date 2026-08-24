@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import SchedulePage from '/src/components/SchedulePage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
@@ -59,6 +60,27 @@
       posDaily: [],
       posProductSales: [],
     }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
+
+    const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+    window.fetch = async (input, options = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.origin)
+      if (url.pathname === '/api/v2/schedules') {
+        if ((options.method || 'GET') === 'PUT') return json({ ok: true })
+        const rows = []
+        for (const [storeKey, days] of Object.entries(schedules[url.searchParams.get('weekStart')] || {})) {
+          for (const [date, shifts] of Object.entries(days)) rows.push({ storeKey, date, shifts })
+        }
+        return json({ rows })
+      }
+      if (url.pathname === '/api/v2/staff-list') {
+        return json({ rows: JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')).staff })
+      }
+      if (url.pathname === '/api/v2/stores') {
+        return json({ rows: JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')).stores })
+      }
+      return json({ rows: [] })
+    }
 
     const USER = {
       developer: { id: 'u-dev', username: 'budu', role: 'developer', staffKey: '' },

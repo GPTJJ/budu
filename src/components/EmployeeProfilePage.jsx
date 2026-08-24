@@ -487,7 +487,8 @@ function EmployeeDetail({ employeeId, user, canEdit, canRevealIdentity, canRevea
     // DA 后统一成功反馈：员工资料保存成功 → 卡皮巴拉动画
     setSaved(msg)
     setTimeout(() => setSaved(''), 2500)
-    setFeedback({ title: t('已保存'), description: t('员工资料已更新') })
+    // 保留具体操作语义（如“已离职（履历已记录）”），避免统一动效把关键结果吞掉。
+    setFeedback({ title: msg, description: '员工资料已更新' })
   }
 
   if (loading && !employee) {

@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import AccountAdminPage from '/src/components/AccountAdminPage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     // 共享数据镜像：马婧欣@chaowai（档案门店）、陈荣梅@multi（多店支援）、史璐璐@chaowai
@@ -21,6 +22,7 @@
       analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [],
       posDaily: [], posProductSales: [],
     }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
 
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname

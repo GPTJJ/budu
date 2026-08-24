@@ -5,11 +5,13 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import OrderRecordsPage from '/src/components/OrderRecordsPage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
       entries: {}, staff: [], stores: [{ key: 'store-1', name: '测试门店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
     }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
 
     const orders = [
       {

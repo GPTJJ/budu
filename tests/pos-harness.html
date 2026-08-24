@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import PosPage from '/src/components/PosPage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     const userId = new URLSearchParams(location.search).get('user') || 'user-test'
@@ -65,6 +66,7 @@
     const mirrorStores = [{ key: 'test-store', name: '测试门店' }]
     if (twoStores) mirrorStores.push({ key: 'store-2', name: '第二门店' })
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: mirrorStores, schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
     let order = JSON.parse(sessionStorage.getItem('__budu-pos-test-order') || 'null')
     let payment = JSON.parse(sessionStorage.getItem('__budu-pos-test-payment') || 'null')
     window.fetch = async (url, options = {}) => {

@@ -5,12 +5,14 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import AssetCenterPage from '/src/components/AssetCenterPage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
       entries: {}, staff: [], stores: [{ key: 'tongying', name: '通盈中心店' }, { key: 'xidan', name: '西单店' }],
       schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
     }))
+    seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
 
     const files = [
       {

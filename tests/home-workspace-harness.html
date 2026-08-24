@@ -13,6 +13,7 @@
       import HomeWorkspace from '/src/components/HomeWorkspace.jsx'
       import Header from '/src/components/Header.jsx'
       import { PublicModeProvider } from '/src/visibility.jsx'
+      import { seedCachedDataForTest } from '/src/utils/userData.js'
       import '/src/index.css'
 
       const data = {
@@ -36,6 +37,7 @@
         posProductSales: [],
       }
       localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify(data))
+      seedCachedDataForTest(data)
       const role = new URLSearchParams(location.search).get('role') || 'developer'
 
       const onNavigate = (view) => {

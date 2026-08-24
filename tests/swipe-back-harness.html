@@ -57,6 +57,18 @@
           { id: 'emp-1', employeeNo: 'BUDU-0001', name: '隋晓', status: 'ACTIVE', employmentType: 'fulltime', currentStoreKey: 'tongying', position: '店员', level: '', phone: '13800000000' },
         ] })
       }
+      if (p === '/api/v2/staff-list') {
+        return json({ rows: [
+          { id: 'emp-1', employeeNo: 'BUDU-0001', name: '隋晓', type: 'fulltime', storeKey: 'tongying' },
+          { id: 'emp-2', employeeNo: 'BUDU-0002', name: '叶芷辰', type: 'fulltime', storeKey: 'tongying' },
+        ] })
+      }
+      if (p === '/api/v2/stores') {
+        return json({ rows: [
+          { key: 'tongying', name: '北京通盈中心店' },
+          { key: 'guanshe', name: '北京官舍店' },
+        ] })
+      }
       if (p === '/api/auth/me') return json({ user })
       return json({ ok: true })
     }
