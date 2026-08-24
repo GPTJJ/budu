@@ -82,6 +82,7 @@ const DIRECT_SUITE = [
   'test-payroll-resolver.mjs', // Gate 23：统一 payroll 计算 resolver（纯函数，零 live 消费）→ critical
   'test-export-salary-identity.mjs', // Gate 25：ExportSalaryModal Employee.id 导出身份（纯逻辑）→ critical
   'test-export-detail-identity.mjs', // Gate 25 澄清：明细行调整/奖金按 employeeId 精确隔离（同店同名）→ critical
+  'test-payroll-adjustment-only.mjs', // Gate 26：稳定调整仅日 Employee.id 月度贡献（无考勤也可进入 payroll）→ critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -106,6 +107,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-resolver.mjs',
   'test-export-salary-identity.mjs',
   'test-export-detail-identity.mjs',
+  'test-payroll-adjustment-only.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

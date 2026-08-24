@@ -21,9 +21,10 @@ import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
  * @param {Array} dailyStoreStaffRows Gate 12 稳定考勤行
  * @param {Array} bigBonusRows Gate 10 大单奖行（含 employeeId/staffKey/bonusCents/date；可空）
  * @param {Array} payAdjustmentRows Gate 9 日薪调整行（含 employeeId/staffName/date/adjustedPayCents；可空）
+ * @param {string} [month] YYYY-MM（Gate 26：稳定调整仅日贡献的月边界；不传则不过滤——Gate 14 兼容）
  * @returns {{ employees: Array, unresolvedDays: Array, coverage: object }}
  */
-export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = []) {
+export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = [], month = '') {
   const input = buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
   const stable = input.stableRows
   const unresolvedDays = []
@@ -85,25 +86,27 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
 
   // ---- 按 Employee.id 聚合 ----
   const empMap = new Map() // employeeId → result
+  const newRec = (employeeId, displayName) => ({
+    employeeId,
+    displayName,
+    stores: new Set(),
+    days: 0,
+    actualHours: 0,
+    basePay: 0,
+    commission: 0,
+    transferSubsidy: 0,
+    bigBonusCents: 0,
+    salaryAdjustmentCents: 0,
+    salary: 0,
+    // Gate 24 adapter：展示字段（营业分摊/订单/调整次数），不改任何金额公式
+    workedRevenueCents: 0,
+    orders: 0,
+    adjustmentCount: 0,
+  })
   for (const day of eligible) {
     const empId = day.employeeId
-    const rec = empMap.get(empId) || {
-      employeeId: empId,
-      displayName: day.staffNameSnapshot,
-      stores: new Set(),
-      days: 0,
-      actualHours: 0,
-      basePay: 0,
-      commission: 0,
-      transferSubsidy: 0,
-      bigBonusCents: 0,
-      salaryAdjustmentCents: 0,
-      salary: 0,
-      // Gate 24 adapter：展示字段（营业分摊/订单/调整次数），不改任何金额公式
-      workedRevenueCents: 0,
-      orders: 0,
-      adjustmentCount: 0,
-    }
+    const rec = empMap.get(empId) || newRec(empId, day.staffNameSnapshot)
+    empMap.set(empId, rec)
     rec.stores.add(day.storeId)
     rec.days += 1
     rec.actualHours += day.actualHours
@@ -135,6 +138,35 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       rec.salary += autoPay
     }
     empMap.set(empId, rec)
+  }
+
+  // ---- Gate 26：稳定调整仅日贡献（员工当日无考勤，仍可进入 Employee.id 月度 payroll）----
+  // 概念上 payroll 贡献键 = 考勤日 ∪ 稳定调整 (employeeId,date)，按 employeeId+date 去重：
+  // - 考勤日：既有正常计算（调整已覆盖，恰好一次）
+  // - 仅调整日：automaticPay=0，salaryAdjustment = 调整额（Gate 9 契约：adjustedPayCents = 最终工资，
+  //   非差额），月度贡献 = 调整额；负值/显式零原样保留
+  // - 不虚构考勤/业绩；月边界严格（date 属于请求月才计入）；legacy NULL 调整不猜测身份
+  const attendedKeys = new Set(eligible.map((d) => `${d.employeeId}|${d.date}`))
+  const adjustmentOnlyKeys = new Set()
+  for (const a of Array.isArray(payAdjustmentRows) ? payAdjustmentRows : []) {
+    if (!a.employeeId) continue // legacy NULL 不猜测（Gate 13/26 冻结）
+    const date = String(a.date || '').slice(0, 10)
+    if (month && !date.startsWith(month)) continue // 月边界：7 月调整绝不进入 8 月 payroll
+    const key = `${a.employeeId}|${date}`
+    if (attendedKeys.has(key)) continue // 考勤日已应用（恰好一次，不重复）
+    if (adjustmentOnlyKeys.has(key)) continue // 同 key 多行只计一次（与考勤日 Map 语义一致）
+    adjustmentOnlyKeys.add(key)
+    const adjCents = adjByEmpDate.get(key)
+    if (adjCents == null) continue
+    let rec = empMap.get(a.employeeId)
+    if (!rec) {
+      // 无考勤月也有真实金钱指令 → 可表示的 Employee.id 主体；显示名取调整快照（身份仍 employeeId）
+      rec = newRec(a.employeeId, String(a.staffName || a.staffNameSnapshot || ''))
+      empMap.set(a.employeeId, rec)
+    }
+    rec.salaryAdjustmentCents += adjCents // automaticPay=0 → 差额 = 最终调整额
+    rec.salary += adjCents
+    rec.adjustmentCount += 1
   }
 
   const employees = [...empMap.values()].map((rec) => ({

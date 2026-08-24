@@ -133,6 +133,18 @@ export function evaluatePayrollReadiness(input) {
     rec.days += 1
     empMap.set(day.employeeId, rec)
   }
+  // Gate 26：稳定调整仅日员工也是 payroll 主体——有显式 Employee.id 的调整即真实金钱指令，
+  // 无考勤不构成 NO_PAYROLL_SUBJECTS；身份仅 employeeId，绝不按 name 推断。
+  const adjustmentOnlyEmployeeIds = new Set()
+  for (const a of adjustments) {
+    if (!a.employeeId) continue // legacy NULL：LEGACY_PAY_ADJUSTMENT_IDENTITY 已在 §3 阻断
+    const date = String(a.date || '').slice(0, 10)
+    if (!date.startsWith(month)) continue
+    adjustmentOnlyEmployeeIds.add(a.employeeId)
+  }
+  for (const empId of adjustmentOnlyEmployeeIds) {
+    if (!empMap.has(empId)) empMap.set(empId, { employeeId: empId, days: 0 })
+  }
   const payrollEmployees = [...empMap.values()]
 
   const calculationReady = calculationBlockers.length === 0 && payrollEmployees.length > 0

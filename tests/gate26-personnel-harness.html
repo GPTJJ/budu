@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 26 Personnel Adjustment-Only Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    window.__origFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const u = String(url)
+      const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      if (u.includes('/api/v2/daily-store-staff')) {
+        const month = new URL(u, location.origin).searchParams.get('month')
+        return json({ ok: true, month, rows: [] }) // 8 月无任何考勤
+      }
+      if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
+        return json({ ok: true, rows: window.__staff || [] })
+      }
+      if (u.includes('/api/v2/employees/backfill') || u.includes('/api/v2/staff') || u.includes('/api/v2/daily-entries')) {
+        return json({ ok: true })
+      }
+      return window.__origFetch(url, opts)
+    }
+
+    const STAFF = [
+      { id: 'emp-A', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'A001' },
+      { id: 'emp-B', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'parttime', employeeNo: 'B001' },
+    ]
+    window.__staff = STAFF
+    seedCachedDataForTest({
+      entries: {},
+      staff: STAFF,
+      removedStaff: [],
+      stores: [{ key: 'guanshe', name: '北京官舍店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [],
+      analysis: {}, productImages: {}, bigBonuses: [], posDaily: [], posProductSales: [],
+      dailyPayAdjustments: [
+        { id: 'dpa-a', employeeId: 'emp-A', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: 50000, reason: 'A 仅调整日 +500', active: true, version: 1 },
+        { id: 'dpa-b', employeeId: 'emp-B', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: -5000, reason: 'B 仅调整日 -50', active: true, version: 1 },
+      ],
+    })
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true,
+          canManage: true,
+          onBack: () => {},
+          onOpenProfile: () => {},
+        }),
+      ),
+    )
+  </script></body>
+</html>

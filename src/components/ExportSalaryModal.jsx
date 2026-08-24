@@ -58,6 +58,8 @@ function PreviewTable({ rows }) {
  * "emp-A 值班而 emp-B 未值班却因同名生成 emp-B 明细"的错误归属；
  * 调整由 employeeDailyPayDetail 按 employeeId 精确（Gate 25 修复），大单奖 Gate 10 已按 id；
  * 工时由 employeeDailyPayDetail 按 employeeId+date+store 取 DailyStoreStaff.actualHours（Gate 25 澄清）。
+ * Gate 26：明细日期 = 考勤 employeeId/date ∪ 稳定调整 employeeId/date（EMPLOYEE_ID 模式）——
+ * 仅调整日输出调整独占行（工时 0、不虚构考勤），与 resolver summary 的调整仅日贡献一致。
  */
 function buildDetailRows(employees, startDate, endDate, stableAttendance = null) {
   const detailRows = []
@@ -70,16 +72,52 @@ function buildDetailRows(employees, startDate, endDate, stableAttendance = null)
       attendanceByEmpDate.set(`${row.employeeId}|${String(row.date || '').slice(0, 10)}`, true)
     }
   }
+  // Gate 26：稳定调整 employeeId/date 门（仅 EMPLOYEE_ID 模式；legacy NULL 调整不进入）
+  const adjustmentByEmpDate = new Map()
+  if (Array.isArray(stableAttendance)) {
+    for (const row of getDailyPayAdjustments()) {
+      if (!row.employeeId) continue
+      adjustmentByEmpDate.set(`${row.employeeId}|${String(row.date || '').slice(0, 10)}`, true)
+    }
+  }
   while (cursor <= end) {
     const date = toDateStr(cursor)
     const monthKey = date.slice(0, 7)
     const day = date.slice(5)
     for (const emp of employees) {
-      // EMPLOYEE_ID 稳定模式：无该员工当日稳定考勤行 → 不生成明细（不按 name 猜测考勤）
-      if (stableAttendance && emp.id && !attendanceByEmpDate.has(`${emp.id}|${date}`)) continue
+      // EMPLOYEE_ID 稳定模式：考勤 ∪ 稳定调整均无 → 不生成明细（不按 name 猜测考勤）
+      if (stableAttendance && emp.id) {
+        const hasAttendance = attendanceByEmpDate.has(`${emp.id}|${date}`)
+        const hasAdjustment = adjustmentByEmpDate.has(`${emp.id}|${date}`)
+        if (!hasAttendance && !hasAdjustment) continue
+      }
       const detail = employeeDailyPayDetail(monthKey, day, emp.name, emp.id, stableAttendance)
       if (!detail) continue
       const typeLabel = emp.type === 'fulltime' ? '全职人员' : '兼职人员'
+      if (detail.rows.length === 0 && detail.totals.payAdjustment) {
+        // Gate 26：仅调整日——不虚构考勤/门店，输出调整独占行（自动工资 0、工时 0、原因与最终工资来自调整）
+        detailRows.push({
+          日期: date,
+          员工编号: emp.employeeNo || '',
+          员工姓名: emp.name,
+          类型: typeLabel,
+          门店: '',
+          '营业额(元)': 0,
+          订单: 0,
+          '工时(h)': 0,
+          '基础时薪(元/h)': 0,
+          '基础工资(元)': 0,
+          '提成时薪(元/h)': 0,
+          '业绩提成(元)': 0,
+          '调货补贴(元)': 0,
+          '大单奖(元)': 0,
+          '自动工资(元)': 0,
+          '薪资调整(元)': r2(detail.totals.salaryAdjustment),
+          调整原因: detail.totals.payAdjustment.reason || '',
+          '最终工资(元)': r2(detail.totals.pay),
+        })
+        continue
+      }
       for (const [rowIndex, row] of detail.rows.entries()) {
         detailRows.push({
           日期: date,
