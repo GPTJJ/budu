@@ -71,6 +71,7 @@ const DIRECT_SUITE = [
   'test-current-directory-identity.mjs', // Gate 7：当前员工目录 Employee.id 身份——重名并存/定向离职不误伤 → critical
   'test-daily-pay-adjustment-employee-identity.mjs', // Gate 9：DailyPayAdjustment 稳定 Employee.id + legacy 兼容 → critical
   'test-big-order-bonus-employee-identity.mjs', // Gate 10：BigOrderBonus 稳定 Employee.id + 稳定读取无双计 → critical
+  'test-daily-store-staff-foundation.mjs', // Gate 12：DailyStoreStaff 按月批量只读数据基础（不改 payroll）→ critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -84,6 +85,7 @@ const CRITICAL_DIRECT = [
   'test-current-directory-identity.mjs',
   'test-daily-pay-adjustment-employee-identity.mjs',
   'test-big-order-bonus-employee-identity.mjs',
+  'test-daily-store-staff-foundation.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

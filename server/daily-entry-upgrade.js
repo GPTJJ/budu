@@ -173,6 +173,54 @@ function serializeStaff(row) {
   }
 }
 
+/**
+ * Gate 12：按月批量读取 DailyStoreStaff（只读数据基础，供未来 payroll 计算）。
+ * - month=YYYY-MM 必填（有界窗口，禁止全量下载历史）
+ * - store 可选（与现有 canStore 授权一致）
+ * - 返回真实存储身份：employeeId 原样返回（legacy 行保持 null，绝不按姓名/快照推断）
+ * - storeKey 来自 Store 关系（storeId → Store.key 规范键），非字符串猜测
+ */
+dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const month = String(req.query.month || '').trim()
+  if (!/^\d{4}-\d{2}$/.test(month)) throw httpError('月份格式应为 YYYY-MM')
+  const storeParam = String(req.query.store || '').trim()
+  if (storeParam && !canStore(req.user, storeParam)) throw httpError('无权限', 403)
+  const [year, monthNum] = month.split('-').map(Number)
+  const start = new Date(Date.UTC(year, monthNum - 1, 1))
+  const end = new Date(Date.UTC(year, monthNum, 1))
+  const where = { date: { gte: start, lt: end } }
+  if (storeParam) where.storeId = storeParam
+  if (!isSuperUser(req.user)) {
+    const allowed = new Set(Array.isArray(req.user.storeKeys) ? req.user.storeKeys : [])
+    if (allowed.size === 0) return res.json({ ok: true, rows: [] })
+    where.storeId = { in: [...allowed] }
+  }
+  // 单次有界查询 + Store 关系（无 N+1 Employee/Store 查找）
+  const rows = await prisma.dailyStoreStaff.findMany({
+    where,
+    include: { store: { select: { key: true } } },
+    orderBy: [{ date: 'asc' }, { storeId: 'asc' }, { staffNameSnapshot: 'asc' }],
+    take: 5000,
+  })
+  res.json({
+    ok: true,
+    month,
+    rows: rows.map((row) => ({
+      id: row.id,
+      storeId: row.storeId,
+      storeKey: row.store ? row.store.key : row.storeId,
+      date: isoDate(row.date),
+      employeeId: row.employeeId || null,
+      staffId: row.staffId,
+      staffNameSnapshot: row.staffNameSnapshot,
+      scheduledHours: row.scheduledHours,
+      actualHours: row.actualHours,
+      attendanceStatus: row.attendanceStatus,
+    })),
+  })
+}))
+
 dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.query.store || '').trim()

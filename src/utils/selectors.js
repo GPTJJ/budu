@@ -10,6 +10,7 @@ import {
   getProducts,
   getBigBonuses,
   getDailyPayAdjustments,
+  getDailyStoreStaff,
   getUserData,
 } from './userData.js'
 import { formatMoney } from './format.js'
@@ -441,6 +442,14 @@ export function channelData(monthKey, storeKey, day = null, weekStart = null) {
 /** 读取员工名单（登录后为服务端共享数据） */
 export function localStaffList() {
   return getStaff()
+}
+
+/**
+ * Gate 12：读取按月加载的 DailyStoreStaff 稳定考勤行（数据基础，尚未参与 payroll 计算）。
+ * month 传 'YYYY-MM' 过滤；不传返回全部已加载行。同一员工/同名员工按行独立保留（id 身份）。
+ */
+export function dailyStoreStaffRows(month) {
+  return getDailyStoreStaff(month)
 }
 
 /**

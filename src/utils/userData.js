@@ -42,6 +42,7 @@ function normalizeCachedData(value) {
     inventory: Array.isArray(source.inventory) ? source.inventory : [],
     bigBonuses: Array.isArray(source.bigBonuses) ? source.bigBonuses : [],
     dailyPayAdjustments: Array.isArray(source.dailyPayAdjustments) ? source.dailyPayAdjustments : [],
+    dailyStoreStaff: Array.isArray(source.dailyStoreStaff) ? source.dailyStoreStaff : [],
     posDaily: Array.isArray(source.posDaily) ? source.posDaily : [],
     posProductSales: Array.isArray(source.posProductSales) ? source.posProductSales : [],
   }
@@ -249,12 +250,47 @@ export async function loadUserData(options = {}) {
   // DA-5：legacy localStorage 迁移已退役（数据权威 = PG）
   // 后台并行数据（含 PostgreSQL 业绩权威源）合并完成后，通知已挂载页面刷新
   notifyUserDataUpdated()
+  // Gate 12：按月懒加载 DailyStoreStaff（有界窗口，不进主请求数组）
+  const currentMonth = new Date().toISOString().slice(0, 7)
+  loadDailyStoreStaffMonth(currentMonth).catch(() => {})
   return cached
+}
+
+// 已加载月份集合：避免重复请求同一月份
+const loadedStaffMonths = new Set()
+
+/**
+ * Gate 12：按月加载 DailyStoreStaff 稳定考勤数据（只读数据基础）。
+ * - 独立缓存域 cached.dailyStoreStaff（不污染 Employee 目录 / DailyEntry 业务数据）
+ * - 有界窗口：仅请求指定月份；同一月份幂等（不重复下载）
+ * - legacy 行 employeeId 保持 null 原样透传，绝不按姓名推断
+ */
+export async function loadDailyStoreStaffMonth(month) {
+  const key = String(month || '')
+  if (!/^\d{4}-\d{2}$/.test(key)) return
+  if (loadedStaffMonths.has(key)) return
+  loadedStaffMonths.add(key)
+  try {
+    const res = await api(`/v2/daily-store-staff?month=${key}`)
+    const rows = Array.isArray(res && res.rows) ? res.rows : []
+    cached.dailyStoreStaff = rows
+    notifyUserDataUpdated()
+  } catch (e) {
+    loadedStaffMonths.delete(key)
+    console.error(`[daily-store-staff] ${key} 加载失败：`, e.message)
+  }
+}
+
+/** 读取当前已加载的 DailyStoreStaff 行（按月过滤；未加载月份返回空数组） */
+export function getDailyStoreStaff(month) {
+  const rows = (getUserData().dailyStoreStaff || [])
+  if (!month) return rows
+  return rows.filter((r) => String(r.date || '').startsWith(month))
 }
 
 export function getUserData() {
   // DA-5：JSON/localStorage 镜像不再作为业务数据源（读权威 = PostgreSQL）
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], dailyStoreStaff: [], posDaily: [], posProductSales: [] }
 }
 
 export function getEntries() {
