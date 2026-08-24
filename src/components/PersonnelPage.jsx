@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Award, BadgeDollarSign, CalendarDays, FileSpreadsheet, IdCard, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
@@ -8,7 +8,6 @@ import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
   employeeList,
-  allEmployeeMonths,
   monthLabel,
   employeeDayStatus,
   employeeDailyPayDetail,
@@ -20,7 +19,8 @@ import {
   allStores,
   storeName,
 } from '../utils/selectors'
-import { resignEmployeeById } from '../utils/userData'
+import { resignEmployeeById, loadDailyStoreStaffMonth, getDailyStoreStaff, getEntries, getDailyPayAdjustments, getBigBonuses } from '../utils/userData'
+import { resolvePayrollCalculation } from '../utils/payrollResolver'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { t } from '../utils/text'
@@ -57,6 +57,17 @@ function Stat({ label, value, accent, className = '' }) {
 function signedMoney(value) {
   const amount = Number(value) || 0
   return `${amount >= 0 ? '+' : '-'}¥${formatMoney(Math.abs(amount))}`
+}
+
+/** Gate 24 澄清：payroll 派生金额渲染——null = 无法归属（LEGACY 重名），显示「—」而非 0 */
+function payAmount(value, fallback = 0) {
+  if (value === null) return t('—')
+  return `¥${formatMoney(Number(value) ?? fallback)}`
+}
+/** 工时渲染：null = 无法归属 → 「—」 */
+function payHours(value) {
+  if (value === null) return t('—')
+  return t('工时 {h}h', { h: Math.round(Number(value) || 0) })
 }
 
 const inputCls = 'input'
@@ -519,19 +530,103 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const [staffVersion, setStaffVersion] = useState(0)
 
   const localStaff = localStaffList()
-  const hasData = allEmployeeMonths().includes(month) || localStaff.length > 0
+  // Gate 7：PersonnelPage 当前目录卡片 = PostgreSQL Employee 当前在册记录（均有 Employee.id）。
+  // Gate 24：月度工资/绩效展示改为统一 payroll resolver（resolvePayrollCalculation）——
+  //   EMPLOYEE_ID 模式按 Employee.id join（同店同名各自正确）；
+  //   LEGACY 模式显式标记兼容计算，且重名员工不把模糊 legacy 金额当精确结果。
+  // 历史 payroll 合成员工（当前目录之外、无 Employee.id）一律不出现在当前人员目录。
+  const directory = currentEmployeeDirectory('all')
+  // Gate 24：卡片渲染以当前 PG 目录为准（hasData = 目录有员工；不再由"当月有无薪资数据"决定）
+  const hasData = directory.length > 0
   const dayHasData = day ? hasLocalEntry(month, day) : false
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const weekLabel = weekDays ? `${weekStart} ~ ${weekDays[6].date}` : ''
 
-  // Gate 7：PersonnelPage 当前目录卡片 = PostgreSQL Employee 当前在册记录（均有 Employee.id）。
-  // 工资/绩效等展示字段按姓名快照合并（payroll 历史语义）——仅展示数据，不作为身份；
-  // 历史 payroll 合成员工（当前目录之外、无 Employee.id）一律不出现在当前人员目录，
-  // 其历史行为保留在 payroll 域（employeeList/payroll 计算），此处不渲染为员工卡片。
-  const directory = currentEmployeeDirectory('all')
-  const payrollMerged = hasData ? employeeList('all', month) : []
-  const payrollByName = new Map(payrollMerged.map((e) => [e.name, e]))
-  const all = hasData ? directory.map((d) => ({ ...(payrollByName.get(d.name) || {}), ...d })) : []
+  // ---- Gate 24：显式月份加载 + resolver（竞态安全：晚到的响应不覆盖当前所选月）----
+  const [payrollDisplay, setPayrollDisplay] = useState({ status: 'loading', month: '', mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+  const requestedMonthRef = useRef('')
+  useEffect(() => {
+    const m = String(month || '')
+    requestedMonthRef.current = m
+    setPayrollDisplay((prev) => ({ ...prev, status: 'loading', month: m }))
+    let cancelled = false
+    loadDailyStoreStaffMonth(m).then(() => {
+      if (cancelled || requestedMonthRef.current !== m) return // 竞态：已切换月份则丢弃
+      const res = resolvePayrollCalculation({
+        month: m,
+        dailyEntries: getEntries(),
+        dailyStoreStaffRows: getDailyStoreStaff(m),
+        dailyPayAdjustments: getDailyPayAdjustments(),
+        bigOrderBonuses: getBigBonuses(),
+        employees: directory,
+        users: [],
+      })
+      if (cancelled || requestedMonthRef.current !== m) return
+      if (res.mode === 'EMPLOYEE_ID') {
+        const byId = new Map(res.payroll.employees.map((row) => [row.employeeId, { ...row, payrollComputed: true }]))
+        setPayrollDisplay({ status: 'ready', month: m, mode: 'EMPLOYEE_ID', byEmployeeId: byId, legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+      } else {
+        // LEGACY 兼容：按姓名聚合；模糊判定 = 当前目录中同名员工数 > 1
+        // （legacy 结果本身把重名合并成一行，无法反推——以目录为准，绝不给重名卡精确金额）
+        const byName = new Map()
+        for (const row of res.payroll.employees) byName.set(row.name, row)
+        const dirNameCounts = new Map()
+        for (const d of directory) dirNameCounts.set(d.name, (dirNameCounts.get(d.name) || 0) + 1)
+        const ambiguous = new Set()
+        for (const d of directory) {
+          if ((dirNameCounts.get(d.name) || 0) > 1) ambiguous.add(d.name)
+        }
+        setPayrollDisplay({ status: 'ready', month: m, mode: 'LEGACY', byEmployeeId: new Map(), legacyByName: byName, legacyAmbiguousNames: ambiguous })
+      }
+    }).catch(() => {
+      if (cancelled || requestedMonthRef.current !== m) return
+      setPayrollDisplay((prev) => ({ ...prev, status: 'ready', month: m }))
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, staffVersion, syncTick])
+
+  // Gate 24：卡片 payroll 富集——EMPLOYEE_ID 按 id；LEGACY 唯一名兼容、重名不赋值
+  const enrichPayroll = (d) => {
+    if (payrollDisplay.mode === 'EMPLOYEE_ID') {
+      return payrollDisplay.byEmployeeId.get(d.id) || {}
+    }
+    if (payrollDisplay.mode === 'LEGACY') {
+      if (payrollDisplay.legacyAmbiguousNames.has(d.name)) return { legacyAmbiguous: true } // 重名模糊：不给精确金额
+      return payrollDisplay.legacyByName.get(d.name) || {}
+    }
+    return {}
+  }
+  const all = directory.map((d) => {
+    const p = enrichPayroll(d)
+    if (p.legacyAmbiguous) {
+      // Gate 24 澄清：LEGACY 重名无法归属 → payroll 派生字段为 null（渲染「—」），
+      // 绝不以数字零冒充"零工资"；非 payroll 员工字段保持原样。
+      return {
+        ...d,
+        legacyAmbiguous: true,
+        salary: null, basePay: null, perf: null, big: null, transferSubsidy: null,
+        hours: null, workedRevenue: null, workedDays: null,
+        salaryAdjustment: null, adjustmentCount: null, payrollComputed: false, roi: null,
+      }
+    }
+    // Gate 24：payroll 派生字段缺失时给安全默认（未就绪等场景不崩溃）
+    return {
+      ...d,
+      salary: p.salary ?? 0,
+      basePay: p.basePay ?? 0,
+      perf: p.perf ?? p.commission ?? 0,
+      big: p.big ?? p.bigBonus ?? 0,
+      transferSubsidy: p.transferSubsidy ?? 0,
+      hours: p.hours ?? p.actualHours ?? 0,
+      workedRevenue: p.workedRevenue ?? 0,
+      workedDays: p.workedDays ?? p.days ?? 0,
+      salaryAdjustment: p.salaryAdjustment ?? 0,
+      adjustmentCount: p.adjustmentCount ?? 0,
+      payrollComputed: p.payrollComputed === true,
+      roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
+    }
+  })
   const scopedAll =
     user?.role === 'staff' && user.staffKey
       ? all.filter((e) => `${e.storeKey}::${e.name}` === user.staffKey)
@@ -601,6 +696,21 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               : day
                 ? t('· 当日值班查询中')
                 : ''}
+            {payrollDisplay.mode === 'EMPLOYEE_ID' && (
+              <span className="ml-2 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
+                {t('稳定计算')}
+              </span>
+            )}
+            {payrollDisplay.mode === 'LEGACY' && (
+              <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                {t('兼容计算')}
+              </span>
+            )}
+            {payrollDisplay.status === 'loading' && (
+              <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                {t('加载中…')}
+              </span>
+            )}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
@@ -768,6 +878,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                             {emp.employeeNo}
                           </span>
                         )}
+                        {emp.legacyAmbiguous && (
+                          <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600" title={t('兼容计算下存在同名员工，金额无法精确归属')}>
+                            {t('身份模糊')}
+                          </span>
+                        )}
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                             emp.type === 'fulltime'
@@ -790,7 +905,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {emp.storeName} · {t('出勤 {days} 天', { days: periodWorkedDays })}
+                        {emp.storeName} · {emp.legacyAmbiguous && !day && !weekStart ? t('出勤 —') : t('出勤 {days} 天', { days: periodWorkedDays })}
                       </p>
                     </div>
                   </div>
@@ -803,33 +918,33 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <Stat
                       label={weekStart ? t('周工资') : day ? t('当日工资') : t('工资合计')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodSalary : emp.salary)}`}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodSalary : emp.salary)}`)}
                       accent="text-budu-600"
                     />
                     <Stat
                       label={t('基础工资')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBase)}`}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodBase)}`)}
                     />
                     <Stat
                       label={t('业绩提成')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`)}
                       accent="text-budu-600"
                     />
                     <Stat
                       label={t('大单奖')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodBig)}`)}
                       accent="text-amber-600"
                     />
                     <Stat
                       label={t('调货补贴')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodTransfer)}`}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodTransfer)}`)}
                       accent="text-emerald-600"
                       className="col-span-2"
                     />
                     {periodAdjustmentCount > 0 && (
                       <Stat
                         label={t('薪资调整')}
-                        value={hidePersonal ? '•••' : signedMoney(periodAdjustment)}
+                        value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : signedMoney(periodAdjustment))}
                         accent="text-violet-600"
                         className="col-span-2"
                       />
@@ -837,8 +952,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   </div>
 
                   <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
-                    <span>{t('工时 {h}h', { h: Math.round(weekStart || day ? periodHours : emp.hours) })}</span>
-                    <span>{isPublic ? '•••' : t('营业额 ¥{amount}', { amount: formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue) })}</span>
+                    <span>{emp.legacyAmbiguous && !day && !weekStart ? t('工时 —') : t('工时 {h}h', { h: Math.round(weekStart || day ? periodHours : emp.hours) })}</span>
+                    <span>{isPublic ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? t('营业额 —') : t('营业额 ¥{amount}', { amount: formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue) }))}</span>
                   </div>
 
                   {canBigBonus && (
@@ -894,13 +1009,17 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   ) : (
                     <div className="mt-3 flex items-center justify-between">
                       <span className="text-[11px] text-slate-300">{t('ROI = 当班营业额 / 工资')}</span>
-                      <span
-                        className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
-                          emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                        }`}
-                      >
-                        {hidePersonal ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
-                      </span>
+                      {emp.legacyAmbiguous && !day && !weekStart ? (
+                        <span className="rounded-lg bg-slate-50 px-2 py-0.5 text-xs font-bold text-slate-400">{t('ROI —')}</span>
+                      ) : (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
+                            emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                          }`}
+                        >
+                          {hidePersonal ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

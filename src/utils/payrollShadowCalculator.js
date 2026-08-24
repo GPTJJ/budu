@@ -99,10 +99,18 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       bigBonusCents: 0,
       salaryAdjustmentCents: 0,
       salary: 0,
+      // Gate 24 adapter：展示字段（营业分摊/订单/调整次数），不改任何金额公式
+      workedRevenueCents: 0,
+      orders: 0,
+      adjustmentCount: 0,
     }
     rec.stores.add(day.storeId)
     rec.days += 1
     rec.actualHours += day.actualHours
+    // 分摊展示（与 legacy 口径一致：营业额/订单按值班人数均摊）
+    const share = day.staffCountForShare > 0 ? day.staffCountForShare : 1
+    rec.workedRevenueCents += (day.dailyRevenueCents || 0) / share
+    rec.orders += (day.orderCount || 0) / share
     // 复用现有纯日薪公式（同一薪酬政策，仅身份/输入源变化）
     const daily = calcDailyPay({
       storeKey: day.storeId,
@@ -122,6 +130,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     if (adjCents != null) {
       rec.salaryAdjustmentCents += adjCents - autoPay
       rec.salary += adjCents
+      rec.adjustmentCount += 1
     } else {
       rec.salary += autoPay
     }
@@ -134,7 +143,10 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     storesWorked: [...rec.stores],
     days: rec.days,
     actualHours: Math.round(rec.actualHours * 100) / 100,
+    workedRevenue: Math.round(rec.workedRevenueCents) / 100,
+    orders: Math.round(rec.orders * 100) / 100,
     basePay: Math.round(rec.basePay * 100) / 100,
+    adjustmentCount: rec.adjustmentCount,
     commission: Math.round(rec.commission * 100) / 100,
     transferSubsidy: Math.round(rec.transferSubsidy * 100) / 100,
     bigBonus: Math.round(rec.bigBonusCents) / 100,
