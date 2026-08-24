@@ -2,6 +2,7 @@
 // 用法：DATABASE_URL=... node scripts/migrate-kv-to-pg.mjs [--db /path/to/db.json] [--dry-run] [--reconcile]
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { PrismaClient } from '@prisma/client'
 
@@ -57,7 +58,9 @@ async function loadKv() {
   throw new Error('未找到 KV 配置或本地 db.json')
 }
 
-const id = (prefix, s) => `${prefix}-${String(s).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`
+// 迁移 ID 必须对完整 UTF-8 输入保持稳定且抗碰撞。旧实现把所有中文字符替换为
+// 下划线，导致同一门店的不同中文员工、商品生成相同 ID 并互相覆盖。
+const id = (prefix, s) => `${prefix}-${crypto.createHash('sha256').update(String(s), 'utf8').digest('hex').slice(0, 32)}`
 const iso = (s) => (s ? new Date(s) : new Date())
 
 async function main() {
@@ -79,7 +82,18 @@ async function main() {
     for (const s of kv.staff || []) {
       const sid = id('st', `${s.storeKey}-${s.name}`)
       await prisma.store.upsert({ where: { key: s.storeKey }, update: {}, create: { key: s.storeKey, name: s.storeKey } })
-      await prisma.staff.upsert({ where: { id: sid }, update: { name: s.name, type: s.type || 'fulltime', salary: Number(s.salary) || 0 }, create: { id: sid, name: s.name, type: s.type || 'fulltime', storeKey: s.storeKey, salary: Number(s.salary) || 0 } })
+      const existing = await prisma.staff.findFirst({ where: { storeKey: s.storeKey, name: s.name } })
+      const data = { name: s.name, type: s.type || 'fulltime', salary: Number(s.salary) || 0 }
+      if (existing) {
+        // 保留 API/历史库已生成的主键，避免同一业务员工产生第二条镜像记录。
+        await prisma.staff.update({ where: { id: existing.id }, data })
+      } else {
+        await prisma.staff.upsert({
+          where: { id: sid },
+          update: data,
+          create: { id: sid, ...data, storeKey: s.storeKey },
+        })
+      }
       counts.staff += 1
     }
     // 业绩

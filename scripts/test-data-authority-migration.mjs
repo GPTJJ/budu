@@ -34,16 +34,31 @@ test('DA migration：已有随机 id 的同门店同日期记录可被 legacy �
         staffNames: [],
       },
     })
+    await prisma.staff.create({
+      data: {
+        id: 'api-generated-staff-id',
+        name: '测试员工甲',
+        type: 'fulltime',
+        storeKey: 'guanshe',
+        salary: 100,
+      },
+    })
     fs.writeFileSync(dbFile, JSON.stringify({
       stores: [],
       users: [],
-      staff: [],
+      staff: [
+        { name: '测试员工甲', type: 'fulltime', storeKey: 'guanshe', salary: 200 },
+        { name: '测试员工乙', type: 'parttime', storeKey: 'guanshe', salary: 80 },
+      ],
       entries: {
         '2026-08|guanshe|08-10': { inc: 3000, ord: 20, staff: ['测试员工'] },
       },
       inventoryRequests: [],
       inventory: [],
-      products: [],
+      products: [
+        { name: '中文商品甲' },
+        { name: '中文商品乙' },
+      ],
     }), { mode: 0o600 })
 
     const result = spawnSync(process.execPath, [
@@ -64,6 +79,49 @@ test('DA migration：已有随机 id 的同门店同日期记录可被 legacy �
     assert.equal(rows[0].incCents, 300000n)
     assert.equal(rows[0].ord, 20)
     assert.deepEqual(rows[0].staffNames, ['测试员工'])
+
+    const staffRows = await prisma.staff.findMany({ where: { storeKey: 'guanshe' } })
+    assert.equal(staffRows.length, 2, '不同中文姓名不得因迁移 ID 清洗发生碰撞')
+    const existingStaff = staffRows.find((row) => row.name === '测试员工甲')
+    assert.equal(existingStaff?.id, 'api-generated-staff-id', '已有员工主键应保持不变')
+    assert.equal(existingStaff?.salary, 200)
+    assert.equal(new Set(staffRows.map((row) => row.id)).size, 2)
+
+    const itemRows = await prisma.inventoryItem.findMany({
+      where: { name: { in: ['中文商品甲', '中文商品乙'] } },
+    })
+    assert.equal(itemRows.length, 2, '不同中文商品不得因迁移 ID 清洗发生碰撞')
+    assert.equal(new Set(itemRows.map((row) => row.id)).size, 2)
+
+    const employeeBackfill = spawnSync(process.execPath, [
+      path.join(root, 'scripts', 'employee-backfill.mjs'),
+    ], {
+      cwd: root,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      encoding: 'utf8',
+    })
+    assert.equal(employeeBackfill.status, 0, employeeBackfill.stderr || employeeBackfill.stdout)
+    assert.match(employeeBackfill.stdout, /\"CREATE\":2/)
+
+    const employees = await prisma.employee.findMany({ orderBy: { employeeNo: 'asc' } })
+    assert.equal(employees.length, 2)
+    assert.deepEqual(new Set(employees.map((row) => `${row.currentStoreKey}::${row.name}`)), new Set([
+      'guanshe::测试员工甲',
+      'guanshe::测试员工乙',
+    ]))
+    assert.equal(await prisma.employeeAuditLog.count({ where: { action: 'backfill.create' } }), 2)
+
+    const rerun = spawnSync(process.execPath, [
+      path.join(root, 'scripts', 'employee-backfill.mjs'),
+    ], {
+      cwd: root,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      encoding: 'utf8',
+    })
+    assert.equal(rerun.status, 0, rerun.stderr || rerun.stdout)
+    assert.match(rerun.stdout, /\"CREATE\":0/)
+    assert.match(rerun.stdout, /\"SKIP\":2/)
+    assert.equal(await prisma.employee.count(), 2, '员工主档回填必须可重复执行')
   } finally {
     await prisma.$disconnect()
     fs.rmSync(tempDir, { recursive: true, force: true })

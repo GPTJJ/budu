@@ -165,12 +165,10 @@ export default function useSwipeBack({ enabled = true, onBack }) {
       gestureRef.current = {
         startX: touch.clientX,
         startY: touch.clientY,
-        startedAt: performance.now(),
+        startedAt: Number(event.timeStamp) || performance.now(),
         horizontal: false,
         lastX: touch.clientX,
-        lastT: performance.now(),
-        prevX: undefined,
-        prevT: undefined,
+        lastT: Number(event.timeStamp) || performance.now(),
         vx: 0,
       }
     }
@@ -198,16 +196,16 @@ export default function useSwipeBack({ enabled = true, onBack }) {
           }
           document.documentElement.classList.add(ACTIVE_CLASS)
         }
-        gesture.lastX = touch.clientX
-        gesture.lastT = performance.now()
         // 瞬时速度：最近两次 move 的位移 / 时间（touchend 时取用，快速甩动判定）
-        const now = performance.now()
-        const dtMs = now - (gesture.prevT || gesture.startedAt)
+        // 使用事件时间戳，而不是处理函数实际获得 CPU 的时间；主线程短暂繁忙时，
+        // 后者会把一次真实快速甩动误判为慢拖拽。
+        const now = Number(event.timeStamp) || performance.now()
+        const dtMs = now - gesture.lastT
         if (dtMs > 0) {
-          gesture.vx = (touch.clientX - (gesture.prevX ?? gesture.lastX)) / dtMs
-          gesture.prevX = touch.clientX
-          gesture.prevT = now
+          gesture.vx = (touch.clientX - gesture.lastX) / dtMs
         }
+        gesture.lastX = touch.clientX
+        gesture.lastT = now
         const viewportWidth = Math.max(window.innerWidth, 320)
         // rAF 合并高频 move，直接写 transform（无 transition，1:1 跟手）
         cancelRaf()

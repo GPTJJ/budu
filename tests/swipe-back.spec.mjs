@@ -15,12 +15,14 @@ async function beginSwipeRightFromEdge(page, { y = 400, distance = 120, steps = 
       steps: st,
       stepMs: ms,
       step: 0,
+      testTime: 1000,
     }
     const start = { identifier: 1, clientX: 8, clientY, pageX: 8, pageY: clientY }
     const event = new TouchEvent('touchstart', { bubbles: true, cancelable: true })
     Object.defineProperties(event, {
       touches: { value: [start] },
       changedTouches: { value: [start] },
+      timeStamp: { value: 1000 },
     })
     target.dispatchEvent(event)
   }, { y, distance: Math.max(distance, 30), steps, stepMs })
@@ -36,6 +38,7 @@ async function beginSwipeRightFromEdge(page, { y = 400, distance = 120, steps = 
       Object.defineProperties(event, {
         touches: { value: [m] },
         changedTouches: { value: [m] },
+        timeStamp: { value: state.testTime + state.stepMs * idx },
       })
       state.target.dispatchEvent(event)
     }, { idx: i })
@@ -53,6 +56,7 @@ async function endSwipeRightFromEdge(page, { toX } = {}) {
     Object.defineProperties(event, {
       touches: { value: [] },
       changedTouches: { value: [m] },
+      timeStamp: { value: state.testTime + state.stepMs * (state.steps + 1) },
     })
     state.target.dispatchEvent(event)
     delete window.__swipeBackTest
