@@ -96,6 +96,9 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
       const result = await api('/v2/daily-pay-adjustments', {
         method: 'PUT',
         body: JSON.stringify({
+          // Gate 9：直接提交所选 Employee 对象的稳定 id（绝不按姓名/门店推导）；
+          // staffName 保留为展示/历史快照。
+          employeeId: emp.id || undefined,
           staffName: emp.name,
           date,
           autoPayCentsSnapshot: Math.round(automaticPay * 100),

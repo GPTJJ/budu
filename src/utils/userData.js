@@ -148,6 +148,7 @@ export async function loadUserData(options = {}) {
   if (adjustments) {
     cached.dailyPayAdjustments = ((adjustments && adjustments.rows) || []).map((row) => ({
       id: row.id,
+      employeeId: row.employeeId || '',
       staffName: row.staffName,
       date: String(row.date || '').slice(0, 10),
       autoPayCentsSnapshot: Number(row.autoPayCentsSnapshot) || 0,

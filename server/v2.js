@@ -209,6 +209,7 @@ function serializeBigBonus(r) {
 function serializeDailyPayAdjustment(r) {
   return {
     id: r.id,
+    employeeId: r.employeeId || '',
     staffName: r.staffName,
     date: isoDate(r.date),
     autoPayCentsSnapshot: r.autoPayCentsSnapshot.toString(),
@@ -1451,7 +1452,7 @@ v2Router.get('/daily-pay-adjustments', wrap(async (req, res) => {
 v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('仅最高业务权限账号可调整每日薪资', 403)
-  const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version } = req.body || {}
+  const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version, employeeId } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 50) throw bad('员工姓名不正确')
   const d = dateOnly(date)
@@ -1466,6 +1467,14 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   const reasonText = String(reason || '').trim()
   if (!reasonText || reasonText.length > 200) throw bad('请填写 1-200 字的调整原因')
 
+  // Gate 9：稳定员工身份（新 UI 必须携带实际 Employee.id；绝不按姓名/门店推导）
+  const stableEmployeeId = employeeId == null ? null : String(employeeId).trim()
+  if (stableEmployeeId) {
+    if (stableEmployeeId.length > 100) throw bad('员工 ID 不正确')
+    const emp = await prisma.employee.findUnique({ where: { id: stableEmployeeId }, select: { id: true } })
+    if (!emp) throw bad('员工不存在', 400)
+  }
+
   const duties = await prisma.dailyEntry.findMany({ where: { date: d }, select: { staffNames: true } })
   const hasDuty = duties.some((entry) => Array.isArray(entry.staffNames) && entry.staffNames.includes(name))
   if (!hasDuty && !canManageAccounts(req.user)) {
@@ -1473,15 +1482,28 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   }
   if (!hasDuty && autoCents !== 0) throw bad('无值班记录时自动工资必须为 0', 409)
 
-  const key = { staffName: name, date: d }
-  const existing = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: key } })
+  // 稳定行以 (employeeId, date) 为变更身份；legacy 行（无 employeeId）沿用 (staffName, date)
+  const stableKey = stableEmployeeId ? { employeeId: stableEmployeeId, date: d } : null
+  const legacyKey = { staffName: name, date: d }
+  const existing = stableKey
+    ? await prisma.dailyPayAdjustment.findUnique({ where: { employeeId_date: stableKey } })
+    : await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: legacyKey } })
   if (existing && version != null && existing.version !== Number(version)) {
     return res.status(409).json({
       error: '该工资调整已被其他开发者修改，请刷新后重试',
       latest: serializeDailyPayAdjustment(existing),
     })
   }
+  // Gate 9 §11：既有 legacy 行（employeeId=NULL）不得仅凭姓名/日期自动归属到新稳定行；
+  // 若 legacy 唯一约束挡住稳定行创建 → 受控冲突，历史解析留待后续 Gate。
+  if (!existing && stableEmployeeId) {
+    const legacyBlocker = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: legacyKey } })
+    if (legacyBlocker) {
+      throw bad('该姓名当天已存在历史工资调整（未绑定员工），无法创建稳定调整；请联系开发者处理', 409)
+    }
+  }
   const base = {
+    ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
     autoPayCentsSnapshot: BigInt(autoCents),
     adjustedPayCents: BigInt(adjustedCents),
     reason: reasonText,
@@ -1503,6 +1525,7 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
         row = await tx.dailyPayAdjustment.create({
           data: {
             id: uid('dpa'),
+            ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
             staffName: name,
             date: d,
             ...base,

@@ -510,20 +510,23 @@ model BigOrderBonus {
 }
 
 model DailyPayAdjustment {
-  id                   String   @id
-  staffName            String   @map("staff_name")
-  date                 DateTime @db.Date
-  autoPayCentsSnapshot BigInt   @default(0) @map("auto_pay_cents_snapshot")
-  adjustedPayCents     BigInt   @default(0) @map("adjusted_pay_cents")
-  reason               String   @default("")
-  active               Boolean  @default(true)
-  createdBy            String   @default("") @map("created_by")
-  updatedBy            String   @default("") @map("updated_by")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
-  version              Int      @default(1)
+  id                   String    @id
+  employeeId           String?   @map("employee_id") // Gate 9：稳定员工身份（employees.id）；历史行 NULL；staffName 仍为展示/历史快照
+  staffName            String    @map("staff_name")
+  date                 DateTime  @db.Date
+  autoPayCentsSnapshot BigInt    @default(0) @map("auto_pay_cents_snapshot")
+  adjustedPayCents     BigInt    @default(0) @map("adjusted_pay_cents")
+  reason               String    @default("")
+  active               Boolean   @default(true)
+  createdBy            String    @default("") @map("created_by")
+  updatedBy            String    @default("") @map("updated_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  version              Int       @default(1)
+  employee             Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@unique([staffName, date])
+  @@unique([employeeId, date])
   @@index([date])
   @@map("daily_pay_adjustments")
 }
@@ -994,6 +997,7 @@ model Employee {
   documents        EmployeeDocument[]
   auditLogs        EmployeeAuditLog[]
   dailyStoreStaff  DailyStoreStaff[]
+  dailyPayAdjustments DailyPayAdjustment[]
 
   @@index([status])
   @@index([currentStoreKey])
