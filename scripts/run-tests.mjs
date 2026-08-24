@@ -55,6 +55,7 @@ const NODE_TEST_SUITE = [
   'test-address-parser.mjs',    // 收件信息智能拆分（单元）
   'test-invoice-parser.mjs',    // 发票开票信息智能拆分（单元）
   'test-data-authority-freeze.mjs', // Data Authority 1.0 DA-1：冻结 PG 权威域（静态扫描 + 可选 DB 冒烟）→ critical
+  'test-pg-bootstrap-independence.mjs', // Data Authority Gate 1：/userdata 不得阻塞 PG authority bootstrap → critical
   'test-data-authority-migration.mjs', // Data Authority：legacy DailyEntry 按业务唯一键幂等回填 → critical
   'test-daily-entry-authority.mjs', // Data Authority 1.0 DA-4：DailyEntry 读/写权威 = PG，禁止 KV 回退 → critical
   'test-schedule-authority.mjs', // Data Authority 1.0 DA-3：Schedule 读/写权威 = PG，前端禁 KV
@@ -82,6 +83,7 @@ const CRITICAL_NODE_TEST = [
   'test-pos-core.mjs',
   'test-homepage-lightweight.mjs',
   'test-data-authority-freeze.mjs',
+  'test-pg-bootstrap-independence.mjs',
   'test-data-authority-migration.mjs',
   'test-daily-entry-authority.mjs',
   'test-schedule-authority.mjs',

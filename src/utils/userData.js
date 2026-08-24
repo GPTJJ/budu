@@ -73,10 +73,27 @@ export async function loadUserData(options = {}) {
   // 基础 KV 数据中的 entries/staff 不再作为初始值/回退。
   const prevEntries = cached && cached.entries ? cached.entries : {}
   const prevStaff = cached && Array.isArray(cached.staff) ? cached.staff : []
-  const data = await api('/userdata').catch(() => null)
-  if (!data || typeof data !== 'object') return
-  // DA-5：JSON 镜像不再作为业务数据源；bigBonuses/调整/POS 汇总等一律以 PG 接口为准
-  cached = normalizeCachedData(data)
+  // Legacy 与 PostgreSQL authority bootstrap 必须彼此独立：先同时启动，
+  // 避免 /userdata 失败或变慢时阻止 PG 权威接口发出请求。
+  const legacyRequest = api('/userdata').catch(() => null)
+  const pgAuthorityRequest = Promise.allSettled([
+    api('/v2/daily-entries'),
+    api('/v2/daily-pay-adjustments'),
+    api('/v2/pos/daily-summary'),
+    api('/v2/pos/product-sales'),
+    api('/v2/transfer-requests'),
+    api('/v2/purchase-requests'),
+    api('/v2/stock'),
+    api('/v2/big-bonuses'),
+    api('/v2/staff-list'),
+    api('/v2/stores'),
+  ])
+  const data = await legacyRequest
+  // DA-5：JSON 镜像不再作为业务数据源；bigBonuses/调整/POS 汇总等一律以 PG 接口为准。
+  // legacy 失败时仅保留当前账号已有的内存数据；首次加载则创建空缓存容器承接 PG 结果，
+  // 但不把 KV 空对象或 legacy 字段当成任何 PG 权威域的业务事实。
+  if (data && typeof data === 'object') cached = normalizeCachedData(data)
+  else if (!cached) cached = normalizeCachedData(null)
   cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
   cached.staff = [] // staff 权威为 PG /v2/staff-list：不以 KV 初始值/回退
   cached.stores = [] // stores 权威为 PG /v2/stores：不展示 KV/旧缓存中的幽灵门店
@@ -89,18 +106,7 @@ export async function loadUserData(options = {}) {
     }
   }
 
-  const requests = await Promise.allSettled([
-    api('/v2/daily-entries'),
-    api('/v2/daily-pay-adjustments'),
-    api('/v2/pos/daily-summary'),
-    api('/v2/pos/product-sales'),
-    api('/v2/transfer-requests'),
-    api('/v2/purchase-requests'),
-    api('/v2/stock'),
-    api('/v2/big-bonuses'),
-    api('/v2/staff-list'),
-    api('/v2/stores'),
-  ])
+  const requests = await pgAuthorityRequest
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
   // v2（PostgreSQL）为业绩数据唯一权威源：即使 PG 返回空也是事实（无 KV 回退）。
@@ -118,18 +124,18 @@ export async function loadUserData(options = {}) {
       }
     }
     cached.entries = merged
-  } else if (Object.keys(prevEntries).length > 0) {
-    cached.entries = prevEntries
-    console.error('[data-authority] DailyEntry 读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
+  } else {
+    if (Object.keys(prevEntries).length > 0) cached.entries = prevEntries
+    console.error(`[data-authority] DailyEntry 读取失败（PostgreSQL 不可用），${Object.keys(prevEntries).length > 0 ? '展示上次 PG 成功缓存' : '不使用 KV 回退'}`)
   }
 
   // DA-2.2：员工名单权威 = PG /v2/staff-list
   const staffRes = result(8)
   if (staffRes && Array.isArray(staffRes.rows)) {
     cached.staff = staffRes.rows
-  } else if (prevStaff.length > 0) {
-    cached.staff = prevStaff
-    console.error('[data-authority] 员工名单读取失败（PostgreSQL 不可用），展示上次 PG 成功缓存')
+  } else {
+    if (prevStaff.length > 0) cached.staff = prevStaff
+    console.error(`[data-authority] 员工名单读取失败（PostgreSQL 不可用），${prevStaff.length > 0 ? '展示上次 PG 成功缓存' : '不使用 KV 回退'}`)
   }
 
   // DA-2.3：门店目录权威 = PG /v2/stores（静态 BASE_STORES 仅作同步渲染种子，PG 覆盖）
