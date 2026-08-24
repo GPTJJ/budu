@@ -42,7 +42,10 @@ function normalizeCachedData(value) {
     inventory: Array.isArray(source.inventory) ? source.inventory : [],
     bigBonuses: Array.isArray(source.bigBonuses) ? source.bigBonuses : [],
     dailyPayAdjustments: Array.isArray(source.dailyPayAdjustments) ? source.dailyPayAdjustments : [],
-    dailyStoreStaff: Array.isArray(source.dailyStoreStaff) ? source.dailyStoreStaff : [],
+    // Gate 21：DailyStoreStaff 按月键控缓存（YYYY-MM → rows）；不再使用单一共享数组
+    dailyStoreStaffByMonth: source.dailyStoreStaffByMonth && typeof source.dailyStoreStaffByMonth === 'object'
+      ? source.dailyStoreStaffByMonth
+      : {},
     posDaily: Array.isArray(source.posDaily) ? source.posDaily : [],
     posProductSales: Array.isArray(source.posProductSales) ? source.posProductSales : [],
   }
@@ -256,41 +259,68 @@ export async function loadUserData(options = {}) {
   return cached
 }
 
-// 已加载月份集合：避免重复请求同一月份
+// 已加载月份集合：避免重复请求同一月份；in-flight 去重（并发同月共享同一请求）
 const loadedStaffMonths = new Set()
+const inflightStaffMonths = new Map()
 
 /**
- * Gate 12：按月加载 DailyStoreStaff 稳定考勤数据（只读数据基础）。
- * - 独立缓存域 cached.dailyStoreStaff（不污染 Employee 目录 / DailyEntry 业务数据）
- * - 有界窗口：仅请求指定月份；同一月份幂等（不重复下载）
+ * Gate 21：按月加载 DailyStoreStaff 稳定考勤数据（月键控缓存，月与月完全隔离）。
+ * - cached.dailyStoreStaffByMonth[YYYY-MM] 为各月独立数据集；互不覆盖
+ * - 有界窗口：仅请求指定月份；同月幂等（已加载直接返回缓存；并发中共享同一 in-flight 请求）
  * - legacy 行 employeeId 保持 null 原样透传，绝不按姓名推断
+ * @param {string} month YYYY-MM
+ * @param {object} [opts] { force } force=true 强制重新拉取（刷新/失效用）
  */
-export async function loadDailyStoreStaffMonth(month) {
+export async function loadDailyStoreStaffMonth(month, opts = {}) {
   const key = String(month || '')
-  if (!/^\d{4}-\d{2}$/.test(key)) return
-  if (loadedStaffMonths.has(key)) return
-  loadedStaffMonths.add(key)
-  try {
-    const res = await api(`/v2/daily-store-staff?month=${key}`)
-    const rows = Array.isArray(res && res.rows) ? res.rows : []
-    cached.dailyStoreStaff = rows
-    notifyUserDataUpdated()
-  } catch (e) {
-    loadedStaffMonths.delete(key)
-    console.error(`[daily-store-staff] ${key} 加载失败：`, e.message)
-  }
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return
+  if (!opts.force && loadedStaffMonths.has(key)) return
+  if (inflightStaffMonths.has(key)) return inflightStaffMonths.get(key)
+  const promise = (async () => {
+    try {
+      const res = await api(`/v2/daily-store-staff?month=${key}`)
+      const rows = Array.isArray(res && res.rows) ? res.rows : []
+      const byMonth = { ...(getUserData().dailyStoreStaffByMonth || {}) }
+      byMonth[key] = rows
+      getUserData().dailyStoreStaffByMonth = byMonth
+      loadedStaffMonths.add(key)
+      notifyUserDataUpdated()
+    } catch (e) {
+      loadedStaffMonths.delete(key)
+      console.error(`[daily-store-staff] ${key} 加载失败：`, e.message)
+    } finally {
+      inflightStaffMonths.delete(key)
+    }
+  })()
+  inflightStaffMonths.set(key, promise)
+  return promise
 }
 
-/** 读取当前已加载的 DailyStoreStaff 行（按月过滤；未加载月份返回空数组） */
+/** Gate 21：失效某月缓存并重新拉取（只影响该月，其他月不受影响） */
+export async function refreshDailyStoreStaffMonth(month) {
+  const key = String(month || '')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return
+  loadedStaffMonths.delete(key)
+  const byMonth = { ...(getUserData().dailyStoreStaffByMonth || {}) }
+  delete byMonth[key]
+  getUserData().dailyStoreStaffByMonth = byMonth
+  return loadDailyStoreStaffMonth(key, { force: true })
+}
+
+/**
+ * Gate 21：读取指定月份的 DailyStoreStaff 行——月身份属于缓存键，绝不回退到"最后加载的月份"。
+ * 未加载月份返回空数组（不会拿到其他月数据）。
+ */
 export function getDailyStoreStaff(month) {
-  const rows = (getUserData().dailyStoreStaff || [])
-  if (!month) return rows
-  return rows.filter((r) => String(r.date || '').startsWith(month))
+  const key = String(month || '')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return []
+  const byMonth = getUserData().dailyStoreStaffByMonth || {}
+  return Array.isArray(byMonth[key]) ? byMonth[key] : []
 }
 
 export function getUserData() {
   // DA-5：JSON/localStorage 镜像不再作为业务数据源（读权威 = PostgreSQL）
-  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], dailyStoreStaff: [], posDaily: [], posProductSales: [] }
+  return cached || { entries: {}, staff: [], removedStaff: [], analysis: {}, productImages: {}, stores: [], schedules: {}, products: [], inventoryRequests: [], inventory: [], bigBonuses: [], dailyPayAdjustments: [], dailyStoreStaffByMonth: {}, posDaily: [], posProductSales: [] }
 }
 
 export function getEntries() {
