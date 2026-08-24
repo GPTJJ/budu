@@ -93,6 +93,7 @@ model DailyStoreStaff {
   id                  String   @id
   storeId             String   @map("store_id")
   date                DateTime @db.Date
+  employeeId          String?  @map("employee_id")
   staffId             String   @map("staff_id")
   staffNameSnapshot   String   @default("") @map("staff_name_snapshot")
   shiftId             String   @default("") @map("shift_id")
@@ -110,8 +111,10 @@ model DailyStoreStaff {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
   store               Store    @relation(fields: [storeId], references: [key], onDelete: Cascade)
+  employee            Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@unique([storeId, date, staffId])
+  @@unique([storeId, date, employeeId])
   @@index([storeId, date])
   @@map("daily_store_staff")
 }
@@ -990,6 +993,7 @@ model Employee {
   statusHistory    EmployeeStatusHistory[]
   documents        EmployeeDocument[]
   auditLogs        EmployeeAuditLog[]
+  dailyStoreStaff  DailyStoreStaff[]
 
   @@index([status])
   @@index([currentStoreKey])

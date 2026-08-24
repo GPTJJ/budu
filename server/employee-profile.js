@@ -675,7 +675,7 @@ employeeProfileRouter.get('/employees/:id/summary', wrap(async (req, res) => {
       take: 6,
     }),
     prisma.dailyStoreStaff.findMany({
-      where: { staffId: row.id },
+      where: { employeeId: row.id },
       orderBy: { date: 'desc' },
       take: 60,
     }),

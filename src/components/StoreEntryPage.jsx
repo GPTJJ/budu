@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
 } from 'lucide-react'
-import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry, employeeList } from '../utils/selectors'
+import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import { loadUserData, onUserDataUpdated } from '../utils/userData'
+import { getStaff, loadUserData, onUserDataUpdated } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
@@ -40,7 +40,7 @@ function Field({ label, icon: Icon, children }) {
   )
 }
 
-function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled }) {
+function StaffMultiSelect({ employees, selectedRows, storeKey, onToggle, disabled }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="relative max-w-md">
@@ -51,7 +51,7 @@ function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled
         className={`${inputCls} flex min-h-[38px] w-full items-center gap-1 text-left`}
       >
         <Users className="h-4 w-4 shrink-0 text-budu-600" />
-        <span className="flex-1 truncate text-sm">{selectedIds.length === 0 ? '选择值班人员（可多选）' : `已选 ${selectedIds.length} 人`}</span>
+        <span className="flex-1 truncate text-sm">{selectedRows.length === 0 ? '选择值班人员（可多选）' : `已选 ${selectedRows.length} 人`}</span>
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -62,10 +62,12 @@ function StaffMultiSelect({ employees, selectedIds, storeKey, onToggle, disabled
             <p className="px-2 py-1.5 text-[11px] font-semibold text-slate-300">点击姓名多选值班人员</p>
             {employees.map((emp) => {
               const id = staffIdFor(emp.storeKey || storeKey, emp.name)
-              const checked = selectedIds.includes(id)
+              const checked = selectedRows.some((row) => (
+                row.employeeId === emp.id || (!row.employeeId && row.staffId === id)
+              ))
               return (
                 <button
-                  key={id}
+                  key={emp.id}
                   type="button"
                   onClick={() => onToggle(emp, id)}
                   className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${checked ? 'bg-budu-50' : 'hover:bg-slate-50'}`}
@@ -118,7 +120,7 @@ export default function StoreEntryPage({ user, onBack }) {
   const canEditStaff = !confirmed || isManager
 
   const allEmployees = useMemo(
-    () => [...employeeList('all')].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+    () => [...getStaff()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
     [version],
   )
 
@@ -132,6 +134,7 @@ export default function StoreEntryPage({ user, onBack }) {
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord || '') : '')
       setStaffRows((data.staff || []).map((s) => ({
+        employeeId: s.employeeId || '',
         staffId: s.staffId,
         staffName: s.staffName,
         scheduledStartTime: s.scheduledStartTime,
@@ -212,6 +215,7 @@ export default function StoreEntryPage({ user, onBack }) {
           storeKey: store,
           date,
           items: nextRows.map((row) => ({
+            employeeId: row.employeeId || undefined,
             staffId: row.staffId,
             staffName: row.staffName,
             scheduledStartTime: row.scheduledStartTime,
@@ -237,10 +241,11 @@ export default function StoreEntryPage({ user, onBack }) {
   }
 
   const toggleStaff = (emp, id) => {
-    const exists = staffRows.some((row) => row.staffId === id)
+    const exists = staffRows.some((row) => row.employeeId === emp.id || (!row.employeeId && row.staffId === id))
     const nextRows = exists
-      ? staffRows.filter((row) => row.staffId !== id)
+      ? staffRows.filter((row) => row.employeeId !== emp.id && (Boolean(row.employeeId) || row.staffId !== id))
       : [...staffRows, {
+        employeeId: emp.id,
         staffId: id,
         staffName: emp.name,
         scheduledStartTime: '',
@@ -468,7 +473,7 @@ export default function StoreEntryPage({ user, onBack }) {
         <div className="mt-4">
           <StaffMultiSelect
             employees={allEmployees}
-            selectedIds={staffRows.map((row) => row.staffId)}
+            selectedRows={staffRows}
             storeKey={store}
             onToggle={toggleStaff}
             disabled={!canEditStaff}

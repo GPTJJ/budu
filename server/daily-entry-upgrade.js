@@ -155,6 +155,7 @@ function serializeEntry(entry) {
 function serializeStaff(row) {
   return {
     id: row.id,
+    employeeId: row.employeeId || '',
     staffId: row.staffId,
     staffName: row.staffNameSnapshot,
     shiftId: row.shiftId,
@@ -426,9 +427,11 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   await ensureStore(storeKey)
 
   const parsed = items.map((item) => {
+    const employeeId = item.employeeId == null ? null : String(item.employeeId).trim()
     const staffId = String(item.staffId || '').trim()
     const staffName = String(item.staffName || '').trim().slice(0, 50)
     if (!staffId || !staffName) throw httpError('值班人员姓名/ID 不正确')
+    if (employeeId && employeeId.length > 100) throw httpError('员工 ID 不正确')
     const attendanceStatus = String(item.attendanceStatus || 'normal')
     if (!ATTENDANCE_STATUSES.includes(attendanceStatus)) throw httpError('出勤状态不正确')
     const breakMinutes = Number(item.breakMinutes)
@@ -442,21 +445,51 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
       ? Math.max(0, Math.min(24, Math.round(Number(item.actualHours) * 100) / 100))
       : hoursFromTimes(actualStartTime, actualEndTime, breakMinutes)
     return {
+      employeeId: employeeId || null,
       staffId, staffName, attendanceStatus, breakMinutes,
       actualStartTime, actualEndTime, scheduledStartTime, scheduledEndTime,
       actualHours, scheduledHours: Math.max(0, Number(item.scheduledHours) || 0),
     }
   })
 
-  const submitted = new Set(parsed.map((item) => item.staffId))
+  const submittedStaffIds = parsed.map((item) => item.staffId)
+  if (new Set(submittedStaffIds).size !== submittedStaffIds.length) {
+    throw httpError('同一值班人员被重复提交', 409)
+  }
+  const submittedEmployeeIds = parsed.map((item) => item.employeeId).filter(Boolean)
+  if (new Set(submittedEmployeeIds).size !== submittedEmployeeIds.length) {
+    throw httpError('同一员工被重复提交', 409)
+  }
+  if (submittedEmployeeIds.length > 0) {
+    const employees = await prisma.employee.findMany({
+      where: { id: { in: submittedEmployeeIds } },
+      select: { id: true },
+    })
+    const existingEmployeeIds = new Set(employees.map((employee) => employee.id))
+    const missing = submittedEmployeeIds.find((employeeId) => !existingEmployeeIds.has(employeeId))
+    if (missing) throw httpError('员工不存在', 400)
+  }
+
   const rows = await prisma.$transaction(async (tx) => {
     const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
-    const byId = new Map(existing.map((row) => [row.staffId, row]))
+    const byStaffId = new Map(existing.map((row) => [row.staffId, row]))
+    const byEmployeeId = new Map(existing.filter((row) => row.employeeId).map((row) => [row.employeeId, row]))
     const results = []
+    const keptRowIds = new Set()
     for (const item of parsed) {
-      const before = byId.get(item.staffId)
+      const exactLegacy = byStaffId.get(item.staffId)
+      const stableLinked = item.employeeId ? byEmployeeId.get(item.employeeId) : null
+      if (item.employeeId && exactLegacy?.employeeId && exactLegacy.employeeId !== item.employeeId) {
+        throw httpError('值班记录员工身份冲突', 409)
+      }
+      if (item.employeeId && stableLinked && exactLegacy && stableLinked.id !== exactLegacy.id) {
+        throw httpError('同一值班记录存在冲突身份', 409)
+      }
+      const before = stableLinked || exactLegacy
       const data = {
-        staffNameSnapshot: item.staffName,
+        ...(item.employeeId ? { employeeId: item.employeeId } : {}),
+        // 已有行的姓名是历史快照；重新保存不得用员工当前姓名覆盖。
+        staffNameSnapshot: before?.staffNameSnapshot || item.staffName,
         shiftId: String(before?.shiftId || ''),
         scheduledStartTime: item.scheduledStartTime || before?.scheduledStartTime || '',
         scheduledEndTime: item.scheduledEndTime || before?.scheduledEndTime || '',
@@ -470,18 +503,20 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
         updatedBy: req.user.username,
         updatedAt: new Date(),
       }
-      const saved = await tx.dailyStoreStaff.upsert({
-        where: { storeId_date_staffId: { storeId: storeKey, date: d, staffId: item.staffId } },
-        update: data,
-        create: {
-          id: `dss-${crypto.randomUUID()}`,
-          storeId: storeKey,
-          date: d,
-          staffId: item.staffId,
-          createdBy: req.user.username,
-          ...data,
-        },
-      })
+      const saved = before
+        ? await tx.dailyStoreStaff.update({ where: { id: before.id }, data })
+        : await tx.dailyStoreStaff.create({
+          data: {
+            id: `dss-${crypto.randomUUID()}`,
+            storeId: storeKey,
+            date: d,
+            employeeId: item.employeeId,
+            staffId: item.staffId,
+            createdBy: req.user.username,
+            ...data,
+          },
+        })
+      keptRowIds.add(saved.id)
       if (!before || JSON.stringify(before) !== JSON.stringify(saved)) {
         await writeAudit(tx, {
           storeId: storeKey,
@@ -497,7 +532,7 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
       }
       results.push(saved)
     }
-    const removed = existing.filter((row) => !submitted.has(row.staffId))
+    const removed = existing.filter((row) => !keptRowIds.has(row.id))
     for (const row of removed) {
       await writeAudit(tx, {
         storeId: storeKey,
