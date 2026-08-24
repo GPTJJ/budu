@@ -1,7 +1,7 @@
 // 订单删除/取消保护回归（O / Q 不变量）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assertOrderDeletable, assertOrderCancelable, canCancelOrder, normalizeOrderCancelReason } from '../server/pos-core.js'
+import { assertOrderDeletable, assertOrderCancelable, buildRecognizedRevenueWhere, canCancelOrder, normalizeOrderCancelReason } from '../server/pos-core.js'
 import { PaymentService } from '../server/payments/payment-service.js'
 import { MemoryPrisma } from './helpers/memory-prisma.mjs'
 
@@ -48,6 +48,19 @@ test('O：作废原因必填、限长并拒绝控制字符', () => {
   assert.throws(() => normalizeOrderCancelReason('a'), (error) => error.status === 400)
   assert.throws(() => normalizeOrderCancelReason('x'.repeat(101)), (error) => error.status === 400)
   assert.throws(() => normalizeOrderCancelReason('重复\n下单'), (error) => error.status === 400)
+})
+
+test('R：营收仅统计支付成功、无退款的完成订单', () => {
+  const scope = { storeId: 'chaowai' }
+  assert.deepEqual(buildRecognizedRevenueWhere(scope), {
+    AND: [
+      scope,
+      { status: { in: ['paid', 'completed'] } },
+      { paymentStatus: 'paid' },
+      { payments: { some: { status: 'success' } } },
+      { refunds: { none: {} } },
+    ],
+  })
 })
 
 test('Q：unresolvedWechatPayment 只命中未决微信支付，终态不命中', async () => {

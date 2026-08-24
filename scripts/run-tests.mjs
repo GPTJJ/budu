@@ -26,6 +26,7 @@ const NODE_TEST_SUITE = [
   'test-pos-core.mjs',              // POS 核心快照/归并（单元）→ critical
   'test-pos-daily.mjs',             // POS 日结（单元）
   'test-pos-order-summary.mjs',     // POS 订单汇总（单元）
+  'test-pos-revenue-recognition-real.mjs', // POS 营收口径（真实 PostgreSQL）
   'test-homepage-lightweight.mjs',  // Homepage 轻量首页（Vite 内存服务）→ critical
   'test-daily-pay-adjustment.mjs',  // 日薪调整（单元）
   'test-product-excel.mjs',         // 商品 Excel 导入（单元）

@@ -160,3 +160,19 @@ export function normalizeOrderCancelReason(value) {
   if (/[\u0000-\u001f\u007f]/.test(reason)) throw httpError('作废原因包含无效字符')
   return reason
 }
+
+/**
+ * 营收只认“已成功收款且从未进入退款流程”的干净订单。
+ * 待支付/失败/异常订单，以及存在任意退款记录的订单，都不能进入营收、订单数和销量。
+ */
+export function buildRecognizedRevenueWhere(scope = {}) {
+  return {
+    AND: [
+      scope,
+      { status: { in: ['paid', 'completed'] } },
+      { paymentStatus: 'paid' },
+      { payments: { some: { status: 'success' } } },
+      { refunds: { none: {} } },
+    ],
+  }
+}

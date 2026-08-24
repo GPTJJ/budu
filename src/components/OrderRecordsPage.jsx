@@ -361,10 +361,10 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
 
       <section aria-label="订单汇总" className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
         {[
-          { label: '累计收款', value: formatCents(summary.collectedAmount), note: `原收款 ${formatCents(summary.grossAmount)}`, icon: Banknote, tone: 'bg-emerald-50 text-emerald-600' },
-          { label: '订单数', value: `${summary.recordCount} 笔`, note: `已收款 ${summary.paidOrderCount} 笔`, icon: ShoppingBag, tone: 'bg-budu-50 text-budu-600' },
-          { label: '商品数量', value: `${summary.itemQuantity} 件`, note: '已扣除退款商品', icon: Package, tone: 'bg-sky-50 text-sky-600' },
-          { label: '客单价', value: formatCents(summary.averageAmount), note: '按已收款订单计算', icon: ReceiptText, tone: 'bg-violet-50 text-violet-600' },
+          { label: '有效营收', value: formatCents(summary.collectedAmount), note: '仅无退款的支付成功订单', icon: Banknote, tone: 'bg-emerald-50 text-emerald-600' },
+          { label: '有效订单', value: `${summary.paidOrderCount} 笔`, note: `全部记录 ${summary.recordCount} 笔`, icon: ShoppingBag, tone: 'bg-budu-50 text-budu-600' },
+          { label: '商品数量', value: `${summary.itemQuantity} 件`, note: '仅有效订单商品', icon: Package, tone: 'bg-sky-50 text-sky-600' },
+          { label: '客单价', value: formatCents(summary.averageAmount), note: '按有效订单计算', icon: ReceiptText, tone: 'bg-violet-50 text-violet-600' },
           { label: '优惠金额', value: formatCents(summary.discountAmount), note: '含折扣及赠送', icon: BadgePercent, tone: 'bg-amber-50 text-amber-600' },
           { label: '退款金额', value: formatCents(summary.refundAmount), note: '已完成退款', icon: RotateCcw, tone: 'bg-rose-50 text-rose-600' },
         ].map(({ label, value, note, icon: Icon, tone }) => (

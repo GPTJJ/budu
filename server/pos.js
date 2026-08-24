@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { serializeProduct } from './products.js'
-import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
+import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, buildRecognizedRevenueWhere, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
@@ -172,23 +172,21 @@ export function buildOrderWhere(user, query = {}) {
   return where
 }
 
-export function composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats) {
+export function composeOrderSummary(total, paidStats, refundStats, itemStats) {
   const paidOrderCount = Number(paidStats?._count?._all || 0)
   const grossAmount = BigInt(paidStats?._sum?.payableAmount || 0)
   const discountAmount = BigInt(paidStats?._sum?.discountAmount || 0)
   const refundAmount = BigInt(refundStats?._sum?.refundAmount || 0)
   const soldQuantity = Number(itemStats?._sum?.quantity || 0)
-  const refundedQuantity = Number(refundItemStats?._sum?.quantity || 0)
-  const collectedAmount = grossAmount > refundAmount ? grossAmount - refundAmount : 0n
   return {
     recordCount: Number(total || 0),
     paidOrderCount,
-    collectedAmount: collectedAmount.toString(),
+    collectedAmount: grossAmount.toString(),
     grossAmount: grossAmount.toString(),
     refundAmount: refundAmount.toString(),
     discountAmount: discountAmount.toString(),
-    itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
-    averageAmount: (paidOrderCount > 0 ? collectedAmount / BigInt(paidOrderCount) : 0n).toString(),
+    itemQuantity: soldQuantity,
+    averageAmount: (paidOrderCount > 0 ? grossAmount / BigInt(paidOrderCount) : 0n).toString(),
   }
 }
 
@@ -217,13 +215,8 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const where = buildOrderWhere(req.user, req.query)
-  const paidWhere = {
-    AND: [
-      where,
-      { paymentStatus: { in: ['paid', 'partially_refunded', 'refunded'] } },
-    ],
-  }
-  const [rows, total, paidStats, refundStats, itemStats, refundItemStats] = await Promise.all([
+  const paidWhere = buildRecognizedRevenueWhere(where)
+  const [rows, total, paidStats, refundStats, itemStats] = await Promise.all([
     prisma.order.findMany({ where, include: orderInclude(), orderBy: { createdAt: 'desc' }, take: 200 }),
     prisma.order.count({ where }),
     prisma.order.aggregate({
@@ -232,22 +225,18 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
       _sum: { payableAmount: true, discountAmount: true },
     }),
     prisma.refund.aggregate({
-      where: { status: 'completed', order: paidWhere },
+      where: { status: 'completed', order: { is: where } },
       _sum: { refundAmount: true },
     }),
     prisma.orderItem.aggregate({
       where: { order: paidWhere },
       _sum: { quantity: true },
     }),
-    prisma.refundItem.aggregate({
-      where: { refund: { status: 'completed', order: paidWhere } },
-      _sum: { quantity: true },
-    }),
   ])
   res.json({
     ok: true,
     total,
-    summary: composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats),
+    summary: composeOrderSummary(total, paidStats, refundStats, itemStats),
     rows: rows.map(serializeOrder),
   })
 }))

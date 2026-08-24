@@ -61,16 +61,13 @@
           if (qs.get('q') && !order.orderNo.toLowerCase().includes(qs.get('q').toLowerCase())) return false
           return true
         })
-        const paid = filtered.filter((order) => ['paid', 'partially_refunded', 'refunded'].includes(order.paymentStatus))
+        const paid = filtered.filter((order) => order.paymentStatus === 'paid' && ['paid', 'completed'].includes(order.status) && (order.payments || []).some((payment) => payment.status === 'success') && (order.refunds || []).length === 0)
         const grossAmount = paid.reduce((sum, order) => sum + Number(order.payableAmount), 0)
-        const refundAmount = paid.reduce((sum, order) => sum + (order.refunds || [])
+        const refundAmount = filtered.reduce((sum, order) => sum + (order.refunds || [])
           .filter((refund) => refund.status === 'completed')
           .reduce((inner, refund) => inner + Number(refund.amount), 0), 0)
         const soldQuantity = paid.reduce((sum, order) => sum + order.items.reduce((inner, item) => inner + item.quantity, 0), 0)
-        const refundedQuantity = paid.reduce((sum, order) => sum + (order.refunds || [])
-          .filter((refund) => refund.status === 'completed')
-          .reduce((inner, refund) => inner + (refund.items || []).reduce((qty, item) => qty + item.quantity, 0), 0), 0)
-        const collectedAmount = Math.max(0, grossAmount - refundAmount)
+        const collectedAmount = grossAmount
         return json({
           ok: true,
           total: filtered.length,
@@ -81,7 +78,7 @@
             grossAmount: String(grossAmount),
             refundAmount: String(refundAmount),
             discountAmount: String(paid.reduce((sum, order) => sum + Number(order.discountAmount), 0)),
-            itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
+            itemQuantity: soldQuantity,
             averageAmount: String(paid.length ? Math.floor(collectedAmount / paid.length) : 0),
           },
           rows: filtered,

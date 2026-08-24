@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
-import { httpError } from './pos-core.js'
+import { buildRecognizedRevenueWhere, httpError } from './pos-core.js'
 import { resolveStoreName } from './store-names.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
@@ -84,13 +84,20 @@ async function writeAudit(tx, input) {
 }
 
 async function aggregatePosDay(storeId, dateStr) {
-  const orders = await prisma.order.findMany({
-    where: { storeId, businessDate: dateOnly(dateStr), status: { not: 'cancelled' } },
-    include: { payments: true, refunds: true },
-  })
+  const businessDate = dateOnly(dateStr)
+  const [orders, refunds] = await Promise.all([
+    prisma.order.findMany({
+      where: buildRecognizedRevenueWhere({ storeId, businessDate }),
+      include: { payments: true },
+    }),
+    prisma.refund.findMany({
+      where: { status: 'completed', order: { is: { storeId, businessDate } } },
+      select: { refundAmount: true },
+    }),
+  ])
   let originalSales = 0n
   let effectiveSales = 0n
-  let refundAmount = 0n
+  const refundAmount = refunds.reduce((sum, refund) => sum + refund.refundAmount, 0n)
   let discountAmount = 0n
   let orderCount = 0
   const byChannel = { wechat: 0n, alipay: 0n, cash: 0n, other: 0n }
@@ -99,17 +106,15 @@ async function aggregatePosDay(storeId, dateStr) {
     discountAmount += order.discountAmount
     effectiveSales += order.payableAmount
     orderCount += 1
-    for (const refund of order.refunds || []) {
-      if (refund.status === 'completed') refundAmount += refund.refundAmount
-    }
     for (const pay of order.payments || []) {
-      if (['success', 'partially_refunded', 'refunded'].includes(pay.status)) {
+      if (pay.status === 'success') {
         const key = ['wechat', 'alipay', 'cash'].includes(pay.channel) ? pay.channel : 'other'
         byChannel[key] += pay.amount
       }
     }
   }
-  const effectiveAfterRefund = effectiveSales - refundAmount
+  // 已退款订单已整体排除，不能再次从干净订单营收中扣减。
+  const effectiveAfterRefund = effectiveSales
   const toStr = (value) => value.toString()
   return {
     status: 'synced',
@@ -279,12 +284,19 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
   const stores = await posScopeStores(req, String(req.query.store || '').trim())
   if (stores.length === 0) return res.json({ rows: [] })
   const storeIds = stores.map((store) => store.key)
-  const [orders, entries] = await Promise.all([
+  const [orders, entries, refunds] = await Promise.all([
     prisma.order.findMany({
-      where: { storeId: { in: storeIds }, businessDate: { not: null }, status: { not: 'cancelled' } },
-      include: { payments: true, refunds: true },
+      where: buildRecognizedRevenueWhere({ storeId: { in: storeIds }, businessDate: { not: null } }),
+      include: { payments: true },
     }),
     prisma.dailyEntry.findMany({ where: { storeKey: { in: storeIds } } }),
+    prisma.refund.findMany({
+      where: {
+        status: 'completed',
+        order: { is: { storeId: { in: storeIds }, businessDate: { not: null } } },
+      },
+      include: { order: { select: { storeId: true, businessDate: true } } },
+    }),
   ])
   const storeMap = new Map(stores.map((store) => [store.key, store]))
   const entryMap = new Map(entries.map((entry) => [`${entry.storeKey}|${isoDate(entry.date)}`, entry]))
@@ -308,21 +320,37 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
     group.effectiveSales += order.payableAmount
     group.discountAmount += order.discountAmount
     group.orderCount += 1
-    for (const refund of order.refunds || []) {
-      if (refund.status === 'completed') group.refundAmount += refund.refundAmount
-    }
     for (const pay of order.payments || []) {
-      if (['success', 'partially_refunded', 'refunded'].includes(pay.status)) {
+      if (pay.status === 'success') {
         const channel = ['wechat', 'alipay', 'cash'].includes(pay.channel) ? pay.channel : 'other'
         group.byChannel[channel] += pay.amount
       }
     }
     groups.set(key, group)
   }
+  for (const refund of refunds) {
+    const dateStr = isoDate(refund.order.businessDate)
+    const store = storeMap.get(refund.order.storeId)
+    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    const key = `${refund.order.storeId}|${dateStr}`
+    const group = groups.get(key) || {
+      storeId: refund.order.storeId,
+      date: dateStr,
+      originalSales: 0n,
+      effectiveSales: 0n,
+      refundAmount: 0n,
+      discountAmount: 0n,
+      orderCount: 0,
+      byChannel: { wechat: 0n, alipay: 0n, cash: 0n, other: 0n },
+    }
+    group.refundAmount += refund.refundAmount
+    groups.set(key, group)
+  }
   const toStr = (value) => value.toString()
   const rows = [...groups.values()].map((group) => {
     const adjustment = entryMap.get(`${group.storeId}|${group.date}`)?.hybridAdjustmentCents || 0n
-    const effective = group.effectiveSales - group.refundAmount + adjustment
+    // 退款订单不进入 effectiveSales；refundAmount 仅作为独立审计指标展示。
+    const effective = group.effectiveSales + adjustment
     return {
       storeKey: group.storeId,
       date: group.date,
@@ -346,7 +374,7 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   const storeIds = stores.map((store) => store.key)
   const storeMap = new Map(stores.map((store) => [store.key, store]))
   const items = await prisma.orderItem.findMany({
-    where: { order: { storeId: { in: storeIds }, businessDate: { not: null }, status: { not: 'cancelled' } } },
+    where: { order: { is: buildRecognizedRevenueWhere({ storeId: { in: storeIds }, businessDate: { not: null } }) } },
     include: { order: { select: { storeId: true, businessDate: true, subtotal: true, payableAmount: true } } },
   })
   const map = new Map()
@@ -368,27 +396,6 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
     current.quantity += item.quantity
     current.amountCents += revenue
     map.set(key, current)
-  }
-  const refundItems = await prisma.refundItem.findMany({
-    where: {
-      refund: {
-        status: 'completed',
-        order: { storeId: { in: storeIds }, businessDate: { not: null } },
-      },
-    },
-    include: {
-      orderItem: { include: { order: { select: { storeId: true, businessDate: true } } } },
-    },
-  })
-  for (const refundItem of refundItems) {
-    const dateStr = isoDate(refundItem.orderItem.order.businessDate)
-    const store = storeMap.get(refundItem.orderItem.order.storeId)
-    if (!store || effectiveSource(store, dateStr) === 'manual') continue
-    const key = `${refundItem.orderItem.order.storeId}|${refundItem.orderItem.productId}`
-    const current = map.get(key)
-    if (!current) continue
-    current.quantity = Math.max(0, current.quantity - refundItem.quantity)
-    current.amountCents = BigInt(Math.max(0, Number(current.amountCents - refundItem.amountCents)))
   }
   res.json({
     rows: [...map.values()].map((row) => ({
