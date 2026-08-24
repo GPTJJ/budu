@@ -75,6 +75,7 @@ const DIRECT_SUITE = [
   'test-payroll-shadow-input.mjs', // Gate 13：Employee.id payroll 输入 shadow 模型（纯函数，零 live 消费）→ critical
   'test-payroll-shadow-calculator.mjs', // Gate 14：Employee.id shadow 月度工资计算（并行，零 live 消费）→ critical
   'test-daily-store-staff-constraint-cutover.mjs', // Gate 16：DailyStoreStaff 稳定身份约束切换（同店同名共存）→ critical
+  'test-payroll-notice-identity.mjs', // Gate 18：PayrollNotice 稳定主体 + 收件人 User.employeeId → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -92,6 +93,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-shadow-input.mjs',
   'test-payroll-shadow-calculator.mjs',
   'test-daily-store-staff-constraint-cutover.mjs',
+  'test-payroll-notice-identity.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

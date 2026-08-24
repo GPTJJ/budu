@@ -21,6 +21,7 @@ const wrap = (fn) => async (req, res) => {
 function serialize(row) {
   return {
     id: row.id,
+    employeeId: row.employeeId || '',
     periodType: row.periodType,
     periodKey: row.periodKey,
     employeeName: row.employeeName,
@@ -97,7 +98,7 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
   for (const row of rows) {
     const employeeName = String(row?.employeeName || '').trim().slice(0, 50)
     const storeKey = String(row?.storeKey || '').trim().slice(0, 30)
-    const targetUsername = String(row?.targetUsername || '').trim().slice(0, 30)
+    const employeeId = row?.employeeId == null ? null : String(row.employeeId).trim()
     const snapshot = row?.snapshot
     const totalCents = Number(row?.totalCents)
     if (!employeeName || !storeKey) throw httpError('员工信息不完整')
@@ -105,30 +106,63 @@ payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
       throw httpError(`「${employeeName}」工资条数据不完整`)
     }
     if (!Number.isInteger(totalCents) || totalCents < 0) throw httpError(`「${employeeName}」工资金额不正确`)
-    const dupKey = `${storeKey}::${employeeName}::${ptype}::${periodKey}`
+    // Gate 18：稳定发放必须携带 Employee.id 主体；payload 内按 employeeId 判重
+    if (!employeeId) throw httpError(`「${employeeName}」缺少稳定员工 ID，无法发放`)
+    if (employeeId.length > 100) throw httpError('员工 ID 不正确')
+    const dupKey = `${employeeId}::${ptype}::${periodKey}`
     if (seen.has(dupKey)) throw httpError(`「${employeeName}」重复选择`)
     seen.add(dupKey)
-    payloads.push({ employeeName, storeKey, targetUsername, snapshot, totalCents })
+    payloads.push({ employeeId, employeeName, storeKey, snapshot, totalCents })
+  }
+
+  // Gate 18：主体存在性 + 收件人解析（唯一 User.employeeId 匹配，fail closed，绝不按姓名/staffKey 兜底）
+  const empIds = [...new Set(payloads.map((r) => r.employeeId))]
+  const employees = await prisma.employee.findMany({ where: { id: { in: empIds } }, select: { id: true, name: true } })
+  const empById = new Map(employees.map((e) => [e.id, e]))
+  const users = await prisma.user.findMany({
+    where: { employeeId: { in: empIds }, status: 'active' },
+    select: { username: true, employeeId: true, status: true },
+  })
+  const usersByEmpId = new Map()
+  for (const u of users) {
+    if (!u.employeeId) continue
+    const list = usersByEmpId.get(u.employeeId) || []
+    list.push(u)
+    usersByEmpId.set(u.employeeId, list)
+  }
+  const resolved = []
+  for (const r of payloads) {
+    const emp = empById.get(r.employeeId)
+    if (!emp) throw httpError('员工不存在', 400)
+    const candidates = usersByEmpId.get(r.employeeId) || []
+    if (candidates.length === 0) {
+      throw httpError(`「${r.employeeName}」未绑定可接收工资条的账号`, 409)
+    }
+    if (candidates.length > 1) {
+      throw httpError(`「${r.employeeName}」存在多个绑定账号，无法确定收件人，请联系开发者处理`, 409)
+    }
+    resolved.push({ ...r, targetUsername: candidates[0].username })
   }
 
   // 同员工同周期重复发放 → 409（已撤回/已删除的工资条不占用周期，可重新发放修正）
   const existing = await prisma.payrollNotice.findMany({
     where: { periodType: ptype, periodKey, status: { notIn: ['recalled', 'deleted'] } },
-    select: { id: true, employeeName: true, storeKey: true },
+    select: { id: true, employeeId: true, employeeName: true, storeKey: true },
   })
-  const existed = new Set(existing.map((r) => `${r.storeKey}::${r.employeeName}`))
-  const dup = payloads.filter((r) => existed.has(`${r.storeKey}::${r.employeeName}`))
+  const stableExisted = new Set(existing.filter((r) => r.employeeId).map((r) => r.employeeId))
+  const dup = resolved.filter((r) => stableExisted.has(r.employeeId))
   if (dup.length) {
     return res.status(409).json({ error: `「${dup.map((r) => r.employeeName).join('、')}」该周期工资条已发放` })
   }
 
   const created = []
-  for (const r of payloads) {
+  for (const r of resolved) {
     const row = await prisma.payrollNotice.create({
       data: {
         id: `pn-${crypto.randomUUID()}`,
         periodType: ptype,
         periodKey: String(periodKey),
+        employeeId: r.employeeId,
         employeeName: r.employeeName,
         storeKey: r.storeKey,
         targetUsername: r.targetUsername,

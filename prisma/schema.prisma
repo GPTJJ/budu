@@ -703,6 +703,7 @@ model AssetReminder {
 
 model PayrollNotice {
   id             String    @id
+  employeeId     String?   @map("employee_id") // Gate 18：稳定工资主体（employees.id）；历史行 NULL；employeeName/storeKey/targetUsername 为发放时快照
   periodType     String    @map("period_type") // month（全职月结）| week（兼职周结）
   periodKey      String    @map("period_key") // 月: '2026-08'；周: 周起始日 '2026-08-10'
   employeeName   String    @map("employee_name")
@@ -719,9 +720,11 @@ model PayrollNotice {
   deletedBy      String    @default("") @map("deleted_by")
   createdBy      String    @default("") @map("created_by")
   createdAt      DateTime  @default(now()) @map("created_at")
+  employee       Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([targetUsername, status])
   @@index([periodKey])
+  @@index([employeeId, periodType, periodKey])
   @@map("payroll_notices")
 }
 
@@ -1005,6 +1008,7 @@ model Employee {
   dailyStoreStaff  DailyStoreStaff[]
   dailyPayAdjustments DailyPayAdjustment[]
   bigOrderBonuses  BigOrderBonus[]
+  payrollNotices   PayrollNotice[]
 
   @@index([status])
   @@index([currentStoreKey])

@@ -58,29 +58,30 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
     const list = employeeList('all', null)
     return list.map((emp) => {
       const snap = buildPayrollSnapshot(periodType, periodKey, emp.name)
-      // 员工绑定账号：优先精确 staffKey = `${storeKey}::${name}`，兜底按员工姓名匹配
-      const acct = accounts.find(
-        (u) => u.staffKey === `${emp.storeKey}::${emp.name}` || (u.staffKey || '').split('::')[1] === emp.name,
-      )
-      return { ...emp, snap, targetUsername: acct ? acct.username : '' }
+      // Gate 18：收件人 = User.employeeId 精确匹配（绝不按 staffKey/姓名兜底，杜绝同名错发）；
+      // 匹配不到或重复时留空，由服务端 fail closed 阻断。
+      const matches = accounts.filter((u) => u.employeeId && u.employeeId === emp.id)
+      const targetUsername = matches.length === 1 ? matches[0].username : ''
+      return { ...emp, snap, targetUsername }
     })
   }, [periodType, periodKey, accounts])
 
-  const picked = employees.filter((e) => selected.has(e.name))
+  // Gate 18：选择身份 = Employee.id（同名员工独立可选）
+  const picked = employees.filter((e) => selected.has(e.id))
   const pickedTotal = picked.reduce((s, e) => s + (e.snap.summary.total || 0), 0)
 
-  const toggle = (name) => {
+  const toggle = (emp) => {
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      if (next.has(emp.id)) next.delete(emp.id)
+      else next.add(emp.id)
       return next
     })
   }
 
   const selectAll = () => {
     if (selected.size === employees.length) setSelected(new Set())
-    else setSelected(new Set(employees.map((e) => e.name)))
+    else setSelected(new Set(employees.map((e) => e.id)))
   }
 
   const send = async () => {
@@ -98,9 +99,9 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
           periodType,
           periodKey,
           rows: picked.map((e) => ({
+            employeeId: e.id,
             employeeName: e.name,
             storeKey: e.storeKey,
-            targetUsername: e.targetUsername,
             snapshot: e.snap,
             totalCents: Math.round((e.snap.summary.total || 0) * 100),
           })),
@@ -263,10 +264,10 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {employees.map((e) => {
-                const on = selected.has(e.name)
+                const on = selected.has(e.id)
                 const bound = e.targetUsername ? `@${e.targetUsername}` : '未绑定'
                 return (
-                  <tr key={`${e.storeKey}::${e.name}`} onClick={() => toggle(e.name)} className={`cursor-pointer transition ${on ? 'bg-budu-50/50' : 'hover:bg-slate-50'}`}>
+                  <tr key={e.id} onClick={() => toggle(e)} className={`cursor-pointer transition ${on ? 'bg-budu-50/50' : 'hover:bg-slate-50'}`}>
                     <td className="px-3 py-2">
                       <span
                         className={`grid h-4.5 w-4.5 place-items-center rounded border ${
