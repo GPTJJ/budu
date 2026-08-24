@@ -113,7 +113,10 @@ model DailyStoreStaff {
   store               Store    @relation(fields: [storeId], references: [key], onDelete: Cascade)
   employee            Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
-  @@unique([storeId, date, staffId])
+  // Gate 16：稳定行身份 = (storeId, date, employeeId)；全量 staffId unique 已移除
+  // （同店同名稳定行可共存，staffId 允许相同——仅兼容快照）。
+  // legacy 行（employeeId=NULL）的 staffId 唯一保护由 migration 中的 partial unique index
+  // (store_id, date, staff_id) WHERE employee_id IS NULL 提供（Prisma 无法表示 partial，故 SQL-only）。
   @@unique([storeId, date, employeeId])
   @@index([storeId, date])
   @@map("daily_store_staff")

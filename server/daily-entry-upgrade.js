@@ -500,13 +500,15 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
     }
   })
 
-  const submittedStaffIds = parsed.map((item) => item.staffId)
-  if (new Set(submittedStaffIds).size !== submittedStaffIds.length) {
-    throw httpError('同一值班人员被重复提交', 409)
-  }
+  // Gate 16：payload 判重身份化——稳定行（employeeId 非空）按 employeeId 判重；
+  // legacy 行（employeeId=NULL）按 staffId 判重。同店同名不同 employeeId 允许并存。
   const submittedEmployeeIds = parsed.map((item) => item.employeeId).filter(Boolean)
   if (new Set(submittedEmployeeIds).size !== submittedEmployeeIds.length) {
     throw httpError('同一员工被重复提交', 409)
+  }
+  const submittedLegacyStaffIds = parsed.filter((item) => !item.employeeId).map((item) => item.staffId)
+  if (new Set(submittedLegacyStaffIds).size !== submittedLegacyStaffIds.length) {
+    throw httpError('同一值班人员被重复提交', 409)
   }
   if (submittedEmployeeIds.length > 0) {
     const employees = await prisma.employee.findMany({
@@ -520,19 +522,15 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
 
   const rows = await prisma.$transaction(async (tx) => {
     const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
-    const byStaffId = new Map(existing.map((row) => [row.staffId, row]))
+    const byLegacyStaffId = new Map(existing.filter((row) => !row.employeeId).map((row) => [row.staffId, row]))
     const byEmployeeId = new Map(existing.filter((row) => row.employeeId).map((row) => [row.employeeId, row]))
     const results = []
     const keptRowIds = new Set()
     for (const item of parsed) {
-      const exactLegacy = byStaffId.get(item.staffId)
+      // Gate 16：稳定行（employeeId 非空）以 (storeId, date, employeeId) 为变更身份，
+      // 绝不按 staffId 选中/改写 legacy NULL 行（同店同名时无法判定归属，不做启发式升级）。
       const stableLinked = item.employeeId ? byEmployeeId.get(item.employeeId) : null
-      if (item.employeeId && exactLegacy?.employeeId && exactLegacy.employeeId !== item.employeeId) {
-        throw httpError('值班记录员工身份冲突', 409)
-      }
-      if (item.employeeId && stableLinked && exactLegacy && stableLinked.id !== exactLegacy.id) {
-        throw httpError('同一值班记录存在冲突身份', 409)
-      }
+      const exactLegacy = item.employeeId ? null : byLegacyStaffId.get(item.staffId)
       const before = stableLinked || exactLegacy
       const data = {
         ...(item.employeeId ? { employeeId: item.employeeId } : {}),
@@ -580,7 +578,10 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
       }
       results.push(saved)
     }
-    const removed = existing.filter((row) => !keptRowIds.has(row.id))
+    // Gate 16：替换语义保护——legacy NULL 行（无法归属当前员工）绝不因稳定名单提交被删除。
+    // 只有"由本批次识别并可安全移除"的行才进入删除：稳定行（employeeId 非空）不在新名单 → 删除；
+    // legacy NULL 行一律保留（其归属解析属于未来 reconciliation，不做历史清理）。
+    const removed = existing.filter((row) => !keptRowIds.has(row.id) && row.employeeId)
     for (const row of removed) {
       await writeAudit(tx, {
         storeId: storeKey,
