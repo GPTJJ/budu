@@ -123,7 +123,7 @@ export async function loadUserData(options = {}) {
   }
 
   // DA-2.2：员工名单权威 = PG /v2/staff-list
-  const staffRes = result(9)
+  const staffRes = result(8)
   if (staffRes && Array.isArray(staffRes.rows)) {
     cached.staff = staffRes.rows
   } else if (prevStaff.length > 0) {
@@ -132,7 +132,7 @@ export async function loadUserData(options = {}) {
   }
 
   // DA-2.3：门店目录权威 = PG /v2/stores（静态 BASE_STORES 仅作同步渲染种子，PG 覆盖）
-  const storesRes = result(10)
+  const storesRes = result(9)
   if (storesRes && Array.isArray(storesRes.rows)) {
     cached.stores = storesRes.rows
   }
