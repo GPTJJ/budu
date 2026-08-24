@@ -66,6 +66,7 @@ const NODE_TEST_SUITE = [
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [
   'test-role-module-api.mjs',       // Auth / 角色 / 模块权限 API（本地起服务）→ critical
+  'test-pg-account-load-db-isolation.mjs', // Gate 4：PG 账号路由不受 legacy loadDb 故障阻塞 → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -74,6 +75,7 @@ const DIRECT_SUITE = [
 // critical 子集（关键业务域：Auth/Account/Permission、DailyEntry、POS、Inventory、Payroll、Approval、Homepage）
 const CRITICAL_DIRECT = [
   'test-role-module-api.mjs',
+  'test-pg-account-load-db-isolation.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

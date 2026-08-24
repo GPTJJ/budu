@@ -668,7 +668,6 @@ export function createApp() {
     if (storeKeys === null) {
       return res.status(400).json({ error: 'storeKeys 格式错误' })
     }
-    const db = await loadDb()
     let staffKey = ''
     if (req.body.staffKey !== undefined) {
       const sk = normalizeStaffKey(req.body.staffKey)
@@ -862,7 +861,6 @@ export function createApp() {
         return res.status(400).json({ error: 'storeKeys 格式错误' })
       }
     }
-    const db = await loadDb()
     let staffKey = null
     if (req.body.staffKey !== undefined) {
       staffKey = normalizeStaffKey(req.body.staffKey)
