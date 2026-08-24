@@ -89,3 +89,45 @@ test('开发者可调整每日最终工资并提交审计明细', async ({ page 
     version: 1,
   })
 })
+
+test('Developer 无值班记录也可直接设定当日最终工资', async ({ page }) => {
+  let submitted = null
+  await page.route('**/api/v2/daily-pay-adjustments', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) })
+      return
+    }
+    submitted = route.request().postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        adjustment: {
+          id: 'dpa-no-duty', staffName: '陈文慧', date: '2026-08-24', autoPayCentsSnapshot: '0',
+          adjustedPayCents: '12345', reason: '无排班临时补贴', createdBy: 'developer', updatedBy: 'developer',
+          createdAt: '2026-08-24T06:00:00.000Z', updatedAt: '2026-08-24T06:00:00.000Z', version: 1,
+        },
+      }),
+    })
+  })
+
+  await page.goto('/tests/personnel-harness.html')
+  const employeeCard = page.locator('.card').filter({ hasText: '陈文慧' }).first()
+  await employeeCard.getByRole('button', { name: '调整每日薪资' }).click()
+  const dialog = page.getByRole('dialog', { name: '调整每日薪资' })
+  await dialog.locator('input[type="date"]').fill('2026-08-24')
+  await expect(dialog.getByText(/Developer 可直接设定最终工资/)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '确认调整' })).toBeEnabled()
+  await dialog.locator('input[type="number"]').fill('123.45')
+  await dialog.locator('textarea').fill('无排班临时补贴')
+  await dialog.getByRole('button', { name: '确认调整' }).click()
+  await expect(dialog.getByText('当日工资已调整并生效')).toBeVisible()
+  expect(submitted).toEqual({
+    staffName: '陈文慧',
+    date: '2026-08-24',
+    autoPayCentsSnapshot: 0,
+    adjustedPayCents: 12345,
+    reason: '无排班临时补贴',
+  })
+})

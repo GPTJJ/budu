@@ -962,6 +962,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       {adjustmentEmp && (
         <DailyPayAdjustmentModal
           emp={adjustmentEmp}
+          currentUser={user}
           initialDate={day ? `${month}-${day.slice(3)}` : weekStart || (month === todayParts().month ? `${month}-${todayParts().day.slice(3)}` : `${month}-01`)}
           onClose={() => setAdjustmentEmp(null)}
           onSaved={() => setSyncTick((value) => value + 1)}

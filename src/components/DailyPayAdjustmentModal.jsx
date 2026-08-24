@@ -40,7 +40,7 @@ function signedYuan(value) {
   return `${amount >= 0 ? '+' : '-'}¥${yuan(Math.abs(amount))}`
 }
 
-export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onSaved }) {
+export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser, onClose, onSaved }) {
   const [date, setDate] = useState(initialDate || localDate())
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
@@ -52,17 +52,19 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onS
     : null
   const current = detail?.totals?.payAdjustment || null
   const automaticPay = detail?.totals?.automaticPay ?? 0
+  const canAdjustWithoutDuty = currentUser?.role === 'developer'
+  const canAdjust = Boolean(detail) || canAdjustWithoutDuty
 
   useEffect(() => {
     if (current) {
       setAmount((Number(current.adjustedPayCents) / 100).toFixed(2))
       setReason(current.reason || '')
     } else {
-      setAmount(detail ? Number(automaticPay).toFixed(2) : '')
+      setAmount(canAdjust ? Number(automaticPay).toFixed(2) : '')
       setReason('')
     }
     setError('')
-  }, [current?.id, current?.version, date, automaticPay])
+  }, [current?.id, current?.version, date, automaticPay, canAdjust])
 
   useEffect(() => {
     const onKey = (event) => event.key === 'Escape' && onClose()
@@ -76,7 +78,7 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onS
   const save = async () => {
     setError('')
     setTip('')
-    if (!detail) {
+    if (!canAdjust) {
       setError(t('该员工当天没有值班记录，不能调整工资'))
       return
     }
@@ -161,12 +163,17 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onS
             <input type="date" value={date} onChange={(event) => { setDate(event.target.value); setTip('') }} className="input w-full" />
           </div>
 
-          {!detail ? (
+          {!detail && !canAdjustWithoutDuty ? (
             <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-600">
               {t('该员工当天没有值班记录，不能调整工资')}
             </div>
           ) : (
             <>
+              {!detail && canAdjustWithoutDuty && (
+                <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-xs font-medium leading-5 text-violet-700">
+                  {t('当天无值班记录：Developer 可直接设定最终工资，自动工资按 ¥0.00 计算')}
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-xl bg-slate-50 px-3 py-2.5">
                   <p className="text-[10px] text-slate-400">{t('自动工资')}</p>
@@ -215,7 +222,7 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, onClose, onS
               {t('恢复自动计算')}
             </button>
           )}
-          <button onClick={save} disabled={busy || !detail} className="ml-auto inline-flex min-w-32 items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50">
+          <button onClick={save} disabled={busy || !canAdjust} className="ml-auto inline-flex min-w-32 items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             {t(current ? '更新调整' : '确认调整')}
           </button>

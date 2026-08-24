@@ -513,8 +513,7 @@ function monthPayAdjustmentSummary(name, monthKey) {
   for (const row of rows) {
     const date = String(row.date || '')
     const automatic = automaticEmployeeDayStatus(date.slice(0, 7), date.slice(5), name)
-    if (!automatic) continue
-    const applied = applyDailyPayAdjustment(name, date, automatic.pay)
+    const applied = applyDailyPayAdjustment(name, date, automatic?.pay || 0)
     delta += applied.salaryAdjustment
     details.push({ date, ...applied })
   }
@@ -575,7 +574,7 @@ export function employeeList(storeKey, monthKey = null) {
         const pr = payroll.get(e.name)
         const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey) : 0
         const automaticSalary = pr ? Math.round((pr.salary + bigBonus) * 100) / 100 : 0
-        const adjustments = pr ? monthPayAdjustmentSummary(e.name, monthKey) : { delta: 0, count: 0, details: [] }
+        const adjustments = monthPayAdjustmentSummary(e.name, monthKey)
         return {
           ...e,
           workedDays: pr ? pr.workedDays : 0,
@@ -628,7 +627,19 @@ export function employeeList(storeKey, monthKey = null) {
           merged.set(st.name, { ...info, ...st, local: true })
         }
       }
-      list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+      list = [...merged.values()]
+        .filter((e) => storeKey === 'all' || e.storeKey === storeKey)
+        .map((e) => {
+          const adjustments = monthPayAdjustmentSummary(e.name, monthKey)
+          const automaticSalary = Number(e.salary) || 0
+          return {
+            ...e,
+            automaticSalary,
+            salaryAdjustment: adjustments.delta,
+            adjustmentCount: adjustments.count,
+            salary: Math.round((automaticSalary + adjustments.delta) * 100) / 100,
+          }
+        })
     }
   }
   return list
@@ -878,9 +889,15 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
 /** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。 */
 export function employeeDayStatus(monthKey, day, name) {
   const automatic = automaticEmployeeDayStatus(monthKey, day, name)
-  if (!automatic) return null
-  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automatic.pay)
-  return { ...automatic, ...applied }
+  const date = fullDateOf(monthKey, day)
+  const adjustment = dailyPayAdjustmentOn(name, date)
+  if (!automatic && !adjustment) return null
+  const base = automatic || { inc: 0, ord: 0, stores: [], hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, pay: 0 }
+  return {
+    ...base,
+    adjustmentOnly: !automatic,
+    ...applyDailyPayOverride(base.pay, adjustment),
+  }
 }
 
 /** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载 */
@@ -940,7 +957,17 @@ export function employeeDailyPayDetail(monthKey, day, name) {
     commission += noPay ? 0 : daily.commission
     transferSubsidy += noPay ? 0 : daily.transferSubsidy
   }
-  if (rows.length === 0) return null
+  if (rows.length === 0) {
+    const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day))
+    if (!adjustment) return null
+    return {
+      rows: [],
+      totals: {
+        inc: 0, ord: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
+        ...applyDailyPayOverride(0, adjustment),
+      },
+    }
+  }
   let assignedCents = 0
   for (const row of rows) {
     const c = bonusByStore.get(row.storeKey) || 0
@@ -998,6 +1025,7 @@ export function employeeDailyPayDetail(monthKey, day, name) {
 
 /** 员工在指定日期区间（如自然周）的汇总薪酬 */
 export function employeeWeekStatus(monthKey, dateList, name) {
+  let includedDays = 0
   let workedDays = 0
   let hours = 0
   let basePay = 0
@@ -1015,7 +1043,8 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     // 自然周可能跨月（如 8.31-9.6），按每个日期的真实月份查业绩
     const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name)
     if (!st) continue
-    workedDays += 1
+    includedDays += 1
+    if (!st.adjustmentOnly) workedDays += 1
     hours += st.hours
     basePay += st.basePay
     commission += st.commission
@@ -1028,7 +1057,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
     ord += st.ord
     ;(st.stores || []).forEach((s) => stores.add(s))
   }
-  if (workedDays === 0) return null
+  if (includedDays === 0) return null
   const r2 = (v) => Math.round(v * 100) / 100
   return {
     workedDays,

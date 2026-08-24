@@ -9,6 +9,7 @@ import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
 import {
   canAccessTransferStore,
+  canManageAccounts,
   canManageTransferStore,
   hasInventoryTransferAll,
   isSuperUser,
@@ -1465,7 +1466,10 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
 
   const duties = await prisma.dailyEntry.findMany({ where: { date: d }, select: { staffNames: true } })
   const hasDuty = duties.some((entry) => Array.isArray(entry.staffNames) && entry.staffNames.includes(name))
-  if (!hasDuty) throw bad('该员工当天没有可识别的值班记录，无法调整工资', 409)
+  if (!hasDuty && !canManageAccounts(req.user)) {
+    throw bad('该员工当天没有可识别的值班记录，无法调整工资', 409)
+  }
+  if (!hasDuty && autoCents !== 0) throw bad('无值班记录时自动工资必须为 0', 409)
 
   const key = { staffName: name, date: d }
   const existing = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: key } })
