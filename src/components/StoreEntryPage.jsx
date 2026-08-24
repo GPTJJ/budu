@@ -117,7 +117,10 @@ export default function StoreEntryPage({ user, onBack }) {
   const canEditSales = source === 'manual' || (source === 'hybrid' && isManager)
   const canEditStaff = !confirmed || isManager
 
-  const allEmployees = useMemo(() => [...employeeList('all')].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')), [])
+  const allEmployees = useMemo(
+    () => [...employeeList('all')].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+    [version],
+  )
 
   const loadOverview = async () => {
     setLoadingOverview((current) => current || !overviewRef.current)

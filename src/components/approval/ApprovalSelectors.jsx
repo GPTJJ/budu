@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronRight, Search } from 'lucide-react'
 import { employeeList, storeName } from '../../utils/selectors'
 import { api } from '../../utils/api'
+import { onUserDataUpdated } from '../../utils/userData'
 
 /** 通用底部弹出容器：半透明遮罩 + 取消/确定 + 安全区 */
 export function BottomSheet({ open, title, onClose, onConfirm, confirmDisabled, children }) {
@@ -78,7 +79,12 @@ export function OptionSheet({ open, title, options, value, onChange, onClose }) 
 export function EmployeeSheet({ open, title, value, onChange, onClose }) {
   const [draft, setDraft] = useState(value)
   const [q, setQ] = useState('')
-  const employees = useMemo(() => employeeList('all', null), [])
+  const [dataVersion, setDataVersion] = useState(0)
+  useEffect(
+    () => onUserDataUpdated(() => setDataVersion((current) => current + 1)),
+    [],
+  )
+  const employees = useMemo(() => employeeList('all', null), [dataVersion])
   useEffect(() => {
     if (open) {
       setDraft(value)

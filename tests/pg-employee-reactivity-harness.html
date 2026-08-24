@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BUDU PG Employee Reactivity Test</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <script type="module">
+      import React, { useEffect, useState } from 'react'
+      import { createRoot } from 'react-dom/client'
+      import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
+      import { EmployeeSheet } from '/src/components/approval/ApprovalSelectors.jsx'
+      import { loadUserData, seedCachedDataForTest } from '/src/utils/userData.js'
+      import '/src/index.css'
+
+      window.__staffRows = []
+      window.__fetchCalls = []
+      window.__employeeSheetMounts = 0
+      window.__employeeSheetUnmounts = 0
+
+      const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      window.fetch = async (url, options = {}) => {
+        const path = String(url)
+        window.__fetchCalls.push({ path, method: options.method || 'GET' })
+        if (path === '/api/userdata') return json({ analysis: {}, productImages: {} })
+        if (path === '/api/v2/staff-list') return json({ rows: window.__staffRows })
+        if (path === '/api/v2/stores') {
+          return json({ rows: [
+            { key: 'guanshe', name: '北京官舍店' },
+            { key: 'chaowai', name: '北京朝外店' },
+          ] })
+        }
+        if (path.startsWith('/api/v2/daily-entry/overview')) {
+          return json({
+            salesDataSource: 'manual',
+            salesDataStatus: 'waiting_input',
+            entry: null,
+            pos: null,
+            staff: [],
+          })
+        }
+        if (path.startsWith('/api/v2/')) return json({ rows: [] })
+        return json({ error: `unexpected request: ${path}` }, 404)
+      }
+
+      seedCachedDataForTest({ staff: [], stores: [], entries: {} })
+      window.__publishStaff = async (rows) => {
+        window.__staffRows = rows
+        await loadUserData({ userId: 'reactivity-test-user' })
+      }
+
+      function EmployeeProbe() {
+        useEffect(() => {
+          window.__employeeSheetMounts += 1
+          return () => { window.__employeeSheetUnmounts += 1 }
+        }, [])
+        return React.createElement(EmployeeSheet, {
+          open: true,
+          title: '选择员工',
+          value: '',
+          onChange: () => {},
+          onClose: () => {},
+        })
+      }
+
+      function EmployeeHarness() {
+        const [mounted, setMounted] = useState(true)
+        useEffect(() => {
+          window.__unmountEmployeeSheet = () => setMounted(false)
+        }, [])
+        return mounted ? React.createElement(EmployeeProbe) : null
+      }
+
+      const mode = new URLSearchParams(location.search).get('mode')
+      const element = mode === 'employee'
+        ? React.createElement(EmployeeHarness)
+        : React.createElement(StoreEntryPage, {
+            user: { id: 'dev-1', username: 'developer', role: 'developer', storeKeys: [] },
+            onBack: () => {},
+          })
+      createRoot(document.getElementById('root')).render(element)
+    </script>
+  </body>
+</html>
