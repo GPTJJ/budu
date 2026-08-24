@@ -262,7 +262,7 @@ function SensitiveNumber({ masked, revealed, onReveal, canReveal, revealTitle, r
 
 // ---------------- 主页面 ----------------
 
-export default function EmployeeProfilePage({ user, onBack, initialQuery = '' }) {
+export default function EmployeeProfilePage({ user, onBack, initialQuery = '', initialId = '' }) {
   const canEdit = ['developer', 'admin', 'finance'].includes(user?.role)
   const canRevealIdentity = ['developer', 'admin'].includes(user?.role)
   const canRevealBank = ['developer', 'admin', 'finance'].includes(user?.role)
@@ -272,9 +272,9 @@ export default function EmployeeProfilePage({ user, onBack, initialQuery = '' })
   const [q, setQ] = useState(initialQuery)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(initialId || '')
   // 跳转直达详情只触发一次：返回列表后不再因 initialQuery 自动跳回
-  const [autoOpened, setAutoOpened] = useState(false)
+  const [autoOpened, setAutoOpened] = useState(Boolean(initialId))
 
   const loadList = useCallback(async (query = q) => {
     setLoading(true)
@@ -292,6 +292,12 @@ export default function EmployeeProfilePage({ user, onBack, initialQuery = '' })
 
   useEffect(() => {
     if (!hasModule) return
+    // Gate 7：已带稳定 Employee.id 时无需搜索，直接渲染对应档案；否则保持姓名/编号搜索
+    if (initialId) {
+      setSelectedId(initialId)
+      setAutoOpened(true)
+      return undefined
+    }
     loadList(initialQuery)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasModule])

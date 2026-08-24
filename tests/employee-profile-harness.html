@@ -9,6 +9,7 @@
 
     const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
     const INITIAL = new URLSearchParams(location.search).get('initial') || ''
+    const INITIAL_ID = new URLSearchParams(location.search).get('initialId') || ''
 
     const USER = {
       developer: { id: 'u-dev', username: 'budu', role: 'developer' },
@@ -93,6 +94,7 @@
         user: USER,
         onBack: () => {},
         initialQuery: INITIAL,
+        initialId: INITIAL_ID,
       }),
     )
   </script></body>

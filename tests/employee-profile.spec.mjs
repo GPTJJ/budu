@@ -135,3 +135,13 @@ test('开发者可发起离职操作（离职 ≠ 删除：确认弹窗提示档
   await page.getByRole('button', { name: '确认离职' }).click()
   await expect(page.getByText(/已离职（履历已记录）/)).toBeVisible()
 })
+
+test('Gate 7 D: 带 Employee.id 跳转直达正确档案（不按姓名搜索命中）', async ({ page }) => {
+  await page.goto('/tests/employee-profile-harness.html?mode=developer&initialId=emp-test-1')
+  // 直接进入指定员工详情（档案详情标题 + 基本信息 Tab）
+  await expect(page.getByText(/档案详情/)).toBeVisible()
+  await expect(page.getByRole('button', { name: '基本信息' })).toBeVisible()
+  await expect(page.getByText(/隋晓/).first()).toBeVisible()
+  // 列表搜索框不应出现（未走姓名搜索）
+  await expect(page.getByPlaceholder('搜索姓名 / 员工编号 / 手机号')).toHaveCount(0)
+})

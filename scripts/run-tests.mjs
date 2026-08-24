@@ -68,6 +68,7 @@ const DIRECT_SUITE = [
   'test-role-module-api.mjs',       // Auth / 角色 / 模块权限 API（本地起服务）→ critical
   'test-pg-account-load-db-isolation.mjs', // Gate 4：PG 账号路由不受 legacy loadDb 故障阻塞 → critical
   'test-daily-store-staff-employee-identity.mjs', // Gate 6：DailyStoreStaff 稳定 Employee.id + legacy 兼容 → critical
+  'test-current-directory-identity.mjs', // Gate 7：当前员工目录 Employee.id 身份——重名并存/定向离职不误伤 → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -78,6 +79,7 @@ const CRITICAL_DIRECT = [
   'test-role-module-api.mjs',
   'test-pg-account-load-db-isolation.mjs',
   'test-daily-store-staff-employee-identity.mjs',
+  'test-current-directory-identity.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

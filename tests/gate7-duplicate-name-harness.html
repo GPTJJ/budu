@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 7 Duplicate Name Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest, onUserDataUpdated } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    // 测试窗口：记录离职请求与缓存更新
+    window.__resignCalls = []
+    window.__origFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const u = String(url)
+      if (u.includes('/api/v2/employees/') && u.endsWith('/status-change')) {
+        window.__resignCalls.push({ url: u, body: JSON.parse(opts.body || '{}') })
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (u.includes('/api/auth/verify-second-password')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
+        const staff = window.__staff || []
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, rows: staff }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      return window.__origFetch(url, opts)
+    }
+    window.__setStaff = (staff) => {
+      window.__staff = staff
+      seedCachedDataForTest({
+        entries: {},
+        staff,
+        removedStaff: [],
+        stores: [
+          { key: 'guanshe', name: '北京官舍店' },
+          { key: 'chaowai', name: '北京朝外店' },
+        ],
+        schedules: {},
+        products: [],
+        inventoryRequests: [],
+        inventory: [],
+        analysis: {},
+        productImages: {},
+        bigBonuses: [],
+        dailyPayAdjustments: [],
+        posDaily: [],
+        posProductSales: [],
+      })
+      // 触发已挂载 consumer 刷新（与 loadUserData 完成后的通知一致）
+      for (const fn of window.__dataListeners || []) fn()
+    }
+    // 收集 onUserDataUpdated 订阅者（与 userData 模块内部 Set 保持一致测试钩子）
+    window.__dataListeners = []
+    const origOn = onUserDataUpdated
+    // 直接调用模块内的订阅不影响测试；此处记录以便手动触发
+    window.__origOn = origOn
+
+    const params = new URLSearchParams(location.search)
+    const GATE7_STAFF = params.get('sameStore') === '1'
+      ? [
+          { id: 'emp-A', name: '李娜', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0201' },
+          { id: 'emp-B', name: '李娜', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0202' },
+        ]
+      : [
+          { id: 'emp-A', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0101' },
+          { id: 'emp-B', name: '张伟', storeKey: 'chaowai', storeName: '北京朝外店', type: 'parttime', employeeNo: 'BUDU-0102' },
+        ]
+    seedCachedDataForTest({
+      entries: {},
+      staff: GATE7_STAFF,
+      removedStaff: [],
+      stores: [
+        { key: 'guanshe', name: '北京官舍店' },
+        { key: 'chaowai', name: '北京朝外店' },
+      ],
+      schedules: {},
+      products: [],
+      inventoryRequests: [],
+      inventory: [],
+      analysis: {},
+      productImages: {},
+      bigBonuses: [],
+      dailyPayAdjustments: [],
+      posDaily: [],
+      posProductSales: [],
+    })
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true,
+          canManage: true,
+          onBack: () => {},
+          onOpenProfile: (name, id) => { window.__openedProfile = { name, id } },
+        }),
+      ),
+    )
+  </script></body>
+</html>

@@ -429,6 +429,19 @@ export function localStaffList() {
   return getStaff()
 }
 
+/**
+ * 当前员工目录（Gate 7）：PostgreSQL employees 的当前在册名单，
+ * 以 Employee.id 为稳定对象身份，不按姓名折叠——重名员工（跨店或同店）
+ * 各自保留独立条目。仅作当前目录展示/操作的数据源；
+ * 历史 payroll 聚合仍走 employeeList（按姓名快照，语义不变）。
+ */
+export function currentEmployeeDirectory(storeKey = 'all') {
+  const list = localStaffList()
+    .map((e) => ({ ...e, local: true }))
+    .filter((e) => isFixedStoreKey(e.storeKey))
+  return storeKey === 'all' ? list : list.filter((e) => e.storeKey === storeKey)
+}
+
 /** 保存员工名单（自动同步到服务端共享数据） */
 export function saveLocalStaffList(list) {
   return commitStaff(list)

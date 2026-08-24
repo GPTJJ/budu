@@ -343,6 +343,27 @@ export async function commitStaff(staff) {
   }
 }
 
+/**
+ * Gate 7：按 Employee.id 定向离职（不做全量名单替换）。
+ * 走既有员工档案端点 POST /v2/employees/:id/status-change（RESIGN），
+ * 只影响该员工，绝不因同名误伤其他员工；成功后在本地缓存中移除该条目。
+ * 历史业绩/工资条等按姓名快照的数据不受影响。
+ */
+export async function resignEmployeeById(employeeId) {
+  const id = String(employeeId || '').trim()
+  if (!id) throw new Error('员工 ID 不正确')
+  try {
+    await api(`/v2/employees/${encodeURIComponent(id)}/status-change`, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'RESIGN', resignReason: '人员管理删除' }),
+    })
+  } catch (e) {
+    throw new Error(`员工离职操作失败：${e.message}`)
+  }
+  getUserData().staff = (getUserData().staff || []).filter((e) => String(e.id || '') !== id)
+  notifyUserDataUpdated()
+}
+
 export function getRemovedStaff() {
   return Array.isArray(getUserData().removedStaff) ? getUserData().removedStaff : []
 }

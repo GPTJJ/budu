@@ -15,11 +15,12 @@ import {
   employeeWeekStatus,
   hasLocalEntry,
   localStaffList,
-  removeStaff,
+  currentEmployeeDirectory,
   saveLocalStaffList,
   allStores,
   storeName,
 } from '../utils/selectors'
+import { resignEmployeeById } from '../utils/userData'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { t } from '../utils/text'
@@ -80,8 +81,10 @@ function AddStaffModal({ onClose, onSave }) {
       setError(t('请输入员工姓名'))
       return
     }
-    if (employeeList('all').some((e) => e.name === trimmed)) {
-      setError(t('该员工已存在，请勿重复添加'))
+    if (employeeList('all').some((e) => e.name === trimmed && e.storeKey === storeKey)) {
+      // Gate 7：仅拒绝同店同名（服务端 PUT /staff-list 按 name+storeKey findFirst，同店同名会更新既有行而非新建）；
+      // 跨店同名允许——Employee.id 才是稳定身份。
+      setError(t('该门店已有同名员工，请勿重复添加'))
       return
     }
     onSave({
@@ -521,7 +524,14 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const weekLabel = weekDays ? `${weekStart} ~ ${weekDays[6].date}` : ''
 
-  const all = hasData ? employeeList('all', month) : []
+  // Gate 7：PersonnelPage 当前目录卡片 = PostgreSQL Employee 当前在册记录（均有 Employee.id）。
+  // 工资/绩效等展示字段按姓名快照合并（payroll 历史语义）——仅展示数据，不作为身份；
+  // 历史 payroll 合成员工（当前目录之外、无 Employee.id）一律不出现在当前人员目录，
+  // 其历史行为保留在 payroll 域（employeeList/payroll 计算），此处不渲染为员工卡片。
+  const directory = currentEmployeeDirectory('all')
+  const payrollMerged = hasData ? employeeList('all', month) : []
+  const payrollByName = new Map(payrollMerged.map((e) => [e.name, e]))
+  const all = hasData ? directory.map((d) => ({ ...(payrollByName.get(d.name) || {}), ...d })) : []
   const scopedAll =
     user?.role === 'staff' && user.staffKey
       ? all.filter((e) => `${e.storeKey}::${e.name}` === user.staffKey)
@@ -543,9 +553,15 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     }
   }
 
-  const handleDeleteStaff = async (name) => {
+  const handleDeleteStaff = async (emp) => {
+    // Gate 7：当前目录员工卡片必须携带 Employee.id；删除/离职只按 id 定向，
+    // 绝不回退到按姓名移除（removeStaff(name) 会误伤同名员工）。
+    if (!emp?.id) {
+      setError(t('员工数据不完整（缺少稳定 ID），无法删除，请刷新后重试'))
+      return
+    }
     try {
-      await removeStaff(name)
+      await resignEmployeeById(emp.id)
       setStaffVersion((v) => v + 1)
     } catch (e) {
       setError(t('员工名单保存失败（PostgreSQL 不可用），请重试'))
@@ -708,7 +724,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                 user?.role !== 'public' && (user?.role !== 'staff' || user.staffKey === `${emp.storeKey}::${emp.name}`)
               return (
                 <div
-                  key={emp.name}
+                  key={emp.id}
                   onClick={() => setDetailEmp(emp)}
                   className="card relative cursor-pointer p-5 transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
                 >
@@ -716,7 +732,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        setPendingDelete(emp.name)
+                        setPendingDelete(emp)
                       }}
                       className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                       title={t('删除该员工')}
@@ -728,7 +744,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        onOpenProfile(emp.name)
+                        onOpenProfile(emp.name, emp.id)
                       }}
                       className="absolute right-11 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-budu-50 hover:text-budu-600"
                       title={t('员工档案')}
@@ -747,6 +763,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="truncate text-[15px] font-bold text-slate-800">{emp.name}</p>
+                        {emp.employeeNo && (
+                          <span className="shrink-0 rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                            {emp.employeeNo}
+                          </span>
+                        )}
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                             emp.type === 'fulltime'
@@ -909,7 +930,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onSave={handleAddStaff} />}
       {pendingDelete && !showSecondPwd && (
         <ConfirmDeleteModal
-          name={pendingDelete}
+          name={pendingDelete.name}
           onClose={() => setPendingDelete(null)}
           onConfirm={() => {
             if (canDelete) setShowSecondPwd(true)
@@ -922,7 +943,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       )}
       {pendingDelete && showSecondPwd && (
         <SecondPasswordModal
-          name={pendingDelete}
+          name={pendingDelete.name}
           onClose={() => {
             setShowSecondPwd(false)
             setPendingDelete(null)

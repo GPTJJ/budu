@@ -83,14 +83,17 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
       : firstAccessibleModule(user)
   ))
   const [pageKey, setPageKey] = useState(0)
-  // 从人员管理跳转员工档案时的初始搜索目标（员工姓名）
+  // 从人员管理跳转员工档案时的初始搜索目标（员工姓名/员工编号）
   const [profileTarget, setProfileTarget] = useState('')
+  // Gate 7：有稳定 Employee.id 时直接以 id 打开档案（重名员工不再按姓名命中错误档案）
+  const [profileTargetId, setProfileTargetId] = useState('')
   const [pendingPosOrder, setPendingPosOrder] = useState(null)
   // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
   const viewStackRef = useRef([])
 
-  const openEmployeeProfile = (name) => {
+  const openEmployeeProfile = (name, id) => {
     setProfileTarget(name || '')
+    setProfileTargetId(id || '')
     handleNavigate('employee-profile')
   }
 
@@ -323,6 +326,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   user={user}
                   onBack={returnToOverview}
                   initialQuery={profileTarget}
+                  initialId={profileTargetId}
                 />
               ) : isPayrollView && hasModuleAccess(user, 'staff-payroll') ? (
                 <PayrollPage user={user} onBack={returnToOverview} onOpenProfile={openEmployeeProfile} />
