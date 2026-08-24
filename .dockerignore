@@ -3,6 +3,7 @@ dist
 tools
 server/data
 backups
+deploy-archive
 docs
 deploy/certs
 deploy/wechat-secrets
