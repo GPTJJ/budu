@@ -44,6 +44,7 @@ const NODE_TEST_SUITE = [
   'test-camera-scanner.mjs',        // 扫码（单元）
   'test-swipe-back.mjs',            // 滑动返回（单元）
   'test-system-slimming.mjs',       // 系统瘦身（单元）
+  'test-store-directory.mjs',       // 固定四店目录与幽灵门店回归保护
   'test-item-category.mjs',         // 商品分类（单元）
   'test-ocr-map.mjs',               // OCR 映射（单元）
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）

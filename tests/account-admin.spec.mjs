@@ -1,4 +1,4 @@
-// 账号管理绑定员工下拉 E2E：朝外店员工 + 多店支援（multi）员工均可绑定
+// 账号管理绑定员工下拉 E2E：只显示所选固定门店员工
 import { expect, test } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
@@ -19,16 +19,16 @@ test('勾选朝外店后绑定下拉包含马婧欣（档案门店 chaowai）', 
   expect(opts.join('|')).toContain('史璐璐（北京朝外店）')
 })
 
-test('多店支援员工（陈荣梅）在勾选任意门店时可选', async ({ page }) => {
+test('已删除的多店支援员工不会重新出现在绑定列表', async ({ page }) => {
   // 勾选「北京朝外店」
   await page.locator('button', { hasText: '北京朝外店' }).first().click()
   await page.waitForTimeout(500)
   const opts = await page.locator('select').nth(1).locator('option').allInnerTexts()
-  expect(opts.join('|')).toContain('陈荣梅（多店支援）')
+  expect(opts.join('|')).not.toContain('陈荣梅')
+  expect(opts.join('|')).not.toContain('多店支援')
 })
 
-test('未勾选门店时绑定下拉只有占位与多店支援员工', async ({ page }) => {
+test('未勾选门店时绑定下拉只有占位', async ({ page }) => {
   const opts = await page.locator('select').nth(1).locator('option').allInnerTexts()
-  // 多店支援员工（multi）属于任意门店，未勾选门店时也可绑定
-  expect(opts.join('|')).toBe('请选择员工|陈荣梅（多店支援）')
+  expect(opts.join('|')).toBe('请选择员工')
 })

@@ -53,15 +53,18 @@ test('DA-2.2: 员工名单权威 = PG employees（前端 /v2/staff-list，绑定
   assert.ok(!/loadDb\(\)\.users/.test(ep), 'staff-list 路由不读 KV users')
 })
 
-test('DA-2.3: 门店目录权威 = PG /v2/stores（SettingsPage 走 PG，基础门店防删）', () => {
+test('DA-2.3: 门店目录固定为四店，PG 只返回白名单且前端无增删入口', () => {
   const userData = read('src/utils/userData.js')
   const settings = read('src/components/SettingsPage.jsx')
   const v2 = read('server/v2.js')
+  const directory = read('shared/storeDirectory.js')
   assert.ok(userData.includes("api('/v2/stores')"), '前端从 PG 拉取门店目录')
-  assert.ok(settings.includes("api('/v2/stores'") && settings.includes("api(`/v2/stores/"), 'SettingsPage 增删门店走 PG')
+  assert.ok(!settings.includes("method: 'POST'") || !settings.includes("api('/v2/stores'"), 'SettingsPage 无新增门店入口')
+  assert.ok(!settings.includes('门店管理') && !settings.includes('新增门店'), 'SettingsPage 不渲染门店管理 UI')
   assert.ok(v2.includes("v2Router.get('/stores'") && v2.includes("v2Router.post('/stores'") && v2.includes("v2Router.delete('/stores/:key'"), '服务端门店目录路由存在')
-  assert.match(v2, /基础门店不可删除/, '基础门店受防删保护')
-  assert.match(v2, /已被业务数据引用，不可删除/, '被引用门店受防删保护')
+  assert.match(v2, /门店目录固定为通盈、官舍、朝外、西单，禁止新增/, '新增门店 API 显式拒绝')
+  assert.match(v2, /固定门店不可删除/, '固定门店受防删保护')
+  assert.deepEqual([...directory.matchAll(/key: '([^']+)'/g)].map((match) => match[1]), ['tongying', 'guanshe', 'chaowai', 'xidan'])
 })
 
 test('DA-2.4: 绑定写入稳定 employeeId（服务端由 staffKey 解析，User.employee_id 持久化）', () => {

@@ -22,6 +22,13 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
+# 北京生产已使用独立权威 PostgreSQL 网络。旧 docker compose 流程会把 api 接到
+# compose 自带 postgres，曾导致人员/门店数据错乱；在权威拓扑自动化完成前硬阻断。
+if [ "$ENV" = "prod" ]; then
+  echo "==> 已阻断：生产环境必须使用 authority-aware green deployment，禁止 docker compose 直连生产"
+  exit 1
+fi
+
 wait_healthy() {
   local tries="$1"
   for i in $(seq 1 "$tries"); do

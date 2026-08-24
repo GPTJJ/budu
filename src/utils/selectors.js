@@ -1,5 +1,5 @@
 import { BASE_STORES } from '../data/baseStores.js'
-import { BASE_EMPLOYEES } from '../data/baseEmployees.js'
+import { isFixedStoreKey } from '../../shared/storeDirectory.js'
 import {
   commitEntries,
   commitStaff,
@@ -64,13 +64,14 @@ function applyDailyPayAdjustment(name, dateStr, automaticPay) {
 }
 
 export function customStores() {
-  return getStores()
+  return getStores().filter((store) => isFixedStoreKey(store.key))
 }
 
 export function allStores() {
-  // Data Authority DA-2.3：门店目录权威 = PostgreSQL（cached.stores 由 /v2/stores 填充）；
-  // BASE_STORES 仅作同步渲染种子，PG 同 key 覆盖。
-  const pg = Array.isArray(getUserData().stores) ? getUserData().stores : []
+  // 门店目录只允许固定四店；PG 可覆盖展示字段，但不能引入新 key。
+  const pg = Array.isArray(getUserData().stores)
+    ? getUserData().stores.filter((store) => isFixedStoreKey(store.key))
+    : []
   return [...new Map([...BASE_STORES, ...pg].map((s) => [s.key, s])).values()]
 }
 
@@ -80,7 +81,6 @@ export function allStoreKeys() {
 
 export function storeName(key) {
   if (key === 'all') return '全部门店'
-  if (key === 'multi') return '多店支援'
   const s = allStores().find((x) => x.key === key)
   return s ? s.name : key
 }
@@ -490,7 +490,7 @@ export function entryMonthPayroll(monthKey) {
     const freq = {}
     for (const k of rec.stores) freq[k] = (freq[k] || 0) + 1
     const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
-    rec.storeKey = top ? top[0] : 'multi'
+    rec.storeKey = top && isFixedStoreKey(top[0]) ? top[0] : ''
     rec.storeName = storeName(rec.storeKey)
     delete rec.stores
   }
@@ -527,16 +527,11 @@ function monthPayAdjustmentSummary(name, monthKey) {
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
   const removed = new Set(getRemovedStaff())
-  const source = (
-    monthKey != null
-      ? analysisEmployeeMonthly(monthKey) || BASE_EMPLOYEES
-      : analysisEmployees() || BASE_EMPLOYEES
-  ).filter((e) => !removed.has(e.name))
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
-    .filter((e) => !removed.has(e.name))
-  // 云端同名员工覆盖轻量兜底主档，避免恢复后与后来维护的员工重复。
-  const base = [...new Map([...source, ...local].map((e) => [e.name, e])).values()]
+    .filter((e) => !removed.has(e.name) && isFixedStoreKey(e.storeKey))
+  // 当前人员目录只读取 PostgreSQL employees；历史月份仍可由当月业绩记录补出姓名。
+  const base = [...new Map(local.map((e) => [e.name, e])).values()]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
   if (monthKey != null) {
     const payroll = entryMonthPayroll(monthKey)
@@ -600,7 +595,7 @@ export function employeeList(storeKey, monthKey = null) {
         const freq = {}
         for (const k of st.stores) freq[k] = (freq[k] || 0) + 1
         const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
-        st.storeKey = top ? top[0] : st.storeKey || 'multi'
+        st.storeKey = top && isFixedStoreKey(top[0]) ? top[0] : (isFixedStoreKey(st.storeKey) ? st.storeKey : '')
         st.storeName = storeName(st.storeKey)
         delete st.stores
       }
@@ -711,8 +706,8 @@ export function entryEmployeePerformance(storeKey = 'all', monthKey = null, day 
       return {
         ...e,
         workedDays: hasPayroll ? (pr ? pr.workedDays : 0) : e.workedDays,
-        storeKey: pr ? pr.storeKey : info ? info.storeKey : 'multi',
-        storeName: pr ? pr.storeName : info ? info.storeName : '多店支援',
+        storeKey: pr ? pr.storeKey : info ? info.storeKey : '',
+        storeName: pr ? pr.storeName : info ? info.storeName : '',
         salary,
         hours,
         commission: periodPay ? periodPay.commission : hasPayroll ? (pr ? pr.commission : 0) : 0,

@@ -1,13 +1,9 @@
-/** 内置门店的中文名称（与前端静态报表 STORES 保持一致） */
-export const STATIC_STORE_NAMES = {
-  tongying: '北京通盈中心店',
-  xidan: '北京西单店',
-  chaowai: '北京朝外店',
-  guanshe: '北京官舍店',
-  multi: '多店支援',
-}
+import { FIXED_STORES, fixedStoreName } from '../shared/storeDirectory.js'
+
+/** 固定四店中文名称；禁止在服务端维护第二份门店目录。 */
+export const STATIC_STORE_NAMES = Object.fromEntries(FIXED_STORES.map((store) => [store.key, store.name]))
 
 export function resolveStoreName(key, fallback = '') {
   if (!key) return fallback
-  return STATIC_STORE_NAMES[key] || fallback || key
+  return fixedStoreName(key, fallback || key)
 }

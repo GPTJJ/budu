@@ -8,13 +8,12 @@
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
-    // 共享数据镜像：马婧欣@chaowai（档案门店）、陈荣梅@multi（多店支援）、史璐璐@chaowai
+    // PostgreSQL 员工目录镜像：仅固定门店员工。
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
       entries: {},
       staff: [
         { name: '马婧欣', type: 'parttime', storeKey: 'chaowai' },
         { name: '史璐璐', type: 'parttime', storeKey: 'chaowai' },
-        { name: '陈荣梅', type: 'fulltime', storeKey: 'multi' },
       ],
       removedStaff: [],
       stores: [{ key: 'chaowai', name: '北京朝外店' }],

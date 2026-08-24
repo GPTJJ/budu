@@ -76,7 +76,7 @@ function AddStaffModal({ onClose, onSave }) {
 
   const handleSave = () => {
     const trimmed = name.trim()
-    const storeLabel = storeKey === 'multi' ? '多店支援' : storeName(storeKey)
+    const storeLabel = storeName(storeKey)
     if (!trimmed) {
       setError(t('请输入员工姓名'))
       return
@@ -168,7 +168,6 @@ function AddStaffModal({ onClose, onSave }) {
                   {s.name}
                 </option>
               ))}
-              <option value="multi">{t('多店支援')}</option>
             </select>
           </div>
 

@@ -31,17 +31,8 @@ test('固定中文文本适配层保留动态占位能力', async () => {
   assert.equal(t('没有占位符'), '没有占位符')
 })
 
-test('员工主档独立于历史报表并保留原全职兼职设置', async () => {
-  const { BASE_EMPLOYEES } = await import('../src/data/baseEmployees.js')
-  assert.equal(BASE_EMPLOYEES.length, 10)
-  assert.deepEqual(
-    BASE_EMPLOYEES.filter((row) => row.type === 'fulltime').map((row) => row.name),
-    ['隋晓', '叶芷辰', '李飞燕'],
-  )
-  assert.deepEqual(
-    BASE_EMPLOYEES.filter((row) => row.type === 'parttime').map((row) => row.name),
-    ['左可翠', '陈文慧', '舒敏', '史璐璐', '马婧欣', '龚艺锦', '王红云'],
-  )
+test('员工主档只来自 PostgreSQL，不保留前端静态人员副本', () => {
+  assert.equal(existsSync(resolve(root, 'src/data/baseEmployees.js')), false)
 })
 
 test('月份列表只从云端分析、每日录入和 POS 汇总派生', async () => {
@@ -62,8 +53,7 @@ test('月份列表只从云端分析、每日录入和 POS 汇总派生', async 
     const { allMonths, employeeList } = await server.ssrLoadModule('/src/utils/selectors.js')
     assert.deepEqual(allMonths().map((row) => row.key), ['2026-09', '2026-10', '2026-11'])
     const staff = employeeList('all', '2026-10')
-    assert.equal(staff.filter((row) => row.type === 'fulltime').length, 3)
-    assert.equal(staff.filter((row) => row.type === 'parttime').length, 7)
+    assert.deepEqual(staff, [])
   } finally {
     await server.close()
   }

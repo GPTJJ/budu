@@ -81,9 +81,6 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
   const [picker, setPicker] = useState({ category: 'product', productName: '', quantity: '', note: '' })
   const [selectedNames, setSelectedNames] = useState([])
   const [picked, setPicked] = useState([])
-  const [tempStores, setTempStores] = useState([])
-  const [customSide, setCustomSide] = useState(null) // 'fromStoreKey' | 'storeKey' | null
-  const [customName, setCustomName] = useState('')
   const [suppliers, setSuppliers] = useState([])
   const [supplierId, setSupplierId] = useState('')
   const [expectedAt, setExpectedAt] = useState('')
@@ -165,10 +162,6 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     setError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
       setError(t('调出门店和调入门店不能相同'))
-      return
-    }
-    if (form.fromStoreKey === '__custom__' || form.storeKey === '__custom__') {
-      setError(t('请先完成自定义门店添加'))
       return
     }
     if (picked.length === 0) {
@@ -264,40 +257,13 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
     createdAt: new Date().toISOString(),
   })
 
-  const addCustomStore = (side) => {
-    setError('')
-    const name = customName.trim()
-    if (!name) {
-      setError(t('请输入门店名称'))
-      return
-    }
-    if ([...stores, ...tempStores].some((s) => s.name === name)) {
-      setError(t('该门店已存在'))
-      return
-    }
-    const key = `custom-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
-    const temp = { key, name }
-    setTempStores((list) => [...list, temp])
-    setForm((s) => ({
-      ...s,
-      [side]: key,
-      [side === 'fromStoreKey' ? 'fromStoreName' : 'storeName']: name,
-    }))
-    setCustomSide(null)
-    setCustomName('')
-    setSavedTip(t('已添加门店：{name}', { name }))
-    setTimeout(() => setSavedTip(''), 1800)
-  }
-
   const selectStore = (side, key) => {
-    const temp = tempStores.find((s) => s.key === key)
     const nameField = side === 'fromStoreKey' ? 'fromStoreName' : 'storeName'
     setForm((s) => ({
       ...s,
       [side]: key,
-      [nameField]: temp ? temp.name : '',
+      [nameField]: '',
     }))
-    setCustomSide(key === '__custom__' ? side : null)
   }
 
   const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
@@ -514,29 +480,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
                 onChange={(e) => selectStore('fromStoreKey', e.target.value)}
                 className={inputCls}
               >
-                {[...stores, ...tempStores].map((s) => (
+                {stores.map((s) => (
                   <option key={s.key} value={s.key}>
                     {s.name}
                   </option>
                 ))}
-                <option value="__custom__">＋ {t('自定义门店')}</option>
               </select>
-              {customSide === 'fromStoreKey' && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    placeholder={t('输入新门店名称')}
-                    className={inputCls}
-                  />
-                  <button
-                    onClick={() => addCustomStore('fromStoreKey')}
-                    className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
-                  >
-                    {t('添加门店')}
-                  </button>
-                </div>
-              )}
             </div>
           )}
           <div>
@@ -548,29 +497,12 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
               onChange={(e) => selectStore('storeKey', e.target.value)}
               className={inputCls}
             >
-              {[...stores, ...tempStores].map((s) => (
+              {stores.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.name}
                 </option>
               ))}
-              <option value="__custom__">＋ {t('自定义门店')}</option>
             </select>
-            {customSide === 'storeKey' && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  placeholder={t('输入新门店名称')}
-                  className={inputCls}
-                />
-                <button
-                  onClick={() => addCustomStore('storeKey')}
-                  className="shrink-0 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-budu-600"
-                >
-                  {t('添加门店')}
-                </button>
-              </div>
-            )}
           </div>
         </div>
 

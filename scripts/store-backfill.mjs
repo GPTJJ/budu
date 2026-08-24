@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs'
 import { PrismaClient } from '@prisma/client'
+import { FIXED_STORES, isFixedStoreKey } from '../shared/storeDirectory.js'
 
 const args = process.argv.slice(2)
 const dbFile = args[args.indexOf('--db') + 1] || 'server/data/db.json'
@@ -22,13 +23,10 @@ if (!process.env.DATABASE_URL && !dryRun) {
 const prisma = new PrismaClient()
 const kv = JSON.parse(fs.readFileSync(dbFile, 'utf8'))
 const sources = [
-  ...(Array.isArray(kv.stores) ? kv.stores : []).map((s) => ({ key: s.key, name: s.name, district: s.district || '' })),
-  // 静态种子（BASE_STORES 与 KV 同 key 时 KV 优先）
-  { key: 'tongying', name: '北京通盈中心店', district: '朝阳区 · 三里屯' },
-  { key: 'guanshe', name: '北京官舍店', district: '朝阳区 · 亮马桥' },
-  { key: 'xidan', name: '北京西单店', district: '西城区 · 西单' },
-  // 虚拟门店（多店支援员工归属）
-  { key: 'multi', name: '多店支援', district: '' },
+  ...(Array.isArray(kv.stores) ? kv.stores : [])
+    .filter((store) => isFixedStoreKey(store.key))
+    .map((s) => ({ key: s.key, name: s.name, district: s.district || '' })),
+  ...FIXED_STORES,
 ]
 const merged = new Map()
 for (const s of sources) if (s.key && s.name) merged.set(s.key, s)

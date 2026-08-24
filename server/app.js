@@ -24,6 +24,7 @@ import { paymentCallbackRouter } from './payment-callbacks.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
+import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 import { startAssetReminderJob } from './asset-reminders.js'
 import { APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
 import * as Sentry from '@sentry/node'
@@ -544,7 +545,7 @@ export function createApp() {
       removedStaff: allowed([MODULE_KEYS.STAFF]) ? data.removedStaff : [],
       analysis: allowed([MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.FINANCE]) ? data.analysis : {},
       productImages: allowed([MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.STORE_POS]) ? data.productImages : {},
-      stores: data.stores || [],
+      stores: (data.stores || []).filter((store) => isFixedStoreKey(store.key)),
       schedules: allowed([MODULE_KEYS.STORE_SCHEDULE]) ? data.schedules : {},
       products: allowed([MODULE_KEYS.PRODUCT_CENTER]) ? data.products : [],
       inventoryRequests: allowed([MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ? data.inventoryRequests : [],
@@ -559,7 +560,7 @@ export function createApp() {
     const out = []
     for (const k of raw) {
       const key = String(k || '').trim()
-      if (!key || key.length > 30 || seen.has(key)) return null
+      if (!isFixedStoreKey(key) || seen.has(key)) return null
       seen.add(key)
       out.push(key)
     }
@@ -958,25 +959,9 @@ export function createApp() {
     res.json({ ok: true })
   })
 
-  // ---------- 自定义门店（仅追加，门店运营/开发者可用；不能改名/删除） ----------
+  // ---------- 门店目录固定为四店；旧接口仅保留显式拒绝，防止旧前端重新写入 ----------
   app.post('/api/stores', requireAuth, requireModule(MODULE_KEYS.SETTINGS), requireDeveloper, async (req, res) => {
-    const name = String(req.body.name || '').trim()
-    const district =
-      req.body.district === undefined || req.body.district === null
-        ? ''
-        : String(req.body.district).trim().slice(0, 50)
-    if (!name || name.length > 30) {
-      return res.status(400).json({ error: '门店名称需为 1-30 个字符' })
-    }
-    const db = await loadDb()
-    const stores = Array.isArray(db.stores) ? db.stores : []
-    if (stores.some((s) => s.name === name)) {
-      return res.status(409).json({ error: '该门店已存在' })
-    }
-    const store = { key: `store-${Date.now().toString(36)}`, name, district }
-    db.stores = [...stores, store]
-    await persist()
-    res.json({ store })
+    res.status(403).json({ error: '门店目录固定为通盈、官舍、朝外、西单，禁止新增' })
   })
 
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
@@ -1274,7 +1259,7 @@ export function createApp() {
     try {
       const db = await loadDb()
       const kvNames = new Map((Array.isArray(db.stores) ? db.stores : []).map((s) => [s.key, String(s.name || '')]))
-      const rows = await prisma.store.findMany()
+      const rows = await prisma.store.findMany({ where: { key: { in: FIXED_STORE_KEYS } } })
       let updated = 0
       for (const row of rows) {
         const name = resolveStoreName(row.key, kvNames.get(row.key) || '')

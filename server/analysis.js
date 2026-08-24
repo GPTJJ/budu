@@ -11,7 +11,6 @@ const NAME_MAP = {
   guanshe: '北京官舍店',
   xidan: '北京西单店',
   chaowai: '北京朝外店',
-  multi: '多店支援',
 }
 
 const SALARY_STORE_MAP = {
@@ -217,7 +216,7 @@ function loadSalary(wb) {
 
 function pickStore(emp) {
   const entries = Object.entries(emp.stores)
-  if (entries.length === 0) return 'multi'
+  if (entries.length === 0) return ''
   let best = entries[0][0]
   let bestCount = entries[0][1]
   for (const [s, c] of entries) {
@@ -226,7 +225,7 @@ function pickStore(emp) {
       bestCount = c
     }
   }
-  return SALARY_STORE_MAP[best] || 'multi'
+  return SALARY_STORE_MAP[best] || ''
 }
 
 function employeeOut(employees) {
@@ -237,7 +236,7 @@ function employeeOut(employees) {
         name: e.name,
         type: FULL_TIME.has(e.name) ? 'fulltime' : 'parttime',
         storeKey: sk,
-        storeName: NAME_MAP[sk] || '多店支援',
+        storeName: NAME_MAP[sk] || '',
         salary: round2(e.salary),
         baseHours: round1(e.baseHours),
         otHours: round1(e.otHours),

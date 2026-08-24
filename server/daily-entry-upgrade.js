@@ -4,6 +4,7 @@ import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { resolveStoreName } from './store-names.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
+import { isFixedStoreKey } from '../shared/storeDirectory.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -28,9 +29,10 @@ function canStore(user, storeId) {
 }
 
 async function ensureStore(key) {
+  if (!isFixedStoreKey(key)) throw httpError('门店不存在或已停用', 400)
   const existing = await prisma.store.findUnique({ where: { key } })
   if (existing) return existing
-  return prisma.store.create({ data: { key, name: resolveStoreName(key) || key, district: '' } })
+  return prisma.store.create({ data: { key, name: resolveStoreName(key), district: '' } })
 }
 
 function dateOnly(value) {

@@ -254,8 +254,7 @@ function CreateUserModal({ onClose, onCreated }) {
               <select value={form.staffKey} onChange={(e) => setForm((s) => ({ ...s, staffKey: e.target.value }))} className={inputCls}>
                 <option value="">{t('请选择员工')}</option>
                 {[...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
-                  // 绑定门店内员工 + 「多店支援（multi）」员工（支援员工属于任意门店，均可绑定）
-                  .filter((s) => form.storeKeys.includes(s.storeKey) || s.storeKey === 'multi')
+                  .filter((s) => form.storeKeys.includes(s.storeKey))
                   .map((s) => <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>{s.name}（{storeName(s.storeKey)}）</option>)}
               </select>
             </div>
@@ -351,8 +350,7 @@ function RoleBindingModal({ user, role, onClose, onSaved }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const staffOptions = [...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
-    // 绑定门店内员工 + 「多店支援（multi）」员工（支援员工属于任意门店，均可绑定）
-    .filter((s) => storeKeys.includes(s.storeKey) || s.storeKey === 'multi')
+    .filter((s) => storeKeys.includes(s.storeKey))
   const submit = async () => {
     setBusy(true)
     setError('')

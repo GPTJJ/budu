@@ -20,13 +20,19 @@ const SEED = {
     '2026-08|tongying|08': { inc: 8500, ord: 150, staff: ['叶芷辰', '李飞燕'] },
     '2026-08|guanshe|08-07': { inc: 0, ord: 0, staff: ['隋晓'] },
     '2026-08|xidan|10': { inc: 1200, ord: 30, staff: ['叶芷辰'] },
-    '2026-08|store-abc|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
+    '2026-08|chaowai|13': { inc: 1500, ord: 40, staff: ['左可翠'] },
   },
-  staff: [],
+  staff: [
+    { name: '叶芷辰', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+    { name: '李飞燕', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+    { name: '隋晓', type: 'fulltime', storeKey: 'guanshe', storeName: '北京官舍店' },
+    { name: '左可翠', type: 'parttime', storeKey: 'chaowai', storeName: '北京朝外店' },
+    { name: '马婧欣', type: 'parttime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+  ],
   removedStaff: [],
   analysis: {},
   productImages: {},
-  stores: [{ key: 'store-abc', name: '北京朝外店' }],
+  stores: [{ key: 'chaowai', name: '北京朝外店' }],
 }
 
 const server = await createServer({
@@ -76,7 +82,7 @@ check('employeeList 8 月：无录入员工薪酬归零', ma, {
 })
 
 const zuo = month.find((e) => e.name === '左可翠')
-check('employeeList 8 月：左可翠（新增门店 key 按名称匹配朝外 11.5h）', zuo, {
+check('employeeList 8 月：左可翠（固定朝外门店 11.5h）', zuo, {
   salary: 345,
   perf: 0,
   hours: 11.5,

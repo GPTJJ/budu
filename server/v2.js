@@ -7,6 +7,7 @@ import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
+import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
   canAccessTransferStore,
   canManageAccounts,
@@ -67,11 +68,13 @@ function isoDate(d) {
 }
 
 async function ensureStore(storeKey, name) {
-  const known = name || resolveStoreName(storeKey)
+  const key = String(storeKey || '').trim()
+  if (!isFixedStoreKey(key)) throw bad('门店不存在或已停用')
+  const known = resolveStoreName(key) || name
   return prisma.store.upsert({
-    where: { key: storeKey },
-    update: known && known !== storeKey ? { name: known } : {},
-    create: { key: storeKey, name: known || storeKey },
+    where: { key },
+    update: { name: known, active: true },
+    create: { key, name: known, active: true },
   })
 }
 
@@ -980,38 +983,22 @@ v2Router.get('/waste-records', wrap(async (req, res) => {
 v2Router.get('/stores', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user.role === 'public' || req.user.role === 'cashier') throw bad('无权限', 403)
-  const rows = await prisma.store.findMany({ where: { active: true }, orderBy: [{ key: 'asc' }] })
+  const rows = await prisma.store.findMany({ where: { active: true, key: { in: FIXED_STORE_KEYS } }, orderBy: [{ key: 'asc' }] })
   res.json({ ok: true, rows: rows.map((r) => ({ key: r.key, name: r.name, district: r.district || '' })) })
 }))
 
-/** 新增自定义门店（仅开发者；key 自动生成） */
+/** 门店目录固定为四店，不接受运行时创建。 */
 v2Router.post('/stores', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
-  const name = String((req.body || {}).name || '').trim()
-  const district = String((req.body || {}).district || '').trim().slice(0, 50)
-  if (!name || name.length > 30) throw bad('门店名称需为 1-30 个字符')
-  const exists = await prisma.store.findFirst({ where: { name } })
-  if (exists) throw bad('该门店已存在', 409)
-  const key = `store-${Date.now().toString(36)}`
-  const row = await prisma.store.create({ data: { key, name, district } })
-  res.json({ ok: true, store: { key: row.key, name: row.name, district: row.district } })
+  throw bad('门店目录固定为通盈、官舍、朝外、西单，禁止新增', 403)
 }))
 
-/** 删除自定义门店（仅开发者；仅允许 store- 前缀自定义键，且预检业务引用避免级联删数据） */
+/** 固定门店不可通过业务 API 删除。 */
 v2Router.delete('/stores/:key', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
-  const key = String(req.params.key || '').slice(0, 30)
-  if (!key.startsWith('store-')) throw bad('基础门店不可删除', 400)
-  const [orders, staff, entries] = await Promise.all([
-    prisma.order.count({ where: { storeId: key } }),
-    prisma.staff.count({ where: { storeKey: key } }),
-    prisma.dailyEntry.count({ where: { storeKey: key } }),
-  ])
-  if (orders > 0 || staff > 0 || entries > 0) throw bad('该门店已被业务数据引用，不可删除', 409)
-  await prisma.store.delete({ where: { key } })
-  res.json({ ok: true })
+  throw bad('固定门店不可删除', 403)
 }))
 
 // 员工名单镜像：KV 员工（人员管理）→ PostgreSQL Staff 表（开发者/店长可写）
@@ -1027,11 +1014,12 @@ v2Router.put('/staff', wrap(async (req, res) => {
       const name = String(s.name || '').trim()
       const storeKey = String(s.storeKey || '').trim()
       if (!name || name.length > 30 || !storeKey || storeKey.length > 30) throw bad('员工数据不正确')
+      if (!isFixedStoreKey(storeKey)) throw bad('员工所属门店不在固定门店目录')
       if (allowed && !allowed.includes(storeKey)) throw bad('无权限', 403)
       await tx.store.upsert({
         where: { key: storeKey },
-        update: {},
-        create: { key: storeKey, name: resolveStoreName(storeKey) || storeKey },
+        update: { name: resolveStoreName(storeKey), active: true },
+        create: { key: storeKey, name: resolveStoreName(storeKey), active: true },
       })
       // id 必须唯一：中文名用 codepoint 编码（与前端 StoreEntryPage.staffIdFor 同规则），
       // 避免同门店同字数员工（如 叶芷辰/李飞燕）替换成下划线后互相覆盖

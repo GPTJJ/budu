@@ -1,18 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Lock, MapPin, MessageCircle, Plus, Server, Store, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Database, Lock, MessageCircle, Server, Store } from 'lucide-react'
 import { t } from '../utils/text'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
-import { commitStores, getStores } from '../utils/userData'
-import { allStores } from '../utils/selectors'
 
 const inputCls = 'input'
 
 export default function SettingsPage({ user, onBack }) {
-  const [storeName, setStoreName] = useState('')
-  const [storeError, setStoreError] = useState('')
-  const [version, setVersion] = useState(0)
   const [alertTip, setAlertTip] = useState('')
   const [sourceStores, setSourceStores] = useState([])
   const [sourceStore, setSourceStore] = useState('')
@@ -41,45 +36,6 @@ export default function SettingsPage({ user, onBack }) {
   const [manualTip, setManualTip] = useState('')
   const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
   const canManageWechatBindings = user?.role === 'developer'
-  const customStores = getStores()
-
-  const addStore = async () => {
-    const name = storeName.trim()
-    if (!name) {
-      setStoreError(t('请输入门店名称'))
-      return
-    }
-    if (allStores().some((s) => s.name === name)) {
-      setStoreError(t('该门店已存在'))
-      return
-    }
-    // Data Authority DA-2.3：门店目录权威 = PostgreSQL
-    try {
-      const res = await api('/v2/stores', { method: 'POST', body: JSON.stringify({ name }) })
-      const store = res && res.store
-      if (store) {
-        commitStores([...customStores, store])
-        setVersion((v) => v + 1)
-      }
-    } catch (e) {
-      setStoreError(e.message || t('门店创建失败，请重试'))
-      return
-    }
-    setStoreName('')
-    setStoreError('')
-  }
-
-  const removeStore = async (key, name) => {
-    if (!window.confirm(t('确定删除门店「{name}」吗？', { name }))) return
-    // Data Authority DA-2.3：门店目录权威 = PostgreSQL
-    try {
-      await api(`/v2/stores/${encodeURIComponent(key)}`, { method: 'DELETE' })
-      commitStores(customStores.filter((s) => s.key !== key))
-      setVersion((v) => v + 1)
-    } catch (e) {
-      setStoreError(e.message || t('门店删除失败，请重试'))
-    }
-  }
 
   const sendTestAlert = async () => {
     setAlertTip('')
@@ -444,58 +400,6 @@ export default function SettingsPage({ user, onBack }) {
             {secError && <span className="text-xs font-medium text-rose-500">{secError}</span>}
             {secTip && <span className="text-xs font-medium text-emerald-600">{secTip}</span>}
           </div>
-        </div>
-      )}
-
-      {isDeveloper && (
-        <div className="card p-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-500 text-white shadow-md">
-              <MapPin className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-[15px] font-bold text-slate-800">{t('门店管理')}</h3>
-              <p className="mt-0.5 text-xs text-slate-400">{t('新增门店后将同步到首页、业绩录入与人员身份')}</p>
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
-            <input
-              value={storeName}
-              onChange={(e) => setStoreName(e.target.value)}
-              placeholder={t('门店名称')}
-              className="input sm:max-w-xs"
-            />
-            <button
-              onClick={addStore}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" />
-              {t('新增门店')}
-            </button>
-          </div>
-          {storeError && <p className="mt-2 text-xs font-medium text-rose-500">{storeError}</p>}
-
-          {customStores.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {customStores.map((s) => (
-                <div
-                  key={s.key}
-                  className="flex items-center gap-3 rounded-xl bg-slate-50/80 px-4 py-2.5 text-sm"
-                >
-                  <MapPin className="h-4 w-4 shrink-0 text-budu-600" />
-                  <span className="min-w-0 flex-1 truncate font-semibold text-slate-700">{s.name}</span>
-                  <button
-                    onClick={() => removeStore(s.key, s.name)}
-                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                    aria-label={t('删除')}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

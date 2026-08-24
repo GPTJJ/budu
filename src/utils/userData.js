@@ -79,6 +79,7 @@ export async function loadUserData(options = {}) {
   cached = normalizeCachedData(data)
   cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
   cached.staff = [] // staff 权威为 PG /v2/staff-list：不以 KV 初始值/回退
+  cached.stores = [] // stores 权威为 PG /v2/stores：不展示 KV/旧缓存中的幽灵门店
   // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
   if (onBaseReady) {
     try {

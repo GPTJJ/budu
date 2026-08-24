@@ -71,7 +71,7 @@ try {
         currentUser: { username: 'store1', role: 'store' },
         onBack: () => {},
       }),
-      ['申请调货', '提交申请', '自定义门店', '物料', '待处理', '已处理'],
+      ['申请调货', '提交申请', '物料', '待处理', '已处理'],
     ],
     [
       'InventoryListModal',
@@ -207,12 +207,12 @@ try {
       ['门店运营模式 · 经营数据已隐藏'],
     ],
     [
-      'SettingsPage developer stores',
+      'SettingsPage fixed store configuration',
       await render('/src/components/SettingsPage.jsx', {
         user: { role: 'developer' },
         onBack: () => {},
       }),
-      ['门店管理', '新增门店'],
+      ['POS 试点门店配置', '销售数据来源'],
     ],
   ]
   const failures = checks.filter(([name, html, markers]) => {

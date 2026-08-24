@@ -3,16 +3,14 @@ import { expect, test } from '@playwright/test'
 test('系统设置保留全部业务配置并移除语言入口', async ({ page }) => {
   let salesSourcePayload = null
   let secondPasswordPayload = null
-  const authorityStores = []
+  const authorityStores = [
+    { key: 'tongying', name: '北京通盈中心店', district: '朝阳区 · 三里屯' },
+    { key: 'guanshe', name: '北京官舍店', district: '朝阳区 · 亮马桥' },
+    { key: 'chaowai', name: '北京朝外店', district: '朝阳区 · 朝外' },
+    { key: 'xidan', name: '北京西单店', district: '西城区 · 西单' },
+  ]
 
   await page.route('**/api/v2/stores', async (route) => {
-    if (route.request().method() === 'POST') {
-      const body = route.request().postDataJSON()
-      const store = { key: 'test-new-store', name: body.name, district: '', active: true }
-      authorityStores.push(store)
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, store }) })
-      return
-    }
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ rows: authorityStores }) })
   })
 
@@ -46,7 +44,8 @@ test('系统设置保留全部业务配置并移除语言入口', async ({ page 
   await expect(page.getByText('企业微信告警')).toBeVisible()
   await expect(page.getByText('微信提醒', { exact: true })).toBeVisible()
   await expect(page.getByText('二级密码', { exact: true })).toBeVisible()
-  await expect(page.getByText('门店管理', { exact: true })).toBeVisible()
+  await expect(page.getByText('门店管理', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '新增门店' })).toHaveCount(0)
   await expect(page.getByText('POS 试点门店配置')).toBeVisible()
   await expect(page.getByText('PostgreSQL / 云端共享数据 / POS 实时汇总')).toBeVisible()
   await expect(page.getByText('界面语言')).toHaveCount(0)
@@ -61,10 +60,6 @@ test('系统设置保留全部业务配置并移除语言入口', async ({ page 
   await page.getByRole('button', { name: '保存二级密码' }).click()
   await expect(page.getByText('二级密码已保存')).toBeVisible()
   expect(secondPasswordPayload).toEqual({ oldPassword: 'login-password', newSecondPassword: 'second-password' })
-
-  await page.getByPlaceholder('门店名称').fill('测试新门店')
-  await page.getByRole('button', { name: '新增门店' }).click()
-  await expect(page.getByText('测试新门店')).toBeVisible()
 
   await page.getByLabel('销售数据来源').selectOption('pos')
   await page.getByRole('button', { name: '保存配置' }).click()

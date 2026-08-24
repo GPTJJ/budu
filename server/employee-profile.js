@@ -12,6 +12,7 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { isSuperUser, hasModuleAccess, MODULE_KEYS } from '../shared/accountPermissions.js'
+import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 
 export const employeeProfileRouter = Router()
 
@@ -411,19 +412,20 @@ employeeProfileRouter.get('/staff-list', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   // 员工名单目录对全部业务账号开放（按角色收敛范围），与旧 KV userdata 口径一致
   if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
-  const where = { status: { not: 'RESIGNED' } }
+  const where = { status: { not: 'RESIGNED' }, currentStoreKey: { in: FIXED_STORE_KEYS } }
   if (req.user.role === 'staff') {
     // 员工账号沿用旧口径：仅本人
     const own = String(req.user.staffKey || '')
     if (own.includes('::')) {
       const [sk, nm] = own.split('::')
+      if (!isFixedStoreKey(sk)) return res.json({ ok: true, rows: [] })
       where.currentStoreKey = sk
       where.name = nm
     } else {
       return res.json({ ok: true, rows: [] })
     }
   } else if (!isSuperUser(req.user) && req.user.role !== 'manager' && req.user.role !== 'finance') {
-    const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys : []
+    const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys.filter(isFixedStoreKey) : []
     where.currentStoreKey = { in: keys }
   }
   const rows = await prisma.employee.findMany({ where, orderBy: [{ currentStoreKey: 'asc' }, { name: 'asc' }] })
@@ -450,6 +452,7 @@ employeeProfileRouter.put('/staff-list', wrap(async (req, res) => {
       const storeKey = String((s && s.storeKey) || '').trim().slice(0, 30)
       const type = (s && s.type) === 'parttime' ? 'parttime' : 'fulltime'
       if (!name || !storeKey) throw httpError('员工数据不正确')
+      if (!isFixedStoreKey(storeKey)) throw httpError('员工所属门店不在固定门店目录')
       const row = await tx.employee.findFirst({ where: { name, currentStoreKey: storeKey } })
       if (row) {
         await tx.employee.update({ where: { id: row.id }, data: { employmentType: type, status: 'ACTIVE' } })
