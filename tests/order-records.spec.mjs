@@ -56,13 +56,53 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
 })
 
 test('开发者可删除订单，删除后列表刷新', async ({ page }) => {
-  page.on('dialog', (dialog) => dialog.accept())
   await page.goto('/tests/order-records-harness.html?deletable=1')
   await expect(page.getByText('共 3 笔订单', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '删除 POS-TEST-ORDER-002' }).click()
+  const dialog = page.getByRole('dialog', { name: '删除订单确认' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('POS-TEST-ORDER-002', { exact: true })).toBeVisible()
+  const confirmButton = dialog.getByRole('button', { name: '确认删除', exact: true })
+  await expect(confirmButton).toBeDisabled()
+  await dialog.getByRole('checkbox').check()
+  await expect(confirmButton).toBeEnabled()
+  await confirmButton.click()
   await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => window.__deletedOrderIds)).toEqual(['order-2'])
+})
+
+test('订单删除入口仅开发者可见', async ({ page }) => {
+  await page.goto('/tests/order-records-harness.html?deletable=1&role=admin')
+  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '删除 POS-TEST-ORDER-002' })).toHaveCount(0)
+})
+
+test('手机与 iPad 订单明细及操作按钮适配触控', async ({ page }) => {
+  for (const viewport of [{ width: 390, height: 844 }, { width: 820, height: 1180 }]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/tests/order-records-harness.html?deletable=1')
+    const orderCard = page.getByRole('row').filter({ hasText: 'POS-TEST-ORDER-002' })
+    await expect(orderCard).toBeVisible()
+    const cardBox = await orderCard.boundingBox()
+    expect(cardBox.width).toBeLessThanOrEqual(viewport.width)
+    const actionButtons = orderCard.getByRole('button')
+    for (let index = 0; index < await actionButtons.count(); index += 1) {
+      const box = await actionButtons.nth(index).boundingBox()
+      expect(box.height).toBeGreaterThanOrEqual(44)
+    }
+    await orderCard.getByRole('button', { name: '查看明细 POS-TEST-ORDER-002' }).click()
+    const detail = page.getByRole('dialog', { name: '订单明细' })
+    await expect(detail).toBeVisible()
+    await expect(detail.getByText('草莓奶油蛋糕', { exact: true })).toBeVisible()
+    const closeButton = detail.getByRole('button', { name: '关闭', exact: true }).last()
+    const closeBox = await closeButton.boundingBox()
+    expect(closeBox.height).toBeGreaterThanOrEqual(44)
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+    await closeButton.click()
+  }
 })
 
 test('整单退款后订单变为已退款', async ({ page }) => {

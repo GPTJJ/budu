@@ -4,6 +4,7 @@ import {
   ALL_MODULE_KEYS,
   MODULE_KEYS,
   canAccessTransferStore,
+  canManageAccounts,
   canManageTransferStore,
   hasInventoryTransferAll,
   hasPageAccess,
@@ -74,4 +75,11 @@ test('账号管理作为开发者保留页面不会被版块撤权检查送回�
   assert.equal(hasPageAccess({ role: 'finance' }, 'account-admin'), false)
   assert.equal(hasPageAccess({ role: 'developer', status: 'disabled' }, 'account-admin'), false)
   assert.equal(hasPageAccess({ role: 'staff' }, MODULE_KEYS.STORE_POS), true)
+})
+
+test('Developer 保留操作不向管理员或财务开放', () => {
+  assert.equal(canManageAccounts({ role: 'developer' }), true)
+  assert.equal(canManageAccounts({ role: 'admin' }), false)
+  assert.equal(canManageAccounts({ role: 'finance' }), false)
+  assert.equal(canManageAccounts({ role: 'developer', status: 'disabled' }), false)
 })

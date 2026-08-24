@@ -10,7 +10,7 @@ import { wechatPayFrontendStatus } from './payments/wechat-config.js'
 import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
-import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
+import { MODULE_KEYS, canManageAccounts, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
 
 export const posRouter = Router()
 
@@ -249,7 +249,7 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
 posRouter.delete('/pos/orders/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  if (!isSuperUser(req.user)) throw httpError('仅最高业务权限账号可删除订单', 403)
+  if (!canManageAccounts(req.user)) throw httpError('仅开发者可删除订单', 403)
   const order = await prisma.order.findUnique({ where: { id: req.params.id }, include: { payments: true } })
   if (!order) throw httpError('订单不存在', 404)
   // 真实支付审计要求：已完成或存在支付记录的订单禁止删除；

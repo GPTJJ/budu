@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BadgePercent, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
@@ -43,6 +43,12 @@ const emptySummary = {
   averageAmount: '0',
 }
 
+const protectedDeleteStatuses = new Set(['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'])
+
+function isOrderDeletable(order) {
+  return Boolean(order && !protectedDeleteStatuses.has(order.status) && (order.payments || []).length === 0)
+}
+
 export default function OrderRecordsPage({ user, onBack, onPay }) {
   const stores = useMemo(() => {
     const list = allStores()
@@ -68,6 +74,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
   const [refundQty, setRefundQty] = useState({})
   const [refundReason, setRefundReason] = useState('')
   const [refunding, setRefunding] = useState(false)
+  const [deleteOrder, setDeleteOrder] = useState(null)
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -136,15 +145,35 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
     XLSX.writeFile(wb, `budu订单记录_${from || '开始'}-${to || '结束'}.xlsx`)
   }
 
-  const removeOrder = async (order) => {
-    if (!window.confirm(`确认删除订单 ${order.orderNo}？删除后不可恢复。`)) return
+  const openDeleteConfirm = (order) => {
+    if (user.role !== 'developer' || !isOrderDeletable(order)) return
+    setDeleteOrder(order)
+    setDeleteConfirmed(false)
+    setError('')
+  }
+
+  const closeDeleteConfirm = () => {
+    if (deleting) return
+    setDeleteOrder(null)
+    setDeleteConfirmed(false)
+  }
+
+  const removeOrder = async () => {
+    if (!deleteOrder || !deleteConfirmed || deleting) return
+    const order = deleteOrder
+    setDeleting(true)
     setError('')
     try {
       await api(`/v2/pos/orders/${order.id}`, { method: 'DELETE' })
       if (detail?.id === order.id) setDetail(null)
+      setDeleteOrder(null)
+      setDeleteConfirmed(false)
+      setNotice(`订单 ${order.orderNo} 已删除`)
       await load()
     } catch (e) {
       setError(e.message)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -227,19 +256,36 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
     }
   }
 
-  const inputClass = 'h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+  const inputClass = 'h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+  const actionButtonClass = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition only:col-span-2 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50'
+
+  const renderOrderActions = (order, compact = false, showDetail = true) => (
+    <div className={`grid gap-2 ${compact ? 'grid-cols-2 sm:flex sm:justify-end' : 'grid-cols-2 sm:flex sm:flex-wrap sm:justify-end'}`}>
+      {order.status === 'pending_payment' && typeof onPay === 'function' && (
+        <button onClick={() => onPay(order)} className={`${actionButtonClass} bg-emerald-600 text-white shadow-sm shadow-emerald-100 hover:bg-emerald-700`} aria-label={`去支付 ${order.orderNo}`}><WalletCards className="h-4 w-4" />去支付</button>
+      )}
+      {user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
+        <button onClick={() => openRefund(order)} className={`${actionButtonClass} border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100`} aria-label={`退款 ${order.orderNo}`}><Download className="h-4 w-4" />退款</button>
+      )}
+      {hasPendingRefund(order) && <span className={`${actionButtonClass} bg-amber-50 text-amber-700`}>退款处理中</span>}
+      {showDetail && <button onClick={() => setDetail(order)} className={`${actionButtonClass} border border-budu-200 bg-budu-50 text-budu-700 hover:bg-budu-100`} aria-label={`查看明细 ${order.orderNo}`}><Package className="h-4 w-4" />订单明细</button>}
+      {user.role === 'developer' && isOrderDeletable(order) && (
+        <button onClick={() => openDeleteConfirm(order)} className={`${actionButtonClass} border border-rose-200 bg-white text-rose-600 hover:bg-rose-50`} aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-4 w-4" />删除</button>
+      )}
+    </div>
+  )
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <button onClick={onBack} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-budu-600" aria-label="返回">
+    <div className="space-y-4 sm:space-y-5">
+      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 border-b border-slate-200/80 bg-slate-100/95 py-2 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0">
+        <button onClick={onBack} className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:text-budu-600 active:scale-95" aria-label="返回">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div>
           <h2 className="text-xl font-bold text-slate-900">订单记录</h2>
           <p className="mt-0.5 text-xs text-slate-400">按日期/门店/支付方式/状态查询 POS 订单与收款记录</p>
         </div>
-        <button onClick={exportExcel} className="ml-auto flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+        <button onClick={exportExcel} className="ml-auto flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 active:scale-[0.98] sm:px-4">
           <FileSpreadsheet className="h-4 w-4" />导出 Excel
         </button>
       </div>
@@ -248,15 +294,15 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
 
       <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="text-xs font-semibold text-slate-500">开始日期<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={`mt-1 w-full ${inputClass}`} /></label>
           <label className="text-xs font-semibold text-slate-500">结束日期<input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={`mt-1 w-full ${inputClass}`} /></label>
           <label className="text-xs font-semibold text-slate-500">门店<select value={store} onChange={(e) => setStore(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="all">全部门店</option>{stores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>
           <label className="text-xs font-semibold text-slate-500">支付方式<select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="">全部</option><option value="cash">现金</option><option value="wechat">微信</option><option value="alipay">支付宝</option></select></label>
           <label className="text-xs font-semibold text-slate-500">状态<select value={status} onChange={(e) => setStatus(e.target.value)} className={`mt-1 w-full ${inputClass}`}><option value="">全部</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-          <div className="flex items-end gap-2">
+          <div className="col-span-2 flex items-end gap-2 xl:col-span-1">
             <label className="relative flex-1 text-xs font-semibold text-slate-500">订单号<Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索订单号" className={`mt-1 w-full pl-9 ${inputClass}`} /></label>
-            <button onClick={load} disabled={loading} className="h-10 shrink-0 rounded-xl bg-budu-500 px-5 text-sm font-semibold text-white disabled:opacity-50">{loading ? '查询中…' : '查询'}</button>
+            <button onClick={load} disabled={loading} className="h-11 shrink-0 rounded-xl bg-budu-500 px-5 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50">{loading ? '查询中…' : '查询'}</button>
           </div>
         </div>
       </section>
@@ -283,9 +329,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
           <p className="text-sm font-semibold text-slate-600">共 {total} 笔订单</p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="border-b border-slate-100 bg-slate-50/80 text-xs font-semibold text-slate-400">
+        <div>
+          <table className="block w-full text-left text-sm xl:table">
+            <thead className="hidden border-b border-slate-100 bg-slate-50/80 text-xs font-semibold text-slate-400 xl:table-header-group">
               <tr>
                 <th className="px-5 py-3">订单号</th>
                 <th className="px-4 py-3">下单时间</th>
@@ -298,36 +344,22 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                 <th className="px-5 py-3 text-right">操作</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="block space-y-3 bg-slate-50/70 p-3 xl:table-row-group xl:space-y-0 xl:divide-y xl:divide-slate-100 xl:bg-white xl:p-0">
               {loading ? (
-                <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400">正在加载订单…</td></tr>
+                <tr className="block xl:table-row"><td colSpan="9" className="block px-5 py-14 text-center text-slate-400 xl:table-cell">正在加载订单…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400"><ReceiptText className="mx-auto mb-2 h-8 w-8 text-slate-300" />暂无符合条件的订单</td></tr>
+                <tr className="block xl:table-row"><td colSpan="9" className="block px-5 py-14 text-center text-slate-400 xl:table-cell"><ReceiptText className="mx-auto mb-2 h-8 w-8 text-slate-300" />暂无符合条件的订单</td></tr>
               ) : rows.map((order) => (
-                <tr key={order.id} className="hover:bg-slate-50/70">
-                  <td className="px-5 py-3.5 font-mono text-xs font-semibold text-slate-700">{order.orderNo}</td>
-                  <td className="px-4 py-3.5 text-slate-500">{localTime(order.createdAt)}</td>
-                  <td className="px-4 py-3.5 text-slate-700">{order.storeName}</td>
-                  <td className="px-4 py-3.5 text-slate-600">{order.cashierNameSnapshot}</td>
-                  <td className="px-4 py-3.5 text-right text-slate-600">{order.items.reduce((sum, item) => sum + item.quantity, 0)} 件</td>
-                  <td className="px-4 py-3.5 text-right font-semibold tabular-nums text-slate-800">{Number(centsToYuan(order.payableAmount)).toFixed(2)}</td>
-                  <td className="px-4 py-3.5">{order.paymentMethod ? <span className="rounded-full bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span> : <span className="text-xs text-slate-400">—</span>}</td>
-                  <td className="px-4 py-3.5"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : order.status === 'cancelled' || order.status === 'refunded' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'}`}>{statusLabels[order.status] || order.status}</span></td>
-                  <td className="px-5 py-3.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {['developer', 'finance', 'admin'].includes(user.role) && !['paid', 'completed', 'partially_refunded', 'refunded', 'pending_payment'].includes(order.status) && (
-                        <button onClick={() => removeOrder(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50" aria-label={`删除 ${order.orderNo}`}><Trash2 className="h-3.5 w-3.5" />删除</button>
-                      )}
-                      {order.status === 'pending_payment' && typeof onPay === 'function' && (
-                        <button onClick={() => onPay(order)} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100" aria-label={`去支付 ${order.orderNo}`}><WalletCards className="h-3.5 w-3.5" />去支付</button>
-                      )}
-                      {user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
-                        <button onClick={() => openRefund(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-orange-600 hover:bg-orange-50" aria-label={`退款 ${order.orderNo}`}><Download className="h-3.5 w-3.5" />退款</button>
-                      )}
-                      {hasPendingRefund(order) && <span className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">退款处理中</span>}
-                      <button onClick={() => setDetail(order)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-budu-600 hover:bg-budu-50"><Package className="h-3.5 w-3.5" />明细</button>
-                    </div>
-                  </td>
+                <tr key={order.id} className="block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-budu-200 hover:shadow-md xl:table-row xl:rounded-none xl:border-0 xl:shadow-none xl:hover:bg-slate-50/70 xl:hover:shadow-none">
+                  <td className="block border-b border-slate-100 px-4 py-3.5 font-mono text-xs font-bold text-slate-700 xl:table-cell xl:border-0 xl:px-5"><span className="mb-1 block font-sans text-[10px] font-semibold text-slate-400 xl:hidden">订单号</span><span>{order.orderNo}</span></td>
+                  <td className="block px-4 pt-3 text-xs text-slate-500 xl:table-cell xl:px-4 xl:py-3.5 xl:text-sm"><span className="mr-2 font-semibold text-slate-400 xl:hidden">下单</span>{localTime(order.createdAt)}</td>
+                  <td className="block px-4 pt-2 text-sm font-semibold text-slate-700 xl:table-cell xl:px-4 xl:py-3.5 xl:font-normal"><span className="mr-2 text-xs font-semibold text-slate-400 xl:hidden">门店</span>{order.storeName}</td>
+                  <td className="hidden px-4 py-3.5 text-slate-600 xl:table-cell">{order.cashierNameSnapshot}</td>
+                  <td className="hidden px-4 py-3.5 text-right text-slate-600 xl:table-cell">{order.items.reduce((sum, item) => sum + item.quantity, 0)} 件</td>
+                  <td className="block px-4 pt-3 text-2xl font-black tabular-nums text-slate-900 xl:table-cell xl:px-4 xl:py-3.5 xl:text-right xl:text-sm xl:font-semibold"><span className="mr-2 text-xs font-semibold text-slate-400 xl:hidden">应付</span>¥{Number(centsToYuan(order.payableAmount)).toFixed(2)}</td>
+                  <td className="inline-block px-4 pb-3 pt-2 xl:table-cell xl:px-4 xl:py-3.5">{order.paymentMethod ? <span className="rounded-full bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span> : <span className="text-xs text-slate-400">未支付</span>}</td>
+                  <td className="inline-block px-0 pb-3 pt-2 xl:table-cell xl:px-4 xl:py-3.5"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : order.status === 'cancelled' || order.status === 'refunded' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'}`}>{statusLabels[order.status] || order.status}</span></td>
+                  <td className="block border-t border-slate-100 p-3 text-right xl:table-cell xl:border-0 xl:px-5 xl:py-3.5">{renderOrderActions(order, true)}</td>
                 </tr>
               ))}
             </tbody>
@@ -336,16 +368,16 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       </section>
 
       {refundOrder && (
-        <div className="fixed inset-0 z-[95] grid place-items-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="订单退款">
-          <div className="my-6 w-full max-w-xl rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center border-b border-slate-100 px-6 py-4">
+        <div className="fixed inset-0 z-[95] grid place-items-center overflow-y-auto bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单退款">
+          <div className="flex min-h-[100dvh] w-full max-w-xl flex-col bg-white shadow-2xl sm:my-6 sm:min-h-0 sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
+            <div className="sticky top-0 z-10 flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">订单退款</h3>
                 <p className="mt-0.5 font-mono text-xs text-slate-400">{refundOrder.orderNo}</p>
               </div>
-              <button onClick={() => setRefundOrder(null)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="关闭"><X className="h-5 w-5" /></button>
+              <button onClick={() => setRefundOrder(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
-            <div className="p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
               <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4 text-center text-sm">
                 <div><p className="text-xs text-slate-400">订单金额</p><p className="mt-1 font-bold tabular-nums text-slate-800">{formatCents(refundOrder.payableAmount)}</p></div>
                 <div><p className="text-xs text-slate-400">已退款</p><p className="mt-1 font-bold tabular-nums text-rose-600">{formatCents(orderRefundedCents(refundOrder))}</p></div>
@@ -362,8 +394,8 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                   将退回剩余可退金额 <strong className="tabular-nums text-slate-900">{formatCents(orderRemainingCents(refundOrder))}</strong>
                 </div>
               ) : (
-                <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100">
-                  <table className="w-full text-left text-sm">
+                <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-100">
+                  <table className="w-full min-w-[520px] text-left text-sm">
                     <thead className="bg-slate-50/80 text-xs font-semibold text-slate-400">
                       <tr><th className="px-4 py-2.5">商品</th><th className="px-4 py-2.5 text-right">单价</th><th className="px-4 py-2.5 text-right">可退数量</th><th className="px-4 py-2.5 text-right">本次退款数量</th></tr>
                     </thead>
@@ -393,27 +425,60 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
 
               {error && <div className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
 
-              <div className="mt-6 flex justify-end gap-3 border-t border-slate-100 pt-4">
-                <button onClick={() => setRefundOrder(null)} disabled={refunding} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-500">取消</button>
-                <button onClick={submitRefund} disabled={refunding || (refundMode === 'partial' && partialTotal <= 0n)} className="rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{refunding ? '退款中…' : '确认退款'}</button>
+              <div className="sticky bottom-0 -mx-4 mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 bg-white/95 px-4 pb-[max(0px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-6 sm:flex sm:justify-end sm:px-6">
+                <button onClick={() => setRefundOrder(null)} disabled={refunding} className={`${actionButtonClass} border border-slate-200 text-slate-600`}>取消</button>
+                <button onClick={submitRefund} disabled={refunding || (refundMode === 'partial' && partialTotal <= 0n)} className={`${actionButtonClass} bg-budu-500 text-white shadow-sm shadow-budu-100`}>{refunding ? '退款中…' : '确认退款'}</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
+      {deleteOrder && (
+        <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="删除订单确认">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-rose-100"><AlertTriangle className="h-6 w-6 text-rose-600" /></div>
+                <div className="min-w-0">
+                  <h3 className="text-lg font-black text-slate-900">删除订单</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">此操作只对开发者开放，删除后无法恢复。</p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs font-bold text-slate-700">{deleteOrder.orderNo}</p>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <div className="text-xs text-slate-500"><p>{deleteOrder.storeName}</p><p className="mt-1">{localTime(deleteOrder.createdAt)}</p></div>
+                  <strong className="text-xl font-black tabular-nums text-slate-900">{formatCents(deleteOrder.payableAmount)}</strong>
+                </div>
+              </div>
+
+              <label className="mt-5 flex min-h-12 cursor-pointer items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-3.5 text-sm font-semibold leading-5 text-rose-800">
+                <input type="checkbox" checked={deleteConfirmed} onChange={(event) => setDeleteConfirmed(event.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-rose-600" />
+                <span>我已确认订单号和金额，并了解删除后不可恢复</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/80 p-4 pb-[max(16px,env(safe-area-inset-bottom))] sm:px-6">
+              <button onClick={closeDeleteConfirm} disabled={deleting} className={`${actionButtonClass} border border-slate-200 bg-white text-slate-600`}>取消</button>
+              <button onClick={removeOrder} disabled={!deleteConfirmed || deleting} className={`${actionButtonClass} bg-rose-600 text-white shadow-sm shadow-rose-200 hover:bg-rose-700`}><Trash2 className="h-4 w-4" />{deleting ? '删除中…' : '确认删除'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detail && (
-        <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="订单明细">
-          <div className="my-6 w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center border-b border-slate-100 px-6 py-4">
+        <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单明细">
+          <div className="flex min-h-[100dvh] w-full max-w-3xl flex-col bg-white shadow-2xl sm:my-6 sm:min-h-0 sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
+            <div className="sticky top-0 z-10 flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">订单明细</h3>
                 <p className="mt-0.5 font-mono text-xs text-slate-400">{detail.orderNo}</p>
               </div>
-              <button onClick={() => setDetail(null)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="关闭"><X className="h-5 w-5" /></button>
+              <button onClick={() => setDetail(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
-            <div className="grid gap-5 p-6">
-              <div className="grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm md:grid-cols-4">
+            <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6">
+              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm sm:grid-cols-4">
                 <div><p className="text-xs text-slate-400">门店</p><p className="mt-1 font-semibold text-slate-700">{detail.storeName}</p></div>
                 <div><p className="text-xs text-slate-400">收银员</p><p className="mt-1 font-semibold text-slate-700">{detail.cashierNameSnapshot}</p></div>
                 <div><p className="text-xs text-slate-400">下单时间</p><p className="mt-1 font-semibold text-slate-700">{localTime(detail.createdAt)}</p></div>
@@ -424,20 +489,20 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
               <div>
                 <h4 className="text-sm font-bold text-slate-800">商品明细</h4>
                 <div className="mt-2 overflow-hidden rounded-2xl border border-slate-100">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50/80 text-xs font-semibold text-slate-400"><tr><th className="px-4 py-2.5">商品</th><th className="px-4 py-2.5">SKU</th><th className="px-4 py-2.5 text-right">单价（元）</th><th className="px-4 py-2.5 text-right">数量</th><th className="px-4 py-2.5 text-right">小计（元）</th></tr></thead>
-                    <tbody className="divide-y divide-slate-100">
+                  <table className="block w-full text-left text-sm sm:table">
+                    <thead className="hidden bg-slate-50/80 text-xs font-semibold text-slate-400 sm:table-header-group"><tr><th className="px-4 py-2.5">商品</th><th className="px-4 py-2.5">SKU</th><th className="px-4 py-2.5 text-right">单价（元）</th><th className="px-4 py-2.5 text-right">数量</th><th className="px-4 py-2.5 text-right">小计（元）</th></tr></thead>
+                    <tbody className="block divide-y divide-slate-100 sm:table-row-group">
                       {(detail.items || []).map((item) => (
-                        <tr key={item.id}>
-                          <td className="px-4 py-2.5 font-semibold text-slate-700">{item.productNameSnapshot}{item.isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{item.skuSnapshot}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{item.isGift ? '0.00' : Number(centsToYuan(item.unitPrice)).toFixed(2)}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{item.quantity}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-800">{item.isGift ? '0.00' : Number(centsToYuan(item.lineAmount)).toFixed(2)}</td>
+                        <tr key={item.id} className="grid grid-cols-[1fr_auto] gap-x-3 px-4 py-3 sm:table-row sm:p-0">
+                          <td className="font-semibold text-slate-700 sm:table-cell sm:px-4 sm:py-2.5">{item.productNameSnapshot}{item.isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</td>
+                          <td className="row-start-2 font-mono text-[11px] text-slate-400 sm:table-cell sm:px-4 sm:py-2.5 sm:text-xs sm:text-slate-500">{item.skuSnapshot}</td>
+                          <td className="hidden text-right tabular-nums text-slate-600 sm:table-cell sm:px-4 sm:py-2.5">{item.isGift ? '0.00' : Number(centsToYuan(item.unitPrice)).toFixed(2)}</td>
+                          <td className="row-start-2 text-right text-xs tabular-nums text-slate-500 sm:table-cell sm:px-4 sm:py-2.5 sm:text-sm">x {item.quantity}</td>
+                          <td className="col-start-2 row-start-1 text-right font-bold tabular-nums text-slate-800 sm:table-cell sm:px-4 sm:py-2.5 sm:font-semibold">{item.isGift ? '¥0.00' : formatCents(item.lineAmount)}</td>
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot className="border-t border-slate-100 bg-slate-50/60 text-sm font-bold text-slate-800"><tr><td colSpan="4" className="px-4 py-2.5 text-right">合计（元）</td><td className="px-4 py-2.5 text-right tabular-nums">{Number(centsToYuan(detail.payableAmount)).toFixed(2)}</td></tr></tfoot>
+                    <tfoot className="block border-t border-slate-100 bg-slate-50/60 text-sm font-bold text-slate-800 sm:table-footer-group"><tr className="flex items-center justify-between sm:table-row"><td colSpan="4" className="px-4 py-3 text-right">合计</td><td className="px-4 py-3 text-right text-lg tabular-nums text-budu-700 sm:text-sm">{formatCents(detail.payableAmount)}</td></tr></tfoot>
                   </table>
                 </div>
               </div>
@@ -477,8 +542,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                   </div>
                 </div>
               )}
-              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
-                <button onClick={() => setDetail(null)} className="flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-500"><Download className="h-4 w-4" />完成</button>
+              <div className="sticky bottom-0 -mx-4 space-y-2 border-t border-slate-100 bg-white/95 px-4 pb-[max(0px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-6 sm:flex sm:flex-row-reverse sm:flex-wrap sm:items-center sm:gap-2 sm:space-y-0 sm:px-6">
+                {renderOrderActions(detail, false, false)}
+                <button onClick={() => setDetail(null)} className={`${actionButtonClass} w-full border border-slate-200 bg-white text-slate-600 sm:w-auto`}><X className="h-4 w-4" />完成</button>
               </div>
             </div>
           </div>
