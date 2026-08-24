@@ -64,15 +64,22 @@ export function bigBonusYuanMonth(name, monthKey, employeeId) {
   return Math.round((cents / 100) * 100) / 100
 }
 
-function dailyPayAdjustmentOn(name, dateStr) {
+/** Gate 25 澄清：调整查找——有 employeeId 时按稳定身份精确（Gate 9 新行）；无则 legacy name 兼容 */
+function dailyPayAdjustmentOn(name, dateStr, employeeId) {
   const rows = getDailyPayAdjustments()
-  return Array.isArray(rows)
-    ? rows.find((row) => row.staffName === name && String(row.date || '') === dateStr) || null
-    : null
+  if (!Array.isArray(rows)) return null
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    // 稳定调整行按 employeeId+date 精确；同店同名两人各自命中自己的调整，绝不交叉
+    const stable = rows.find((row) => row.employeeId === stableId && String(row.date || '') === dateStr)
+    if (stable) return stable
+    return null
+  }
+  return rows.find((row) => row.staffName === name && String(row.date || '') === dateStr) || null
 }
 
-function applyDailyPayAdjustment(name, dateStr, automaticPay) {
-  const adjustment = dailyPayAdjustmentOn(name, dateStr)
+function applyDailyPayAdjustment(name, dateStr, automaticPay, employeeId) {
+  const adjustment = dailyPayAdjustmentOn(name, dateStr, employeeId)
   return applyDailyPayOverride(automaticPay, adjustment)
 }
 
@@ -927,8 +934,16 @@ export function employeeDayStatus(monthKey, day, name, employeeId) {
   }
 }
 
-/** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载。employeeId 可选（大单奖稳定身份）。 */
-export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
+/**
+ * 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载。
+ * employeeId 可选（大单奖稳定身份）。
+ * Gate 25 澄清（工时身份）：attendanceRows 可选——传入时（EMPLOYEE_ID 导出明细路径），
+ * 每门店行的工时 = DailyStoreStaff.actualHours（按 employeeId+date+storeId 精确），
+ * 时薪沿用同一薪酬政策（baseRate/commissionRate/transferSubsidyRate × 工时）；
+ * 该员工当日该店无稳定考勤行 → 不生成该门店行（同名绝不制造考勤/工时）。
+ * 未传 attendanceRows 的调用（legacy、弹窗等）保持原公式工时口径，行为逐字节不变。
+ */
+export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendanceRows) {
   if (!day) return null
   const entries = localEntries()
   const rows = []
@@ -938,6 +953,17 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
+  const stableId = String(employeeId || '').trim()
+  const strictAttendance = stableId && Array.isArray(attendanceRows)
+  const attendanceByStore = new Map()
+  if (strictAttendance) {
+    const fullDate = fullDateOf(monthKey, day)
+    for (const a of attendanceRows) {
+      if (String(a.employeeId || '') !== stableId) continue
+      if (String(a.date || '').slice(0, 10) !== fullDate) continue
+      attendanceByStore.set(String(a.storeId || a.storeKey || ''), a)
+    }
+  }
   const dayBonuses = bigBonusesByName(name, employeeId).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
   const bonusByStore = new Map()
   let bonusTotalCents = 0
@@ -951,6 +977,8 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
     if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
     if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
     const storeKey = parts[1]
+    // Gate 25 澄清：稳定模式该员工当日该店无考勤行 → 不生成该门店行（同名不制造考勤）
+    if (strictAttendance && !attendanceByStore.has(storeKey)) continue
     const share = v.staff.length
     const noPay = isNoPayStaff(name)
     const daily = calcDailyPay({
@@ -960,6 +988,12 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
       date: fullDateOf(monthKey, day),
       staffCount: share,
     })
+    const att = strictAttendance ? attendanceByStore.get(storeKey) : null
+    // 稳定模式工时 = 该员工自己的 DailyStoreStaff.actualHours；否则沿用公式工时（legacy 口径）
+    const rowHours = att ? Math.round((Number(att.actualHours) || 0) * 100) / 100 : daily.hours
+    const rowBasePay = Math.round(daily.baseRate * rowHours * 100) / 100
+    const rowCommission = Math.round(daily.commissionRate * rowHours * 100) / 100
+    const rowSubsidy = Math.round(daily.transferSubsidyRate * rowHours * 100) / 100
     const revShare = (Number(v.inc) || 0) / share
     const ordShare = (Number(v.ord) || 0) / share
     rows.push({
@@ -967,25 +1001,25 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
       storeName: storeName(storeKey),
       revenue: Math.round(revShare * 100) / 100,
       orders: Math.round(ordShare * 100) / 100,
-      hours: daily.hours,
+      hours: rowHours,
       baseRate: daily.baseRate,
-      basePay: daily.basePay,
+      basePay: rowBasePay,
       commissionRate: daily.commissionRate,
-      commission: daily.commission,
+      commission: rowCommission,
       transferSubsidyRate: daily.transferSubsidyRate,
-      transferSubsidy: daily.transferSubsidy,
+      transferSubsidy: rowSubsidy,
       bigBonus: 0,
-      total: daily.total,
+      total: Math.round((rowBasePay + rowCommission + rowSubsidy) * 100) / 100,
     })
     inc += revShare
     ord += ordShare
-    hours += daily.hours
-    basePay += noPay ? 0 : daily.basePay
-    commission += noPay ? 0 : daily.commission
-    transferSubsidy += noPay ? 0 : daily.transferSubsidy
+    hours += rowHours
+    basePay += noPay ? 0 : rowBasePay
+    commission += noPay ? 0 : rowCommission
+    transferSubsidy += noPay ? 0 : rowSubsidy
   }
   if (rows.length === 0) {
-    const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day))
+    const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day), employeeId)
     if (!adjustment) return null
     return {
       rows: [],
@@ -1018,7 +1052,7 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
       row.bigBonus = 0
       row.total = 0
     }
-    const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), 0)
+    const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), 0, employeeId)
     return {
       rows,
       totals: {
@@ -1034,7 +1068,7 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId) {
     }
   }
   const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
-  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay)
+  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay, employeeId)
   return {
     rows,
     totals: {

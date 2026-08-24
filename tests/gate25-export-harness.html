@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 25 Export Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import ExportSalaryModal from '/src/components/ExportSalaryModal.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    window.__origFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const u = String(url)
+      const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      if (u.includes('/api/v2/daily-store-staff')) {
+        const month = new URL(u, location.origin).searchParams.get('month')
+        return json({ ok: true, month, rows: (window.__attendanceByMonth || {})[month] || [] })
+      }
+      if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
+        return json({ ok: true, rows: window.__staff || [] })
+      }
+      if (u.includes('/api/v2/daily-entries') && (opts.method || 'GET') === 'GET') {
+        return json({ ok: true, rows: Object.entries(window.__entries || {}).map(([k, v]) => {
+          const [m, storeKey, dd] = k.split('|')
+          return { date: `${m}-${dd.slice(3)}`, storeKey, incCents: String(Math.round((v.inc || 0) * 100)), ord: v.ord || 0, staffNames: v.staff || [] }
+        }) })
+      }
+      if (u.includes('/api/v2/big-bonuses') || u.includes('/api/v2/daily-pay-adjustments')) return json({ rows: [] })
+      return window.__origFetch(url, opts)
+    }
+
+    const isLegacy = new URLSearchParams(location.search).get('legacy') === '1'
+    const hoursDiff = new URLSearchParams(location.search).get('hours') === 'diff'
+    const STAFF = [
+      { id: 'emp-A', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'A001' },
+      { id: 'emp-B', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'parttime', employeeNo: 'B001' },
+    ]
+    window.__staff = STAFF
+    window.__entries = { '2026-08|guanshe|08-01': { inc: 12000, ord: 120, staff: ['张伟', '张伟'] } }
+    window.__attendanceByMonth = isLegacy
+      ? { '2026-08': [] }
+      : {
+          '2026-08': [
+            { id: 'a1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: hoursDiff ? 8 : 8 },
+            { id: 'a2', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: hoursDiff ? 6 : 8 },
+          ],
+        }
+    seedCachedDataForTest({
+      entries: window.__entries,
+      staff: STAFF,
+      removedStaff: [],
+      stores: [{ key: 'guanshe', name: '北京官舍店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [],
+      analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
+    })
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(ExportSalaryModal, {
+        employees: STAFF,
+        month: '2026-08',
+        day: null,
+        weekStart: null,
+        onClose: () => {},
+      }),
+    )
+  </script></body>
+</html>
