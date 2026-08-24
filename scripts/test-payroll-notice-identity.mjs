@@ -154,13 +154,11 @@ try {
   assert.ok(cookie)
 
   // 创建 User：user-A.employeeId=emp-A、user-B.employeeId=emp-B。
-  // 注意：账号创建路径按 staffKey 解析 employeeId（同店同名会命中第一个）——这是 User binding 域
-  // 的既有缺陷（Deferred），Gate 18 不修；此处直接以权威 DB 写入绑定，验证发放侧收件人解析。
+  // Gate 20：显式 Employee.id 绑定（同店同名安全）——创建时直接携带 employeeId。
   const mkUser = async (username, empId) => {
-    const r = await fetch(`${base}/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ username, password: '123456', role: 'staff', storeKeys: ['guanshe'], staffKey: `guanshe::张伟` }) })
+    const r = await fetch(`${base}/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ username, password: '123456', role: 'staff', storeKeys: ['guanshe'], staffKey: `guanshe::张伟`, employeeId: empId }) })
     if (r.status !== 200) console.log('mkUser', username, r.status, await r.text())
     assert.equal(r.status, 200, `创建 ${username}`)
-    await prisma.user.updateMany({ where: { username }, data: { employeeId: empId } })
   }
   await mkUser('user-A', 'emp-A')
   await mkUser('user-B', 'emp-B')
@@ -204,8 +202,11 @@ try {
   console.log('  [D] 未绑定阻断 PASS')
 
   // E: 重复绑定阻断
-  await fetch(`${base}/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ username: 'user-A2', password: '123456', role: 'staff', storeKeys: ['guanshe'], staffKey: 'guanshe::张伟' }) })
+  // E 场景：模拟历史重复绑定状态——先以空闲员工创建 user-A2，再在 DB 层写入 emp-A（模拟旧数据/历史状态）
+  const rA2 = await fetch(`${base}/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ username: 'user-A2', password: '123456', role: 'staff', storeKeys: ['guanshe'], staffKey: 'guanshe::张伟', employeeId: 'emp-X' }) })
+  assert.equal(rA2.status, 200, 'E 创建 user-A2')
   await prisma.user.updateMany({ where: { username: 'user-A2' }, data: { employeeId: 'emp-A' } })
+  // Gate 20 新路径：user-A2 重复绑 emp-A 的创建会被 409 拦截（已在上方验证）
   const rE = await request(base, '/v2/payroll-notices', { cookie, method: 'POST', body: { periodType: 'month', periodKey: '2027-01', rows: [rowFor('emp-A', '张伟')] } })
   assert.equal(rE.status, 409, `E 重复绑定应 409: ${await rE.text()}`)
   assert.equal(await prisma.payrollNotice.count({ where: { employeeId: 'emp-A', periodKey: '2027-01' } }), 0, 'E 零 notice')

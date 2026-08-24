@@ -48,7 +48,7 @@ test('DA-2.2: 员工名单权威 = PG employees（前端 /v2/staff-list，绑定
   const ep = read('server/employee-profile.js')
   assert.ok(userData.includes("api('/v2/staff-list')"), '前端从 PG 拉取员工名单')
   assert.ok(ep.includes("employeeProfileRouter.get('/staff-list'") && ep.includes("employeeProfileRouter.put('/staff-list'"), '服务端 staff-list 路由存在')
-  assert.match(app, /prisma\.employee\.findFirst[\s\S]{0,200}绑定员工不存在或已离职/, '绑定校验使用 PG employees')
+  assert.match(app, /prisma\.employee\.(findUnique|findMany)[\s\S]{0,200}(绑定员工不存在或已离职|员工不存在)/, '绑定校验使用 PG employees（Gate 20：显式 id findUnique / legacy findMany fail closed）')
   assert.ok(!/\(db\.staff \|\| \[\]\)\.some/.test(app), '绑定校验不再读 KV staff')
   assert.ok(!/loadDb\(\)\.users/.test(ep), 'staff-list 路由不读 KV users')
 })
@@ -67,8 +67,10 @@ test('DA-2.3: 门店目录固定为四店，PG 只返回白名单且前端无增
   assert.deepEqual([...directory.matchAll(/key: '([^']+)'/g)].map((match) => match[1]), ['tongying', 'guanshe', 'chaowai', 'xidan'])
 })
 
-test('DA-2.4: 绑定写入稳定 employeeId（服务端由 staffKey 解析，User.employee_id 持久化）', () => {
+test('DA-2.4: 绑定写入稳定 employeeId（Gate 20：显式 Employee.id 权威 + legacy fail closed，User.employee_id 持久化）', () => {
   assert.match(userStore, /employeeId: row\.employeeId \|\| ''/, 'user-store 透传 employeeId')
-  assert.match(app, /employeeId: bindingResult \? bindingResult\.employeeId : ''/, '创建账号时持久化 employeeId')
-  assert.match(app, /employeeId: bindingResult && \['manager', 'staff'\]\.includes\(role\) \? bindingResult\.employeeId : ''/, '角色更新时持久化 employeeId')
+  assert.match(app, /const boundEmpId = bindingResult \? bindingResult\.employeeId : ''/, '创建账号时持久化 employeeId（显式绑定权威）')
+  assert.match(app, /employeeId: boundEmpId/, '角色更新时持久化 employeeId')
+  assert.match(app, /explicitEmployeeId/, '绑定校验接受显式 Employee.id')
+  assert.match(app, /matches\.length > 1/, 'legacy 歧义 fail closed（>1 匹配拒绝）')
 })

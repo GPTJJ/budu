@@ -369,20 +369,44 @@ export function createApp() {
     return null
   }
 
-  // Data Authority DA-2.2/2.4：绑定校验权威 = PG employees；返回 { error } 或 { employeeId }
-  async function validateBoundRole(role, storeKeys, staffKey) {
+  // Data Authority DA-2.2/2.4：绑定校验权威 = PG employees；返回 { error } 或 { employeeId, staffKeySnapshot }
+  // Gate 20：显式 Employee.id 优先（staffKey 快照由 canonical Employee 推导，忽略 client 传入值防矛盾）；
+  // legacy staffKey 路径 fail closed（0/1/>1 匹配）。
+  async function validateBoundRole(role, storeKeys, staffKey, explicitEmployeeId = '') {
     if (!['manager', 'staff'].includes(role)) return null
     if (!Array.isArray(storeKeys) || storeKeys.length < 1) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定至少一家门店`
-    if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
-    const [staffStoreKey, staffName] = String(staffKey).split('::')
-    if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
     try {
       const { prisma } = await import('./pg.js')
-      const emp = await prisma.employee.findFirst({
+      const explicitId = String(explicitEmployeeId || '').trim()
+      if (explicitId) {
+        // Gate 20：显式 Employee.id 为权威——绝不按姓名/门店重建/替换；
+        // staffKey 兼容快照必须由 canonical Employee（currentStoreKey + name）推导，
+        // client 传入的 staffKey 一律忽略，防止 employeeId 与快照互相矛盾。
+        const emp = await prisma.employee.findUnique({
+          where: { id: explicitId },
+          select: { id: true, name: true, currentStoreKey: true },
+        })
+        if (!emp) return '员工不存在'
+        if (!storeKeys.includes(emp.currentStoreKey)) return '绑定员工必须属于账号已绑定门店'
+        return {
+          employeeId: explicitId,
+          staffKeySnapshot: `${emp.currentStoreKey}::${emp.name}`,
+        }
+      }
+      // legacy 路径（无显式 id）：staffKey 既是解析输入也是门店归属校验；fail closed 0/1/>1
+      if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
+      const [staffStoreKey, staffName] = String(staffKey).split('::')
+      if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
+      const matches = await prisma.employee.findMany({
         where: { name: staffName, currentStoreKey: staffStoreKey, status: { not: 'RESIGNED' } },
+        select: { id: true, name: true, currentStoreKey: true },
       })
-      if (!emp) return '绑定员工不存在或已离职'
-      return { employeeId: emp.id }
+      if (matches.length === 0) return '绑定员工不存在或已离职'
+      if (matches.length > 1) return '存在多个同名员工，无法确定绑定，请通过员工选择器指定'
+      return {
+        employeeId: matches[0].id,
+        staffKeySnapshot: `${matches[0].currentStoreKey}::${matches[0].name}`,
+      }
     } catch {
       return '绑定员工校验失败，请稍后重试'
     }
@@ -679,21 +703,28 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingResult = await validateBoundRole(role, storeKeys, staffKey)
+    const bindingResult = await validateBoundRole(role, storeKeys, staffKey, String(req.body.employeeId || '').trim())
     if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
     // Data Authority DA-2：账号权威 = PostgreSQL
     const existing = await listUsers()
     if (existing.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
+    // Gate 20：1 Employee ↔ 至多 1 User（无论 active/disabled——禁用账号不释放绑定）
+    const boundEmpId = bindingResult ? bindingResult.employeeId : ''
+    if (boundEmpId && existing.some((u) => u.employeeId === boundEmpId)) {
+      return res.status(409).json({ error: '该员工已绑定账号' })
+    }
+    // Gate 20：显式/legacy 解析出的 canonical staffKey 快照（由 Employee 推导，忽略 client 矛盾值）
+    const effStaffKey = bindingResult && bindingResult.staffKeySnapshot ? bindingResult.staffKeySnapshot : staffKey
     const user = {
       id: crypto.randomUUID(),
       username,
       displayName,
       role,
       storeKeys,
-      staffKey,
-      employeeId: bindingResult ? bindingResult.employeeId : '',
+      staffKey: effStaffKey,
+      employeeId: boundEmpId,
       status: 'active',
       bindingLegacyExempt: false,
       permissions: normalizeAccountPermissions(req.body.permissions, role),
@@ -888,16 +919,23 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingResult = await validateBoundRole(role, effStoreKeys, effStaffKey)
+    const bindingResult = await validateBoundRole(role, effStoreKeys, effStaffKey, String(req.body.employeeId || '').trim())
     if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
+    // Gate 20：1 Employee ↔ 至多 1 User——排除当前编辑账号自身（自持绑定允许）
+    const boundEmpId = bindingResult ? bindingResult.employeeId : ''
+    if (boundEmpId) {
+      const otherBound = users.some((u) => u.id !== target.id && u.employeeId === boundEmpId)
+      if (otherBound) return res.status(409).json({ error: '该员工已绑定账号' })
+    }
     const next = {
       role,
       status: 'active',
       disabledAt: null,
       bindingLegacyExempt: false,
       storeKeys: effStoreKeys,
-      staffKey: !['manager', 'staff'].includes(role) ? '' : effStaffKey,
-      employeeId: bindingResult && ['manager', 'staff'].includes(role) ? bindingResult.employeeId : '',
+      // Gate 20：canonical staffKey 快照（显式/legacy 解析由 Employee 推导；非绑定角色清空）
+      staffKey: !['manager', 'staff'].includes(role) ? '' : (bindingResult && bindingResult.staffKeySnapshot ? bindingResult.staffKeySnapshot : effStaffKey),
+      employeeId: boundEmpId,
       permissions: normalizeAccountPermissions(null, role, target.assetCenter === true),
     }
     next.assetCenter = next.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
