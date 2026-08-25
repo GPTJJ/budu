@@ -87,7 +87,10 @@ export function evaluatePayrollReadiness(input) {
       eligibleDays.delete(key)
     }
   }
-  for (const u of unresolved) {
+  // Gate 27 澄清：unresolved 日必须属于请求月——跨月条目（如历史无考勤月）不得污染当月就绪度
+  // （模块契约 JSDoc："dailyEntries 仅该月相关行会被使用"；Gate 22 测试 I 月隔离同义）
+  const monthUnresolved = unresolved.filter((u) => String(u.date || '').slice(0, 7) === month)
+  for (const u of monthUnresolved) {
     calculationBlockers.push({ type: CALC, reason: u.reason, detail: `${u.storeId || ''} ${u.date || ''}` })
     bump(u.reason)
   }
@@ -201,7 +204,7 @@ export function evaluatePayrollReadiness(input) {
     coverage: {
       totalBusinessDays,
       stableEligibleDays: eligibleDays.size,
-      unresolvedDays: unresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
+      unresolvedDays: monthUnresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
       stableAttendanceRows,
       legacyAttendanceRows,
       stableAdjustmentRows,
