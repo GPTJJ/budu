@@ -105,10 +105,20 @@ function round2(v) {
   return Math.round(v * 100) / 100
 }
 
-/** 计算单个员工某日薪酬：基础薪资 + 业绩提成 + 官舍调货补贴 */
-export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount }) {
+/**
+ * 计算单个员工某日薪酬：基础薪资 + 业绩提成 + 官舍调货补贴。
+ * payableHours 仅由 Employee.id 稳定路径显式传入；省略时保留 legacy dutyHours 口径。
+ * 显式传入的稳定工时必须是有限非负数，禁止用默认班次替代损坏的考勤数据。
+ */
+export function calcDailyPay(input) {
+  const { storeKey, storeName, revenue, date, staffCount } = input
   const normKey = normalizeStoreKey(storeKey, storeName)
-  const hours = dutyHours(normKey, staffCount)
+  const hasPayableHours = Object.prototype.hasOwnProperty.call(input, 'payableHours')
+  const explicitHours = Number(input.payableHours)
+  if (hasPayableHours && (input.payableHours == null || input.payableHours === '' || !Number.isFinite(explicitHours) || explicitHours < 0)) {
+    throw new TypeError('payableHours must be a finite non-negative number')
+  }
+  const hours = hasPayableHours ? explicitHours : dutyHours(normKey, staffCount)
   const baseRate = Number(staffCount) <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
   const basePay = round2(baseRate * hours)
   const rate = commissionRate(normKey, revenue, date)

@@ -939,7 +939,7 @@ export function employeeDayStatus(monthKey, day, name, employeeId) {
  * employeeId 可选（大单奖稳定身份）。
  * Gate 25 澄清（工时身份）：attendanceRows 可选——传入时（EMPLOYEE_ID 导出明细路径），
  * 每门店行的工时 = DailyStoreStaff.actualHours（按 employeeId+date+storeId 精确），
- * 时薪沿用同一薪酬政策（baseRate/commissionRate/transferSubsidyRate × 工时）；
+ * 金额与月汇总复用 calcDailyPay 的同一稳定工时合同，不在明细层二次计算；
  * 该员工当日该店无稳定考勤行 → 不生成该门店行（同名绝不制造考勤/工时）。
  * 未传 attendanceRows 的调用（legacy、弹窗等）保持原公式工时口径，行为逐字节不变。
  */
@@ -981,19 +981,20 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     if (strictAttendance && !attendanceByStore.has(storeKey)) continue
     const share = v.staff.length
     const noPay = isNoPayStaff(name)
+    const att = strictAttendance ? attendanceByStore.get(storeKey) : null
     const daily = calcDailyPay({
       storeKey,
       storeName: storeName(storeKey),
       revenue: Number(v.inc) || 0,
       date: fullDateOf(monthKey, day),
       staffCount: share,
+      ...(att ? { payableHours: att.actualHours } : {}),
     })
-    const att = strictAttendance ? attendanceByStore.get(storeKey) : null
-    // 稳定模式工时 = 该员工自己的 DailyStoreStaff.actualHours；否则沿用公式工时（legacy 口径）
-    const rowHours = att ? Math.round((Number(att.actualHours) || 0) * 100) / 100 : daily.hours
-    const rowBasePay = Math.round(daily.baseRate * rowHours * 100) / 100
-    const rowCommission = Math.round(daily.commissionRate * rowHours * 100) / 100
-    const rowSubsidy = Math.round(daily.transferSubsidyRate * rowHours * 100) / 100
+    // 稳定模式由 calcDailyPay 消费精确 actualHours；legacy 未传 payableHours，继续使用 dutyHours。
+    const rowHours = daily.hours
+    const rowBasePay = daily.basePay
+    const rowCommission = daily.commission
+    const rowSubsidy = daily.transferSubsidy
     const revShare = (Number(v.inc) || 0) / share
     const ordShare = (Number(v.ord) || 0) / share
     rows.push({
@@ -1009,7 +1010,7 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       transferSubsidyRate: daily.transferSubsidyRate,
       transferSubsidy: rowSubsidy,
       bigBonus: 0,
-      total: Math.round((rowBasePay + rowCommission + rowSubsidy) * 100) / 100,
+      total: daily.total,
     })
     inc += revShare
     ord += ordShare

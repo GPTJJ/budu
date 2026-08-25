@@ -185,8 +185,9 @@ const adj = (employeeId, date, adjustedPayCents, reason = '') => ({ id: `d-${emp
   const b = out.employees.find((r) => r.employeeId === 'emp-B')
   assert.equal(a.actualHours, 8, 'M emp-A 8h')
   assert.equal(b.actualHours, 6, 'M emp-B 6h')
-  assert.equal(a.salary, b.salary, 'M 无调整时同店同日 share=2 公式金额一致（salary policy 未变）')
-  console.log('  [M] 8h/6h 正常回归 PASS')
+  assert.equal(a.salary, 440, 'M emp-A 按实际 8h')
+  assert.equal(b.salary, 330, 'M emp-B 按实际 6h')
+  console.log('  [M] 8h/6h 稳定工时金额独立 PASS')
 }
 
 // ---- N: Personnel 展示（resolver → Employee.id join；byEmployeeId 可命中调整仅日行）----

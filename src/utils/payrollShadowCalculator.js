@@ -121,6 +121,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       revenue: (day.dailyRevenueCents || 0) / 100,
       date: day.date,
       staffCount: day.staffCountForShare,
+      payableHours: day.actualHours,
     })
     const bonusCents = bonusByEmpDate.get(`${empId}|${day.date}`) || 0
     const adjCents = adjByEmpDate.get(`${empId}|${day.date}`)

@@ -60,7 +60,9 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
         storeId,
         storeKey: row.storeKey || storeId,
         staffNameSnapshot: row.staffNameSnapshot || '',
-        actualHours: Number(row.actualHours) || 0,
+        // PostgreSQL actual_hours 为非空 Float，写 API 也会规范为 0..24 的有限数。
+        // 此处仍保留非法值为 NaN，交由稳定薪酬合同 fail closed，禁止 undefined/NaN 悄悄变成 0h。
+        actualHours: row.actualHours == null || row.actualHours === '' ? Number.NaN : Number(row.actualHours),
         scheduledHours: Number(row.scheduledHours) || 0,
         attendanceStatus: row.attendanceStatus || 'normal',
         staffCountForShare,

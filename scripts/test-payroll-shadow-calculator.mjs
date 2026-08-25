@@ -19,8 +19,9 @@ const { monthlyPayrollFromEntries } = await import(path.join(root, 'src/utils/pa
     const day = String(d).padStart(2, '0')
     entries[`2026-09|guanshe|09-${day}`] = { inc: 6000, ord: 60, staff: ['张三'] }
     entries[`2026-09|chaowai|09-${day}`] = { inc: 6000, ord: 60, staff: ['李四'] }
-    staff.push({ id: `g${d}`, storeId: 'guanshe', storeKey: 'guanshe', date: `2026-09-${day}`, employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张三', actualHours: 0 })
-    staff.push({ id: `c${d}`, storeId: 'chaowai', storeKey: 'chaowai', date: `2026-09-${day}`, employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '李四', actualHours: 0 })
+    // 该 parity fixture 的实际工时刻意等于 legacy 门店默认班次；稳定合同本身不再依赖默认班次。
+    staff.push({ id: `g${d}`, storeId: 'guanshe', storeKey: 'guanshe', date: `2026-09-${day}`, employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张三', actualHours: 11 })
+    staff.push({ id: `c${d}`, storeId: 'chaowai', storeKey: 'chaowai', date: `2026-09-${day}`, employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '李四', actualHours: 11.5 })
   }
   const shadow = calculateEmployeeIdShadowPayroll(entries, staff)
   assert.equal(shadow.employees.length, 2, 'I 两名员工')
@@ -64,10 +65,10 @@ const { monthlyPayrollFromEntries } = await import(path.join(root, 'src/utils/pa
   ]
   const out = calculateEmployeeIdShadowPayroll(entries, staff)
   assert.equal(out.employees.length, 2)
-  // 与 legacy 对比：两人 share=2 时每人 basePay 相同
-  const legacyMap = monthlyPayrollFromEntries(entries, '2026-08')
-  assert.equal(out.employees[0].salary, Math.round(legacyMap.get('张三').salary * 100) / 100, 'B emp-A == legacy 张三（share 同 2）')
-  assert.equal(out.employees[1].salary, Math.round(legacyMap.get('李四').salary * 100) / 100, 'B emp-B == legacy 李四')
+  const a = out.employees.find((row) => row.employeeId === 'emp-A')
+  const b = out.employees.find((row) => row.employeeId === 'emp-B')
+  assert.equal(a.salary, 600, 'B emp-A 按实际 8h')
+  assert.equal(b.salary, 450, 'B emp-B 按实际 6h')
   console.log('  [B] 同日两人 share PASS')
 }
 

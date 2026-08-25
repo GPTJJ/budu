@@ -14,7 +14,7 @@ test('Gate 27 A/B: 同店同名两行独立发放（金额/收件人/快照各�
   expect(a).toContain('@user-a')
   expect(b).toContain('@user-b')
   expect(a).toContain('¥1180.00') // 考勤 680 + 调整仅日 500
-  expect(b).toContain('¥630.00') // 考勤 680 - 50
+  expect(b).toContain('¥460.00') // 考勤按实际 6h 计 510 - 调整仅日 50
   // 全选发放
   await page.getByRole('button', { name: '全选' }).click()
   await page.getByRole('button', { name: /确认发放 2 份/ }).click()
@@ -28,9 +28,9 @@ test('Gate 27 A/B: 同店同名两行独立发放（金额/收件人/快照各�
   expect(pa.employeeName).toBe('张伟')
   expect(pb.employeeName).toBe('张伟')
   expect(pa.totalCents).toBe(118000)
-  expect(pb.totalCents).toBe(63000)
+  expect(pb.totalCents).toBe(46000)
   expect(pa.snapshot.summary.total).toBe(1180)
-  expect(pb.snapshot.summary.total).toBe(630)
+  expect(pb.snapshot.summary.total).toBe(460)
   expect(pa.snapshot.summary.adjustment).toBe(500) // 仅调整日 +500（考勤日无调整）
   expect(pb.snapshot.summary.adjustment).toBe(-50)
   // 快照逐日明细：31 天；考勤日工时按各自 DailyStoreStaff.actualHours；仅调整日真实表示（工时 0）
@@ -167,7 +167,7 @@ test('Gate 27 N1: 负工资员工单独选中 → 阻断（0 POST）', async ({ 
   await page.goto('/tests/gate27-issue-harness.html?negative=1')
   await expect(page.getByText('稳定计算', { exact: true })).toBeVisible()
   const rowB = page.locator('tbody tr').filter({ hasText: 'B001' })
-  await expect(rowB).toContainText('¥-120.00')
+  await expect(rowB).toContainText('¥-290.00') // 考勤按实际 6h 计 510 - 调整仅日 800
   await rowB.click()
   await page.getByRole('button', { name: /确认发放 1 份/ }).click()
   await expect(page.getByText(/工资金额为负/)).toBeVisible()
