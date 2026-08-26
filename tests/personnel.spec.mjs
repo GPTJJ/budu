@@ -1,6 +1,19 @@
 import { expect, test } from '@playwright/test'
 import * as XLSX from 'xlsx'
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v2/daily-store-staff?month=*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ rows: [{
+        id: 'dss-ye-20260809', employeeId: 'emp-ye', employeeName: '叶芷辰',
+        storeKey: 'tongying', date: '2026-08-09', actualHours: 12,
+      }] }),
+    })
+  })
+})
+
 test('雇员页面恢复既有全职与兼职主档', async ({ page }) => {
   await page.goto('/tests/personnel-harness.html')
   await expect(page.getByRole('button', { name: '全部（10）' })).toBeVisible()
@@ -16,12 +29,13 @@ test('员工卡片工资明细下载为可读取的 Excel 表格', async ({ page
   await page.goto('/tests/personnel-harness.html')
   const employeeCard = page.locator('.card').filter({ hasText: '叶芷辰' }).first()
   await expect(employeeCard).toBeVisible()
-  await expect(employeeCard.getByText('薪资调整')).toBeVisible()
+  await expect(employeeCard.getByText('工资调整')).toBeVisible()
   await expect(employeeCard.getByRole('button', { name: '调整每日薪资' })).toBeVisible()
   await employeeCard.click()
 
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByText(/叶芷辰 · 当月每日工资明细/)).toBeVisible()
+  await dialog.getByRole('button', { name: '查看详情' }).click()
   await expect(dialog.getByText('临时加班补偿')).toBeVisible()
   await expect(dialog.getByRole('button', { name: '导出 Excel', exact: true })).toBeVisible()
 
@@ -53,6 +67,7 @@ test('开发者可调整每日最终工资并提交审计明细', async ({ page 
         ok: true,
         adjustment: {
           id: 'dpa-test',
+          employeeId: 'emp-ye',
           staffName: '叶芷辰',
           date: '2026-08-09',
           autoPayCentsSnapshot: '54000',
@@ -81,6 +96,7 @@ test('开发者可调整每日最终工资并提交审计明细', async ({ page 
 
   await expect(dialog.getByText('当日工资已调整并生效')).toBeVisible()
   expect(submitted).toEqual({
+    employeeId: 'emp-ye',
     staffName: '叶芷辰',
     date: '2026-08-09',
     autoPayCentsSnapshot: 54000,
@@ -104,7 +120,7 @@ test('Developer 无值班记录也可直接设定当日最终工资', async ({ p
       body: JSON.stringify({
         ok: true,
         adjustment: {
-          id: 'dpa-no-duty', staffName: '陈文慧', date: '2026-08-24', autoPayCentsSnapshot: '0',
+          id: 'dpa-no-duty', employeeId: 'emp-chen', staffName: '陈文慧', date: '2026-08-24', autoPayCentsSnapshot: '0',
           adjustedPayCents: '12345', reason: '无排班临时补贴', createdBy: 'developer', updatedBy: 'developer',
           createdAt: '2026-08-24T06:00:00.000Z', updatedAt: '2026-08-24T06:00:00.000Z', version: 1,
         },
@@ -124,6 +140,7 @@ test('Developer 无值班记录也可直接设定当日最终工资', async ({ p
   await dialog.getByRole('button', { name: '确认调整' }).click()
   await expect(dialog.getByText('当日工资已调整并生效')).toBeVisible()
   expect(submitted).toEqual({
+    employeeId: 'emp-chen',
     staffName: '陈文慧',
     date: '2026-08-24',
     autoPayCentsSnapshot: 0,

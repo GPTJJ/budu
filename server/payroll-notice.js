@@ -48,13 +48,16 @@ function periodText(row) {
     : `${row.periodKey.slice(0, 4)}年${Number(row.periodKey.slice(5, 7))}月`
 }
 
-/** 查看范围：开发者全量；其它账号（含店长）仅本人（绑定员工或 username 直配） */
+/** 查看范围：开发者全量；staff 按 Employee.id 本人；店长保留既有本人兼容范围。 */
 function noticeWhere(user, query = {}) {
   const where = {}
   if (isSuperUser(user)) {
     // 开发者/管理员/财务全量
+  } else if (user.role === 'staff') {
+    // 普通员工 fail closed：只认认证账号的稳定 Employee.id，不回退 staffKey/name/username。
+    where.employeeId = String(user.employeeId || '').trim() || '__unbound__'
   } else {
-    // 本人：按绑定员工 storeKey::name 或账号名匹配
+    // 店长等既有非 self-only 角色保持原产品范围。
     where.OR = []
     if (user.staffKey) where.OR.push({ storeKey: user.staffKey.split('::')[0] || '__none__', employeeName: user.staffKey.split('::')[1] || '__none__' })
     where.OR.push({ targetUsername: user.username })
@@ -199,12 +202,15 @@ payrollNoticeRouter.post('/payroll-notices/:id/confirm', wrap(async (req, res) =
   if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
   const row = await prisma.payrollNotice.findUnique({ where: { id: req.params.id } })
   if (!row) throw httpError('工资条不存在', 404)
-  // 仅本人（绑定员工或 username 直配）可签收；开发者可代签
-  const isOwner =
+  // staff 仅按稳定 Employee.id 签收；店长保留既有本人兼容路径；最高业务权限可代签。
+  const staffOwns = req.user.role === 'staff' && Boolean(req.user.employeeId) && row.employeeId === req.user.employeeId
+  const managerOwns = req.user.role === 'manager' && (
     row.targetUsername === req.user.username ||
-    ((req.user.role === 'staff' || req.user.role === 'manager') &&
-      row.storeKey === (req.user.staffKey || '').split('::')[0] &&
-      row.employeeName === (req.user.staffKey || '').split('::')[1]) ||
+    (row.storeKey === (req.user.staffKey || '').split('::')[0] && row.employeeName === (req.user.staffKey || '').split('::')[1])
+  )
+  const isOwner =
+    staffOwns ||
+    managerOwns ||
     isSuperUser(req.user)
   if (!isOwner) throw httpError('无权签收该工资条', 403)
   if (row.status === 'recalled' || row.status === 'deleted') {

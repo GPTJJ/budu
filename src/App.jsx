@@ -68,7 +68,7 @@ export default function App() {
         setUser((prev) => {
           if (!prev) return prev
           const next = data.user
-          const keys = ['role', 'storeKeys', 'staffKey', 'assetCenter', 'permissions', 'status', 'bindingComplete', 'bindingLegacyExempt']
+          const keys = ['role', 'storeKeys', 'staffKey', 'employeeId', 'assetCenter', 'permissions', 'status', 'bindingComplete', 'bindingLegacyExempt']
           const changed = keys.some((key) => JSON.stringify(prev[key]) !== JSON.stringify(next[key]))
           return changed ? next : prev
         })

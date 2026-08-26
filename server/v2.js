@@ -236,17 +236,17 @@ function dailyPayAdjustmentAuditValue(r) {
   }
 }
 
-function staffNameFromAccount(user) {
-  if (!user || user.role !== 'staff' || !user.staffKey) return ''
-  const parts = String(user.staffKey).split('::')
-  return parts.length > 1 ? parts.slice(1).join('::') : ''
+function selfEmployeeId(user) {
+  return user?.role === 'staff' ? String(user.employeeId || '').trim() : ''
 }
 
 async function scopeDailyPayAdjustments(rows, user) {
   if (isSuperUser(user)) return rows
   if (!user || user.role === 'public') return []
-  const ownName = staffNameFromAccount(user)
-  if (user.role === 'staff' && !ownName) return []
+  if (user.role === 'staff') {
+    const ownId = selfEmployeeId(user)
+    return ownId ? rows.filter((row) => String(row.employeeId || '').trim() === ownId) : []
+  }
   const allowedStores = new Set(Array.isArray(user.storeKeys) ? user.storeKeys : [])
   if (allowedStores.size === 0 || rows.length === 0) return []
 
@@ -256,7 +256,6 @@ async function scopeDailyPayAdjustments(rows, user) {
     select: { storeKey: true, date: true, staffNames: true },
   })
   return rows.filter((row) => {
-    if (user.role === 'staff' && row.staffName !== ownName) return false
     const date = isoDate(row.date)
     const duties = entries.filter(
       (entry) => isoDate(entry.date) === date && Array.isArray(entry.staffNames) && entry.staffNames.includes(row.staffName),
@@ -1375,7 +1374,13 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
   const month = String(req.query.month || '')
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const where = { storeKey: whereStores(req.user, store || undefined) }
-  if (staffKey) where.staffKey = staffKey
+  if (req.user.role === 'staff') {
+    const ownId = selfEmployeeId(req.user)
+    if (!ownId) return res.json({ rows: [] })
+    where.employeeId = ownId
+  } else if (staffKey) {
+    where.staffKey = staffKey
+  }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.date = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
@@ -1393,6 +1398,10 @@ v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   // Gate 10：稳定员工身份（新 UI 必须携带实际 Employee.id；绝不按姓名/门店推导）
   const stableEmployeeId = employeeId == null ? null : String(employeeId).trim()
+  if (req.user.role === 'staff') {
+    const ownId = selfEmployeeId(req.user)
+    if (!ownId || stableEmployeeId !== ownId) throw bad('只能为本人登记大单奖', 403)
+  }
   if (stableEmployeeId) {
     if (stableEmployeeId.length > 100) throw bad('员工 ID 不正确')
     const emp = await prisma.employee.findUnique({ where: { id: stableEmployeeId }, select: { id: true } })
@@ -1428,6 +1437,7 @@ v2Router.delete('/big-bonuses/:id', wrap(async (req, res) => {
   if (!canInvoice(req.user)) throw bad('无权限', 403)
   const row = await prisma.bigOrderBonus.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('大单奖记录不存在', 404)
+  if (req.user.role === 'staff' && (!selfEmployeeId(req.user) || row.employeeId !== selfEmployeeId(req.user))) throw bad('无权限', 403)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.bigOrderBonus.delete({ where: { id: row.id } })

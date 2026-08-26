@@ -84,11 +84,20 @@ function canRevealBank(user) {
   return Boolean(user) && BANK_REVEAL_ROLES.has(user.role) && moduleOk(user)
 }
 
-/** 查看范围：superuser/finance/manager 全量；staff 仅本人（一期预留，模块默认不开放给 staff） */
-function canViewEmployee(user, employee) {
+function selfEmployeeId(user) {
+  return user?.role === 'staff' ? String(user.employeeId || '').trim() : ''
+}
+
+function canViewEmployeeId(user, employeeId) {
   if (!moduleOk(user)) return false
   if (isSuperUser(user) || user.role === 'finance' || user.role === 'manager') return true
-  return Boolean(user && employee.userId && employee.userId === user.id)
+  const ownId = selfEmployeeId(user)
+  return Boolean(ownId && ownId === String(employeeId || '').trim())
+}
+
+/** 查看范围：superuser/finance/manager 全量；staff 仅按 User.employeeId 查看本人。 */
+function canViewEmployee(user, employee) {
+  return Boolean(employee && canViewEmployeeId(user, employee.id))
 }
 
 // ---------------- 审计 ----------------
@@ -190,6 +199,8 @@ employeeProfileRouter.get('/employees', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProfileAccess(req.user)
   const q = String(req.query.q || '').trim().slice(0, 40)
+  const ownId = selfEmployeeId(req.user)
+  if (req.user.role === 'staff' && !ownId) return res.json({ rows: [] })
   const where = q
     ? {
         OR: [
@@ -199,6 +210,7 @@ employeeProfileRouter.get('/employees', wrap(async (req, res) => {
         ],
       }
     : {}
+  if (req.user.role === 'staff') where.id = ownId
   const rows = await prisma.employee.findMany({
     where,
     include: { profile: true },
@@ -414,16 +426,10 @@ employeeProfileRouter.get('/staff-list', wrap(async (req, res) => {
   if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
   const where = { status: { not: 'RESIGNED' }, currentStoreKey: { in: FIXED_STORE_KEYS } }
   if (req.user.role === 'staff') {
-    // 员工账号沿用旧口径：仅本人
-    const own = String(req.user.staffKey || '')
-    if (own.includes('::')) {
-      const [sk, nm] = own.split('::')
-      if (!isFixedStoreKey(sk)) return res.json({ ok: true, rows: [] })
-      where.currentStoreKey = sk
-      where.name = nm
-    } else {
-      return res.json({ ok: true, rows: [] })
-    }
+    // 员工本人范围只认认证账号的稳定 Employee.id；缺失/无效绑定自然返回空，绝不回退姓名或 staffKey。
+    const ownId = selfEmployeeId(req.user)
+    if (!ownId) return res.json({ ok: true, rows: [] })
+    where.id = ownId
   } else if (!isSuperUser(req.user) && req.user.role !== 'manager' && req.user.role !== 'finance') {
     const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys.filter(isFixedStoreKey) : []
     where.currentStoreKey = { in: keys }
@@ -529,6 +535,7 @@ employeeProfileRouter.post('/employees/:id/bank-account/reveal', wrap(async (req
 employeeProfileRouter.get('/employees/:id/contracts', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProfileAccess(req.user)
+  if (!canViewEmployeeId(req.user, req.params.id)) throw httpError('无权限', 403)
   const rows = await prisma.employeeContract.findMany({
     where: { employeeId: req.params.id },
     orderBy: [{ signDate: 'desc' }, { createdAt: 'desc' }],
@@ -670,7 +677,7 @@ employeeProfileRouter.get('/employees/:id/summary', wrap(async (req, res) => {
   if (!canViewEmployee(req.user, row)) throw httpError('无权限', 403)
   const [notices, staffRows] = await Promise.all([
     prisma.payrollNotice.findMany({
-      where: { employeeName: row.name, storeKey: row.currentStoreKey || undefined },
+      where: { employeeId: row.id },
       orderBy: { createdAt: 'desc' },
       take: 6,
     }),
@@ -696,6 +703,7 @@ employeeProfileRouter.get('/employees/:id/summary', wrap(async (req, res) => {
 employeeProfileRouter.get('/employees/:id/documents', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProfileAccess(req.user)
+  if (!canViewEmployeeId(req.user, req.params.id)) throw httpError('无权限', 403)
   const rows = await prisma.employeeDocument.findMany({
     where: { employeeId: req.params.id },
     orderBy: { createdAt: 'desc' },
@@ -738,6 +746,7 @@ employeeProfileRouter.post('/employees/:id/documents', wrap(async (req, res) => 
 employeeProfileRouter.get('/employees/:id/documents/:docId/content', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProfileAccess(req.user)
+  if (!canViewEmployeeId(req.user, req.params.id)) throw httpError('无权限', 403)
   const doc = await prisma.employeeDocument.findUnique({ where: { id: req.params.docId } })
   if (!doc || doc.employeeId !== req.params.id) throw httpError('附件不存在', 404)
   if (doc.isSensitive && !canEdit(req.user)) throw httpError('无权限查看敏感附件', 403)

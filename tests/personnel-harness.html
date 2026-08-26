@@ -9,11 +9,24 @@
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
+    const staff = [
+      { id: 'emp-sui', name: '隋晓', type: 'fulltime', storeKey: 'guanshe', storeName: '北京官舍店' },
+      { id: 'emp-ye', name: '叶芷辰', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+      { id: 'emp-li', name: '李飞燕', type: 'fulltime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+      { id: 'emp-zuo', name: '左可翠', type: 'parttime', storeKey: 'chaowai', storeName: '北京朝外店' },
+      { id: 'emp-chen', name: '陈文慧', type: 'parttime', storeKey: 'xidan', storeName: '北京西单店' },
+      { id: 'emp-shu', name: '舒敏', type: 'parttime', storeKey: 'chaowai', storeName: '北京朝外店' },
+      { id: 'emp-shi', name: '史璐璐', type: 'parttime', storeKey: 'chaowai', storeName: '北京朝外店' },
+      { id: 'emp-ma', name: '马婧欣', type: 'parttime', storeKey: 'tongying', storeName: '北京通盈中心店' },
+      { id: 'emp-gong', name: '龚艺锦', type: 'parttime', storeKey: 'guanshe', storeName: '北京官舍店' },
+      { id: 'emp-wang', name: '王红云', type: 'parttime', storeKey: 'xidan', storeName: '北京西单店' },
+    ]
+
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
       entries: {
         '2026-08|tongying|08-09': { inc: 7200, ord: 80, staff: ['叶芷辰'] },
       },
-      staff: [],
+      staff,
       removedStaff: [],
       stores: [{ key: 'tongying', name: '北京通盈中心店' }],
       schedules: {},
@@ -25,6 +38,7 @@
       bigBonuses: [],
       dailyPayAdjustments: [{
         id: 'dpa-test',
+        employeeId: 'emp-ye',
         staffName: '叶芷辰',
         date: '2026-08-09',
         autoPayCentsSnapshot: 54000,
@@ -36,6 +50,12 @@
         updatedAt: '2026-08-10T01:00:00.000Z',
         version: 1
       }],
+      dailyStoreStaffByMonth: {
+        '2026-08': [{
+          id: 'dss-ye-20260809', employeeId: 'emp-ye', employeeName: '叶芷辰',
+          storeKey: 'tongying', date: '2026-08-09', actualHours: 12,
+        }],
+      },
       posDaily: [],
       posProductSales: [],
     }))

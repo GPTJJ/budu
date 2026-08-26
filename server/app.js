@@ -270,7 +270,7 @@ export function createApp() {
   function userPublic(u) {
     const bindingComplete =
       !['manager', 'staff'].includes(u.role) ||
-      ((u.storeKeys || []).length > 0 && Boolean(u.staffKey))
+      ((u.storeKeys || []).length > 0 && Boolean(u.employeeId))
     return {
       id: u.id,
       username: u.username,
@@ -504,12 +504,8 @@ export function createApp() {
       if (allowed.has(store)) entries[k] = v
     }
     let staff = (db.staff || []).filter((s) => allowed.has(s.storeKey))
-    // 绑定员工的店员：只能看到本人档案
-    if (user.role === 'staff' && user.staffKey) {
-      staff = staff.filter((s) => `${s.storeKey}::${s.name}` === user.staffKey)
-    } else if (user.role === 'staff') {
-      staff = []
-    }
+    // 员工目录权威已迁移到 PG /v2/staff-list；legacy userdata 不再按 staffKey/姓名猜测本人。
+    if (user.role === 'staff') staff = []
     const schedules = {}
     for (const [wk, sm] of Object.entries(db.schedules || {})) {
       const o = {}

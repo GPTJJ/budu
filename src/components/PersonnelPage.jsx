@@ -448,7 +448,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
-  const [filter, setFilter] = useState(() => (['developer', 'finance', 'admin'].includes(user?.role) ? 'all' : 'fulltime'))
+  const [filter, setFilter] = useState(() => (['developer', 'finance', 'admin', 'staff'].includes(user?.role) ? 'all' : 'fulltime'))
   const [month, setMonth] = useState(() => todayParts().month)
   const [day, setDay] = useState(null)
   const [weekStart, setWeekStart] = useState(null)
@@ -619,10 +619,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
     }
   })
-  const scopedAll =
-    user?.role === 'staff' && user.staffKey
-      ? all.filter((e) => `${e.storeKey}::${e.name}` === user.staffKey)
-      : all
+  const scopedAll = user?.role === 'staff'
+    ? (user.employeeId ? all.filter((employee) => employee.id === user.employeeId) : [])
+    : all
   const fulltime = scopedAll.filter((e) => e.type === 'fulltime')
   const parttime = scopedAll.filter((e) => e.type === 'parttime')
   const list = filter === 'all' ? scopedAll : filter === 'fulltime' ? fulltime : parttime
@@ -828,7 +827,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   ? `${Number(day.slice(0, 2))}.${Number(day.slice(3, 5))}`
                   : monthLabel(month)
               const canBigBonus =
-                user?.role !== 'public' && (user?.role !== 'staff' || user.staffKey === `${emp.storeKey}::${emp.name}`)
+                user?.role !== 'public' && (user?.role !== 'staff' || (user.employeeId && user.employeeId === emp.id))
               return (
                 <div
                   key={emp.id}

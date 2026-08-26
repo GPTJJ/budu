@@ -52,11 +52,15 @@
       bigBonuses: [{ id: 'bonus-a', date: '2026-08-20', employeeId: 'emp-A', staffKey: 'tongying::张伟', bonusCents: 5000 }],
       dailyPayAdjustments: [], posDaily: [], posProductSales: [],
     })
+    const self = new URLSearchParams(location.search).get('self')
+    const currentUser = self
+      ? { id: `user-${self}`, username: `staff-${self}`, role: 'staff', employeeId: self === 'missing' ? '' : `emp-${self}`, staffKey: 'tongying::张伟' }
+      : { id: 'dev-1', username: 'developer', role: 'developer' }
     createRoot(document.getElementById('root')).render(
       React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
         React.createElement(PersonnelPage, {
-          user: { id: 'dev-1', username: 'developer', role: 'developer' },
-          canDelete: true, canManage: true, onBack: () => {}, onOpenProfile: () => {},
+          user: currentUser,
+          canDelete: !self, canManage: !self, onBack: () => {}, onOpenProfile: () => {},
         }),
       ),
     )
