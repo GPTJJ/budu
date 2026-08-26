@@ -39,7 +39,7 @@ export function resolvePayrollCalculation(input) {
   // ---- 2) 引擎选择 ----
   if (calculationReady) {
     // Gate 26：month 传给 calculator——稳定调整仅日贡献严格限定在请求月内
-    const shadow = calculateEmployeeIdShadowPayroll(entries, staffRows, bonuses, adjustments, month)
+    const shadow = calculateEmployeeIdShadowPayroll(entries, staffRows, bonuses, adjustments, month, storeNames)
     return {
       month,
       mode: 'EMPLOYEE_ID',

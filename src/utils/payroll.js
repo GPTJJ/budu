@@ -70,6 +70,16 @@ const COMMISSION_STEP = 1000
 const COMMISSION_PER_STEP = 5
 export const TRANSFER_SUBSIDY_EFFECTIVE_DATE = '2026-08-01'
 export const TRANSFER_SUBSIDY_RATE = 2
+export const PAYABLE_HOURS_SOURCE = Object.freeze({
+  ACTUAL_HOURS: 'ACTUAL_HOURS',
+  LEGACY_DUTY_HOURS: 'LEGACY_DUTY_HOURS',
+  ADJUSTMENT_ONLY: 'ADJUSTMENT_ONLY',
+})
+
+export const CALCULATION_DAY_POLICY = Object.freeze({
+  HOLIDAY: 'HOLIDAY_POLICY',
+  WORKDAY: 'WORKDAY_POLICY',
+})
 
 /** 当日值班工时：1 人按门店标准工时；2 人及以上各 8h */
 export function dutyHours(storeKey, staffCount, storeName = '') {
@@ -77,15 +87,31 @@ export function dutyHours(storeKey, staffCount, storeName = '') {
   return 8
 }
 
-/** 阶梯提成时薪（元/h）：未达当日业绩目标为 0；达到目标奖励 5 元/h，之后每增加 1000 元再加 5 元/h */
-export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
+/**
+ * 提成政策的单一权威选择点。rate 与 target 必须从同一次政策选择返回，
+ * 解释元数据不得在调用方重算目标或日期分支。
+ */
+function commissionPolicy(storeKey, revenue, dateStr, storeName = '') {
   const normKey = normalizeStoreKey(storeKey, storeName)
   const cfg = storePayConfig(normKey)
-  const target = normKey === 'tongying' && isHoliday(dateStr) ? cfg.holidayTarget : cfg.target
+  // 当前只有通盈的薪资目标存在节假日分支；该字段描述实际使用的工资政策，
+  // 不是对自然日作“法定节假日”分类。
+  const holidayPolicy = normKey === 'tongying' && isHoliday(dateStr)
+  const target = normKey === 'tongying' && holidayPolicy ? cfg.holidayTarget : cfg.target
   const rev = Number(revenue) || 0
-  if (rev < target) return 0
-  const extra = Math.floor((rev - target) / COMMISSION_STEP)
-  return COMMISSION_PER_STEP + extra * COMMISSION_PER_STEP
+  const extra = rev < target ? null : Math.floor((rev - target) / COMMISSION_STEP)
+  return {
+    target,
+    rate: extra == null ? 0 : COMMISSION_PER_STEP + extra * COMMISSION_PER_STEP,
+    calculationDayPolicy: holidayPolicy
+      ? CALCULATION_DAY_POLICY.HOLIDAY
+      : CALCULATION_DAY_POLICY.WORKDAY,
+  }
+}
+
+/** 阶梯提成时薪（元/h）：未达当日业绩目标为 0；达到目标奖励 5 元/h，之后每增加 1000 元再加 5 元/h */
+export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
+  return commissionPolicy(storeKey, revenue, dateStr, storeName).rate
 }
 
 /** 官舍运营中心调货补贴：自 2026-08-01 起按实际官舍值班工时增加 2 元/h。 */
@@ -112,13 +138,29 @@ export function calcDailyPay(input) {
   if (hasPayableHours && (input.payableHours == null || input.payableHours === '' || !Number.isFinite(explicitHours) || explicitHours < 0)) {
     throw new TypeError('payableHours must be a finite non-negative number')
   }
+  const payableHoursSource = input.payableHoursSource || (
+    hasPayableHours ? PAYABLE_HOURS_SOURCE.ACTUAL_HOURS : PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS
+  )
+  if (![PAYABLE_HOURS_SOURCE.ACTUAL_HOURS, PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS].includes(payableHoursSource)) {
+    throw new TypeError('payableHoursSource is invalid for calculated payroll')
+  }
+  if (payableHoursSource === PAYABLE_HOURS_SOURCE.ACTUAL_HOURS && !hasPayableHours) {
+    throw new TypeError('ACTUAL_HOURS requires explicit payableHours')
+  }
+  if (payableHoursSource === PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS && hasPayableHours) {
+    throw new TypeError('LEGACY_DUTY_HOURS cannot use explicit payableHours')
+  }
   const hours = hasPayableHours ? explicitHours : dutyHours(normKey, staffCount)
-  const baseRate = Number(staffCount) <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
+  const participantCount = Number(staffCount)
+  const rawStoreRevenue = Number(revenue) || 0
+  const baseRate = participantCount <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
   const basePay = round2(baseRate * hours)
-  const rate = commissionRate(normKey, revenue, date)
+  const policy = commissionPolicy(normKey, rawStoreRevenue, date, storeName)
+  const rate = policy.rate
   const commission = round2(rate * hours)
   const subsidyRate = transferSubsidyRate(normKey, date, storeName)
   const transferSubsidy = round2(subsidyRate * hours)
+  const total = round2(basePay + commission + transferSubsidy)
   return {
     hours,
     baseRate,
@@ -127,7 +169,23 @@ export function calcDailyPay(input) {
     commission,
     transferSubsidyRate: subsidyRate,
     transferSubsidy,
-    total: round2(basePay + commission + transferSubsidy),
+    total,
+    explanation: {
+      payableHours: hours,
+      payableHoursSource,
+      participantCount,
+      rawStoreRevenue,
+      commissionBasis: rawStoreRevenue,
+      calculationDayPolicy: policy.calculationDayPolicy,
+      baseRate,
+      basePay,
+      commissionTarget: policy.target,
+      commissionRate: rate,
+      commission,
+      transferSubsidyRate: subsidyRate,
+      transferSubsidy,
+      total,
+    },
   }
 }
 

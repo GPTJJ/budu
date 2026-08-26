@@ -15,7 +15,7 @@ import {
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { t } from './text.js'
-import { calcDailyPay, monthlyPayrollFromEntries } from './payroll.js'
+import { calcDailyPay, monthlyPayrollFromEntries, PAYABLE_HOURS_SOURCE } from './payroll.js'
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 import { addWeeks, getWeekDays } from './schedule.js'
@@ -77,6 +77,25 @@ function dailyPayAdjustmentOn(name, dateStr, employeeId) {
 function applyDailyPayAdjustment(name, dateStr, automaticPay, employeeId) {
   const adjustment = dailyPayAdjustmentOn(name, dateStr, employeeId)
   return applyDailyPayOverride(automaticPay, adjustment)
+}
+
+function bigOrderBonusExplanation(rows) {
+  return rows.map((row) => ({
+    orderAmount: Math.round(((Number(row.amountCents) || 0) / 100) * 100) / 100,
+    bonusAmount: Math.round(((Number(row.bonusCents) || 0) / 100) * 100) / 100,
+    receiptPresent: Boolean(String(row.receipt || '').trim()),
+  }))
+}
+
+function dailyAdjustmentExplanation(applied) {
+  if (!applied?.payAdjustment) return null
+  return {
+    automaticPay: applied.automaticPay,
+    autoPaySnapshot: applied.payAdjustment.autoPaySnapshot,
+    salaryAdjustment: applied.salaryAdjustment,
+    finalPay: applied.pay,
+    reason: applied.payAdjustment.reason == null ? '' : String(applied.payAdjustment.reason),
+  }
 }
 
 export function customStores() {
@@ -1032,7 +1051,10 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       revenue: Number(v.inc) || 0,
       date: fullDateOf(monthKey, day),
       staffCount: share,
-      ...(att ? { payableHours: att.actualHours } : {}),
+      ...(att ? {
+        payableHours: att.actualHours,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
+      } : {}),
     })
     // 稳定模式由 calcDailyPay 消费精确 actualHours；legacy 未传 payableHours，继续使用 dutyHours。
     const rowHours = daily.hours
@@ -1055,6 +1077,13 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       transferSubsidy: rowSubsidy,
       bigBonus: 0,
       total: daily.total,
+      explanation: {
+        ...daily.explanation,
+        state: daily.hours === 0 ? 'REAL_ZERO' : 'NORMAL',
+        displayWorkedRevenue: Math.round(revShare * 100) / 100,
+        bigOrderBonuses: [],
+        adjustment: null,
+      },
     })
     inc += revShare
     ord += ordShare
@@ -1066,31 +1095,60 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
   if (rows.length === 0) {
     const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day), employeeId)
     if (!adjustment) return null
+    const applied = applyDailyPayOverride(0, adjustment)
     return {
       rows: [],
       totals: {
         inc: 0, ord: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
-        ...applyDailyPayOverride(0, adjustment),
+        ...applied,
+      },
+      explanation: {
+        state: 'ADJUSTMENT_ONLY',
+        payableHours: 0,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ADJUSTMENT_ONLY,
+        participantCount: null,
+        rawStoreRevenue: null,
+        displayWorkedRevenue: null,
+        commissionBasis: null,
+        calculationDayPolicy: null,
+        baseRate: null,
+        basePay: 0,
+        commissionTarget: null,
+        commissionRate: null,
+        commission: 0,
+        transferSubsidyRate: null,
+        transferSubsidy: 0,
+        total: 0,
+        bigOrderBonuses: [],
+        adjustment: dailyAdjustmentExplanation(applied),
       },
     }
   }
   let assignedCents = 0
+  const assignedBonusRows = new Set()
   for (const row of rows) {
+    const storeBonusRows = dayBonuses.filter((bonus) => bonus.storeKey === row.storeKey)
     const c = bonusByStore.get(row.storeKey) || 0
     if (c > 0) {
       row.bigBonus = Math.round((c / 100) * 100) / 100
       row.total = Math.round((row.total + row.bigBonus) * 100) / 100
       assignedCents += c
     }
+    for (const bonus of storeBonusRows) assignedBonusRows.add(bonus)
+    row.explanation.bigOrderBonuses = bigOrderBonusExplanation(storeBonusRows)
   }
   if (assignedCents < bonusTotalCents) {
     const extra = Math.round(((bonusTotalCents - assignedCents) / 100) * 100) / 100
+    const unassignedBonusRows = dayBonuses.filter((bonus) => !assignedBonusRows.has(bonus))
     rows[0].bigBonus = Math.round((rows[0].bigBonus + extra) * 100) / 100
     rows[0].total = Math.round((rows[0].total + extra) * 100) / 100
+    rows[0].explanation.bigOrderBonuses.push(...bigOrderBonusExplanation(unassignedBonusRows))
   }
   const bigBonus = Math.round((bonusTotalCents / 100) * 100) / 100
   const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
   const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay, employeeId)
+  const adjustmentExplanation = dailyAdjustmentExplanation(applied)
+  for (const row of rows) row.explanation.adjustment = adjustmentExplanation
   return {
     rows,
     totals: {
@@ -1102,6 +1160,10 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       transferSubsidy: Math.round(transferSubsidy * 100) / 100,
       bigBonus,
       ...applied,
+    },
+    explanation: {
+      state: rows.every((row) => row.hours === 0) ? 'REAL_ZERO' : 'NORMAL',
+      adjustment: adjustmentExplanation,
     },
   }
 }

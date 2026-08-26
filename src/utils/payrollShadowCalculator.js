@@ -11,8 +11,29 @@
  * - 允许消费者：测试 only
  */
 
-import { calcDailyPay } from './payroll.js'
+import { calcDailyPay, PAYABLE_HOURS_SOURCE } from './payroll.js'
 import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
+
+const round2 = (value) => Math.round(Number(value || 0) * 100) / 100
+
+function bonusExplanation(rows) {
+  return rows.map((row) => ({
+    orderAmount: round2((Number(row.amountCents) || 0) / 100),
+    bonusAmount: round2((Number(row.bonusCents) || 0) / 100),
+    receiptPresent: Boolean(String(row.receipt || '').trim()),
+  }))
+}
+
+function adjustmentExplanation(adjustment, automaticPay, finalPay) {
+  if (!adjustment) return null
+  return {
+    automaticPay: round2(automaticPay),
+    autoPaySnapshot: round2((Number(adjustment.autoPayCentsSnapshot) || 0) / 100),
+    salaryAdjustment: round2(finalPay - automaticPay),
+    finalPay: round2(finalPay),
+    reason: adjustment.reason == null ? '' : String(adjustment.reason),
+  }
+}
 
 /**
  * 计算某月 Employee.id shadow 月度工资。
@@ -22,9 +43,10 @@ import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
  * @param {Array} bigBonusRows Gate 10 大单奖行（含 employeeId/staffKey/bonusCents/date；可空）
  * @param {Array} payAdjustmentRows Gate 9 日薪调整行（含 employeeId/staffName/date/adjustedPayCents；可空）
  * @param {string} [month] YYYY-MM（Gate 26：稳定调整仅日贡献的月边界；不传则不过滤——Gate 14 兼容）
+ * @param {object} [storeNames] storeKey → 展示名；仅用于解释元数据，不参与计算
  * @returns {{ employees: Array, unresolvedDays: Array, coverage: object }}
  */
-export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = [], month = '') {
+export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = [], month = '', storeNames = {}) {
   const input = buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
   const stable = input.stableRows
   const unresolvedDays = []
@@ -70,18 +92,26 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
 
   // ---- 大单奖稳定读取（employeeId 精确；legacy NULL 不猜测）----
   const bonusByEmpDate = new Map() // `${employeeId}|${date}` → cents
+  const bonusRowsByEmpDate = new Map() // 同 employeeId+date 允许多笔，解释不可折成假单
   for (const b of Array.isArray(bigBonusRows) ? bigBonusRows : []) {
     if (!b.employeeId) continue // legacy NULL 不猜测
     const date = String(b.date || '').slice(0, 10)
-    bonusByEmpDate.set(`${b.employeeId}|${date}`, (bonusByEmpDate.get(`${b.employeeId}|${date}`) || 0) + (Number(b.bonusCents) || 0))
+    const key = `${b.employeeId}|${date}`
+    bonusByEmpDate.set(key, (bonusByEmpDate.get(key) || 0) + (Number(b.bonusCents) || 0))
+    const rows = bonusRowsByEmpDate.get(key) || []
+    rows.push(b)
+    bonusRowsByEmpDate.set(key, rows)
   }
 
   // ---- 日薪调整稳定读取（employeeId 精确；legacy NULL 不猜测）----
   const adjByEmpDate = new Map() // `${employeeId}|${date}` → adjustedPayCents
+  const adjustmentRowByEmpDate = new Map()
   for (const a of Array.isArray(payAdjustmentRows) ? payAdjustmentRows : []) {
     if (!a.employeeId) continue
     const date = String(a.date || '').slice(0, 10)
-    adjByEmpDate.set(`${a.employeeId}|${date}`, Number(a.adjustedPayCents) || 0)
+    const key = `${a.employeeId}|${date}`
+    adjByEmpDate.set(key, Number(a.adjustedPayCents) || 0)
+    adjustmentRowByEmpDate.set(key, a)
   }
 
   // ---- 按 Employee.id 聚合 ----
@@ -102,6 +132,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     workedRevenueCents: 0,
     orders: 0,
     adjustmentCount: 0,
+    dailyExplanations: [],
   })
   for (const day of eligible) {
     const empId = day.employeeId
@@ -122,9 +153,12 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       date: day.date,
       staffCount: day.staffCountForShare,
       payableHours: day.actualHours,
+      payableHoursSource: PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
     })
-    const bonusCents = bonusByEmpDate.get(`${empId}|${day.date}`) || 0
-    const adjCents = adjByEmpDate.get(`${empId}|${day.date}`)
+    const employeeDayKey = `${empId}|${day.date}`
+    const bonusCents = bonusByEmpDate.get(employeeDayKey) || 0
+    const adjCents = adjByEmpDate.get(employeeDayKey)
+    const adjustmentRow = adjustmentRowByEmpDate.get(employeeDayKey)
     rec.basePay += daily.basePay
     rec.commission += daily.commission
     rec.transferSubsidy += daily.transferSubsidy
@@ -138,6 +172,33 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     } else {
       rec.salary += autoPay
     }
+    const automaticPay = round2(autoPay / 100)
+    const finalPay = round2((adjCents != null ? adjCents : autoPay) / 100)
+    const displayWorkedRevenue = round2((day.dailyRevenueCents || 0) / 100 / share)
+    rec.dailyExplanations.push({
+      employeeId: empId,
+      date: day.date,
+      storeKey: day.storeKey || day.storeId,
+      storeName: String(storeNames?.[day.storeKey || day.storeId] || ''),
+      hours: daily.hours,
+      baseRate: daily.baseRate,
+      basePay: daily.basePay,
+      commissionRate: daily.commissionRate,
+      commission: daily.commission,
+      transferSubsidyRate: daily.transferSubsidyRate,
+      transferSubsidy: daily.transferSubsidy,
+      bigBonus: round2(bonusCents / 100),
+      automaticPay,
+      salaryAdjustment: round2(finalPay - automaticPay),
+      finalPay,
+      explanation: {
+        ...daily.explanation,
+        state: daily.hours === 0 ? 'REAL_ZERO' : 'NORMAL',
+        displayWorkedRevenue,
+        bigOrderBonuses: bonusExplanation(bonusRowsByEmpDate.get(employeeDayKey) || []),
+        adjustment: adjustmentExplanation(adjustmentRow, automaticPay, finalPay),
+      },
+    })
     empMap.set(empId, rec)
   }
 
@@ -168,6 +229,44 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     rec.salaryAdjustmentCents += adjCents // automaticPay=0 → 差额 = 最终调整额
     rec.salary += adjCents
     rec.adjustmentCount += 1
+    const finalPay = round2(adjCents / 100)
+    rec.dailyExplanations.push({
+      employeeId: a.employeeId,
+      date,
+      storeKey: null,
+      storeName: null,
+      hours: 0,
+      baseRate: null,
+      basePay: 0,
+      commissionRate: null,
+      commission: 0,
+      transferSubsidyRate: null,
+      transferSubsidy: 0,
+      bigBonus: 0,
+      automaticPay: 0,
+      salaryAdjustment: finalPay,
+      finalPay,
+      explanation: {
+        state: 'ADJUSTMENT_ONLY',
+        payableHours: 0,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ADJUSTMENT_ONLY,
+        participantCount: null,
+        rawStoreRevenue: null,
+        displayWorkedRevenue: null,
+        commissionBasis: null,
+        calculationDayPolicy: null,
+        baseRate: null,
+        basePay: 0,
+        commissionTarget: null,
+        commissionRate: null,
+        commission: 0,
+        transferSubsidyRate: null,
+        transferSubsidy: 0,
+        total: 0,
+        bigOrderBonuses: [],
+        adjustment: adjustmentExplanation(a, 0, finalPay),
+      },
+    })
   }
 
   const employees = [...empMap.values()].map((rec) => ({
@@ -185,6 +284,9 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     bigBonus: Math.round(rec.bigBonusCents) / 100,
     salaryAdjustment: Math.round(rec.salaryAdjustmentCents) / 100,
     salary: Math.round(rec.salary) / 100,
+    dailyExplanations: rec.dailyExplanations
+      .slice()
+      .sort((a, b) => `${a.date}|${a.storeKey || ''}`.localeCompare(`${b.date}|${b.storeKey || ''}`)),
   }))
 
   // ---- 覆盖率 ----
