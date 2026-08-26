@@ -36,3 +36,14 @@ test('Gate 29F WEEK: 8.31–9.6 同时加载两月且不重复', async ({ page }
   expect(calls).toContain('2026-08')
   expect(calls).toContain('2026-09')
 })
+
+test('Gate 29G MONTH: 手工大单奖与提成分列，且同名 Employee.id 不串值', async ({ page }) => {
+  await page.goto('/tests/gate29f-personnel-harness.html')
+  await expect(page.getByText('稳定计算', { exact: true })).toBeVisible()
+  const cardA = page.locator('.card').filter({ hasText: 'A001' })
+  const cardB = page.locator('.card').filter({ hasText: 'B001' })
+  await expect(cardA.locator('[data-stat-label="业绩提成"]')).toContainText('¥120.00')
+  await expect(cardA.locator('[data-stat-label="大单奖"]')).toContainText('¥50.00')
+  await expect(cardB.locator('[data-stat-label="业绩提成"]')).toContainText('¥30.00')
+  await expect(cardB.locator('[data-stat-label="大单奖"]')).toContainText('¥0.00')
+})

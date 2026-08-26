@@ -87,6 +87,7 @@ const DIRECT_SUITE = [
   'test-payroll-payable-hours.mjs', // Gate 29B：稳定应付工时权威 + 月/日/快照统一计算合同 → critical
   'test-payroll-mascot-isolation.mjs', // Gate 29E：展示姓名不得控制工资资格 → critical
   'test-personnel-payroll-identity.mjs', // Gate 29F：Personnel 日/周 Employee.id + 跨月/竞态身份 → critical
+  'test-personnel-monthly-display.mjs', // Gate 29G：Personnel 月度提成/大单奖展示语义 → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -116,6 +117,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-payable-hours.mjs',
   'test-payroll-mascot-isolation.mjs',
   'test-personnel-payroll-identity.mjs',
+  'test-personnel-monthly-display.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

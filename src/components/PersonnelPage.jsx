@@ -29,6 +29,7 @@ import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
+import { personnelMonthlyComponents } from '../utils/payrollDisplay'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -49,7 +50,7 @@ function todayParts() {
 
 function Stat({ label, value, accent, className = '' }) {
   return (
-    <div className={`rounded-xl bg-slate-50/80 px-3 py-2 ${className}`}>
+    <div data-stat-label={label} className={`rounded-xl bg-slate-50/80 px-3 py-2 ${className}`}>
       <p className="text-[10px] text-slate-400">{label}</p>
       <p className={`mt-0.5 text-sm font-bold tabular-nums ${accent || 'text-slate-700'}`}>{value}</p>
     </div>
@@ -633,13 +634,16 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   }
   const all = directory.map((d) => {
     const p = enrichPayroll(d)
+    const monthlyComponents = personnelMonthlyComponents(p, {
+      legacyAmbiguous: p.legacyAmbiguous === true,
+    })
     if (p.legacyAmbiguous) {
       // Gate 24 澄清：LEGACY 重名无法归属 → payroll 派生字段为 null（渲染「—」），
       // 绝不以数字零冒充"零工资"；非 payroll 员工字段保持原样。
       return {
         ...d,
         legacyAmbiguous: true,
-        salary: null, basePay: null, perf: null, big: null, transferSubsidy: null,
+        salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
         hours: null, workedRevenue: null, workedDays: null,
         salaryAdjustment: null, adjustmentCount: null, payrollComputed: false, roi: null,
       }
@@ -647,15 +651,17 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     // Gate 24：payroll 派生字段缺失时给安全默认（未就绪等场景不崩溃）
     return {
       ...d,
-      salary: p.salary ?? 0,
-      basePay: p.basePay ?? 0,
-      perf: p.perf ?? p.commission ?? 0,
-      big: p.big ?? p.bigBonus ?? 0,
-      transferSubsidy: p.transferSubsidy ?? 0,
+      salary: monthlyComponents.salary,
+      basePay: monthlyComponents.basePay,
+      commission: monthlyComponents.commission,
+      perf: monthlyComponents.commission,
+      bigBonus: monthlyComponents.bigBonus,
+      big: monthlyComponents.bigBonus,
+      transferSubsidy: monthlyComponents.transferSubsidy,
       hours: p.hours ?? p.actualHours ?? 0,
       workedRevenue: p.workedRevenue ?? 0,
       workedDays: p.workedDays ?? p.days ?? 0,
-      salaryAdjustment: p.salaryAdjustment ?? 0,
+      salaryAdjustment: monthlyComponents.salaryAdjustment,
       adjustmentCount: p.adjustmentCount ?? 0,
       payrollComputed: p.payrollComputed === true,
       roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
@@ -854,7 +860,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               const periodPerf = hasPeriodResult ? status.commission : 0
               const periodBase = hasPeriodResult ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
               const periodTransfer = hasPeriodResult ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
-              const periodBig = hasPeriodResult ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
+              const periodBig = hasPeriodResult ? status.bigBonus || 0 : day || weekStart ? 0 : emp.bigBonus || 0
               const periodAdjustment = hasPeriodResult ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
               const periodAdjustmentCount = hasPeriodResult ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
               const periodRevenue = hasPeriodResult ? status.inc : 0
@@ -966,7 +972,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     />
                     <Stat
                       label={t('业绩提成')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`)}
+                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodPerf : emp.commission)}`)}
                       accent="text-budu-600"
                     />
                     <Stat

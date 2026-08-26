@@ -15,6 +15,7 @@
     ]
     const entries = {
       '2026-08|tongying|08-10': { inc: 2050, ord: 20, staff: ['张伟', '张伟'] },
+      '2026-08|tongying|08-20': { inc: 2050, ord: 20, staff: ['张伟'] },
       '2026-08|tongying|08-31': { inc: 2050, ord: 20, staff: ['张伟'] },
       '2026-09|tongying|09-01': { inc: 2050, ord: 20, staff: ['张伟'] },
     }
@@ -23,6 +24,7 @@
       '2026-08': [
         { id: 'a-day', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-10', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
         { id: 'b-day', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-10', employeeId: 'emp-B', staffNameSnapshot: '张伟', actualHours: 6 },
+        { id: 'a-bonus', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-20', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
         { id: 'a-aug', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-31', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
       ],
       '2026-09': [
@@ -46,7 +48,9 @@
       entries, staff, removedStaff: [],
       stores: [{ key: 'tongying', name: '北京通盈中心店' }],
       schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
-      bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
+      // Gate 29G：手工大单奖是正式权威输入，不依赖 POS；只属于 emp-A。
+      bigBonuses: [{ id: 'bonus-a', date: '2026-08-20', employeeId: 'emp-A', staffKey: 'tongying::张伟', bonusCents: 5000 }],
+      dailyPayAdjustments: [], posDaily: [], posProductSales: [],
     })
     createRoot(document.getElementById('root')).render(
       React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
