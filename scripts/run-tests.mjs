@@ -85,6 +85,7 @@ const DIRECT_SUITE = [
   'test-payroll-adjustment-only.mjs', // Gate 26：稳定调整仅日 Employee.id 月度贡献（无考勤也可进入 payroll）→ critical
   'test-payroll-issue-resolver.mjs', // Gate 27：PayrollIssueModal resolver 发放纯逻辑（主体/快照/预检）→ critical
   'test-payroll-payable-hours.mjs', // Gate 29B：稳定应付工时权威 + 月/日/快照统一计算合同 → critical
+  'test-payroll-mascot-isolation.mjs', // Gate 29E：展示姓名不得控制工资资格 → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
@@ -112,6 +113,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-adjustment-only.mjs',
   'test-payroll-issue-resolver.mjs',
   'test-payroll-payable-hours.mjs',
+  'test-payroll-mascot-isolation.mjs',
   'test-inventory-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',

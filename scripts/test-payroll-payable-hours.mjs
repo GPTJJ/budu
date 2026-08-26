@@ -98,13 +98,17 @@ const attendance = (employeeId, name, storeId, date, actualHours) => ({
   console.log('  [对账] 月汇总 = 导出日明细 = 发放快照 PASS')
 }
 
-// 6. 已知 P0 探针：稳定月汇总尚未应用「卡皮巴拉不发工资」，本 Gate 按范围明确不修。
+// 6. Gate 29E：展示姓名只是快照，不得成为工资资格；普通稳定考勤必须正常计薪。
 {
   const entries = { '2026-08|guanshe|08-10': { inc: 0, ord: 0, staff: ['卡皮巴拉'] } }
   const rows = [attendance('emp-capy', '卡皮巴拉', 'guanshe', '2026-08-10', 8)]
   const rec = calculateEmployeeIdShadowPayroll(entries, rows, [], [], '2026-08').employees[0]
-  assert.equal(rec.salary, 256, '当前未解决行为被固定为显式 P0 探针')
-  console.log('  [DEFERRED P0] 稳定月汇总尚未应用 no-pay 员工规则（仅探针）')
+  assert.deepEqual(
+    { hours: rec.actualHours, basePay: rec.basePay, subsidy: rec.transferSubsidy, salary: rec.salary },
+    { hours: 8, basePay: 240, subsidy: 16, salary: 256 },
+    '展示姓名不得使稳定工资归零',
+  )
+  console.log('  [姓名安全] 展示姓名不影响稳定工资资格 PASS')
 }
 
 console.log('GATE 29B PAYROLL PAYABLE HOURS TEST OK')

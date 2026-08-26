@@ -3,7 +3,7 @@
  *
  * 在 Vite dev server 中动态 import 真实 src/utils/selectors.js，
  * 用注入的 localStorage 镜像数据验证：
- * - 员工当日工资（多店同日 / 普通 / 卡皮巴拉不计工资）
+ * - 员工当日工资（多店同日 / 普通 / 展示姓名不影响工资资格）
  * - 自然周汇总（含跨月周 8.31-9.6）
  * - 大单奖按日/按月
  * - 每日工资明细
@@ -105,7 +105,7 @@ try {
     const dayYe = sel.employeeDayStatus('2026-08', '08-08', '叶芷辰')
     out.dayYe = dayYe
 
-    // 2. 卡皮巴拉当日不计工资
+    // 2. Gate 29E：历史吉祥物展示姓名按普通工资公式计算
     const dayCapy = sel.employeeDayStatus('2026-08', '08-11', '卡皮巴拉')
     out.dayCapy = dayCapy
 
@@ -148,8 +148,8 @@ try {
 
   const c = r.dayCapy
   check(
-    '卡皮巴拉当日：只统计工时、工资为 0',
-    c && near(c.hours, 8) && c.basePay === 0 && c.commission === 0 && c.pay === 0,
+    '卡皮巴拉当日：展示姓名不排除普通工资',
+    c && near(c.hours, 8) && c.basePay === 224 && c.commission === 160 && c.pay === 384,
     JSON.stringify(c),
   )
 
@@ -176,8 +176,8 @@ try {
 
   const dc = r.detailCapy
   check(
-    '卡皮巴拉明细：全 0 仅工时 8h',
-    dc && near(dc.totals.hours, 8) && dc.totals.basePay === 0 && dc.totals.commission === 0 && dc.totals.bigBonus === 0 && dc.totals.pay === 0,
+    '卡皮巴拉明细：展示姓名按普通工资公式计算',
+    dc && near(dc.totals.hours, 8) && dc.totals.basePay === 224 && dc.totals.commission === 160 && dc.totals.bigBonus === 0 && dc.totals.pay === 384,
     JSON.stringify(dc),
   )
 

@@ -15,7 +15,7 @@ import {
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { t } from './text.js'
-import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
+import { calcDailyPay, monthlyPayrollFromEntries } from './payroll.js'
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 import { addWeeks, getWeekDays } from './schedule.js'
@@ -606,7 +606,7 @@ export function employeeList(storeKey, monthKey = null) {
       list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
       list = list.map((e) => {
         const pr = payroll.get(e.name)
-        const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey, e.id) : 0
+        const bigBonus = pr ? bigBonusYuanMonth(e.name, monthKey, e.id) : 0
         const automaticSalary = pr ? Math.round((pr.salary + bigBonus) * 100) / 100 : 0
         const adjustments = monthPayAdjustmentSummary(e.name, monthKey)
         return {
@@ -873,7 +873,6 @@ export function employeesByType(type, monthKey = null) {
 function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
   if (!day) return null
   const entries = localEntries()
-  const noPay = isNoPayStaff(name)
   let inc = 0
   let ord = 0
   let count = 0
@@ -881,7 +880,7 @@ function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
-  const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day), employeeId)
+  const bigBonus = bigBonusYuanOn(name, fullDateOf(monthKey, day), employeeId)
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -899,9 +898,9 @@ function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
     inc += (Number(v.inc) || 0) / share
     ord += (Number(v.ord) || 0) / share
     hours += daily.hours
-    basePay += noPay ? 0 : daily.basePay
-    commission += noPay ? 0 : daily.commission
-    transferSubsidy += noPay ? 0 : daily.transferSubsidy
+    basePay += daily.basePay
+    commission += daily.commission
+    transferSubsidy += daily.transferSubsidy
     count += 1
     stores.push(storeKey)
   }
@@ -980,7 +979,6 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     // Gate 25 澄清：稳定模式该员工当日该店无考勤行 → 不生成该门店行（同名不制造考勤）
     if (strictAttendance && !attendanceByStore.has(storeKey)) continue
     const share = v.staff.length
-    const noPay = isNoPayStaff(name)
     const att = strictAttendance ? attendanceByStore.get(storeKey) : null
     const daily = calcDailyPay({
       storeKey,
@@ -1015,9 +1013,9 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     inc += revShare
     ord += ordShare
     hours += rowHours
-    basePay += noPay ? 0 : rowBasePay
-    commission += noPay ? 0 : rowCommission
-    transferSubsidy += noPay ? 0 : rowSubsidy
+    basePay += rowBasePay
+    commission += rowCommission
+    transferSubsidy += rowSubsidy
   }
   if (rows.length === 0) {
     const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day), employeeId)
@@ -1045,29 +1043,6 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     rows[0].total = Math.round((rows[0].total + extra) * 100) / 100
   }
   const bigBonus = Math.round((bonusTotalCents / 100) * 100) / 100
-  if (isNoPayStaff(name)) {
-    for (const row of rows) {
-      row.basePay = 0
-      row.commission = 0
-      row.transferSubsidy = 0
-      row.bigBonus = 0
-      row.total = 0
-    }
-    const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), 0, employeeId)
-    return {
-      rows,
-      totals: {
-        inc: Math.round(inc * 100) / 100,
-        ord: Math.round(ord * 100) / 100,
-        hours: Math.round(hours * 100) / 100,
-        basePay: 0,
-        commission: 0,
-        transferSubsidy: 0,
-        bigBonus: 0,
-        ...applied,
-      },
-    }
-  }
   const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
   const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay, employeeId)
   return {

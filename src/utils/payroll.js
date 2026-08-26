@@ -70,12 +70,6 @@ const COMMISSION_STEP = 1000
 const COMMISSION_PER_STEP = 5
 export const TRANSFER_SUBSIDY_EFFECTIVE_DATE = '2026-08-01'
 export const TRANSFER_SUBSIDY_RATE = 2
-/** 特殊员工：只统计工时，不计算任何工资（如吉祥物「卡皮巴拉」） */
-const NO_PAY_STAFF = new Set(['卡皮巴拉'])
-
-export function isNoPayStaff(name) {
-  return NO_PAY_STAFF.has(String(name || ''))
-}
 
 /** 当日值班工时：1 人按门店标准工时；2 人及以上各 8h */
 export function dutyHours(storeKey, staffCount, storeName = '') {
@@ -164,7 +158,6 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
       staffCount: share,
     })
     for (const name of v.staff) {
-      const noPay = isNoPayStaff(name)
       const rec = map.get(name) || {
         name,
         workedDays: 0,
@@ -181,10 +174,10 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
       rec.workedRevenue += inc / share
       rec.orders += ord / share
       rec.hours += daily.hours
-      rec.basePay += noPay ? 0 : daily.basePay
-      rec.commission += noPay ? 0 : daily.commission
-      rec.transferSubsidy += noPay ? 0 : daily.transferSubsidy
-      rec.salary += noPay ? 0 : daily.total
+      rec.basePay += daily.basePay
+      rec.commission += daily.commission
+      rec.transferSubsidy += daily.transferSubsidy
+      rec.salary += daily.total
       rec.days.add(day)
       rec.stores.add(storeKey)
       map.set(name, rec)
