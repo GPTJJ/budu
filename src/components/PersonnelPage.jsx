@@ -30,6 +30,11 @@ import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
 import { personnelMonthlyComponents } from '../utils/payrollDisplay'
+import {
+  PayrollDailyList,
+  PayrollExplanationHeading,
+  PayrollMonthlySummary,
+} from './payroll/EmployeePayrollPresentation'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -60,17 +65,6 @@ function Stat({ label, value, accent, className = '' }) {
 function signedMoney(value) {
   const amount = Number(value) || 0
   return `${amount >= 0 ? '+' : '-'}¥${formatMoney(Math.abs(amount))}`
-}
-
-/** Gate 24 澄清：payroll 派生金额渲染——null = 无法归属（LEGACY 重名），显示「—」而非 0 */
-function payAmount(value, fallback = 0) {
-  if (value === null) return t('—')
-  return `¥${formatMoney(Number(value) ?? fallback)}`
-}
-/** 工时渲染：null = 无法归属 → 「—」 */
-function payHours(value) {
-  if (value === null) return t('—')
-  return t('工时 {h}h', { h: Math.round(Number(value) || 0) })
 }
 
 const inputCls = 'input'
@@ -318,10 +312,11 @@ function SecondPasswordModal({ name, onClose, onSuccess }) {
   )
 }
 
-function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentity, attendanceRows, onClose }) {
+function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentity, attendanceRows, dailyExplanations, onClose }) {
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const weekDays = weekStart ? getWeekDays(weekStart) : null
+  // 导出继续复用既有逐日明细合同；界面展示则只读取 resolver 已提供的 explanation metadata。
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
     const detail = employeeDailyPayDetail(
@@ -382,10 +377,23 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
     { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 0, salaryAdjustment: 0, pay: 0 },
   )
 
+  const scopedDates = weekStart && weekDays
+    ? new Set(weekDays.map((item) => item.date))
+    : null
+  const selectedDate = day
+    ? (String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${String(day).padStart(2, '0')}`)
+    : ''
+  const explanationRows = (Array.isArray(dailyExplanations) ? dailyExplanations : [])
+    .filter((row) => {
+      const date = String(row?.date || '')
+      if (selectedDate) return date === selectedDate
+      if (scopedDates) return scopedDates.has(date)
+      return date.startsWith(month)
+    })
+    .slice()
+    .sort((a, b) => `${a.date}|${a.storeKey || ''}`.localeCompare(`${b.date}|${b.storeKey || ''}`))
+
   const download = () => {
-    const selectedDate = day
-      ? (String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${String(day).padStart(2, '0')}`)
-      : ''
     const periodLabel = weekStart
       ? `本周 ${weekStart} ~ ${weekDays[6].date}`
       : day
@@ -396,11 +404,11 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`${emp.name}工资明细`}>
+    <div className="fixed inset-0 z-[95] flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={`${emp.name}工资明细`}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
-        <div className="flex flex-wrap items-center gap-3">
-          <div>
+      <div className="relative max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-4 shadow-lg sm:max-h-[88vh] sm:rounded-2xl sm:p-6">
+        <div className="sticky top-0 z-10 -mx-4 -mt-4 flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6">
+          <div className="min-w-0">
             <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t(weekStart ? '本周每日工资明细' : day ? '当日工资明细' : '当月每日工资明细')}</h3>
             <p className="mt-0.5 text-xs text-slate-400">{t('{period} · 按日期正序排列', { period: weekStart ? `${weekStart} ~ ${weekDays[6].date}` : day ? `${month}-${day}` : month })}</p>
           </div>
@@ -412,102 +420,24 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
         {hidePersonal ? (
           <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
         ) : (
-          <>
-            <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />周末 / 法定节假日</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />调休上班（周末补班）</span>
+          <div className="mt-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <PayrollExplanationHeading />
+              <button
+                onClick={download}
+                className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                {t('导出 Excel')}
+              </button>
             </div>
-            <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
-                    <th className="py-2 pr-2">{t('日期')}</th>
-                    <th className="py-2 pr-2 text-right">{t('营业额')}</th>
-                    <th className="py-2 pr-2 text-right">{t('订单')}</th>
-                    <th className="py-2 pr-2 text-right">{t('工时')}</th>
-                    <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
-                    <th className="py-2 pr-2 text-right">{t('提成')}</th>
-                    <th className="py-2 pr-2 text-right">{t('调货补贴')}</th>
-                    <th className="py-2 pr-2 text-right">{t('大单奖')}</th>
-                    <th className="py-2 pr-2 text-right">{t('自动工资')}</th>
-                    <th className="py-2 pr-2 text-right">{t('薪资调整')}</th>
-                    <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {dayRows.map((r) => (
-                    <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
-                      <td className="py-1.5 pr-2 font-semibold">
-                        <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-amber-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
-                          {r.day}
-                          {r.mark === 'holiday' && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700">{t('假')}</span>}
-                          {r.mark === 'makeup' && <span className="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-600">{t('班')}</span>}
-                        </span>
-                        {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
-                        {r.payAdjustment && <span className="ml-1 rounded bg-violet-50 px-1 py-0.5 text-[9px] text-violet-600">{t('已调整')}</span>}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.revenue.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? r.orders : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.basePay.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.commission.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">
-                        {r.hasData ? `¥${r.transferSubsidy.toFixed(2)}` : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">
-                        {r.hasData && r.bigBonus > 0 ? `¥${r.bigBonus.toFixed(2)}` : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.automaticPay.toFixed(2)}` : '—'}</td>
-                      <td className={`py-1.5 pr-2 text-right tabular-nums ${r.payAdjustment ? 'font-semibold text-violet-600' : ''}`}>
-                        {r.payAdjustment ? signedMoney(r.salaryAdjustment) : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right font-bold tabular-nums text-budu-600">
-                        {r.hasData ? `¥${r.pay.toFixed(2)}` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="bg-budu-50/40 font-bold">
-                    <td className="py-2 pr-2 text-slate-700">{t('合计')}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.revenue.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.orders}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.hours}h</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.basePay.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-emerald-600">¥{totals.transferSubsidy.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.bigBonus.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.automaticPay.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-violet-600">{signedMoney(totals.salaryAdjustment)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            {dayRows.some((row) => row.payAdjustment) && (
-              <div className="mt-4 space-y-2">
-                <p className="text-xs font-bold text-slate-600">{t('人工调整明细')}</p>
-                {dayRows.filter((row) => row.payAdjustment).map((row) => (
-                  <div key={`adjustment-${row.day}`} className="rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-xs text-violet-700">
-                    <p className="font-semibold">
-                      {row.day} · {t('自动 ¥{auto} → 最终 ¥{final}（差额 {difference}）', {
-                        auto: row.payAdjustment.autoPaySnapshot.toFixed(2),
-                        final: row.payAdjustment.adjustedPay.toFixed(2),
-                        difference: signedMoney(row.payAdjustment.recordedDifference),
-                      })}
-                    </p>
-                    <p className="mt-1 break-words">{t('原因')}：{row.payAdjustment.reason}</p>
-                    <p className="mt-1 text-violet-400">{t('操作人')}：{row.payAdjustment.updatedBy || row.payAdjustment.createdBy || '—'} · {row.payAdjustment.updatedAt ? new Date(row.payAdjustment.updatedAt).toLocaleString('zh-CN') : '—'}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={download}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              {t('导出 Excel')}
-            </button>
-          </>
+            <PayrollDailyList
+              records={stableIdentity ? explanationRows : []}
+              legacyRows={dayRows}
+              legacyLimited={!stableIdentity && !emp.legacyAmbiguous}
+              legacyAmbiguous={!stableIdentity && emp.legacyAmbiguous}
+            />
+          </div>
         )}
       </div>
     </div>
@@ -559,23 +489,43 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       ? [String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${day}`]
       : []
   const periodKey = periodDates.join('|')
-  const [periodAttendance, setPeriodAttendance] = useState({ status: 'idle', key: '', rows: [] })
+  const [periodAttendance, setPeriodAttendance] = useState({ status: 'idle', key: '', rows: [], dailyByEmployeeId: new Map() })
   const periodRequestRef = useRef(0)
   useEffect(() => {
     if (periodDates.length === 0) {
-      setPeriodAttendance({ status: 'idle', key: '', rows: [] })
+      setPeriodAttendance({ status: 'idle', key: '', rows: [], dailyByEmployeeId: new Map() })
       return undefined
     }
     const requestId = periodRequestRef.current + 1
     periodRequestRef.current = requestId
     const key = periodDates.join('|')
     const months = payrollPeriodMonths(periodDates)
-    setPeriodAttendance({ status: 'loading', key, rows: [] })
+    setPeriodAttendance({ status: 'loading', key, rows: [], dailyByEmployeeId: new Map() })
     let cancelled = false
     Promise.all(months.map((monthKey) => loadDailyStoreStaffMonth(monthKey))).then(() => {
       if (cancelled || periodRequestRef.current !== requestId) return
       const rows = months.flatMap((monthKey) => getDailyStoreStaff(monthKey))
-      setPeriodAttendance({ status: 'ready', key, rows })
+      const dailyByEmployeeId = new Map()
+      const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
+      for (const monthKey of months) {
+        const result = resolvePayrollCalculation({
+          month: monthKey,
+          dailyEntries: getEntries(),
+          dailyStoreStaffRows: getDailyStoreStaff(monthKey),
+          dailyPayAdjustments: getDailyPayAdjustments(),
+          bigOrderBonuses: getBigBonuses(),
+          employees: directory,
+          users: [],
+          storeNames,
+        })
+        if (result.mode !== 'EMPLOYEE_ID') continue
+        for (const employee of result.payroll.employees) {
+          const current = dailyByEmployeeId.get(employee.employeeId) || []
+          current.push(...(Array.isArray(employee.dailyExplanations) ? employee.dailyExplanations : []))
+          dailyByEmployeeId.set(employee.employeeId, current)
+        }
+      }
+      setPeriodAttendance({ status: 'ready', key, rows, dailyByEmployeeId })
     })
     return () => { cancelled = true }
     // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
@@ -600,6 +550,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         bigOrderBonuses: getBigBonuses(),
         employees: directory,
         users: [],
+        storeNames: Object.fromEntries(allStores().map((store) => [store.key, store.name])),
       })
       if (cancelled || requestedMonthRef.current !== m) return
       if (res.mode === 'EMPLOYEE_ID') {
@@ -663,6 +614,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       workedDays: p.workedDays ?? p.days ?? 0,
       salaryAdjustment: monthlyComponents.salaryAdjustment,
       adjustmentCount: p.adjustmentCount ?? 0,
+      dailyExplanations: Array.isArray(p.dailyExplanations) ? p.dailyExplanations : [],
       payrollComputed: p.payrollComputed === true,
       roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
     }
@@ -955,51 +907,57 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     </div>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
-                    <span className="text-[10px] font-bold text-budu-600">{periodText}</span>
-                    {weekStart && <span className="text-[10px] text-slate-400">{t('第 {n} 周', { n: isoWeek(weekStart) })}</span>}
-                  </div>
+                  {!day && !weekStart ? (
+                    <PayrollMonthlySummary
+                      employee={emp}
+                      monthText={periodText}
+                      hidden={hidePersonal}
+                      ambiguous={emp.legacyAmbiguous}
+                    />
+                  ) : (
+                    <>
+                      <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
+                        <span className="text-[10px] font-bold text-budu-600">{periodText}</span>
+                        {weekStart && <span className="text-[10px] text-slate-400">{t('第 {n} 周', { n: isoWeek(weekStart) })}</span>}
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <Stat
+                          label={weekStart ? t('周工资') : t('当日工资')}
+                          value={hidePersonal ? '•••' : `¥${formatMoney(periodSalary)}`}
+                          accent="text-budu-600"
+                        />
+                        <Stat label={t('基础工资')} value={hidePersonal ? '•••' : `¥${formatMoney(periodBase)}`} />
+                        <Stat label={t('业绩提成')} value={hidePersonal ? '•••' : `¥${formatMoney(periodPerf)}`} accent="text-budu-600" />
+                        <Stat label={t('大单奖')} value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`} accent="text-amber-600" />
+                        <Stat label={t('调货补贴')} value={hidePersonal ? '•••' : `¥${formatMoney(periodTransfer)}`} accent="text-emerald-600" className="col-span-2" />
+                        {periodAdjustmentCount > 0 && (
+                          <Stat
+                            label={t('薪资调整')}
+                            value={hidePersonal ? '•••' : signedMoney(periodAdjustment)}
+                            accent="text-violet-600"
+                            className="col-span-2"
+                          />
+                        )}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
+                        <span>{t('工时 {h}h', { h: Math.round(periodHours) })}</span>
+                        <span>{isPublic ? '•••' : t('个人业绩分摊 ¥{amount}', { amount: formatMoney(periodRevenue) })}</span>
+                      </div>
+                    </>
+                  )}
 
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <Stat
-                      label={weekStart ? t('周工资') : day ? t('当日工资') : t('工资合计')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodSalary : emp.salary)}`)}
-                      accent="text-budu-600"
-                    />
-                    <Stat
-                      label={t('基础工资')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodBase)}`)}
-                    />
-                    <Stat
-                      label={t('业绩提成')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(weekStart || day ? periodPerf : emp.commission)}`)}
-                      accent="text-budu-600"
-                    />
-                    <Stat
-                      label={t('大单奖')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodBig)}`)}
-                      accent="text-amber-600"
-                    />
-                    <Stat
-                      label={t('调货补贴')}
-                      value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : `¥${formatMoney(periodTransfer)}`)}
-                      accent="text-emerald-600"
-                      className="col-span-2"
-                    />
-                    {periodAdjustmentCount > 0 && (
-                      <Stat
-                        label={t('薪资调整')}
-                        value={hidePersonal ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? payAmount(null) : signedMoney(periodAdjustment))}
-                        accent="text-violet-600"
-                        className="col-span-2"
-                      />
-                    )}
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
-                    <span>{emp.legacyAmbiguous && !day && !weekStart ? t('工时 —') : t('工时 {h}h', { h: Math.round(weekStart || day ? periodHours : emp.hours) })}</span>
-                    <span>{isPublic ? '•••' : (emp.legacyAmbiguous && !day && !weekStart ? t('营业额 —') : t('营业额 ¥{amount}', { amount: formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue) }))}</span>
-                  </div>
+                  {!day && !weekStart && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setDetailEmp(emp)
+                      }}
+                      className="mt-3 flex min-h-10 w-full items-center justify-center rounded-xl border border-budu-100 bg-white px-3 py-2 text-xs font-bold text-budu-600 transition hover:bg-budu-50"
+                    >
+                      {t('查看每日工资明细')}
+                    </button>
+                  )}
 
                   {canBigBonus && (
                     <button
@@ -1130,7 +1088,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           onClose={() => setShowExport(false)}
         />
       )}
-      {detailEmp && (        <DailyPayModal
+      {detailEmp && (
+        <DailyPayModal
           emp={detailEmp}
           month={month}
           day={day}
@@ -1138,6 +1097,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           hidePersonal={hidePersonal}
           stableIdentity={payrollDisplay.mode === 'EMPLOYEE_ID'}
           attendanceRows={day || weekStart ? (periodAttendance.key === periodKey ? periodAttendance.rows : []) : getDailyStoreStaff(month)}
+          dailyExplanations={day || weekStart
+            ? (periodAttendance.dailyByEmployeeId?.get(detailEmp.id) || [])
+            : (detailEmp.dailyExplanations || [])}
           onClose={() => setDetailEmp(null)}
         />
       )}

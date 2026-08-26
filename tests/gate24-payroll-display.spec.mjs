@@ -7,13 +7,13 @@ test('Gate 24 A/B: 同店同名两卡各自显示独立金额（EMPLOYEE_ID 模�
   const cards = page.locator('.card').filter({ hasText: '张伟' })
   await expect(cards).toHaveCount(2)
   // 两人 share=2，各 6000 营业额分摊：工资应相同且 > 0（同一公式）
-  // 断言两卡各有一个非零工资合计
+  // 断言两卡各有一个非零最终工资
   const amounts = []
   for (let i = 0; i < 2; i += 1) {
     const card = cards.nth(i)
-    await expect(card.getByText('工资合计')).toBeVisible()
+    await expect(card.getByText('最终工资', { exact: true })).toBeVisible()
     const text = await card.innerText()
-    const m = text.match(/工资合计\s*¥([\d,]+\.\d{2})/)
+    const m = text.match(/最终工资\s*¥([\d,]+\.\d{2})/)
     expect(m).toBeTruthy()
     amounts.push(Number(m[1].replace(/,/g, '')))
   }
@@ -33,7 +33,7 @@ test('Gate 24 D: LEGACY 重名模式显示身份模糊且不给精确金额', as
   const cards = page.locator('.card').filter({ hasText: '张伟' })
   await expect(cards).toHaveCount(2)
   await expect(page.getByText('身份模糊', { exact: true })).toHaveCount(2)
-  // 工资合计应为「—」（无法归属，绝不以 ¥0.00 冒充零工资）
+  // 最终工资应为「—」（无法归属，绝不以 ¥0.00 冒充零工资）
   await expect(cards.first().getByText('—', { exact: true }).first()).toBeVisible()
   await expect(cards.first().getByText('¥0.00', { exact: true })).toHaveCount(0)
 })

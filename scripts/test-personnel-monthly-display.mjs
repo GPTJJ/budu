@@ -7,6 +7,7 @@ import { personnelMonthlyComponents } from '../src/utils/payrollDisplay.js'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const personnelSource = fs.readFileSync(path.join(root, 'src/components/PersonnelPage.jsx'), 'utf8')
+const presentationSource = fs.readFileSync(path.join(root, 'src/components/payroll/EmployeePayrollPresentation.jsx'), 'utf8')
 
 function components(record, options) {
   return personnelMonthlyComponents(record, options)
@@ -70,8 +71,10 @@ const legacyAmbiguous = components({ commission: 20, bigBonus: 30, salary: 50 },
 assert.ok(Object.values(legacyAmbiguous).every((value) => value === null))
 
 assert.match(personnelSource, /payrollDisplay\.byEmployeeId\.get\(d\.id\)/)
-assert.match(personnelSource, /weekStart \|\| day \? periodPerf : emp\.commission/)
-assert.match(personnelSource, /day \|\| weekStart \? 0 : emp\.bigBonus/)
+assert.match(personnelSource, /<PayrollMonthlySummary/)
+assert.match(presentationSource, /\['业绩提成', employee\?\.commission\]/)
+assert.match(presentationSource, /\['大单奖', employee\?\.bigBonus\]/)
 assert.doesNotMatch(personnelSource, /emp\.perf\s*\+\s*emp\.big/)
+assert.doesNotMatch(presentationSource, /employee\?\.commission\s*\+\s*employee\?\.bigBonus/)
 
 console.log('Gate 29G Personnel monthly component display tests: PASS')

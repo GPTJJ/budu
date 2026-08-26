@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 29J Payroll UI</title></head>
+  <body class="m-0 bg-slate-50"><div id="root"></div><script type="module">
+    import React, { useState } from 'react'
+    import { createRoot } from 'react-dom/client'
+    import { PayrollDailyList, PayrollMonthlySummary } from '/src/components/payroll/EmployeePayrollPresentation.jsx'
+    import '/src/index.css'
+
+    window.__payrollUiFetchCount = 0
+    const originalFetch = window.fetch
+    window.fetch = (...args) => {
+      window.__payrollUiFetchCount += 1
+      return originalFetch(...args)
+    }
+
+    const makeRecord = (overrides = {}) => ({
+      employeeId: 'emp-A', date: '2026-08-10', storeKey: 'tongying', storeName: '北京通盈中心店',
+      hours: 8, baseRate: 30, basePay: 240, commissionRate: 5, commission: 40,
+      transferSubsidyRate: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 280,
+      salaryAdjustment: 0, finalPay: 280,
+      explanation: {
+        state: 'NORMAL', payableHours: 8, payableHoursSource: 'ACTUAL_HOURS', participantCount: 1,
+        rawStoreRevenue: 2050, displayWorkedRevenue: 2050, commissionBasis: 2050,
+        calculationDayPolicy: 'WORKDAY_POLICY', baseRate: 30, basePay: 240,
+        commissionTarget: 2000, commissionRate: 5, commission: 40,
+        transferSubsidyRate: 0, transferSubsidy: 0, bigOrderBonuses: [], adjustment: null,
+      },
+      ...overrides,
+    })
+
+    const fixtures = {
+      normal: [makeRecord()],
+      twoA: [makeRecord({
+        employeeId: 'emp-A', baseRate: 28, basePay: 224, automaticPay: 264, finalPay: 264,
+        explanation: { ...makeRecord().explanation, participantCount: 2, displayWorkedRevenue: 1025, baseRate: 28, basePay: 224 },
+      })],
+      twoB: [makeRecord({
+        employeeId: 'emp-B', hours: 6, baseRate: 28, basePay: 168, commission: 30, automaticPay: 198, finalPay: 198,
+        explanation: { ...makeRecord().explanation, payableHours: 6, participantCount: 2, displayWorkedRevenue: 1025, baseRate: 28, basePay: 168, commission: 30 },
+      })],
+      holiday: [makeRecord({
+        date: '2026-08-09', commissionRate: 0, commission: 0, automaticPay: 240, finalPay: 240,
+        explanation: { ...makeRecord().explanation, rawStoreRevenue: 4800, displayWorkedRevenue: 4800, commissionBasis: 4800, calculationDayPolicy: 'HOLIDAY_POLICY', commissionTarget: 5000, commissionRate: 0, commission: 0 },
+      })],
+      guanshe: [makeRecord({
+        date: '2026-08-11', storeKey: 'guanshe', storeName: '北京官舍店', hours: 7, basePay: 210,
+        commissionRate: 0, commission: 0, transferSubsidyRate: 2, transferSubsidy: 14, automaticPay: 224, finalPay: 224,
+        explanation: { ...makeRecord().explanation, payableHours: 7, rawStoreRevenue: 0, displayWorkedRevenue: 0, commissionBasis: 0, basePay: 210, commissionRate: 0, commission: 0, transferSubsidyRate: 2, transferSubsidy: 14 },
+      })],
+      bonusAdjustment: [makeRecord({
+        date: '2026-08-12', bigBonus: 150, automaticPay: 430, salaryAdjustment: 70, finalPay: 500,
+        explanation: {
+          ...makeRecord().explanation,
+          bigOrderBonuses: [
+            { orderAmount: 1000, bonusAmount: 50, receiptPresent: true },
+            { orderAmount: 2000, bonusAmount: 100, receiptPresent: false },
+          ],
+          adjustment: { automaticPay: 430, autoPaySnapshot: 250, salaryAdjustment: 70, finalPay: 500, reason: '经理确认 500' },
+        },
+      })],
+      adjustmentOnly: [makeRecord({
+        date: '2026-08-13', storeKey: null, storeName: null, hours: 0, baseRate: null, basePay: 0,
+        commissionRate: null, commission: 0, automaticPay: 0, salaryAdjustment: 500, finalPay: 500,
+        explanation: {
+          state: 'ADJUSTMENT_ONLY', payableHours: 0, payableHoursSource: 'ADJUSTMENT_ONLY', participantCount: null,
+          rawStoreRevenue: null, displayWorkedRevenue: null, commissionBasis: null, calculationDayPolicy: null,
+          baseRate: null, basePay: 0, commissionTarget: null, commissionRate: null, commission: 0,
+          transferSubsidyRate: null, transferSubsidy: 0, bigOrderBonuses: [],
+          adjustment: { automaticPay: 0, autoPaySnapshot: 0, salaryAdjustment: 500, finalPay: 500, reason: '仅调整日 +500' },
+        },
+      })],
+      realZero: [makeRecord({
+        date: '2026-08-14', hours: 0, basePay: 0, commission: 0, automaticPay: 0, finalPay: 0,
+        explanation: { ...makeRecord().explanation, state: 'REAL_ZERO', payableHours: 0, basePay: 0, commission: 0 },
+      })],
+      none: [],
+    }
+
+    const monthly = { basePay: 1000, commission: 300, transferSubsidy: 20, bigBonus: 80, salaryAdjustment: 50, salary: 1450, workedDays: 12, hours: 88, workedRevenue: 12345 }
+
+    function App() {
+      const [fixture, setFixture] = useState('normal')
+      const [legacy, setLegacy] = useState('none')
+      return React.createElement('main', { className: 'mx-auto max-w-xl space-y-5 p-3 sm:p-5' },
+        React.createElement(PayrollMonthlySummary, { employee: monthly, monthText: '2026年08月' }),
+        React.createElement('div', { className: 'flex flex-wrap gap-2', 'aria-label': 'fixture controls' },
+          Object.keys(fixtures).map((key) => React.createElement('button', { key, onClick: () => { setLegacy('none'); setFixture(key) }, className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': `fixture-${key}` }, key)),
+          React.createElement('button', { onClick: () => setLegacy('unique'), className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': 'fixture-legacy-unique' }, 'legacy'),
+          React.createElement('button', { onClick: () => setLegacy('ambiguous'), className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': 'fixture-legacy-ambiguous' }, 'ambiguous'),
+        ),
+        React.createElement('section', { 'data-current-fixture': legacy === 'none' ? fixture : legacy },
+          React.createElement(PayrollDailyList, {
+            records: legacy === 'none' ? fixtures[fixture] : [],
+            legacyLimited: legacy === 'unique',
+            legacyAmbiguous: legacy === 'ambiguous',
+            legacyRows: [{ day: '08-10', stores: '通盈中心', hours: 12, pay: 420, hasData: true }],
+          }),
+        ),
+      )
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(App))
+  </script></body>
+</html>

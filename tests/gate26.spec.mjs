@@ -18,9 +18,9 @@ test('Gate 26 N: 仅调整月 Personnel 卡片按 Employee.id 显示（同名独
   // 出勤 0 天（不虚构考勤）
   expect(a).toContain('出勤 0 天')
   expect(b).toContain('出勤 0 天')
-  // 薪资调整标签出现（adjustmentCount > 0）
-  expect(a).toContain('薪资调整')
-  expect(b).toContain('薪资调整')
+  // 工资调整标签出现（adjustmentCount > 0）
+  expect(a).toContain('工资调整')
+  expect(b).toContain('工资调整')
 })
 
 test('Gate 26 K: 导出明细 = 考勤 ∪ 调整（调整独占行 工时0/原因正确/不重复）', async ({ page }) => {
