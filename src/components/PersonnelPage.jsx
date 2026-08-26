@@ -12,6 +12,8 @@ import {
   employeeDayStatus,
   employeeDailyPayDetail,
   employeeWeekStatus,
+  legacyAmbiguousEmployeeNames,
+  payrollPeriodMonths,
   hasLocalEntry,
   localStaffList,
   currentEmployeeDirectory,
@@ -315,13 +317,19 @@ function SecondPasswordModal({ name, onClose, onSuccess }) {
   )
 }
 
-function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
+function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentity, attendanceRows, onClose }) {
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
-    const detail = employeeDailyPayDetail(monthKey, dd, emp.name, emp.id)
+    const detail = employeeDailyPayDetail(
+      monthKey,
+      dd,
+      emp.name,
+      stableIdentity ? emp.id : undefined,
+      stableIdentity ? attendanceRows : undefined,
+    )
     // 周末/法定节假日标记（与首页日历一致：假=红+「假」、调休=绿+「班」、普通周末=红）
     const full = String(dd).includes('-') ? `${monthKey}-${String(dd).slice(3)}` : `${monthKey}-${String(dd)}`
     const isHolidayDay = HOLIDAYS_2026.has(full)
@@ -542,6 +550,37 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const weekLabel = weekDays ? `${weekStart} ~ ${weekDays[6].date}` : ''
 
+  // Gate 29F：日/周稳定工资必须先加载所选日期覆盖的每一个月份。
+  // 请求键只由所选期间决定；员工切换不发请求，渲染始终使用当前 Employee.id，避免迟到的 A 覆盖 B。
+  const periodDates = weekDays
+    ? weekDays.map((item) => item.date)
+    : day
+      ? [String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${day}`]
+      : []
+  const periodKey = periodDates.join('|')
+  const [periodAttendance, setPeriodAttendance] = useState({ status: 'idle', key: '', rows: [] })
+  const periodRequestRef = useRef(0)
+  useEffect(() => {
+    if (periodDates.length === 0) {
+      setPeriodAttendance({ status: 'idle', key: '', rows: [] })
+      return undefined
+    }
+    const requestId = periodRequestRef.current + 1
+    periodRequestRef.current = requestId
+    const key = periodDates.join('|')
+    const months = payrollPeriodMonths(periodDates)
+    setPeriodAttendance({ status: 'loading', key, rows: [] })
+    let cancelled = false
+    Promise.all(months.map((monthKey) => loadDailyStoreStaffMonth(monthKey))).then(() => {
+      if (cancelled || periodRequestRef.current !== requestId) return
+      const rows = months.flatMap((monthKey) => getDailyStoreStaff(monthKey))
+      setPeriodAttendance({ status: 'ready', key, rows })
+    })
+    return () => { cancelled = true }
+    // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, day, weekStart, staffVersion, syncTick])
+
   // ---- Gate 24：显式月份加载 + resolver（竞态安全：晚到的响应不覆盖当前所选月）----
   const [payrollDisplay, setPayrollDisplay] = useState({ status: 'loading', month: '', mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
   const requestedMonthRef = useRef('')
@@ -570,12 +609,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         // （legacy 结果本身把重名合并成一行，无法反推——以目录为准，绝不给重名卡精确金额）
         const byName = new Map()
         for (const row of res.payroll.employees) byName.set(row.name, row)
-        const dirNameCounts = new Map()
-        for (const d of directory) dirNameCounts.set(d.name, (dirNameCounts.get(d.name) || 0) + 1)
-        const ambiguous = new Set()
-        for (const d of directory) {
-          if ((dirNameCounts.get(d.name) || 0) > 1) ambiguous.add(d.name)
-        }
+        const ambiguous = legacyAmbiguousEmployeeNames(directory)
         setPayrollDisplay({ status: 'ready', month: m, mode: 'LEGACY', byEmployeeId: new Map(), legacyByName: byName, legacyAmbiguousNames: ambiguous })
       }
     }).catch(() => {
@@ -726,6 +760,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           <CalendarPicker
             month={month}
             day={day}
+            weekStart={weekStart}
             onSelect={(m, d) => {
               setMonth(m)
               setDay(d)
@@ -802,28 +837,32 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {/* 员工卡片 */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-sync-tick={syncTick}>
             {list.map((emp, i) => {
+              const periodReady = periodAttendance.status === 'ready' && periodAttendance.key === periodKey
+              const stablePeriod = payrollDisplay.mode === 'EMPLOYEE_ID'
+              const legacyPeriod = payrollDisplay.mode === 'LEGACY' && !emp.legacyAmbiguous
               const status = weekStart
-                ? weekDays
-                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name, emp.id)
+                ? weekDays && (stablePeriod ? periodReady : legacyPeriod)
+                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name, stablePeriod ? emp.id : undefined, stablePeriod ? periodAttendance.rows : undefined)
                   : null
-                : day
-                  ? employeeDayStatus(month, day, emp.name, emp.id)
+                : day && (stablePeriod ? periodReady : legacyPeriod)
+                  ? employeeDayStatus(month, day, emp.name, stablePeriod ? emp.id : undefined, stablePeriod ? periodAttendance.rows : undefined)
                   : null
-              const onDuty = Boolean((day || weekStart) && status)
-              const periodSalary = onDuty ? status.pay : 0
-              const periodHours = onDuty ? status.hours : 0
-              const periodPerf = onDuty ? status.commission : 0
-              const periodBase = onDuty ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
-              const periodTransfer = onDuty ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
-              const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
-              const periodAdjustment = onDuty ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
-              const periodAdjustmentCount = onDuty ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
-              const periodRevenue = onDuty ? status.inc : 0
+              const hasPeriodResult = Boolean((day || weekStart) && status)
+              const onDuty = Boolean(hasPeriodResult && !status.adjustmentOnly)
+              const periodSalary = hasPeriodResult ? status.pay : 0
+              const periodHours = hasPeriodResult ? status.hours : 0
+              const periodPerf = hasPeriodResult ? status.commission : 0
+              const periodBase = hasPeriodResult ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
+              const periodTransfer = hasPeriodResult ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
+              const periodBig = hasPeriodResult ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
+              const periodAdjustment = hasPeriodResult ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
+              const periodAdjustmentCount = hasPeriodResult ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
+              const periodRevenue = hasPeriodResult ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
               const periodWorkedDays = weekStart
                 ? status ? status.workedDays : 0
                 : day
-                  ? status ? 1 : 0
+                  ? onDuty ? 1 : 0
                   : emp.workedDays
               const periodText = weekStart
                 ? `${Number(weekStart.slice(5, 7))}.${Number(weekStart.slice(8, 10))} - ${Number(weekDays[6].date.slice(5, 7))}.${Number(weekDays[6].date.slice(8, 10))}`
@@ -897,7 +936,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                             {t('本地')}
                           </span>
                         )}
-                        {(day || weekStart) && status && (
+                        {(day || weekStart) && onDuty && (
                           <span className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
                             {t('值班')}
@@ -987,10 +1026,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       {status ? (
                         <>
                           <span className="text-xs font-semibold text-slate-500">
-                            {t(weekStart ? '本周值班 · {count} 天 · {stores} 家店' : '当日值班 · {count} 家店', {
-                              count: weekStart ? status.workedDays : periodStores,
-                              stores: periodStores,
-                            })}
+                            {status.adjustmentOnly
+                              ? t('仅薪资调整 · 无考勤记录')
+                              : t(weekStart ? '本周值班 · {count} 天 · {stores} 家店' : '当日值班 · {count} 家店', {
+                                  count: weekStart ? status.workedDays : periodStores,
+                                  stores: periodStores,
+                                })}
                           </span>
                           {isPublic ? (
                             <span className="text-xs font-bold text-slate-300">•••</span>
@@ -1089,6 +1130,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           day={day}
           weekStart={weekStart}
           hidePersonal={hidePersonal}
+          stableIdentity={payrollDisplay.mode === 'EMPLOYEE_ID'}
+          attendanceRows={day || weekStart ? (periodAttendance.key === periodKey ? periodAttendance.rows : []) : getDailyStoreStaff(month)}
           onClose={() => setDetailEmp(null)}
         />
       )}

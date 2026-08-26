@@ -2,7 +2,7 @@
  * BUDU 前端选择器模拟测试（浏览器环境）
  *
  * 在 Vite dev server 中动态 import 真实 src/utils/selectors.js，
- * 用注入的 localStorage 镜像数据验证：
+ * 用测试专用内存缓存播种验证（DA-5 后 localStorage 镜像已退役）：
  * - 员工当日工资（多店同日 / 普通 / 展示姓名不影响工资资格）
  * - 自然周汇总（含跨月周 8.31-9.6）
  * - 大单奖按日/按月
@@ -91,13 +91,12 @@ try {
   await waitReady()
   const browser = await chromium.launch({ headless: true })
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
-  await ctx.addInitScript((data) => {
-    localStorage.setItem('budu-os-cloud-mirror-v1', data)
-  }, JSON.stringify(mirror))
   const page = await ctx.newPage()
   await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
-  const r = await page.evaluate(async () => {
+  const r = await page.evaluate(async (fixture) => {
+    const userData = await import('/src/utils/userData.js')
+    userData.seedCachedDataForTest(fixture)
     const sel = await import('/src/utils/selectors.js')
     const out = {}
 
@@ -136,7 +135,7 @@ try {
     out.bonusMonth = sel.bigBonusYuanMonth('叶芷辰', '2026-08')
     out.hasLocal = sel.hasLocalEntry('2026-08', '08-09')
     return out
-  })
+  }, mirror)
 
   // ---- 断言 ----
   const d = r.dayYe

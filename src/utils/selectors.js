@@ -31,8 +31,7 @@ function fullDateOf(monthKey, day) {
 
 /**
  * Gate 10：大单奖读取（稳定身份优先，legacy 兼容，绝不双计）。
- * - 有 employeeId 的员工：stable 行按 employeeId 精确匹配；legacy NULL 行沿用旧 endsWith 姓名规则
- *   （历史奖金按姓名归入该员工——与旧行为一致）。stable 行绝不进入姓名路径，避免双计。
+ * - 有 employeeId 的员工：只按 employeeId 精确匹配。legacy NULL 行不得按姓名猜给稳定员工。
  * - 无 employeeId 的调用（历史 payroll 合成员工等）：沿用 legacy endsWith("::"+name) 聚合，
  *   包含 stable 行（其 staffKey 快照仍匹配）与 legacy 行——与旧行为一致。
  */
@@ -40,10 +39,7 @@ function bigBonusesByName(name, employeeId) {
   const rows = getBigBonuses()
   const stableId = String(employeeId || '').trim()
   if (stableId) {
-    return rows.filter((r) => {
-      if (r.employeeId) return r.employeeId === stableId
-      return String(r.staffKey || '').endsWith(`::${name}`)
-    })
+    return rows.filter((r) => String(r.employeeId || '').trim() === stableId)
   }
   return rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`))
 }
@@ -257,6 +253,29 @@ export function periodDates(monthKey, day = null, weekStart = null) {
   if (weekStart) return getWeekDays(weekStart).map((item) => item.date)
   if (day) return [fullDateOf(monthKey, day)]
   return dailyRows(monthKey, 'all').map((row) => `${monthKey}-${row.d.slice(3)}`)
+}
+
+/** Gate 29F：日/周期间涉及的月份键；跨月周必须同时加载，顺序稳定且不重复。 */
+export function payrollPeriodMonths(dateList) {
+  const months = []
+  const seen = new Set()
+  for (const value of Array.isArray(dateList) ? dateList : []) {
+    const month = String(value || '').slice(0, 7)
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || seen.has(month)) continue
+    seen.add(month)
+    months.push(month)
+  }
+  return months
+}
+
+/** LEGACY 兼容只允许唯一展示姓名；重名不得猜测金额归属。 */
+export function legacyAmbiguousEmployeeNames(employees) {
+  const counts = new Map()
+  for (const employee of Array.isArray(employees) ? employees : []) {
+    const name = String(employee?.name || '')
+    if (name) counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
 }
 
 /** 按日/自然周/整月读取每日经营数据；自然周允许跨月。 */
@@ -920,10 +939,31 @@ function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
 }
 
 /** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。employeeId 可选（大单奖稳定身份）。 */
-export function employeeDayStatus(monthKey, day, name, employeeId) {
+export function employeeDayStatus(monthKey, day, name, employeeId, attendanceRows) {
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    const detail = employeeDailyPayDetail(monthKey, day, name, stableId, Array.isArray(attendanceRows) ? attendanceRows : [])
+    if (!detail) return null
+    return {
+      inc: detail.totals.inc,
+      ord: detail.totals.ord,
+      stores: detail.rows.map((row) => row.storeKey),
+      hours: detail.totals.hours,
+      basePay: detail.totals.basePay,
+      commission: detail.totals.commission,
+      transferSubsidy: detail.totals.transferSubsidy,
+      bigBonus: detail.totals.bigBonus,
+      adjustmentOnly: detail.rows.length === 0,
+      automaticPay: detail.totals.automaticPay,
+      salaryAdjustment: detail.totals.salaryAdjustment,
+      payAdjustment: detail.totals.payAdjustment,
+      adjustmentCount: detail.totals.payAdjustment ? 1 : 0,
+      pay: detail.totals.pay,
+    }
+  }
   const automatic = automaticEmployeeDayStatus(monthKey, day, name, employeeId)
   const date = fullDateOf(monthKey, day)
-  const adjustment = dailyPayAdjustmentOn(name, date)
+  const adjustment = dailyPayAdjustmentOn(name, date, employeeId)
   if (!automatic && !adjustment) return null
   const base = automatic || { inc: 0, ord: 0, stores: [], hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, pay: 0 }
   return {
@@ -953,14 +993,18 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
   let commission = 0
   let transferSubsidy = 0
   const stableId = String(employeeId || '').trim()
-  const strictAttendance = stableId && Array.isArray(attendanceRows)
+  const strictAttendance = Boolean(stableId)
+  const stableAttendanceRows = Array.isArray(attendanceRows) ? attendanceRows : []
   const attendanceByStore = new Map()
+  const participantCountByStore = new Map()
   if (strictAttendance) {
     const fullDate = fullDateOf(monthKey, day)
-    for (const a of attendanceRows) {
-      if (String(a.employeeId || '') !== stableId) continue
+    for (const a of stableAttendanceRows) {
       if (String(a.date || '').slice(0, 10) !== fullDate) continue
-      attendanceByStore.set(String(a.storeId || a.storeKey || ''), a)
+      const attendanceStore = String(a.storeId || a.storeKey || '')
+      if (!attendanceStore || !String(a.employeeId || '').trim()) continue
+      participantCountByStore.set(attendanceStore, (participantCountByStore.get(attendanceStore) || 0) + 1)
+      if (String(a.employeeId || '') === stableId) attendanceByStore.set(attendanceStore, a)
     }
   }
   const dayBonuses = bigBonusesByName(name, employeeId).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
@@ -974,11 +1018,13 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
     if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
-    if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
+    if (!Array.isArray(v.staff)) continue
     const storeKey = parts[1]
     // Gate 25 澄清：稳定模式该员工当日该店无考勤行 → 不生成该门店行（同名不制造考勤）
     if (strictAttendance && !attendanceByStore.has(storeKey)) continue
-    const share = v.staff.length
+    if (!strictAttendance && !v.staff.includes(name)) continue
+    const share = strictAttendance ? participantCountByStore.get(storeKey) || 0 : v.staff.length
+    if (share <= 0) continue
     const att = strictAttendance ? attendanceByStore.get(storeKey) : null
     const daily = calcDailyPay({
       storeKey,
@@ -1061,7 +1107,7 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
 }
 
 /** 员工在指定日期区间（如自然周）的汇总薪酬。employeeId 可选（大单奖稳定身份）。 */
-export function employeeWeekStatus(monthKey, dateList, name, employeeId) {
+export function employeeWeekStatus(monthKey, dateList, name, employeeId, attendanceRows) {
   let includedDays = 0
   let workedDays = 0
   let hours = 0
@@ -1078,7 +1124,7 @@ export function employeeWeekStatus(monthKey, dateList, name, employeeId) {
   for (const fullDate of dateList) {
     const dateStr = String(fullDate)
     // 自然周可能跨月（如 8.31-9.6），按每个日期的真实月份查业绩
-    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name, employeeId)
+    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name, employeeId, attendanceRows)
     if (!st) continue
     includedDays += 1
     if (!st.adjustmentOnly) workedDays += 1
@@ -1098,6 +1144,7 @@ export function employeeWeekStatus(monthKey, dateList, name, employeeId) {
   const r2 = (v) => Math.round(v * 100) / 100
   return {
     workedDays,
+    adjustmentOnly: workedDays === 0,
     hours: r2(hours),
     basePay: r2(basePay),
     commission: r2(commission),

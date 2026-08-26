@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BadgeDollarSign, Loader2, RotateCcw, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { employeeDailyPayDetail } from '../utils/selectors'
 import {
+  getDailyStoreStaff,
+  loadDailyStoreStaffMonth,
   removeDailyPayAdjustment,
   upsertDailyPayAdjustment,
 } from '../utils/userData'
@@ -18,6 +20,7 @@ function localDate() {
 function normalizeApiRow(row) {
   return {
     id: row.id,
+    employeeId: row.employeeId || '',
     staffName: row.staffName,
     date: String(row.date || '').slice(0, 10),
     autoPayCentsSnapshot: Number(row.autoPayCentsSnapshot) || 0,
@@ -47,13 +50,32 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [tip, setTip] = useState('')
+  const [attendance, setAttendance] = useState({ status: 'loading', month: '', rows: [] })
+  const attendanceRequestRef = useRef(0)
+  useEffect(() => {
+    const month = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : ''
+    const requestId = attendanceRequestRef.current + 1
+    attendanceRequestRef.current = requestId
+    if (!month) {
+      setAttendance({ status: 'ready', month: '', rows: [] })
+      return undefined
+    }
+    setAttendance({ status: 'loading', month, rows: [] })
+    let cancelled = false
+    loadDailyStoreStaffMonth(month).then(() => {
+      if (cancelled || attendanceRequestRef.current !== requestId) return
+      setAttendance({ status: 'ready', month, rows: getDailyStoreStaff(month) })
+    })
+    return () => { cancelled = true }
+  }, [date])
+  const attendanceReady = attendance.status === 'ready' && attendance.month === date.slice(0, 7)
   const detail = /^\d{4}-\d{2}-\d{2}$/.test(date)
-    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name, emp.id)
+    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name, emp.id, attendanceReady ? attendance.rows : [])
     : null
   const current = detail?.totals?.payAdjustment || null
   const automaticPay = detail?.totals?.automaticPay ?? 0
   const canAdjustWithoutDuty = currentUser?.role === 'developer'
-  const canAdjust = Boolean(detail) || canAdjustWithoutDuty
+  const canAdjust = attendanceReady && (Boolean(detail) || canAdjustWithoutDuty)
 
   useEffect(() => {
     if (current) {

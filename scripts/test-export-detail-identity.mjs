@@ -27,8 +27,14 @@ seedCachedDataForTest({
   inventoryRequests: [], inventory: [], analysis: {}, productImages: {}, posDaily: [], posProductSales: [],
 })
 
+const stableAttendance = [
+  { id: 'att-a', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8 },
+  { id: 'att-b', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6 },
+]
+const identityAttendance = stableAttendance.map((row) => ({ ...row, actualHours: 8 }))
+
 // emp-A 明细：最终工资被覆盖为 100 元（adjustedPayCents=10000）、奖金 30 元；调整行按 employeeId 精确命中
-const detailA = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-A')
+const detailA = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-A', identityAttendance)
 assert.ok(detailA, 'emp-A 明细存在')
 assert.equal(detailA.totals.pay, 100, 'emp-A 当日最终工资 = 100 元（调整后，非 emp-B 的 -50）')
 assert.equal(detailA.totals.bigBonus, 30, 'emp-A 奖金 30（非 emp-B 的 70）')
@@ -38,7 +44,7 @@ assert.equal(detailA.totals.payAdjustment && detailA.totals.payAdjustment.adjust
 console.log('  [emp-A] pay=100 / 奖金30 / 原因 A 调整 +100 / employeeId=emp-A PASS')
 
 // emp-B 明细：最终工资被覆盖为 -50 元（adjustedPayCents=-5000）、奖金 70 元
-const detailB = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-B')
+const detailB = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-B', identityAttendance)
 assert.ok(detailB, 'emp-B 明细存在')
 assert.equal(detailB.totals.pay, -50, 'emp-B 当日最终工资 = -50 元（调整后，非 emp-A 的 +100）')
 assert.equal(detailB.totals.bigBonus, 70, 'emp-B 奖金 70（非 emp-A 的 30）')
@@ -60,12 +66,8 @@ console.log('  [legacy 调用] name 兼容保留 PASS')
 // Gate 25 澄清（工时身份）：同店同名同日，emp-A actualHours=8、emp-B actualHours=6
 // → 明细工时必须各自取自己的 DailyStoreStaff.actualHours（8/6），绝不为 8/8、6/6 或 name 默认
 {
-  const attendance = [
-    { id: 'att-a', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8 },
-    { id: 'att-b', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6 },
-  ]
-  const hA = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-A', attendance)
-  const hB = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-B', attendance)
+  const hA = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-A', stableAttendance)
+  const hB = employeeDailyPayDetail('2026-08', '08-01', '张伟', 'emp-B', stableAttendance)
   assert.ok(hA && hB, '工时 fixture 明细存在')
   assert.equal(hA.rows.length, 1, 'emp-A 一行')
   assert.equal(hB.rows.length, 1, 'emp-B 一行')

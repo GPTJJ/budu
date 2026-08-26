@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 29F Personnel</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const staff = [
+      { id: 'emp-A', name: '张伟', storeKey: 'tongying', storeName: '北京通盈中心店', type: 'fulltime', employeeNo: 'A001' },
+      { id: 'emp-B', name: '张伟', storeKey: 'tongying', storeName: '北京通盈中心店', type: 'parttime', employeeNo: 'B001' },
+    ]
+    const entries = {
+      '2026-08|tongying|08-10': { inc: 2050, ord: 20, staff: ['张伟', '张伟'] },
+      '2026-08|tongying|08-31': { inc: 2050, ord: 20, staff: ['张伟'] },
+      '2026-09|tongying|09-01': { inc: 2050, ord: 20, staff: ['张伟'] },
+    }
+    window.__attendanceCalls = []
+    window.__attendanceByMonth = {
+      '2026-08': [
+        { id: 'a-day', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-10', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
+        { id: 'b-day', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-10', employeeId: 'emp-B', staffNameSnapshot: '张伟', actualHours: 6 },
+        { id: 'a-aug', storeId: 'tongying', storeKey: 'tongying', date: '2026-08-31', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
+      ],
+      '2026-09': [
+        { id: 'a-sep', storeId: 'tongying', storeKey: 'tongying', date: '2026-09-01', employeeId: 'emp-A', staffNameSnapshot: '张伟', actualHours: 8 },
+      ],
+    }
+    const originalFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const value = String(url)
+      const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      if (value.includes('/api/v2/daily-store-staff')) {
+        const month = new URL(value, location.origin).searchParams.get('month')
+        window.__attendanceCalls.push(month)
+        return json({ ok: true, month, rows: window.__attendanceByMonth[month] || [] })
+      }
+      if (value.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') return json({ ok: true, rows: staff })
+      if (value.includes('/api/v2/employees/backfill') || value.includes('/api/v2/staff') || value.includes('/api/v2/daily-entries')) return json({ ok: true })
+      return originalFetch(url, opts)
+    }
+    seedCachedDataForTest({
+      entries, staff, removedStaff: [],
+      stores: [{ key: 'tongying', name: '北京通盈中心店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
+      bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
+    })
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true, canManage: true, onBack: () => {}, onOpenProfile: () => {},
+        }),
+      ),
+    )
+  </script></body>
+</html>

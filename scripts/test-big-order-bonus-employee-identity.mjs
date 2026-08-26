@@ -167,7 +167,7 @@ try {
   assert.equal(bigBonusYuanMonth('张伟', '2026-09', 'emp-A'), 100, '调店后仍按 employeeId 读到历史 bonus')
   console.log('  [F] 调店稳定读取 PASS')
 
-  // G/H: legacy 行兼容 + 无启发式回填
+  // G/H: legacy 无 id 查询兼容 + 稳定 Employee.id 不继承 legacy NULL 姓名行
   await prisma.bigOrderBonus.create({
     data: { id: 'legacy-g10', staffKey: 'guanshe::张伟', staffName: '张伟', storeKey: 'guanshe', date: new Date('2026-09-04T00:00:00Z'), amountCents: 100000n, bonusCents: 5000n, createdBy: 't' },
   })
@@ -183,9 +183,9 @@ try {
     ], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
   })
   assert.equal(bigBonusYuanMonth('张伟', '2026-09'), 350, 'legacy 行按旧行为可读（100+200+50）')
-  assert.equal(bigBonusYuanMonth('张伟', '2026-09', 'emp-A'), 150, 'emp-A = stable 100 + legacy 姓名归并 50（§9 legacy 兼容）')
-  assert.equal(bigBonusYuanMonth('张伟', '2026-09', 'emp-B'), 250, 'emp-B = stable 200 + legacy 姓名归并 50（legacy 行同名歧义为已知旧行为，§9 保留；未来 reconciliation 解析）')
-  console.log('  [G/H] legacy 兼容 + 无启发式回填 PASS')
+  assert.equal(bigBonusYuanMonth('张伟', '2026-09', 'emp-A'), 100, 'emp-A 只读 stable 100；legacy NULL 不按姓名猜给稳定身份')
+  assert.equal(bigBonusYuanMonth('张伟', '2026-09', 'emp-B'), 200, 'emp-B 只读 stable 200；同名 legacy NULL 不交叉')
+  console.log('  [G/H] legacy 无 id 查询兼容；稳定 Employee.id 无姓名回退 PASS')
 
   console.log('GATE 10 BIG ORDER BONUS EMPLOYEE ID TEST OK')
 } finally {
