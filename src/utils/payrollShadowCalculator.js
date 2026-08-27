@@ -269,6 +269,61 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     })
   }
 
+  // ---- Gate 29Q：已有月度主体的跨日稳定奖金贡献 ----
+  // BigOrderBonus 不要求奖金日同时有 POS/考勤；只要该 Employee.id 已由本月
+  // 考勤或 adjustment-only 建立真实 payroll 主体，奖金就是该主体的稳定贡献。
+  // 反之，bonus-only 仍不得创建新主体。若同日存在 adjustment-only，调整记录
+  // 是当日最终工资权威，保持既有覆盖语义，不额外叠加奖金。
+  for (const [key, bonusCents] of bonusByEmpDate) {
+    if (!bonusCents || attendedKeys.has(key) || adjustmentOnlyKeys.has(key)) continue
+    const separator = key.indexOf('|')
+    const employeeId = key.slice(0, separator)
+    const date = key.slice(separator + 1)
+    if (month && !date.startsWith(month)) continue
+    const rec = empMap.get(employeeId)
+    if (!rec) continue // BONUS_ONLY 不创建 payroll subject
+    rec.bigBonusCents += bonusCents
+    rec.salary += bonusCents
+    const finalPay = round2(bonusCents / 100)
+    rec.dailyExplanations.push({
+      employeeId,
+      date,
+      storeKey: null,
+      storeName: null,
+      hours: 0,
+      baseRate: null,
+      basePay: 0,
+      commissionRate: null,
+      commission: 0,
+      transferSubsidyRate: null,
+      transferSubsidy: 0,
+      bigBonus: finalPay,
+      automaticPay: finalPay,
+      salaryAdjustment: 0,
+      finalPay,
+      explanation: {
+        state: 'BIG_BONUS_CONTRIBUTION_ONLY',
+        payableHours: 0,
+        payableHoursSource: null,
+        participantCount: null,
+        rawStoreRevenue: null,
+        displayWorkedRevenue: null,
+        commissionBasis: null,
+        calculationDayPolicy: null,
+        baseRate: null,
+        basePay: 0,
+        commissionTarget: null,
+        commissionRate: null,
+        commission: 0,
+        transferSubsidyRate: null,
+        transferSubsidy: 0,
+        total: 0,
+        bigOrderBonuses: bonusExplanation(bonusRowsByEmpDate.get(key) || []),
+        adjustment: null,
+      },
+    })
+  }
+
   const employees = [...empMap.values()].map((rec) => ({
     employeeId: rec.employeeId,
     displayName: rec.displayName,

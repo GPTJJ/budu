@@ -59,9 +59,11 @@ export function evaluatePayrollReadiness(input) {
 
   // ---- 1) 考勤 + 业务日覆盖（复用 Gate 13 纯分类，行为不变）----
   const dayInput = buildEmployeePayrollDayInputs(entries, staffRows)
-  const stable = dayInput.stableRows
-  const legacy = dayInput.legacyUnknownRows
-  const legacyCompatible = dayInput.legacyCompatibleRows
+  const inRequestedMonth = (row) => String(row?.date || '').slice(0, 7) === month
+  const stable = dayInput.stableRows.filter(inRequestedMonth)
+  const legacy = dayInput.legacyUnknownRows.filter(inRequestedMonth)
+  const legacyCompatible = dayInput.legacyCompatibleRows.filter(inRequestedMonth)
+  const substitutes = dayInput.substituteRows.filter(inRequestedMonth)
   const unresolved = dayInput.unresolvedDays
 
   const eligibleDays = new Set()
@@ -148,6 +150,49 @@ export function evaluatePayrollReadiness(input) {
     }
   }
 
+  // ---- 4A) 考勤权威与工资贡献权威分离（Gate 29Q）----
+  // 调整/奖金拥有 Employee.id 只说明该笔贡献身份稳定，绝不能据此把整月
+  // legacy-compatible 考勤切换为 Employee.id 考勤。
+  const hasStableAttendance = stable.length > 0
+  const hasLegacyCompatibleAttendance = legacyCompatible.length > 0
+  const hasLegacyUnknownAttendance = legacy.length > 0
+  let attendanceMode = 'NONE'
+  if (hasStableAttendance && hasLegacyCompatibleAttendance) attendanceMode = 'MIXED_ATTENDANCE_AUTHORITY'
+  else if (hasLegacyUnknownAttendance) attendanceMode = 'LEGACY_UNKNOWN'
+  else if (hasStableAttendance) attendanceMode = 'EMPLOYEE_ID'
+  else if (hasLegacyCompatibleAttendance) attendanceMode = 'LEGACY_COMPATIBLE'
+  else if (stableAdjustmentRows > 0) attendanceMode = 'ADJUSTMENT_ONLY'
+  else if (stableBonusRows > 0) attendanceMode = 'BONUS_ONLY'
+
+  if (hasStableAttendance && hasLegacyCompatibleAttendance) {
+    calculationBlockers.push({
+      type: CALC,
+      reason: 'MIXED_ATTENDANCE_AUTHORITY',
+      detail: `${month} 同时存在 EMPLOYEE 与 LEGACY_EMPLOYEE_COMPATIBLE 考勤，禁止静默选择单一引擎`,
+    })
+    bump('MIXED_ATTENDANCE_AUTHORITY')
+  }
+
+  if (hasLegacyCompatibleAttendance && (stableAdjustmentRows > 0 || stableBonusRows > 0)) {
+    calculationBlockers.push({
+      type: CALC,
+      reason: 'STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE',
+      detail: `${month} legacy-compatible 考勤无法在无稳定桥接的情况下安全合并 Employee.id 调整或奖金`,
+    })
+    bump('STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE')
+  }
+
+  // legacy-compatible 工资可供兼容核对，但不能被误报为 Employee.id-native
+  // 计算/发放就绪。其工资由 resolver 的 legacy compatibility 路径提供。
+  if (hasLegacyCompatibleAttendance && !hasStableAttendance && stableAdjustmentRows === 0 && stableBonusRows === 0) {
+    calculationBlockers.push({
+      type: CALC,
+      reason: 'LEGACY_COMPATIBLE_ATTENDANCE',
+      detail: `${month} 考勤仍为已复核 legacy-compatible 身份，仅允许兼容计算，不可发放`,
+    })
+    bump('LEGACY_COMPATIBLE_ATTENDANCE')
+  }
+
   // 员工就绪度在计算就绪判定前构建：无任何稳定 payroll 主体（空月）→ 计算不就绪（确定性）
   // ---- 5) 按员工就绪度 ----
   const empMap = new Map()
@@ -228,7 +273,7 @@ export function evaluatePayrollReadiness(input) {
       unresolvedDays: monthUnresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
       stableAttendanceRows,
       legacyAttendanceRows,
-      substituteAttendanceRows: dayInput.substituteRows.length,
+      substituteAttendanceRows: substitutes.length,
       legacyCompatibleAttendanceRows: legacyCompatible.length,
       legacyUnknownAttendanceRows: legacy.length,
       excludedDraftDays: dayInput.excludedDraftDays.length,
@@ -240,7 +285,9 @@ export function evaluatePayrollReadiness(input) {
       issueReadyEmployeeCount,
       issueBlockedEmployeeCount,
       reasonCounts,
+      attendanceMode,
     },
+    attendanceMode,
     employees,
   }
 }
