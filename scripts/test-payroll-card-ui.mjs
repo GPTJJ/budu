@@ -66,7 +66,7 @@ const normal = {
 {
   const html = renderToStaticMarkup(React.createElement(PayrollDailyList, { records: [normal] }))
   assert.match(html, /8月10日/)
-  assert.match(html, /实际计薪 8h/)
+  assert.match(html, /计薪工时 8h/)
   assert.match(html, /¥280\.00/)
   assert.match(html, /查看详情/)
   assert.doesNotMatch(html, /提成目标/, '默认折叠不堆叠详细字段')

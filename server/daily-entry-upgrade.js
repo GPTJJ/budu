@@ -6,6 +6,10 @@ import { resolveStoreName } from './store-names.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
+  HISTORICAL_ATTENDANCE_STATUS,
+  PAYABLE_HOURS_SOURCES,
+} from '../shared/payableHoursAuthority.js'
+import {
   classifyDailyStaffTargets,
   OPERATIONAL_IDENTITY_TYPES,
   PAYROLL_PARTICIPANT_TYPES,
@@ -173,6 +177,8 @@ function serializeStaff(row) {
     breakMinutes: row.breakMinutes,
     scheduledHours: row.scheduledHours,
     actualHours: row.actualHours,
+    historicalPayrollHours: row.historicalPayrollHours,
+    payableHoursSource: row.payableHoursSource,
     attendanceStatus: row.attendanceStatus,
     source: row.source,
     updatedBy: row.updatedBy,
@@ -225,6 +231,8 @@ dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
       staffNameSnapshot: row.staffNameSnapshot,
       scheduledHours: row.scheduledHours,
       actualHours: row.actualHours,
+      historicalPayrollHours: row.historicalPayrollHours,
+      payableHoursSource: row.payableHoursSource,
       attendanceStatus: row.attendanceStatus,
     })),
   })
@@ -524,6 +532,13 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   await ensureStore(storeKey)
 
   const normalizedInput = items.map((item) => {
+    if (
+      Object.prototype.hasOwnProperty.call(item || {}, 'historicalPayrollHours')
+      || Object.prototype.hasOwnProperty.call(item || {}, 'payableHoursSource')
+      || item?.attendanceStatus === HISTORICAL_ATTENDANCE_STATUS
+    ) {
+      throw httpError('历史计薪工时只能通过受控修复流程写入', 400)
+    }
     const employeeId = item.employeeId == null ? null : String(item.employeeId).trim()
     const participantUserId = item.participantUserId == null ? null : String(item.participantUserId).trim()
     if (employeeId && employeeId.length > 100) throw httpError('员工 ID 不正确')
@@ -537,9 +552,10 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
     const scheduledStartTime = String(item.scheduledStartTime || '').slice(0, 5)
     const scheduledEndTime = String(item.scheduledEndTime || '').slice(0, 5)
     const providedHours = item.actualHours != null && item.actualHours !== '' && Number.isFinite(Number(item.actualHours))
-    const actualHours = providedHours
-      ? Math.max(0, Math.min(24, Math.round(Number(item.actualHours) * 100) / 100))
-      : hoursFromTimes(actualStartTime, actualEndTime, breakMinutes)
+    if (!providedHours || Number(item.actualHours) < 0 || Number(item.actualHours) > 24) {
+      throw httpError('实际工时必须是 0 到 24 之间的有限数字', 400)
+    }
+    const actualHours = Math.round(Number(item.actualHours) * 100) / 100
     return {
       ...(Object.prototype.hasOwnProperty.call(item || {}, 'participantType') ? { participantType: item.participantType } : {}),
       employeeId: employeeId || null,
@@ -571,6 +587,9 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
 
   const rows = await prisma.$transaction(async (tx) => {
     const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
+    if (existing.some((row) => row.payableHoursSource === PAYABLE_HOURS_SOURCES.LEGACY_PAYROLL_HOURS)) {
+      throw httpError('历史计薪工时为只读权威记录，不能由日常值班录入覆盖或删除', 409)
+    }
     const authorityConflict = parsed.find((item) => existing.some((row) => (
       ![PAYROLL_PARTICIPANT_TYPES.EMPLOYEE, PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE].includes(row.participantType)
       && ((item.employeeId && row.employeeId === item.employeeId)
@@ -602,6 +621,8 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
         breakMinutes: item.breakMinutes,
         scheduledHours: item.scheduledHours,
         actualHours: item.actualHours,
+        historicalPayrollHours: null,
+        payableHoursSource: PAYABLE_HOURS_SOURCES.ACTUAL_HOURS,
         attendanceStatus: item.attendanceStatus,
         source: before?.source || 'manual',
         updatedBy: req.user.username,

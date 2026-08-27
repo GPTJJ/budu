@@ -51,7 +51,7 @@ const { monthlyPayrollFromEntries } = await import(path.join(root, 'src/utils/pa
   assert.equal(out.employees.length, 1)
   assert.equal(out.employees[0].employeeId, 'emp-A')
   assert.equal(out.employees[0].days, 1)
-  assert.equal(out.employees[0].actualHours, 8)
+  assert.equal(out.employees[0].payableHours, 8)
   assert.ok(out.employees[0].salary > 0)
   console.log('  [A] 单员工整月 PASS')
 }

@@ -1,4 +1,5 @@
 import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
+import { normalizePayableHours } from '../../shared/payableHoursAuthority.js'
 
 const participantTypeOf = (row) => {
   if (Object.values(PAYROLL_PARTICIPANT_TYPES).includes(row?.participantType)) return row.participantType
@@ -69,6 +70,7 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
     ].includes(row.participantType)).length
 
     for (const row of group) {
+      const normalizedHours = normalizePayableHours(row)
       const base = {
         employeeId: row.employeeId || null,
         participantUserId: row.participantUserId || null,
@@ -77,9 +79,12 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
         storeId,
         storeKey: row.storeKey || storeId,
         staffNameSnapshot: row.staffNameSnapshot || '',
-        actualHours: row.actualHours == null || row.actualHours === '' ? Number.NaN : Number(row.actualHours),
+        actualHours: row.actualHours == null ? null : Number(row.actualHours),
+        historicalPayrollHours: row.historicalPayrollHours == null ? null : Number(row.historicalPayrollHours),
+        payableHours: normalizedHours.payableHours,
+        payableHoursSource: normalizedHours.payableHoursSource,
         scheduledHours: Number(row.scheduledHours) || 0,
-        attendanceStatus: row.attendanceStatus || 'normal',
+        attendanceStatus: row.attendanceStatus,
         staffCountForShare: participantCount,
         participantCount,
         dailyRevenueCents: entry ? Math.round(entry.inc * 100) : null,

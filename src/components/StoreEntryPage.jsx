@@ -117,7 +117,8 @@ export default function StoreEntryPage({ user, onBack }) {
   const pos = overview?.pos || null
   const adjustmentCents = overview?.entry ? BigInt(overview.entry.hybridAdjustmentCents) : 0n
   const canEditSales = source === 'manual' || (source === 'hybrid' && isManager)
-  const canEditStaff = !confirmed || isManager
+  const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
+  const canEditStaff = (!confirmed || isManager) && !hasHistoricalStaff
 
   const loadOverview = async () => {
     setLoadingOverview((current) => current || !overviewRef.current)
@@ -147,6 +148,8 @@ export default function StoreEntryPage({ user, onBack }) {
         actualEndTime: s.actualEndTime,
         breakMinutes: s.breakMinutes,
         actualHours: s.actualHours,
+        historicalPayrollHours: s.historicalPayrollHours,
+        payableHoursSource: s.payableHoursSource || 'ACTUAL_HOURS',
         attendanceStatus: s.attendanceStatus,
       })))
     } catch (e) {
@@ -213,6 +216,10 @@ export default function StoreEntryPage({ user, onBack }) {
   }
 
   const persistStaff = async (nextRows) => {
+    if (hasHistoricalStaff) {
+      setError('历史计薪工时为只读记录，不能在每日门店录入中修改')
+      return
+    }
     setSaving('staff')
     setError('')
     try {
@@ -247,6 +254,7 @@ export default function StoreEntryPage({ user, onBack }) {
   }
 
   const toggleStaff = (participant) => {
+    if (hasHistoricalStaff) return
     const exists = staffRows.some((row) => (
       (participant.employeeId && row.employeeId === participant.employeeId)
       || (participant.participantUserId && row.participantUserId === participant.participantUserId)
@@ -491,13 +499,19 @@ export default function StoreEntryPage({ user, onBack }) {
             onToggle={toggleStaff}
             disabled={!canEditStaff}
           />
+          {hasHistoricalStaff && (
+            <p className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+              历史计薪工时（无考勤事实）为只读权威记录，不能在日常值班录入中覆盖或删除。
+            </p>
+          )}
           {staffRows.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {staffRows.map((row) => (
                 <span key={row.staffId} className="inline-flex items-center gap-1.5 rounded-full bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-700">
                   {row.staffName}
                   {row.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && <span className="text-[10px] text-amber-600">不计工资</span>}
-                  <b className="tabular-nums text-budu-600">{Number(row.actualHours).toFixed(1)}h</b>
+                  {row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' && <span className="text-[10px] text-amber-600">历史只读</span>}
+                  <b className="tabular-nums text-budu-600">{Number(row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' ? row.historicalPayrollHours : row.actualHours).toFixed(1)}h</b>
                 </span>
               ))}
             </div>

@@ -19,6 +19,8 @@ import { calcDailyPay, monthlyPayrollFromEntries, PAYABLE_HOURS_SOURCE } from '.
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 import { addWeeks, getWeekDays } from './schedule.js'
+import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
+import { normalizePayableHours } from '../../shared/payableHoursAuthority.js'
 
 export const STORE_KEYS = BASE_STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
@@ -1021,8 +1023,17 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     for (const a of stableAttendanceRows) {
       if (String(a.date || '').slice(0, 10) !== fullDate) continue
       const attendanceStore = String(a.storeId || a.storeKey || '')
-      if (!attendanceStore || !String(a.employeeId || '').trim()) continue
-      participantCountByStore.set(attendanceStore, (participantCountByStore.get(attendanceStore) || 0) + 1)
+      if (!attendanceStore) continue
+      const participantType = a.participantType || (
+        a.employeeId ? PAYROLL_PARTICIPANT_TYPES.EMPLOYEE : PAYROLL_PARTICIPANT_TYPES.LEGACY_UNKNOWN
+      )
+      if ([
+        PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+        PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
+        PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE,
+      ].includes(participantType)) {
+        participantCountByStore.set(attendanceStore, (participantCountByStore.get(attendanceStore) || 0) + 1)
+      }
       if (String(a.employeeId || '') === stableId) attendanceByStore.set(attendanceStore, a)
     }
   }
@@ -1045,6 +1056,7 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     const share = strictAttendance ? participantCountByStore.get(storeKey) || 0 : v.staff.length
     if (share <= 0) continue
     const att = strictAttendance ? attendanceByStore.get(storeKey) : null
+    const normalizedHours = att ? normalizePayableHours(att) : null
     const daily = calcDailyPay({
       storeKey,
       storeName: storeName(storeKey),
@@ -1052,8 +1064,8 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       date: fullDateOf(monthKey, day),
       staffCount: share,
       ...(att ? {
-        payableHours: att.actualHours,
-        payableHoursSource: PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
+        payableHours: normalizedHours.payableHours,
+        payableHoursSource: normalizedHours.payableHoursSource,
       } : {}),
     })
     // 稳定模式由 calcDailyPay 消费精确 actualHours；legacy 未传 payableHours，继续使用 dutyHours。
@@ -1069,6 +1081,8 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       revenue: Math.round(revShare * 100) / 100,
       orders: Math.round(ordShare * 100) / 100,
       hours: rowHours,
+      payableHours: rowHours,
+      payableHoursSource: daily.explanation.payableHoursSource,
       baseRate: daily.baseRate,
       basePay: rowBasePay,
       commissionRate: daily.commissionRate,
@@ -1099,7 +1113,9 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
     return {
       rows: [],
       totals: {
-        inc: 0, ord: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
+        inc: 0, ord: 0, hours: 0, payableHours: 0,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ADJUSTMENT_ONLY,
+        basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
         ...applied,
       },
       explanation: {
@@ -1155,6 +1171,8 @@ export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendan
       inc: Math.round(inc * 100) / 100,
       ord: Math.round(ord * 100) / 100,
       hours: Math.round(hours * 100) / 100,
+      payableHours: Math.round(hours * 100) / 100,
+      payableHoursSource: [...new Set(rows.map((row) => row.payableHoursSource))].join('+'),
       basePay: Math.round(basePay * 100) / 100,
       commission: Math.round(commission * 100) / 100,
       transferSubsidy: Math.round(transferSubsidy * 100) / 100,

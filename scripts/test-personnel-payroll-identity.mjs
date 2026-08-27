@@ -166,11 +166,11 @@ for (const employee of employees) {
   assert.ok(monthly)
   assert.deepEqual(
     [daily.hours, daily.basePay, daily.commission, daily.transferSubsidy, daily.bigBonus, daily.salaryAdjustment, daily.pay],
-    [monthly.actualHours, monthly.basePay, monthly.commission, monthly.transferSubsidy, monthly.bigBonus, monthly.salaryAdjustment, monthly.salary],
+    [monthly.payableHours, monthly.basePay, monthly.commission, monthly.transferSubsidy, monthly.bigBonus, monthly.salaryAdjustment, monthly.salary],
   )
   assert.deepEqual(
     [weekly.hours, weekly.basePay, weekly.commission, weekly.transferSubsidy, weekly.bigBonus, weekly.salaryAdjustment, weekly.pay],
-    [monthly.actualHours, monthly.basePay, monthly.commission, monthly.transferSubsidy, monthly.bigBonus, monthly.salaryAdjustment, monthly.salary],
+    [monthly.payableHours, monthly.basePay, monthly.commission, monthly.transferSubsidy, monthly.bigBonus, monthly.salaryAdjustment, monthly.salary],
   )
 }
 console.log('  [Reconcile] Personnel 日/周 = 月 resolver = Export/Issue 稳定金额合同 PASS')

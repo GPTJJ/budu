@@ -4,6 +4,7 @@ import { formatMoney } from '../../utils/format'
 
 const HOURS_SOURCE_LABELS = {
   ACTUAL_HOURS: '实际考勤工时',
+  LEGACY_PAYROLL_HOURS: '历史计薪工时（无考勤事实）',
   LEGACY_DUTY_HOURS: '历史兼容计薪工时',
   ADJUSTMENT_ONLY: '无考勤，仅工资调整',
 }
@@ -86,7 +87,7 @@ export function PayrollMonthlySummary({ employee, monthText, hidden = false, amb
             <p className="mt-0.5 text-xs font-bold text-slate-700">{ambiguous ? '—' : `${Number(employee?.workedDays) || 0}天`}</p>
           </div>
           <div className="min-w-0 px-2 text-center">
-            <p className="text-[10px] text-slate-400">实际计薪工时</p>
+            <p className="text-[10px] text-slate-400">计薪工时</p>
             <p className="mt-0.5 text-xs font-bold text-slate-700">{ambiguous ? '—' : hours(employee?.hours)}</p>
           </div>
           <div className="min-w-0 px-2 text-center">
@@ -155,7 +156,7 @@ export function PayrollDailyCard({ record }) {
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-            {adjustmentOnly ? '无考勤' : `实际计薪 ${hours(explanation.payableHours)}`}
+            {adjustmentOnly ? '无考勤' : `计薪工时 ${hours(explanation.payableHours)}`}
           </span>
           {realZero && <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-600">真实 0 工时</span>}
           {bonuses.length > 0 && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-600">有大单奖</span>}
@@ -180,7 +181,7 @@ export function PayrollDailyCard({ record }) {
             <>
               <ExplanationSection title="当日情况">
                 <DetailRow label="门店" value={record.storeName || record.storeKey || '—'} />
-                <DetailRow label="实际计薪工时" value={hours(explanation.payableHours)} />
+                <DetailRow label="计薪工时" value={hours(explanation.payableHours)} />
                 <DetailRow label="工时来源" value={HOURS_SOURCE_LABELS[explanation.payableHoursSource] || '—'} />
                 <DetailRow label="当日参与计薪人数" value={explanation.participantCount == null ? '—' : `${explanation.participantCount}人`} />
                 <DetailRow label="计薪规则" value={DAY_POLICY_LABELS[explanation.calculationDayPolicy] || '—'} />
@@ -195,7 +196,7 @@ export function PayrollDailyCard({ record }) {
 
               <ExplanationSection title="基础工资">
                 <DetailRow label="基础时薪" value={rate(explanation.baseRate)} />
-                <DetailRow label="实际计薪工时" value={hours(explanation.payableHours)} />
+                <DetailRow label="计薪工时" value={hours(explanation.payableHours)} />
                 <DetailRow label="基础工资" value={money(explanation.basePay)} strong />
               </ExplanationSection>
 

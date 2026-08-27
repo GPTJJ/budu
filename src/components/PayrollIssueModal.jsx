@@ -372,7 +372,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
                     <th className="px-3 py-2">门店</th>
                     <th className="px-3 py-2">类型</th>
                     <th className="px-3 py-2 text-right">出勤</th>
-                    <th className="px-3 py-2 text-right">工时</th>
+                    <th className="px-3 py-2 text-right">计薪工时</th>
                     <th className="px-3 py-2 text-right">合计</th>
                     <th className="px-3 py-2">绑定账号</th>
                   </tr>
@@ -412,7 +412,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
                           </span>
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-slate-600">{e.rec.days || 0} 天</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">{e.rec.actualHours || 0}h</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-600">{e.rec.payableHours || 0}h</td>
                         <td className="px-3 py-2 text-right font-bold tabular-nums text-budu-600">{yuan(e.rec.salary)}</td>
                         <td className={`px-3 py-2 ${e.matches.length === 1 ? 'text-emerald-600' : 'text-slate-300'}`}>{bound}</td>
                       </tr>

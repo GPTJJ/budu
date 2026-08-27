@@ -24,7 +24,7 @@ test('Gate 29J monthly summary separates commission and big bonus', async ({ pag
 
 test('Gate 29J normal day expands authoritative explanation without request', async ({ page }) => {
   const before = await page.evaluate(() => window.__payrollUiFetchCount)
-  await expect(page.getByTestId('payroll-daily-card')).toContainText('实际计薪 8h')
+  await expect(page.getByTestId('payroll-daily-card')).toContainText('计薪工时 8h')
   await expect(page.getByTestId('payroll-daily-card')).toContainText('¥280.00')
   await expand(page)
   const details = page.getByTestId('payroll-expanded-details')
@@ -46,7 +46,7 @@ test('Gate 29J two staff, holiday and subsidy semantics', async ({ page }) => {
   await expect(details).toContainText('2人')
 
   await fixture(page, 'twoB')
-  await expect(page.getByTestId('payroll-daily-card')).toContainText('实际计薪 6h')
+  await expect(page.getByTestId('payroll-daily-card')).toContainText('计薪工时 6h')
   await expect(page.getByTestId('payroll-daily-card')).toContainText('¥198.00')
 
   await fixture(page, 'holiday')
@@ -94,7 +94,7 @@ test('Gate 29J bonus, adjustment, adjustment-only and real zero', async ({ page 
   await expect(page.getByTestId('payroll-daily-card')).toContainText('真实 0 工时')
   await expect(page.getByTestId('payroll-daily-card')).toContainText('¥0.00')
   await expand(page)
-  await expect(page.getByTestId('payroll-expanded-details')).toContainText('实际计薪工时')
+  await expect(page.getByTestId('payroll-expanded-details')).toContainText('计薪工时')
   await expect(page.getByTestId('payroll-expanded-details')).toContainText('0h')
 })
 

@@ -11,6 +11,12 @@ import { fileURLToPath } from 'node:url'
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const ADMIN_URL = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_dev@localhost:5432/budu'
 const GATE16_MIGRATION = '20260824000010_daily_store_staff_legacy_staff_id_partial'
+const POST_GATE16_MIGRATIONS = [
+  '20260824000010_daily_store_staff_legacy_staff_id_partial',
+  '20260824000011_payroll_notice_employee_subject',
+  '20260824000012_payroll_participant_authority',
+  '20260827000013_historical_payable_hours_authority',
+]
 
 async function dropSchema(schema) {
   const { PrismaClient } = await import('@prisma/client')
@@ -41,7 +47,7 @@ async function migrationTests() {
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(tempPrisma, 'schema.prisma'))
     fs.copyFileSync(path.join(root, 'prisma', 'migrations', 'migration_lock.toml'), path.join(tempPrisma, 'migrations', 'migration_lock.toml'))
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'), { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === GATE16_MIGRATION) continue
+      if (!entry.isDirectory() || POST_GATE16_MIGRATIONS.includes(entry.name)) continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry.name), path.join(tempPrisma, 'migrations', entry.name), { recursive: true })
     }
     execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', path.join(tempPrisma, 'schema.prisma')], {

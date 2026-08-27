@@ -38,6 +38,8 @@ export function buildPayrollSnapshot(periodType, periodKey, empName) {
       mark: markOf(monthKey, dayStr),
       revenue: t ? t.inc : 0,
       hours: t ? t.hours : 0,
+      payableHours: t ? t.payableHours ?? t.hours : 0,
+      payableHoursSource: t ? t.payableHoursSource || 'LEGACY_DUTY_HOURS' : null,
       basePay: t ? t.basePay : 0,
       commission: t ? t.commission : 0,
       transferSubsidy: t ? t.transferSubsidy : 0,
@@ -86,6 +88,7 @@ export function buildPayrollSnapshot(periodType, periodKey, empName) {
     { workedDays: 0, hours: 0, revenue: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, adjustment: 0, total: 0 },
   )
   summary.hours = Math.round(summary.hours * 100) / 100
+  summary.payableHours = summary.hours
   summary.total = Math.round(summary.total * 100) / 100
   return { days, summary }
 }

@@ -1,3 +1,5 @@
+import { PAYABLE_HOURS_SOURCES } from '../../shared/payableHoursAuthority.js'
+
 /** 中国大陆 2026 法定节假日（含调休补班） */
 export const HOLIDAYS_2026 = new Set([
   '2026-01-01', '2026-01-02', '2026-01-03',
@@ -71,7 +73,7 @@ const COMMISSION_PER_STEP = 5
 export const TRANSFER_SUBSIDY_EFFECTIVE_DATE = '2026-08-01'
 export const TRANSFER_SUBSIDY_RATE = 2
 export const PAYABLE_HOURS_SOURCE = Object.freeze({
-  ACTUAL_HOURS: 'ACTUAL_HOURS',
+  ...PAYABLE_HOURS_SOURCES,
   LEGACY_DUTY_HOURS: 'LEGACY_DUTY_HOURS',
   ADJUSTMENT_ONLY: 'ADJUSTMENT_ONLY',
 })
@@ -141,11 +143,15 @@ export function calcDailyPay(input) {
   const payableHoursSource = input.payableHoursSource || (
     hasPayableHours ? PAYABLE_HOURS_SOURCE.ACTUAL_HOURS : PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS
   )
-  if (![PAYABLE_HOURS_SOURCE.ACTUAL_HOURS, PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS].includes(payableHoursSource)) {
+  if (![
+    PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
+    PAYABLE_HOURS_SOURCE.LEGACY_PAYROLL_HOURS,
+    PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS,
+  ].includes(payableHoursSource)) {
     throw new TypeError('payableHoursSource is invalid for calculated payroll')
   }
-  if (payableHoursSource === PAYABLE_HOURS_SOURCE.ACTUAL_HOURS && !hasPayableHours) {
-    throw new TypeError('ACTUAL_HOURS requires explicit payableHours')
+  if ([PAYABLE_HOURS_SOURCE.ACTUAL_HOURS, PAYABLE_HOURS_SOURCE.LEGACY_PAYROLL_HOURS].includes(payableHoursSource) && !hasPayableHours) {
+    throw new TypeError(`${payableHoursSource} requires explicit payableHours`)
   }
   if (payableHoursSource === PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS && hasPayableHours) {
     throw new TypeError('LEGACY_DUTY_HOURS cannot use explicit payableHours')

@@ -247,10 +247,10 @@ const moneyFields = (row) => ({
   const rec = calculateEmployeeIdShadowPayroll(entries, rows, [], [], '2026-08').employees[0]
   const snapshot = buildIssueSnapshot(rec, { month: '2026-08', name: '张伟', attendanceRows: rows })
   assert.deepEqual(Object.keys(snapshot).sort(), ['days', 'summary'])
-  assert.deepEqual(Object.keys(snapshot.summary).sort(), ['adjustment', 'basePay', 'bigBonus', 'commission', 'hours', 'revenue', 'total', 'transferSubsidy', 'workedDays'])
+  assert.deepEqual(Object.keys(snapshot.summary).sort(), ['adjustment', 'basePay', 'bigBonus', 'commission', 'payableHours', 'revenue', 'total', 'transferSubsidy', 'workedDays'])
   assert.equal(snapshot.days.some((day) => Object.hasOwn(day, 'explanation')), false)
   assert.deepEqual(snapshot.summary, {
-    workedDays: 1, hours: 8, revenue: 2050, basePay: 240, commission: 40,
+    workedDays: 1, payableHours: 8, revenue: 2050, basePay: 240, commission: 40,
     transferSubsidy: 0, bigBonus: 0, adjustment: 0, total: 280,
   })
   console.log('  [Selector/历史] 字段一致 + PayrollNotice 形状与金额冻结 PASS')

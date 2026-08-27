@@ -32,7 +32,7 @@ function markOf(monthKey, dd) {
 export function buildIssueSnapshot(rec, ctx) {
   const summary = {
     workedDays: rec.days || 0,
-    hours: rec.actualHours || 0,
+    payableHours: rec.payableHours ?? rec.actualHours ?? 0,
     revenue: rec.workedRevenue || 0,
     basePay: rec.basePay || 0,
     commission: rec.commission || 0,
@@ -55,7 +55,8 @@ export function buildIssueSnapshot(rec, ctx) {
       day: dd,
       mark: markOf(String(ctx.month), dd),
       revenue: t ? t.inc : 0,
-      hours: t ? t.hours : 0,
+      payableHours: t ? t.payableHours : 0,
+      payableHoursSource: t ? t.payableHoursSource : null,
       basePay: t ? t.basePay : 0,
       commission: t ? t.commission : 0,
       transferSubsidy: t ? t.transferSubsidy : 0,

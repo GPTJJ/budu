@@ -9,8 +9,8 @@ const issueModalSource = fs.readFileSync(path.join(root, 'src/components/Payroll
 const { buildIssueSnapshot, buildIssueRows, preflightIssueSelection, buildIssuePayloadRows } = await import(path.join(root, 'src/utils/payrollIssue.js').replaceAll('\\', '/'))
 const { resolvePayrollCalculation } = await import(path.join(root, 'src/utils/payrollResolver.js').replaceAll('\\', '/'))
 
-const recA = { employeeId: 'emp-A', displayName: '张伟', storesWorked: ['guanshe'], days: 1, actualHours: 8, workedRevenue: 6000, orders: 60, basePay: 224, commission: 440, transferSubsidy: 16, bigBonus: 0, salaryAdjustment: 0, salary: 680 }
-const recB = { employeeId: 'emp-B', displayName: '张伟', storesWorked: ['guanshe'], days: 1, actualHours: 6, workedRevenue: 6000, orders: 60, basePay: 168, commission: 330, transferSubsidy: 12, bigBonus: 0, salaryAdjustment: 0, salary: 510 }
+const recA = { employeeId: 'emp-A', displayName: '张伟', storesWorked: ['guanshe'], days: 1, payableHours: 8, workedRevenue: 6000, orders: 60, basePay: 224, commission: 440, transferSubsidy: 16, bigBonus: 0, salaryAdjustment: 0, salary: 680 }
+const recB = { employeeId: 'emp-B', displayName: '张伟', storesWorked: ['guanshe'], days: 1, payableHours: 6, workedRevenue: 6000, orders: 60, basePay: 168, commission: 330, transferSubsidy: 12, bigBonus: 0, salaryAdjustment: 0, salary: 510 }
 const users = [
   { id: 'u1', username: 'user-a', employeeId: 'emp-A', status: 'active' },
   { id: 'u2', username: 'user-b', employeeId: 'emp-B', status: 'active' },
@@ -24,7 +24,7 @@ const dirById = new Map([
 {
   const snap = buildIssueSnapshot(recA)
   assert.equal(snap.summary.workedDays, 1, 'A 出勤天')
-  assert.equal(snap.summary.hours, 8, 'A 工时')
+  assert.equal(snap.summary.payableHours, 8, 'A 计薪工时')
   assert.equal(snap.summary.total, 680, 'A 合计 = rec.salary')
   assert.equal(snap.summary.basePay, 224, 'A basePay 同源')
   assert.ok(Array.isArray(snap.days) && typeof snap.summary === 'object', 'A 快照形状 {days, summary}')
@@ -97,16 +97,16 @@ const dirById = new Map([
 
 // ---- H: 调整仅日员工（0 天 / 0 时 / salary 500）可见可发 ----
 {
-  const recAdj = { employeeId: 'emp-C', displayName: '李四', storesWorked: [], days: 0, actualHours: 0, workedRevenue: 0, orders: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, salaryAdjustment: 500, salary: 500 }
+  const recAdj = { employeeId: 'emp-C', displayName: '李四', storesWorked: [], days: 0, payableHours: 0, workedRevenue: 0, orders: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, salaryAdjustment: 500, salary: 500 }
   const readiness = [{ employeeId: 'emp-C', days: 0, issueReady: true, blockers: [] }]
   const rows = buildIssueRows([recAdj], readiness, [{ id: 'u3', username: 'user-c', employeeId: 'emp-C', status: 'active' }], new Map())
   assert.equal(rows.length, 1, 'H 主体可见')
   assert.equal(rows[0].rec.days, 0, 'H 0 天')
-  assert.equal(rows[0].rec.actualHours, 0, 'H 0 时')
+  assert.equal(rows[0].rec.payableHours, 0, 'H 0 时')
   assert.equal(rows[0].rec.salary, 500, 'H salary 500')
   const snap = rows[0].snapshot
   assert.equal(snap.summary.workedDays, 0)
-  assert.equal(snap.summary.hours, 0)
+  assert.equal(snap.summary.payableHours, 0)
   assert.equal(snap.summary.total, 500, 'H 快照 0/0/500')
   const p = preflightIssueSelection(rows, new Set(['emp-C']))
   assert.equal(p.ok, true, 'H 绑定后可发')
@@ -115,7 +115,7 @@ const dirById = new Map([
 
 // ---- K: 离职/历史员工主体不因当前目录缺失被丢弃（displayName 快照回退，无 name 推断）----
 {
-  const recOld = { employeeId: 'emp-X', displayName: '王五', storesWorked: ['guanshe'], days: 2, actualHours: 16, workedRevenue: 9000, orders: 90, basePay: 448, commission: 880, transferSubsidy: 32, bigBonus: 0, salaryAdjustment: 0, salary: 1360 }
+  const recOld = { employeeId: 'emp-X', displayName: '王五', storesWorked: ['guanshe'], days: 2, payableHours: 16, workedRevenue: 9000, orders: 90, basePay: 448, commission: 880, transferSubsidy: 32, bigBonus: 0, salaryAdjustment: 0, salary: 1360 }
   const readiness = [{ employeeId: 'emp-X', days: 2, issueReady: true, blockers: [] }]
   const rows = buildIssueRows([recOld], readiness, [{ id: 'u9', username: 'wangwu', employeeId: 'emp-X', status: 'active' }], new Map()) // 目录无 emp-X
   assert.equal(rows.length, 1, 'K 主体保留')
@@ -211,14 +211,14 @@ const dirById = new Map([
   const dayA01 = snapA.days.find((d) => d.day === '08-01')
   const dayB01 = snapB.days.find((d) => d.day === '08-01')
   assert.equal(dayA01.hasData, true, 'P A 考勤日 hasData')
-  assert.equal(dayA01.hours, 8, 'P A 工时 8（DailyStoreStaff.actualHours）')
-  assert.equal(dayB01.hours, 6, 'P B 工时 6')
+  assert.equal(dayA01.payableHours, 8, 'P A 计薪工时 8（tagged union）')
+  assert.equal(dayB01.payableHours, 6, 'P B 计薪工时 6')
   assert.equal(dayB01.pay, 510, 'P B 考勤日工资（6h 口径）')
   // Q: 同店同名隔离——A/B 各自调整仅日归属（无交叉）
   const dayA10 = snapA.days.find((d) => d.day === '08-10')
   const dayB10 = snapB.days.find((d) => d.day === '08-10')
   assert.equal(dayA10.hasData, true, 'Q A 调整仅日 hasData')
-  assert.equal(dayA10.hours, 0, 'Q A 调整仅日工时 0（不虚构考勤）')
+  assert.equal(dayA10.payableHours, 0, 'Q A 调整仅日工时 0（不虚构考勤）')
   assert.equal(dayA10.adjustment, 500, 'Q A 调整 500')
   assert.equal(dayA10.pay, 500, 'Q A 最终 500')
   assert.equal(dayB10.adjustment, -50, 'Q B 调整 -50（不误取 A 的 500）')
@@ -226,7 +226,7 @@ const dirById = new Map([
   // R: 无考勤无调整日 hasData=false（与既有工资条语义一致）
   const dayA02 = snapA.days.find((d) => d.day === '08-02')
   assert.equal(dayA02.hasData, false, 'R 空日 hasData=false')
-  assert.equal(dayA02.hours, 0, 'R 空日工时 0')
+  assert.equal(dayA02.payableHours, 0, 'R 空日工时 0')
   console.log('  [P/Q/R] 快照逐日明细（工时/调整按 employeeId、仅调整日真实表示）PASS')
 }
 

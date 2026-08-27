@@ -1,4 +1,4 @@
-// Gate 29B：Employee.id 稳定工资以 DailyStoreStaff.actualHours 为唯一应付工时权威。
+// Gate 29B：Employee.id 稳定工资以 tagged union 归一化后的 payableHours 为唯一计薪工时权威。
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,7 +27,7 @@ const attendance = (employeeId, name, storeId, date, actualHours) => ({
   const rows = [attendance('emp-ye', '叶芷辰', 'tongying', '2026-08-10', 8)]
   const rec = calculateEmployeeIdShadowPayroll(entries, rows, [], [], '2026-08').employees[0]
   assert.deepEqual(
-    { hours: rec.actualHours, basePay: rec.basePay, commission: rec.commission, subsidy: rec.transferSubsidy, salary: rec.salary },
+    { hours: rec.payableHours, basePay: rec.basePay, commission: rec.commission, subsidy: rec.transferSubsidy, salary: rec.salary },
     { hours: 8, basePay: 240, commission: 40, subsidy: 0, salary: 280 },
   )
   console.log('  [用户场景] 通盈 2050 / 1人 / 8h = 280 PASS')
@@ -104,7 +104,7 @@ const attendance = (employeeId, name, storeId, date, actualHours) => ({
   const rows = [attendance('emp-capy', '卡皮巴拉', 'guanshe', '2026-08-10', 8)]
   const rec = calculateEmployeeIdShadowPayroll(entries, rows, [], [], '2026-08').employees[0]
   assert.deepEqual(
-    { hours: rec.actualHours, basePay: rec.basePay, subsidy: rec.transferSubsidy, salary: rec.salary },
+    { hours: rec.payableHours, basePay: rec.basePay, subsidy: rec.transferSubsidy, salary: rec.salary },
     { hours: 8, basePay: 240, subsidy: 16, salary: 256 },
     '展示姓名不得使稳定工资归零',
   )

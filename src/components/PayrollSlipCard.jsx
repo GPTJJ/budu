@@ -36,7 +36,7 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot, fu
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
           ['出勤天数', `${snap.summary.workedDays || 0} 天`],
-          ['总工时', `${snap.summary.hours || 0}h`],
+          ['计薪工时', `${snap.summary.payableHours ?? snap.summary.hours ?? 0}h`],
           ['基础工资', fmt(snap.summary.basePay)],
           ['业绩提成', fmt(snap.summary.commission)],
           ['调货补贴', fmt(snap.summary.transferSubsidy)],
@@ -64,7 +64,7 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot, fu
           <thead className="sticky top-0 bg-slate-50 text-slate-400">
             <tr>
               <th className="px-3 py-2">日期</th>
-              <th className="px-3 py-2 text-right">工时</th>
+              <th className="px-3 py-2 text-right">计薪工时</th>
               <th className="px-3 py-2 text-right">基础工资</th>
               <th className="px-3 py-2 text-right">提成</th>
               <th className="px-3 py-2 text-right">调货补贴</th>
@@ -83,7 +83,7 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot, fu
                     {r.mark === 'makeup' && <span className="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-600">班</span>}
                   </span>
                 </td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{r.hasData ? `${r.payableHours ?? r.hours ?? 0}h` : '—'}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{r.hasData ? fmt(r.basePay) : '—'}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{r.hasData ? fmt(r.commission) : '—'}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{r.hasData && r.transferSubsidy ? fmt(r.transferSubsidy) : '—'}</td>

@@ -64,7 +64,7 @@ function PreviewTable({ rows }) {
  * （stableAttendance 按月传入）——只有该员工当日有稳定考勤行才生成明细，杜绝
  * "emp-A 值班而 emp-B 未值班却因同名生成 emp-B 明细"的错误归属；
  * 调整由 employeeDailyPayDetail 按 employeeId 精确（Gate 25 修复），大单奖 Gate 10 已按 id；
- * 工时由 employeeDailyPayDetail 按 employeeId+date+store 取 DailyStoreStaff.actualHours（Gate 25 澄清）。
+ * 计薪工时由 employeeDailyPayDetail 按 employeeId+date+store 通过 tagged union 权威归一化。
  * Gate 26：明细日期 = 考勤 employeeId/date ∪ 稳定调整 employeeId/date（EMPLOYEE_ID 模式）——
  * 仅调整日输出调整独占行（工时 0、不虚构考勤），与 resolver summary 的调整仅日贡献一致。
  */
@@ -111,7 +111,8 @@ function buildDetailRows(employees, startDate, endDate, stableAttendance = null)
           门店: '',
           '营业额(元)': 0,
           订单: 0,
-          '工时(h)': 0,
+          '计薪工时(h)': 0,
+          工时来源: 'ADJUSTMENT_ONLY',
           '基础时薪(元/h)': 0,
           '基础工资(元)': 0,
           '提成时薪(元/h)': 0,
@@ -134,7 +135,8 @@ function buildDetailRows(employees, startDate, endDate, stableAttendance = null)
           门店: row.storeName,
           '营业额(元)': r2(row.revenue),
           订单: r2(row.orders),
-          '工时(h)': r2(row.hours),
+          '计薪工时(h)': r2(row.payableHours),
+          工时来源: row.payableHoursSource,
           '基础时薪(元/h)': r2(row.baseRate),
           '基础工资(元)': r2(row.basePay),
           '提成时薪(元/h)': r2(row.commissionRate),
@@ -171,7 +173,7 @@ function buildSummaryRows(resolverResult, employees, mode) {
           出勤天数: rec.days || 0,
           '营业额(元)': r2(rec.workedRevenue),
           订单: r2(rec.orders),
-          '工时(h)': r2(rec.actualHours),
+          '计薪工时(h)': r2(rec.payableHours),
           '基础工资(元)': r2(rec.basePay),
           '业绩提成(元)': r2(rec.commission),
           '调货补贴(元)': r2(rec.transferSubsidy),
@@ -192,7 +194,7 @@ function buildSummaryRows(resolverResult, employees, mode) {
     出勤天数: rec.workedDays || 0,
     '营业额(元)': r2(rec.workedRevenue),
     订单: r2(rec.orders || 0),
-    '工时(h)': r2(rec.hours),
+    '计薪工时(h)': r2(rec.hours),
     '基础工资(元)': r2(rec.basePay),
     '业绩提成(元)': r2(rec.commission),
     '调货补贴(元)': r2(rec.transferSubsidy),

@@ -682,7 +682,7 @@ employeeProfileRouter.get('/employees/:id/summary', wrap(async (req, res) => {
       take: 6,
     }),
     prisma.dailyStoreStaff.findMany({
-      where: { employeeId: row.id },
+      where: { employeeId: row.id, payableHoursSource: 'ACTUAL_HOURS' },
       orderBy: { date: 'desc' },
       take: 60,
     }),

@@ -24,7 +24,7 @@ const attendance = (employeeId, actualHours) => ({
   const entries = { '2026-08|tongying|08-10': { inc: 2050, ord: 20, staff: ['卡皮巴拉'] } }
   const rec = calculateEmployeeIdShadowPayroll(entries, [attendance('emp-capy', 8)], [], [], '2026-08').employees[0]
   assert.deepEqual(
-    { hours: rec.actualHours, basePay: rec.basePay, commission: rec.commission, salary: rec.salary },
+    { hours: rec.payableHours, basePay: rec.basePay, commission: rec.commission, salary: rec.salary },
     { hours: 8, basePay: 240, commission: 40, salary: 280 },
   )
   console.log('  [A] 稳定路径：卡皮巴拉 8h / 2050 = 280 PASS')
@@ -47,8 +47,8 @@ const attendance = (employeeId, actualHours) => ({
   const out = calculateEmployeeIdShadowPayroll(entries, [attendance('emp-A', 8), attendance('emp-B', 6)], [], [], '2026-08')
   const a = out.employees.find((row) => row.employeeId === 'emp-A')
   const b = out.employees.find((row) => row.employeeId === 'emp-B')
-  assert.deepEqual({ hours: a.actualHours, salary: a.salary }, { hours: 8, salary: 264 })
-  assert.deepEqual({ hours: b.actualHours, salary: b.salary }, { hours: 6, salary: 198 })
+  assert.deepEqual({ hours: a.payableHours, salary: a.salary }, { hours: 8, salary: 264 })
+  assert.deepEqual({ hours: b.payableHours, salary: b.salary }, { hours: 6, salary: 198 })
   console.log('  [C] 同名 Employee.id A=264 / B=198 / 无身份交叉 PASS')
 }
 

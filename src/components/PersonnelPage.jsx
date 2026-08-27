@@ -644,7 +644,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       bigBonus: monthlyComponents.bigBonus,
       big: monthlyComponents.bigBonus,
       transferSubsidy: monthlyComponents.transferSubsidy,
-      hours: p.hours ?? p.actualHours ?? 0,
+      hours: p.hours ?? p.payableHours ?? 0,
       workedRevenue: p.workedRevenue ?? 0,
       workedDays: p.workedDays ?? p.days ?? 0,
       salaryAdjustment: monthlyComponents.salaryAdjustment,

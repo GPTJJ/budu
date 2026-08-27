@@ -121,7 +121,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     displayName,
     stores: new Set(),
     days: 0,
-    actualHours: 0,
+    payableHours: 0,
     basePay: 0,
     commission: 0,
     transferSubsidy: 0,
@@ -140,7 +140,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     empMap.set(empId, rec)
     rec.stores.add(day.storeId)
     rec.days += 1
-    rec.actualHours += day.actualHours
+    rec.payableHours += day.payableHours
     // 分摊展示（与 legacy 口径一致：营业额/订单按值班人数均摊）
     const share = day.staffCountForShare > 0 ? day.staffCountForShare : 1
     rec.workedRevenueCents += (day.dailyRevenueCents || 0) / share
@@ -152,8 +152,8 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       revenue: (day.dailyRevenueCents || 0) / 100,
       date: day.date,
       staffCount: day.staffCountForShare,
-      payableHours: day.actualHours,
-      payableHoursSource: PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
+      payableHours: day.payableHours,
+      payableHoursSource: day.payableHoursSource,
     })
     const employeeDayKey = `${empId}|${day.date}`
     const bonusCents = bonusByEmpDate.get(employeeDayKey) || 0
@@ -181,6 +181,8 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       storeKey: day.storeKey || day.storeId,
       storeName: String(storeNames?.[day.storeKey || day.storeId] || ''),
       hours: daily.hours,
+      payableHours: daily.hours,
+      payableHoursSource: day.payableHoursSource,
       baseRate: daily.baseRate,
       basePay: daily.basePay,
       commissionRate: daily.commissionRate,
@@ -329,7 +331,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     displayName: rec.displayName,
     storesWorked: [...rec.stores],
     days: rec.days,
-    actualHours: Math.round(rec.actualHours * 100) / 100,
+    payableHours: Math.round(rec.payableHours * 100) / 100,
     workedRevenue: Math.round(rec.workedRevenueCents) / 100,
     orders: Math.round(rec.orders * 100) / 100,
     basePay: Math.round(rec.basePay * 100) / 100,

@@ -221,7 +221,7 @@ const users = [{ employeeId: 'emp-A', status: 'active' }, { employeeId: 'emp-B',
     users: [{ employeeId: 'emp-M', status: 'active' }],
   })
   assert.equal(result.calculationReady, true)
-  assert.equal(result.payroll.employees[0].actualHours, 11.5)
+  assert.equal(result.payroll.employees[0].payableHours, 11.5)
   assert.equal(result.payroll.employees[0].salary, 345)
 }
 
