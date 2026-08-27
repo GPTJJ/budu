@@ -5,6 +5,11 @@ import { buildRecognizedRevenueWhere, httpError } from './pos-core.js'
 import { resolveStoreName } from './store-names.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
+import {
+  classifyDailyStaffTargets,
+  OPERATIONAL_IDENTITY_TYPES,
+  PAYROLL_PARTICIPANT_TYPES,
+} from './payroll-participant-authority.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -156,6 +161,8 @@ function serializeStaff(row) {
   return {
     id: row.id,
     employeeId: row.employeeId || '',
+    participantType: row.participantType,
+    participantUserId: row.participantUserId || '',
     staffId: row.staffId,
     staffName: row.staffNameSnapshot,
     shiftId: row.shiftId,
@@ -212,12 +219,54 @@ dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
       storeKey: row.store ? row.store.key : row.storeId,
       date: isoDate(row.date),
       employeeId: row.employeeId || null,
+      participantType: row.participantType,
+      participantUserId: row.participantUserId || null,
       staffId: row.staffId,
       staffNameSnapshot: row.staffNameSnapshot,
       scheduledHours: row.scheduledHours,
       actualHours: row.actualHours,
       attendanceStatus: row.attendanceStatus,
     })),
+  })
+}))
+
+/** Canonical directories for the DailyStoreStaff write contract. */
+dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const storeKey = String(req.query.store || '').trim()
+  if (!storeKey) throw httpError('门店不能为空')
+  if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
+  await ensureStore(storeKey)
+  const [employees, users] = await Promise.all([
+    prisma.employee.findMany({
+      where: { currentStoreKey: storeKey, status: { not: 'RESIGNED' } },
+      select: { id: true, employeeNo: true, name: true, status: true },
+      orderBy: [{ name: 'asc' }, { employeeNo: 'asc' }],
+    }),
+    prisma.user.findMany({
+      where: { operationalIdentityType: OPERATIONAL_IDENTITY_TYPES.NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE, status: 'active' },
+      select: { id: true, username: true, displayName: true, storeKeys: true },
+      orderBy: { username: 'asc' },
+    }),
+  ])
+  const substitutes = users
+    .filter((user) => Array.isArray(user.storeKeys) && user.storeKeys.includes(storeKey))
+    .map((user) => ({
+      participantUserId: user.id,
+      label: user.displayName || user.username,
+      username: user.username,
+      participantType: PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
+    }))
+  res.json({
+    ok: true,
+    employees: employees.map((employee) => ({
+      employeeId: employee.id,
+      employeeNo: employee.employeeNo,
+      label: employee.name,
+      status: employee.status,
+      participantType: PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+    })),
+    substitutes,
   })
 }))
 
@@ -474,12 +523,11 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   }
   await ensureStore(storeKey)
 
-  const parsed = items.map((item) => {
+  const normalizedInput = items.map((item) => {
     const employeeId = item.employeeId == null ? null : String(item.employeeId).trim()
-    const staffId = String(item.staffId || '').trim()
-    const staffName = String(item.staffName || '').trim().slice(0, 50)
-    if (!staffId || !staffName) throw httpError('值班人员姓名/ID 不正确')
+    const participantUserId = item.participantUserId == null ? null : String(item.participantUserId).trim()
     if (employeeId && employeeId.length > 100) throw httpError('员工 ID 不正确')
+    if (participantUserId && participantUserId.length > 100) throw httpError('运营参与者 ID 不正确')
     const attendanceStatus = String(item.attendanceStatus || 'normal')
     if (!ATTENDANCE_STATUSES.includes(attendanceStatus)) throw httpError('出勤状态不正确')
     const breakMinutes = Number(item.breakMinutes)
@@ -493,47 +541,57 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
       ? Math.max(0, Math.min(24, Math.round(Number(item.actualHours) * 100) / 100))
       : hoursFromTimes(actualStartTime, actualEndTime, breakMinutes)
     return {
+      ...(Object.prototype.hasOwnProperty.call(item || {}, 'participantType') ? { participantType: item.participantType } : {}),
       employeeId: employeeId || null,
-      staffId, staffName, attendanceStatus, breakMinutes,
+      participantUserId: participantUserId || null,
+      attendanceStatus, breakMinutes,
       actualStartTime, actualEndTime, scheduledStartTime, scheduledEndTime,
       actualHours, scheduledHours: Math.max(0, Number(item.scheduledHours) || 0),
     }
   })
-
-  // Gate 16：payload 判重身份化——稳定行（employeeId 非空）按 employeeId 判重；
-  // legacy 行（employeeId=NULL）按 staffId 判重。同店同名不同 employeeId 允许并存。
-  const submittedEmployeeIds = parsed.map((item) => item.employeeId).filter(Boolean)
-  if (new Set(submittedEmployeeIds).size !== submittedEmployeeIds.length) {
-    throw httpError('同一员工被重复提交', 409)
-  }
-  const submittedLegacyStaffIds = parsed.filter((item) => !item.employeeId).map((item) => item.staffId)
-  if (new Set(submittedLegacyStaffIds).size !== submittedLegacyStaffIds.length) {
-    throw httpError('同一值班人员被重复提交', 409)
-  }
-  if (submittedEmployeeIds.length > 0) {
-    const employees = await prisma.employee.findMany({
+  const submittedEmployeeIds = [...new Set(normalizedInput.map((item) => item.employeeId).filter(Boolean))]
+  const submittedUserIds = [...new Set(normalizedInput.map((item) => item.participantUserId).filter(Boolean))]
+  const [employees, participantUsers] = await Promise.all([
+    submittedEmployeeIds.length ? prisma.employee.findMany({
       where: { id: { in: submittedEmployeeIds } },
-      select: { id: true },
-    })
-    const existingEmployeeIds = new Set(employees.map((employee) => employee.id))
-    const missing = submittedEmployeeIds.find((employeeId) => !existingEmployeeIds.has(employeeId))
-    if (missing) throw httpError('员工不存在', 400)
+      select: { id: true, name: true, status: true },
+    }) : [],
+    submittedUserIds.length ? prisma.user.findMany({
+      where: { id: { in: submittedUserIds } },
+      select: { id: true, username: true, displayName: true, status: true, operationalIdentityType: true, storeKeys: true },
+    }) : [],
+  ])
+  let parsed
+  try {
+    parsed = classifyDailyStaffTargets(normalizedInput, employees, participantUsers, { storeKey })
+  } catch (error) {
+    const status = /重复提交/.test(error.message || '') ? 409 : 400
+    throw httpError(error.message || '值班参与者无效', status)
   }
 
   const rows = await prisma.$transaction(async (tx) => {
     const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
-    const byLegacyStaffId = new Map(existing.filter((row) => !row.employeeId).map((row) => [row.staffId, row]))
-    const byEmployeeId = new Map(existing.filter((row) => row.employeeId).map((row) => [row.employeeId, row]))
+    const authorityConflict = parsed.find((item) => existing.some((row) => (
+      ![PAYROLL_PARTICIPANT_TYPES.EMPLOYEE, PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE].includes(row.participantType)
+      && ((item.employeeId && row.employeeId === item.employeeId)
+        || (item.participantUserId && row.participantUserId === item.participantUserId)
+        || row.staffId === item.staffId)
+    )))
+    if (authorityConflict) throw httpError('该日存在未完成身份复核的历史值班记录，请先完成精确修复', 409)
+    const byEmployeeId = new Map(existing.filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId).map((row) => [row.employeeId, row]))
+    const byParticipantUserId = new Map(existing.filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE && row.participantUserId).map((row) => [row.participantUserId, row]))
     const results = []
     const keptRowIds = new Set()
     for (const item of parsed) {
       // Gate 16：稳定行（employeeId 非空）以 (storeId, date, employeeId) 为变更身份，
       // 绝不按 staffId 选中/改写 legacy NULL 行（同店同名时无法判定归属，不做启发式升级）。
-      const stableLinked = item.employeeId ? byEmployeeId.get(item.employeeId) : null
-      const exactLegacy = item.employeeId ? null : byLegacyStaffId.get(item.staffId)
-      const before = stableLinked || exactLegacy
+      const before = item.employeeId
+        ? byEmployeeId.get(item.employeeId)
+        : byParticipantUserId.get(item.participantUserId)
       const data = {
-        ...(item.employeeId ? { employeeId: item.employeeId } : {}),
+        employeeId: item.employeeId,
+        participantUserId: item.participantUserId,
+        participantType: item.participantType,
         // 已有行的姓名是历史快照；重新保存不得用员工当前姓名覆盖。
         staffNameSnapshot: before?.staffNameSnapshot || item.staffName,
         shiftId: String(before?.shiftId || ''),
@@ -557,6 +615,8 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
             storeId: storeKey,
             date: d,
             employeeId: item.employeeId,
+            participantUserId: item.participantUserId,
+            participantType: item.participantType,
             staffId: item.staffId,
             createdBy: req.user.username,
             ...data,
@@ -581,7 +641,10 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
     // Gate 16：替换语义保护——legacy NULL 行（无法归属当前员工）绝不因稳定名单提交被删除。
     // 只有"由本批次识别并可安全移除"的行才进入删除：稳定行（employeeId 非空）不在新名单 → 删除；
     // legacy NULL 行一律保留（其归属解析属于未来 reconciliation，不做历史清理）。
-    const removed = existing.filter((row) => !keptRowIds.has(row.id) && row.employeeId)
+    const removed = existing.filter((row) => !keptRowIds.has(row.id) && (
+      row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE
+      || row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE
+    ))
     for (const row of removed) {
       await writeAudit(tx, {
         storeId: storeKey,

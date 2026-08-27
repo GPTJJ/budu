@@ -380,6 +380,7 @@ v2Router.get('/daily-entries', wrap(async (req, res) => {
       incCents: r.incCents.toString(),
       ord: r.ord,
       staffNames: r.staffNames,
+      status: r.status,
       version: r.version,
       updatedBy: r.updatedBy,
       updatedAt: r.updatedAt,
@@ -422,6 +423,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
         incCents: existing.incCents.toString(),
         ord: existing.ord,
         staffNames: existing.staffNames,
+        status: existing.status,
         version: existing.version,
       },
     })
@@ -460,6 +462,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
       incCents: saved.incCents.toString(),
       ord: saved.ord,
       staffNames: saved.staffNames,
+      status: saved.status,
       version: saved.version,
     },
   })

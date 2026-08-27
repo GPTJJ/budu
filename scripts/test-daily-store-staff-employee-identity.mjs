@@ -15,6 +15,8 @@ const POST_GATE6_MIGRATIONS = [
   '20260824000008_daily_pay_adjustment_employee_identity',
   '20260824000009_big_order_bonus_employee_identity',
   '20260824000010_daily_store_staff_legacy_staff_id_partial',
+  '20260824000011_payroll_notice_employee_subject',
+  '20260824000012_payroll_participant_authority',
 ]
 
 async function dropSchema(schema) {
@@ -160,7 +162,7 @@ try {
   let stableRows = await prisma.dailyStoreStaff.findMany({ where: { storeId: 'chaowai', date: new Date('2026-08-24T00:00:00Z') } })
   assert.equal(stableRows.length, 1)
   assert.equal(stableRows[0].employeeId, 'emp-A')
-  assert.equal(stableRows[0].staffId, 'st-chaowai-a')
+  assert.equal(stableRows[0].staffId, 'employee:emp-A')
   assert.equal(stableRows[0].staffNameSnapshot, '张伟')
 
   // B: employee profile reads the canonical employeeId relation.
@@ -170,18 +172,18 @@ try {
   assert.equal(summary.attendance.days, 1)
   assert.equal(summary.attendance.totalHours, 8)
 
-  // C: legacy rows and legacy clients remain valid without a stable ID.
-  assert.equal((await save('2026-08-25', [attendanceItem({ employeeId: undefined, staffId: 'st-chaowai-legacy', staffName: '客户端姓名', actualHours: 5 })])).status, 200)
+  // C: historical legacy rows remain, but new clients must submit a stable target.
+  assert.equal((await save('2026-08-25', [attendanceItem({ employeeId: undefined, staffId: 'st-chaowai-legacy', staffName: '客户端姓名', actualHours: 5 })])).status, 400)
   let legacy = await prisma.dailyStoreStaff.findUnique({ where: { id: 'legacy-upgrade-row' } })
   assert.equal(legacy.employeeId, null)
-  assert.equal(legacy.staffNameSnapshot, '历史张伟', 'legacy 重存不得覆盖历史姓名快照')
+  assert.equal(legacy.staffNameSnapshot, '历史张伟', '拒绝的 legacy 提交不得覆盖历史姓名快照')
 
   // D: Gate 16 契约——stable 请求不再改写 legacy NULL 行（同店同名无法判定归属，不做启发式升级）；
   // 独立创建 stable 行，legacy 行原样保留。
   assert.equal((await save('2026-08-25', [attendanceItem({ staffId: 'st-chaowai-legacy', actualHours: 6 })])).status, 200)
   legacy = await prisma.dailyStoreStaff.findUnique({ where: { id: 'legacy-upgrade-row' } })
   assert.equal(legacy.employeeId, null, 'legacy 行保持 NULL（不被 stable 请求改写）')
-  assert.equal(legacy.actualHours, 5, 'legacy 行工时保持 C 场景 legacy 提交后的 5（不被 stable 请求改写为 6）')
+  assert.equal(legacy.actualHours, 4, 'legacy 行工时保持原值（不被 stable 请求改写）')
   const stableD = await prisma.dailyStoreStaff.findFirst({ where: { storeId: 'chaowai', date: new Date('2026-08-25T00:00:00Z'), employeeId: 'emp-A' } })
   assert.ok(stableD, 'stable 行独立存在')
   assert.equal(stableD.id !== 'legacy-upgrade-row', true, '非同一行')
@@ -195,7 +197,7 @@ try {
   stableRows = await prisma.dailyStoreStaff.findMany({ where: { storeId: 'chaowai', date: new Date('2026-08-24T00:00:00Z') } })
   assert.equal(stableRows.length, 1, 'identical replay 后仍必须恰好 1 行')
   assert.equal(stableRows[0].employeeId, 'emp-A', 'replay 不得改变 employeeId')
-  assert.equal(stableRows[0].staffId, 'st-chaowai-a', 'replay 不得改变 staffId')
+  assert.equal(stableRows[0].staffId, 'employee:emp-A', 'replay 不得改变 server-derived staffId')
   // 然后同逻辑状态（仅工时变化）的再次保存也须成功，仍 1 行。
   assert.equal((await save('2026-08-24', [attendanceItem({ actualHours: 7 })])).status, 200)
   stableRows = await prisma.dailyStoreStaff.findMany({ where: { storeId: 'chaowai', date: new Date('2026-08-24T00:00:00Z') } })
@@ -218,7 +220,7 @@ try {
   assert.equal((await save('2026-08-27', [attendanceItem({ employeeId: 'emp-B', staffId: 'st-chaowai-conflict' })])).status, 200)
   const conflictB = await prisma.dailyStoreStaff.findFirst({ where: { storeId: 'chaowai', date: new Date('2026-08-27T00:00:00Z'), employeeId: 'emp-B' } })
   assert.ok(conflictB, 'emp-B 独立行存在')
-  assert.equal(conflictB.staffId, 'st-chaowai-conflict', 'staffId 相同允许（全量 unique 已移除）')
+  assert.equal(conflictB.staffId, 'employee:emp-B', 'staffId 按稳定身份由服务器派生')
 
   // Gate 16 核心：同店/同日/同名不同 employeeId → 两行共存（旧全量 staffId unique 已移除）
   assert.equal((await save('2026-08-28', [

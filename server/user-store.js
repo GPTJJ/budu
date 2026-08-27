@@ -30,6 +30,7 @@ export function toAppUser(row) {
     status: row.status || 'active',
     secondPasswordHash: row.secondPasswordHash || '',
     bindingLegacyExempt: Boolean(row.bindingLegacyExempt),
+    operationalIdentityType: row.operationalIdentityType || 'STANDARD',
     assetCenter: Boolean(row.assetCenter),
     permissions: normalizeAccountPermissions(row.permissions, row.role, Boolean(row.assetCenter)),
     permissionsUpdatedAt: row.permissionsUpdatedAt || '',
@@ -54,6 +55,7 @@ function toPgData(user) {
     status: String(user.status || 'active'),
     secondPasswordHash: String(user.secondPasswordHash || ''),
     bindingLegacyExempt: Boolean(user.bindingLegacyExempt),
+    operationalIdentityType: String(user.operationalIdentityType || 'STANDARD'),
     assetCenter: Boolean(user.assetCenter),
     permissions: user.permissions && typeof user.permissions === 'object' ? user.permissions : {},
     disabledAt: user.disabledAt || null,
@@ -96,7 +98,7 @@ export async function createUser(user) {
 
 export async function updateUser(id, patch) {
   const data = {}
-  for (const key of ['username', 'passwordHash', 'role', 'displayName', 'avatar', 'storeKeys', 'staffKey', 'employeeId', 'status', 'secondPasswordHash', 'bindingLegacyExempt', 'assetCenter', 'permissions', 'disabledAt', 'permissionsUpdatedAt', 'permissionsUpdatedBy']) {
+  for (const key of ['username', 'passwordHash', 'role', 'displayName', 'avatar', 'storeKeys', 'staffKey', 'employeeId', 'status', 'secondPasswordHash', 'bindingLegacyExempt', 'operationalIdentityType', 'assetCenter', 'permissions', 'disabledAt', 'permissionsUpdatedAt', 'permissionsUpdatedBy']) {
     if (patch[key] !== undefined) data[key] = patch[key]
   }
   const row = await prisma.user.update({ where: { id }, data })

@@ -285,6 +285,7 @@ export function createApp() {
       disabledAt: u.disabledAt || '',
       bindingComplete,
       bindingLegacyExempt: u.bindingLegacyExempt === true && !bindingComplete,
+      operationalIdentityType: u.operationalIdentityType || 'STANDARD',
       permissionsUpdatedAt: u.permissionsUpdatedAt || '',
       permissionsUpdatedBy: u.permissionsUpdatedBy || '',
       avatar: u.avatar || '',
@@ -660,6 +661,7 @@ export function createApp() {
       staffKey: '',
       status: 'active',
       bindingLegacyExempt: false,
+      operationalIdentityType: 'STANDARD',
       permissions: normalizeAccountPermissions(null, 'developer'),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
@@ -723,6 +725,7 @@ export function createApp() {
       employeeId: boundEmpId,
       status: 'active',
       bindingLegacyExempt: false,
+      operationalIdentityType: 'STANDARD',
       permissions: normalizeAccountPermissions(req.body.permissions, role),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
@@ -952,6 +955,27 @@ export function createApp() {
       permissionsUpdatedAt: new Date().toISOString(),
       permissionsUpdatedBy: req.user.username,
     })
+    res.json({ user: userPublic(updated) })
+  })
+
+  app.put('/api/admin/users/:id/operational-identity', requireAuth, requireAccountAdmin, async (req, res) => {
+    const operationalIdentityType = String(req.body?.operationalIdentityType || '').trim()
+    if (!['STANDARD', 'NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE'].includes(operationalIdentityType)) {
+      return res.status(400).json({ error: '运营身份类型不正确' })
+    }
+    const users = await listUsers()
+    const target = users.find((u) => u.id === req.params.id)
+    if (!target) return res.status(404).json({ error: '账号不存在' })
+    if (operationalIdentityType === 'NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE' && target.employeeId) {
+      return res.status(409).json({ error: '已绑定员工的账号不能标记为非员工运营替代账号' })
+    }
+    if (operationalIdentityType === 'STANDARD') {
+      const participationCount = await prisma.dailyStoreStaff.count({ where: { participantUserId: target.id } })
+      if (participationCount > 0) {
+        return res.status(409).json({ error: '该账号已有运营参与记录，不能直接取消替代身份' })
+      }
+    }
+    const updated = await updateUser(target.id, { operationalIdentityType })
     res.json({ user: userPublic(updated) })
   })
 

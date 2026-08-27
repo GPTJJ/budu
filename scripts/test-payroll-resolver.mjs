@@ -1,6 +1,5 @@
 // Gate 23：统一 payroll 计算 resolver（纯函数，PURE RESOLVER ONLY，零 live 消费）
-// A 全稳定→EMPLOYEE_ID / B 同店同名 2 行 / C legacy 考勤→LEGACY / D legacy 调整→LEGACY
-// E legacy 奖金→LEGACY / F stable+未绑定→EMPLOYEE_ID+issue false / G 重复绑定→EMPLOYEE_ID+issue false
+// A 全稳定→EMPLOYEE_ID / B 同店同名 2 行 / C-E stable authority 不因 legacy 问题整月降级
 // H 月隔离 / I legacy-vs-stable parity / J 零部分稳定 / K 空月确定性
 import assert from 'node:assert/strict'
 import path from 'node:path'
@@ -44,7 +43,7 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [B] 同店同名 2 行 PASS')
 }
 
-// C: legacy 考勤 → LEGACY + blocker
+// C: unknown legacy 考勤不允许把稳定员工降级到姓名工资
 {
   const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '王五'] } }
   const staff = [
@@ -52,32 +51,32 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
     { id: 'legacy', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-01', employeeId: null, staffId: 'st-l', staffNameSnapshot: '王五', actualHours: 4 },
   ]
   const out = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees: [{ id: 'emp-A' }], users: baseUsers })
-  assert.equal(out.mode, 'LEGACY', 'C mode')
+  assert.equal(out.mode, 'EMPLOYEE_ID', 'C mode')
   assert.equal(out.calculationReady, false, 'C calc not ready')
   assert.equal(out.issueReady, false, 'C issue false')
   assert.ok(out.blockers.some((b) => b.reason === 'MIXED_STABLE_LEGACY'), 'C blocker')
-  assert.equal(out.payroll.employees.some((e) => e.employeeId), false, 'C 不合成 Employee.id')
-  console.log('  [C] legacy 考勤 → LEGACY PASS')
+  assert.equal(out.payroll.employees.some((e) => !e.employeeId), false, 'C 不合成姓名身份')
+  console.log('  [C] unknown legacy 不触发姓名回退 PASS')
 }
 
-// D: legacy 调整 → LEGACY
+// D: legacy 调整阻断发放但稳定员工不降级
 {
   const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟'] } }
   const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
   const adjustments = [{ employeeId: null, staffName: '张伟', date: '2026-09-01' }]
   const out = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, dailyPayAdjustments: adjustments, employees: [{ id: 'emp-A' }], users: baseUsers })
-  assert.equal(out.mode, 'LEGACY', 'D mode')
+  assert.equal(out.mode, 'EMPLOYEE_ID', 'D mode')
   assert.ok(out.blockers.some((b) => b.reason === 'LEGACY_PAY_ADJUSTMENT_IDENTITY'), 'D blocker')
   console.log('  [D] legacy 调整 → LEGACY PASS')
 }
 
-// E: legacy 奖金 → LEGACY
+// E: legacy 奖金阻断发放但稳定员工不降级
 {
   const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟'] } }
   const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
   const bonuses = [{ employeeId: null, staffName: '张伟', date: '2026-09-01' }]
   const out = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, bigOrderBonuses: bonuses, employees: [{ id: 'emp-A' }], users: baseUsers })
-  assert.equal(out.mode, 'LEGACY', 'E mode')
+  assert.equal(out.mode, 'EMPLOYEE_ID', 'E mode')
   assert.ok(out.blockers.some((b) => b.reason === 'LEGACY_BIG_BONUS_IDENTITY'), 'E blocker')
   console.log('  [E] legacy 奖金 → LEGACY PASS')
 }
@@ -126,11 +125,11 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [H] 月隔离 PASS')
 }
 
-// J: 零部分稳定——缺业务日 → LEGACY（不部分算）
+// J: 缺业务日保持 EMPLOYEE_ID 权威且不虚构金额
 {
   const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
   const out = resolvePayrollCalculation({ month: '2026-09', dailyEntries: {}, dailyStoreStaffRows: staff, employees: [{ id: 'emp-A' }], users: baseUsers })
-  assert.equal(out.mode, 'LEGACY', 'J 缺业务 → LEGACY')
+  assert.equal(out.mode, 'EMPLOYEE_ID', 'J 缺业务保持稳定身份')
   assert.equal(out.calculationReady, false, 'J not ready')
   console.log('  [J] 零部分稳定 PASS')
 }

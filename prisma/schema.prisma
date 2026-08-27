@@ -45,6 +45,7 @@ model User {
   status              String    @default("active") // active | disabled
   secondPasswordHash  String    @default("") @map("second_password_hash")
   bindingLegacyExempt Boolean   @default(false) @map("binding_legacy_exempt")
+  operationalIdentityType String @default("STANDARD") @map("operational_identity_type")
   assetCenter         Boolean   @default(false) @map("asset_center")
   permissions         Json      @default("{}") // 模块授权（normalizeAccountPermissions 产物）
   disabledAt          DateTime? @map("disabled_at")
@@ -52,6 +53,8 @@ model User {
   permissionsUpdatedBy String    @default("") @map("permissions_updated_by")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  dailyStoreStaffParticipations DailyStoreStaff[] @relation("DailyStoreStaffParticipantUser")
 
   @@map("User")
 }
@@ -94,6 +97,8 @@ model DailyStoreStaff {
   storeId             String   @map("store_id")
   date                DateTime @db.Date
   employeeId          String?  @map("employee_id")
+  participantType     String   @default("LEGACY_UNKNOWN") @map("participant_type")
+  participantUserId   String?  @map("participant_user_id")
   staffId             String   @map("staff_id")
   staffNameSnapshot   String   @default("") @map("staff_name_snapshot")
   shiftId             String   @default("") @map("shift_id")
@@ -112,6 +117,7 @@ model DailyStoreStaff {
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
   store               Store    @relation(fields: [storeId], references: [key], onDelete: Cascade)
   employee            Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  participantUser     User? @relation("DailyStoreStaffParticipantUser", fields: [participantUserId], references: [id], onDelete: Restrict)
 
   // Gate 16：稳定行身份 = (storeId, date, employeeId)；全量 staffId unique 已移除
   // （同店同名稳定行可共存，staffId 允许相同——仅兼容快照）。
@@ -119,6 +125,7 @@ model DailyStoreStaff {
   // (store_id, date, staff_id) WHERE employee_id IS NULL 提供（Prisma 无法表示 partial，故 SQL-only）。
   @@unique([storeId, date, employeeId])
   @@index([storeId, date])
+  @@index([participantUserId])
   @@map("daily_store_staff")
 }
 

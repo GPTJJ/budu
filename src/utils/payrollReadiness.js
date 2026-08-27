@@ -36,6 +36,7 @@ export function evaluatePayrollReadiness(input) {
   const adjustments = Array.isArray(input?.dailyPayAdjustments) ? input.dailyPayAdjustments : []
   const bonuses = Array.isArray(input?.bigOrderBonuses) ? input.bigOrderBonuses : []
   const users = Array.isArray(input?.users) ? input.users : []
+  const employeeDirectory = Array.isArray(input?.employees) ? input.employees : []
 
   const calculationBlockers = []
   const issueBlockers = []
@@ -59,7 +60,8 @@ export function evaluatePayrollReadiness(input) {
   // ---- 1) 考勤 + 业务日覆盖（复用 Gate 13 纯分类，行为不变）----
   const dayInput = buildEmployeePayrollDayInputs(entries, staffRows)
   const stable = dayInput.stableRows
-  const legacy = dayInput.legacyRows
+  const legacy = dayInput.legacyUnknownRows
+  const legacyCompatible = dayInput.legacyCompatibleRows
   const unresolved = dayInput.unresolvedDays
 
   const eligibleDays = new Set()
@@ -71,7 +73,8 @@ export function evaluatePayrollReadiness(input) {
     }
     eligibleDays.add(`${day.storeId}|${day.date}`)
   }
-  // mixed stable/legacy 日：Gate 13 已把 legacy 行分入 legacyRows；凡同日同店存在 legacy 行即不可稳定计算
+  // LEGACY_UNKNOWN is fail-closed. Explicit substitutes and reviewed compatible
+  // participants never force stable Employee.id payroll into name mode.
   const legacyByStoreDate = new Map()
   for (const row of legacy) {
     const key = `${row.storeId}|${row.date}`
@@ -79,12 +82,30 @@ export function evaluatePayrollReadiness(input) {
     g.push(row)
     legacyByStoreDate.set(key, g)
   }
+  for (const [key] of legacyByStoreDate) {
+    const [storeId, date] = key.split('|')
+    if (!date.startsWith(month)) continue
+    calculationBlockers.push({ type: CALC, reason: 'LEGACY_UNKNOWN_PARTICIPANT', detail: `${storeId} ${date} 存在未解析运营参与者` })
+    bump('LEGACY_UNKNOWN_PARTICIPANT')
+  }
   for (const key of [...eligibleDays]) {
     if (legacyByStoreDate.has(key)) {
       const [storeId, date] = key.split('|')
-      calculationBlockers.push({ type: CALC, reason: 'MIXED_STABLE_LEGACY', detail: `${storeId} ${date} 混有 legacy 考勤行` })
+      calculationBlockers.push({ type: CALC, reason: 'MIXED_STABLE_LEGACY', detail: `${storeId} ${date} 混有未解析 legacy 行` })
       bump('MIXED_STABLE_LEGACY')
       eligibleDays.delete(key)
+    }
+  }
+  const directoryNameCounts = new Map()
+  for (const employee of employeeDirectory) {
+    const name = String(employee?.name || '').trim()
+    if (name) directoryNameCounts.set(name, (directoryNameCounts.get(name) || 0) + 1)
+  }
+  for (const row of legacyCompatible) {
+    const name = String(row.staffNameSnapshot || '').trim()
+    if ((directoryNameCounts.get(name) || 0) > 1) {
+      calculationBlockers.push({ type: CALC, reason: 'LEGACY_DUPLICATE_IDENTITY', detail: `${row.storeId} ${row.date} ${name} 对应多个员工` })
+      bump('LEGACY_DUPLICATE_IDENTITY')
     }
   }
   // Gate 27 澄清：unresolved 日必须属于请求月——跨月条目（如历史无考勤月）不得污染当月就绪度
@@ -97,7 +118,7 @@ export function evaluatePayrollReadiness(input) {
 
   // ---- 2) 考勤身份统计 ----
   const stableAttendanceRows = stable.filter((d) => ![...legacyByStoreDate.keys()].includes(`${d.storeId}|${d.date}`)).length
-  const legacyAttendanceRows = legacy.length
+  const legacyAttendanceRows = legacy.length + legacyCompatible.length
 
   // ---- 3) DailyPayAdjustment 覆盖（该月 legacy NULL 行 → 阻断）----
   let stableAdjustmentRows = 0
@@ -207,6 +228,10 @@ export function evaluatePayrollReadiness(input) {
       unresolvedDays: monthUnresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
       stableAttendanceRows,
       legacyAttendanceRows,
+      substituteAttendanceRows: dayInput.substituteRows.length,
+      legacyCompatibleAttendanceRows: legacyCompatible.length,
+      legacyUnknownAttendanceRows: legacy.length,
+      excludedDraftDays: dayInput.excludedDraftDays.length,
       stableAdjustmentRows,
       legacyAdjustmentRows,
       stableBonusRows,

@@ -193,7 +193,7 @@ try {
   assert.equal(rows.length, 2, '两行共存')
   assert.equal(rows[0].employeeId, 'emp-A')
   assert.equal(rows[1].employeeId, 'emp-B')
-  assert.equal(rows[0].staffId, rows[1].staffId, 'staffId 允许相同')
+  assert.deepEqual(rows.map((row) => row.staffId), ['employee:emp-A', 'employee:emp-B'], 'staffId 由服务器按稳定身份派生')
   console.log('  [§12] 同店同名共存 PASS')
 
   // §13: replay 幂等
@@ -231,14 +231,13 @@ try {
   assert.equal(r18.status, 400, '无效 employeeId 应 400')
   console.log('  [§18] 无效 employeeId 400 PASS')
 
-  // §15: legacy partial unique 应用层——legacy 写走 upsert（同 staffId 幂等，不产生第二条）；
-  // DB 层两条 NULL 行共存被 partial unique 拒绝（已在升级迁移测试验证 P2002）
+  // §15: Gate 29N 后新写必须使用稳定 target；legacy partial unique 仅保护历史行。
   const r15a = await save2(base, cookie, '2026-09-12', [item(null, 'st-legacy-x', '王五')])
-  assert.equal(r15a.status, 200, `legacy 写应成功: ${await r15a.text()}`)
+  assert.equal(r15a.status, 400, '无稳定 target 的 legacy 新写必须拒绝')
   const r15b = await save2(base, cookie, '2026-09-12', [item(null, 'st-legacy-x', '王五')])
-  assert.equal(r15b.status, 200, 'legacy 同 staffId 重复提交 = upsert 幂等')
-  assert.equal(await prisma.dailyStoreStaff.count({ where: { storeId: 'guanshe', date: new Date('2026-09-12T00:00:00Z'), employeeId: null } }), 1, 'legacy 仍 1 行')
-  console.log('  [§15] legacy 唯一保护 PASS（DB partial unique 已验证；API upsert 幂等）')
+  assert.equal(r15b.status, 400)
+  assert.equal(await prisma.dailyStoreStaff.count({ where: { storeId: 'guanshe', date: new Date('2026-09-12T00:00:00Z') } }), 0, '拒绝不得造历史行')
+  console.log('  [§15] legacy 新写 fail closed PASS')
 
   // §22: shadow payroll 证明——同店同名 2 员工 + share=2
   const { calculateEmployeeIdShadowPayroll } = await import(path.join(root, 'src/utils/payrollShadowCalculator.js').replaceAll('\\', '/'))

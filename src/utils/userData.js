@@ -124,6 +124,7 @@ export async function loadUserData(options = {}) {
         inc: Number(row.incCents) / 100,
         ord: row.ord,
         staff: Array.isArray(row.staffNames) ? row.staffNames : [],
+        status: row.status,
         v2version: row.version,
       }
     }
@@ -358,7 +359,7 @@ export async function commitEntries(entries) {
           version: v.v2version,
         }),
       })
-      if (res && res.row) entries[k] = { ...v, v2version: res.row.version }
+      if (res && res.row) entries[k] = { ...v, status: res.row.status, v2version: res.row.version }
     } catch (err) {
       if (err.status === 409 && err.data && err.data.latest) {
         // 版本冲突：以 PG 最新值为准
@@ -366,6 +367,7 @@ export async function commitEntries(entries) {
           inc: Number(err.data.latest.incCents) / 100,
           ord: err.data.latest.ord,
           staff: Array.isArray(err.data.latest.staffNames) ? err.data.latest.staffNames : [],
+          status: err.data.latest.status,
           v2version: err.data.latest.version,
         }
         console.warn('业绩版本冲突，已加载最新数据')

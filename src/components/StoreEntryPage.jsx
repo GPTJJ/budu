@@ -6,7 +6,7 @@ import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry } from
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import { getStaff, loadUserData, onUserDataUpdated } from '../utils/userData'
+import { loadUserData, onUserDataUpdated } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
@@ -23,11 +23,6 @@ function todayStr() {
 
 const inputCls = 'input'
 
-function staffIdFor(storeKey, name) {
-  const encoded = [...String(name)].map((ch) => ch.codePointAt(0).toString(36)).join('')
-  return `st-${storeKey}-${encoded.slice(0, 64)}`
-}
-
 function Field({ label, icon: Icon, children }) {
   return (
     <div className="block">
@@ -40,7 +35,7 @@ function Field({ label, icon: Icon, children }) {
   )
 }
 
-function StaffMultiSelect({ employees, selectedRows, storeKey, onToggle, disabled }) {
+function StaffMultiSelect({ participants, selectedRows, onToggle, disabled }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="relative max-w-md">
@@ -60,20 +55,24 @@ function StaffMultiSelect({ employees, selectedRows, storeKey, onToggle, disable
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-full z-40 mt-1 max-h-72 w-full overflow-y-auto rounded-2xl border border-slate-100 bg-white p-2 shadow-lg">
             <p className="px-2 py-1.5 text-[11px] font-semibold text-slate-300">点击姓名多选值班人员</p>
-            {employees.map((emp) => {
-              const id = staffIdFor(emp.storeKey || storeKey, emp.name)
+            {participants.map((participant) => {
+              const id = participant.employeeId || participant.participantUserId
               const checked = selectedRows.some((row) => (
-                row.employeeId === emp.id || (!row.employeeId && row.staffId === id)
+                (participant.employeeId && row.employeeId === participant.employeeId)
+                || (participant.participantUserId && row.participantUserId === participant.participantUserId)
               ))
               return (
                 <button
-                  key={emp.id}
+                  key={`${participant.participantType}:${id}`}
                   type="button"
-                  onClick={() => onToggle(emp, id)}
+                  onClick={() => onToggle(participant)}
                   className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${checked ? 'bg-budu-50' : 'hover:bg-slate-50'}`}
                 >
                   <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] font-bold ${checked ? 'border-budu-500 bg-budu-500 text-white' : 'border-slate-200 text-transparent'}`}>✓</span>
-                  <span className="font-semibold text-slate-700">{emp.name}</span>
+                  <span className="font-semibold text-slate-700">{participant.label}</span>
+                  {participant.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && (
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">运营替代·不计工资</span>
+                  )}
                 </button>
               )
             })}
@@ -101,10 +100,11 @@ export default function StoreEntryPage({ user, onBack }) {
   const [inc, setInc] = useState('')
   const [ord, setOrd] = useState('')
   const [staffRows, setStaffRows] = useState([])
+  const [participants, setParticipants] = useState([])
   const [saving, setSaving] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
   const [feedback, setFeedback] = useState(null)
-  const [version, setVersion] = useState(0)
+  const [, setVersion] = useState(0)
   const [adjustCents, setAdjustCents] = useState('')
   const [adjustNote, setAdjustNote] = useState('')
 
@@ -119,22 +119,26 @@ export default function StoreEntryPage({ user, onBack }) {
   const canEditSales = source === 'manual' || (source === 'hybrid' && isManager)
   const canEditStaff = !confirmed || isManager
 
-  const allEmployees = useMemo(
-    () => [...getStaff()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
-    [version],
-  )
-
   const loadOverview = async () => {
     setLoadingOverview((current) => current || !overviewRef.current)
     setError('')
     try {
-      const data = await api(`/v2/daily-entry/overview?store=${encodeURIComponent(store)}&date=${date}`)
+      const [data, directory] = await Promise.all([
+        api(`/v2/daily-entry/overview?store=${encodeURIComponent(store)}&date=${date}`),
+        api(`/v2/daily-participants?store=${encodeURIComponent(store)}`),
+      ])
+      setParticipants([
+        ...(directory.employees || []).map((row) => ({ ...row, label: row.label })),
+        ...(directory.substitutes || []).map((row) => ({ ...row, label: row.label })),
+      ])
       setOverview(data)
       overviewRef.current = data
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord || '') : '')
       setStaffRows((data.staff || []).map((s) => ({
         employeeId: s.employeeId || '',
+        participantUserId: s.participantUserId || '',
+        participantType: s.participantType || 'LEGACY_UNKNOWN',
         staffId: s.staffId,
         staffName: s.staffName,
         scheduledStartTime: s.scheduledStartTime,
@@ -157,7 +161,10 @@ export default function StoreEntryPage({ user, onBack }) {
   // 进入页面时自动拉取最新共享数据（POS 自动同步/他端录入的最新业绩），
   // 并在后台数据合并完成后重渲染，避免首次打开只看到旧缓存（如 KV 只到 8-17）。
   useEffect(() => {
-    const unsubscribe = onUserDataUpdated(() => setVersion((v) => v + 1))
+    const unsubscribe = onUserDataUpdated(() => {
+      setVersion((v) => v + 1)
+      loadOverview().catch(() => {})
+    })
     loadUserData()
       .then(() => setVersion((v) => v + 1))
       .catch(() => {})
@@ -214,10 +221,9 @@ export default function StoreEntryPage({ user, onBack }) {
         body: JSON.stringify({
           storeKey: store,
           date,
-          items: nextRows.map((row) => ({
+          items: nextRows.filter((row) => row.employeeId || row.participantUserId).map((row) => ({
             employeeId: row.employeeId || undefined,
-            staffId: row.staffId,
-            staffName: row.staffName,
+            participantUserId: row.participantUserId || undefined,
             scheduledStartTime: row.scheduledStartTime,
             scheduledEndTime: row.scheduledEndTime,
             actualStartTime: '',
@@ -240,14 +246,22 @@ export default function StoreEntryPage({ user, onBack }) {
     }
   }
 
-  const toggleStaff = (emp, id) => {
-    const exists = staffRows.some((row) => row.employeeId === emp.id || (!row.employeeId && row.staffId === id))
+  const toggleStaff = (participant) => {
+    const exists = staffRows.some((row) => (
+      (participant.employeeId && row.employeeId === participant.employeeId)
+      || (participant.participantUserId && row.participantUserId === participant.participantUserId)
+    ))
     const nextRows = exists
-      ? staffRows.filter((row) => row.employeeId !== emp.id && (Boolean(row.employeeId) || row.staffId !== id))
+      ? staffRows.filter((row) => !(
+        (participant.employeeId && row.employeeId === participant.employeeId)
+        || (participant.participantUserId && row.participantUserId === participant.participantUserId)
+      ))
       : [...staffRows, {
-        employeeId: emp.id,
-        staffId: id,
-        staffName: emp.name,
+        employeeId: participant.employeeId || '',
+        participantUserId: participant.participantUserId || '',
+        participantType: participant.participantType,
+        staffId: participant.employeeId ? `employee:${participant.employeeId}` : `user:${participant.participantUserId}`,
+        staffName: participant.label,
         scheduledStartTime: '',
         scheduledEndTime: '',
         actualStartTime: '',
@@ -472,9 +486,8 @@ export default function StoreEntryPage({ user, onBack }) {
         </div>
         <div className="mt-4">
           <StaffMultiSelect
-            employees={allEmployees}
+            participants={participants}
             selectedRows={staffRows}
-            storeKey={store}
             onToggle={toggleStaff}
             disabled={!canEditStaff}
           />
@@ -483,6 +496,7 @@ export default function StoreEntryPage({ user, onBack }) {
               {staffRows.map((row) => (
                 <span key={row.staffId} className="inline-flex items-center gap-1.5 rounded-full bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-700">
                   {row.staffName}
+                  {row.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && <span className="text-[10px] text-amber-600">不计工资</span>}
                   <b className="tabular-nums text-budu-600">{Number(row.actualHours).toFixed(1)}h</b>
                 </span>
               ))}

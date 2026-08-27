@@ -30,6 +30,10 @@
         window.__fetchCalls.push({ path, method: options.method || 'GET' })
         if (path === '/api/userdata') return json({ analysis: {}, productImages: {} })
         if (path === '/api/v2/staff-list') return json({ rows: window.__staffRows })
+        if (path.startsWith('/api/v2/daily-participants')) return json({
+          employees: window.__staffRows.map((row) => ({ employeeId: row.id, label: row.name, participantType: 'EMPLOYEE' })),
+          substitutes: [],
+        })
         if (path === '/api/v2/stores') {
           return json({ rows: [
             { key: 'guanshe', name: '北京官舍店' },

@@ -60,7 +60,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     g.push(row)
     byStoreDate.set(key, g)
   }
-  for (const row of input.legacyRows) {
+  for (const row of input.legacyUnknownRows) {
     const key = `${row.storeId}|${row.date}`
     const g = byStoreDate.get(key)
     if (g) {

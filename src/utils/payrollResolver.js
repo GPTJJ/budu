@@ -16,6 +16,47 @@
 import { evaluatePayrollReadiness } from './payrollReadiness.js'
 import { calculateEmployeeIdShadowPayroll } from './payrollShadowCalculator.js'
 import { monthlyPayrollFromEntries } from './payroll.js'
+import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
+
+function stableEmployeeAuthorityExists(staffRows, adjustments) {
+  return staffRows.some((row) => row?.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE
+    || (!row?.participantType && Boolean(row?.employeeId)))
+    || adjustments.some((row) => Boolean(row?.employeeId))
+}
+
+function compatibleLegacyEntries(entries, staffRows, employees) {
+  const duplicateNames = new Set()
+  const nameCounts = new Map()
+  for (const employee of employees) {
+    const name = String(employee?.name || '').trim()
+    if (name) nameCounts.set(name, (nameCounts.get(name) || 0) + 1)
+  }
+  for (const [name, count] of nameCounts) if (count > 1) duplicateNames.add(name)
+
+  const namesByStoreDate = new Map()
+  for (const row of staffRows) {
+    if (row?.participantType !== PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE) continue
+    const name = String(row.staffNameSnapshot || '').trim()
+    if (!name || duplicateNames.has(name)) continue
+    const store = row.storeId || row.storeKey || ''
+    const date = String(row.date || '').slice(0, 10)
+    const key = `${store}|${date}`
+    const names = namesByStoreDate.get(key) || []
+    names.push(name)
+    namesByStoreDate.set(key, names)
+  }
+
+  const safe = {}
+  for (const [key, value] of Object.entries(entries)) {
+    if (value?.status !== 'confirmed') continue
+    const parts = key.split('|')
+    if (parts.length !== 3) continue
+    const date = `${parts[0]}-${String(parts[2]).slice(3)}`
+    const names = namesByStoreDate.get(`${parts[1]}|${date}`)
+    if (names?.length) safe[key] = { ...value, staff: names }
+  }
+  return safe
+}
 
 /**
  * 解析某月（YYYY-MM）payroll 计算。
@@ -31,29 +72,31 @@ export function resolvePayrollCalculation(input) {
   const bonuses = Array.isArray(input?.bigOrderBonuses) ? input.bigOrderBonuses : []
   const users = Array.isArray(input?.users) ? input.users : []
   const storeNames = input?.storeNames && typeof input.storeNames === 'object' ? input.storeNames : {}
+  const employees = Array.isArray(input?.employees) ? input.employees : []
 
   // ---- 1) 就绪度 ----
   const readiness = evaluatePayrollReadiness(input)
   const calculationReady = isMonth && readiness.calculationReady
 
   // ---- 2) 引擎选择 ----
-  if (calculationReady) {
+  if (calculationReady || stableEmployeeAuthorityExists(staffRows, adjustments)) {
     // Gate 26：month 传给 calculator——稳定调整仅日贡献严格限定在请求月内
     const shadow = calculateEmployeeIdShadowPayroll(entries, staffRows, bonuses, adjustments, month, storeNames)
     return {
       month,
       mode: 'EMPLOYEE_ID',
-      calculationReady: true,
-      issueReady: readiness.issueReady,
+      calculationReady,
+      issueReady: calculationReady && readiness.issueReady,
       readiness,
       payroll: shadow,
-      blockers: readiness.issueBlockers,
+      blockers: [...readiness.calculationBlockers, ...readiness.issueBlockers],
     }
   }
 
   // ---- 3) legacy 兼容输出（公式零改动；不合成 Employee.id；issueReady 恒 false）----
+  const safeLegacyEntries = compatibleLegacyEntries(entries, staffRows, employees)
   const legacy = isMonth
-    ? monthlyPayrollFromEntries(entries, month, storeNames)
+    ? monthlyPayrollFromEntries(safeLegacyEntries, month, storeNames)
     : new Map()
   const legacyRows = [...legacy.values()].map((rec) => ({
     name: rec.name,

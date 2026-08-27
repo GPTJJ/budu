@@ -67,8 +67,8 @@ function buildSummaryRows(resolverResult, employees, mode) {
 
 // D: legacy 唯一名兼容
 {
-  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['李四'] } }
-  const staff = [{ id: 'legacy', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-01', employeeId: null, staffId: 'st-l', staffNameSnapshot: '李四', actualHours: 8 }]
+  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['李四'], status: 'confirmed' } }
+  const staff = [{ id: 'legacy', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-01', employeeId: null, participantType: 'LEGACY_EMPLOYEE_COMPATIBLE', staffId: 'st-l', staffNameSnapshot: '李四', actualHours: 8 }]
   const employees = [{ id: 'emp-L', name: '李四', employeeNo: 'L001', storeKey: 'guanshe', type: 'fulltime' }]
   const res = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees, users: [] })
   assert.equal(res.mode, 'LEGACY', 'D legacy mode')
