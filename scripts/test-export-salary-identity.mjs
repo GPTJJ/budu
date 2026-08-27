@@ -1,11 +1,13 @@
 // Gate 25：ExportSalaryModal Employee.id 导出
 // 用 resolver 的 EMPLOYEE_ID 结果验证 buildSummaryRows 逻辑（同店同名两行独立、稳定零、legacy 唯一名、重名阻断）
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const { resolvePayrollCalculation } = await import(path.join(root, 'src/utils/payrollResolver.js').replaceAll('\\', '/'))
+const exportSource = fs.readFileSync(path.join(root, 'src/components/ExportSalaryModal.jsx'), 'utf8')
 
 const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', storeKey: 'guanshe', date, employeeId, staffId: `st-${id}`, staffNameSnapshot: name, actualHours: 8 })
 
@@ -106,3 +108,9 @@ function buildSummaryRows(resolverResult, employees, mode) {
 }
 
 console.log('GATE 25 EXPORT SALARY IDENTITY TEST OK')
+
+assert.match(exportSource, /getDailyStoreStaffMonthState\(monthKey\)/)
+assert.match(exportSource, /monthState\.status !== 'loaded' \|\| !monthState\.hasPayload/)
+assert.match(exportSource, /工资数据尚未加载，请重新加载/)
+assert.match(exportSource, /resolverResult\.mode === 'EMPLOYEE_ID' && !resolverResult\.calculationReady/)
+console.log('  [G] 缓存缺失/计算未就绪时导出 fail-closed PASS')

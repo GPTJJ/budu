@@ -3,7 +3,14 @@ import { Download, Eye, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getWeekDays } from '../utils/schedule'
 import { employeeDailyPayDetail } from '../utils/selectors'
-import { loadDailyStoreStaffMonth, getDailyStoreStaff, getEntries, getDailyPayAdjustments, getBigBonuses } from '../utils/userData'
+import {
+  loadDailyStoreStaffMonth,
+  getDailyStoreStaff,
+  getDailyStoreStaffMonthState,
+  getEntries,
+  getDailyPayAdjustments,
+  getBigBonuses,
+} from '../utils/userData'
 import { resolvePayrollCalculation } from '../utils/payrollResolver'
 import { t } from '../utils/text'
 
@@ -251,6 +258,12 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
       // Gate 25：显式加载所选月份考勤 → 统一 resolver（唯一计算决策点）
       const monthKey = startDate.slice(0, 7)
       await loadDailyStoreStaffMonth(monthKey)
+      const monthState = getDailyStoreStaffMonthState(monthKey)
+      if (monthState.status !== 'loaded' || !monthState.hasPayload) {
+        setError(t('工资数据尚未加载，请重新加载'))
+        setLoading(false)
+        return null
+      }
       const resolverResult = resolvePayrollCalculation({
         month: monthKey,
         dailyEntries: getEntries(),
@@ -260,6 +273,11 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
         employees: selectedEmployees,
         users: [],
       })
+      if (resolverResult.mode === 'EMPLOYEE_ID' && !resolverResult.calculationReady) {
+        setError(t('工资数据尚未加载完整，请重新加载'))
+        setLoading(false)
+        return null
+      }
       setExportMode(resolverResult.mode === 'EMPLOYEE_ID' ? 'EMPLOYEE_ID' : 'LEGACY')
       // LEGACY 重名阻断：目录中同名员工 >1 且被选中 → 受控失败（绝不猜测归属）
       if (resolverResult.mode === 'LEGACY') {

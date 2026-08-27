@@ -49,7 +49,16 @@ try {
   const cookie = register.headers.get('set-cookie')?.split(';')[0] || ''
   assert.ok(cookie)
 
-  const { seedCachedDataForTest, loadDailyStoreStaffMonth, getDailyStoreStaff, refreshDailyStoreStaffMonth, getUserData } = await import(path.join(root, 'src/utils/userData.js').replaceAll('\\', '/'))
+  const {
+    seedCachedDataForTest,
+    loadDailyStoreStaffMonth,
+    getDailyStoreStaff,
+    getDailyStoreStaffMonthState,
+    refreshDailyStoreStaffMonth,
+    prepareUserDataForUser,
+    resetUserData,
+    getUserData,
+  } = await import(path.join(root, 'src/utils/userData.js').replaceAll('\\', '/'))
 
   // 模拟前端：seed 空缓存，然后通过 API 加载
   seedCachedDataForTest({ entries: {}, staff: [], removedStaff: [], stores: [{ key: 'guanshe', name: '北京官舍店' }], schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] })
@@ -59,15 +68,18 @@ try {
   const { api } = await import(path.join(root, 'src/utils/api.js').replaceAll('\\', '/'))
   // 覆盖全局 fetch：把 /api/v2/daily-store-staff 指向测试 server
   const origFetch = globalThis.fetch
-  globalThis.fetch = (input, init) => {
+  let monthRequestCount = 0
+  const routedFetch = (input, init) => {
     const u = String(input)
     if (u.includes('/api/v2/daily-store-staff')) {
+      monthRequestCount += 1
       const url = new URL(u, 'http://x')
       const month = url.searchParams.get('month')
       return origFetch(`${base}/v2/daily-store-staff?month=${month}`, { ...init, headers: { ...(init?.headers || {}), Cookie: cookie } })
     }
     return origFetch(input, init)
   }
+  globalThis.fetch = routedFetch
 
   // A: 仅 8 月
   await loadDailyStoreStaffMonth('2026-08')
@@ -128,6 +140,90 @@ try {
   assert.equal(getDailyStoreStaff('2026-08').length, 3, 'I 8月刷新后 3 行')
   assert.equal(getDailyStoreStaff('2026-07').length, 1, 'I 7月不受影响')
   console.log('  [I] 失效隔离 PASS')
+
+  // J: reset 后再次请求同一月份，旧 marker 不得短路网络加载。
+  const beforeResetReload = monthRequestCount
+  resetUserData()
+  prepareUserDataForUser('account-reset')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  await loadDailyStoreStaffMonth('2026-08')
+  assert.equal(monthRequestCount, beforeResetReload + 1, 'J reset 后同月必须重新请求')
+  assert.equal(getDailyStoreStaff('2026-08').length, 3)
+  console.log('  [J] reset 后同月重载 PASS')
+
+  // K: 账号 A 的 month marker 不能抑制账号 B 的加载。
+  prepareUserDataForUser('account-a')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  await loadDailyStoreStaffMonth('2026-08')
+  const beforeAccountB = monthRequestCount
+  prepareUserDataForUser('account-b')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  await loadDailyStoreStaffMonth('2026-08')
+  assert.equal(monthRequestCount, beforeAccountB + 1, 'K 账号 B 必须独立加载同月')
+  console.log('  [K] 账号切换缓存隔离 PASS')
+
+  // L: 账号 A 的迟到响应不能写入账号 B 缓存。
+  prepareUserDataForUser('late-a')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  let resolveLateResponse
+  globalThis.fetch = (input, init) => {
+    if (String(input).includes('/api/v2/daily-store-staff')) {
+      return new Promise((resolve) => { resolveLateResponse = resolve })
+    }
+    return origFetch(input, init)
+  }
+  const lateRequest = loadDailyStoreStaffMonth('2026-08')
+  await Promise.resolve()
+  prepareUserDataForUser('late-b')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  resolveLateResponse(new Response(JSON.stringify({ rows: [{ id: 'stale-account-a' }] }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }))
+  const lateResult = await lateRequest
+  assert.equal(lateResult.status, 'ignored', 'L 旧账号响应应被忽略')
+  assert.equal(getDailyStoreStaff('2026-08').length, 0, 'L 新账号缓存不得被污染')
+  assert.equal(getDailyStoreStaffMonthState('2026-08').status, 'not_loaded')
+  globalThis.fetch = routedFetch
+  await loadDailyStoreStaffMonth('2026-08')
+  assert.equal(getDailyStoreStaff('2026-08').length, 3, 'L 新账号可正常重新加载')
+  console.log('  [L] 迟到响应隔离 PASS')
+
+  // M: 权威 API 返回 [] 是已加载空月，不得无限重复请求。
+  prepareUserDataForUser('empty-month')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  let emptyRequestCount = 0
+  globalThis.fetch = (input, init) => {
+    if (String(input).includes('/api/v2/daily-store-staff')) {
+      emptyRequestCount += 1
+      return Promise.resolve(new Response(JSON.stringify({ rows: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    }
+    return origFetch(input, init)
+  }
+  await loadDailyStoreStaffMonth('2026-06')
+  await loadDailyStoreStaffMonth('2026-06')
+  const emptyState = getDailyStoreStaffMonthState('2026-06')
+  assert.equal(emptyState.status, 'loaded')
+  assert.equal(emptyState.hasPayload, true)
+  assert.deepEqual(emptyState.rows, [])
+  assert.equal(emptyRequestCount, 1, 'M 权威空月只请求一次')
+  console.log('  [M] 权威空月状态 PASS')
+
+  // N: LOADED marker 存在但实际 payload 丢失时必须检测损坏并重新拉取。
+  prepareUserDataForUser('corrupt-marker')
+  seedCachedDataForTest({ dailyStoreStaffByMonth: {} })
+  globalThis.fetch = routedFetch
+  await loadDailyStoreStaffMonth('2026-08')
+  const beforeCorruptReload = monthRequestCount
+  delete getUserData().dailyStoreStaffByMonth['2026-08']
+  assert.equal(getDailyStoreStaffMonthState('2026-08').status, 'not_loaded')
+  await loadDailyStoreStaffMonth('2026-08')
+  assert.equal(monthRequestCount, beforeCorruptReload + 1, 'N 损坏 marker 必须触发重载')
+  assert.equal(getDailyStoreStaff('2026-08').length, 3)
+  console.log('  [N] marker/payload 一致性 PASS')
 
   globalThis.fetch = origFetch
   console.log('GATE 21 MONTH-SCOPED STAFF CACHE TEST OK')

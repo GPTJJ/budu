@@ -78,6 +78,7 @@ const DIRECT_SUITE = [
   'test-payroll-notice-identity.mjs', // Gate 18：PayrollNotice 稳定主体 + 收件人 User.employeeId → critical
   'test-explicit-employee-account-binding.mjs', // Gate 20：显式 Employee.id 账号绑定（同店同名安全）→ critical
   'test-month-scoped-staff-cache.mjs', // Gate 21：DailyStoreStaff 月键控缓存隔离 → critical
+  'test-payroll-cache-lifecycle.mjs', // P0：reset/账号切换/迟到响应/月状态缓存生命周期 → critical
   'test-payroll-readiness.mjs', // Gate 22：payroll 月就绪度评估（纯函数，零 live 消费）→ critical
   'test-payroll-resolver.mjs', // Gate 23：统一 payroll 计算 resolver（纯函数，零 live 消费）→ critical
   'test-export-salary-identity.mjs', // Gate 25：ExportSalaryModal Employee.id 导出身份（纯逻辑）→ critical
@@ -111,6 +112,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-notice-identity.mjs',
   'test-explicit-employee-account-binding.mjs',
   'test-month-scoped-staff-cache.mjs',
+  'test-payroll-cache-lifecycle.mjs',
   'test-payroll-readiness.mjs',
   'test-payroll-resolver.mjs',
   'test-export-salary-identity.mjs',

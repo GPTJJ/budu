@@ -9,6 +9,38 @@ import { api } from './api.js'
 
 
 let cached = null
+let activeUserId = ''
+let userDataGeneration = 0
+let staffMonthRequestSequence = 0
+
+export const STAFF_MONTH_LOAD_STATE = Object.freeze({
+  NOT_LOADED: 'not_loaded',
+  LOADING: 'loading',
+  LOADED: 'loaded',
+  ERROR: 'error',
+})
+
+// 月缓存状态与请求都绑定到当前账号代际。reset/切换账号会推进 generation，
+// 旧账号的迟到响应因此不能写入新账号缓存。
+const staffMonthStates = new Map()
+const inflightStaffMonths = new Map()
+
+function invalidateMonthlyAttendanceCache({ clearPayload = true } = {}) {
+  userDataGeneration += 1
+  staffMonthStates.clear()
+  inflightStaffMonths.clear()
+  if (clearPayload && cached) cached.dailyStoreStaffByMonth = {}
+}
+
+function activateUser(nextUserId) {
+  const next = String(nextUserId || '')
+  if (activeUserId !== next) {
+    invalidateMonthlyAttendanceCache()
+    cached = null
+    activeUserId = next
+  }
+  return { userId: activeUserId, generation: userDataGeneration }
+}
 
 // 数据更新通知：后台拉取/合并完成后回调订阅者，让已挂载的页面重新渲染最新缓存
 const dataListeners = new Set()
@@ -25,8 +57,6 @@ function notifyUserDataUpdated() {
     }
   }
 }
-let activeUserId = ''
-
 function normalizeCachedData(value) {
   const source = value && typeof value === 'object' ? value : {}
   return {
@@ -58,8 +88,7 @@ function normalizeCachedData(value) {
 export function prepareUserDataForUser(userId) {
   // DA-5：JSON/localStorage 镜像不再作为业务数据源（读权威 = PostgreSQL）
   const nextUserId = String(userId || '')
-  if (activeUserId && activeUserId !== nextUserId) cached = null
-  activeUserId = nextUserId
+  activateUser(nextUserId)
   return false
 }
 
@@ -68,10 +97,12 @@ export async function loadUserData(options = {}) {
   const userId = typeof options === 'string' ? options : options?.userId
   const onBaseReady = typeof options === 'object' ? options?.onBaseReady : null
   if (userId) {
-    const nextUserId = String(userId)
-    if (activeUserId && activeUserId !== nextUserId) cached = null
-    activeUserId = nextUserId
+    activateUser(userId)
   }
+  const requestOwner = { userId: activeUserId, generation: userDataGeneration }
+  const ownsCurrentSession = () => (
+    requestOwner.generation === userDataGeneration && requestOwner.userId === activeUserId
+  )
   // Data Authority DA-4/DA-2.2：entries 与 staff 的唯一权威是 PostgreSQL。
   // 先暂存进入本函数前的内存缓存（上一次会话内成功的 PG 数据），
   // 基础 KV 数据中的 entries/staff 不再作为初始值/回退。
@@ -93,6 +124,7 @@ export async function loadUserData(options = {}) {
     api('/v2/stores'),
   ])
   const data = await legacyRequest
+  if (!ownsCurrentSession()) return cached
   // DA-5：JSON 镜像不再作为业务数据源；bigBonuses/调整/POS 汇总等一律以 PG 接口为准。
   // legacy 失败时仅保留当前账号已有的内存数据；首次加载则创建空缓存容器承接 PG 结果，
   // 但不把 KV 空对象或 legacy 字段当成任何 PG 权威域的业务事实。
@@ -111,6 +143,7 @@ export async function loadUserData(options = {}) {
   }
 
   const requests = await pgAuthorityRequest
+  if (!ownsCurrentSession()) return cached
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
   // v2（PostgreSQL）为业绩数据唯一权威源：即使 PG 返回空也是事实（无 KV 回退）。
@@ -260,10 +293,6 @@ export async function loadUserData(options = {}) {
   return cached
 }
 
-// 已加载月份集合：避免重复请求同一月份；in-flight 去重（并发同月共享同一请求）
-const loadedStaffMonths = new Set()
-const inflightStaffMonths = new Map()
-
 /**
  * Gate 21：按月加载 DailyStoreStaff 稳定考勤数据（月键控缓存，月与月完全隔离）。
  * - cached.dailyStoreStaffByMonth[YYYY-MM] 为各月独立数据集；互不覆盖
@@ -274,26 +303,85 @@ const inflightStaffMonths = new Map()
  */
 export async function loadDailyStoreStaffMonth(month, opts = {}) {
   const key = String(month || '')
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return
-  if (!opts.force && loadedStaffMonths.has(key)) return
-  if (inflightStaffMonths.has(key)) return inflightStaffMonths.get(key)
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
+    return { month: key, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, rows: [] }
+  }
+  const owner = { userId: activeUserId, generation: userDataGeneration }
+  const requestToken = staffMonthRequestSequence + 1
+  staffMonthRequestSequence = requestToken
+  const ownsCurrentSession = () => (
+    owner.generation === userDataGeneration && owner.userId === activeUserId
+  )
+  const ownsCurrentRequest = () => (
+    ownsCurrentSession() && staffMonthStates.get(key)?.requestToken === requestToken
+  )
+  const byMonth = cached?.dailyStoreStaffByMonth
+  const hasPayload = Boolean(
+    byMonth && Object.prototype.hasOwnProperty.call(byMonth, key) && Array.isArray(byMonth[key]),
+  )
+  const state = staffMonthStates.get(key)
+  const stateMatchesOwner = state?.generation === owner.generation && state?.userId === owner.userId
+  if (!opts.force && stateMatchesOwner && state.status === STAFF_MONTH_LOAD_STATE.LOADED && hasPayload) {
+    return { month: key, status: STAFF_MONTH_LOAD_STATE.LOADED, rows: byMonth[key] }
+  }
+  // marker 与 payload 不一致即视为损坏，绝不以“已加载”短路。
+  if (state?.status === STAFF_MONTH_LOAD_STATE.LOADED && !hasPayload) staffMonthStates.delete(key)
+  const inflight = inflightStaffMonths.get(key)
+  if (!opts.force && inflight && inflight.generation === owner.generation && inflight.userId === owner.userId) {
+    return inflight.promise
+  }
+  staffMonthStates.set(key, {
+    month: key,
+    status: STAFF_MONTH_LOAD_STATE.LOADING,
+    generation: owner.generation,
+    userId: owner.userId,
+    requestToken,
+    error: null,
+  })
   const promise = (async () => {
     try {
       const res = await api(`/v2/daily-store-staff?month=${key}`)
       const rows = Array.isArray(res && res.rows) ? res.rows : []
-      const byMonth = { ...(getUserData().dailyStoreStaffByMonth || {}) }
-      byMonth[key] = rows
-      getUserData().dailyStoreStaffByMonth = byMonth
-      loadedStaffMonths.add(key)
+      if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
+      if (!cached) cached = normalizeCachedData(null)
+      const nextByMonth = { ...(cached.dailyStoreStaffByMonth || {}) }
+      nextByMonth[key] = rows
+      cached.dailyStoreStaffByMonth = nextByMonth
+      staffMonthStates.set(key, {
+        month: key,
+        status: STAFF_MONTH_LOAD_STATE.LOADED,
+        generation: owner.generation,
+        userId: owner.userId,
+        requestToken,
+        error: null,
+      })
       notifyUserDataUpdated()
+      return { month: key, status: STAFF_MONTH_LOAD_STATE.LOADED, rows }
     } catch (e) {
-      loadedStaffMonths.delete(key)
-      console.error(`[daily-store-staff] ${key} 加载失败：`, e.message)
+      if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
+      const nextByMonth = { ...(cached?.dailyStoreStaffByMonth || {}) }
+      delete nextByMonth[key]
+      if (!cached) cached = normalizeCachedData(null)
+      cached.dailyStoreStaffByMonth = nextByMonth
+      staffMonthStates.set(key, {
+        month: key,
+        status: STAFF_MONTH_LOAD_STATE.ERROR,
+        generation: owner.generation,
+        userId: owner.userId,
+        requestToken,
+        error: e?.message || '加载失败',
+      })
+      notifyUserDataUpdated()
+      console.error(`[daily-store-staff] ${key} 加载失败：`, e?.message)
+      return { month: key, status: STAFF_MONTH_LOAD_STATE.ERROR, rows: [], error: e }
     } finally {
-      inflightStaffMonths.delete(key)
+      const current = inflightStaffMonths.get(key)
+      if (current?.promise === promise && current?.generation === owner.generation && current?.userId === owner.userId) {
+        inflightStaffMonths.delete(key)
+      }
     }
   })()
-  inflightStaffMonths.set(key, promise)
+  inflightStaffMonths.set(key, { ...owner, promise })
   return promise
 }
 
@@ -301,7 +389,7 @@ export async function loadDailyStoreStaffMonth(month, opts = {}) {
 export async function refreshDailyStoreStaffMonth(month) {
   const key = String(month || '')
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return
-  loadedStaffMonths.delete(key)
+  staffMonthStates.delete(key)
   const byMonth = { ...(getUserData().dailyStoreStaffByMonth || {}) }
   delete byMonth[key]
   getUserData().dailyStoreStaffByMonth = byMonth
@@ -317,6 +405,36 @@ export function getDailyStoreStaff(month) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) return []
   const byMonth = getUserData().dailyStoreStaffByMonth || {}
   return Array.isArray(byMonth[key]) ? byMonth[key] : []
+}
+
+/**
+ * 返回当前账号代际下某月的显式加载状态。
+ * LOADED + rows=[] 表示权威空月；缺少 payload 时永远不会伪装成 LOADED。
+ */
+export function getDailyStoreStaffMonthState(month) {
+  const key = String(month || '')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
+    return { month: key, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, hasPayload: false, rows: [], error: null }
+  }
+  const byMonth = cached?.dailyStoreStaffByMonth
+  const hasPayload = Boolean(
+    byMonth && Object.prototype.hasOwnProperty.call(byMonth, key) && Array.isArray(byMonth[key]),
+  )
+  const state = staffMonthStates.get(key)
+  const ownsState = state?.generation === userDataGeneration && state?.userId === activeUserId
+  if (!ownsState) {
+    return { month: key, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, hasPayload, rows: hasPayload ? byMonth[key] : [], error: null }
+  }
+  if (state.status === STAFF_MONTH_LOAD_STATE.LOADED && !hasPayload) {
+    return { month: key, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, hasPayload: false, rows: [], error: null }
+  }
+  return {
+    month: key,
+    status: state.status,
+    hasPayload,
+    rows: hasPayload ? byMonth[key] : [],
+    error: state.error || null,
+  }
 }
 
 export function getUserData() {
@@ -503,12 +621,25 @@ export function commitRemovedStaff(removedStaff) {
 }
 
 export function resetUserData() {
+  invalidateMonthlyAttendanceCache()
   cached = null
   activeUserId = ''
 }
 
 /** 测试专用：注入内存缓存（DA-5 后 localStorage 镜像播种已移除，仅集成测试使用） */
 export function seedCachedDataForTest(data) {
+  invalidateMonthlyAttendanceCache()
   cached = normalizeCachedData(data)
+  for (const [month, rows] of Object.entries(cached.dailyStoreStaffByMonth || {})) {
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month) && Array.isArray(rows)) {
+      staffMonthStates.set(month, {
+        month,
+        status: STAFF_MONTH_LOAD_STATE.LOADED,
+        generation: userDataGeneration,
+        userId: activeUserId,
+        error: null,
+      })
+    }
+  }
   return cached
 }

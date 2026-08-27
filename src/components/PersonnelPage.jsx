@@ -21,7 +21,16 @@ import {
   allStores,
   storeName,
 } from '../utils/selectors'
-import { resignEmployeeById, loadDailyStoreStaffMonth, getDailyStoreStaff, getEntries, getDailyPayAdjustments, getBigBonuses } from '../utils/userData'
+import {
+  resignEmployeeById,
+  loadDailyStoreStaffMonth,
+  refreshDailyStoreStaffMonth,
+  getDailyStoreStaff,
+  getDailyStoreStaffMonthState,
+  getEntries,
+  getDailyPayAdjustments,
+  getBigBonuses,
+} from '../utils/userData'
 import { resolvePayrollCalculation } from '../utils/payrollResolver'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
@@ -504,6 +513,10 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     let cancelled = false
     Promise.all(months.map((monthKey) => loadDailyStoreStaffMonth(monthKey))).then(() => {
       if (cancelled || periodRequestRef.current !== requestId) return
+      if (months.some((monthKey) => getDailyStoreStaffMonthState(monthKey).status !== 'loaded')) {
+        setPeriodAttendance({ status: 'error', key, rows: [], dailyByEmployeeId: new Map() })
+        return
+      }
       const rows = months.flatMap((monthKey) => getDailyStoreStaff(monthKey))
       const dailyByEmployeeId = new Map()
       const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
@@ -542,6 +555,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     let cancelled = false
     loadDailyStoreStaffMonth(m).then(() => {
       if (cancelled || requestedMonthRef.current !== m) return // 竞态：已切换月份则丢弃
+      const monthState = getDailyStoreStaffMonthState(m)
+      if (monthState.status !== 'loaded' || !monthState.hasPayload) {
+        setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+        return
+      }
       const res = resolvePayrollCalculation({
         month: m,
         dailyEntries: getEntries(),
@@ -554,9 +572,18 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       })
       if (cancelled || requestedMonthRef.current !== m) return
       if (res.mode === 'EMPLOYEE_ID') {
+        if (!res.calculationReady) {
+          setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+          return
+        }
         const byId = new Map(res.payroll.employees.map((row) => [row.employeeId, { ...row, payrollComputed: true }]))
         setPayrollDisplay({ status: 'ready', month: m, mode: 'EMPLOYEE_ID', byEmployeeId: byId, legacyByName: new Map(), legacyAmbiguousNames: new Set() })
       } else {
+        const calculationBlockers = res.readiness?.calculationBlockers || []
+        if (calculationBlockers.length > 0 && calculationBlockers.every((item) => item.reason === 'NO_PAYROLL_SUBJECTS')) {
+          setPayrollDisplay({ status: 'empty', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+          return
+        }
         // LEGACY 兼容：按姓名聚合；模糊判定 = 当前目录中同名员工数 > 1
         // （legacy 结果本身把重名合并成一行，无法反推——以目录为准，绝不给重名卡精确金额）
         const byName = new Map()
@@ -566,7 +593,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       }
     }).catch(() => {
       if (cancelled || requestedMonthRef.current !== m) return
-      setPayrollDisplay((prev) => ({ ...prev, status: 'ready', month: m }))
+      setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
     })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -575,20 +602,17 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   // Gate 24：卡片 payroll 富集——EMPLOYEE_ID 按 id；LEGACY 唯一名兼容、重名不赋值
   const enrichPayroll = (d) => {
     if (payrollDisplay.mode === 'EMPLOYEE_ID') {
-      return payrollDisplay.byEmployeeId.get(d.id) || {}
+      return payrollDisplay.byEmployeeId.get(d.id) || null
     }
     if (payrollDisplay.mode === 'LEGACY') {
       if (payrollDisplay.legacyAmbiguousNames.has(d.name)) return { legacyAmbiguous: true } // 重名模糊：不给精确金额
-      return payrollDisplay.legacyByName.get(d.name) || {}
+      return payrollDisplay.legacyByName.get(d.name) || null
     }
-    return {}
+    return null
   }
   const all = directory.map((d) => {
     const p = enrichPayroll(d)
-    const monthlyComponents = personnelMonthlyComponents(p, {
-      legacyAmbiguous: p.legacyAmbiguous === true,
-    })
-    if (p.legacyAmbiguous) {
+    if (p?.legacyAmbiguous) {
       // Gate 24 澄清：LEGACY 重名无法归属 → payroll 派生字段为 null（渲染「—」），
       // 绝不以数字零冒充"零工资"；非 payroll 员工字段保持原样。
       return {
@@ -597,9 +621,20 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
         hours: null, workedRevenue: null, workedDays: null,
         salaryAdjustment: null, adjustmentCount: null, payrollComputed: false, roi: null,
+        payrollAvailable: false, payrollUnavailable: false,
       }
     }
-    // Gate 24：payroll 派生字段缺失时给安全默认（未就绪等场景不崩溃）
+    if (!p) {
+      return {
+        ...d,
+        salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
+        hours: null, workedRevenue: null, workedDays: null,
+        salaryAdjustment: null, adjustmentCount: null, dailyExplanations: [], payrollComputed: false, roi: null,
+        payrollAvailable: false,
+        payrollUnavailable: payrollDisplay.status === 'unavailable',
+      }
+    }
+    const monthlyComponents = personnelMonthlyComponents(p)
     return {
       ...d,
       salary: monthlyComponents.salary,
@@ -616,6 +651,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       adjustmentCount: p.adjustmentCount ?? 0,
       dailyExplanations: Array.isArray(p.dailyExplanations) ? p.dailyExplanations : [],
       payrollComputed: p.payrollComputed === true,
+      payrollAvailable: true,
+      payrollUnavailable: false,
       roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
     }
   })
@@ -626,6 +663,13 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const parttime = scopedAll.filter((e) => e.type === 'parttime')
   const list = filter === 'all' ? scopedAll : filter === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
+
+  const retryMonthlyPayroll = async () => {
+    setPayrollDisplay((prev) => ({ ...prev, status: 'loading', month }))
+    const result = await refreshDailyStoreStaffMonth(month)
+    if (result?.status === 'loaded') setSyncTick((value) => value + 1)
+    else setPayrollDisplay((prev) => ({ ...prev, status: 'unavailable', month }))
+  }
 
   const handleAddStaff = async (emp) => {
     setShowAdd(false)
@@ -700,6 +744,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {payrollDisplay.status === 'loading' && (
               <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
                 {t('加载中…')}
+              </span>
+            )}
+            {payrollDisplay.status === 'unavailable' && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                {t('工资数据暂不可用')}
+                <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
               </span>
             )}
           </p>
@@ -831,7 +881,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               return (
                 <div
                   key={emp.id}
-                  onClick={() => setDetailEmp(emp)}
+                  onClick={() => {
+                    if (day || weekStart || emp.payrollAvailable) setDetailEmp(emp)
+                  }}
                   className="card relative cursor-pointer p-5 transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
                 >
                   {canDelete && !isPublic && (
@@ -901,18 +953,36 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {emp.storeName} · {emp.legacyAmbiguous && !day && !weekStart ? t('出勤 —') : t('出勤 {days} 天', { days: periodWorkedDays })}
+                        {emp.storeName} · {!day && !weekStart && !emp.payrollAvailable ? t('出勤 —') : t('出勤 {days} 天', { days: periodWorkedDays })}
                       </p>
                     </div>
                   </div>
 
-                  {!day && !weekStart ? (
+                  {!day && !weekStart && emp.payrollAvailable ? (
                     <PayrollMonthlySummary
                       employee={emp}
                       monthText={periodText}
                       hidden={hidePersonal}
                       ambiguous={emp.legacyAmbiguous}
                     />
+                  ) : !day && !weekStart ? (
+                    <div className={`mt-4 rounded-xl border px-3 py-4 text-center ${emp.payrollUnavailable ? 'border-rose-100 bg-rose-50/70' : 'border-slate-100 bg-slate-50/70'}`}>
+                      <p className={`text-sm font-bold ${emp.payrollUnavailable ? 'text-rose-600' : 'text-slate-500'}`}>
+                        {t(emp.payrollUnavailable ? '工资数据暂不可用' : '暂无工资数据')}
+                      </p>
+                      {emp.payrollUnavailable && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            retryMonthlyPayroll()
+                          }}
+                          className="mt-2 text-xs font-bold text-budu-600 underline"
+                        >
+                          {t('重新加载')}
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
@@ -945,7 +1015,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     </>
                   )}
 
-                  {!day && !weekStart && (
+                  {!day && !weekStart && emp.payrollAvailable && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -1013,7 +1083,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   ) : (
                     <div className="mt-3 flex items-center justify-between">
                       <span className="text-[11px] text-slate-300">{t('ROI = 当班营业额 / 工资')}</span>
-                      {emp.legacyAmbiguous && !day && !weekStart ? (
+                      {!emp.payrollAvailable ? (
                         <span className="rounded-lg bg-slate-50 px-2 py-0.5 text-xs font-bold text-slate-400">{t('ROI —')}</span>
                       ) : (
                         <span

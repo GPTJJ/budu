@@ -9,7 +9,14 @@ import { api } from '../utils/api'
 import { periodLabel } from '../utils/payrollSlip'
 import { storeName, currentEmployeeDirectory } from '../utils/selectors'
 import { resolvePayrollCalculation } from '../utils/payrollResolver'
-import { loadDailyStoreStaffMonth, getDailyStoreStaff, getEntries, getDailyPayAdjustments, getBigBonuses } from '../utils/userData'
+import {
+  loadDailyStoreStaffMonth,
+  getDailyStoreStaff,
+  getDailyStoreStaffMonthState,
+  getEntries,
+  getDailyPayAdjustments,
+  getBigBonuses,
+} from '../utils/userData'
 import { buildIssueRows, preflightIssueSelection, buildIssuePayloadRows } from '../utils/payrollIssue'
 
 const yuan = (n) => `¥${Number(n || 0).toFixed(2)}`
@@ -80,6 +87,11 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
     loadDailyStoreStaffMonth(m)
       .then(() => {
         if (cancelled) return
+        const monthState = getDailyStoreStaffMonthState(m)
+        if (monthState.status !== 'loaded' || !monthState.hasPayload) {
+          setPayroll({ status: 'blocked', month: m, mode: '', calculationReady: false, byEmployeeId: new Map(), readinessById: new Map(), subjects: [], blocked: 'LOAD_ERROR' })
+          return
+        }
         const res = resolvePayrollCalculation({
           month: m,
           dailyEntries: getEntries(),
@@ -208,7 +220,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
     if (payroll.blocked === 'PERIOD_NOT_AVAILABLE') {
       return '周度/自定义周期尚未迁移至稳定工资计算，暂不可发放'
     }
-    if (payroll.blocked === 'LOAD_ERROR') return '工资数据加载失败，请稍后重试'
+    if (payroll.blocked === 'LOAD_ERROR') return '工资数据尚未加载，请重新加载'
     return '该月份暂无可发放的稳定工资数据'
   }
 

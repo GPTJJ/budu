@@ -1,9 +1,11 @@
 // Gate 27：PayrollIssueModal 稳定发放纯逻辑（resolver 消费 + Employee.id 主体/快照/预检）
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const issueModalSource = fs.readFileSync(path.join(root, 'src/components/PayrollIssueModal.jsx'), 'utf8')
 const { buildIssueSnapshot, buildIssueRows, preflightIssueSelection, buildIssuePayloadRows } = await import(path.join(root, 'src/utils/payrollIssue.js').replaceAll('\\', '/'))
 const { resolvePayrollCalculation } = await import(path.join(root, 'src/utils/payrollResolver.js').replaceAll('\\', '/'))
 
@@ -255,3 +257,10 @@ const dirById = new Map([
 }
 
 console.log('GATE 27 PAYROLL ISSUE RESOLVER TEST OK')
+
+assert.match(issueModalSource, /getDailyStoreStaffMonthState\(m\)/)
+assert.match(issueModalSource, /monthState\.status !== 'loaded' \|\| !monthState\.hasPayload/)
+assert.match(issueModalSource, /blocked: 'LOAD_ERROR'/)
+assert.match(issueModalSource, /工资数据尚未加载，请重新加载/)
+assert.match(issueModalSource, /if \(payroll\.status !== 'ready'\)/)
+console.log('  [T] 月缓存缺失时发放 fail-closed PASS')
