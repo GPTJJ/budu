@@ -19,6 +19,7 @@ SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
 CANDIDATE="budu-prod-${SHORT_SHA}-mailing-qr"
 MIGRATOR="budu-migrate-${SHORT_SHA}-mailing-qr"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-mailing-qr"
 IMAGE="budu-api:mailing-qr-only-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
@@ -54,6 +55,9 @@ rollback_on_error() {
   fi
   if docker inspect "$MIGRATOR" >/dev/null 2>&1; then
     docker rm -f "$MIGRATOR" >/dev/null 2>&1 || true
+  fi
+  if docker inspect "$BACKUP_CONTAINER" >/dev/null 2>&1; then
+    docker rm -f "$BACKUP_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ "$OLD_STOPPED" -eq 1 ] && [ -n "$OLD_CONTAINER" ]; then
     docker start "$OLD_CONTAINER" >/dev/null 2>&1 || true
@@ -257,8 +261,15 @@ path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
 BACKUP_NAME="budu_bj006-migration48-pre-mailing-qr-${SHORT_SHA}.dump"
-docker run --rm --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
-  sh -c 'pg_dump "$PGURI" --format=custom --no-owner --file="/backup/$BACKUP_NAME"'
+docker create --name "$BACKUP_CONTAINER" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
+  sh -c 'pg_dump "$PGURI" --format=custom --no-owner --file="/backup/$BACKUP_NAME"' >/dev/null
+while IFS= read -r backup_network; do
+  [ -n "$backup_network" ] || continue
+  [ "$backup_network" = "$COMMON_NETWORK" ] && continue
+  docker network connect "$backup_network" "$BACKUP_CONTAINER"
+done < <(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$OLD_CONTAINER")
+docker start -a "$BACKUP_CONTAINER"
+docker rm "$BACKUP_CONTAINER" >/dev/null
 docker run --rm -v "${ROLLBACK_ROOT}:/backup:ro" postgres:16-alpine pg_restore --list "/backup/${BACKUP_NAME}" >/dev/null
 cp "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
 chmod 400 "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
