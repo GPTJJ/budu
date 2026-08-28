@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BUDU Performance Duty Staff Harness</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
+      import { loadUserData, prepareUserDataForUser, resetUserData } from '/src/utils/userData.js'
+      import '/src/index.css'
+
+      const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      window.__writes = []
+      window.__triggerSharedRefresh = () => loadUserData({ userId: 'dev-performance-detail' })
+
+      const dailyEntries = [
+        { id: 'de-chaowai-20260820', storeKey: 'chaowai', date: '2026-08-20', incCents: '8000', ord: 1, staffNames: [], status: 'confirmed', version: 1 },
+        { id: 'de-chaowai-20260821', storeKey: 'chaowai', date: '2026-08-21', incCents: '9000', ord: 1, staffNames: ['旧名字'], status: 'confirmed', version: 1 },
+        { id: 'de-chaowai-20260822', storeKey: 'chaowai', date: '2026-08-22', incCents: '10000', ord: 1, staffNames: ['历史姓名'], status: 'confirmed', version: 1 },
+        { id: 'de-chaowai-20260823', storeKey: 'chaowai', date: '2026-08-23', incCents: '11000', ord: 1, staffNames: ['过时镜像'], status: 'confirmed', version: 1 },
+        { id: 'de-chaowai-20260824', storeKey: 'chaowai', date: '2026-08-24', incCents: '0', ord: 0, staffNames: [], status: 'confirmed', version: 4 },
+      ]
+      const dailyStoreStaff = [
+        { id: 'dss-legacy-20260820', storeKey: 'chaowai', date: '2026-08-20', employeeId: 'emp-ma', participantUserId: null, participantType: 'EMPLOYEE', staffId: 'employee:emp-ma', staffName: '马婧欣', actualHours: null, historicalPayrollHours: 11.5, payableHoursSource: 'LEGACY_PAYROLL_HOURS', attendanceStatus: 'historical_payroll_only' },
+        { id: 'dss-renamed-20260821', storeKey: 'chaowai', date: '2026-08-21', employeeId: 'emp-renamed', participantUserId: null, participantType: 'EMPLOYEE', staffId: 'employee:emp-renamed', staffName: '旧快照', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal' },
+        { id: 'dss-same-a-20260823', storeKey: 'chaowai', date: '2026-08-23', employeeId: 'emp-same-a', participantUserId: null, participantType: 'EMPLOYEE', staffId: 'employee:emp-same-a', staffName: '王某', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal' },
+        { id: 'dss-same-b-20260823', storeKey: 'chaowai', date: '2026-08-23', employeeId: 'emp-same-b', participantUserId: null, participantType: 'EMPLOYEE', staffId: 'employee:emp-same-b', staffName: '王某', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal' },
+        { id: 'dss-sub-20260823', storeKey: 'chaowai', date: '2026-08-23', employeeId: null, participantUserId: 'user-sub', participantType: 'NON_EMPLOYEE_SUBSTITUTE', staffId: 'user:user-sub', staffName: '卡皮巴拉', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal' },
+        { id: 'dss-ma-20260824', storeKey: 'chaowai', date: '2026-08-24', employeeId: 'emp-ma', participantUserId: null, participantType: 'EMPLOYEE', staffId: 'employee:emp-ma', staffName: '马婧欣', actualHours: 11.5, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal' },
+      ]
+      const overview = {
+        storeKey: 'chaowai', date: '2026-08-24', salesDataSource: 'pos', salesDataStatus: 'synced',
+        entry: { ...dailyEntries[0], hybridAdjustmentCents: '0', hybridAdjustmentNote: '' },
+        pos: {
+          originalSales: '22300', effectiveSales: '22300', effectiveAfterRefund: '22300',
+          refundAmount: '0', discountAmount: '0', orderCount: 2, avgOrderCents: '11150',
+          byChannel: { wechat: '22300', alipay: '0', cash: '0', other: '0' },
+        },
+        staff: dailyStoreStaff.filter((row) => row.date === '2026-08-24'),
+      }
+
+      resetUserData()
+      prepareUserDataForUser('dev-performance-detail')
+      window.fetch = async (url, options = {}) => {
+        const path = String(url)
+        const method = options.method || 'GET'
+        if (method !== 'GET') {
+          window.__writes.push({ path, method })
+          return json({ ok: true })
+        }
+        if (path === '/api/userdata') return json({ analysis: {}, productImages: {} })
+        if (path === '/api/v2/daily-entries') return json({ ok: true, rows: dailyEntries })
+        if (path.startsWith('/api/v2/daily-store-staff')) {
+          await wait(25)
+          return json({ ok: true, month: '2026-08', rows: dailyStoreStaff })
+        }
+        if (path === '/api/v2/pos/daily-summary') return json({ ok: true, rows: [{ storeKey: 'chaowai', date: '2026-08-24', incCents: '22300', ord: 2, discountCents: '0', refundCents: '0', originalSalesCents: '22300' }] })
+        if (path === '/api/v2/staff-list') return json({ ok: true, rows: [
+          { id: 'emp-ma', name: '马婧欣', type: 'fulltime', storeKey: 'chaowai', employeeNo: 'BUDU-1105' },
+          { id: 'emp-renamed', name: '新名字', type: 'fulltime', storeKey: 'chaowai', employeeNo: 'BUDU-1106' },
+          { id: 'emp-same-a', name: '王某', type: 'fulltime', storeKey: 'chaowai', employeeNo: 'BUDU-1107' },
+          { id: 'emp-same-b', name: '王某', type: 'fulltime', storeKey: 'chaowai', employeeNo: 'BUDU-1108' },
+        ] })
+        if (path === '/api/v2/stores') return json({ ok: true, rows: [{ key: 'chaowai', name: '北京朝外店' }] })
+        if (path.startsWith('/api/v2/daily-entry/overview')) {
+          const parsed = new URL(path, location.origin)
+          const store = parsed.searchParams.get('store')
+          const date = parsed.searchParams.get('date')
+          return json(store === 'chaowai' && date === '2026-08-24'
+            ? overview
+            : { storeKey: store, date, salesDataSource: 'manual', salesDataStatus: 'waiting_input', entry: null, pos: null, staff: [] })
+        }
+        if (path.startsWith('/api/v2/daily-participants')) return json({ ok: true, employees: [{ employeeId: 'emp-ma', employeeNo: 'BUDU-1105', label: '马婧欣', currentStoreKey: 'chaowai', participantType: 'EMPLOYEE', priorityGroup: 2 }], substitutes: [] })
+        if (path.startsWith('/api/v2/')) return json({ ok: true, rows: [] })
+        return json({ error: `unexpected request: ${path}` }, 404)
+      }
+
+      createRoot(document.getElementById('root')).render(React.createElement(StoreEntryPage, {
+        user: { id: 'dev-performance-detail', username: 'developer', role: 'developer', storeKeys: [] },
+        onBack: () => {},
+      }))
+    </script>
+  </body>
+</html>

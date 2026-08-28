@@ -2,15 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
 } from 'lucide-react'
-import { allStores, dailyRows, monthLabel, localEntries, deleteLocalEntry } from '../utils/selectors'
+import {
+  allStores, currentEmployeeDirectory, dailyRows, dailyStoreStaffRows, monthLabel, localEntries, deleteLocalEntry,
+} from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import { loadUserData, onUserDataUpdated } from '../utils/userData'
+import {
+  getDailyStoreStaffMonthState, loadDailyStoreStaffMonth, loadUserData, onUserDataUpdated,
+} from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
+import { resolvePerformanceDutyStaff } from '../utils/storeEntryParticipantDisplay'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -186,6 +191,9 @@ export default function StoreEntryPage({ user, onBack }) {
   const month = date && date.length >= 7 ? date.slice(0, 7) : '2026-07'
   const storeInfo = allStores().find((s) => s.key === store)
   const rows = dailyRows(month, store)
+  const performanceStaffMonth = getDailyStoreStaffMonthState(month)
+  const performanceStaffRows = dailyStoreStaffRows(month)
+  const performanceEmployeeDirectory = currentEmployeeDirectory('all')
   const source = overview?.salesDataSource || 'manual'
   const confirmed = overview?.entry?.status === 'confirmed'
   const salesDataStatus = overview?.salesDataStatus || 'waiting_input'
@@ -288,6 +296,10 @@ export default function StoreEntryPage({ user, onBack }) {
       .catch(() => {})
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    loadDailyStoreStaffMonth(month).catch(() => {})
+  }, [month, user?.id])
 
   const refreshAll = async () => {
     await loadUserData().catch(() => {})
@@ -730,11 +742,36 @@ export default function StoreEntryPage({ user, onBack }) {
             <tbody>
               {rows.map((r) => {
                 const entry = localEntries()[`${month}|${store}|${r.d}`]
-                const staffNames = entry && Array.isArray(entry.staff) ? entry.staff : []
+                const performanceDate = `${month}-${String(r.d || '').includes('-') ? String(r.d).slice(3) : String(r.d)}`
+                const dutyStaff = resolvePerformanceDutyStaff({
+                  monthRows: performanceStaffRows,
+                  monthLoaded: performanceStaffMonth.status === 'loaded' && performanceStaffMonth.hasPayload,
+                  storeKey: store,
+                  date: performanceDate,
+                  legacyStaffNames: entry && Array.isArray(entry.staff) ? entry.staff : [],
+                  employeeDirectory: performanceEmployeeDirectory,
+                })
                 return (
                   <tr key={r.d} className="border-t border-slate-50 transition hover:bg-slate-50">
                     <td className="px-5 py-3 font-medium text-slate-700">{r.d}</td>
-                    <td className="px-4 py-3">{staffNames.length > 0 ? <div className="flex flex-wrap gap-1">{staffNames.map((n) => <span key={n} className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[11px] font-semibold text-budu-600">{n}</span>)}</div> : <span className="text-xs text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3" data-testid={`performance-duty-staff-${performanceDate}`} data-authority={dutyStaff.source}>
+                      {dutyStaff.source === 'unresolved' ? (
+                        <span aria-label="值班人员载入中" className="text-xs text-slate-300">…</span>
+                      ) : dutyStaff.participants.length > 0 ? (
+                        <div className="flex min-w-0 flex-wrap gap-1">
+                          {dutyStaff.participants.map((participant) => (
+                            <span
+                              key={participant.key}
+                              title={participant.label}
+                              data-participant-key={participant.key}
+                              className="max-w-full break-words rounded-md bg-budu-50 px-1.5 py-0.5 text-[11px] font-semibold text-budu-600"
+                            >
+                              {participant.label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : <span className="text-xs text-slate-300">—</span>}
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">¥{formatMoney(r.inc)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{r.ord.toLocaleString('zh-CN')}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">¥{r.ord > 0 ? (r.inc / r.ord).toFixed(2) : '0.00'}</td>
