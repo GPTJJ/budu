@@ -127,6 +127,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
   })
 
   await t.test('并发双提交：仅一个 Mailing、一个 Notification、一个 SUBMITTED', async () => {
+    const submitNow = new Date('2026-08-28T06:30:00.000Z')
     const payload = {
       recipient: '测试顾客',
       phone: '13800138000',
@@ -137,8 +138,8 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
       companyWebsite: '',
     }
     const results = await Promise.allSettled([
-      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload }),
-      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload }),
+      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload, now: submitNow }),
+      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload, now: submitNow }),
     ])
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
     const rejected = results.find((result) => result.status === 'rejected')
