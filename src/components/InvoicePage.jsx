@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, CalendarClock, Camera, ClipboardPaste, Copy, ImageUp, Loader2, Mail, MapPin, Mic, Plus, QrCode, Receipt, Sparkles, Trash2, User } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, CalendarClock, Copy, Loader2, Mail, MapPin, QrCode, Receipt, Trash2 } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
-import { normalizeImage } from '../utils/image'
-import { parseInvoiceText } from '../utils/invoiceParser'
 import QrCodeModal from './QrCodeModal'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 
@@ -18,43 +16,27 @@ const fmtTime = (iso) => {
   return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-export default function InvoicePage({ currentUser, onBack }) {
+const INVOICE_CATEGORIES = Object.freeze(['食品', '巧克力', '太妃糖'])
+
+export default function InvoicePage({ onBack }) {
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
   const [tab, setTab] = useState('pending')
   const [dateFilter, setDateFilter] = useState('')
   const [pendingRows, setPendingRows] = useState([])
   const [doneRows, setDoneRows] = useState([])
-  const [companies, setCompanies] = useState([])
   const [form, setForm] = useState({
-    storeKey: allStores()[0]?.key || '',
-    titleType: 'company',
-    companyName: '',
-    taxNo: '',
+    storeKey: '',
     amount: '',
-    category: '商品',
-    email: '',
+    category: '',
   })
-  const [focused, setFocused] = useState(false)
   const [error, setError] = useState('')
   const [savedTip, setSavedTip] = useState('')
-  const [ocrReady, setOcrReady] = useState(null)
-  const [ocrBusy, setOcrBusy] = useState(false)
-  const [preview, setPreview] = useState('')
   const [qrOpen, setQrOpen] = useState(false)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState('')
   const [qrRequest, setQrRequest] = useState(null)
   const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('finance-invoice'))
-  const nameInputRef = useRef(null)
-  const fileInputRef = useRef(null)
-  const cameraInputRef = useRef(null)
-
-  useEffect(() => {
-    api('/v2/invoices/ocr-status')
-      .then((d) => setOcrReady(Boolean(d && d.configured)))
-      .catch(() => setOcrReady(false))
-  }, [])
 
   const load = async () => {
     setError('')
@@ -66,14 +48,12 @@ export default function InvoicePage({ currentUser, onBack }) {
     doneQs.set('status', 'done')
     if (dateFilter) doneQs.set('date', dateFilter)
     try {
-      const [pd, dn, cps] = await Promise.all([
+      const [pd, dn] = await Promise.all([
         api(`/v2/invoices?${pendingQs}`),
         api(`/v2/invoices?${doneQs}`),
-        api('/v2/invoices/companies'),
       ])
       setPendingRows(pd.rows || [])
       setDoneRows(dn.rows || [])
-      setCompanies(cps.rows || [])
     } catch (err) {
       setError(t(err.message))
     }
@@ -111,154 +91,28 @@ export default function InvoicePage({ currentUser, onBack }) {
     return pendingRows
   }, [tab, pendingRows, doneRows])
 
-  const suggestions = useMemo(() => {
-    const q = form.companyName.trim().toLowerCase()
-    if (!q) return companies.slice(0, 8)
-    return companies.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8)
-  }, [companies, form.companyName])
-
   const setField = (key, value) => setForm((s) => ({ ...s, [key]: value }))
 
-  const pickCompany = (c) => {
-    setField('companyName', c.name)
-    setField('taxNo', c.taxNo || '')
-    setFocused(false)
-    nameInputRef.current?.blur()
-  }
-
-  const changeName = (value) => {
-    setField('companyName', value)
-    const hit = companies.find((c) => c.name.toLowerCase() === value.trim().toLowerCase())
-    setField('taxNo', hit ? hit.taxNo || '' : '')
-    setFocused(true)
-  }
-
-  // ---------- 智能识别（粘贴 / 语音 → 拆分抬头/税号/金额） ----------
-  const [recognizeText, setRecognizeText] = useState('')
-  const [recognizeBusy, setRecognizeBusy] = useState('') // '' | 'voice'
-  const [recognizeHint, setRecognizeHint] = useState('')
-  const recognitionRef = useRef(null)
-
-  const applyParsed = (text) => {
-    const { companyName, taxNo, amount, email, titleType, matched } = parseInvoiceText(text)
-    if (!matched) {
-      setRecognizeHint('未能从文本中识别出开票信息，请检查后重试或手动填写')
-      return
-    }
-    if (companyName) {
-      setField('companyName', companyName)
-      // 与字典精确匹配时自动补税号
-      const hit = companies.find((c) => c.name.toLowerCase() === companyName.toLowerCase())
-      setField('taxNo', hit ? hit.taxNo || '' : taxNo || '')
-      if (titleType) setField('titleType', titleType)
-    } else if (taxNo) {
-      setField('taxNo', taxNo)
-    }
-    if (amount) setField('amount', amount)
-    if (email) setField('email', email)
-    const parts = []
-    if (companyName) parts.push(`抬头「${companyName}」`)
-    if (taxNo) parts.push(`税号「${taxNo}」`)
-    if (amount) parts.push(`金额「${amount}」`)
-    setRecognizeHint(`已识别${parts.join('、')}（空字段已自动填入）`)
-    setRecognizeText('')
-  }
-
-  const handlePasteRecognize = () => {
-    const text = recognizeText.trim()
-    if (!text) {
-      setRecognizeHint('请先粘贴或输入开票文本')
-      return
-    }
-    applyParsed(text)
-  }
-
-  const handleVoiceRecognize = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      setRecognizeHint('当前浏览器不支持语音识别（请使用 iPhone Safari / 微信内置浏览器）')
-      return
-    }
-    try {
-      const rec = new SR()
-      recognitionRef.current = rec
-      rec.lang = 'zh-CN'
-      rec.interimResults = false
-      rec.maxAlternatives = 1
-      setRecognizeBusy('voice')
-      setRecognizeHint('正在聆听…请说出抬头、税号和金额')
-      rec.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((r) => r[0].transcript)
-          .join('')
-        setRecognizeBusy('')
-        if (transcript.trim()) applyParsed(transcript)
-        else setRecognizeHint('没有听清，请重试')
-      }
-      rec.onerror = (event) => {
-        setRecognizeBusy('')
-        const msg = {
-          'not-allowed': '麦克风权限被拒绝，请在系统设置中允许访问麦克风',
-          'service-not-allowed': '语音服务不可用',
-          'no-speech': '没有检测到语音，请重试',
-          network: '网络异常，语音识别失败',
-        }[event.error]
-        setRecognizeHint(msg || `语音识别失败（${event.error}）`)
-      }
-      rec.onend = () => {
-        recognitionRef.current = null
-        setRecognizeBusy((busy) => (busy === 'voice' ? '' : busy))
-      }
-      rec.start()
-    } catch {
-      setRecognizeBusy('')
-      setRecognizeHint('语音识别启动失败，请重试')
-    }
-  }
-
-  const submit = async () => {
-    setError('')
-    const name = form.companyName.trim()
-    if (!name) {
-      setError(t(form.titleType === 'company' ? '请填写公司名称' : '请填写抬头名称'))
-      return
-    }
-    const cents = Math.round((Number(form.amount) || 0) * 100)
-    if (!(cents > 0)) {
-      setError(t('请填写正确的开票金额'))
-      return
-    }
-    if (!form.email.trim()) {
-      setError(t('请填写邮箱'))
-      return
-    }
-    try {
-      await api('/v2/invoices', {
-        method: 'POST',
-        body: JSON.stringify({
-          storeKey: form.storeKey,
-          titleType: form.titleType,
-          companyName: name,
-          taxNo: form.taxNo.trim(),
-          amountCents: cents,
-          category: form.category.trim() || '其他',
-          email: form.email.trim(),
-        }),
-      })
-      setForm((s) => ({ ...s, companyName: '', taxNo: '', amount: '', email: '' }))
-      setSavedTip(t('发票申请已提交 ✓'))
-      setTimeout(() => setSavedTip(''), 2000)
-      await load()
-    } catch (err) {
-      setError(t(err.message))
-    }
-  }
+  const amountText = String(form.amount || '')
+  const amountCents = Math.round(Number(amountText) * 100)
+  const amountValid = /^\d+(?:\.\d{1,2})?$/.test(amountText)
+    && Number.isSafeInteger(amountCents)
+    && amountCents > 0
+    && amountCents <= 999999999999
+  const qrReady = Boolean(form.storeKey) && amountValid && INVOICE_CATEGORIES.includes(form.category)
 
   const generateCustomerQr = async () => {
     setError('')
-    const amountCents = Math.round((Number(form.amount) || 0) * 100)
-    if (!(amountCents > 0)) {
+    if (!form.storeKey) {
+      setError(t('请先选择本次服务门店'))
+      return
+    }
+    if (!amountValid) {
       setError(t('请先填写正确的开票金额'))
+      return
+    }
+    if (!INVOICE_CATEGORIES.includes(form.category)) {
+      setError(t('请先选择商品类目'))
       return
     }
     setQrOpen(true)
@@ -271,7 +125,7 @@ export default function InvoicePage({ currentUser, onBack }) {
           type: 'INVOICE',
           storeKey: form.storeKey,
           amountCents,
-          category: form.category.trim() || '其他',
+          category: form.category,
         }),
       })
       setQrRequest(data)
@@ -310,50 +164,6 @@ export default function InvoicePage({ currentUser, onBack }) {
     } finally {
       setQrLoading(false)
     }
-  }
-
-  const handleFile = async (e) => {
-    const file = e.target.files && e.target.files[0]
-    e.target.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setError(t('请上传图片文件'))
-      return
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setError(t('图片不能超过 25MB'))
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = async () => {
-      const original = String(reader.result || '')
-      setPreview(original)
-      setOcrBusy(true)
-      setError('')
-      try {
-        const dataUrl = await normalizeImage(original, file.type)
-        const d = await api('/v2/invoices/ocr', {
-          method: 'POST',
-          body: JSON.stringify({ imageBase64: dataUrl }),
-        })
-        const ex = d.extracted || {}
-        setForm((s) => ({
-          ...s,
-          titleType: ex.titleType || s.titleType,
-          companyName: ex.companyName || s.companyName,
-          taxNo: ex.taxNo || s.taxNo,
-          amount: ex.amountYuan != null ? String(ex.amountYuan) : s.amount,
-        }))
-        setSavedTip(t('识别成功，信息已自动填入，请核对后提交'))
-        setTimeout(() => setSavedTip(''), 3000)
-      } catch (err) {
-        setError(t(err.message))
-      } finally {
-        setOcrBusy(false)
-      }
-    }
-    reader.onerror = () => setError(t('图片读取失败'))
-    reader.readAsDataURL(file)
   }
 
   const remove = async (id) => {
@@ -425,7 +235,7 @@ export default function InvoicePage({ currentUser, onBack }) {
             <Receipt className="h-5 w-5 text-budu-500" />
             {t('发票开具')}
           </h2>
-          <p className="mt-0.5 text-[13px] text-slate-400">{t('登记开票信息，输入公司名称自动匹配税号')}</p>
+          <p className="mt-0.5 text-[13px] text-slate-400">{t('创建顾客二维码申请并处理开票记录')}</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={inputCls} />
@@ -449,190 +259,83 @@ export default function InvoicePage({ currentUser, onBack }) {
       {savedTip && <p className="rounded-xl bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-600">{savedTip}</p>}
       {error && <p className="rounded-xl bg-rose-50 px-4 py-2 text-xs font-medium text-rose-500">{error}</p>}
 
-      <div className="card p-5">
-        <section className="mb-5 rounded-3xl border border-budu-100 bg-gradient-to-br from-budu-50 to-white p-4 sm:p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="text-lg font-bold text-slate-900">顾客自助开票资料</h3>
-              <p className="mt-1 text-sm leading-6 text-slate-500">先在下方锁定门店、金额和发票内容，再让顾客扫码填写抬头、税号及接收邮箱。</p>
+      <section className="card p-5 sm:p-6" aria-labelledby="invoice-request-title">
+        <div>
+          <h3 id="invoice-request-title" className="text-lg font-bold text-slate-900">创建开票申请</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-500">门店先确认本次业务信息，再由顾客扫码填写开票资料。</p>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">本次服务门店</span>
+            <select
+              aria-label="本次服务门店"
+              value={form.storeKey}
+              onChange={(e) => setField('storeKey', e.target.value)}
+              className={`${inputCls} min-h-12 w-full`}
+            >
+              <option value="">请选择门店</option>
+              {allStores().map((s) => (
+                <option key={s.key} value={s.key}>{s.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">开票金额</span>
+            <div className="relative">
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-bold text-slate-400">¥</span>
+              <input
+                aria-label="开票金额"
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0.01"
+                value={form.amount}
+                onChange={(e) => setField('amount', e.target.value)}
+                placeholder="请输入本次开票金额"
+                className={`${inputCls} min-h-12 w-full pl-8`}
+              />
             </div>
-            <button type="button" onClick={generateCustomerQr} disabled={qrLoading} className="btn-primary min-h-12 shrink-0 whitespace-nowrap px-4">
-              {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-              生成顾客开票二维码
-            </button>
-          </div>
-          <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-xs leading-5 text-slate-500">二维码金额以当前“开票金额”为准，生成后顾客只能查看，不能修改。工作人员手动录入继续保留。</p>
-        </section>
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="flex items-center gap-2 text-[15px] font-bold text-slate-800">
-            <Building2 className="h-4 w-4 text-budu-500" />
-            {t('新增开票申请')}
-          </h3>
-          <span
-            className={`rounded-lg px-2 py-0.5 text-[11px] font-bold ${
-              ocrReady ? 'bg-emerald-50 text-emerald-600' : ocrReady === false ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-400'
-            }`}
-          >
-            {t(ocrReady ? 'OCR 已启用' : ocrReady === false ? 'OCR 未配置（可手动填写）' : 'OCR 状态检测中…')}
-          </span>
+          </label>
         </div>
 
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
-        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
-
-        {/* 智能识别：粘贴/语音 → 拆分抬头/税号/金额 */}
-        <div className="mt-3 space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-budu-600" />
-            <p className="text-sm font-bold text-slate-700">智能识别开票信息</p>
-            <span className="text-[11px] text-slate-400">粘贴或说出「抬头+税号+金额」，自动拆分填入</span>
+        <fieldset className="mt-4">
+          <legend className="mb-2 text-sm font-semibold text-slate-700">商品类目</legend>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="商品类目">
+            {INVOICE_CATEGORIES.map((category) => {
+              const selected = form.category === category
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setField('category', category)}
+                  className={`min-h-11 rounded-xl border px-2 text-sm font-bold transition ${
+                    selected
+                      ? 'border-budu-300 bg-budu-50 text-budu-700 shadow-sm'
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-budu-200 hover:bg-budu-50/40'
+                  }`}
+                >
+                  {category}
+                </button>
+              )
+            })}
           </div>
-          <div className="flex gap-2">
-            <input
-              value={recognizeText}
-              onChange={(e) => setRecognizeText(e.target.value)}
-              placeholder="「粘贴识别」或输入文本，智能拆分抬头、税号和金额"
-              className={`${inputCls} flex-1`}
-            />
-            <button
-              type="button"
-              onClick={handlePasteRecognize}
-              disabled={recognizeBusy !== ''}
-              className="btn-primary h-10 shrink-0 px-3"
-            >
-              <ClipboardPaste className="h-4 w-4" />
-              粘贴并识别
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleVoiceRecognize}
-              disabled={recognizeBusy !== ''}
-              className="btn-secondary h-9 px-3"
-            >
-              {recognizeBusy === 'voice' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
-              {recognizeBusy === 'voice' ? '聆听中…' : '语音识别'}
-            </button>
-            {recognizeHint && (
-              <p className="w-full text-xs font-medium text-budu-600">{recognizeHint}</p>
-            )}
-          </div>
-        </div>
+        </fieldset>
 
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={ocrBusy}
-            className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-budu-200 bg-budu-50/40 px-4 py-3 text-left transition hover:border-budu-400 hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {preview ? (
-              <img src={preview} alt="发票" className="h-14 w-14 rounded-xl border border-slate-100 bg-white object-contain" />
-            ) : (
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-budu-500 shadow-sm">
-                {ocrBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
-              </span>
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-slate-700">
-                {ocrBusy ? t('正在识别照片文字…') : t(preview ? '重新选择图片' : '从相册选择图片/发票照片')}
-              </span>
-              <span className="mt-0.5 block text-[11px] text-slate-400">{t('支持发票/收据/对账单等照片，自动匹配抬头税号金额')}</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => cameraInputRef.current?.click()}
-            disabled={ocrBusy}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-budu-200 bg-white px-4 py-3 text-sm font-semibold text-budu-600 transition hover:bg-budu-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Camera className="h-5 w-5" />
-            {t('拍照上传')}
-          </button>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <select value={form.storeKey} onChange={(e) => setField('storeKey', e.target.value)} className={inputCls}>
-            {allStores().map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1">
-            <button
-              type="button"
-              onClick={() => setField('titleType', 'company')}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                form.titleType === 'company' ? 'bg-budu-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
-              }`}
-            >
-              <Building2 className="h-4 w-4" />
-              {t('公司')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setField('titleType', 'personal')}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                form.titleType === 'personal' ? 'bg-budu-500 text-white shadow' : 'text-slate-500 hover:bg-budu-50'
-              }`}
-            >
-              <User className="h-4 w-4" />
-              {t('个人')}
-            </button>
-          </div>
-
-          <input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setField('amount', e.target.value)} placeholder={t('开票金额（元）')} className={inputCls} />
-
-          <div className="relative">
-            <input
-              ref={nameInputRef}
-              value={form.companyName}
-              onChange={(e) => changeName(e.target.value)}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setTimeout(() => setFocused(false), 150)}
-              placeholder={t(form.titleType === 'company' ? '公司名称（输入自动匹配税号）' : '个人姓名 / 抬头')}
-              className={inputCls}
-            />
-            {focused && suggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-100 bg-white p-1 shadow-xl">
-                {suggestions.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => pickCompany(c)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 transition hover:bg-budu-50"
-                  >
-                    <span className="truncate">{c.name}</span>
-                    {c.taxNo && <span className="shrink-0 text-[11px] text-slate-400">{c.taxNo}</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {form.titleType === 'company' ? (
-            <input value={form.taxNo} onChange={(e) => setField('taxNo', e.target.value)} placeholder={t('公司税号（自动匹配，可修改）')} className={inputCls} />
-          ) : (
-            <div className="hidden lg:block" />
-          )}
-
-          <input value={form.category} onChange={(e) => setField('category', e.target.value)} placeholder={t('品类（手动填写）')} className={inputCls} />
-
-          <input type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder={t('收票邮箱')} className={inputCls} />
-
-          <button
-            onClick={submit}
-            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95"
-          >
-            <Plus className="h-4 w-4" />
-            {t('提交开票')}
-          </button>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={generateCustomerQr}
+          disabled={!qrReady || qrLoading}
+          className="btn-primary mt-5 min-h-12 w-full justify-center disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+          生成顾客申请二维码
+        </button>
+        <p className="mt-3 text-center text-xs leading-5 text-slate-400">顾客扫码后自行填写开票资料并提交</p>
+      </section>
 
       <QrCodeModal
         open={qrOpen}

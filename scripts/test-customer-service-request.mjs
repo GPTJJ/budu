@@ -72,7 +72,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
   ] })
 
   await t.test('Public API 无登录可访问自己的 token，固定路径不暴露 token，且 POST 严格 JSON', async () => {
-    const generated = await createCustomerServiceRequest({ prismaClient: prisma, user: DEV, input: { type: 'INVOICE', storeKey: 'xidan', amountCents: 1000, category: '商品' } })
+    const generated = await createCustomerServiceRequest({ prismaClient: prisma, user: DEV, input: { type: 'INVOICE', storeKey: 'xidan', amountCents: 1000, category: '食品' } })
     const token = extractToken(generated.publicUrl)
     resetPublicCustomerRequestRateLimitsForTest()
     const express = (await import('express')).default
@@ -262,31 +262,50 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.equal((await prisma.customerServiceRequest.findUnique({ where: { id: expiring.request.id } })).status, 'EXPIRED')
   })
 
-  await t.test('Invoice：金额由后台锁定，顾客 payload 无法篡改；通知定向财务', async () => {
+  await t.test('Invoice：门店、金额、类目由后台锁定，顾客 payload 无法篡改；通知定向财务', async () => {
     const request = await createCustomerServiceRequest({
       prismaClient: prisma,
       user: DEV,
-      input: { type: 'INVOICE', storeKey: 'xidan', amountCents: 12345, category: '商品' },
+      input: { type: 'INVOICE', storeKey: 'xidan', amountCents: 12345, category: '巧克力' },
     })
     const token = extractToken(request.publicUrl)
     const publicView = await resolvePublicCustomerRequest({ prismaClient: prisma, token })
+    assert.equal(publicView.invoiceStoreKey, 'xidan')
     assert.equal(publicView.invoiceAmountCents, '12345')
+    assert.equal(publicView.invoiceCategory, '巧克力')
     await submitCustomerServiceRequest({
       prismaClient: prisma,
       token,
       payload: {
         titleType: 'ENTERPRISE', invoiceTitle: '测试企业有限公司', taxNo: '91110108MA01TEST2X',
-        email: 'invoice@example.test', note: '测试备注', amountCents: 99999999,
+        email: 'invoice@example.test', note: '测试备注', storeKey: 'tongying', amountCents: 99999999, category: '食品',
         confirmedAccurate: true, companyWebsite: '',
       },
     })
     const invoice = await prisma.invoice.findFirst({ where: { createdBy: DEV.username }, orderBy: { createdAt: 'desc' } })
+    assert.equal(invoice.storeKey, 'xidan')
     assert.equal(invoice.amountCents, 12345n)
+    assert.equal(invoice.category, '巧克力')
     assert.equal(invoice.status, 'pending')
     const notification = await prisma.notification.findFirst({ where: { refType: 'invoice', refId: invoice.id } })
     assert.equal(notification.username, 'finance-csr')
     assert.equal(notification.title, '新的开票申请')
     assert.equal(notification.target, 'finance-invoice')
+  })
+
+  await t.test('Invoice：门店、正数金额和三选一类目由服务端强制校验', async () => {
+    const before = await prisma.customerServiceRequest.count()
+    for (const input of [
+      { type: 'INVOICE', storeKey: '', amountCents: 100, category: '食品' },
+      { type: 'INVOICE', storeKey: 'xidan', amountCents: 0, category: '食品' },
+      { type: 'INVOICE', storeKey: 'xidan', amountCents: -1, category: '食品' },
+      { type: 'INVOICE', storeKey: 'xidan', amountCents: 100, category: '' },
+      { type: 'INVOICE', storeKey: 'xidan', amountCents: 100, category: '商品' },
+      { type: 'INVOICE', storeKey: 'xidan', amountCents: 100, category: ['食品', '巧克力'] },
+    ]) {
+      await assert.rejects(() => createCustomerServiceRequest({ prismaClient: prisma, user: DEV, input }))
+    }
+    assert.equal(await prisma.customerServiceRequest.count(), before)
   })
 
   await t.test('Invoice 个人抬头不要求税号；企业税号 fail-safe', () => {

@@ -51,6 +51,7 @@ const NODE_TEST_SUITE = [
   'test-item-category.mjs',         // 商品分类（单元）
   'test-ocr-map.mjs',               // OCR 映射（单元）
   'test-customer-service-request.mjs', // 顾客自助二维码：token/并发/事务/通知/金额锁定 → critical
+  'test-invoice-qr-workflow.mjs', // 发票 QR-only：门店/金额/三选一类目锁定与公开只读合同 → critical
   'test-mailing-qr-workflow.mjs', // 门店邮寄 QR-only：配送组合/收款门禁/逐单复制 → critical
   'test-mailing-qr-migration-rehearsal.mjs', // 48→49 additive migration 与旧应用读取回滚合同 → critical
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
@@ -155,6 +156,7 @@ const CRITICAL_NODE_TEST = [
   'test-schedule-authority.mjs',
   'test-identity-authority.mjs',
   'test-customer-service-request.mjs',
+  'test-invoice-qr-workflow.mjs',
   'test-customer-request-wecom-unit.mjs',
   'test-mailing-qr-workflow.mjs',
   'test-mailing-qr-migration-rehearsal.mjs',

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Loader2, LockKeyhole, Mail, MapPin, PackageCheck, ReceiptText, ShieldCheck } from 'lucide-react'
 import { customerRequestTokenFromLocation, publicCustomerRequestApi } from '../utils/customerRequestApi'
+import { storeName } from '../utils/selectors'
 
 const fieldClass = 'input min-h-12 w-full text-base'
 const money = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -129,10 +130,12 @@ export default function CustomerRequestPage() {
                     <input type="email" inputMode="email" autoComplete="email" value={invoice.email} onChange={(e) => updateInvoice('email', e.target.value)} maxLength={120} className={`${fieldClass} pl-10`} placeholder="用于接收电子发票" required />
                   </div>
                 </label>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold text-slate-500">本次开票金额（由 budu 锁定）</p>
-                  <p className="mt-1 text-2xl font-bold text-slate-900">¥{money(request.invoiceAmountCents)}</p>
-                  <p className="mt-1 text-xs text-slate-500">发票内容：{request.invoiceCategory}</p>
+                <div className="rounded-2xl border border-budu-100 bg-budu-50/60 p-4" data-testid="locked-invoice-facts">
+                  <p className="text-xs font-bold tracking-wide text-budu-600">本次开票</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-700">{storeName(request.invoiceStoreKey)}</p>
+                  <p className="mt-1 text-2xl font-black text-slate-900">¥{money(request.invoiceAmountCents)}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-600">{request.invoiceCategory}</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">门店、金额和商品类目已由 budu 门店确认，无法修改。</p>
                 </div>
                 <label className="block text-sm font-semibold text-slate-700">
                   备注

@@ -14,14 +14,21 @@
       { id: 'c1', name: '北京某某科技有限公司', taxNo: '91110108MA01ABCD2X' },
     ]
     let customerRequestCount = 0
+    let lastCustomerRequest = null
+    window.__invoiceTest = {
+      get customerRequestCount() { return customerRequestCount },
+      get lastCustomerRequest() { return lastCustomerRequest },
+    }
 
     window.fetch = async (url, options = {}) => {
-      const path = new URL(url, location.origin).pathname
+      const requestUrl = new URL(url, location.origin)
+      const path = requestUrl.pathname
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/v2/invoices/ocr-status') return json({ ok: true, configured: true })
       if (path === '/api/v2/invoices/companies') return json({ rows: companies })
       if (path === '/api/v2/invoices' && (!options.method || options.method === 'GET')) {
-        return json({ rows })
+        const status = requestUrl.searchParams.get('status')
+        return json({ rows: status ? rows.filter((row) => row.status === status) : rows })
       }
       if (path === '/api/v2/invoices' && options.method === 'POST') {
         const body = JSON.parse(options.body)
@@ -30,6 +37,7 @@
       }
       if (path === '/api/v2/customer-requests' && options.method === 'POST') {
         customerRequestCount += 1
+        lastCustomerRequest = JSON.parse(options.body)
         return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'c'.repeat(43)}` }, 201)
       }
       if (/\/api\/v2\/customer-requests\/[^/]+\/regenerate$/.test(path) && options.method === 'POST') {
@@ -37,6 +45,12 @@
         return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'d'.repeat(43)}` }, 201)
       }
       if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
+      const statusMatch = path.match(/^\/api\/v2\/invoices\/([^/]+)\/status$/)
+      if (statusMatch && options.method === 'POST') {
+        const row = rows.find((item) => item.id === statusMatch[1])
+        if (row) row.status = JSON.parse(options.body).status
+        return json({ ok: true, invoice: row })
+      }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 

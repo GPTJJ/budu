@@ -17,7 +17,7 @@
       if (path === '/api/public/customer-request' && (!options.method || options.method === 'GET')) {
         if (params.has('expired')) return json({ error: '二维码已失效，请联系 budu 工作人员重新生成' }, 410)
         return json({ ok: true, request: type === 'INVOICE'
-          ? { type, status: 'WAITING_CUSTOMER', expiresAt: '2026-08-28T17:30:00.000Z', invoiceAmountCents: '12345', invoiceCategory: '商品' }
+          ? { type, status: 'WAITING_CUSTOMER', expiresAt: '2026-08-28T17:30:00.000Z', invoiceStoreKey: 'xidan', invoiceAmountCents: '12345', invoiceCategory: '巧克力' }
           : { type, status: 'WAITING_CUSTOMER', expiresAt: '2026-08-28T17:30:00.000Z' }
         })
       }

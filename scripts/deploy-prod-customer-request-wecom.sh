@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware additive migration + blue/green deployment for Mailing QR-only.
+# Authority-aware no-schema-change blue/green deployment for Invoice QR-only.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,16 +17,16 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-mailing-qr"
-MIGRATOR="budu-migrate-${SHORT_SHA}-mailing-qr"
-BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-mailing-qr"
-IMAGE="budu-api:mailing-qr-only-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-invoice-qr"
+MIGRATOR="budu-migrate-${SHORT_SHA}-invoice-qr"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-invoice-qr"
+IMAGE="budu-api:invoice-qr-only-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-mailing-qr-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-invoice-qr-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/mailing-qr-only-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/invoice-qr-only-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -153,6 +153,26 @@ try {
 NODE
 }
 
+invoice_business_digest() {
+  local container="$1"
+  docker exec -i "$container" node --input-type=module - <<'NODE'
+import crypto from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  const rows = await prisma.invoice.findMany({
+    orderBy: { id: 'asc' },
+    select: { id: true, storeKey: true, titleType: true, companyName: true, taxNo: true, amountCents: true, category: true, email: true, note: true, status: true, createdBy: true, createdAt: true },
+  })
+  const serializable = rows.map((row) => ({ ...row, amountCents: String(row.amountCents) }))
+  const digest = crypto.createHash('sha256').update(JSON.stringify(serializable)).digest('hex')
+  process.stdout.write(`${rows.length}:${digest}`)
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+}
+
 verify_public_health() {
   local container="$1"
   local expected_sha_prefix="$2"
@@ -182,9 +202,9 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" 48
+verify_database_authority "$OLD_CONTAINER" 49
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=48 health=PASS writer=1"
+echo "production authority verified: DB=budu_bj006 migration=49 health=PASS writer=1"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -260,7 +280,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration48-pre-mailing-qr-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration49-pre-invoice-qr-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -276,16 +296,19 @@ docker run --rm -v "${ROLLBACK_ROOT}:/backup:ro" postgres:16-alpine pg_restore -
 cp "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
 chmod 400 "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
 BEFORE_MAILING_DIGEST="$(mailing_business_digest "$OLD_CONTAINER")"
-echo "fresh migration48 backup integrity PASS; protected rollback copy created"
+BEFORE_INVOICE_DIGEST="$(invoice_business_digest "$OLD_CONTAINER")"
+echo "fresh migration49 backup integrity PASS; protected rollback copy created"
 
-# Apply only the exact release migration through an isolated one-shot container.
+# Run the exact release migrator in isolation. This release contains no new
+# migration, so the ledger must remain 49 and both historical domains unchanged.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
 docker rm "$MIGRATOR" >/dev/null
 verify_database_authority "$OLD_CONTAINER" 49
 [ "$(mailing_business_digest "$OLD_CONTAINER")" = "$BEFORE_MAILING_DIGEST" ] || { echo "historical MailingRecord digest changed during additive migration" >&2; exit 1; }
-echo "additive migration 48 -> 49 PASS; historical MailingRecord digest unchanged"
+[ "$(invoice_business_digest "$OLD_CONTAINER")" = "$BEFORE_INVOICE_DIGEST" ] || { echo "historical Invoice digest changed during no-op migration gate" >&2; exit 1; }
+echo "migration ledger remains 49; historical MailingRecord and Invoice digests unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
@@ -337,4 +360,4 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "Mailing QR-only additive migration and blue/green deployment completed"
+echo "Invoice QR-only no-schema-change blue/green deployment completed"

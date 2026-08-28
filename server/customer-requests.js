@@ -284,7 +284,9 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
           },
         })
       } else {
-        const locked = validateInvoiceMetadata(metadata)
+        // New requests are whitelist-validated at creation. Keep legacy in-flight
+        // QR metadata readable without rewriting or invalidating historical work.
+        const locked = validateInvoiceMetadata(metadata, { allowLegacyCategory: true })
         const titleType = input.titleType === 'PERSONAL' ? 'personal' : 'company'
         if (titleType === 'company') {
           await tx.invoiceCompany.upsert({

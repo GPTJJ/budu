@@ -19,11 +19,15 @@ test('Mailing 顾客表单：移动端填写、确认、一次提交与成功页
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
 })
 
-test('Invoice 顾客表单：金额只读、企业税号动态规则、个人税号不要求', async ({ page }) => {
+test('Invoice 顾客表单：门店、金额、类目只读，企业税号动态规则、个人税号不要求', async ({ page }) => {
   await page.goto(`/tests/customer-request-harness.html?type=invoice#token=${'z'.repeat(43)}`)
   await expect(page.getByRole('heading', { name: '开票信息填写' })).toBeVisible()
-  await expect(page.getByText('¥123.45')).toBeVisible()
-  await expect(page.getByText('本次开票金额（由 budu 锁定）')).toBeVisible()
+  const locked = page.getByTestId('locked-invoice-facts')
+  await expect(locked.getByText('北京西单店')).toBeVisible()
+  await expect(locked.getByText('¥123.45')).toBeVisible()
+  await expect(locked.getByText('巧克力')).toBeVisible()
+  await expect(locked.getByText('门店、金额和商品类目已由 budu 门店确认，无法修改。')).toBeVisible()
+  await expect(locked.locator('input, select, button')).toHaveCount(0)
   await expect(page.getByPlaceholder('请输入税号')).toBeVisible()
   await page.getByRole('radio', { name: '个人' }).click()
   await expect(page.getByPlaceholder('请输入税号')).toHaveCount(0)
@@ -68,8 +72,10 @@ test('后台 Mailing 使用共享 QR 弹层，重新生成后二维码仍可用'
 
 test('后台 Invoice 锁定金额后生成同一共享 QR 弹层', async ({ page }) => {
   await page.goto('/tests/invoice-harness.html')
-  await page.getByPlaceholder('开票金额（元）').fill('88.50')
-  await page.getByRole('button', { name: '生成顾客开票二维码' }).click()
+  await page.getByLabel('本次服务门店').selectOption('xidan')
+  await page.getByLabel('开票金额').fill('88.50')
+  await page.getByRole('radio', { name: '太妃糖' }).click()
+  await page.getByRole('button', { name: '生成顾客申请二维码' }).click()
   await expect(page.getByRole('dialog', { name: '顾客填写开票信息' })).toBeVisible()
   await expect(page.getByTestId('customer-request-qr')).toBeVisible()
 })

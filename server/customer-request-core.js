@@ -12,6 +12,8 @@ export const CUSTOMER_REQUEST_STATUS = Object.freeze({
   CANCELLED: 'CANCELLED',
 })
 
+export const INVOICE_CATEGORIES = Object.freeze(['食品', '巧克力', '太妃糖'])
+
 export const CUSTOMER_REQUEST_TTL_MS = 2 * 60 * 60 * 1000
 
 export const MAILING_METHOD = Object.freeze({
@@ -172,12 +174,15 @@ export function validateMailingMetadata(input) {
   }
 }
 
-export function validateInvoiceMetadata(input) {
+export function validateInvoiceMetadata(input, { allowLegacyCategory = false } = {}) {
   const amountCents = Number(input?.amountCents)
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 999999999999) {
     throw httpError('请先填写正确的开票金额')
   }
-  const category = text(input?.category || '其他', 30, '发票内容', { required: true, min: 1 })
+  const category = text(input?.category, 30, '商品类目', { required: true, min: 1 })
+  if (!allowLegacyCategory && !INVOICE_CATEGORIES.includes(category)) {
+    throw httpError('请选择正确的商品类目')
+  }
   return { amountCents, category }
 }
 
@@ -191,8 +196,9 @@ export function serializePublicRequest(request) {
   if (request.type === CUSTOMER_REQUEST_TYPES.INVOICE) {
     return {
       ...base,
+      invoiceStoreKey: String(request.storeKey || ''),
       invoiceAmountCents: String(metadata.amountCents || 0),
-      invoiceCategory: String(metadata.category || '其他'),
+      invoiceCategory: String(metadata.category || ''),
     }
   }
   return base
