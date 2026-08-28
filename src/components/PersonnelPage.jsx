@@ -763,6 +763,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     }
   }
 
+  const canUseAllFilter = ['developer', 'finance', 'admin'].includes(user?.role)
+  const showToolbarActions = (canManage && !isPublic) || canUseAllFilter
+
   return (
     <div className="space-y-6">
       {user?.role === 'staff' && (
@@ -770,131 +773,151 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {t('当前账号仅可查看本人信息')}
         </p>
       )}
-      {/* 页面头部 */}
-      <div className="flex flex-wrap items-center gap-4">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {t('返回首页')}
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">{t('人员管理')}</h2>
-          <p className="mt-0.5 text-[13px] text-slate-400">
-            {payrollComputed
-              ? t('薪酬按每日业绩录入自动计算 · 全职 {full} 人 / 兼职 {part} 人', {
-                  full: fulltime.length,
-                  part: parttime.length,
-                })
-              : t('薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人', {
-                  full: fulltime.length,
-                  part: parttime.length,
-                })}
-            {weekStart
-              ? t('· 查看整周 {range}', { range: weekLabel })
-              : day
-                ? t('· 当日值班查询中')
-                : ''}
-            {payrollDisplay.mode === 'EMPLOYEE_ID' && (
-              <span className="ml-2 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
-                {t('稳定计算')}
+      {/* 页面头部 / 筛选工具栏 */}
+      <section className="space-y-3" data-testid="personnel-toolbar">
+        <div className="flex items-start gap-3">
+          <button
+            onClick={onBack}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-2xl bg-white px-3 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {t('返回首页')}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <h2 className="shrink-0 text-xl font-bold text-slate-800">{t('人员管理')}</h2>
+              <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                payrollDisplay.mode === 'EMPLOYEE_ID'
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : 'bg-amber-50 text-amber-600'
+              }`}>
+                {t(payrollDisplay.mode === 'EMPLOYEE_ID' ? '稳定计算' : '兼容计算')}
               </span>
-            )}
-            {payrollDisplay.mode === 'LEGACY' && (
-              <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
-                {t('兼容计算')}
-              </span>
-            )}
-            {payrollDisplay.status === 'loading' && (
-              <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
-                {t('加载中…')}
-              </span>
-            )}
-            {payrollDisplay.status === 'unavailable' && (
-              <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
-                {t('工资数据暂不可用')}
-                <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
-              </span>
-            )}
-          </p>
+            </div>
+            <p className="mt-1 text-[13px] font-semibold text-slate-600" data-testid="personnel-counts">
+              {t('全职 {full} 人 · 兼职 {part} 人', {
+                full: fulltime.length,
+                part: parttime.length,
+              })}
+            </p>
+            <p className="mt-0.5 text-xs leading-5 text-slate-400">
+              {payrollComputed
+                ? t('薪酬按每日业绩录入自动计算')
+                : t('薪资表 2026.27-31 周 · 按所选月份显示')}
+              {weekStart
+                ? t(' · 查看整周 {range}', { range: weekLabel })
+                : day
+                  ? t(' · 当日值班查询中')
+                  : ''}
+              {payrollDisplay.status === 'loading' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                  {t('加载中…')}
+                </span>
+              )}
+              {payrollDisplay.status === 'unavailable' && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                  {t('工资数据暂不可用')}
+                  <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
+                </span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="ml-auto flex items-center gap-2.5">
-          {canManage && !isPublic && (
-            <button
-              onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 rounded-2xl bg-budu-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" />
-              {t('添加员工')}
-            </button>
-          )}
-          <CalendarPicker
-            month={month}
-            day={day}
-            weekStart={weekStart}
-            onSelect={(m, d) => {
-              setMonth(m)
-              setDay(d)
-              if (d) setWeekStart(null)
-            }}
-            onWeekSelect={(ws) => {
-              setMonth(ws.slice(0, 7))
-              setDay(null)
-              setWeekStart(ws)
-            }}
-          />
-        </div>
-      </div>
 
-      {/* 类型切换 */}
-      <div className="space-y-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
-            {['developer', 'finance', 'admin'].includes(user?.role) && (
+        <div className="grid min-w-0 gap-2.5 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center" data-testid="personnel-toolbar-controls">
+          <div className="min-w-0" data-testid="personnel-month-selector">
+            <CalendarPicker
+              month={month}
+              day={day}
+              weekStart={weekStart}
+              onSelect={(m, d) => {
+                setMonth(m)
+                setDay(d)
+                if (d) setWeekStart(null)
+              }}
+              onWeekSelect={(ws) => {
+                setMonth(ws.slice(0, 7))
+                setDay(null)
+                setWeekStart(ws)
+              }}
+            />
+          </div>
+
+          <div
+            className={`grid min-w-0 w-full gap-1.5 rounded-2xl bg-white p-1.5 shadow-card ${
+              canUseAllFilter ? 'grid-cols-3' : 'grid-cols-2'
+            }`}
+            data-testid="personnel-filters"
+          >
+            {canUseAllFilter && (
               <button
+                type="button"
+                aria-label={`${t('全部')}（${scopedAll.length}）`}
                 onClick={() => setFilter('all')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+                className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                   filter === 'all'
                     ? 'bg-budu-500 text-white shadow-md'
                     : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
-                {t('全部')}（{scopedAll.length}）
+                <span className="sm:hidden">{t('全部')} {scopedAll.length}</span>
+                <span className="hidden sm:inline">{t('全部')}（{scopedAll.length}）</span>
               </button>
             )}
             <button
+              type="button"
+              aria-label={`${t('全职人员')}（${fulltime.length}）`}
               onClick={() => setFilter('fulltime')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+              className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'fulltime'
                   ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              {t('全职人员')}（{fulltime.length}）
+              <span className="sm:hidden">{t('全职')} {fulltime.length}</span>
+              <span className="hidden sm:inline">{t('全职人员')}（{fulltime.length}）</span>
             </button>
             <button
+              type="button"
+              aria-label={`${t('兼职人员')}（${parttime.length}）`}
               onClick={() => setFilter('parttime')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+              className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'parttime'
                   ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              {t('兼职人员')}（{parttime.length}）
+              <span className="sm:hidden">{t('兼职')} {parttime.length}</span>
+              <span className="hidden sm:inline">{t('兼职人员')}（{parttime.length}）</span>
             </button>
           </div>
-          {['developer', 'finance', 'admin'].includes(user?.role) && (
-            <button
-              onClick={() => setShowExport(true)}
-              className="ml-auto flex items-center gap-1.5 rounded-2xl bg-emerald-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              {t('导出表格')}
-            </button>
+
+          {showToolbarActions && (
+            <div className="grid w-full grid-cols-2 gap-2.5 md:flex md:w-auto" data-testid="personnel-actions">
+              {canManage && !isPublic && (
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(true)}
+                  className="flex h-11 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl bg-budu-500 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 md:w-auto"
+                >
+                  <Plus className="h-4 w-4 shrink-0" />
+                  {t('添加员工')}
+                </button>
+              )}
+              {canUseAllFilter && (
+                <button
+                  type="button"
+                  onClick={() => setShowExport(true)}
+                  className="flex h-11 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-budu-100 hover:bg-budu-50 hover:text-budu-600 md:w-auto"
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                  {t('导出表格')}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      </div>
+      </section>
 
       {day && !dayHasData && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-medium text-amber-600">

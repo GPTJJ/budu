@@ -14,6 +14,87 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
+test('人员管理顶部工具栏在移动端、iPad 与桌面保持紧凑且无溢出', async ({ page }) => {
+  await page.goto('/tests/personnel-harness.html')
+
+  for (const width of [320, 340, 375, 390, 430, 768, 1440]) {
+    await page.setViewportSize({ width, height: width < 600 ? 844 : 1024 })
+    const toolbar = page.getByTestId('personnel-toolbar')
+    await expect(toolbar).toBeVisible()
+    await expect(page.getByTestId('personnel-counts')).toHaveText('全职 3 人 · 兼职 7 人')
+
+    const metrics = await page.evaluate(() => {
+      const rect = (element) => element.getBoundingClientRect()
+      const month = document.querySelector('[data-testid="personnel-month-selector"] button')
+      const filters = [...document.querySelectorAll('[data-testid="personnel-filters"] > button')]
+      const actions = [...document.querySelectorAll('[data-testid="personnel-actions"] > button')]
+      const controls = [month, ...filters, ...actions].filter(Boolean)
+      const overlaps = (left, right) => {
+        const a = rect(left)
+        const b = rect(right)
+        return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+      }
+      return {
+        viewportWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        monthText: month?.innerText.trim(),
+        monthClipped: month ? month.scrollWidth > month.clientWidth : true,
+        filterClipped: filters.some((element) => element.scrollWidth > element.clientWidth),
+        actionClipped: actions.some((element) => element.scrollWidth > element.clientWidth),
+        actionWhiteSpace: actions.map((element) => getComputedStyle(element).whiteSpace),
+        actionWidths: actions.map((element) => rect(element).width),
+        actionHeights: actions.map((element) => rect(element).height),
+        overlapCount: controls.flatMap((element, index) => (
+          controls.slice(index + 1).map((other) => overlaps(element, other))
+        )).filter(Boolean).length,
+      }
+    })
+
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth)
+    expect(metrics.monthText).toContain('2026年08月')
+    expect(metrics.monthClipped).toBe(false)
+    expect(metrics.filterClipped).toBe(false)
+    expect(metrics.actionClipped).toBe(false)
+    expect(metrics.actionWhiteSpace).toEqual(['nowrap', 'nowrap'])
+    expect(metrics.overlapCount).toBe(0)
+    expect(metrics.actionHeights.every((height) => height >= 44 && height <= 48)).toBe(true)
+    if (width < 768) {
+      expect(Math.abs(metrics.actionWidths[0] - metrics.actionWidths[1])).toBeLessThanOrEqual(1)
+    }
+  }
+})
+
+test('人员筛选、月份选择、添加与导出入口行为保持不变', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 844 })
+  await page.goto('/tests/personnel-harness.html')
+
+  await page.getByRole('button', { name: '全职人员（3）' }).click()
+  await expect(page.getByText('隋晓', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('陈文慧', { exact: true }).first()).toBeHidden()
+  await page.getByRole('button', { name: '兼职人员（7）' }).click()
+  await expect(page.getByText('陈文慧', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('隋晓', { exact: true }).first()).toBeHidden()
+  await page.getByRole('button', { name: '全部（10）' }).click()
+
+  await page.getByRole('button', { name: /2026年08月/ }).first().click()
+  const calendar = page.locator('input[type="date"]').locator('../..')
+  await calendar.getByRole('button').first().click()
+  await expect(calendar.getByText('2026年07月', { exact: true })).toBeVisible()
+  await page.locator('div.fixed.inset-0.z-30').click({ position: { x: 1, y: 1 } })
+  await expect(page.getByRole('button', { name: /2026年08月/ }).first()).toBeVisible()
+  await expect(page.getByTestId('personnel-counts')).toHaveText('全职 3 人 · 兼职 7 人')
+
+  await page.getByRole('button', { name: '添加员工', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '添加员工' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('heading', { name: '添加员工' })).toBeHidden()
+
+  await page.getByRole('button', { name: '导出表格', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '导出表格' })).toBeVisible()
+  await page.getByRole('button', { name: '关闭' }).click()
+  await expect(page.getByRole('heading', { name: '导出表格' })).toBeHidden()
+})
+
 test('雇员页面恢复既有全职与兼职主档', async ({ page }) => {
   await page.goto('/tests/personnel-harness.html')
   await expect(page.getByRole('button', { name: '全部（10）' })).toBeVisible()
