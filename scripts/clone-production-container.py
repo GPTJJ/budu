@@ -41,7 +41,7 @@ if payment_mode == "disabled":
     env["WECHAT_PAY_ENABLED"] = "0"
 
 args = [
-    "docker", "run", "-d", "--name", candidate,
+    "docker", "create", "--name", candidate,
     "--network", network,
     "--restart", "no",
     "--label", "budu.production-role=candidate",
@@ -78,6 +78,38 @@ try:
 finally:
     pathlib.Path(env_path).unlink(missing_ok=True)
 if result.returncode != 0:
-    raise SystemExit(f"DOCKER_RUN_FAILED_{result.returncode}")
+    raise SystemExit(f"DOCKER_CREATE_FAILED_{result.returncode}")
 container_id = result.stdout.strip()
-print(json.dumps({"created": True, "containerIdPrefix": container_id[:12], "paymentMode": payment_mode}))
+
+source_networks = sorted((source.get("NetworkSettings") or {}).get("Networks") or {})
+if network not in source_networks:
+    raise SystemExit("PRIMARY_NETWORK_NOT_PRESENT_ON_SOURCE")
+for extra_network in source_networks:
+    if extra_network == network:
+        continue
+    connect = subprocess.run(
+        ["docker", "network", "connect", extra_network, candidate],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if connect.returncode != 0:
+        raise SystemExit(f"DOCKER_NETWORK_CONNECT_FAILED_{connect.returncode}")
+
+start = subprocess.run(
+    ["docker", "start", candidate],
+    check=False,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+if start.returncode != 0:
+    raise SystemExit(f"DOCKER_START_FAILED_{start.returncode}")
+
+print(json.dumps({
+    "created": True,
+    "containerIdPrefix": container_id[:12],
+    "networkCount": len(source_networks),
+    "paymentMode": payment_mode,
+}))

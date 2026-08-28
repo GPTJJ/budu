@@ -192,12 +192,16 @@ test('production clone keeps secrets out of process arguments and preserves name
   fs.writeFileSync(bindingFile, JSON.stringify({ username: 'budu', userId: 'dh' }), { mode: 0o600 })
   fs.writeFileSync(fakeDocker, `#!/bin/sh
 if [ "$1" = "inspect" ]; then
-  printf '%s' '[{"Config":{"Env":["PRIVATE_TEST_VALUE=must-not-appear"]},"Mounts":[{"Type":"volume","Name":"named-data","Source":"/var/lib/docker/volumes/named-data/_data","Destination":"/app/data","RW":true},{"Type":"bind","Source":"/safe/cert.pem","Destination":"/run/cert.pem","RW":false}]}]'
+  printf '%s' '[{"Config":{"Env":["PRIVATE_TEST_VALUE=must-not-appear"]},"Mounts":[{"Type":"volume","Name":"named-data","Source":"/var/lib/docker/volumes/named-data/_data","Destination":"/app/data","RW":true},{"Type":"bind","Source":"/safe/cert.pem","Destination":"/run/cert.pem","RW":false}],"NetworkSettings":{"Networks":{"database":{},"frontend":{}}}}]'
   exit 0
 fi
-if [ "$1" = "run" ]; then
+if [ "$1" = "create" ]; then
   printf '%s\\n' "$@" > "$FAKE_DOCKER_ARGS"
   printf '%s\\n' 'fake-container-id'
+  exit 0
+fi
+if [ "$1" = "network" ] || [ "$1" = "start" ]; then
+  printf '%s\\n' "$@" >> "$FAKE_DOCKER_ARGS"
   exit 0
 fi
 exit 1
@@ -205,7 +209,7 @@ exit 1
   try {
     const result = spawnSync('python3', [
       path.resolve('scripts/clone-production-container.py'),
-      'old', 'candidate', 'image', 'release-sha', bindingFile, 'network', 'disabled',
+      'old', 'candidate', 'image', 'release-sha', bindingFile, 'frontend', 'disabled',
     ], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${tempDir}:${process.env.PATH}`, FAKE_DOCKER_ARGS: argsFile },
@@ -217,6 +221,8 @@ exit 1
     assert.equal(dockerArgs.includes('must-not-appear'), false)
     assert.equal(dockerArgs.includes('type=volume,source=named-data,target=/app/data'), true)
     assert.equal(dockerArgs.includes('type=bind,source=/safe/cert.pem,target=/run/cert.pem,readonly'), true)
+    assert.equal(dockerArgs.includes('network\nconnect\ndatabase\ncandidate'), true)
+    assert.equal(dockerArgs.includes('start\ncandidate'), true)
     assert.equal(result.stdout.includes('must-not-appear'), false)
     assert.equal(result.stderr.includes('must-not-appear'), false)
   } finally {
