@@ -590,20 +590,27 @@ model PurchaseItem {
 }
 
 model MailingRecord {
-  id        String    @id
-  method    String
-  postage   String
-  fee       String?
-  address   String
-  recipient String
-  phone     String
-  remark    String    @default("")
-  status    String    @default("pending")
-  createdBy String    @default("")
-  createdAt DateTime  @default(now())
-  shippedAt DateTime?
+  id                         String    @id
+  method                     String
+  postage                    String
+  fee                        String?
+  storeKey                   String?   @map("store_key")
+  shippingTier               String?   @map("shipping_tier")
+  shippingAmountCents        Int?      @map("shipping_amount_cents")
+  shippingPaymentMode        String?   @map("shipping_payment_mode")
+  shippingPaymentConfirmedAt DateTime? @map("shipping_payment_confirmed_at")
+  shippingPaymentConfirmedBy String?   @map("shipping_payment_confirmed_by")
+  address                    String
+  recipient                  String
+  phone                      String
+  remark                     String    @default("")
+  status                     String    @default("pending")
+  createdBy                  String    @default("")
+  createdAt                  DateTime  @default(now())
+  shippedAt                  DateTime?
 
   @@index([status, createdAt])
+  @@index([storeKey, status, createdAt])
 }
 
 /** 顾客自助资料采集工作流：仅负责 token、状态与正式业务记录关联。 */

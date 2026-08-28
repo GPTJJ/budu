@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware, application-only production deployment for CustomerRequest WeCom delivery.
+# Authority-aware additive migration + blue/green deployment for Mailing QR-only.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,14 +17,15 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-r1"
-IMAGE="budu-api:customer-request-wecom-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-mailing-qr"
+MIGRATOR="budu-migrate-${SHORT_SHA}-mailing-qr"
+IMAGE="budu-api:mailing-qr-only-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-csr-wecom-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-mailing-qr-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/customer-request-wecom-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/mailing-qr-only-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -50,6 +51,9 @@ rollback_on_error() {
   echo "deployment failed; restoring the previous application authority" >&2
   if docker inspect "$CANDIDATE" >/dev/null 2>&1; then
     docker stop -t 20 "$CANDIDATE" >/dev/null 2>&1 || true
+  fi
+  if docker inspect "$MIGRATOR" >/dev/null 2>&1; then
+    docker rm -f "$MIGRATOR" >/dev/null 2>&1 || true
   fi
   if [ "$OLD_STOPPED" -eq 1 ] && [ -n "$OLD_CONTAINER" ]; then
     docker start "$OLD_CONTAINER" >/dev/null 2>&1 || true
@@ -93,7 +97,8 @@ PY
 
 verify_database_authority() {
   local container="$1"
-  docker exec -i "$container" node --input-type=module - <<'NODE'
+  local expected_migrations="$2"
+  docker exec -i "$container" env EXPECTED_MIGRATIONS="$expected_migrations" node --input-type=module - <<'NODE'
 import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 try {
@@ -102,7 +107,7 @@ try {
     prisma.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'),
   ])
   const result = { database: database[0]?.name, migrations: Number(migrations[0]?.count) }
-  if (result.database !== 'budu_bj006' || result.migrations !== 48) throw new Error('PRODUCTION_DATABASE_AUTHORITY_MISMATCH')
+  if (result.database !== 'budu_bj006' || result.migrations !== Number(process.env.EXPECTED_MIGRATIONS)) throw new Error('PRODUCTION_DATABASE_AUTHORITY_MISMATCH')
   console.log(JSON.stringify(result))
 } finally {
   await prisma.$disconnect()
@@ -125,6 +130,25 @@ count_database_writers() {
   printf '%s\n' "$count"
 }
 
+mailing_business_digest() {
+  local container="$1"
+  docker exec -i "$container" node --input-type=module - <<'NODE'
+import crypto from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  const rows = await prisma.mailingRecord.findMany({
+    orderBy: { id: 'asc' },
+    select: { id: true, method: true, postage: true, fee: true, address: true, recipient: true, phone: true, remark: true, status: true, createdBy: true, createdAt: true, shippedAt: true },
+  })
+  const digest = crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+  process.stdout.write(`${rows.length}:${digest}`)
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+}
+
 verify_public_health() {
   local container="$1"
   local expected_sha_prefix="$2"
@@ -136,7 +160,7 @@ const health = await response.json()
 if (!response.ok || health.ok !== true || health.dbOk !== true || !String(health.gitSha || '').startsWith(process.env.EXPECTED_SHA_PREFIX)) {
   throw new Error('PUBLIC_HEALTH_AUTHORITY_MISMATCH')
 }
-console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 48 }))
+console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 49 }))
 NODE
 }
 
@@ -154,7 +178,7 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER"
+verify_database_authority "$OLD_CONTAINER" 48
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
 echo "production authority verified: DB=budu_bj006 migration=48 health=PASS writer=1"
 
@@ -214,21 +238,48 @@ print(common[0])
 PY
 )"
 
-docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
-python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled
-require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE"
+# Fresh pre-migration backup and protected copy. Credentials stay in a 0600
+# env-file and never enter command output.
+DB_ENV_FILE="${WORK_ROOT}/database.env"
+OLD_CONTAINER="$OLD_CONTAINER" DB_ENV_FILE="$DB_ENV_FILE" python3 - <<'PY'
+import json, os, pathlib, subprocess, urllib.parse
+raw = subprocess.check_output(['docker', 'inspect', os.environ['OLD_CONTAINER']], text=True)
+env = json.loads(raw)[0]['Config'].get('Env') or []
+database_url = next((item.split('=', 1)[1] for item in env if item.startswith('DATABASE_URL=')), '')
+if not database_url:
+    raise SystemExit('DATABASE_URL_MISSING')
+parts = urllib.parse.urlsplit(database_url)
+if parts.path != '/budu_bj006':
+    raise SystemExit('BACKUP_DATABASE_AUTHORITY_MISMATCH')
+safe_uri = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, '', ''))
+path = pathlib.Path(os.environ['DB_ENV_FILE'])
+path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
+path.chmod(0o600)
+PY
+BACKUP_NAME="budu_bj006-migration48-pre-mailing-qr-${SHORT_SHA}.dump"
+docker run --rm --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
+  sh -c 'pg_dump "$PGURI" --format=custom --no-owner --file="/backup/$BACKUP_NAME"'
+docker run --rm -v "${ROLLBACK_ROOT}:/backup:ro" postgres:16-alpine pg_restore --list "/backup/${BACKUP_NAME}" >/dev/null
+cp "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
+chmod 400 "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.protected"
+BEFORE_MAILING_DIGEST="$(mailing_business_digest "$OLD_CONTAINER")"
+echo "fresh migration48 backup integrity PASS; protected rollback copy created"
 
-CHANNEL_STATE_DIR="${APP_DIR}/.deployment-state"
-CHANNEL_STATE="${CHANNEL_STATE_DIR}/customer-request-wecom-channel-${SHORT_SHA}"
-mkdir -p "$CHANNEL_STATE_DIR"
-chmod 700 "$CHANNEL_STATE_DIR"
-[ ! -e "$CHANNEL_STATE" ] || { echo "channel-check state already exists; refusing a possible duplicate test message" >&2; exit 1; }
-printf 'pending\n' > "$CHANNEL_STATE"
-chmod 600 "$CHANNEL_STATE"
-docker exec "$CANDIDATE" node /app/scripts/run-customer-request-wecom-channel-check.mjs
-printf 'sent\n' > "$CHANNEL_STATE"
-echo "one-recipient WeCom channel check passed"
+# Apply only the exact release migration through an isolated one-shot container.
+docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
+python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
+[ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
+docker rm "$MIGRATOR" >/dev/null
+verify_database_authority "$OLD_CONTAINER" 49
+[ "$(mailing_business_digest "$OLD_CONTAINER")" = "$BEFORE_MAILING_DIGEST" ] || { echo "historical MailingRecord digest changed during additive migration" >&2; exit 1; }
+echo "additive migration 48 -> 49 PASS; historical MailingRecord digest unchanged"
+
+docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
+python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
+require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
+verify_database_authority "$CANDIDATE" 49
+[ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
+echo "unrouted read-only Candidate internal smoke PASS"
 
 # Prepare immutable rollback copies and a candidate routing template. No reload yet.
 cp "$HOST_TEMPLATE" "${ROLLBACK_ROOT}/budu.conf.template"
@@ -254,10 +305,10 @@ docker stop -t 20 "$CANDIDATE" >/dev/null
 docker rm "$CANDIDATE" >/dev/null
 docker stop -t 20 "$OLD_CONTAINER" >/dev/null
 OLD_STOPPED=1
-python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve
+python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve writer
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE"
+verify_database_authority "$CANDIDATE" 49
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
 TEMPLATE_CHANGED=1
@@ -273,4 +324,4 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "authority-aware CustomerRequest WeCom deployment completed"
+echo "Mailing QR-only additive migration and blue/green deployment completed"

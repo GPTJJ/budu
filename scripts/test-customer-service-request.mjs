@@ -126,6 +126,27 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.deepEqual(Object.keys(publicView).sort(), ['expiresAt', 'status', 'type'])
   })
 
+  await t.test('顺丰不包邮必须先确认准确金额，未确认不会创建 request', async () => {
+    const before = await prisma.customerServiceRequest.count()
+    await assert.rejects(
+      () => createCustomerServiceRequest({
+        prismaClient: prisma,
+        user: DEV,
+        input: { type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮', shippingTier: 'FRESH', shippingAmountCents: 3500, paymentConfirmed: false },
+      }),
+      /确认收到顾客运费/,
+    )
+    await assert.rejects(
+      () => createCustomerServiceRequest({
+        prismaClient: prisma,
+        user: DEV,
+        input: { type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮', shippingTier: 'STANDARD', shippingAmountCents: 3500, paymentConfirmed: true },
+      }),
+      /金额与配送类型不一致/,
+    )
+    assert.equal(await prisma.customerServiceRequest.count(), before)
+  })
+
   await t.test('并发双提交：仅一个 Mailing、一个 Notification、一个 SUBMITTED', async () => {
     const submitNow = new Date('2026-08-28T06:30:00.000Z')
     const payload = {
@@ -156,6 +177,10 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.equal(notification.title, '新的邮寄信息')
     assert.equal(notification.target, 'store-mailing')
     assert.equal(notification.refId, request.linkedBusinessRecordId)
+    const official = await prisma.mailingRecord.findUnique({ where: { id: request.linkedBusinessRecordId } })
+    assert.equal(official.storeKey, 'xidan')
+    assert.equal(official.shippingPaymentMode, 'FREE')
+    assert.equal(official.shippingAmountCents, null)
     let wecomDelivery = null
     for (let attempt = 0; attempt < 50 && !wecomDelivery; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20))
@@ -165,6 +190,39 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     }
     assert.ok(wecomDelivery, 'CustomerRequest 必须触发独立企微投递记录')
     assert.equal(wecomDelivery.status, 'skipped', '企微缺配置不得阻塞正式 Mailing 与站内通知')
+  })
+
+  await t.test('顺丰生鲜 ¥35 的锁定条件与工作人员确认审计写入正式记录', async () => {
+    const confirmedAt = new Date('2026-08-28T07:00:00.000Z')
+    const created = await createCustomerServiceRequest({
+      prismaClient: prisma,
+      user: DEV,
+      now: confirmedAt,
+      input: {
+        type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮',
+        shippingTier: 'FRESH', shippingAmountCents: 3500, paymentConfirmed: true,
+        paymentConfirmedAt: '1999-01-01T00:00:00.000Z', paymentConfirmedBy: 'spoofed',
+      },
+    })
+    const storedRequest = await prisma.customerServiceRequest.findUnique({ where: { id: created.request.id } })
+    assert.equal(storedRequest.requestMetadata.paymentConfirmedBy, DEV.username)
+    assert.equal(storedRequest.requestMetadata.paymentConfirmedAt, confirmedAt.toISOString())
+    await submitCustomerServiceRequest({
+      prismaClient: prisma,
+      token: extractToken(created.publicUrl),
+      now: new Date('2026-08-28T07:10:00.000Z'),
+      payload: {
+        recipient: '测试顾客乙', phone: '13900139000', address: '上海市徐汇区测试路2号3单元401',
+        mailingContent: '', note: '', confirmedAccurate: true, companyWebsite: '',
+      },
+    })
+    const official = await prisma.mailingRecord.findUnique({ where: { id: (await prisma.customerServiceRequest.findUnique({ where: { id: created.request.id } })).linkedBusinessRecordId } })
+    assert.equal(official.storeKey, 'xidan')
+    assert.equal(official.shippingTier, 'FRESH')
+    assert.equal(official.shippingAmountCents, 3500)
+    assert.equal(official.shippingPaymentMode, 'COLLECTED')
+    assert.equal(official.shippingPaymentConfirmedBy, DEV.username)
+    assert.equal(official.shippingPaymentConfirmedAt.toISOString(), confirmedAt.toISOString())
   })
 
   await t.test('重新生成语义：同门店旧 WAITING token 立即失效', async () => {

@@ -22,16 +22,16 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# CustomerRequest WeCom release has a dedicated authority-aware production path.
+# Mailing QR-only release has a dedicated authority-aware production path.
 # It self-disables after the verified old SHA changes; all other production releases
 # remain blocked from the unsafe compose topology below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="b89a1d78aa2b48f07267b53468a1882cafddd2bb"
+  EXPECTED_OLD_SHA="acebda57175e0568c3799699902eb0a3fe7484d9"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-csr-wecom-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-mailing-qr-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-csr-wecom.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-mailing-qr.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -54,7 +54,7 @@ if [ "$ENV" = "prod" ]; then
   [ -n "$TEST_DB_PORT" ] || { echo "==> 无法解析隔离测试数据库端口"; exit 1; }
   TEST_DATABASE_URL="postgresql://budu_test:budu_test_password@127.0.0.1:${TEST_DB_PORT}/budu_test?schema=public"
 
-  echo "==> Node 22：critical / WeCom / build 回归"
+  echo "==> Node 22：critical / Mailing WebKit / WeCom / build 回归"
   docker run --rm --network host --ipc=host \
     -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
     -e DATABASE_URL="$TEST_DATABASE_URL" \
@@ -65,13 +65,13 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 12m npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 12m npm run test:critical && npx playwright test tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-csr-wecom-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-mailing-qr-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"

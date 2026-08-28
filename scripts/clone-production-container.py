@@ -13,14 +13,17 @@ import sys
 import tempfile
 
 
-if len(sys.argv) != 8:
+if len(sys.argv) not in {8, 9}:
     raise SystemExit(
-        "usage: clone-production-container.py CURRENT CANDIDATE IMAGE SHA BINDING_FILE NETWORK PAYMENT_MODE"
+        "usage: clone-production-container.py CURRENT CANDIDATE IMAGE SHA BINDING_FILE NETWORK PAYMENT_MODE [RUNTIME_MODE]"
     )
 
-current, candidate, image, release_sha, binding_path, network, payment_mode = sys.argv[1:]
+current, candidate, image, release_sha, binding_path, network, payment_mode = sys.argv[1:8]
+runtime_mode = sys.argv[8] if len(sys.argv) == 9 else "writer"
 if payment_mode not in {"disabled", "preserve"}:
     raise SystemExit("PAYMENT_MODE_INVALID")
+if runtime_mode not in {"writer", "readonly", "migration"}:
+    raise SystemExit("RUNTIME_MODE_INVALID")
 binding = json.loads(pathlib.Path(binding_path).read_text(encoding="utf-8"))
 username = binding.get("username")
 user_id = binding.get("userId")
@@ -39,6 +42,12 @@ env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME"] = username
 env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID"] = user_id
 if payment_mode == "disabled":
     env["WECHAT_PAY_ENABLED"] = "0"
+if runtime_mode == "readonly":
+    database_url = env.get("DATABASE_URL", "")
+    if not database_url:
+        raise SystemExit("DATABASE_URL_MISSING")
+    separator = "&" if "?" in database_url else "?"
+    env["DATABASE_URL"] = f"{database_url}{separator}options=-c%20default_transaction_read_only%3Don"
 
 args = [
     "docker", "create", "--name", candidate,
@@ -73,6 +82,10 @@ os.chmod(env_path, 0o600)
 args.extend(["--env-file", env_path])
 
 args.append(image)
+if runtime_mode == "readonly":
+    args.extend(["node", "server/index.js"])
+elif runtime_mode == "migration":
+    args.extend(["npx", "prisma", "migrate", "deploy"])
 try:
     result = subprocess.run(args, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 finally:
@@ -112,4 +125,5 @@ print(json.dumps({
     "containerIdPrefix": container_id[:12],
     "networkCount": len(source_networks),
     "paymentMode": payment_mode,
+    "runtimeMode": runtime_mode,
 }))

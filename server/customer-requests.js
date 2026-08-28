@@ -105,9 +105,16 @@ export async function createCustomerServiceRequest({ prismaClient = prisma, user
   if (!canUseType(user, type) || !canUseStore(user, storeKey)) throw httpError('无权限', 403)
   const store = await prismaClient.store.findUnique({ where: { key: storeKey } })
   if (!store || !store.active) throw httpError('门店不存在或已停用', 404)
-  const metadata = type === CUSTOMER_REQUEST_TYPES.MAILING
+  let metadata = type === CUSTOMER_REQUEST_TYPES.MAILING
     ? validateMailingMetadata(input)
     : validateInvoiceMetadata(input)
+  if (type === CUSTOMER_REQUEST_TYPES.MAILING && metadata.shippingPaymentMode === 'COLLECTED') {
+    metadata = {
+      ...metadata,
+      paymentConfirmedAt: now.toISOString(),
+      paymentConfirmedBy: user.username,
+    }
+  }
   const users = type === CUSTOMER_REQUEST_TYPES.INVOICE ? await listUsers() : []
   const handlerUsername = type === CUSTOMER_REQUEST_TYPES.INVOICE
     ? invoiceHandler(users, user, storeKey)
@@ -262,6 +269,12 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
             method: locked.method,
             postage: locked.postage,
             fee: locked.fee || null,
+            storeKey: tokenRow.request.storeKey,
+            shippingTier: locked.shippingTier,
+            shippingAmountCents: locked.shippingAmountCents,
+            shippingPaymentMode: locked.shippingPaymentMode,
+            shippingPaymentConfirmedAt: locked.paymentConfirmedAt ? new Date(locked.paymentConfirmedAt) : null,
+            shippingPaymentConfirmedBy: locked.paymentConfirmedBy,
             address: input.address,
             recipient: input.recipient,
             phone: input.phone,

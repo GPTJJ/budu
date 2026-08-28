@@ -4,11 +4,13 @@
   <body class="m-0"><div id="root"></div><script type="module">
     import React from 'react'
     import { createRoot } from 'react-dom/client'
+    import { BrowserQRCodeReader } from '@zxing/browser'
     import StoreMailingPage from '/src/components/StoreMailingPage.jsx'
     import '/src/index.css'
 
     const syntheticRecords = [
-      { id: 'seed-pending', recipient: '测试甲', address: '北京市测试区示例路1号', phone: '13800000001', remark: '测试商品1盒', method: '顺丰邮寄', postage: '包邮', fee: '', status: 'pending', createdAt: '2026-08-28T01:00:00.000Z' },
+      { id: 'seed-pending', recipient: '测试甲', address: '北京市测试区示例路1号', phone: '13800000001', remark: '测试商品1盒', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮', fee: '生鲜航运35¥', shippingTier: 'FRESH', shippingAmountCents: 3500, shippingPaymentMode: 'COLLECTED', status: 'pending', createdAt: '2026-08-28T01:00:00.000Z' },
+      { id: 'seed-pending-2', recipient: '测试丙', address: '广州市测试区示例路3号', phone: '13800000003', remark: '', storeKey: 'chaowai', method: '同城闪送', postage: '不包邮', fee: '微信沟通', shippingPaymentMode: 'WECHAT_COMMUNICATION', status: 'pending', createdAt: '2026-08-28T03:00:00.000Z' },
       { id: 'seed-shipped', recipient: '测试乙', address: '上海市测试区示例路2号', phone: '13800000002', remark: '', method: '同城闪送', postage: '不包邮', fee: '', status: 'shipped', createdAt: '2026-08-27T01:00:00.000Z', shippedAt: '2026-08-27T02:00:00.000Z' },
     ]
     const records = new URLSearchParams(location.search).has('records') ? [...syntheticRecords] : []
@@ -20,6 +22,20 @@
     ]
     let ocrRequestCount = 0
     let customerRequestCount = 0
+    const customerBodies = []
+    const clipboardWrites = []
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value) => clipboardWrites.push(value) } })
+    window.__mailingTest = {
+      records,
+      customerBodies,
+      clipboardWrites,
+      async verifyStaticQr(testId) {
+        const image = document.querySelector(`[data-testid="${testId}"]`)
+        if (!image) return false
+        const result = await new BrowserQRCodeReader().decodeFromImageElement(image)
+        return Boolean(result?.getText())
+      },
+    }
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
@@ -52,6 +68,7 @@
       }
       if (path === '/api/v2/customer-requests' && options.method === 'POST') {
         customerRequestCount += 1
+        customerBodies.push(JSON.parse(options.body))
         return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'a'.repeat(43)}` }, 201)
       }
       if (/\/api\/v2\/customer-requests\/[^/]+\/regenerate$/.test(path) && options.method === 'POST') {
@@ -59,6 +76,13 @@
         return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'b'.repeat(43)}` }, 201)
       }
       if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
+      if (/\/api\/v2\/mailing-records\/[^/]+\/ship$/.test(path) && options.method === 'POST') {
+        const id = path.split('/').at(-2)
+        const row = records.find((item) => item.id === id)
+        row.status = 'shipped'
+        row.shippedAt = new Date().toISOString()
+        return json({ ok: true, record: row })
+      }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 

@@ -14,6 +14,22 @@ export const CUSTOMER_REQUEST_STATUS = Object.freeze({
 
 export const CUSTOMER_REQUEST_TTL_MS = 2 * 60 * 60 * 1000
 
+export const MAILING_METHOD = Object.freeze({
+  SF: '顺丰邮寄',
+  FLASH: '同城闪送',
+})
+
+export const MAILING_SHIPPING_TIER = Object.freeze({
+  STANDARD: 'STANDARD',
+  FRESH: 'FRESH',
+})
+
+export const MAILING_PAYMENT_MODE = Object.freeze({
+  FREE: 'FREE',
+  COLLECTED: 'COLLECTED',
+  WECHAT_COMMUNICATION: 'WECHAT_COMMUNICATION',
+})
+
 export function httpError(message, status = 400) {
   const error = new Error(message)
   error.status = status
@@ -103,11 +119,57 @@ export function validateInvoiceSubmission(payload) {
 export function validateMailingMetadata(input) {
   const method = String(input?.method || '').trim()
   const postage = String(input?.postage || '').trim()
-  const fee = String(input?.fee || '').trim()
-  if (!['顺丰邮寄', '同城闪送'].includes(method)) throw httpError('邮寄方式不正确')
+  if (!Object.values(MAILING_METHOD).includes(method)) throw httpError('邮寄方式不正确')
   if (!['包邮', '不包邮'].includes(postage)) throw httpError('运费选项不正确')
-  if (fee && !['标准件18¥', '生鲜航运30¥'].includes(fee)) throw httpError('运费选项不正确')
-  return { method, postage, fee }
+
+  if (postage === '包邮') {
+    return {
+      method,
+      postage,
+      shippingTier: null,
+      shippingAmountCents: null,
+      shippingPaymentMode: MAILING_PAYMENT_MODE.FREE,
+      paymentConfirmed: false,
+      paymentConfirmedAt: null,
+      paymentConfirmedBy: null,
+      fee: '',
+    }
+  }
+
+  if (method === MAILING_METHOD.FLASH) {
+    return {
+      method,
+      postage,
+      shippingTier: null,
+      shippingAmountCents: null,
+      shippingPaymentMode: MAILING_PAYMENT_MODE.WECHAT_COMMUNICATION,
+      paymentConfirmed: false,
+      paymentConfirmedAt: null,
+      paymentConfirmedBy: null,
+      fee: '微信沟通',
+    }
+  }
+
+  const shippingTier = String(input?.shippingTier || '').toUpperCase()
+  if (!Object.values(MAILING_SHIPPING_TIER).includes(shippingTier)) throw httpError('请选择顺丰运费类型')
+  const shippingAmountCents = shippingTier === MAILING_SHIPPING_TIER.STANDARD ? 1800 : 3500
+  const suppliedAmount = Number(input?.shippingAmountCents ?? shippingAmountCents)
+  if (suppliedAmount !== shippingAmountCents) throw httpError('运费金额与配送类型不一致')
+  if (input?.paymentConfirmed !== true) throw httpError('请先确认收到顾客运费')
+  const paymentConfirmedAt = input?.paymentConfirmedAt ? new Date(input.paymentConfirmedAt) : null
+  if (paymentConfirmedAt && Number.isNaN(paymentConfirmedAt.getTime())) throw httpError('运费确认时间不正确')
+  const paymentConfirmedBy = String(input?.paymentConfirmedBy || '').trim() || null
+  return {
+    method,
+    postage,
+    shippingTier,
+    shippingAmountCents,
+    shippingPaymentMode: MAILING_PAYMENT_MODE.COLLECTED,
+    paymentConfirmed: true,
+    paymentConfirmedAt: paymentConfirmedAt?.toISOString() || null,
+    paymentConfirmedBy,
+    fee: shippingTier === MAILING_SHIPPING_TIER.STANDARD ? '标准件18¥' : '生鲜航运35¥',
+  }
 }
 
 export function validateInvoiceMetadata(input) {
