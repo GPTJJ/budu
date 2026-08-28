@@ -3,6 +3,76 @@
 // 角色矩阵（developer 可 reveal；finance 可 reveal 银行卡但不可身份证；manager/staff 不可）、空态
 import { expect, test } from '@playwright/test'
 
+async function openBankCard(page, { width = 375, height = 812, stress = false } = {}) {
+  await page.setViewportSize({ width, height })
+  await page.goto(`/tests/employee-profile-harness.html?mode=developer${stress ? '&stress=1' : ''}`)
+  await page.getByText(/隋晓/).first().click()
+  await page.getByRole('button', { name: '银行卡' }).click()
+  await expect(page.getByTestId('bank-card')).toBeVisible()
+}
+
+async function revealBankCard(page) {
+  await page.getByRole('button', { name: '查看完整号码' }).click()
+  await page.getByRole('button', { name: '确认查看' }).click()
+  await expect(page.getByTestId('bank-card-copy')).toBeVisible()
+}
+
+async function bankCardGeometry(page) {
+  return page.evaluate(() => {
+    const get = (id) => document.querySelector(`[data-testid="${id}"]`)
+    const rect = (element) => {
+      if (!element) return null
+      const box = element.getBoundingClientRect()
+      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
+    }
+    const overlaps = (a, b) => Boolean(a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top)
+
+    const card = get('bank-card')
+    const number = rect(get('bank-card-number'))
+    const copy = rect(get('bank-card-copy'))
+    const holder = rect(get('bank-card-holder'))
+    const actions = rect(get('bank-card-actions'))
+    const badge = rect(get('bank-card-payroll-badge'))
+    const audit = rect(get('bank-card-audit-notice'))
+    const copyStyle = get('bank-card-copy') ? getComputedStyle(get('bank-card-copy')) : null
+    const auditText = get('bank-card-audit-notice')?.querySelector('span:last-child')
+    const auditTextRect = rect(auditText)
+
+    return {
+      viewportOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      cardOverflow: card.scrollWidth > card.clientWidth + 1,
+      numberCopyOverlap: overlaps(number, copy),
+      numberHolderOverlap: overlaps(number, holder),
+      holderActionsOverlap: overlaps(holder, actions),
+      holderBadgeOverlap: overlaps(holder, badge),
+      numberBadgeOverlap: overlaps(number, badge),
+      copyBadgeOverlap: overlaps(copy, badge),
+      copy: copy ? { ...copy, whiteSpace: copyStyle.whiteSpace } : null,
+      audit,
+      auditText: auditTextRect,
+    }
+  })
+}
+
+function expectStableBankCardLayout(metrics, { revealed = false } = {}) {
+  expect(metrics.viewportOverflow).toBe(false)
+  expect(metrics.cardOverflow).toBe(false)
+  expect(metrics.numberHolderOverlap).toBe(false)
+  expect(metrics.holderActionsOverlap).toBe(false)
+  expect(metrics.holderBadgeOverlap).toBe(false)
+  expect(metrics.numberBadgeOverlap).toBe(false)
+  expect(metrics.audit.width).toBeGreaterThan(120)
+  expect(metrics.auditText.width).toBeGreaterThan(80)
+  expect(metrics.auditText.height).toBeLessThanOrEqual(32)
+  if (revealed) {
+    expect(metrics.numberCopyOverlap).toBe(false)
+    expect(metrics.copyBadgeOverlap).toBe(false)
+    expect(metrics.copy.width).toBeGreaterThanOrEqual(56)
+    expect(metrics.copy.height).toBeLessThanOrEqual(44)
+    expect(metrics.copy.whiteSpace).toBe('nowrap')
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/tests/employee-profile-harness.html?mode=developer')
 })
@@ -64,6 +134,54 @@ test('银行卡掩码 + reveal 确认', async ({ page }) => {
   await expect(page.getByText('6222020200112233445', { exact: true })).toBeVisible()
   const calls = await page.evaluate(() => window.__revealCalls)
   expect(calls).toContain('bank.reveal')
+})
+
+test.describe('银行卡移动端响应式布局', () => {
+  for (const width of [320, 340, 375, 390, 430]) {
+    test(`${width}px 掩码与完整号码均无溢出或重叠`, async ({ page }) => {
+      await openBankCard(page, { width })
+      expectStableBankCardLayout(await bankCardGeometry(page))
+
+      await revealBankCard(page)
+      expectStableBankCardLayout(await bankCardGeometry(page), { revealed: true })
+      await expect(page.getByRole('button', { name: '复制' })).toHaveText('复制')
+      await expect(page.getByRole('button', { name: '隐藏' })).toBeVisible()
+      await expect(page.getByTestId('bank-card-holder')).toContainText('隋晓')
+      await expect(page.getByTestId('bank-card-payroll-badge')).toHaveText('工资卡')
+      await expect(page.getByTestId('bank-card-audit-notice')).toContainText('查看将记录审计日志')
+    })
+  }
+
+  test('340px 更新流程打开和关闭均无横向溢出', async ({ page }) => {
+    await openBankCard(page, { width: 340 })
+    await page.getByRole('button', { name: '更新' }).click()
+    await expect(page.getByPlaceholder('8-25 位卡号')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+    await expect(page.getByRole('button', { name: '取消' })).toHaveCSS('white-space', 'nowrap')
+    await expect(page.getByRole('button', { name: '保存（加密存储）' })).toHaveCSS('white-space', 'nowrap')
+    await page.getByRole('button', { name: '取消' }).click()
+    await expect(page.getByTestId('bank-card')).toBeVisible()
+  })
+
+  test('320px 长银行名、长持卡人和 25 位安全测试卡号保持稳定', async ({ page }) => {
+    await openBankCard(page, { width: 320, stress: true })
+    await expect(page.getByTestId('bank-card-bank-name')).toContainText('特别长名称测试支行')
+    await expect(page.getByTestId('bank-card-holder')).toContainText('安全测试持卡人超长姓名示例')
+    expectStableBankCardLayout(await bankCardGeometry(page))
+
+    await revealBankCard(page)
+    await expect(page.getByTestId('bank-card-number')).toHaveText('6222020200112233445566778')
+    expectStableBankCardLayout(await bankCardGeometry(page), { revealed: true })
+  })
+
+  test('iPad 竖屏与桌面布局回归', async ({ page }) => {
+    for (const viewport of [{ width: 768, height: 1024 }, { width: 1280, height: 900 }]) {
+      await openBankCard(page, viewport)
+      expectStableBankCardLayout(await bankCardGeometry(page))
+      await revealBankCard(page)
+      expectStableBankCardLayout(await bankCardGeometry(page), { revealed: true })
+    }
+  })
 })
 
 test('基本信息空字段显示「暂未填写」', async ({ page }) => {

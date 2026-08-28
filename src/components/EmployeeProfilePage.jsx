@@ -181,7 +181,18 @@ function InlineSelect({ label, value, onChange, options, className = '', placeho
 }
 
 /** 敏感号码展示区：掩码 ↔ 完整号码（完整号码须二次确认 reveal，仅在内存中） */
-function SensitiveNumber({ masked, revealed, onReveal, canReveal, revealTitle, revealMessage, revealLabel = '查看完整号码' }) {
+function SensitiveNumber({
+  masked,
+  revealed,
+  onReveal,
+  canReveal,
+  revealTitle,
+  revealMessage,
+  revealLabel = '查看完整号码',
+  details = null,
+  status = null,
+  variant = 'default',
+}) {
   const [confirming, setConfirming] = useState(false)
   const [showFull, setShowFull] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -206,47 +217,89 @@ function SensitiveNumber({ masked, revealed, onReveal, canReveal, revealTitle, r
 
   const display = showFull && revealed ? revealed : masked || MASKED
 
+  const visibilityControl = !showFull && canReveal ? (
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      className="flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-budu-50 px-2.5 py-1.5 text-[11px] font-bold text-budu-600 transition hover:bg-budu-100"
+    >
+      <Eye className="h-3.5 w-3.5" /> {revealLabel}
+    </button>
+  ) : showFull ? (
+    <button
+      type="button"
+      onClick={() => setShowFull(false)}
+      className="flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-500 transition hover:bg-slate-200"
+    >
+      <EyeOff className="h-3.5 w-3.5" /> 隐藏
+    </button>
+  ) : null
+
+  const auditNotice = (
+    <span
+      data-testid={variant === 'bank' ? 'bank-card-audit-notice' : undefined}
+      className="flex min-w-0 items-start gap-1 text-[10px] leading-4 text-slate-300"
+    >
+      <ShieldCheck className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>查看将记录审计日志</span>
+    </span>
+  )
+
+  const numberDisplay = (
+    <div
+      data-testid={variant === 'bank' ? 'bank-card-number-row' : undefined}
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2"
+    >
+      <span
+        data-testid={variant === 'bank' ? 'bank-card-number' : undefined}
+        className={`min-w-0 break-words font-mono text-[13px] font-bold leading-5 tracking-wide text-slate-800 [overflow-wrap:anywhere] ${showFull ? 'text-budu-700' : ''}`}
+      >
+        {display}
+      </span>
+      {showFull && revealed && (
+        <button
+          type="button"
+          data-testid={variant === 'bank' ? 'bank-card-copy' : undefined}
+          onClick={copyFull}
+          className="flex min-h-9 min-w-14 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500 transition hover:bg-slate-200"
+        >
+          <Copy className="h-3 w-3" /> {copied ? '已复制' : '复制'}
+        </button>
+      )}
+    </div>
+  )
+
   return (
-    <div>
-      <div className="flex items-center gap-2">
-        <span className={`font-mono text-[13px] font-bold tracking-wide text-slate-800 ${showFull ? 'text-budu-700' : ''}`}>
-          {display}
-        </span>
-        {showFull && revealed && (
-          <button
-            onClick={copyFull}
-            className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500 transition hover:bg-slate-200"
-          >
-            <Copy className="h-3 w-3" /> {copied ? '已复制' : '复制'}
-          </button>
-        )}
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        {!showFull && canReveal && (
-          <button
-            onClick={() => setConfirming(true)}
-            className="flex items-center gap-1 rounded-lg bg-budu-50 px-2.5 py-1.5 text-[11px] font-bold text-budu-600 transition hover:bg-budu-100"
-          >
-            <Eye className="h-3.5 w-3.5" /> {revealLabel}
-          </button>
-        )}
-        {showFull && (
-          <button
-            onClick={() => setShowFull(false)}
-            className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-500 transition hover:bg-slate-200"
-          >
-            <EyeOff className="h-3.5 w-3.5" /> 隐藏
-          </button>
-        )}
-        {!canReveal && masked && (
-          <span className="flex items-center gap-1 text-[11px] text-slate-400">
-            <Lock className="h-3 w-3" /> 无查看完整号码权限
-          </span>
-        )}
-        <span className="flex items-center gap-1 text-[10px] text-slate-300">
-          <ShieldCheck className="h-3 w-3" /> 查看将记录审计日志
-        </span>
-      </div>
+    <div className={variant === 'bank' ? 'min-w-0' : ''}>
+      {variant === 'bank' ? (
+        <div className="grid min-w-0 grid-cols-1 gap-y-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.65fr)] sm:gap-x-6">
+          {numberDisplay}
+          {details}
+          <div data-testid="bank-card-actions" className="flex min-w-0 flex-wrap items-center gap-2 sm:col-span-2">
+            {visibilityControl}
+            {!canReveal && masked && (
+              <span className="flex min-w-0 items-center gap-1 text-[11px] leading-4 text-slate-400">
+                <Lock className="h-3 w-3 shrink-0" /> 无查看完整号码权限
+              </span>
+            )}
+            {status}
+          </div>
+          <div className="min-w-0 sm:col-span-2">{auditNotice}</div>
+        </div>
+      ) : (
+        <>
+          {numberDisplay}
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+            {visibilityControl}
+            {!canReveal && masked && (
+              <span className="flex min-w-0 items-center gap-1 text-[11px] leading-4 text-slate-400">
+                <Lock className="h-3 w-3 shrink-0" /> 无查看完整号码权限
+              </span>
+            )}
+            {auditNotice}
+          </div>
+        </>
+      )}
       {confirming && (
         <ConfirmDialog
           title={revealTitle}
@@ -1158,7 +1211,7 @@ function BankTab({ employeeId, employeeName, canEdit, canReveal }) {
       title="工资银行卡"
       extra={
         canEdit && !editing && (
-          <button onClick={startEdit} className="rounded-xl bg-budu-50 px-3 py-2 text-xs font-bold text-budu-600 transition hover:bg-budu-100">
+          <button type="button" onClick={startEdit} className="shrink-0 whitespace-nowrap rounded-xl bg-budu-50 px-3 py-2 text-xs font-bold text-budu-600 transition hover:bg-budu-100">
             {data.bank.length ? '更新' : '登记银行卡'}
           </button>
         )
@@ -1176,11 +1229,11 @@ function BankTab({ employeeId, employeeName, canEdit, canReveal }) {
             <input type="checkbox" checked={form.isPayroll === true} onChange={(e) => setForm((s) => ({ ...s, isPayroll: e.target.checked }))} />
             设为工资卡
           </label>
-          <div className="flex gap-2.5">
-            <button onClick={() => setEditing(false)} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-slate-200">
+          <div className="flex flex-col gap-2.5 sm:flex-row">
+            <button type="button" onClick={() => setEditing(false)} className="w-full whitespace-nowrap rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-slate-200 sm:w-auto">
               取消
             </button>
-            <button onClick={save} disabled={saving} className="rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50">
+            <button type="button" onClick={save} disabled={saving} className="w-full whitespace-nowrap rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50 sm:w-auto">
               {saving ? '保存中…' : '保存（加密存储）'}
             </button>
           </div>
@@ -1194,12 +1247,12 @@ function BankTab({ employeeId, employeeName, canEdit, canReveal }) {
       ) : (
         <div className="space-y-3">
           {data.bank.map((b) => (
-            <div key={b.id} className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl bg-slate-50 p-4">
-              <div>
+            <div key={b.id} data-testid="bank-card" className="grid min-w-0 grid-cols-1 gap-4 rounded-xl bg-slate-50 p-4 lg:grid-cols-[minmax(10rem,0.55fr)_minmax(0,1.45fr)] lg:gap-x-6">
+              <div className="min-w-0">
                 <p className="text-[11px] text-slate-400">开户银行</p>
-                <p className="mt-0.5 text-[13px] font-bold text-slate-700">{b.bankName || EMPTY}</p>
+                <p data-testid="bank-card-bank-name" className="mt-0.5 min-w-0 break-words text-[13px] font-bold leading-5 text-slate-700 [overflow-wrap:anywhere]">{b.bankName || EMPTY}</p>
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0">
                 <p className="text-[11px] text-slate-400">卡号（加密存储）</p>
                 <div className="mt-1">
                   <SensitiveNumber
@@ -1209,16 +1262,19 @@ function BankTab({ employeeId, employeeName, canEdit, canReveal }) {
                     canReveal={canReveal}
                     revealTitle="查看完整银行卡号"
                     revealMessage="此操作将解密显示完整银行卡号，并记录一条审计日志。请确认仅用于必要场景。"
+                    variant="bank"
+                    details={(
+                      <div data-testid="bank-card-holder" className="min-w-0">
+                        <p className="text-[11px] text-slate-400">持卡人</p>
+                        <p className="mt-0.5 min-w-0 break-words text-[13px] font-semibold leading-5 text-slate-700 [overflow-wrap:anywhere]">{b.accountName || EMPTY}</p>
+                      </div>
+                    )}
+                    status={b.isPayroll ? (
+                      <span data-testid="bank-card-payroll-badge" className="shrink-0 whitespace-nowrap rounded-md bg-budu-50 px-2 py-1 text-[10px] font-bold text-budu-600">工资卡</span>
+                    ) : null}
                   />
                 </div>
               </div>
-              <div>
-                <p className="text-[11px] text-slate-400">持卡人</p>
-                <p className="mt-0.5 text-[13px] font-semibold text-slate-700">{b.accountName || EMPTY}</p>
-              </div>
-              {b.isPayroll && (
-                <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">工资卡</span>
-              )}
             </div>
           ))}
         </div>

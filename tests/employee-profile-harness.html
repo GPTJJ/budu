@@ -10,6 +10,7 @@
     const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
     const INITIAL = new URLSearchParams(location.search).get('initial') || ''
     const INITIAL_ID = new URLSearchParams(location.search).get('initialId') || ''
+    const STRESS = new URLSearchParams(location.search).get('stress') === '1'
 
     const USER = {
       developer: { id: 'u-dev', username: 'budu', role: 'developer' },
@@ -50,7 +51,15 @@
       hasFull: true,
     }
 
-    const BANK = { bank: [{ id: 'eba-1', bankName: '中国工商银行', maskedNumber: '**** **** **** 3445', cardLast4: '3445', accountName: '隋晓', isPayroll: true, status: 'active' }] }
+    const BANK = { bank: [{
+      id: 'eba-1',
+      bankName: STRESS ? '中国工商银行北京通盈中心特别长名称测试支行' : '中国工商银行',
+      maskedNumber: '**** **** **** 3445',
+      cardLast4: '3445',
+      accountName: STRESS ? '安全测试持卡人超长姓名示例' : '隋晓',
+      isPayroll: true,
+      status: 'active',
+    }] }
 
     window.__revealCalls = []
 
@@ -68,7 +77,7 @@
       if (url.pathname === `/api/v2/employees/${EMP.id}/bank-account` && method === 'GET') return json(BANK)
       if (url.pathname === `/api/v2/employees/${EMP.id}/bank-account/reveal` && method === 'POST') {
         window.__revealCalls.push('bank.reveal')
-        return json({ bankName: '中国工商银行', cardNumber: '6222020200112233445', cardLast4: '3445' })
+        return json({ bankName: BANK.bank[0].bankName, cardNumber: STRESS ? '6222020200112233445566778' : '6222020200112233445', cardLast4: '3445' })
       }
       if (url.pathname === `/api/v2/employees/${EMP.id}/contracts`) return json({ rows: [] })
       if (url.pathname === `/api/v2/employees/${EMP.id}/timeline`) {
