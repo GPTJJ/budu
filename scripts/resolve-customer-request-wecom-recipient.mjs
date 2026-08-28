@@ -19,6 +19,7 @@ if (!outputPath || !outputPath.startsWith('/')) throw new Error('ABSOLUTE_OUTPUT
 const prisma = new PrismaClient()
 const normalizePhone = (value) => String(value || '').replace(/\D/g, '')
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const validUserId = (value) => /^[A-Za-z0-9._@-]{1,64}$/.test(String(value || ''))
 
 try {
   const users = await prisma.user.findMany({
@@ -41,7 +42,26 @@ try {
   let userId = bindings[0]?.openId?.trim() || ''
   let bindingAuthority = Boolean(userId)
   let mobileToUserIdLookup = false
+  let stableAccountCrossCheck = false
   let employee = null
+  let detail = null
+  if (!userId && validUserId(users[0].username)) {
+    const accountDetailUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/get')
+    accountDetailUrl.searchParams.set('access_token', accessToken)
+    accountDetailUrl.searchParams.set('userid', users[0].username)
+    const accountDetailResponse = await fetch(accountDetailUrl, { signal: AbortSignal.timeout(8000) })
+    const accountDetail = await accountDetailResponse.json().catch(() => ({}))
+    if (
+      accountDetailResponse.ok
+      && accountDetail.errcode === 0
+      && accountDetail.userid === users[0].username
+      && accountDetail.name === '胡东辉'
+    ) {
+      userId = users[0].username
+      detail = accountDetail
+      stableAccountCrossCheck = true
+    }
+  }
   if (!userId) {
     const employees = await prisma.employee.findMany({
       where: { userId: users[0].id },
@@ -68,15 +88,17 @@ try {
     userId = lookup.userid.trim()
     mobileToUserIdLookup = true
   }
-  if (!/^[A-Za-z0-9._@-]{1,64}$/.test(userId)) throw new Error('WECOM_USER_ID_SHAPE_INVALID')
+  if (!validUserId(userId)) throw new Error('WECOM_USER_ID_SHAPE_INVALID')
 
-  const detailUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/get')
-  detailUrl.searchParams.set('access_token', accessToken)
-  detailUrl.searchParams.set('userid', userId)
-  const detailResponse = await fetch(detailUrl, { signal: AbortSignal.timeout(8000) })
-  const detail = await detailResponse.json().catch(() => ({}))
-  if (!detailResponse.ok || detail.errcode !== 0 || detail.userid !== userId || detail.name !== '胡东辉') {
-    throw new Error(`WECOM_DETAIL_${detail.errcode ?? detailResponse.status}`)
+  if (!detail) {
+    const detailUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/get')
+    detailUrl.searchParams.set('access_token', accessToken)
+    detailUrl.searchParams.set('userid', userId)
+    const detailResponse = await fetch(detailUrl, { signal: AbortSignal.timeout(8000) })
+    detail = await detailResponse.json().catch(() => ({}))
+    if (!detailResponse.ok || detail.errcode !== 0 || detail.userid !== userId || detail.name !== '胡东辉') {
+      throw new Error(`WECOM_DETAIL_${detail.errcode ?? detailResponse.status}`)
+    }
   }
 
   const wecomPhone = normalizePhone(detail.mobile)
@@ -85,8 +107,8 @@ try {
   const wecomEmail = normalizeEmail(detail.email)
   const phoneCrossCheck = Boolean(employee && buduPhone && wecomPhone && buduPhone === wecomPhone)
   const emailCrossCheck = Boolean(buduEmail && wecomEmail && buduEmail === wecomEmail)
-  const stableAccountCrossCheck = users[0].username === userId
-  if (!bindingAuthority && !phoneCrossCheck) {
+  stableAccountCrossCheck = stableAccountCrossCheck || users[0].username === userId
+  if (!bindingAuthority && !stableAccountCrossCheck && !phoneCrossCheck) {
     throw new Error('WECOM_IDENTITY_CROSS_CHECK_FAILED')
   }
 
