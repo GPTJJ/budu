@@ -3,6 +3,7 @@ import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { broadcast } from './notification-center.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
+import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
@@ -1200,8 +1201,9 @@ v2Router.post('/ocr/general', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!req.user || req.user.role === 'cashier' || req.user.role === 'public') throw bad('无权限', 403)
   const { imageBase64 } = req.body || {}
+  const correlation = correlateOcrRequest(req.body)
   const result = await generalOcrText(String(imageBase64 || ''))
-  res.json({ ok: true, text: result.text })
+  res.json({ ok: true, text: result.text, ...correlation })
 }))
 
 v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {

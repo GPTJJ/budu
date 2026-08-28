@@ -37,6 +37,7 @@
     "test:wechat-provider": "node --test scripts/test-wechat-pay-provider.mjs",
     "test:payment-reconciler": "node --test scripts/test-payment-reconciliation.mjs",
     "test:wechat-config": "node --test scripts/test-wechat-config.mjs",
+    "test:ocr-integrity": "node --test scripts/test-ocr-input-integrity.mjs",
     "test:wechat-e2e": "node --test scripts/test-wechat-pay-e2e.mjs"
   },
   "dependencies": {

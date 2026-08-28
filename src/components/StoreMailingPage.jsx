@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api } from '../utils/api'
 import { mergeRecipientFields, parseRecipientText } from '../utils/addressParser'
+import { createOcrRequestId, fingerprintImageDataUrl, isMatchingOcrResponse, sha256Hex } from '../utils/ocrIntegrity'
 import qrUrl from '../assets/mailing-qr.jpg'
 
 const STORAGE_KEY = 'budu-store-mailing'
@@ -80,6 +81,13 @@ export default function StoreMailingPage({ onBack }) {
   const [recipient, setRecipient] = useState(saved?.recipient || '')
   const [phone, setPhone] = useState(saved?.phone || '')
   const [remark, setRemark] = useState(saved?.remark || '')
+  const formValuesRef = useRef({
+    recipientName: saved?.recipient || '',
+    phone: saved?.phone || '',
+    address: saved?.address || '',
+    note: saved?.remark || '',
+  })
+  const ocrOwnedFieldsRef = useRef({})
   const [copied, setCopied] = useState('')
   const [records, setRecords] = useState([])
   const [recordsLoading, setRecordsLoading] = useState(true)
@@ -147,10 +155,60 @@ export default function StoreMailingPage({ onBack }) {
   const [recognizeText, setRecognizeText] = useState('')
   const [recognizeBusy, setRecognizeBusy] = useState('') // '' | 'image' | 'voice'
   const [recognizeHint, setRecognizeHint] = useState('')
+  const [ocrSession, setOcrSession] = useState({
+    status: 'idle', generation: 0, requestId: '', fileFingerprint: '', rawTextFingerprint: '', parserInputFingerprint: '',
+  })
   const fileInputRef = useRef(null)
   const recognitionRef = useRef(null)
+  const ocrGenerationRef = useRef(0)
+  const ocrCurrentRef = useRef(null)
+  const ocrAbortRef = useRef(null)
 
-  const applyParsed = (text) => {
+  useEffect(() => () => {
+    ocrAbortRef.current?.abort()
+    recognitionRef.current?.abort?.()
+  }, [])
+
+  const commitRecipientFields = (values) => {
+    formValuesRef.current = values
+    setRecipient(values.recipientName)
+    setPhone(values.phone)
+    setAddress(values.address)
+    setRemark(values.note)
+  }
+
+  const handleManualFieldChange = (field, value) => {
+    delete ocrOwnedFieldsRef.current[field]
+    commitRecipientFields({ ...formValuesRef.current, [field]: value })
+  }
+
+  const clearOcrOwnedFields = () => {
+    const current = formValuesRef.current
+    const next = { ...current }
+    let changed = false
+    for (const [field, ownedValue] of Object.entries(ocrOwnedFieldsRef.current)) {
+      if (ownedValue && current[field] === ownedValue) {
+        next[field] = ''
+        changed = true
+      }
+    }
+    ocrOwnedFieldsRef.current = {}
+    if (changed) commitRecipientFields(next)
+  }
+
+  const invalidateOcrSession = ({ clearOwned = true } = {}) => {
+    ocrGenerationRef.current += 1
+    ocrAbortRef.current?.abort()
+    ocrAbortRef.current = null
+    ocrCurrentRef.current = null
+    if (clearOwned) clearOcrOwnedFields()
+    setOcrSession({
+      status: 'idle', generation: ocrGenerationRef.current, requestId: '', fileFingerprint: '', rawTextFingerprint: '', parserInputFingerprint: '',
+    })
+    setRecognizeBusy((busy) => (busy === 'image' ? '' : busy))
+  }
+
+  const applyParsed = (text, source = 'text') => {
     const parsed = parseRecipientText(text)
     const { recipientName, phone: parsedPhone, address: parsedAddress, note: parsedNote, matched } = parsed
     if (!matched) {
@@ -158,13 +216,17 @@ export default function StoreMailingPage({ onBack }) {
       return
     }
     const merged = mergeRecipientFields(
-      { recipientName: recipient, phone, address, note: remark },
+      formValuesRef.current,
       parsed,
     )
-    setRecipient(merged.recipientName)
-    setPhone(merged.phone)
-    setAddress(merged.address)
-    setRemark(merged.note)
+    if (source === 'image') {
+      const nextOwned = {}
+      for (const field of ['recipientName', 'phone', 'address', 'note']) {
+        if (!String(formValuesRef.current[field] || '').trim() && parsed[field]) nextOwned[field] = merged[field]
+      }
+      ocrOwnedFieldsRef.current = nextOwned
+    }
+    commitRecipientFields(merged)
     const parts = []
     if (recipientName) parts.push('姓名')
     if (parsedPhone) parts.push('电话')
@@ -172,6 +234,7 @@ export default function StoreMailingPage({ onBack }) {
     if (parsedNote) parts.push('备注')
     setRecognizeHint(`已识别${parts.join('、')}（仅填充空字段）`)
     setRecognizeText('')
+    return parsed
   }
 
   const handlePasteRecognize = () => {
@@ -180,13 +243,25 @@ export default function StoreMailingPage({ onBack }) {
       setRecognizeHint('请先粘贴或输入收件文本')
       return
     }
+    invalidateOcrSession()
     applyParsed(text)
   }
 
   const handleImageFile = async (file) => {
     if (!file) return
+    const generation = ocrGenerationRef.current + 1
+    ocrGenerationRef.current = generation
+    ocrAbortRef.current?.abort()
+    ocrAbortRef.current = null
+    ocrCurrentRef.current = { generation, requestId: '', fileFingerprint: '' }
+    clearOcrOwnedFields()
     setRecognizeBusy('image')
     setRecognizeHint('')
+    setOcrSession({
+      status: 'loading', generation, requestId: '', fileFingerprint: '', rawTextFingerprint: '', parserInputFingerprint: '',
+    })
+    let requestTimeoutId
+    let requestTimedOut = false
     try {
       // 图片压缩到 1600px 内、JPEG 质量 0.85，控制上传体积
       const compressed = await new Promise((resolve, reject) => {
@@ -208,20 +283,62 @@ export default function StoreMailingPage({ onBack }) {
         reader.onerror = () => reject(new Error('图片读取失败'))
         reader.readAsDataURL(file)
       })
+      if (ocrCurrentRef.current?.generation !== generation) return
+      const fileFingerprint = await fingerprintImageDataUrl(compressed)
+      if (ocrCurrentRef.current?.generation !== generation) return
+      const requestId = createOcrRequestId(generation, fileFingerprint)
+      const context = { generation, requestId, fileFingerprint }
+      const controller = new AbortController()
+      ocrCurrentRef.current = context
+      ocrAbortRef.current = controller
+      requestTimeoutId = setTimeout(() => {
+        requestTimedOut = true
+        controller.abort()
+      }, 30000)
+      setOcrSession({
+        status: 'loading', ...context, rawTextFingerprint: '', parserInputFingerprint: '',
+      })
       const data = await api('/v2/ocr/general', {
         method: 'POST',
-        body: JSON.stringify({ imageBase64: compressed }),
+        signal: controller.signal,
+        body: JSON.stringify({ imageBase64: compressed, requestId, fileFingerprint }),
       })
+      const currentMatches = ocrCurrentRef.current?.generation === context.generation
+        && ocrCurrentRef.current?.requestId === context.requestId
+        && ocrCurrentRef.current?.fileFingerprint === context.fileFingerprint
+      if (!currentMatches) return
+      if (!isMatchingOcrResponse(ocrCurrentRef.current, context, data)) {
+        throw new Error('OCR 响应与当前图片不匹配，请重新选择图片')
+      }
       const text = String(data.text || '').trim()
       if (!text) {
-        setRecognizeHint('未识别到文字，请确认照片文字清晰完整')
+        setRecognizeHint('未识别到有效信息，请确认照片文字清晰完整')
+        setOcrSession({
+          status: 'error', ...context, rawTextFingerprint: '', parserInputFingerprint: '',
+        })
         return
       }
-      applyParsed(text)
+      const rawTextFingerprint = await sha256Hex(text)
+      const parserInputFingerprint = await sha256Hex(text)
+      if (!isMatchingOcrResponse(ocrCurrentRef.current, context, data)) return
+      const parsed = applyParsed(text, 'image')
+      setOcrSession({
+        status: parsed?.matched ? 'success' : 'error',
+        ...context,
+        rawTextFingerprint,
+        parserInputFingerprint,
+      })
     } catch (e) {
-      setRecognizeHint(e.message || '图片识别失败')
+      if (ocrCurrentRef.current?.generation !== generation || (e?.name === 'AbortError' && !requestTimedOut)) return
+      const detail = requestTimedOut ? '识别请求超时，请重试' : (e.message || '请重新选择图片后重试')
+      setRecognizeHint(`图片识别失败：${detail}`)
+      setOcrSession((session) => ({ ...session, status: 'error' }))
     } finally {
-      setRecognizeBusy('')
+      clearTimeout(requestTimeoutId)
+      if (ocrCurrentRef.current?.generation === generation) {
+        setRecognizeBusy('')
+        ocrAbortRef.current = null
+      }
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -233,6 +350,7 @@ export default function StoreMailingPage({ onBack }) {
       return
     }
     try {
+      invalidateOcrSession()
       const rec = new SR()
       recognitionRef.current = rec
       rec.lang = 'zh-CN'
@@ -289,6 +407,8 @@ export default function StoreMailingPage({ onBack }) {
       setRecipient('')
       setPhone('')
       setRemark('')
+      formValuesRef.current = { recipientName: '', phone: '', address: '', note: '' }
+      ocrOwnedFieldsRef.current = {}
       try {
         localStorage.removeItem(STORAGE_KEY)
       } catch {
@@ -427,7 +547,7 @@ export default function StoreMailingPage({ onBack }) {
               <button
                 type="button"
                 onClick={handlePasteRecognize}
-                disabled={recognizeBusy !== ''}
+                disabled={recognizeBusy === 'voice'}
                 className="btn-primary h-11 shrink-0 whitespace-nowrap px-3 sm:h-10"
               >
                 <ClipboardPaste className="h-4 w-4" />
@@ -438,16 +558,16 @@ export default function StoreMailingPage({ onBack }) {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={recognizeBusy !== ''}
+                disabled={recognizeBusy === 'voice'}
                 className="btn-secondary h-9 px-3"
               >
                 {recognizeBusy === 'image' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageUp className="h-4 w-4" />}
-                图片识别
+                {recognizeBusy === 'image' ? '识别中…可更换图片' : '图片识别'}
               </button>
               <button
                 type="button"
                 onClick={handleVoiceRecognize}
-                disabled={recognizeBusy !== ''}
+                disabled={recognizeBusy === 'voice'}
                 className="btn-secondary h-9 px-3"
               >
                 {recognizeBusy === 'voice' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
@@ -458,11 +578,24 @@ export default function StoreMailingPage({ onBack }) {
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => handleImageFile(e.target.files?.[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  handleImageFile(file)
+                }}
               />
-              {recognizeHint && (
-                <p className="w-full text-xs font-medium text-budu-600">{recognizeHint}</p>
-              )}
+              <div
+                data-testid="ocr-session-status"
+                data-status={ocrSession.status}
+                data-generation={ocrSession.generation}
+                data-request-id={ocrSession.requestId}
+                data-file-fingerprint={ocrSession.fileFingerprint.slice(0, 12)}
+                data-raw-text-fingerprint={ocrSession.rawTextFingerprint.slice(0, 12)}
+                data-parser-input-fingerprint={ocrSession.parserInputFingerprint.slice(0, 12)}
+                className="w-full min-w-0"
+              >
+                {recognizeHint && <p className="break-words text-xs font-medium text-budu-600">{recognizeHint}</p>}
+              </div>
             </div>
           </div>
 
@@ -474,7 +607,7 @@ export default function StoreMailingPage({ onBack }) {
               <div className="flex gap-2">
                 <textarea
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => handleManualFieldChange('address', e.target.value)}
                   placeholder="请输入收件地址"
                   rows={2}
                   className={`${fieldCls} min-h-[72px] resize-none`}
@@ -495,7 +628,7 @@ export default function StoreMailingPage({ onBack }) {
               <div className="flex gap-2">
                 <input
                   value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
+                  onChange={(e) => handleManualFieldChange('recipientName', e.target.value)}
                   placeholder="请输入收件人姓名"
                   className={fieldCls}
                 />
@@ -515,7 +648,7 @@ export default function StoreMailingPage({ onBack }) {
               <div className="flex gap-2">
                 <input
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => handleManualFieldChange('phone', e.target.value)}
                   placeholder="请输入手机号 / 电话"
                   inputMode="tel"
                   className={fieldCls}
@@ -536,7 +669,7 @@ export default function StoreMailingPage({ onBack }) {
               <div className="flex gap-2">
                 <textarea
                   value={remark}
-                  onChange={(e) => setRemark(e.target.value)}
+                  onChange={(e) => handleManualFieldChange('note', e.target.value)}
                   placeholder="商品信息及数量，顾客指定时间"
                   rows={2}
                   className={`${fieldCls} min-h-[56px] resize-none`}

@@ -1,5 +1,35 @@
 import { expect, test } from '@playwright/test'
 
+const imageFixture = (name, color, label) => ({
+  name,
+  mimeType: 'image/svg+xml',
+  buffer: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100"><rect width="160" height="100" fill="${color}"/><text x="8" y="52" font-size="12">${label}</text></svg>`),
+})
+
+const IMAGE_A = imageFixture('image-a.svg', '#ef4444', 'A-13800138000')
+const IMAGE_B = imageFixture('image-b.svg', '#3b82f6', 'B-13900139000')
+const IMAGE_C = imageFixture('image-c.svg', '#22c55e', 'C-13700137000')
+const IMAGE_D = imageFixture('image-d.svg', '#a855f7', 'D-13600136000')
+
+const recipientFields = (page) => ({
+  name: page.getByPlaceholder('请输入收件人姓名'),
+  phone: page.getByPlaceholder('请输入手机号 / 电话'),
+  address: page.getByPlaceholder('请输入收件地址'),
+  note: page.getByPlaceholder('商品信息及数量，顾客指定时间'),
+})
+
+async function uploadImage(page, image) {
+  await page.locator('input[type="file"]').setInputFiles(image)
+}
+
+async function expectRecipient(page, { name, phone, address, note }) {
+  const fields = recipientFields(page)
+  await expect(fields.name).toHaveValue(name)
+  await expect(fields.phone).toHaveValue(phone)
+  await expect(fields.address).toHaveValue(address)
+  await expect(fields.note).toHaveValue(note)
+}
+
 test('门店邮寄提交成功后清空表单与本地存档，重开页面不残留', async ({ page }) => {
   await page.goto('/tests/mailing-harness.html')
   await page.getByPlaceholder('请输入收件地址').fill('测试地址路1号')
@@ -109,6 +139,166 @@ test('图片 OCR 文本与语音文本都进入同一 parser', async ({ page }) 
   await expect(page.getByPlaceholder('请输入手机号 / 电话')).toHaveValue('13600000000')
   await expect(page.getByPlaceholder('请输入收件地址')).toHaveValue('广东省深圳市测试区示例街8号')
   await expect(page.getByPlaceholder('商品信息及数量，顾客指定时间')).toHaveValue('测试商品1件')
+})
+
+test('OCR 输入完整性：A/B/C 图片各自拥有结果与独立指纹', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1')
+  const controls = [
+    [IMAGE_A, { name: '张三', phone: '13800138000', address: '北京市朝阳区测试路1号', note: '巧克力1盒' }],
+    [IMAGE_B, { name: '李四', phone: '13900139000', address: '上海市徐汇区测试路2号', note: '糖果2盒' }],
+    [IMAGE_C, { name: '王五', phone: '13700137000', address: '广州市天河区测试路3号', note: '礼盒1份' }],
+  ]
+  const fingerprints = []
+  for (const [image, expected] of controls) {
+    await uploadImage(page, image)
+    await expectRecipient(page, expected)
+    const status = page.getByTestId('ocr-session-status')
+    await expect(status).toHaveAttribute('data-status', 'success')
+    const metadata = await status.evaluate((element) => ({
+      generation: element.dataset.generation,
+      requestId: element.dataset.requestId,
+      file: element.dataset.fileFingerprint,
+      raw: element.dataset.rawTextFingerprint,
+      parser: element.dataset.parserInputFingerprint,
+    }))
+    expect(metadata.requestId).toContain(`ocr-${metadata.generation}-`)
+    expect(metadata.raw).toBe(metadata.parser)
+    fingerprints.push(metadata.file)
+  }
+  expect(new Set(fingerprints).size).toBe(3)
+})
+
+test('OCR 输入完整性：A 慢响应不能覆盖更晚的 B', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-race=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'loading')
+  await uploadImage(page, IMAGE_B)
+  await expectRecipient(page, { name: '李四', phone: '13900139000', address: '上海市徐汇区测试路2号', note: '糖果2盒' })
+  await page.waitForTimeout(300)
+  await expectRecipient(page, { name: '李四', phone: '13900139000', address: '上海市徐汇区测试路2号', note: '糖果2盒' })
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-generation', '2')
+})
+
+test('OCR 输入完整性：成功后新图片失败不复用旧结果且保留手工值', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-fail-second=1')
+  await uploadImage(page, IMAGE_A)
+  await expectRecipient(page, { name: '张三', phone: '13800138000', address: '北京市朝阳区测试路1号', note: '巧克力1盒' })
+  await recipientFields(page).name.fill('手工保留姓名')
+  await uploadImage(page, IMAGE_B)
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'error')
+  await expectRecipient(page, { name: '手工保留姓名', phone: '', address: '', note: '' })
+  await expect(page.getByText(/图片识别失败/)).toBeVisible()
+})
+
+test('OCR 输入完整性：空 OCR 结果不回退上次成功数据', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-empty-second=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('张三')
+  await uploadImage(page, IMAGE_B)
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'error')
+  await expectRecipient(page, { name: '', phone: '', address: '', note: '' })
+  await expect(page.getByText('未识别到有效信息，请确认照片文字清晰完整')).toBeVisible()
+})
+
+test('OCR 输入完整性：响应关联不匹配时 fail closed', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-mismatch-second=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('张三')
+  await uploadImage(page, IMAGE_B)
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'error')
+  await expectRecipient(page, { name: '', phone: '', address: '', note: '' })
+  await expect(page.getByText(/OCR 响应与当前图片不匹配/)).toBeVisible()
+})
+
+test('OCR 输入完整性：快速 A/B/C/D 切换最终仅 D 可见', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-race=1')
+  await uploadImage(page, IMAGE_A)
+  await uploadImage(page, IMAGE_B)
+  await uploadImage(page, IMAGE_C)
+  await uploadImage(page, IMAGE_D)
+  await expectRecipient(page, { name: '赵六', phone: '13600136000', address: '深圳市南山区测试路4号', note: '饼干1袋' })
+  await page.waitForTimeout(320)
+  await expectRecipient(page, { name: '赵六', phone: '13600136000', address: '深圳市南山区测试路4号', note: '饼干1袋' })
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-generation', '4')
+})
+
+test('OCR 输入完整性：同一文件可重新选择并产生新请求代际', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('张三')
+  const firstRequest = await page.getByTestId('ocr-session-status').getAttribute('data-request-id')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('李四')
+  const status = page.getByTestId('ocr-session-status')
+  await expect(status).toHaveAttribute('data-generation', '2')
+  expect(await status.getAttribute('data-request-id')).not.toBe(firstRequest)
+})
+
+test('OCR 输入完整性：OCR 会话不污染粘贴与语音输入', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.SpeechRecognition = class {
+      start() {
+        queueMicrotask(() => {
+          this.onresult?.({ results: [[{ transcript: '周小雨\n13600000000\n广东省深圳市测试区示例街8号\n测试商品1件' }]] })
+          this.onend?.()
+        })
+      }
+    }
+  })
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('张三')
+  const source = page.getByPlaceholder('「粘贴识别」或输入文本，智能拆分姓名、电话和地址')
+  await source.fill('李四\n13900139000\n上海市徐汇区测试路2号\n糖果2盒')
+  await page.getByRole('button', { name: '粘贴并识别' }).click()
+  await expectRecipient(page, { name: '李四', phone: '13900139000', address: '上海市徐汇区测试路2号', note: '糖果2盒' })
+
+  await uploadImage(page, IMAGE_C)
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-generation', '3')
+  await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'success')
+  await recipientFields(page).name.fill('')
+  await recipientFields(page).phone.fill('')
+  await recipientFields(page).address.fill('')
+  await recipientFields(page).note.fill('')
+  await page.getByRole('button', { name: '语音识别' }).click()
+  await expectRecipient(page, { name: '周小雨', phone: '13600000000', address: '广东省深圳市测试区示例街8号', note: '测试商品1件' })
+})
+
+test('OCR 输入完整性：预填手工字段不被图片识别静默覆盖', async ({ page }) => {
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1')
+  await recipientFields(page).name.fill('手工姓名')
+  await uploadImage(page, IMAGE_A)
+  await expectRecipient(page, { name: '手工姓名', phone: '13800138000', address: '北京市朝阳区测试路1号', note: '巧克力1盒' })
+})
+
+test('OCR 输入完整性：日志不包含识别原文或完整收件字段', async ({ page }) => {
+  const messages = []
+  page.on('console', (message) => messages.push(message.text()))
+  await page.goto('/tests/mailing-harness.html?ocr-sequence=1')
+  await uploadImage(page, IMAGE_A)
+  await expect(recipientFields(page).name).toHaveValue('张三')
+  const output = messages.join('\n')
+  expect(output).not.toContain('13800138000')
+  expect(output).not.toContain('北京市朝阳区测试路1号')
+  expect(output).not.toContain('张三')
+})
+
+test('OCR loading/error 在移动与桌面宽度无横向溢出', async ({ page }) => {
+  for (const width of [320, 340, 375, 390, 430, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/tests/mailing-harness.html?ocr-sequence=1&ocr-delay-second=1')
+    await uploadImage(page, IMAGE_A)
+    await expect(page.getByTestId('ocr-session-status')).toHaveAttribute('data-status', 'success')
+    await uploadImage(page, IMAGE_B)
+    await expect(page.getByRole('button', { name: '识别中…可更换图片' })).toBeVisible()
+    const metrics = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      imageButtonWidth: [...document.querySelectorAll('button')].find((button) => button.textContent.includes('识别中'))?.getBoundingClientRect().width || 0,
+    }))
+    expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewport)
+    expect(metrics.imageButtonWidth).toBeGreaterThanOrEqual(44)
+  }
 })
 
 test('发件记录移动工具栏：日期筛选有明确标签且各宽度无溢出', async ({ page }) => {
