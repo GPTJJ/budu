@@ -40,10 +40,19 @@ export function publicBaseUrl() {
   }
 }
 
-/** CustomerRequest 企微固定收件人。只接受显式 UserID 配置，绝不按姓名推断。 */
-export function customerRequestWecomRecipientUserId() {
+const CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT = 'budu'
+const CUSTOMER_REQUEST_WECOM_USER_ID = 'dh'
+
+/** CustomerRequest 企微固定绑定。只接受精确 BUDU 账号 → UserID 配置，绝不按姓名推断。 */
+export function customerRequestWecomRecipientBinding() {
+  const username = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME || '').trim()
   const userId = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID || '').trim()
-  return /^[A-Za-z0-9._@-]{1,64}$/.test(userId) ? userId : ''
+  if (username !== CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT || userId !== CUSTOMER_REQUEST_WECOM_USER_ID) return null
+  return { username, userId }
+}
+
+export function customerRequestWecomRecipientUserId() {
+  return customerRequestWecomRecipientBinding()?.userId || ''
 }
 
 /** BUDU 站内深链：固定 HTTPS origin，记录 ID 只作为登录后的页面定位提示。 */
@@ -230,7 +239,7 @@ export async function sendWechatPersonal(cfg, binding, { title, content, target,
 /**
  * CustomerRequest 专用企业微信投递。
  * - 站内通知事务提交后调用，失败不回滚业务。
- * - 固定配置 UserID；不查 BUDU 姓名、不查角色、不广播。
+ * - 固定配置 BUDU 账号 → UserID；不查姓名、不查角色、不广播。
  * - 确定性 delivery 主键抢占，HTTP 重试/重复调用/进程重启不会重复发送。
  */
 export async function deliverCustomerRequestWecom({
@@ -244,9 +253,10 @@ export async function deliverCustomerRequestWecom({
   if (!notification?.id || !requestId || !['MAILING', 'INVOICE'].includes(type)) {
     return { ok: false, status: 'skipped', reason: 'invalid customer request delivery event' }
   }
-  const recipientUserId = customerRequestWecomRecipientUserId()
+  const recipientBinding = customerRequestWecomRecipientBinding()
+  const recipientUserId = recipientBinding?.userId || ''
   const deliveryId = `nld-csr-wecom-${crypto.createHash('sha256')
-    .update(`${requestId}\0${type}\0${recipientUserId || 'missing'}`)
+    .update(`${requestId}\0${type}\0${recipientBinding?.username || 'missing'}\0${recipientUserId || 'missing'}`)
     .digest('hex')
     .slice(0, 32)}`
   try {

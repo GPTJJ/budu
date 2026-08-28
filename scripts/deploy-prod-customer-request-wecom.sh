@@ -23,7 +23,7 @@ HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
 WORK_ROOT="$(mktemp -d "/dev/shm/budu-csr-wecom-${SHORT_SHA}.XXXXXX")"
-RECIPIENT_FILE="${WORK_ROOT}/recipient-userid"
+BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
 ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/customer-request-wecom-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
@@ -35,9 +35,9 @@ safe_cleanup() {
   if [ -n "$OLD_CONTAINER" ] && docker inspect "$OLD_CONTAINER" >/dev/null 2>&1; then
     docker exec --user root "$OLD_CONTAINER" rm -f \
       /app/scripts/.resolve-customer-request-wecom-recipient.mjs \
-      /tmp/.customer-request-wecom-recipient >/dev/null 2>&1 || true
+      /tmp/.customer-request-wecom-binding >/dev/null 2>&1 || true
   fi
-  rm -f "$RECIPIENT_FILE" "$RESOLVER_PATH" "$CLONER_PATH" "$BUNDLE_PATH" "$SELF_PATH"
+  rm -f "$BINDING_FILE" "$RESOLVER_PATH" "$CLONER_PATH" "$BUNDLE_PATH" "$SELF_PATH"
   rm -rf "$WORK_ROOT"
 }
 
@@ -158,34 +158,37 @@ verify_database_authority "$OLD_CONTAINER"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
 echo "production authority verified: DB=budu_bj006 migration=48 health=PASS writer=1"
 
-# Resolve the exact directory identity on the trusted production IP. The UserID is
-# written to a protected file and never echoed.
+# Verify the locked BUDU account and exact directory UserID on the trusted production IP.
+# The binding is written to a protected file; no name lookup participates.
 docker cp "$RESOLVER_PATH" "${OLD_CONTAINER}:/app/scripts/.resolve-customer-request-wecom-recipient.mjs" >/dev/null
-docker exec "$OLD_CONTAINER" node /app/scripts/.resolve-customer-request-wecom-recipient.mjs /tmp/.customer-request-wecom-recipient
-docker cp "${OLD_CONTAINER}:/tmp/.customer-request-wecom-recipient" "$RECIPIENT_FILE" >/dev/null
-docker exec --user root "$OLD_CONTAINER" rm -f /app/scripts/.resolve-customer-request-wecom-recipient.mjs /tmp/.customer-request-wecom-recipient
-chmod 600 "$RECIPIENT_FILE"
-RECIPIENT_FILE="$RECIPIENT_FILE" python3 - <<'PY'
-import os, pathlib, re
-value = pathlib.Path(os.environ['RECIPIENT_FILE']).read_text(encoding='utf-8').strip()
-if not re.fullmatch(r'[A-Za-z0-9._@-]{1,64}', value):
-    raise SystemExit('RESOLVED_RECIPIENT_INVALID')
+docker exec "$OLD_CONTAINER" node /app/scripts/.resolve-customer-request-wecom-recipient.mjs /tmp/.customer-request-wecom-binding
+docker cp "${OLD_CONTAINER}:/tmp/.customer-request-wecom-binding" "$BINDING_FILE" >/dev/null
+docker exec --user root "$OLD_CONTAINER" rm -f /app/scripts/.resolve-customer-request-wecom-recipient.mjs /tmp/.customer-request-wecom-binding
+chmod 600 "$BINDING_FILE"
+BINDING_FILE="$BINDING_FILE" python3 - <<'PY'
+import json, os, pathlib
+binding = json.loads(pathlib.Path(os.environ['BINDING_FILE']).read_text(encoding='utf-8'))
+if binding != {'username': 'budu', 'userId': 'dh'}:
+    raise SystemExit('RESOLVED_BINDING_INVALID')
 PY
 
 mkdir -p "$ROLLBACK_ROOT"
 chmod 700 "$ROLLBACK_ROOT"
 cp "$ENV_FILE" "${ROLLBACK_ROOT}/env.production.pre-wecom"
 chmod 600 "${ROLLBACK_ROOT}/env.production.pre-wecom"
-ENV_FILE="$ENV_FILE" RECIPIENT_FILE="$RECIPIENT_FILE" python3 - <<'PY'
-import os, pathlib, re, tempfile
+ENV_FILE="$ENV_FILE" BINDING_FILE="$BINDING_FILE" python3 - <<'PY'
+import json, os, pathlib, tempfile
 path = pathlib.Path(os.environ['ENV_FILE'])
-recipient = pathlib.Path(os.environ['RECIPIENT_FILE']).read_text(encoding='utf-8').strip()
-if not re.fullmatch(r'[A-Za-z0-9._@-]{1,64}', recipient):
-    raise SystemExit('RECIPIENT_INVALID')
+binding = json.loads(pathlib.Path(os.environ['BINDING_FILE']).read_text(encoding='utf-8'))
+if binding != {'username': 'budu', 'userId': 'dh'}:
+    raise SystemExit('BINDING_INVALID')
 lines = path.read_text(encoding='utf-8').splitlines()
-key = 'CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID'
-lines = [line for line in lines if not line.startswith(f'{key}=')]
-lines.append(f'{key}={recipient}')
+mapping = {
+    'CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME': binding['username'],
+    'CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID': binding['userId'],
+}
+lines = [line for line in lines if not any(line.startswith(f'{key}=') for key in mapping)]
+lines.extend(f'{key}={value}' for key, value in mapping.items())
 fd, temp_name = tempfile.mkstemp(prefix='.env.production.', dir=str(path.parent), text=True)
 with os.fdopen(fd, 'w', encoding='utf-8') as handle:
     handle.write('\n'.join(lines) + '\n')
@@ -193,7 +196,7 @@ os.chmod(temp_name, path.stat().st_mode & 0o777)
 os.replace(temp_name, path)
 PY
 ENV_CHANGED=1
-echo "fixed WeCom recipient mapping verified and installed"
+echo "stable CustomerRequest binding budu -> dh verified and installed"
 
 git clone -q "$BUNDLE_PATH" "${WORK_ROOT}/release"
 [ "$(git -C "${WORK_ROOT}/release" rev-parse HEAD)" = "$RELEASE_SHA" ] || { echo "release bundle SHA mismatch" >&2; exit 1; }
@@ -212,7 +215,7 @@ PY
 )"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
-python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$RECIPIENT_FILE" "$COMMON_NETWORK" disabled
+python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 verify_database_authority "$CANDIDATE"
 
@@ -251,7 +254,7 @@ docker stop -t 20 "$CANDIDATE" >/dev/null
 docker rm "$CANDIDATE" >/dev/null
 docker stop -t 20 "$OLD_CONTAINER" >/dev/null
 OLD_STOPPED=1
-python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$RECIPIENT_FILE" "$COMMON_NETWORK" preserve
+python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 verify_database_authority "$CANDIDATE"

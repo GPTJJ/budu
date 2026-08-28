@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 
 process.env.PUBLIC_BASE_URL = 'https://budu.example'
 
 const {
   _resetWechatTokenCaches,
+  customerRequestWecomRecipientBinding,
   customerRequestWecomRecipientUserId,
   deliverCustomerRequestWecom,
   notificationDeepLink,
@@ -42,11 +44,12 @@ function installFetch({ timeout = false } = {}) {
   return { calls, restore: () => { global.fetch = original } }
 }
 
-function setWecomEnv(recipient = 'hudonghui-exact-userid') {
+function setWecomEnv(username = 'budu', userId = 'dh') {
   process.env.WXWORK_CORP_ID = 'ww-test'
   process.env.WXWORK_AGENT_ID = '1000002'
   process.env.WXWORK_SECRET = 'test-secret'
-  process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID = recipient
+  process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME = username
+  process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID = userId
 }
 
 const notificationFor = (type) => ({
@@ -76,7 +79,8 @@ for (const type of ['MAILING', 'INVOICE']) {
       assert.equal(first.recipientCount, 1)
       const sends = fetchMock.calls.filter((call) => call.href.includes('/message/send'))
       assert.equal(sends.length, 1)
-      assert.equal(sends[0].body.touser, 'hudonghui-exact-userid')
+      assert.deepEqual(customerRequestWecomRecipientBinding(), { username: 'budu', userId: 'dh' })
+      assert.equal(sends[0].body.touser, 'dh')
       assert.equal(sends[0].body.touser.includes('|'), false)
       const link = new URL(sends[0].body.textcard.url)
       assert.equal(link.origin, 'https://budu.example')
@@ -132,13 +136,18 @@ test('provider timeout is recorded as failed without leaking token or secret', a
   }
 })
 
-test('missing or name-shaped recipient config fails closed without provider call', async () => {
-  setWecomEnv('胡东辉')
+test('missing or mismatched stable binding fails closed without provider call', async () => {
+  setWecomEnv('another-account', 'dh')
   _resetWechatTokenCaches()
   const fetchMock = installFetch()
   const prisma = fakePrisma()
   try {
     assert.equal(customerRequestWecomRecipientUserId(), '')
+    setWecomEnv('budu', 'another-user-id')
+    assert.equal(customerRequestWecomRecipientBinding(), null)
+    setWecomEnv('', '')
+    assert.equal(customerRequestWecomRecipientBinding(), null)
+    setWecomEnv('another-account', 'dh')
     const result = await deliverCustomerRequestWecom({
       prismaClient: prisma,
       notification: notificationFor('MAILING'),
@@ -154,6 +163,22 @@ test('missing or name-shaped recipient config fails closed without provider call
     fetchMock.restore()
     _resetWechatTokenCaches()
   }
+})
+
+test('CustomerRequest routing contains no name, employee, role or directory-search authority', () => {
+  const notificationSource = fs.readFileSync(new URL('../server/notification-center.js', import.meta.url), 'utf8')
+  const resolverSource = fs.readFileSync(new URL('./resolve-customer-request-wecom-recipient.mjs', import.meta.url), 'utf8')
+  const deliverySource = notificationSource.slice(
+    notificationSource.indexOf('export async function deliverCustomerRequestWecom'),
+    notificationSource.indexOf('/** 企业微信自建应用消息'),
+  )
+  for (const source of [deliverySource, resolverSource]) {
+    for (const forbidden of ['displayName', 'employee.find', 'getuserid', 'mobile', 'developer', 'finance', 'manager']) {
+      assert.equal(source.includes(forbidden), false, `forbidden routing authority: ${forbidden}`)
+    }
+  }
+  assert.equal(resolverSource.includes("where: { username: BUDU_USERNAME, disabledAt: null }"), true)
+  assert.equal(resolverSource.includes("detailUrl.searchParams.set('userid', WECOM_USER_ID)"), true)
 })
 
 test('record deep link is consumed into the existing authenticated focus contract', async () => {

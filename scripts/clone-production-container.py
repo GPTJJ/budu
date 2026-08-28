@@ -2,27 +2,28 @@
 """Create an unrouted production candidate from an existing API container.
 
 The script preserves the authoritative runtime environment and mounts without
-printing their values. Only the release SHA, fixed CustomerRequest recipient,
+printing their values. Only the release SHA, fixed CustomerRequest binding,
 payment-worker mode, name, image, and network are changed.
 """
 import json
 import pathlib
-import re
 import subprocess
 import sys
 
 
 if len(sys.argv) != 8:
     raise SystemExit(
-        "usage: clone-production-container.py CURRENT CANDIDATE IMAGE SHA RECIPIENT_FILE NETWORK PAYMENT_MODE"
+        "usage: clone-production-container.py CURRENT CANDIDATE IMAGE SHA BINDING_FILE NETWORK PAYMENT_MODE"
     )
 
-current, candidate, image, release_sha, recipient_path, network, payment_mode = sys.argv[1:]
+current, candidate, image, release_sha, binding_path, network, payment_mode = sys.argv[1:]
 if payment_mode not in {"disabled", "preserve"}:
     raise SystemExit("PAYMENT_MODE_INVALID")
-recipient = pathlib.Path(recipient_path).read_text(encoding="utf-8").strip()
-if not re.fullmatch(r"[A-Za-z0-9._@-]{1,64}", recipient):
-    raise SystemExit("RECIPIENT_USER_ID_INVALID")
+binding = json.loads(pathlib.Path(binding_path).read_text(encoding="utf-8"))
+username = binding.get("username")
+user_id = binding.get("userId")
+if username != "budu" or user_id != "dh":
+    raise SystemExit("RECIPIENT_BINDING_INVALID")
 
 raw = subprocess.check_output(["docker", "inspect", current], text=True)
 source = json.loads(raw)[0]
@@ -32,7 +33,8 @@ for item in source["Config"].get("Env") or []:
     if separator:
         env[key] = value
 env["GIT_SHA"] = release_sha
-env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID"] = recipient
+env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME"] = username
+env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID"] = user_id
 if payment_mode == "disabled":
     env["WECHAT_PAY_ENABLED"] = "0"
 

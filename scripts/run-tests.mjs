@@ -194,6 +194,7 @@ const STRIPPED_ENV_KEYS = [
   'SENTRY_DSN', 'VITE_SENTRY_DSN',
   // 其他外部服务
   'PUBLIC_BASE_URL',
+  'CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME',
   // 随机种子/环境密钥（避免测试继承生产 JWT 等）
   'JWT_SECRET',
 ]
