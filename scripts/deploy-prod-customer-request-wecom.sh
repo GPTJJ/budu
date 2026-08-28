@@ -261,7 +261,9 @@ path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
 BACKUP_NAME="budu_bj006-migration48-pre-mailing-qr-${SHORT_SHA}.dump"
-docker create --name "$BACKUP_CONTAINER" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
+# Write the dump as the invoking deployment user so the protected host-side
+# rollback copy can be permission-locked without requiring privileged chmod.
+docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
   sh -c 'pg_dump "$PGURI" --format=custom --no-owner --file="/backup/$BACKUP_NAME"' >/dev/null
 while IFS= read -r backup_network; do
   [ -n "$backup_network" ] || continue
