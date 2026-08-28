@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
-  ArrowLeft, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Loader2, Mic, PackageCheck, Plus, ScanText, Send, Sparkles,
+  ArrowLeft, CalendarDays, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Loader2, Mic, PackageCheck, Plus, Send, Sparkles,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { parseRecipientText } from '../utils/addressParser'
+import { mergeRecipientFields, parseRecipientText } from '../utils/addressParser'
 import qrUrl from '../assets/mailing-qr.jpg'
 
 const STORAGE_KEY = 'budu-store-mailing'
@@ -151,19 +151,26 @@ export default function StoreMailingPage({ onBack }) {
   const recognitionRef = useRef(null)
 
   const applyParsed = (text) => {
-    const { name, phone: parsedPhone, address: parsedAddress, matched } = parseRecipientText(text)
+    const parsed = parseRecipientText(text)
+    const { recipientName, phone: parsedPhone, address: parsedAddress, note: parsedNote, matched } = parsed
     if (!matched) {
       setRecognizeHint('未能从文本中识别出收件信息，请检查后重试或手动填写')
       return
     }
-    if (name) setRecipient((v) => v || name)
-    if (parsedPhone) setPhone((v) => v || parsedPhone)
-    if (parsedAddress) setAddress((v) => v || parsedAddress)
+    const merged = mergeRecipientFields(
+      { recipientName: recipient, phone, address, note: remark },
+      parsed,
+    )
+    setRecipient(merged.recipientName)
+    setPhone(merged.phone)
+    setAddress(merged.address)
+    setRemark(merged.note)
     const parts = []
-    if (name) parts.push(`姓名「${name}」`)
-    if (parsedPhone) parts.push(`电话「${parsedPhone}」`)
-    if (parsedAddress) parts.push(`地址「${parsedAddress}」`)
-    setRecognizeHint(`已识别${parts.join('、')}（空字段已自动填入）`)
+    if (recipientName) parts.push('姓名')
+    if (parsedPhone) parts.push('电话')
+    if (parsedAddress) parts.push('地址')
+    if (parsedNote) parts.push('备注')
+    setRecognizeHint(`已识别${parts.join('、')}（仅填充空字段）`)
     setRecognizeText('')
   }
 
@@ -404,23 +411,24 @@ export default function StoreMailingPage({ onBack }) {
 
           {/* 智能识别：粘贴/图片/语音 → 拆分姓名电话地址 */}
           <div className="space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <Sparkles className="h-4 w-4 text-budu-600" />
               <p className="text-sm font-bold text-slate-700">智能识别收件信息</p>
-              <span className="text-[11px] text-slate-400">粘贴或说出「姓名+电话+地址」，自动拆分填入</span>
+              <span className="w-full text-[11px] text-slate-400 sm:w-auto">粘贴或说出「姓名+电话+地址+备注」，自动拆分填入</span>
             </div>
-            <div className="flex gap-2">
-              <input
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <textarea
                 value={recognizeText}
                 onChange={(e) => setRecognizeText(e.target.value)}
                 placeholder="「粘贴识别」或输入文本，智能拆分姓名、电话和地址"
-                className={`${fieldCls} flex-1`}
+                rows={3}
+                className={`${fieldCls} min-h-[84px] min-w-0 flex-1 resize-y sm:min-h-[72px]`}
               />
               <button
                 type="button"
                 onClick={handlePasteRecognize}
                 disabled={recognizeBusy !== ''}
-                className="btn-primary h-10 shrink-0 px-3"
+                className="btn-primary h-11 shrink-0 whitespace-nowrap px-3 sm:h-10"
               >
                 <ClipboardPaste className="h-4 w-4" />
                 粘贴并识别
@@ -474,7 +482,7 @@ export default function StoreMailingPage({ onBack }) {
                 <button
                   type="button"
                   onClick={() => handleCopy('address', address)}
-                  className="btn-secondary h-10 shrink-0 px-3"
+                  className="btn-secondary h-11 w-11 shrink-0 p-0 sm:h-10 sm:w-10"
                   aria-label="复制收件地址"
                 >
                   {copied === 'address' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -494,7 +502,7 @@ export default function StoreMailingPage({ onBack }) {
                 <button
                   type="button"
                   onClick={() => handleCopy('recipient', recipient)}
-                  className="btn-secondary h-10 shrink-0 px-3"
+                  className="btn-secondary h-11 w-11 shrink-0 p-0 sm:h-10 sm:w-10"
                   aria-label="复制收件人"
                 >
                   {copied === 'recipient' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -515,7 +523,7 @@ export default function StoreMailingPage({ onBack }) {
                 <button
                   type="button"
                   onClick={() => handleCopy('phone', phone)}
-                  className="btn-secondary h-10 shrink-0 px-3"
+                  className="btn-secondary h-11 w-11 shrink-0 p-0 sm:h-10 sm:w-10"
                   aria-label="复制联系方式"
                 >
                   {copied === 'phone' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -536,7 +544,7 @@ export default function StoreMailingPage({ onBack }) {
                 <button
                   type="button"
                   onClick={() => handleCopy('remark', remark)}
-                  className="btn-secondary h-10 shrink-0 px-3"
+                  className="btn-secondary h-11 w-11 shrink-0 p-0 sm:h-10 sm:w-10"
                   aria-label="复制备注"
                 >
                   {copied === 'remark' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
@@ -575,13 +583,15 @@ export default function StoreMailingPage({ onBack }) {
 
       {/* 发件记录 */}
       <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-          <h3 className="text-[15px] font-semibold text-slate-900">发件记录</h3>
-          <span className="rounded-lg bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-            待发货 {pendingRecords.length} 条
-          </span>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-medium">
+        <div data-testid="mailing-record-toolbar" className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 lg:flex-row lg:items-center">
+          <div className="flex items-center justify-between gap-3 lg:justify-start">
+            <h3 className="text-[15px] font-semibold text-slate-900">发件记录</h3>
+            <span className="shrink-0 rounded-lg bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+              待发货 {pendingRecords.length} 条
+            </span>
+          </div>
+          <div className="grid min-w-0 grid-cols-2 gap-2 lg:ml-auto lg:flex lg:w-auto lg:items-end">
+            <div className="col-span-2 grid grid-cols-2 rounded-lg bg-slate-100 p-1 text-xs font-medium lg:inline-flex">
               <button type="button" onClick={() => setActiveTab('pending')} className={tabCls('pending')}>
                 待发货（{pendingRecords.length}）
               </button>
@@ -589,9 +599,15 @@ export default function StoreMailingPage({ onBack }) {
                 已发货（{shippedRecords.length}）
               </button>
             </div>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="input w-auto" aria-label="开始日期" />
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="input w-auto" aria-label="结束日期" />
-            <button type="button" onClick={handleExport} disabled={visibleRecords.length === 0} className="btn-secondary px-3 py-2">
+            <label className="min-w-0 text-[11px] font-medium text-slate-500">
+              <span className="mb-1 flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />开始日期</span>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="input min-w-0 w-full text-xs" aria-label="开始日期" />
+            </label>
+            <label className="min-w-0 text-[11px] font-medium text-slate-500">
+              <span className="mb-1 flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />结束日期</span>
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="input min-w-0 w-full text-xs" aria-label="结束日期" />
+            </label>
+            <button type="button" onClick={handleExport} disabled={visibleRecords.length === 0} className="btn-secondary col-span-2 min-h-11 w-full whitespace-nowrap px-3 py-2 lg:w-auto">
               {exportDone ? <Check className="h-4 w-4 text-emerald-600" /> : <FileSpreadsheet className="h-4 w-4" />}
               {exportDone ? '已导出' : '导出 Excel'}
             </button>
