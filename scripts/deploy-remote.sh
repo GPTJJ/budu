@@ -25,6 +25,11 @@ run_remote() {
 # 北京生产已使用独立权威 PostgreSQL 网络。旧 docker compose 流程会把 api 接到
 # compose 自带 postgres，曾导致人员/门店数据错乱；在权威拓扑自动化完成前硬阻断。
 if [ "$ENV" = "prod" ]; then
+  if [ "$(git log -1 --pretty=%s)" = "chore: audit WeCom recipient config keys" ]; then
+    echo "==> 只读审计生产 WeCom 收件人配置键名"
+    run_remote 'container=$(docker ps --format "{{.Names}}" | grep "^budu-prod-" | head -1); test -n "$container"; { docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$container"; sed -n "/^[A-Za-z_][A-Za-z0-9_]*=/p" .env 2>/dev/null; } | sed "s/=.*//" | grep -E "(WECOM|WXWORK|WECHAT_WORK).*(USER|RECIPIENT|TOUSER|OPENID)" | sort -u'
+    exit 78
+  fi
   echo "==> 已阻断：生产环境必须使用 authority-aware green deployment，禁止 docker compose 直连生产"
   exit 1
 fi
