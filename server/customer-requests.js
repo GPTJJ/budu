@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { listUsers } from './user-store.js'
-import { publicBaseUrl, pushWechat } from './notification-center.js'
+import { deliverCustomerRequestWecom, publicBaseUrl } from './notification-center.js'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
 import {
   CUSTOMER_REQUEST_STATUS,
@@ -306,13 +306,32 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
       await tx.notificationDelivery.create({
         data: { id: uid('nld'), notificationId: notification.id, channel: 'inapp', status: 'sent' },
       })
-      return { type: tokenRow.request.type, notification }
+      const store = await tx.store.findUnique({
+        where: { key: tokenRow.request.storeKey },
+        select: { name: true },
+      })
+      return {
+        type: tokenRow.request.type,
+        requestId: tokenRow.request.id,
+        storeName: store?.name || tokenRow.request.storeKey,
+        submittedAt: now,
+        notification,
+      }
     })
   } catch (error) {
     if (error?.code === 'P2034') throw httpError('该资料已经提交，请勿重复提交', 409)
     throw error
   }
-  pushWechat(committed.notification, committed.notification.title, committed.notification.content, committed.notification.target).catch(() => {})
+  deliverCustomerRequestWecom({
+    prismaClient,
+    notification: committed.notification,
+    requestId: committed.requestId,
+    type: committed.type,
+    storeName: committed.storeName,
+    submittedAt: committed.submittedAt,
+  }).catch(() => {
+    console.error('[customer-request-wecom] delivery failed')
+  })
   return { ok: true, type: committed.type, status: CUSTOMER_REQUEST_STATUS.SUBMITTED }
 }
 

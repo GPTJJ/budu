@@ -29,6 +29,28 @@ export function prepareApprovalScope(notification) {
 
 const FOCUS_KEY = 'budu-notification-record-focus'
 
+/** 登录后的企微深链入口。查询参数只选择已授权页面并定位记录，不承担鉴权。 */
+export function consumeNotificationDeepLink(canOpen = () => true) {
+  if (typeof window === 'undefined') return ''
+  const params = new URLSearchParams(window.location.search)
+  const target = String(params.get('nav') || '')
+  const refType = String(params.get('refType') || '')
+  const refId = String(params.get('refId') || '')
+  if (!['store-mailing', 'finance-invoice'].includes(target) || !/^[A-Za-z0-9._:-]{1,160}$/.test(refId)) return ''
+  params.delete('nav')
+  params.delete('refType')
+  params.delete('refId')
+  const query = params.toString()
+  window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+  if (!canOpen(target)) return ''
+  try {
+    sessionStorage.setItem(FOCUS_KEY, JSON.stringify({ target, refType, refId }))
+  } catch {
+    /* Safari 隐私模式下不阻塞页面跳转 */
+  }
+  return target
+}
+
 export function prepareNotificationRecordFocus(notification) {
   if (!notification?.target || !notification?.refId) return
   const detail = {
