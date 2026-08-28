@@ -112,8 +112,8 @@ try {
   console.log('  [工资调整] staff-A 只读 emp-A PASS')
 
   await prisma.payrollNotice.createMany({ data: [
-    { id: 'pn-A', employeeId: 'emp-A', periodType: 'month', periodKey: '2026-08', employeeName: '张伟', storeKey: 'guanshe', targetUsername: 'staff-A', snapshot: { days: [], summary: {} }, totalCents: 26400n, status: 'pending' },
-    { id: 'pn-B', employeeId: 'emp-B', periodType: 'month', periodKey: '2026-08', employeeName: '张伟', storeKey: 'guanshe', targetUsername: 'staff-B', snapshot: { days: [], summary: {} }, totalCents: 19800n, status: 'pending' },
+    { id: 'pn-A', employeeId: 'emp-A', periodType: 'month', periodKey: '2026-08', periodStart: new Date('2026-08-01T00:00:00.000Z'), periodEnd: new Date('2026-08-31T00:00:00.000Z'), employeeName: '张伟', storeKey: 'guanshe', targetUsername: 'staff-A', snapshot: { days: [], summary: {} }, totalCents: 26400n, status: 'pending' },
+    { id: 'pn-B', employeeId: 'emp-B', periodType: 'month', periodKey: '2026-08', periodStart: new Date('2026-08-01T00:00:00.000Z'), periodEnd: new Date('2026-08-31T00:00:00.000Z'), employeeName: '张伟', storeKey: 'guanshe', targetUsername: 'staff-B', snapshot: { days: [], summary: {} }, totalCents: 19800n, status: 'pending' },
   ] })
   const notices = await (await request(base, '/v2/payroll-notices', { cookie: cookieA })).json()
   assert.deepEqual(notices.rows.map((row) => row.employeeId), ['emp-A'])

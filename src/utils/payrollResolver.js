@@ -1,5 +1,5 @@
 /**
- * Gate 23：统一 payroll 计算 resolver（纯函数，PURE RESOLVER ONLY，零 live 消费）。
+ * MONTH / WEEK / CUSTOM 统一 payroll 日期范围 resolver（纯函数）。
  *
  * 组合三个已验收组件，让未来 live 消费者不自行决定走哪条计算路径：
  *   1. evaluatePayrollReadiness()  → 月就绪度（计算/发放双维度）
@@ -16,26 +16,29 @@
  */
 
 import { evaluatePayrollReadiness } from './payrollReadiness.js'
-import { calculateEmployeeIdShadowPayroll } from './payrollShadowCalculator.js'
+import { calculateEmployeeIdRangePayroll } from './payrollShadowCalculator.js'
 import { monthlyPayrollFromEntries } from './payroll.js'
 import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
 import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
+import { isDateInPayrollRange, resolvePayrollPeriod } from './payrollPeriod.js'
 
 const SUBSTITUTE_DENOMINATOR_PREFIX = '__BUDU_NON_EMPLOYEE_SUBSTITUTE__:'
 
-function contributionRowsForMonth(rows, month) {
-  return rows.filter((row) => String(row?.date || '').slice(0, 7) === month && Boolean(row?.employeeId))
+function contributionRowsForRange(rows, period) {
+  return rows.filter((row) => (
+    isDateInPayrollRange(row?.date, period.periodStart, period.periodEnd) && Boolean(row?.employeeId)
+  ))
 }
 
-function evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, month) {
+function evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, period) {
   const input = buildEmployeePayrollDayInputs(entries, staffRows)
-  const inMonth = (row) => String(row?.date || '').slice(0, 7) === month
-  const stableRows = input.stableRows.filter(inMonth)
-  const legacyCompatibleRows = input.legacyCompatibleRows.filter(inMonth)
-  const legacyUnknownRows = input.legacyUnknownRows.filter(inMonth)
-  const substituteRows = input.substituteRows.filter(inMonth)
-  const stableAdjustmentRows = contributionRowsForMonth(adjustments, month)
-  const stableBonusRows = contributionRowsForMonth(bonuses, month)
+  const inRange = (row) => isDateInPayrollRange(row?.date, period.periodStart, period.periodEnd)
+  const stableRows = input.stableRows.filter(inRange)
+  const legacyCompatibleRows = input.legacyCompatibleRows.filter(inRange)
+  const legacyUnknownRows = input.legacyUnknownRows.filter(inRange)
+  const substituteRows = input.substituteRows.filter(inRange)
+  const stableAdjustmentRows = contributionRowsForRange(adjustments, period)
+  const stableBonusRows = contributionRowsForRange(bonuses, period)
 
   let mode = 'NONE'
   if (stableRows.length > 0 && legacyCompatibleRows.length > 0) mode = 'MIXED_ATTENDANCE_AUTHORITY'
@@ -56,7 +59,7 @@ function evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, m
   }
 }
 
-function compatibleLegacyEntries(entries, staffRows, employees) {
+function compatibleLegacyEntries(entries, staffRows, employees, period) {
   const duplicateNames = new Set()
   const nameCounts = new Map()
   for (const employee of employees) {
@@ -67,6 +70,7 @@ function compatibleLegacyEntries(entries, staffRows, employees) {
 
   const namesByStoreDate = new Map()
   for (const row of staffRows) {
+    if (!isDateInPayrollRange(row?.date, period.periodStart, period.periodEnd)) continue
     const participantType = row?.participantType
     const isCompatible = participantType === PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE
     const isSubstitute = participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE
@@ -94,6 +98,7 @@ function compatibleLegacyEntries(entries, staffRows, employees) {
     const parts = key.split('|')
     if (parts.length !== 3) continue
     const date = `${parts[0]}-${String(parts[2]).slice(3)}`
+    if (!isDateInPayrollRange(date, period.periodStart, period.periodEnd)) continue
     const names = namesByStoreDate.get(`${parts[1]}|${date}`)
     if (names?.length) safe[key] = { ...value, staff: names }
   }
@@ -155,13 +160,13 @@ function mergeBlockers(...groups) {
 }
 
 /**
- * 解析某月（YYYY-MM）payroll 计算。
+ * 解析规范化 payroll 日期范围。旧 `{ month: 'YYYY-MM' }` 输入保持整月兼容。
  * @param {object} input 同 evaluatePayrollReadiness 输入 + 可选 storeNames
  * @returns {object} { month, mode, attendanceMode, calculationReady, issueReady, readiness, payroll, blockers }
  */
 export function resolvePayrollCalculation(input) {
-  const month = String(input?.month || '')
-  const isMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+  const period = resolvePayrollPeriod(input)
+  const month = period.month || String(input?.month || '')
   const entries = input?.dailyEntries && typeof input.dailyEntries === 'object' ? input.dailyEntries : {}
   const staffRows = Array.isArray(input?.dailyStoreStaffRows) ? input.dailyStoreStaffRows : []
   const adjustments = Array.isArray(input?.dailyPayAdjustments) ? input.dailyPayAdjustments : []
@@ -172,22 +177,32 @@ export function resolvePayrollCalculation(input) {
 
   // ---- 1) 就绪度 ----
   const readiness = evaluatePayrollReadiness(input)
-  const authority = evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, month)
+  if (!period.valid) {
+    return {
+      month,
+      periodType: '', periodKey: '', periodStart: '', periodEnd: '',
+      mode: 'EMPLOYEE_ID', attendanceMode: 'NONE', calculationReady: false, issueReady: false,
+      readiness,
+      payroll: { employees: [], unresolvedDays: [], coverage: readiness.coverage },
+      blockers: readiness.calculationBlockers,
+    }
+  }
+  const authority = evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, period)
 
   // ---- 2) Employee.id attendance / adjustment-only ----
   // Stable contributions never select the attendance engine. Adjustment-only is
   // the one explicit no-attendance exception; bonus-only remains unsupported.
   if (authority.mode === 'EMPLOYEE_ID' || authority.mode === 'ADJUSTMENT_ONLY') {
-    // Gate 26：month 传给 calculator——稳定调整仅日贡献严格限定在请求月内
-    const shadow = calculateEmployeeIdShadowPayroll(entries, staffRows, bonuses, adjustments, month, storeNames)
+    const shadow = calculateEmployeeIdRangePayroll(entries, staffRows, bonuses, adjustments, period, storeNames)
     const attendanceCoverage = stableAttendanceCoverage(authority, shadow)
     const coverageBlockers = attendanceCoverage.missing.length > 0
       ? [{ type: 'CALCULATION_BLOCKER', reason: 'PAYROLL_SUBJECT_COVERAGE_INCOMPLETE', detail: `缺失 ${attendanceCoverage.missing.length} 个稳定考勤身份日`, missing: attendanceCoverage.missing }]
       : []
     const blockers = mergeBlockers(readiness.calculationBlockers, readiness.issueBlockers, coverageBlockers)
-    const calculationReady = isMonth && readiness.calculationReady && coverageBlockers.length === 0
+    const calculationReady = readiness.calculationReady && coverageBlockers.length === 0
     return {
       month,
+      ...period,
       mode: 'EMPLOYEE_ID',
       attendanceMode: authority.mode,
       calculationReady,
@@ -202,10 +217,11 @@ export function resolvePayrollCalculation(input) {
   // Fail closed with an empty positive-payroll output and complete diagnostics.
   if (authority.mode === 'LEGACY_UNKNOWN' || authority.mode === 'MIXED_ATTENDANCE_AUTHORITY') {
     const explicit = authority.mode === 'MIXED_ATTENDANCE_AUTHORITY'
-      ? { type: 'CALCULATION_BLOCKER', reason: 'MIXED_ATTENDANCE_AUTHORITY', detail: `${month} 同时存在稳定与 legacy-compatible 考勤` }
-      : { type: 'CALCULATION_BLOCKER', reason: 'LEGACY_UNKNOWN_PARTICIPANT', detail: `${month} 存在身份未知的考勤参与者` }
+      ? { type: 'CALCULATION_BLOCKER', reason: 'MIXED_ATTENDANCE_AUTHORITY', detail: `${period.periodStart}～${period.periodEnd} 同时存在稳定与 legacy-compatible 考勤` }
+      : { type: 'CALCULATION_BLOCKER', reason: 'LEGACY_UNKNOWN_PARTICIPANT', detail: `${period.periodStart}～${period.periodEnd} 存在身份未知的考勤参与者` }
     return {
       month,
+      ...period,
       mode: authority.stableRows.length > 0 ? 'EMPLOYEE_ID' : 'LEGACY',
       attendanceMode: authority.mode,
       calculationReady: false,
@@ -227,8 +243,8 @@ export function resolvePayrollCalculation(input) {
   }
 
   // ---- 3) legacy 兼容输出（公式零改动；不合成 Employee.id；issueReady 恒 false）----
-  const safeLegacyEntries = compatibleLegacyEntries(entries, staffRows, employees)
-  const legacy = isMonth
+  const safeLegacyEntries = compatibleLegacyEntries(entries, staffRows, employees, period)
+  const legacy = period.periodType === 'month'
     ? monthlyPayrollFromEntries(safeLegacyEntries, month, storeNames)
     : new Map()
   const legacyRows = [...legacy.values()]
@@ -251,11 +267,12 @@ export function resolvePayrollCalculation(input) {
     : []
   const stableContributionBlockers = authority.mode === 'LEGACY_COMPATIBLE'
     && (authority.stableAdjustmentRows.length > 0 || authority.stableBonusRows.length > 0)
-    ? [{ type: 'CALCULATION_BLOCKER', reason: 'STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE', detail: `${month} 稳定贡献无法在无身份桥接时安全合并至 legacy-compatible 考勤` }]
+    ? [{ type: 'CALCULATION_BLOCKER', reason: 'STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE', detail: `${period.periodStart}～${period.periodEnd} 稳定贡献无法在无身份桥接时安全合并至 legacy-compatible 考勤` }]
     : []
 
   return {
     month,
+    ...period,
     mode: 'LEGACY',
     attendanceMode: authority.mode,
     calculationReady: false,

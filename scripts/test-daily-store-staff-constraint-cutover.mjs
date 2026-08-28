@@ -16,6 +16,7 @@ const POST_GATE16_MIGRATIONS = [
   '20260824000011_payroll_notice_employee_subject',
   '20260824000012_payroll_participant_authority',
   '20260827000013_historical_payable_hours_authority',
+  '20260828000014_payroll_notice_period_range',
 ]
 
 async function dropSchema(schema) {

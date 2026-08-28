@@ -1,5 +1,5 @@
 /**
- * Gate 22：payroll 月就绪度评估（纯函数，READINESS ONLY，零 live 消费）。
+ * Payroll 日期范围就绪度评估（纯函数，READINESS ONLY，零 live 消费）。
  *
  * 分离两个独立维度：
  * - CALCULATION READINESS：Employee.id-native 计算所需的金钱/考勤输入能否无身份猜测地表示。
@@ -11,12 +11,14 @@
  */
 
 import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
+import { isDateInPayrollRange, resolvePayrollPeriod } from './payrollPeriod.js'
 
 const CALC = 'CALCULATION_BLOCKER'
 const ISSUE = 'ISSUE_BLOCKER'
 
 /**
- * 评估某月（YYYY-MM）的 payroll 就绪度。
+ * 评估规范化闭区间的 payroll 就绪度。旧 month 输入仍严格映射为整月，
+ * 作为 MONTH 回归兼容接口。
  *
  * @param {object} input
  * @param {string} input.month YYYY-MM（显式；不做"当前缓存月"回退）
@@ -29,8 +31,8 @@ const ISSUE = 'ISSUE_BLOCKER'
  * @returns {object} { month, calculationReady, issueReady, calculationBlockers, issueBlockers, coverage, employees }
  */
 export function evaluatePayrollReadiness(input) {
-  const month = String(input?.month || '')
-  const isMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+  const period = resolvePayrollPeriod(input)
+  const month = period.month || String(input?.month || '')
   const entries = input?.dailyEntries && typeof input.dailyEntries === 'object' ? input.dailyEntries : {}
   const staffRows = Array.isArray(input?.dailyStoreStaffRows) ? input.dailyStoreStaffRows : []
   const adjustments = Array.isArray(input?.dailyPayAdjustments) ? input.dailyPayAdjustments : []
@@ -46,11 +48,12 @@ export function evaluatePayrollReadiness(input) {
     reasonCounts[reason] = (reasonCounts[reason] || 0) + 1
   }
 
-  if (!isMonth) {
-    calculationBlockers.push({ type: CALC, reason: 'INVALID_MONTH', detail: `月份格式应为 YYYY-MM，收到 "${month}"` })
-    bump('INVALID_MONTH')
+  if (!period.valid) {
+    calculationBlockers.push({ type: CALC, reason: period.reason, detail: period.detail })
+    bump(period.reason)
     return {
-      month, calculationReady: false, issueReady: false,
+      month, periodType: '', periodKey: '', periodStart: '', periodEnd: '',
+      calculationReady: false, issueReady: false,
       calculationBlockers, issueBlockers,
       coverage: { totalBusinessDays: 0, stableEligibleDays: 0, unresolvedDays: 0, reasonCounts },
       employees: [],
@@ -59,11 +62,11 @@ export function evaluatePayrollReadiness(input) {
 
   // ---- 1) 考勤 + 业务日覆盖（复用 Gate 13 纯分类，行为不变）----
   const dayInput = buildEmployeePayrollDayInputs(entries, staffRows)
-  const inRequestedMonth = (row) => String(row?.date || '').slice(0, 7) === month
-  const stable = dayInput.stableRows.filter(inRequestedMonth)
-  const legacy = dayInput.legacyUnknownRows.filter(inRequestedMonth)
-  const legacyCompatible = dayInput.legacyCompatibleRows.filter(inRequestedMonth)
-  const substitutes = dayInput.substituteRows.filter(inRequestedMonth)
+  const inRequestedRange = (row) => isDateInPayrollRange(row?.date, period.periodStart, period.periodEnd)
+  const stable = dayInput.stableRows.filter(inRequestedRange)
+  const legacy = dayInput.legacyUnknownRows.filter(inRequestedRange)
+  const legacyCompatible = dayInput.legacyCompatibleRows.filter(inRequestedRange)
+  const substitutes = dayInput.substituteRows.filter(inRequestedRange)
   const unresolved = dayInput.unresolvedDays
 
   const eligibleDays = new Set()
@@ -86,7 +89,6 @@ export function evaluatePayrollReadiness(input) {
   }
   for (const [key] of legacyByStoreDate) {
     const [storeId, date] = key.split('|')
-    if (!date.startsWith(month)) continue
     calculationBlockers.push({ type: CALC, reason: 'LEGACY_UNKNOWN_PARTICIPANT', detail: `${storeId} ${date} 存在未解析运营参与者` })
     bump('LEGACY_UNKNOWN_PARTICIPANT')
   }
@@ -110,10 +112,9 @@ export function evaluatePayrollReadiness(input) {
       bump('LEGACY_DUPLICATE_IDENTITY')
     }
   }
-  // Gate 27 澄清：unresolved 日必须属于请求月——跨月条目（如历史无考勤月）不得污染当月就绪度
-  // （模块契约 JSDoc："dailyEntries 仅该月相关行会被使用"；Gate 22 测试 I 月隔离同义）
-  const monthUnresolved = unresolved.filter((u) => String(u.date || '').slice(0, 7) === month)
-  for (const u of monthUnresolved) {
+  // 请求范围之外的 unresolved 日不得污染当前周期就绪度。
+  const rangeUnresolved = unresolved.filter(inRequestedRange)
+  for (const u of rangeUnresolved) {
     calculationBlockers.push({ type: CALC, reason: u.reason, detail: `${u.storeId || ''} ${u.date || ''}` })
     bump(u.reason)
   }
@@ -122,12 +123,12 @@ export function evaluatePayrollReadiness(input) {
   const stableAttendanceRows = stable.filter((d) => ![...legacyByStoreDate.keys()].includes(`${d.storeId}|${d.date}`)).length
   const legacyAttendanceRows = legacy.length + legacyCompatible.length
 
-  // ---- 3) DailyPayAdjustment 覆盖（该月 legacy NULL 行 → 阻断）----
+  // ---- 3) DailyPayAdjustment 覆盖（范围内 legacy NULL 行 → 阻断）----
   let stableAdjustmentRows = 0
   let legacyAdjustmentRows = 0
   for (const a of adjustments) {
     const date = String(a.date || '').slice(0, 10)
-    if (!date.startsWith(month)) continue
+    if (!isDateInPayrollRange(date, period.periodStart, period.periodEnd)) continue
     if (a.employeeId) stableAdjustmentRows += 1
     else {
       legacyAdjustmentRows += 1
@@ -141,7 +142,7 @@ export function evaluatePayrollReadiness(input) {
   let legacyBonusRows = 0
   for (const b of bonuses) {
     const date = String(b.date || '').slice(0, 10)
-    if (!date.startsWith(month)) continue
+    if (!isDateInPayrollRange(date, period.periodStart, period.periodEnd)) continue
     if (b.employeeId) stableBonusRows += 1
     else {
       legacyBonusRows += 1
@@ -168,7 +169,7 @@ export function evaluatePayrollReadiness(input) {
     calculationBlockers.push({
       type: CALC,
       reason: 'MIXED_ATTENDANCE_AUTHORITY',
-      detail: `${month} 同时存在 EMPLOYEE 与 LEGACY_EMPLOYEE_COMPATIBLE 考勤，禁止静默选择单一引擎`,
+      detail: `${period.periodStart}～${period.periodEnd} 同时存在 EMPLOYEE 与 LEGACY_EMPLOYEE_COMPATIBLE 考勤，禁止静默选择单一引擎`,
     })
     bump('MIXED_ATTENDANCE_AUTHORITY')
   }
@@ -177,7 +178,7 @@ export function evaluatePayrollReadiness(input) {
     calculationBlockers.push({
       type: CALC,
       reason: 'STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE',
-      detail: `${month} legacy-compatible 考勤无法在无稳定桥接的情况下安全合并 Employee.id 调整或奖金`,
+      detail: `${period.periodStart}～${period.periodEnd} legacy-compatible 考勤无法在无稳定桥接的情况下安全合并 Employee.id 调整或奖金`,
     })
     bump('STABLE_CONTRIBUTION_WITH_LEGACY_ATTENDANCE')
   }
@@ -188,7 +189,7 @@ export function evaluatePayrollReadiness(input) {
     calculationBlockers.push({
       type: CALC,
       reason: 'LEGACY_COMPATIBLE_ATTENDANCE',
-      detail: `${month} 考勤仍为已复核 legacy-compatible 身份，仅允许兼容计算，不可发放`,
+      detail: `${period.periodStart}～${period.periodEnd} 考勤仍为已复核 legacy-compatible 身份，仅允许兼容计算，不可发放`,
     })
     bump('LEGACY_COMPATIBLE_ATTENDANCE')
   }
@@ -208,7 +209,7 @@ export function evaluatePayrollReadiness(input) {
   for (const a of adjustments) {
     if (!a.employeeId) continue // legacy NULL：LEGACY_PAY_ADJUSTMENT_IDENTITY 已在 §3 阻断
     const date = String(a.date || '').slice(0, 10)
-    if (!date.startsWith(month)) continue
+    if (!isDateInPayrollRange(date, period.periodStart, period.periodEnd)) continue
     adjustmentOnlyEmployeeIds.add(a.employeeId)
   }
   for (const empId of adjustmentOnlyEmployeeIds) {
@@ -218,7 +219,7 @@ export function evaluatePayrollReadiness(input) {
 
   const calculationReady = calculationBlockers.length === 0 && payrollEmployees.length > 0
   if (payrollEmployees.length === 0 && calculationBlockers.length === 0) {
-    calculationBlockers.push({ type: CALC, reason: 'NO_PAYROLL_SUBJECTS', detail: `${month} 无任何稳定考勤员工` })
+    calculationBlockers.push({ type: CALC, reason: 'NO_PAYROLL_SUBJECTS', detail: `${period.periodStart}～${period.periodEnd} 无任何稳定工资主体` })
     bump('NO_PAYROLL_SUBJECTS')
   }
 
@@ -226,7 +227,7 @@ export function evaluatePayrollReadiness(input) {
     .sort((a, b) => String(a.employeeId).localeCompare(String(b.employeeId)))
     .map((rec) => {
       const blockers = []
-      if (!calculationReady) blockers.push({ type: CALC, reason: 'MONTH_CALCULATION_NOT_READY' })
+      if (!calculationReady) blockers.push({ type: CALC, reason: 'PERIOD_CALCULATION_NOT_READY' })
       // 收件人：Gate 18 语义——User.employeeId 精确匹配；status 规则沿用 Gate 18（active 才 eligible）
       const matches = users.filter((u) => u.employeeId === rec.employeeId && u.status === 'active')
       let issueReady = calculationReady
@@ -258,11 +259,17 @@ export function evaluatePayrollReadiness(input) {
   // ---- 6) 覆盖率 ----
   const totalBusinessDays = Object.keys(entries).filter((k) => {
     const parts = k.split('|')
-    return parts.length === 3 && parts[0] === month && parts[1] !== 'all'
+    if (parts.length !== 3 || parts[1] === 'all') return false
+    const date = `${parts[0]}-${String(parts[2]).slice(3)}`
+    return isDateInPayrollRange(date, period.periodStart, period.periodEnd)
   }).length
 
   return {
     month,
+    periodType: period.periodType,
+    periodKey: period.periodKey,
+    periodStart: period.periodStart,
+    periodEnd: period.periodEnd,
     calculationReady,
     issueReady,
     calculationBlockers,
@@ -270,13 +277,13 @@ export function evaluatePayrollReadiness(input) {
     coverage: {
       totalBusinessDays,
       stableEligibleDays: eligibleDays.size,
-      unresolvedDays: monthUnresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
+      unresolvedDays: rangeUnresolved.length + [...legacyByStoreDate.keys()].filter((k) => eligibleDays.size === 0 || ![...eligibleDays].includes(k)).length,
       stableAttendanceRows,
       legacyAttendanceRows,
       substituteAttendanceRows: substitutes.length,
       legacyCompatibleAttendanceRows: legacyCompatible.length,
       legacyUnknownAttendanceRows: legacy.length,
-      excludedDraftDays: dayInput.excludedDraftDays.length,
+      excludedDraftDays: dayInput.excludedDraftDays.filter(inRequestedRange).length,
       stableAdjustmentRows,
       legacyAdjustmentRows,
       stableBonusRows,

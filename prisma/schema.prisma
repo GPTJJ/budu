@@ -713,8 +713,10 @@ model AssetReminder {
 model PayrollNotice {
   id             String    @id
   employeeId     String?   @map("employee_id") // Gate 18：稳定工资主体（employees.id）；历史行 NULL；employeeName/storeKey/targetUsername 为发放时快照
-  periodType     String    @map("period_type") // month（全职月结）| week（兼职周结）
-  periodKey      String    @map("period_key") // 月: '2026-08'；周: 周起始日 '2026-08-10'
+  periodType     String    @map("period_type") // month | week | custom
+  periodKey      String    @map("period_key") // 月 YYYY-MM；周 周一 YYYY-MM-DD；自定义 start~end
+  periodStart    DateTime  @db.Date @map("period_start")
+  periodEnd      DateTime  @db.Date @map("period_end")
   employeeName   String    @map("employee_name")
   storeKey       String    @map("store_key")
   targetUsername String    @default("") @map("target_username")
@@ -734,6 +736,7 @@ model PayrollNotice {
   @@index([targetUsername, status])
   @@index([periodKey])
   @@index([employeeId, periodType, periodKey])
+  @@index([employeeId, periodStart, periodEnd])
   @@map("payroll_notices")
 }
 

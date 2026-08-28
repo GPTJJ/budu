@@ -67,7 +67,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed, onOpenP
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-slate-400">
-              {notice.periodType === 'week' ? '兼职周结' : notice.periodType === 'custom' ? '自定周期' : '全职月结'} · {periodLabel(notice.periodType, notice.periodKey)}
+              {notice.periodType === 'week' ? '周度' : notice.periodType === 'custom' ? '自定义日期' : '月度'} · {periodLabel(notice.periodType, notice.periodKey, notice.periodStart, notice.periodEnd)}
             </p>
             {notice.status !== 'pending' && (
               <p
@@ -93,7 +93,7 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed, onOpenP
         <div className="mt-1">
           <PayrollSlipCard
             employeeName={notice.employeeName}
-            periodText={periodLabel(notice.periodType, notice.periodKey)}
+            periodText={periodLabel(notice.periodType, notice.periodKey, notice.periodStart, notice.periodEnd)}
             snapshot={notice.snapshot}
             onOpenProfile={onOpenProfile}
           />

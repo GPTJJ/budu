@@ -13,6 +13,7 @@
 
 import { calcDailyPay, PAYABLE_HOURS_SOURCE } from './payroll.js'
 import { buildEmployeePayrollDayInputs } from './payrollShadowInput.js'
+import { isDateInPayrollRange, resolvePayrollPeriod } from './payrollPeriod.js'
 
 const round2 = (value) => Math.round(Number(value || 0) * 100) / 100
 
@@ -36,19 +37,28 @@ function adjustmentExplanation(adjustment, automaticPay, finalPay) {
 }
 
 /**
- * 计算某月 Employee.id shadow 月度工资。
+ * 计算一个规范化闭区间的 Employee.id 工资。
  *
  * @param {object} dailyEntries 与 cached.entries 同构
  * @param {Array} dailyStoreStaffRows Gate 12 稳定考勤行
  * @param {Array} bigBonusRows Gate 10 大单奖行（含 employeeId/staffKey/bonusCents/date；可空）
  * @param {Array} payAdjustmentRows Gate 9 日薪调整行（含 employeeId/staffName/date/adjustedPayCents；可空）
- * @param {string} [month] YYYY-MM（Gate 26：稳定调整仅日贡献的月边界；不传则不过滤——Gate 14 兼容）
+ * @param {string|object} [periodInput] 旧 YYYY-MM 或 canonical period；不传仅保留旧纯函数测试兼容
  * @param {object} [storeNames] storeKey → 展示名；仅用于解释元数据，不参与计算
  * @returns {{ employees: Array, unresolvedDays: Array, coverage: object }}
  */
-export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = [], month = '', storeNames = {}) {
+export function calculateEmployeeIdRangePayroll(dailyEntries, dailyStoreStaffRows, bigBonusRows = [], payAdjustmentRows = [], periodInput = '', storeNames = {}) {
   const input = buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
-  const stable = input.stableRows
+  const hasPeriodInput = typeof periodInput === 'string'
+    ? Boolean(periodInput)
+    : Boolean(periodInput && typeof periodInput === 'object' && Object.keys(periodInput).length)
+  const period = typeof periodInput === 'string'
+    ? resolvePayrollPeriod({ month: periodInput })
+    : resolvePayrollPeriod(periodInput || {})
+  const inRange = (row) => !hasPeriodInput || (
+    period.valid && isDateInPayrollRange(row?.date, period.periodStart, period.periodEnd)
+  )
+  const stable = input.stableRows.filter(inRange)
   const unresolvedDays = []
 
   // ---- 稳定资格判定：仅完整稳定覆盖的日进入 shadow 计算 ----
@@ -60,7 +70,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     g.push(row)
     byStoreDate.set(key, g)
   }
-  for (const row of input.legacyUnknownRows) {
+  for (const row of input.legacyUnknownRows.filter(inRange)) {
     const key = `${row.storeId}|${row.date}`
     const g = byStoreDate.get(key)
     if (g) {
@@ -70,7 +80,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
   }
 
   // unresolved 日（Gate 13 已分类 + 本 Gate 的 mixed）
-  for (const u of input.unresolvedDays) unresolvedDays.push(u)
+  for (const u of input.unresolvedDays.filter(inRange)) unresolvedDays.push(u)
   const mixedReasons = new Map()
   const eligible = stable.filter((row) => {
     if (row._mixedLegacy) {
@@ -96,6 +106,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
   for (const b of Array.isArray(bigBonusRows) ? bigBonusRows : []) {
     if (!b.employeeId) continue // legacy NULL 不猜测
     const date = String(b.date || '').slice(0, 10)
+    if (!inRange({ date })) continue
     const key = `${b.employeeId}|${date}`
     bonusByEmpDate.set(key, (bonusByEmpDate.get(key) || 0) + (Number(b.bonusCents) || 0))
     const rows = bonusRowsByEmpDate.get(key) || []
@@ -109,6 +120,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
   for (const a of Array.isArray(payAdjustmentRows) ? payAdjustmentRows : []) {
     if (!a.employeeId) continue
     const date = String(a.date || '').slice(0, 10)
+    if (!inRange({ date })) continue
     const key = `${a.employeeId}|${date}`
     adjByEmpDate.set(key, Number(a.adjustedPayCents) || 0)
     adjustmentRowByEmpDate.set(key, a)
@@ -189,6 +201,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
       commission: daily.commission,
       transferSubsidyRate: daily.transferSubsidyRate,
       transferSubsidy: daily.transferSubsidy,
+      orders: round2((day.orderCount || 0) / share),
       bigBonus: round2(bonusCents / 100),
       automaticPay,
       salaryAdjustment: round2(finalPay - automaticPay),
@@ -215,7 +228,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
   for (const a of Array.isArray(payAdjustmentRows) ? payAdjustmentRows : []) {
     if (!a.employeeId) continue // legacy NULL 不猜测（Gate 13/26 冻结）
     const date = String(a.date || '').slice(0, 10)
-    if (month && !date.startsWith(month)) continue // 月边界：7 月调整绝不进入 8 月 payroll
+    if (!inRange({ date })) continue
     const key = `${a.employeeId}|${date}`
     if (attendedKeys.has(key)) continue // 考勤日已应用（恰好一次，不重复）
     if (adjustmentOnlyKeys.has(key)) continue // 同 key 多行只计一次（与考勤日 Map 语义一致）
@@ -281,7 +294,7 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     const separator = key.indexOf('|')
     const employeeId = key.slice(0, separator)
     const date = key.slice(separator + 1)
-    if (month && !date.startsWith(month)) continue
+    if (!inRange({ date })) continue
     const rec = empMap.get(employeeId)
     if (!rec) continue // BONUS_ONLY 不创建 payroll subject
     rec.bigBonusCents += bonusCents
@@ -347,7 +360,11 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
   }))
 
   // ---- 覆盖率 ----
-  const totalDailyEntries = Object.keys(dailyEntries || {}).length
+  const totalDailyEntries = Object.keys(dailyEntries || {}).filter((key) => {
+    const parts = key.split('|')
+    if (parts.length !== 3 || parts[1] === 'all') return false
+    return inRange({ date: `${parts[0]}-${String(parts[2]).slice(3)}` })
+  }).length
   const eligibleKeys = new Set(eligible.map((d) => `${d.storeId}|${d.date}`))
   const reasonCounts = {}
   for (const u of unresolvedDays) {
@@ -365,3 +382,6 @@ export function calculateEmployeeIdShadowPayroll(dailyEntries, dailyStoreStaffRo
     },
   }
 }
+
+/** Backwards-compatible alias; all live consumers use the canonical range resolver. */
+export const calculateEmployeeIdShadowPayroll = calculateEmployeeIdRangePayroll

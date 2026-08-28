@@ -246,9 +246,15 @@ const moneyFields = (row) => ({
 
   const rec = calculateEmployeeIdShadowPayroll(entries, rows, [], [], '2026-08').employees[0]
   const snapshot = buildIssueSnapshot(rec, { month: '2026-08', name: '张伟', attendanceRows: rows })
-  assert.deepEqual(Object.keys(snapshot).sort(), ['days', 'summary'])
+  assert.deepEqual(Object.keys(snapshot).sort(), ['days', 'employeeId', 'period', 'summary'])
   assert.deepEqual(Object.keys(snapshot.summary).sort(), ['adjustment', 'basePay', 'bigBonus', 'commission', 'payableHours', 'revenue', 'total', 'transferSubsidy', 'workedDays'])
-  assert.equal(snapshot.days.some((day) => Object.hasOwn(day, 'explanation')), false)
+  assert.equal(snapshot.period.periodType, 'month')
+  assert.equal(snapshot.period.periodStart, '2026-08-01')
+  assert.equal(snapshot.period.periodEnd, '2026-08-31')
+  assert.equal(snapshot.employeeId, 'emp-A')
+  assert.equal(snapshot.days.every((day) => Object.hasOwn(day, 'explanation')), true)
+  assert.equal(snapshot.days[0].participantCount, 1)
+  assert.equal(snapshot.days[0].payableHoursSource, 'ACTUAL_HOURS')
   assert.deepEqual(snapshot.summary, {
     workedDays: 1, payableHours: 8, revenue: 2050, basePay: 240, commission: 40,
     transferSubsidy: 0, bigBonus: 0, adjustment: 0, total: 280,

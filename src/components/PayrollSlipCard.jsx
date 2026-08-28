@@ -74,8 +74,8 @@ export default function PayrollSlipCard({ employeeName, periodText, snapshot, fu
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {(snap.days || []).map((r) => (
-              <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
+            {(snap.days || []).map((r, index) => (
+              <tr key={`${r.date || r.day}|${r.storeKey || ''}|${index}`} className={r.hasData ? '' : 'text-slate-300'}>
                 <td className="px-3 py-1.5 font-semibold">
                   <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-amber-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
                     {r.day}

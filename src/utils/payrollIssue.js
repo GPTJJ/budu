@@ -6,30 +6,26 @@
  * 本模块只做：snapshot 形状映射（含逐日明细）、Employee.id 富集、按选中员工的发放预检。
  */
 
-import { employeeDailyPayDetail } from './selectors.js'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from './payroll.js'
+import { businessDateDayOfWeek, isBusinessDate, resolvePayrollPeriod } from './payrollPeriod.js'
 
 /** 日标记（holiday/makeup/weekend/null）：工资条逐日展示（只读，无身份语义；与 payrollSlip.markOf 同构） */
-function markOf(monthKey, dd) {
-  const full = String(dd).includes('-') ? `${monthKey}-${String(dd).slice(3)}` : `${monthKey}-${String(dd)}`
+function markOf(full) {
   const isHolidayDay = HOLIDAYS_2026.has(full)
   const isMakeupDay = WORKDAYS_2026.has(full)
-  const dow = new Date(`${full}T00:00:00`).getDay()
+  const dow = businessDateDayOfWeek(full)
   const isWeekendDay = !isHolidayDay && !isMakeupDay && (dow === 0 || dow === 6)
   return isHolidayDay ? 'holiday' : isMakeupDay ? 'makeup' : isWeekendDay ? 'weekend' : null
 }
 
 /**
  * 把 resolver 的 Employee.id payroll rec 映射为 PayrollNotice snapshot。
- * Gate 27 澄清：summary 来自 resolver rec（权威月度聚合）；
- * days 复用已验收的 Employee.id 安全逐日明细 helper（employeeDailyPayDetail，Gate 25/26）：
- * - 考勤行/工时按 DailyStoreStaff.employeeId+date+store 精确（严格模式）
- * - 调整/大单奖按 employeeId；仅调整日输出调整独占日（工时 0、不虚构考勤）
- * - 无 name 归属金额；与导出明细口径一致
+ * summary 和 days 都直接映射同一个 resolver 结果，不调用 selector 或第二套公式。
  * @param {object} rec resolver payroll rec
  * @param {object} [ctx] { month: 'YYYY-MM', name: 显示名, attendanceRows: 该月 DailyStoreStaff 行 }
  */
 export function buildIssueSnapshot(rec, ctx) {
+  const period = resolvePayrollPeriod(ctx || {})
   const summary = {
     workedDays: rec.days || 0,
     payableHours: rec.payableHours ?? rec.actualHours ?? 0,
@@ -41,32 +37,48 @@ export function buildIssueSnapshot(rec, ctx) {
     adjustment: rec.salaryAdjustment || 0,
     total: rec.salary || 0,
   }
-  if (!ctx || !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(ctx.month || ''))) {
-    return { days: [], summary }
+  const days = (rec.dailyExplanations || [])
+    .filter((row) => isBusinessDate(row?.date))
+    .map((row) => ({
+      date: row.date,
+      day: row.date,
+      mark: markOf(row.date),
+      employeeId: rec.employeeId,
+      storeKey: row.storeKey || null,
+      storeName: row.storeName || null,
+      payableHours: row.payableHours ?? row.hours ?? row.explanation?.payableHours ?? 0,
+      payableHoursSource: row.payableHoursSource || row.explanation?.payableHoursSource || null,
+      participantCount: row.explanation?.participantCount ?? null,
+      rawStoreRevenue: row.explanation?.rawStoreRevenue ?? null,
+      displayWorkedRevenue: row.explanation?.displayWorkedRevenue ?? null,
+      commissionBasis: row.explanation?.commissionBasis ?? null,
+      calculationDayPolicy: row.explanation?.calculationDayPolicy ?? null,
+      baseRate: row.baseRate ?? row.explanation?.baseRate ?? null,
+      basePay: row.basePay || 0,
+      commissionRate: row.commissionRate ?? row.explanation?.commissionRate ?? null,
+      commission: row.commission || 0,
+      transferSubsidyRate: row.explanation?.transferSubsidyRate ?? null,
+      transferSubsidy: row.transferSubsidy || 0,
+      bigBonus: row.bigBonus || 0,
+      adjustment: row.salaryAdjustment || 0,
+      automaticPay: row.automaticPay || 0,
+      pay: row.finalPay || 0,
+      explanation: row.explanation || null,
+      hasData: true,
+    }))
+    .sort((a, b) => `${a.date}|${a.storeKey || ''}`.localeCompare(`${b.date}|${b.storeKey || ''}`))
+  return {
+    period: period.valid
+      ? {
+          periodType: period.periodType,
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+        }
+      : null,
+    employeeId: rec.employeeId,
+    days,
+    summary,
   }
-  const [y, m] = String(ctx.month).split('-').map(Number)
-  const daysInMonth = new Date(y, m, 0).getDate()
-  const days = []
-  for (let d = 1; d <= daysInMonth; d += 1) {
-    const dd = `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    const detail = employeeDailyPayDetail(String(ctx.month), dd, ctx.name || '', rec.employeeId, ctx.attendanceRows)
-    const t = detail ? detail.totals : null
-    days.push({
-      day: dd,
-      mark: markOf(String(ctx.month), dd),
-      revenue: t ? t.inc : 0,
-      payableHours: t ? t.payableHours : 0,
-      payableHoursSource: t ? t.payableHoursSource : null,
-      basePay: t ? t.basePay : 0,
-      commission: t ? t.commission : 0,
-      transferSubsidy: t ? t.transferSubsidy : 0,
-      bigBonus: t ? t.bigBonus : 0,
-      adjustment: t ? t.salaryAdjustment || 0 : 0,
-      pay: t ? t.pay : 0,
-      hasData: Boolean(detail),
-    })
-  }
-  return { days, summary }
 }
 
 /**
@@ -76,7 +88,7 @@ export function buildIssueSnapshot(rec, ctx) {
  * @param {Array} readinessEmployees resolver.readiness.employees（per-employee issueReady/blockers）
  * @param {Array} users User 列表（含 employeeId/status/username）
  * @param {Map} dirById Employee.id → 目录员工（可选，仅展示）
- * @param {object} [snapCtx] buildIssueSnapshot 的 { month, attendanceRows } 上下文
+ * @param {object} [snapCtx] canonical period 上下文
  */
 export function buildIssueRows(payrollEmployees, readinessEmployees, users = [], dirById = new Map(), snapCtx = null) {
   const readinessById = new Map((readinessEmployees || []).map((r) => [r.employeeId, r]))
@@ -88,8 +100,8 @@ export function buildIssueRows(payrollEmployees, readinessEmployees, users = [],
     const name = (dir && dir.name) || rec.displayName || ''
     return {
       employeeId: rec.employeeId,
-      name,
       employeeNo: (dir && dir.employeeNo) || '',
+      name,
       storeKey: (dir && dir.storeKey) || (Array.isArray(rec.storesWorked) && rec.storesWorked[0]) || '',
       type: (dir && dir.type) || '',
       rec,

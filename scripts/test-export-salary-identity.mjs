@@ -1,5 +1,3 @@
-// Gate 25：ExportSalaryModal Employee.id 导出
-// 用 resolver 的 EMPLOYEE_ID 结果验证 buildSummaryRows 逻辑（同店同名两行独立、稳定零、legacy 唯一名、重名阻断）
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -7,110 +5,58 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const { resolvePayrollCalculation } = await import(path.join(root, 'src/utils/payrollResolver.js').replaceAll('\\', '/'))
+const { buildPayrollExportRows } = await import(path.join(root, 'src/utils/payrollExport.js').replaceAll('\\', '/'))
 const exportSource = fs.readFileSync(path.join(root, 'src/components/ExportSalaryModal.jsx'), 'utf8')
 
-const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', storeKey: 'guanshe', date, employeeId, staffId: `st-${id}`, staffNameSnapshot: name, actualHours: 8 })
+const staffRow = (id, date, employeeId, name, hours = 8) => ({
+  id, storeId: 'guanshe', storeKey: 'guanshe', date, employeeId,
+  participantType: 'EMPLOYEE', staffId: `st-${id}`, staffNameSnapshot: name,
+  actualHours: hours, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS',
+})
 
-// 复刻 buildSummaryRows（从 ExportSalaryModal 抽取的纯逻辑——为避免 import jsx，内联同构实现）
-function buildSummaryRows(resolverResult, employees, mode) {
-  const empById = new Map(employees.map((e) => [e.id, e]))
-  if (mode === 'EMPLOYEE_ID') {
-    return (resolverResult.payroll.employees || [])
-      .map((rec) => {
-        const emp = empById.get(rec.employeeId)
-        return {
-          employeeId: rec.employeeId,
-          employeeNo: (emp && emp.employeeNo) || '',
-          name: (emp && emp.name) || rec.displayName || '',
-          salary: rec.salary || 0,
-        }
-      })
-      .filter((row) => row.name)
-  }
-  return (resolverResult.payroll.employees || []).map((rec) => ({
-    employeeId: '',
-    employeeNo: '',
-    name: rec.name || '',
-    salary: rec.salary || 0,
-  }))
+const entries = {
+  '2026-08|guanshe|08-31': { inc: 3000, ord: 30, staff: ['张伟'], status: 'confirmed' },
+  '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '张伟'], status: 'confirmed' },
 }
+const staff = [
+  staffRow('a0', '2026-08-31', 'emp-A', '张伟'),
+  staffRow('a1', '2026-09-01', 'emp-A', '张伟'),
+  staffRow('b1', '2026-09-01', 'emp-B', '张伟', 6),
+]
+const employees = [
+  { id: 'emp-A', name: '张伟', employeeNo: 'A001', storeKey: 'guanshe', type: 'fulltime' },
+  { id: 'emp-B', name: '张伟', employeeNo: 'B001', storeKey: 'guanshe', type: 'parttime' },
+]
 
-// A/B: 同店同名稳定导出 → 两行独立
-{
-  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '张伟'] } }
-  const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟'), staffRow('b', '2026-09-01', 'emp-B', '张伟')]
-  const employees = [
-    { id: 'emp-A', name: '张伟', employeeNo: 'A001', storeKey: 'guanshe', type: 'fulltime' },
-    { id: 'emp-B', name: '张伟', employeeNo: 'B001', storeKey: 'guanshe', type: 'parttime' },
-  ]
-  const res = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees, users: [] })
-  assert.equal(res.mode, 'EMPLOYEE_ID', 'A mode')
-  const rows = buildSummaryRows(res, employees, res.mode)
-  assert.equal(rows.length, 2, 'A/B 两行')
-  const a = rows.find((r) => r.employeeId === 'emp-A')
-  const b = rows.find((r) => r.employeeId === 'emp-B')
-  assert.ok(a && b, 'B 两人各自行')
-  assert.equal(a.employeeNo, 'A001')
-  assert.equal(b.employeeNo, 'B001')
-  assert.equal(a.salary, b.salary, '同店同日 share=2 金额相等（独立）')
-  assert.equal(rows.some((r) => r.employeeId === ''), false, '无合并行（无 employeeId 空行）')
-  console.log('  [A/B] 同店同名两行独立 PASS')
-}
+const result = resolvePayrollCalculation({
+  periodType: 'custom', periodStart: '2026-08-31', periodEnd: '2026-09-01',
+  dailyEntries: entries, dailyStoreStaffRows: staff, employees, users: [],
+})
+assert.equal(result.mode, 'EMPLOYEE_ID')
+assert.equal(result.calculationReady, true)
+assert.equal(result.issueReady, false, '导出不要求收件人绑定')
 
-// C: 稳定真实零 → 导出 0（非 unresolved）
-{
-  // 无业绩但稳定考勤 → 工资为 0？实际 calcDailyPay 有 basePay；构造无考勤日即可：只验证结构
-  const entries = {}
-  const staff = []
-  const res = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees: [], users: [] })
-  assert.equal(res.mode, 'LEGACY', 'C 空月 LEGACY')
-  console.log('  [C] 空月确定性 PASS（LEGACY 非 unresolved 崩溃）')
-}
+const exported = buildPayrollExportRows(result, employees, new Set(['emp-A', 'emp-B']))
+assert.equal(exported.summaryRows.length, 2, '同名 Employee.id 独立导出')
+assert.equal(exported.detailRows.length, 3, '跨月精确日明细，无遗漏/重复')
+assert.deepEqual(new Set(exported.summaryRows.map((row) => row['Employee.id'])), new Set(['emp-A', 'emp-B']))
+assert.equal(exported.summaryRows.every((row) => row.周期类型 === 'CUSTOM'), true)
+assert.equal(exported.summaryRows.every((row) => row.周期开始 === '2026-08-31' && row.周期结束 === '2026-09-01'), true)
+assert.equal(exported.detailRows.every((row) => row.工时来源 === 'ACTUAL_HOURS'), true)
+assert.equal(exported.detailRows.every((row) => row['最终工资(元)'] > 0), true)
+console.log('  [A/B] 同名隔离 + 跨月 resolver Export PASS')
 
-// D: legacy 唯一名兼容
-{
-  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['李四'], status: 'confirmed' } }
-  const staff = [{ id: 'legacy', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-01', employeeId: null, participantType: 'LEGACY_EMPLOYEE_COMPATIBLE', staffId: 'st-l', staffNameSnapshot: '李四', actualHours: 8 }]
-  const employees = [{ id: 'emp-L', name: '李四', employeeNo: 'L001', storeKey: 'guanshe', type: 'fulltime' }]
-  const res = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees, users: [] })
-  assert.equal(res.mode, 'LEGACY', 'D legacy mode')
-  const rows = buildSummaryRows(res, employees, res.mode)
-  assert.equal(rows.length, 1, 'D 唯一名一行')
-  assert.equal(rows[0].name, '李四', 'D 兼容显示')
-  console.log('  [D] legacy 唯一名兼容 PASS')
-}
+const onlyA = buildPayrollExportRows(result, employees, new Set(['emp-A']))
+assert.equal(onlyA.summaryRows.length, 1)
+assert.equal(onlyA.detailRows.length, 2)
+assert.equal(onlyA.detailRows.every((row) => row['Employee.id'] === 'emp-A'), true)
+console.log('  [C] Employee.id 选择范围 PASS')
 
-// E: legacy 重名阻断——导出层逻辑（目录同名 → 阻断）
-{
-  const employees = [
-    { id: 'emp-A', name: '张伟', employeeNo: 'A001', storeKey: 'guanshe', type: 'fulltime' },
-    { id: 'emp-B', name: '张伟', employeeNo: 'B001', storeKey: 'guanshe', type: 'parttime' },
-  ]
-  const nameCounts = new Map()
-  for (const e of employees) nameCounts.set(e.name, (nameCounts.get(e.name) || 0) + 1)
-  const ambiguous = employees.some((e) => (nameCounts.get(e.name) || 0) > 1)
-  assert.equal(ambiguous, true, 'E 目录重名检测')
-  console.log('  [E] legacy 重名阻断逻辑 PASS')
-}
-
-// F: calculationReady / issueReady=false 导出允许（resolver 不 gate 导出）
-{
-  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟'] } }
-  const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
-  const employees = [{ id: 'emp-A', name: '张伟', employeeNo: 'A001', storeKey: 'guanshe', type: 'fulltime' }]
-  const res = resolvePayrollCalculation({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees, users: [] })
-  assert.equal(res.mode, 'EMPLOYEE_ID', 'F mode')
-  assert.equal(res.calculationReady, true, 'F calc ready')
-  assert.equal(res.issueReady, false, 'F issue false（无 User 绑定）')
-  const rows = buildSummaryRows(res, employees, res.mode)
-  assert.equal(rows.length, 1, 'F 导出仍允许')
-  console.log('  [F] calc ready / issue false 导出允许 PASS')
-}
+assert.match(exportSource, /loadDailyStoreStaffRange\(period\.periodStart, period\.periodEnd\)/)
+assert.match(exportSource, /getDailyStoreStaffRangeState\(period\.periodStart, period\.periodEnd\)/)
+assert.match(exportSource, /!rangeState\.complete/)
+assert.match(exportSource, /resolverResult\.mode !== 'EMPLOYEE_ID' \|\| !resolverResult\.calculationReady/)
+assert.doesNotMatch(exportSource, /employeeDailyPayDetail|monthlyPayrollFromEntries|calcDailyPay/)
+console.log('  [D] 跨月缓存完整性 + 无前端工资公式 PASS')
 
 console.log('GATE 25 EXPORT SALARY IDENTITY TEST OK')
-
-assert.match(exportSource, /getDailyStoreStaffMonthState\(monthKey\)/)
-assert.match(exportSource, /monthState\.status !== 'loaded' \|\| !monthState\.hasPayload/)
-assert.match(exportSource, /工资数据尚未加载，请重新加载/)
-assert.match(exportSource, /resolverResult\.mode === 'EMPLOYEE_ID' && !resolverResult\.calculationReady/)
-console.log('  [G] 缓存缺失/计算未就绪时导出 fail-closed PASS')

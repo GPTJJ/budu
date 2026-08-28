@@ -184,50 +184,41 @@ const dirById = new Map([
   console.log('  [O] 跨月条目不污染当月就绪度 PASS')
 }
 
-// ---- P/Q/R: 快照逐日明细（employeeId 安全；同店同名隔离；调整仅日真实表示）----
+// ---- P/Q/R: snapshot is the immutable resolver explanation projection ----
 {
-  const { seedCachedDataForTest } = await import(path.join(root, 'src/utils/userData.js').replaceAll('\\', '/'))
-  seedCachedDataForTest({
-    entries: { '2026-08|guanshe|08-01': { inc: 12000, ord: 120, staff: ['张伟', '张伟'] } },
-    staff: [
-      { id: 'emp-A', name: '张伟', storeKey: 'guanshe', type: 'fulltime', employeeNo: 'A001' },
-      { id: 'emp-B', name: '张伟', storeKey: 'guanshe', type: 'parttime', employeeNo: 'B001' },
+  const periodResult = resolvePayrollCalculation({
+    periodType: 'custom', periodStart: '2026-08-01', periodEnd: '2026-08-10',
+    dailyEntries: { '2026-08|guanshe|08-01': { inc: 12000, ord: 120, staff: ['张伟', '张伟'], status: 'confirmed' } },
+    dailyStoreStaffRows: [
+      { id: 'a1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS' },
+      { id: 'b1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', participantType: 'EMPLOYEE', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS' },
     ],
     dailyPayAdjustments: [
-      { id: 'dpa-a', employeeId: 'emp-A', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: 50000, reason: 'A 仅调整日 +500', active: true, version: 1 },
-      { id: 'dpa-b', employeeId: 'emp-B', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: -5000, reason: 'B 仅调整日 -50', active: true, version: 1 },
+      { id: 'dpa-a', employeeId: 'emp-A', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: 50000, reason: 'A 仅调整日 +500' },
+      { id: 'dpa-b', employeeId: 'emp-B', staffName: '张伟', date: '2026-08-10', autoPayCentsSnapshot: 0, adjustedPayCents: 5000, reason: 'B 仅调整日 +50' },
     ],
-    bigBonuses: [], removedStaff: [], stores: [{ key: 'guanshe', name: '北京官舍店' }],
-    schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {}, posDaily: [], posProductSales: [],
+    bigOrderBonuses: [], employees: [...dirById.values()], users,
   })
-  const attendance = [
-    { id: 'a1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8 },
-    { id: 'b1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6 },
-  ]
-  const snapA = buildIssueSnapshot(recA, { month: '2026-08', name: '张伟', attendanceRows: attendance })
-  const snapB = buildIssueSnapshot(recB, { month: '2026-08', name: '张伟', attendanceRows: attendance })
-  // P: 逐日填充（31 天；考勤日 hasData + 各自工时）
-  assert.equal(snapA.days.length, 31, 'P 31 天逐日')
-  const dayA01 = snapA.days.find((d) => d.day === '08-01')
-  const dayB01 = snapB.days.find((d) => d.day === '08-01')
-  assert.equal(dayA01.hasData, true, 'P A 考勤日 hasData')
-  assert.equal(dayA01.payableHours, 8, 'P A 计薪工时 8（tagged union）')
-  assert.equal(dayB01.payableHours, 6, 'P B 计薪工时 6')
-  assert.equal(dayB01.pay, 510, 'P B 考勤日工资（6h 口径）')
-  // Q: 同店同名隔离——A/B 各自调整仅日归属（无交叉）
-  const dayA10 = snapA.days.find((d) => d.day === '08-10')
-  const dayB10 = snapB.days.find((d) => d.day === '08-10')
-  assert.equal(dayA10.hasData, true, 'Q A 调整仅日 hasData')
-  assert.equal(dayA10.payableHours, 0, 'Q A 调整仅日工时 0（不虚构考勤）')
-  assert.equal(dayA10.adjustment, 500, 'Q A 调整 500')
-  assert.equal(dayA10.pay, 500, 'Q A 最终 500')
-  assert.equal(dayB10.adjustment, -50, 'Q B 调整 -50（不误取 A 的 500）')
-  assert.equal(dayB10.pay, -50, 'Q B 最终 -50')
-  // R: 无考勤无调整日 hasData=false（与既有工资条语义一致）
-  const dayA02 = snapA.days.find((d) => d.day === '08-02')
-  assert.equal(dayA02.hasData, false, 'R 空日 hasData=false')
-  assert.equal(dayA02.payableHours, 0, 'R 空日工时 0')
-  console.log('  [P/Q/R] 快照逐日明细（工时/调整按 employeeId、仅调整日真实表示）PASS')
+  const periodRecA = periodResult.payroll.employees.find((row) => row.employeeId === 'emp-A')
+  const periodRecB = periodResult.payroll.employees.find((row) => row.employeeId === 'emp-B')
+  const snapA = buildIssueSnapshot(periodRecA, periodResult)
+  const snapB = buildIssueSnapshot(periodRecB, periodResult)
+  assert.equal(snapA.days.length, 2, 'P 只保存有权威贡献的日行，不填充空白日')
+  assert.deepEqual(snapA.period, { periodType: 'custom', periodStart: '2026-08-01', periodEnd: '2026-08-10' })
+  const dayA01 = snapA.days.find((day) => day.date === '2026-08-01')
+  const dayB01 = snapB.days.find((day) => day.date === '2026-08-01')
+  assert.equal(dayA01.payableHours, 8)
+  assert.equal(dayB01.payableHours, 6)
+  assert.equal(dayA01.participantCount, 2)
+  const dayA10 = snapA.days.find((day) => day.date === '2026-08-10')
+  const dayB10 = snapB.days.find((day) => day.date === '2026-08-10')
+  assert.equal(dayA10.payableHours, 0)
+  assert.equal(dayA10.adjustment, 500)
+  assert.equal(dayB10.adjustment, 50)
+  assert.equal(snapA.days.some((day) => day.date === '2026-08-02'), false, 'R 空日不伪造工资事实')
+  assert.equal(snapA.employeeId, 'emp-A')
+  assert.equal(snapB.employeeId, 'emp-B')
+  console.log('  [P/Q/R] resolver 日解释快照 + 同名隔离 + 调整仅日 PASS')
 }
 
 // ---- S: 负工资总额预检（NEGATIVE_PAYROLL_TOTAL，仅 ISSUE 级阻断）----
@@ -258,9 +249,10 @@ const dirById = new Map([
 
 console.log('GATE 27 PAYROLL ISSUE RESOLVER TEST OK')
 
-assert.match(issueModalSource, /getDailyStoreStaffMonthState\(m\)/)
-assert.match(issueModalSource, /monthState\.status !== 'loaded' \|\| !monthState\.hasPayload/)
-assert.match(issueModalSource, /blocked: 'LOAD_ERROR'/)
-assert.match(issueModalSource, /工资数据尚未加载，请重新加载/)
-assert.match(issueModalSource, /if \(payroll\.status !== 'ready'\)/)
-console.log('  [T] 月缓存缺失时发放 fail-closed PASS')
+assert.match(issueModalSource, /loadDailyStoreStaffRange\(period\.periodStart, period\.periodEnd\)/)
+assert.match(issueModalSource, /getDailyStoreStaffRangeState\(period\.periodStart, period\.periodEnd\)/)
+assert.match(issueModalSource, /!rangeState\.complete/)
+assert.match(issueModalSource, /payroll-notices\/preflight/)
+assert.match(issueModalSource, /payroll\.status !== 'ready' \|\| preflighting/)
+assert.doesNotMatch(issueModalSource, /周度\/自定义周期尚未迁移至稳定工资计算/)
+console.log('  [T] 范围缓存/服务端预检/过时 blocker 移除 PASS')

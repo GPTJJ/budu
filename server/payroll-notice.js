@@ -5,6 +5,13 @@ import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 import { notify } from './notification-center.js'
+import {
+  buildAuthoritativeIssueRows,
+  findPayrollRangeOverlaps,
+  loadAuthoritativePayrollRange,
+  normalizeAuthoritativePeriod,
+  validateClientIssueRows,
+} from './payroll-authority.js'
 
 export const payrollNoticeRouter = Router()
 
@@ -24,6 +31,8 @@ function serialize(row) {
     employeeId: row.employeeId || '',
     periodType: row.periodType,
     periodKey: row.periodKey,
+    periodStart: row.periodStart ? row.periodStart.toISOString().slice(0, 10) : '',
+    periodEnd: row.periodEnd ? row.periodEnd.toISOString().slice(0, 10) : '',
     employeeName: row.employeeName,
     storeKey: row.storeKey,
     targetUsername: row.targetUsername,
@@ -44,7 +53,7 @@ function serialize(row) {
 /** 周期文案（通知用）：'2026-08' → 2026年8月；周/自定义 → '2026-08-10 ~ 2026-08-16' */
 function periodText(row) {
   return row.periodType === 'week' || row.periodType === 'custom'
-    ? String(row.periodKey).replace('~', ' ~ ')
+    ? `${row.periodStart.toISOString().slice(0, 10)} ～ ${row.periodEnd.toISOString().slice(0, 10)}`
     : `${row.periodKey.slice(0, 4)}年${Number(row.periodKey.slice(5, 7))}月`
 }
 
@@ -82,114 +91,113 @@ payrollNoticeRouter.get('/payroll-notices', wrap(async (req, res) => {
   res.json({ ok: true, rows: rows.map(serialize) })
 }))
 
+payrollNoticeRouter.post('/payroll-notices/preflight', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可检查工资发放', 403)
+  const period = normalizeAuthoritativePeriod(req.body || {})
+  const employeeIds = Array.isArray(req.body?.employeeIds)
+    ? [...new Set(req.body.employeeIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : []
+  if (employeeIds.length < 1 || employeeIds.length > 200) throw httpError('请提供 1-200 名员工')
+  const authority = await loadAuthoritativePayrollRange(prisma, period)
+  const overlaps = await findPayrollRangeOverlaps(prisma, period, employeeIds)
+  const overlapById = new Map()
+  for (const overlap of overlaps) {
+    const rows = overlapById.get(overlap.employeeId) || []
+    rows.push(overlap)
+    overlapById.set(overlap.employeeId, rows)
+  }
+  const rows = employeeIds.map((employeeId) => {
+    try {
+      const row = buildAuthoritativeIssueRows(authority, [employeeId])[0]
+      const employeeOverlaps = overlapById.get(employeeId) || []
+      return {
+        employeeId,
+        issueReady: employeeOverlaps.length === 0,
+        totalCents: row.totalCents,
+        blockers: employeeOverlaps.length > 0 ? ['OVERLAPPING_PAYROLL_NOTICE'] : [],
+        overlaps: employeeOverlaps,
+      }
+    } catch (error) {
+      return { employeeId, issueReady: false, totalCents: null, blockers: [error.code || 'PAYROLL_NOT_READY'], overlaps: overlapById.get(employeeId) || [] }
+    }
+  })
+  res.json({ ok: true, period, calculationReady: authority.result.calculationReady, rows })
+}))
+
 payrollNoticeRouter.post('/payroll-notices', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw httpError('仅开发者/管理员/财务可发放工资条', 403)
-  const { periodType, periodKey, rows } = req.body || {}
-  const ptype = String(periodType || '')
-  if (!['month', 'week', 'custom'].includes(ptype)) throw httpError('发放周期类型不正确')
-  const periodRe = ptype === 'custom' ? /^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$/ : /^\d{4}-\d{2}(-\d{2})?$/
-  if (!periodRe.test(String(periodKey || ''))) throw httpError('发放周期不正确')
-  if (ptype === 'custom') {
-    const [st, en] = String(periodKey).split('~')
-    if (st > en) throw httpError('周期开始不能晚于周期结束')
-  }
+  const period = normalizeAuthoritativePeriod(req.body || {})
+  const rows = req.body?.rows
   if (!Array.isArray(rows) || rows.length < 1 || rows.length > 200) throw httpError('请至少选择 1 名员工（最多 200 名）')
+  const employeeIds = rows.map((row) => String(row?.employeeId || '').trim())
+  if (employeeIds.some((id) => !id || id.length > 100) || new Set(employeeIds).size !== employeeIds.length) {
+    throw httpError('员工 ID 缺失或重复')
+  }
 
-  const seen = new Set()
-  const payloads = []
-  for (const row of rows) {
-    const employeeName = String(row?.employeeName || '').trim().slice(0, 50)
-    const storeKey = String(row?.storeKey || '').trim().slice(0, 30)
-    const employeeId = row?.employeeId == null ? null : String(row.employeeId).trim()
-    const snapshot = row?.snapshot
-    const totalCents = Number(row?.totalCents)
-    if (!employeeName || !storeKey) throw httpError('员工信息不完整')
-    if (!snapshot || typeof snapshot !== 'object' || !Array.isArray(snapshot.days) || !snapshot.summary) {
-      throw httpError(`「${employeeName}」工资条数据不完整`)
+  const runTransaction = () => prisma.$transaction(async (tx) => {
+    // Per-Employee advisory locks serialize same/overlapping range issuance.
+    for (const employeeId of [...employeeIds].sort()) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${employeeId}, 0))`
     }
-    if (!Number.isInteger(totalCents) || totalCents < 0) throw httpError(`「${employeeName}」工资金额不正确`)
-    // Gate 18：稳定发放必须携带 Employee.id 主体；payload 内按 employeeId 判重
-    if (!employeeId) throw httpError(`「${employeeName}」缺少稳定员工 ID，无法发放`)
-    if (employeeId.length > 100) throw httpError('员工 ID 不正确')
-    const dupKey = `${employeeId}::${ptype}::${periodKey}`
-    if (seen.has(dupKey)) throw httpError(`「${employeeName}」重复选择`)
-    seen.add(dupKey)
-    payloads.push({ employeeId, employeeName, storeKey, snapshot, totalCents })
-  }
-
-  // Gate 18：主体存在性 + 收件人解析（唯一 User.employeeId 匹配，fail closed，绝不按姓名/staffKey 兜底）
-  const empIds = [...new Set(payloads.map((r) => r.employeeId))]
-  const employees = await prisma.employee.findMany({ where: { id: { in: empIds } }, select: { id: true, name: true } })
-  const empById = new Map(employees.map((e) => [e.id, e]))
-  const users = await prisma.user.findMany({
-    where: { employeeId: { in: empIds }, status: 'active' },
-    select: { username: true, employeeId: true, status: true },
-  })
-  const usersByEmpId = new Map()
-  for (const u of users) {
-    if (!u.employeeId) continue
-    const list = usersByEmpId.get(u.employeeId) || []
-    list.push(u)
-    usersByEmpId.set(u.employeeId, list)
-  }
-  const resolved = []
-  for (const r of payloads) {
-    const emp = empById.get(r.employeeId)
-    if (!emp) throw httpError('员工不存在', 400)
-    const candidates = usersByEmpId.get(r.employeeId) || []
-    if (candidates.length === 0) {
-      throw httpError(`「${r.employeeName}」未绑定可接收工资条的账号`, 409)
+    const authority = await loadAuthoritativePayrollRange(tx, period)
+    const authoritativeRows = buildAuthoritativeIssueRows(authority, employeeIds)
+    validateClientIssueRows(authoritativeRows, rows)
+    const overlaps = await findPayrollRangeOverlaps(tx, period, employeeIds)
+    if (overlaps.length > 0) {
+      const names = [...new Set(overlaps.map((row) => row.employeeName || row.employeeId))].join('、')
+      const error = httpError(`「${names}」存在重复或重叠工资条`, 409)
+      error.code = 'OVERLAPPING_PAYROLL_NOTICE'
+      error.overlaps = overlaps
+      throw error
     }
-    if (candidates.length > 1) {
-      throw httpError(`「${r.employeeName}」存在多个绑定账号，无法确定收件人，请联系开发者处理`, 409)
+    const created = []
+    for (const row of authoritativeRows) {
+      created.push(await tx.payrollNotice.create({
+        data: {
+          id: `pn-${crypto.randomUUID()}`,
+          periodType: period.periodType,
+          periodKey: period.periodKey,
+          periodStart: new Date(`${period.periodStart}T00:00:00.000Z`),
+          periodEnd: new Date(`${period.periodEnd}T00:00:00.000Z`),
+          employeeId: row.employeeId,
+          employeeName: row.employeeName,
+          storeKey: row.storeKey,
+          targetUsername: row.targetUsername,
+          snapshot: row.snapshot,
+          totalCents: BigInt(row.totalCents),
+          status: 'pending',
+          createdBy: req.user.username,
+        },
+      }))
     }
-    resolved.push({ ...r, targetUsername: candidates[0].username })
+    return created
+  }, { isolationLevel: 'Serializable' })
+
+  let created
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      created = await runTransaction()
+      break
+    } catch (error) {
+      if (error.code !== 'P2034' || attempt === 3) throw error
+    }
   }
 
-  // 同员工同周期重复发放 → 409（已撤回/已删除的工资条不占用周期，可重新发放修正）
-  const existing = await prisma.payrollNotice.findMany({
-    where: { periodType: ptype, periodKey, status: { notIn: ['recalled', 'deleted'] } },
-    select: { id: true, employeeId: true, employeeName: true, storeKey: true },
-  })
-  const stableExisted = new Set(existing.filter((r) => r.employeeId).map((r) => r.employeeId))
-  const dup = resolved.filter((r) => stableExisted.has(r.employeeId))
-  if (dup.length) {
-    return res.status(409).json({ error: `「${dup.map((r) => r.employeeName).join('、')}」该周期工资条已发放` })
-  }
-
-  const created = []
-  for (const r of resolved) {
-    const row = await prisma.payrollNotice.create({
-      data: {
-        id: `pn-${crypto.randomUUID()}`,
-        periodType: ptype,
-        periodKey: String(periodKey),
-        employeeId: r.employeeId,
-        employeeName: r.employeeName,
-        storeKey: r.storeKey,
-        targetUsername: r.targetUsername,
-        snapshot: r.snapshot,
-        totalCents: BigInt(r.totalCents),
-        status: 'pending',
-        createdBy: req.user.username,
-      },
-    })
-    created.push(row)
-  }
-  // 通知中心：发放工资条 → 员工站内消息 + 微信提醒（待签收）
-  for (const r of created) {
-    const period = periodText(r)
-    const total = (Number(r.totalCents) / 100).toFixed(2)
-    if (r.targetUsername) {
+  // Notifications are emitted only after the atomic DB transaction commits.
+  for (const row of created) {
+    const periodDisplay = periodText(row)
+    const total = (Number(row.totalCents) / 100).toFixed(2)
+    if (row.targetUsername) {
       notify({
-        username: r.targetUsername,
+        username: row.targetUsername,
         templateKey: 'payroll_pending',
-        data: { employeeName: r.employeeName, period, amount: total },
+        data: { employeeName: row.employeeName, period: periodDisplay, amount: total },
         priority: 'high',
         target: 'staff-payroll',
         refType: 'payroll',
-        refId: r.id,
+        refId: row.id,
         ack: true,
       }).catch(() => {})
     }

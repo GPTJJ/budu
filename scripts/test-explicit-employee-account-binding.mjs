@@ -27,6 +27,16 @@ await prisma.employee.createMany({
     { id: 'emp-C', employeeNo: 'C001', name: '李四', currentStoreKey: 'chaowai', status: 'ACTIVE' },
   ],
 })
+await prisma.dailyEntry.create({
+  data: { id: 'de-gate20-2026-09-01', storeKey: 'guanshe', date: new Date('2026-09-01T00:00:00.000Z'), incCents: 500000n, ord: 10, staffNames: ['张伟', '张伟'], status: 'confirmed' },
+})
+await prisma.dailyStoreStaff.createMany({
+  data: ['emp-A', 'emp-B'].map((employeeId, index) => ({
+    id: `dss-gate20-${employeeId}`, storeId: 'guanshe', date: new Date('2026-09-01T00:00:00.000Z'), employeeId,
+    participantType: 'EMPLOYEE', staffId: `staff-${employeeId}`, staffNameSnapshot: '张伟',
+    actualHours: index === 0 ? 8 : 6, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal',
+  })),
+})
 
 const { createApp } = await import('../server/app.js')
 const server = createApp().listen(0)
@@ -120,8 +130,14 @@ try {
   console.log('  [无效 employeeId] 400 PASS')
 
   // Gate 18 集成：绑定 → 发放端到端（emp-A → user-A、emp-B → user-B）
-  const rowFor = (employeeId, employeeName) => ({ employeeId, employeeName, storeKey: 'guanshe', snapshot: { days: [{ day: '09-01', revenue: 5000, hours: 8 }], summary: { workedDays: 1, hours: 8, total: 600 } }, totalCents: 60000 })
-  const issueRes = await request(base, '/v2/payroll-notices', { cookie, method: 'POST', body: { periodType: 'month', periodKey: '2026-09', rows: [rowFor('emp-A', '张伟'), rowFor('emp-B', '张伟')] } })
+  await prisma.user.update({ where: { username: 'user-A' }, data: { status: 'active' } })
+  const { buildAuthoritativeIssueRows, loadAuthoritativePayrollRange } = await import('../server/payroll-authority.js')
+  const authority = await loadAuthoritativePayrollRange(prisma, { periodType: 'month', periodKey: '2026-09' })
+  const rows = buildAuthoritativeIssueRows(authority, ['emp-A', 'emp-B']).map((row) => ({
+    employeeId: row.employeeId, employeeName: row.employeeName, storeKey: row.storeKey,
+    snapshot: row.snapshot, totalCents: row.totalCents,
+  }))
+  const issueRes = await request(base, '/v2/payroll-notices', { cookie, method: 'POST', body: { periodType: 'month', periodKey: '2026-09', rows } })
   assert.equal(issueRes.status, 200, `Gate18 集成发放应成功: ${await issueRes.text()}`)
   const notices = await prisma.payrollNotice.findMany({ where: { periodKey: '2026-09' }, orderBy: { employeeId: 'asc' } })
   assert.equal(notices.length, 2)

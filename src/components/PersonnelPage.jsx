@@ -9,11 +9,8 @@ import {
   employeesByType,
   employeeList,
   monthLabel,
-  employeeDayStatus,
   employeeDailyPayDetail,
-  employeeWeekStatus,
   legacyAmbiguousEmployeeNames,
-  payrollPeriodMonths,
   hasLocalEntry,
   localStaffList,
   currentEmployeeDirectory,
@@ -30,8 +27,12 @@ import {
   getEntries,
   getDailyPayAdjustments,
   getBigBonuses,
+  getDailyStoreStaffRange,
+  getDailyStoreStaffRangeState,
+  loadDailyStoreStaffRange,
 } from '../utils/userData'
 import { resolvePayrollCalculation } from '../utils/payrollResolver'
+import { resolvePayrollPeriod } from '../utils/payrollPeriod'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { t } from '../utils/text'
@@ -60,6 +61,24 @@ function todayParts() {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return { month: `${d.getFullYear()}-${mm}`, day: `${mm}-${dd}` }
+}
+
+function resolverPeriodStatus(record) {
+  return {
+    pay: record.salary || 0,
+    hours: record.payableHours || 0,
+    commission: record.commission || 0,
+    basePay: record.basePay || 0,
+    transferSubsidy: record.transferSubsidy || 0,
+    bigBonus: record.bigBonus || 0,
+    salaryAdjustment: record.salaryAdjustment || 0,
+    adjustmentCount: record.adjustmentCount || 0,
+    inc: record.workedRevenue || 0,
+    ord: record.orders || 0,
+    stores: record.storesWorked || [],
+    workedDays: record.days || 0,
+    adjustmentOnly: (record.days || 0) === 0 && (record.adjustmentCount || 0) > 0,
+  }
 }
 
 function Stat({ label, value, accent, className = '' }) {
@@ -328,6 +347,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
   // 导出继续复用既有逐日明细合同；界面展示则只读取 resolver 已提供的 explanation metadata。
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
+    if (stableIdentity) return
     const detail = employeeDailyPayDetail(
       monthKey,
       dd,
@@ -370,7 +390,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
       pushDay(month, `${String(m).padStart(2, '0')}-${dd}`, dd)
     }
   }
-  const totals = dayRows.reduce(
+  const legacyTotals = dayRows.reduce(
     (s, r) => ({
       revenue: s.revenue + r.revenue,
       orders: s.orders + r.orders,
@@ -402,6 +422,42 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
     .slice()
     .sort((a, b) => `${a.date}|${a.storeKey || ''}`.localeCompare(`${b.date}|${b.storeKey || ''}`))
 
+  // Stable detail/export is a projection of the same resolver explanations;
+  // employeeDailyPayDetail remains only for explicit legacy compatibility display.
+  const resolverDayRows = explanationRows.map((row) => ({
+    day: row.date,
+    stores: row.storeName || row.storeKey || '',
+    revenue: row.explanation?.displayWorkedRevenue || 0,
+    orders: row.orders || 0,
+    hours: row.payableHours ?? row.hours ?? 0,
+    basePay: row.basePay || 0,
+    commission: row.commission || 0,
+    transferSubsidy: row.transferSubsidy || 0,
+    bigBonus: row.bigBonus || 0,
+    automaticPay: row.automaticPay || 0,
+    salaryAdjustment: row.salaryAdjustment || 0,
+    payAdjustment: row.explanation?.adjustment || null,
+    pay: row.finalPay || 0,
+  }))
+  const effectiveDayRows = stableIdentity ? resolverDayRows : dayRows
+  const totals = stableIdentity
+    ? effectiveDayRows.reduce(
+        (sum, row) => ({
+          revenue: sum.revenue + row.revenue,
+          orders: sum.orders + row.orders,
+          hours: sum.hours + row.hours,
+          basePay: sum.basePay + row.basePay,
+          commission: sum.commission + row.commission,
+          transferSubsidy: sum.transferSubsidy + row.transferSubsidy,
+          bigBonus: sum.bigBonus + row.bigBonus,
+          automaticPay: sum.automaticPay + row.automaticPay,
+          salaryAdjustment: sum.salaryAdjustment + row.salaryAdjustment,
+          pay: sum.pay + row.pay,
+        }),
+        { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 0, salaryAdjustment: 0, pay: 0 },
+      )
+    : legacyTotals
+
   const download = () => {
     const periodLabel = weekStart
       ? `本周 ${weekStart} ~ ${weekDays[6].date}`
@@ -409,7 +465,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
         ? `当日 ${selectedDate}`
         : month
     const periodKey = weekStart ? weekStart.replace(/-/g, '') : day ? selectedDate.replace(/-/g, '') : month.replace(/-/g, '')
-    downloadEmployeePayExcel({ employeeName: emp.name, periodLabel, periodKey, dayRows, totals })
+    downloadEmployeePayExcel({ employeeName: emp.name, periodLabel, periodKey, dayRows: effectiveDayRows, totals })
   }
 
   return (
@@ -498,47 +554,56 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       ? [String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${day}`]
       : []
   const periodKey = periodDates.join('|')
-  const [periodAttendance, setPeriodAttendance] = useState({ status: 'idle', key: '', rows: [], dailyByEmployeeId: new Map() })
+  const emptyPeriodState = (status = 'idle', key = '') => ({ status, key, rows: [], byEmployeeId: new Map(), dailyByEmployeeId: new Map() })
+  const [periodAttendance, setPeriodAttendance] = useState(emptyPeriodState())
   const periodRequestRef = useRef(0)
   useEffect(() => {
     if (periodDates.length === 0) {
-      setPeriodAttendance({ status: 'idle', key: '', rows: [], dailyByEmployeeId: new Map() })
+      setPeriodAttendance(emptyPeriodState())
       return undefined
     }
     const requestId = periodRequestRef.current + 1
     periodRequestRef.current = requestId
     const key = periodDates.join('|')
-    const months = payrollPeriodMonths(periodDates)
-    setPeriodAttendance({ status: 'loading', key, rows: [], dailyByEmployeeId: new Map() })
+    const period = resolvePayrollPeriod({
+      periodType: weekStart ? 'week' : 'custom',
+      ...(weekStart
+        ? { periodKey: weekStart }
+        : { periodStart: periodDates[0], periodEnd: periodDates[periodDates.length - 1] }),
+    })
+    if (!period.valid) {
+      setPeriodAttendance(emptyPeriodState('error', key))
+      return undefined
+    }
+    setPeriodAttendance(emptyPeriodState('loading', key))
     let cancelled = false
-    Promise.all(months.map((monthKey) => loadDailyStoreStaffMonth(monthKey))).then(() => {
+    loadDailyStoreStaffRange(period.periodStart, period.periodEnd).then(() => {
       if (cancelled || periodRequestRef.current !== requestId) return
-      if (months.some((monthKey) => getDailyStoreStaffMonthState(monthKey).status !== 'loaded')) {
-        setPeriodAttendance({ status: 'error', key, rows: [], dailyByEmployeeId: new Map() })
+      const rangeState = getDailyStoreStaffRangeState(period.periodStart, period.periodEnd)
+      if (!rangeState.complete) {
+        setPeriodAttendance(emptyPeriodState('error', key))
         return
       }
-      const rows = months.flatMap((monthKey) => getDailyStoreStaff(monthKey))
-      const dailyByEmployeeId = new Map()
-      const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
-      for (const monthKey of months) {
-        const result = resolvePayrollCalculation({
-          month: monthKey,
-          dailyEntries: getEntries(),
-          dailyStoreStaffRows: getDailyStoreStaff(monthKey),
-          dailyPayAdjustments: getDailyPayAdjustments(),
-          bigOrderBonuses: getBigBonuses(),
-          employees: directory,
-          users: [],
-          storeNames,
-        })
-        if (result.mode !== 'EMPLOYEE_ID') continue
-        for (const employee of result.payroll.employees) {
-          const current = dailyByEmployeeId.get(employee.employeeId) || []
-          current.push(...(Array.isArray(employee.dailyExplanations) ? employee.dailyExplanations : []))
-          dailyByEmployeeId.set(employee.employeeId, current)
-        }
+      const rows = getDailyStoreStaffRange(period.periodStart, period.periodEnd)
+      const result = resolvePayrollCalculation({
+        ...period,
+        dailyEntries: getEntries(),
+        dailyStoreStaffRows: rows,
+        dailyPayAdjustments: getDailyPayAdjustments(),
+        bigOrderBonuses: getBigBonuses(),
+        employees: directory,
+        users: [],
+        storeNames: Object.fromEntries(allStores().map((store) => [store.key, store.name])),
+      })
+      if (result.mode !== 'EMPLOYEE_ID' || !result.calculationReady) {
+        setPeriodAttendance(emptyPeriodState('error', key))
+        return
       }
-      setPeriodAttendance({ status: 'ready', key, rows, dailyByEmployeeId })
+      const byEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, resolverPeriodStatus(record)]))
+      const dailyByEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, record.dailyExplanations || []]))
+      setPeriodAttendance({ status: 'ready', key, rows, byEmployeeId, dailyByEmployeeId })
+    }).catch(() => {
+      if (!cancelled && periodRequestRef.current === requestId) setPeriodAttendance(emptyPeriodState('error', key))
     })
     return () => { cancelled = true }
     // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
@@ -846,14 +911,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {list.map((emp, i) => {
               const periodReady = periodAttendance.status === 'ready' && periodAttendance.key === periodKey
               const stablePeriod = payrollDisplay.mode === 'EMPLOYEE_ID'
-              const legacyPeriod = payrollDisplay.mode === 'LEGACY' && !emp.legacyAmbiguous
-              const status = weekStart
-                ? weekDays && (stablePeriod ? periodReady : legacyPeriod)
-                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name, stablePeriod ? emp.id : undefined, stablePeriod ? periodAttendance.rows : undefined)
-                  : null
-                : day && (stablePeriod ? periodReady : legacyPeriod)
-                  ? employeeDayStatus(month, day, emp.name, stablePeriod ? emp.id : undefined, stablePeriod ? periodAttendance.rows : undefined)
-                  : null
+              const status = (day || weekStart) && stablePeriod && periodReady
+                ? periodAttendance.byEmployeeId.get(emp.id) || null
+                : null
               const hasPeriodResult = Boolean((day || weekStart) && status)
               const onDuty = Boolean(hasPeriodResult && !status.adjustmentOnly)
               const periodSalary = hasPeriodResult ? status.pay : 0

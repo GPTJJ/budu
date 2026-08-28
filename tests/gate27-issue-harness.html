@@ -23,6 +23,25 @@
       if (u.includes('/api/admin/users')) {
         return json({ ok: true, users: window.__users || [] })
       }
+      if (u.includes('/api/v2/payroll-notices/preflight') && (opts.method || 'GET') === 'POST') {
+        const body = JSON.parse(opts.body || '{}')
+        const includes = (date) => date >= body.periodStart && date <= body.periodEnd
+        const totalFor = (employeeId) => {
+          const attendance = adjonly || legacy || !includes('2026-08-01') ? 0 : employeeId === 'emp-A' ? 68000 : 51000
+          const adjustment = !includes('2026-08-10') ? 0 : employeeId === 'emp-A' ? 50000 : negative ? -80000 : -5000
+          return attendance + adjustment
+        }
+        return json({
+          ok: true,
+          period: body,
+          calculationReady: true,
+          rows: (body.employeeIds || []).map((employeeId) => {
+            const recipients = (window.__users || []).filter((user) => user.employeeId === employeeId && user.status === 'active')
+            const totalCents = totalFor(employeeId)
+            return { employeeId, totalCents, issueReady: recipients.length === 1 && totalCents >= 0, blockers: [], overlaps: [] }
+          }),
+        })
+      }
       if (u.includes('/api/v2/payroll-notices') && (opts.method || 'GET') === 'POST') {
         const body = JSON.parse(opts.body || '{}')
         window.__posted = body
@@ -65,8 +84,8 @@
       ? {}
       : {
           '2026-08': [
-            { id: 'a1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8 },
-            { id: 'a2', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6 },
+            { id: 'a1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffId: 'st-a', staffNameSnapshot: '张伟', actualHours: 8, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS' },
+            { id: 'a2', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-B', participantType: 'EMPLOYEE', staffId: 'st-b', staffNameSnapshot: '张伟', actualHours: 6, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS' },
           ],
         }
     seedCachedDataForTest({

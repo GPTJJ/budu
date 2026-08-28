@@ -85,6 +85,7 @@ const DIRECT_SUITE = [
   'test-export-detail-identity.mjs', // Gate 25 澄清：明细行调整/奖金按 employeeId 精确隔离（同店同名）→ critical
   'test-payroll-adjustment-only.mjs', // Gate 26：稳定调整仅日 Employee.id 月度贡献（无考勤也可进入 payroll）→ critical
   'test-payroll-issue-resolver.mjs', // Gate 27：PayrollIssueModal resolver 发放纯逻辑（主体/快照/预检）→ critical
+  'test-week-custom-payroll.mjs', // WEEK/CUSTOM：统一范围 resolver / 跨月 / 历史 / cache / algebra → critical
   'test-payroll-payable-hours.mjs', // Gate 29B：稳定应付工时权威 + 月/日/快照统一计算合同 → critical
   'test-payroll-mascot-isolation.mjs', // Gate 29E：展示姓名不得控制工资资格 → critical
   'test-personnel-payroll-identity.mjs', // Gate 29F：Personnel 日/周 Employee.id + 跨月/竞态身份 → critical
@@ -119,6 +120,7 @@ const CRITICAL_DIRECT = [
   'test-export-detail-identity.mjs',
   'test-payroll-adjustment-only.mjs',
   'test-payroll-issue-resolver.mjs',
+  'test-week-custom-payroll.mjs',
   'test-payroll-payable-hours.mjs',
   'test-payroll-mascot-isolation.mjs',
   'test-personnel-payroll-identity.mjs',

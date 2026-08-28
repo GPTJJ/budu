@@ -1,4 +1,5 @@
 import { api } from './api.js'
+import { monthsInPayrollRange } from './payrollPeriod.js'
 
 /**
  * 共享数据层：登录后从服务端加载「业绩录入 + 员工名单」，
@@ -434,6 +435,52 @@ export function getDailyStoreStaffMonthState(month) {
     hasPayload,
     rows: hasPayload ? byMonth[key] : [],
     error: state.error || null,
+  }
+}
+
+/** Load all attendance months intersecting an inclusive payroll range. */
+export async function loadDailyStoreStaffRange(periodStart, periodEnd, opts = {}) {
+  const months = monthsInPayrollRange(periodStart, periodEnd)
+  const rangeKey = `${periodStart}|${periodEnd}`
+  if (months.length === 0) return { rangeKey, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, complete: false, months: [], rows: [] }
+  await Promise.all(months.map((month) => loadDailyStoreStaffMonth(month, opts)))
+  return getDailyStoreStaffRangeState(periodStart, periodEnd)
+}
+
+export function getDailyStoreStaffRange(periodStart, periodEnd) {
+  return monthsInPayrollRange(periodStart, periodEnd).flatMap((month) => getDailyStoreStaff(month))
+}
+
+/**
+ * A range is complete only when every intersecting month has a payload marker
+ * owned by the current account generation. Empty loaded months remain facts.
+ */
+export function getDailyStoreStaffRangeState(periodStart, periodEnd) {
+  const months = monthsInPayrollRange(periodStart, periodEnd)
+  const rangeKey = `${periodStart}|${periodEnd}`
+  if (months.length === 0) {
+    return { rangeKey, status: STAFF_MONTH_LOAD_STATE.NOT_LOADED, complete: false, months: [], missingMonths: [], rows: [] }
+  }
+  const states = months.map((month) => getDailyStoreStaffMonthState(month))
+  const missingMonths = states
+    .filter((state) => state.status !== STAFF_MONTH_LOAD_STATE.LOADED || !state.hasPayload)
+    .map((state) => state.month)
+  const hasError = states.some((state) => state.status === STAFF_MONTH_LOAD_STATE.ERROR)
+  const loading = states.some((state) => state.status === STAFF_MONTH_LOAD_STATE.LOADING)
+  const status = missingMonths.length === 0
+    ? STAFF_MONTH_LOAD_STATE.LOADED
+    : hasError
+      ? STAFF_MONTH_LOAD_STATE.ERROR
+      : loading
+        ? STAFF_MONTH_LOAD_STATE.LOADING
+        : STAFF_MONTH_LOAD_STATE.NOT_LOADED
+  return {
+    rangeKey,
+    status,
+    complete: missingMonths.length === 0,
+    months,
+    missingMonths,
+    rows: missingMonths.length === 0 ? getDailyStoreStaffRange(periodStart, periodEnd) : [],
   }
 }
 
