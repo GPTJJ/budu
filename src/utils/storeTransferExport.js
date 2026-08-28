@@ -1,39 +1,90 @@
 import * as XLSX from 'xlsx'
 import { downloadFile } from './downloadFile.js'
-import { transferStatusLabel } from './storeTransfer.js'
+import { transferStatusLabel, transferViewStatus } from './storeTransfer.js'
 
 const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 
-export function transferExcelRows(records, storeLabel) {
-  return (Array.isArray(records) ? records : []).flatMap((record) =>
-    (record.items || []).map((item) => ({
-      调拨单号: record.id,
-      创建时间: formatTime(record.createdAt),
-      状态: transferStatusLabel(record.status),
-      调出门店: storeLabel(record.fromStoreKey, record.fromStoreName),
-      调入门店: storeLabel(record.storeKey, record.storeName),
-      类型: item.category === 'material' ? '物料' : item.category === 'product' ? '产品' : '其他',
-      名称: item.productName || '—',
-      编码: item.itemCode || '—',
-      数量: Number(item.quantity) || 0,
-      申请人: record.createdBy || '—',
-      发货人: record.shippedBy || '—',
-      发货时间: formatTime(record.shippedAt),
-      备注: record.note || '',
-    })),
-  )
+const shanghaiDate = (value) => {
+  if (!value) return ''
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value)).map((part) => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+const itemType = (item) => item.category === 'material' ? '物料' : '产品'
+const itemCategory = (item) => item.category === 'product' ? item.productCategory || '未分类' : '—'
+
+export function buildTransferExportData(records, options = {}) {
+  const storeLabel = options.storeLabel || ((key, legacyName = '') => legacyName || key || '—')
+  const selectedStores = new Set(Array.isArray(options.storeKeys) ? options.storeKeys : [])
+  const filterType = ['product', 'material'].includes(options.itemType) ? options.itemType : 'all'
+  const details = []
+  const summary = new Map()
+  const selectedAllStores = selectedStores.size === 0
+
+  for (const record of Array.isArray(records) ? records : []) {
+    if (transferViewStatus(record.status) !== 'shipped' || !record.shippedAt) continue
+    const shippedDate = shanghaiDate(record.shippedAt)
+    if (options.dateFrom && shippedDate < options.dateFrom) continue
+    if (options.dateTo && shippedDate > options.dateTo) continue
+    const fromSelected = selectedAllStores || selectedStores.has(record.fromStoreKey)
+    const toSelected = selectedAllStores || selectedStores.has(record.storeKey)
+    if (!fromSelected && !toSelected) continue
+
+    for (const item of record.items || []) {
+      if (filterType !== 'all' && item.category !== filterType) continue
+      const type = itemType(item)
+      const category = itemCategory(item)
+      const code = item.itemCode || '—'
+      const name = item.productName || '—'
+      const quantity = Number(item.quantity) || 0
+      details.push({
+        调拨单号: record.id,
+        发货时间: formatTime(record.shippedAt),
+        调出门店: storeLabel(record.fromStoreKey, record.fromStoreName),
+        调入门店: storeLabel(record.storeKey, record.storeName),
+        类型: type,
+        产品分类: category,
+        编号: code,
+        名称: name,
+        数量: quantity,
+        申请人: record.createdBy || '—',
+        发货确认人: record.shippedBy || '—',
+        备注: record.note || '',
+      })
+      for (const direction of [
+        fromSelected && { key: record.fromStoreKey, name: storeLabel(record.fromStoreKey, record.fromStoreName), inbound: 0, outbound: quantity },
+        toSelected && { key: record.storeKey, name: storeLabel(record.storeKey, record.storeName), inbound: quantity, outbound: 0 },
+      ].filter(Boolean)) {
+        const key = [direction.key, item.category, category, code, name].join('\u0000')
+        const current = summary.get(key) || { 门店: direction.name, 类型: type, 分类: category, 编号: code, 名称: name, 调入数量: 0, 调出数量: 0, 净调拨: 0, _storeKey: direction.key }
+        current.调入数量 += direction.inbound
+        current.调出数量 += direction.outbound
+        current.净调拨 = current.调入数量 - current.调出数量
+        summary.set(key, current)
+      }
+    }
+  }
+
+  const summaryRows = [...summary.values()].sort((a, b) => a._storeKey.localeCompare(b._storeKey) || a.类型.localeCompare(b.类型) || a.分类.localeCompare(b.分类, 'zh-CN') || a.编号.localeCompare(b.编号, 'zh-CN') || a.名称.localeCompare(b.名称, 'zh-CN')).map(({ _storeKey, ...row }) => row)
+  return { summaryRows, detailRows: details }
 }
 
-export function exportTransferExcel(records, storeLabel) {
-  const rows = transferExcelRows(records, storeLabel)
-  const sheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ 提示: '当前筛选条件下暂无调拨明细' }])
-  sheet['!cols'] = [
-    { wch: 25 }, { wch: 20 }, { wch: 10 }, { wch: 16 }, { wch: 16 }, { wch: 9 },
-    { wch: 28 }, { wch: 24 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 30 },
-  ]
+export function createTransferExportWorkbook(records, options = {}) {
+  const { summaryRows, detailRows } = buildTransferExportData(records, options)
+  const summarySheet = XLSX.utils.json_to_sheet(summaryRows.length ? summaryRows : [{ 提示: '当前筛选条件下暂无已发货调拨汇总' }])
+  const detailSheet = XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ 提示: '当前筛选条件下暂无已发货调拨明细' }])
+  summarySheet['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]
+  detailSheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
   const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, sheet, '门店调拨明细')
-  XLSX.writeFile(workbook, `BUDU门店调拨_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  XLSX.utils.book_append_sheet(workbook, summarySheet, '调拨汇总')
+  XLSX.utils.book_append_sheet(workbook, detailSheet, '调拨明细')
+  return { workbook, summaryRows, detailRows }
+}
+
+export function exportTransferExcel(records, options = {}) {
+  const result = createTransferExportWorkbook(records, options)
+  const range = options.dateFrom || options.dateTo ? `_${options.dateFrom || '最早'}_${options.dateTo || '最新'}` : ''
+  XLSX.writeFile(result.workbook, `BUDU门店物资调拨汇总${range}.xlsx`)
+  return result
 }
 
 function wrapCanvasText(ctx, text, maxWidth) {

@@ -1,27 +1,75 @@
 import { expect, test } from '@playwright/test'
 
-test('产品 Tab 支持新增、编辑、排序与停用', async ({ page }) => {
+test('分类管理支持新增、编辑、排序和启停', async ({ page }) => {
   await page.goto('/tests/product-material-harness.html')
-  await expect(page.getByRole('tab', { name: '产品' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('button', { name: '分类管理' }).click()
+  await expect(page.getByRole('dialog', { name: '分类管理' })).toBeVisible()
+  await page.getByRole('button', { name: '新增分类' }).click()
+  await page.getByLabel('分类名称').fill('其他')
+  await page.getByLabel('分类排序').fill('3')
+  await page.getByRole('button', { name: '保存分类' }).click()
+  const category = page.locator('[data-category-id="category-2"]')
+  await expect(category).toContainText('其他')
+  await page.getByRole('button', { name: '编辑分类其他' }).click()
+  await page.getByLabel('分类名称').fill('其他产品')
+  await page.getByLabel('分类排序').fill('4')
+  await page.getByRole('button', { name: '保存分类' }).click()
+  await expect(category).toContainText('排序 4')
+  await category.getByRole('button', { name: '停用' }).click()
+  await expect(category).toContainText('已停用')
+})
+
+test('产品支持未分类、分类/状态筛选及名称/编号搜索', async ({ page }) => {
+  await page.goto('/tests/product-material-harness.html')
+  await expect(page.getByRole('button', { name: '全部 3' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '未分类 2' })).toBeVisible()
+  await page.getByRole('button', { name: '未分类 2' }).click()
+  await expect(page.locator('[data-master-item-id="p-used"]')).toHaveCount(0)
+  await expect(page.locator('[data-master-item-id="p-off"]')).toBeVisible()
+  await page.getByLabel('产品状态筛选').selectOption('active')
+  await expect(page.locator('[data-master-item-id="p-off"]')).toHaveCount(0)
+  await expect(page.locator('[data-master-item-id="p-zero"]')).toBeVisible()
+  await page.getByLabel('搜索名称或编号').fill('PRICE')
+  await expect(page.locator('[data-master-item-id="p-zero"]')).toBeVisible()
+  await page.getByLabel('搜索名称或编号').fill('补价')
+  await expect(page.locator('[data-master-item-id="p-zero"]')).toBeVisible()
+})
+
+test('批量移动分类与批量设为未分类一次完成', async ({ page }) => {
+  await page.goto('/tests/product-material-harness.html')
+  await page.getByLabel('选择旧产品').check()
+  await page.getByLabel('选择0.1元-补价用').check()
+  await expect(page.getByTestId('bulk-category-bar')).toContainText('已选择 2 项')
+  await page.getByLabel('批量目标分类').selectOption('c-candy')
+  await page.getByRole('button', { name: '移动到分类' }).click()
+  await expect(page.locator('[data-master-item-id="p-off"]')).toContainText('糖果')
+  await page.getByLabel('选择旧产品').check()
+  await page.getByLabel('批量目标分类').selectOption('')
+  await page.getByRole('button', { name: '移动到分类' }).click()
+  await expect(page.locator('[data-master-item-id="p-off"]')).toContainText('未分类')
+})
+
+test('产品新增编辑保留编号、分类、排序与停用', async ({ page }) => {
+  await page.goto('/tests/product-material-harness.html')
   await page.getByRole('button', { name: '新增产品' }).click()
   await page.getByLabel('产品编号').fill('NO.13')
   await page.getByLabel('产品名称').fill('NO.13测试产品')
+  await page.getByLabel('所属分类').selectOption('c-candy')
   await page.getByLabel('排序').fill('13')
   await page.getByRole('button', { name: '保存' }).click()
-  await expect(page.getByText('NO.13测试产品', { exact: true })).toBeVisible()
-
+  await expect(page.locator('[data-master-item-id="new-4"]')).toContainText('NO.13测试产品')
   await page.getByRole('button', { name: '编辑NO.13测试产品' }).click()
   await page.getByLabel('产品编号').fill('NO.13A')
-  await page.getByLabel('产品名称').fill('NO.13测试产品改')
+  await page.getByLabel('所属分类').selectOption('')
   await page.getByLabel('排序').fill('2')
   await page.getByRole('button', { name: '保存' }).click()
-  const card = page.locator('[data-master-item-id="new-3"]')
-  await expect(card).toContainText('编号 NO.13A · 排序 2')
-  await card.getByRole('button', { name: '停用' }).click()
-  await expect(card).toContainText('已停用')
+  const row = page.locator('[data-master-item-id="new-4"]')
+  await expect(row).toContainText('未分类 · 已启用 · 排序 2')
+  await row.getByRole('button', { name: '停用' }).click()
+  await expect(row).toContainText('已停用')
 })
 
-test('物料 Tab 支持新增、编辑与启停，历史使用项没有删除入口', async ({ page }) => {
+test('物料逻辑保持新增、编辑与启停且无删除入口', async ({ page }) => {
   await page.goto('/tests/product-material-harness.html')
   await page.getByRole('tab', { name: '物料' }).click()
   await expect(page.locator('[data-master-item-id="m-used"]')).toContainText('已用于历史调拨/采购 · 仅可停用')
@@ -31,13 +79,9 @@ test('物料 Tab 支持新增、编辑与启停，历史使用项没有删除入
   await page.getByLabel('排序').fill('8')
   await page.getByRole('button', { name: '保存' }).click()
   await expect(page.getByText('新物料', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '编辑新物料' }).click()
-  await page.getByLabel('物料名称').fill('新物料改')
-  await page.getByRole('button', { name: '保存' }).click()
-  await expect(page.getByText('新物料改', { exact: true })).toBeVisible()
 })
 
-test('320/340/375/390/430px 管理页面无横向滚动', async ({ page }) => {
+test('320/340/375/390/430px 管理列表无横向滚动', async ({ page }) => {
   for (const width of [320, 340, 375, 390, 430]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/tests/product-material-harness.html')

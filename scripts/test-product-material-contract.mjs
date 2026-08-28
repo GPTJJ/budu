@@ -32,3 +32,32 @@ test('主数据 API 没有物理删除路径且服务端拒绝停用货品新调
   assert.match(source, /!existing\.transferEnabled/)
   assert.match(source, /货品已停用或不存在，请刷新后重试/)
 })
+
+test('产品管理与调拨选择器共同读取 PostgreSQL 产品分类且没有写死分类', () => {
+  const management = read('src/components/ProductMaterialManagementPage.jsx')
+  const transfer = read('src/components/StoreTransferPage.jsx')
+  const server = read('server/v2.js')
+  assert.match(management, /\/v2\/product-categories/)
+  assert.match(transfer, /\/v2\/product-categories\?active=true/)
+  assert.match(server, /prisma\.productCategory/)
+  assert.doesNotMatch(`${management}\n${transfer}`, /\[['"]糖果|\[['"]礼盒|const\s+PRODUCT_CATEGORIES/)
+})
+
+test('分类和产品均无物理删除，批量归类与历史分类快照由服务端保护', () => {
+  const source = read('server/v2.js')
+  assert.doesNotMatch(source, /delete\('\/product-categories/)
+  assert.match(source, /transfer-master-items\/bulk-category/)
+  assert.match(source, /productCategoryNameSnapshot/)
+  assert.match(source, /item\.productCategory\?\.name \|\| ''/)
+})
+
+test('调拨 Excel 使用已发货、发货时间、门店方向并生成汇总和明细 Sheet', () => {
+  const source = read('src/utils/storeTransferExport.js')
+  assert.match(source, /transferViewStatus\(record\.status\) !== 'shipped'/)
+  assert.match(source, /record\.shippedAt/)
+  assert.match(source, /调入数量/)
+  assert.match(source, /调出数量/)
+  assert.match(source, /净调拨/)
+  assert.match(source, /append_sheet\(workbook, summarySheet, '调拨汇总'\)/)
+  assert.match(source, /append_sheet\(workbook, detailSheet, '调拨明细'\)/)
+})

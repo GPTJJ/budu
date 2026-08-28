@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, Check, ChevronRight, Download, FileSpreadsheet, Filter,
-  Minus, PackageCheck, Plus, RefreshCcw, Trash2, Truck, X,
+  Minus, PackageCheck, Plus, RefreshCcw, Search, Trash2, Truck, X,
 } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
@@ -70,10 +70,16 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   const [shipConfirm, setShipConfirm] = useState(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [filters, setFilters] = useState({ dateFrom: '', dateTo: '', fromStoreKey: '', toStoreKey: '' })
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportFilters, setExportFilters] = useState(() => ({ dateFrom: '', dateTo: '', storeKeys: stores.map((store) => store.key), itemType: 'all' }))
+  const [exportError, setExportError] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [masterItems, setMasterItems] = useState([])
+  const [productCategories, setProductCategories] = useState([])
+  const [productSearch, setProductSearch] = useState('')
+  const [productCategoryFilter, setProductCategoryFilter] = useState('all')
   const [masterLoading, setMasterLoading] = useState(true)
   const [version, setVersion] = useState(0)
   const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('inventory-transfer'))
@@ -97,14 +103,21 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   }, {})
   const products = picked.filter((item) => item.category === 'product')
   const materials = picked.filter((item) => item.category === 'material')
-  const activeProducts = masterItems.filter((item) => item.category === 'product' && item.enabled)
+  const allActiveProducts = masterItems.filter((item) => item.category === 'product' && item.enabled)
+  const activeProducts = allActiveProducts.filter((item) => {
+    const keyword = productSearch.trim().toLocaleLowerCase('zh-CN')
+    if (keyword && !`${item.name} ${item.code}`.toLocaleLowerCase('zh-CN').includes(keyword)) return false
+    if (productCategoryFilter === 'uncategorized') return !item.productCategoryId
+    if (productCategoryFilter !== 'all') return item.productCategoryId === productCategoryFilter
+    return true
+  })
   const activeMaterials = masterItems.filter((item) => item.category === 'material' && item.enabled)
   const canReview = picked.length > 0 && picked.every((item) => validTransferQuantity(item.quantity))
 
   useEffect(() => {
     let active = true
-    api('/v2/transfer-master-items?active=true')
-      .then((data) => { if (active) { setMasterItems(data.rows || []); setError('') } })
+    Promise.all([api('/v2/transfer-master-items?active=true'), api('/v2/product-categories?active=true')])
+      .then(([itemData, categoryData]) => { if (active) { setMasterItems(itemData.rows || []); setProductCategories(categoryData.rows || []); setError('') } })
       .catch((err) => { if (active) setError(err.message) })
       .finally(() => { if (active) setMasterLoading(false) })
     return () => { active = false }
@@ -134,6 +147,8 @@ export default function StoreTransferPage({ currentUser, onBack }) {
     setFromStoreKey(defaultFrom)
     setToStoreKey(defaultTo)
     setPickerTab('product')
+    setProductSearch('')
+    setProductCategoryFilter('all')
     setDraft(initialTransferDraft())
     setPicked([])
     setNote('')
@@ -232,6 +247,19 @@ export default function StoreTransferPage({ currentUser, onBack }) {
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
 
+  const toggleExportStore = (storeKey) => setExportFilters((current) => ({
+    ...current,
+    storeKeys: current.storeKeys.includes(storeKey) ? current.storeKeys.filter((key) => key !== storeKey) : [...current.storeKeys, storeKey],
+  }))
+
+  const runExport = () => {
+    if (exportFilters.dateFrom && exportFilters.dateTo && exportFilters.dateFrom > exportFilters.dateTo) return setExportError('开始日期不能晚于结束日期')
+    if (!exportFilters.storeKeys.length) return setExportError('请至少选择一个门店')
+    exportTransferExcel(allRequests, { ...exportFilters, storeLabel })
+    setExportError('')
+    setExportOpen(false)
+  }
+
   if (screen === 'create') return (
     <div className="mx-auto max-w-3xl space-y-4 pb-[calc(10rem+env(safe-area-inset-bottom))] sm:pb-28" data-testid="transfer-create-page">
       <header className="flex items-center gap-3">
@@ -260,14 +288,16 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         </div>
         {pickerTab === 'product' ? (
           <div className="mt-4" data-testid="transfer-product-draft">
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <label className="relative block"><Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-300" /><input aria-label="搜索调拨产品" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="搜索产品名称 / 编号" className="input pl-9" /></label>
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="调拨产品分类筛选"><button onClick={() => setProductCategoryFilter('all')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === 'all' ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button><button onClick={() => setProductCategoryFilter('uncategorized')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === 'uncategorized' ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>未分类</button>{productCategories.map((category) => <button key={category.id} onClick={() => setProductCategoryFilter(category.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === category.id ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{category.name}</button>)}</div>
+            <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
               {activeProducts.map((item) => {
                 const selected = draft.product.selectedNames.includes(item.name)
                 const displayName = item.code && item.name.startsWith(item.code) ? item.name.slice(item.code.length) : item.name
                 return <button key={item.id} type="button" aria-pressed={selected} onClick={() => setDraft((current) => toggleDraftProduct(current, item.name))} className={`min-h-20 rounded-2xl border p-2 text-left transition ${selected ? 'border-budu-400 bg-budu-50 text-budu-700 ring-1 ring-budu-200' : 'border-slate-100 bg-white text-slate-600'}`}><span className="block text-base font-black">{item.code || '—'}</span><span className="mt-1 block text-xs font-semibold">{displayName}</span></button>
               })}
             </div>
-            {!masterLoading && !activeProducts.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">暂无已启用产品，请先在产品物料管理中启用</p>}
+            {!masterLoading && !activeProducts.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">当前搜索或分类下暂无已启用产品</p>}
             <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl bg-slate-50 p-3">
               <label className="min-w-[140px] flex-1 text-xs font-semibold text-slate-500">本批统一数量<input aria-label="产品批量数量" inputMode="numeric" value={draft.product.batchQuantity} onChange={(event) => setDraft((current) => setDraftProductQuantity(current, event.target.value.replace(/\D/g, '').slice(0, 6)))} placeholder="输入整数" className="input mt-1.5" /></label>
               <button type="button" onClick={addSelectedProducts} className="btn-primary min-h-11 px-5">加入清单 · {draft.product.selectedNames.length} 种</button>
@@ -317,7 +347,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
           </div>
           <button onClick={() => { setHistoryScope(historyScope === 'canceled' ? 'normal' : 'canceled') }} className={`rounded-xl px-3 py-2.5 text-xs font-bold ${historyScope === 'canceled' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500'}`}>已取消/驳回 {counts.canceled || 0}</button>
           <button onClick={() => setFiltersOpen((value) => !value)} className="rounded-xl bg-slate-100 p-2.5 text-slate-500" aria-label="筛选"><Filter className="h-4 w-4" /></button>
-          <button onClick={() => exportTransferExcel(filtered, storeLabel)} className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600" aria-label="导出 Excel"><FileSpreadsheet className="h-4 w-4" /></button>
+          <button onClick={() => { setExportError(''); setExportOpen(true) }} className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600" aria-label="导出 Excel"><FileSpreadsheet className="h-4 w-4" /></button>
         </div>
         {filtersOpen && <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4"><input aria-label="开始日期" type="date" value={filters.dateFrom} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} className="input" /><input aria-label="结束日期" type="date" value={filters.dateTo} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} className="input" /><select aria-label="筛选调出门店" value={filters.fromStoreKey} onChange={(event) => setFilters((current) => ({ ...current, fromStoreKey: event.target.value }))} className="input"><option value="">全部调出门店</option>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select><select aria-label="筛选调入门店" value={filters.toStoreKey} onChange={(event) => setFilters((current) => ({ ...current, toStoreKey: event.target.value }))} className="input"><option value="">全部调入门店</option>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select></div>}
       </section>
@@ -333,7 +363,8 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         {!filtered.length && <div className="rounded-[24px] border border-dashed border-slate-200 py-16 text-center"><Truck className="mx-auto h-8 w-8 text-slate-200" /><p className="mt-3 text-sm text-slate-300">当前条件下暂无调拨记录</p></div>}
       </div>
 
-      {detail && <Sheet title="调拨详情" onClose={() => setDetail(null)}><div className="space-y-4 p-5"><div className="rounded-2xl bg-budu-50 p-4"><div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-budu-500">{detail.id}</p><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[transferViewStatus(detail.status)]}`}>{transferStatusLabel(detail.status)}</span></div><p className="mt-2 text-xl font-black text-budu-800">{storeLabel(detail.fromStoreKey, detail.fromStoreName)} → {storeLabel(detail.storeKey, detail.storeName)}</p></div><div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">申请人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.createdBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.createdAt)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">发货人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.shippedBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.shippedAt)}</p></div></div>{['product', 'material'].map((category) => { const rows = (detail.items || []).filter((item) => item.category === category); return rows.length ? <div key={category}><h4 className="mb-2 text-xs font-bold text-slate-500">{category === 'product' ? '产品' : '物料'} · {rows.length} 种</h4><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{rows.map((item) => <div key={item.id || item.productName} className="flex items-start justify-between gap-3 px-4 py-3"><div><p className="text-sm font-semibold text-slate-700">{item.productName || '—'}</p><p className="mt-1 text-[11px] text-slate-400">编码 {item.itemCode || '—'}{item.note ? ` · ${item.note}` : ''}</p></div><span className="font-black tabular-nums text-slate-800">× {item.quantity}</span></div>)}</div></div> : null })}<div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><span className="font-bold">备注：</span>{detail.note || '—'}</div>{transferViewStatus(detail.status) === 'canceled' && <div className="rounded-2xl bg-slate-100 p-3 text-xs text-slate-500">撤回人 {detail.withdrawnBy || '—'} · {formatTime(detail.withdrawnAt)}</div>}<div className="grid grid-cols-2 gap-2"><button onClick={() => exportTransferImage(detail, storeLabel)} className="btn-secondary min-h-11"><Download className="h-4 w-4" />调拨单图片</button><button onClick={() => exportTransferExcel([detail], storeLabel)} className="btn-secondary min-h-11"><FileSpreadsheet className="h-4 w-4" />Excel</button></div>{transferViewStatus(detail.status) === 'pending' && <div className="space-y-2 border-t border-slate-100 pt-4">{canManageTransferStore(currentUser, detail.fromStoreKey) && <button onClick={() => setShipConfirm(detail)} className="btn-primary min-h-12 w-full"><Truck className="h-4 w-4" />确认发货</button>}{(detail.createdBy === currentUser?.username || transferAll) && <button onClick={() => withdraw(detail)} disabled={busy} className="min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-500">撤回调拨</button>}</div>}</div></Sheet>}
+      {detail && <Sheet title="调拨详情" onClose={() => setDetail(null)}><div className="space-y-4 p-5"><div className="rounded-2xl bg-budu-50 p-4"><div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-budu-500">{detail.id}</p><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[transferViewStatus(detail.status)]}`}>{transferStatusLabel(detail.status)}</span></div><p className="mt-2 text-xl font-black text-budu-800">{storeLabel(detail.fromStoreKey, detail.fromStoreName)} → {storeLabel(detail.storeKey, detail.storeName)}</p></div><div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">申请人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.createdBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.createdAt)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">发货人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.shippedBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.shippedAt)}</p></div></div>{['product', 'material'].map((category) => { const rows = (detail.items || []).filter((item) => item.category === category); return rows.length ? <div key={category}><h4 className="mb-2 text-xs font-bold text-slate-500">{category === 'product' ? '产品' : '物料'} · {rows.length} 种</h4><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{rows.map((item) => <div key={item.id || item.productName} className="flex items-start justify-between gap-3 px-4 py-3"><div><p className="text-sm font-semibold text-slate-700">{item.productName || '—'}</p><p className="mt-1 text-[11px] text-slate-400">编码 {item.itemCode || '—'}{item.productCategory ? ` · ${item.productCategory}` : ''}{item.note ? ` · ${item.note}` : ''}</p></div><span className="font-black tabular-nums text-slate-800">× {item.quantity}</span></div>)}</div></div> : null })}<div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><span className="font-bold">备注：</span>{detail.note || '—'}</div>{transferViewStatus(detail.status) === 'canceled' && <div className="rounded-2xl bg-slate-100 p-3 text-xs text-slate-500">撤回人 {detail.withdrawnBy || '—'} · {formatTime(detail.withdrawnAt)}</div>}<button onClick={() => exportTransferImage(detail, storeLabel)} className="btn-secondary min-h-11 w-full"><Download className="h-4 w-4" />调拨单图片</button>{transferViewStatus(detail.status) === 'pending' && <div className="space-y-2 border-t border-slate-100 pt-4">{canManageTransferStore(currentUser, detail.fromStoreKey) && <button onClick={() => setShipConfirm(detail)} className="btn-primary min-h-12 w-full"><Truck className="h-4 w-4" />确认发货</button>}{(detail.createdBy === currentUser?.username || transferAll) && <button onClick={() => withdraw(detail)} disabled={busy} className="min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-500">撤回调拨</button>}</div>}</div></Sheet>}
+      {exportOpen && <Sheet title="导出门店物资调拨" onClose={() => setExportOpen(false)} labelledBy="transfer-export-title"><div className="space-y-4 p-5"><p className="rounded-2xl bg-emerald-50 p-3 text-xs text-emerald-700">只统计已发货，以发货确认时间为准；不代表当前库存。</p><div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2"><label className="text-xs font-bold text-slate-500">开始日期<input aria-label="导出开始日期" type="date" value={exportFilters.dateFrom} onChange={(event) => setExportFilters((current) => ({ ...current, dateFrom: event.target.value }))} className="input mt-1.5" /></label><span className="mb-3 text-slate-300">—</span><label className="text-xs font-bold text-slate-500">结束日期<input aria-label="导出结束日期" type="date" value={exportFilters.dateTo} onChange={(event) => setExportFilters((current) => ({ ...current, dateTo: event.target.value }))} className="input mt-1.5" /></label></div><fieldset><legend className="mb-2 text-xs font-bold text-slate-500">门店（可多选）</legend><div className="grid grid-cols-2 gap-2">{stores.map((store) => <label key={store.key} className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-50 px-3 text-sm font-semibold text-slate-600"><input aria-label={`导出门店${store.name}`} type="checkbox" checked={exportFilters.storeKeys.includes(store.key)} onChange={() => toggleExportStore(store.key)} className="h-4 w-4 accent-budu-500" />{store.name}</label>)}</div></fieldset><fieldset><legend className="mb-2 text-xs font-bold text-slate-500">货品类型</legend><div className="grid grid-cols-3 rounded-2xl bg-slate-100 p-1">{[['all', '全部'], ['product', '产品'], ['material', '物料']].map(([key, label]) => <button key={key} type="button" onClick={() => setExportFilters((current) => ({ ...current, itemType: key }))} className={`min-h-10 rounded-xl text-sm font-bold ${exportFilters.itemType === key ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</div></fieldset>{exportError && <p role="alert" className="text-sm font-semibold text-rose-500">{exportError}</p>}<button onClick={runExport} className="btn-primary min-h-12 w-full"><FileSpreadsheet className="h-4 w-4" />导出汇总 Excel</button></div></Sheet>}
       {shipConfirm && <Sheet title="确认已发货" onClose={() => setShipConfirm(null)} labelledBy="ship-confirm-title"><div className="space-y-4 p-5"><div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800"><p className="font-bold">请确认货品已经从调出门店发出。</p><p className="mt-1 text-xs">确认后状态变为“已发货”，并记录发货人与时间；不会修改任何库存，也不能普通撤回。</p></div><p className="text-center text-base font-black text-slate-800">{storeLabel(shipConfirm.fromStoreKey, shipConfirm.fromStoreName)} → {storeLabel(shipConfirm.storeKey, shipConfirm.storeName)}</p><div className="grid grid-cols-2 gap-3"><button onClick={() => setShipConfirm(null)} className="btn-secondary min-h-12">取消</button><button onClick={() => ship(shipConfirm)} disabled={busy} className="btn-primary min-h-12"><Check className="h-4 w-4" />{busy ? '处理中…' : '确认已发货'}</button></div></div></Sheet>}
     </div>
   )

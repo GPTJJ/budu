@@ -44,7 +44,7 @@ test('Transfer 2.0 additive migration preserves every legacy transfer fact and o
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 51)
+    assert.equal(Number(migrations[0].count), 52)
     const after = await client.$queryRawUnsafe(oldProjection)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(after)).digest('hex'), beforeDigest)
     const additive = await client.$queryRawUnsafe(`SELECT "shippedBy", "shippedAt", "withdrawnBy", "withdrawnAt" FROM "TransferRequest" WHERE id = 'legacy-transfer'`)

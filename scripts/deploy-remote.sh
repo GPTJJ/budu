@@ -22,15 +22,15 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Product/material management is an additive successor to the verified Store Transfer 2.0
-# release. Production remains on the authority-aware blue/green path below.
+# Product category and transfer summary are an additive successor to the verified
+# product/material release. Production remains on the authority-aware green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="3f326ee46d82eab59444f4983fb0fa4ab9c8a2d8"
+  EXPECTED_OLD_SHA="4a957cbcba88b500f5c02f5d61df468767041ff3"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-product-material-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-product-category-summary-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-product-material.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-product-category-summary.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -70,11 +70,11 @@ if [ "$ENV" = "prod" ]; then
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-product-material-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-product-category-summary-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"
-  "${SCP_ARGS[@]}" scripts/deploy-prod-product-material.sh "$USER@$HOST:${REMOTE_PREFIX}.deploy.sh"
+  "${SCP_ARGS[@]}" scripts/deploy-prod-product-category-summary.sh "$USER@$HOST:${REMOTE_PREFIX}.deploy.sh"
   "${SSH_ARGS[@]}" "$USER@$HOST" bash "${REMOTE_PREFIX}.deploy.sh" \
     "${REMOTE_PREFIX}.bundle" \
     "${REMOTE_PREFIX}.resolver.mjs" \

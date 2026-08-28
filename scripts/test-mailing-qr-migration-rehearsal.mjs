@@ -51,7 +51,7 @@ test('Mailing QR-only additive migration preserves legacy records and old-app ro
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 51)
+    assert.equal(Number(migrations[0].count), 52)
     const legacyAfter = await client.$queryRawUnsafe(`SELECT id, method, postage, fee, address, recipient, phone, remark, status, "createdBy" FROM "MailingRecord" ORDER BY id`)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(legacyAfter)).digest('hex'), beforeDigest)
 

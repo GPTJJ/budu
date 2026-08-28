@@ -168,6 +168,7 @@ model InventoryItem {
   transferCode      String?        @unique
   transferEnabled   Boolean        @default(false)
   transferSortOrder Int            @default(0)
+  productCategoryId String?
   version        Int            @default(1)
   updatedAt      DateTime       @default(now()) @updatedAt
   createdAt      DateTime       @default(now())
@@ -177,6 +178,22 @@ model InventoryItem {
   purchaseItems  PurchaseItem[]
   waste          WasteRecord[]
   orderItems     OrderItem[]
+  productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+
+  @@index([productCategoryId])
+}
+
+model ProductCategory {
+  id        String          @id
+  name      String          @unique
+  sortOrder Int             @default(0)
+  isActive  Boolean         @default(true)
+  version   Int             @default(1)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @default(now()) @updatedAt
+  products  InventoryItem[]
+
+  @@index([isActive, sortOrder])
 }
 
 model Order {
@@ -410,6 +427,7 @@ model TransferItem {
   itemNameSnapshot String          @default("")
   itemCodeSnapshot String          @default("")
   categorySnapshot String          @default("")
+  productCategoryNameSnapshot String @default("")
   request          TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   item             InventoryItem   @relation(fields: [itemId], references: [id])
 }

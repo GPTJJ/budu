@@ -5,7 +5,7 @@ import {
   setDraftMaterialQuantity, setDraftProductQuantity, toggleDraftProduct,
   transferStatusLabel, transferViewStatus, validTransferQuantity,
 } from '../src/utils/storeTransfer.js'
-import { transferExcelRows } from '../src/utils/storeTransferExport.js'
+import { buildTransferExportData } from '../src/utils/storeTransferExport.js'
 
 test('产品草稿与物料草稿完全隔离', () => {
   let draft = initialTransferDraft()
@@ -41,18 +41,18 @@ test('可靠历史状态只在展示层映射', () => {
   assert.equal(transferStatusLabel('unknown-legacy'), '—')
 })
 
-test('Excel 每条明细一行且包含正式调拨审计字段', () => {
-  const rows = transferExcelRows([{
+test('Excel 明细只使用已发货记录且包含正式调拨审计字段', () => {
+  const { detailRows: rows } = buildTransferExportData([{
     id: 'tr-1', status: 'shipped', fromStoreKey: 'from', storeKey: 'to', createdAt: '2026-08-29T00:00:00.000Z',
     createdBy: '申请人', shippedBy: '发货人', shippedAt: '2026-08-29T01:00:00.000Z', note: '整单备注',
     items: [
       { category: 'product', productName: 'NO.1树莓', itemCode: 'NO.1', quantity: 2 },
       { category: 'material', productName: '冰袋', itemCode: 'MAT-ICE', quantity: 3 },
     ],
-  }], (key) => key === 'from' ? '调出门店' : '调入门店')
+  }], { storeKeys: ['from', 'to'], storeLabel: (key) => key === 'from' ? '调出门店' : '调入门店' })
   assert.equal(rows.length, 2)
-  assert.deepEqual(Object.keys(rows[0]), ['调拨单号', '创建时间', '状态', '调出门店', '调入门店', '类型', '名称', '编码', '数量', '申请人', '发货人', '发货时间', '备注'])
-  assert.deepEqual(rows.map((row) => [row.类型, row.名称, row.编码, row.数量]), [
+  assert.deepEqual(Object.keys(rows[0]), ['调拨单号', '发货时间', '调出门店', '调入门店', '类型', '产品分类', '编号', '名称', '数量', '申请人', '发货确认人', '备注'])
+  assert.deepEqual(rows.map((row) => [row.类型, row.名称, row.编号, row.数量]), [
     ['产品', 'NO.1树莓', 'NO.1', 2],
     ['物料', '冰袋', 'MAT-ICE', 3],
   ])

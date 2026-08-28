@@ -85,11 +85,28 @@ try {
     if (!response.ok) throw new Error(`产品物料主数据创建失败：${response.status} ${await response.text()}`)
     return (await response.json()).item
   }
-  const productOne = await createMaster({ category: 'product', code: 'NO.1', name: 'NO.1树莓', sortOrder: 1, enabled: true })
-  await createMaster({ category: 'product', code: 'NO.2', name: 'NO.2柠檬', sortOrder: 2, enabled: true })
+  const categoryResponse = await fetch(`${base}/v2/product-categories`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ name: '糖果', sortOrder: 1, isActive: true }),
+  })
+  if (!categoryResponse.ok) throw new Error(`产品分类创建失败：${categoryResponse.status} ${await categoryResponse.text()}`)
+  let productCategory = (await categoryResponse.json()).category
+  const productOne = await createMaster({ category: 'product', code: 'NO.1', name: 'NO.1树莓', productCategoryId: productCategory.id, sortOrder: 1, enabled: true })
+  const productTwo = await createMaster({ category: 'product', code: 'NO.2', name: 'NO.2柠檬', sortOrder: 2, enabled: true })
   await createMaster({ category: 'material', name: '冰袋', sortOrder: 1, enabled: true })
+  const bulkCategory = await fetch(`${base}/v2/transfer-master-items/bulk-category`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ ids: [productTwo.id], productCategoryId: productCategory.id }),
+  })
+  if (!bulkCategory.ok || (await bulkCategory.json()).updated !== 1) throw new Error('产品批量归类失败')
+  const renameCategory = await fetch(`${base}/v2/product-categories/${productCategory.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ ...productCategory, name: '糖果新版' }),
+  })
+  if (!renameCategory.ok) throw new Error(`产品分类编辑失败：${renameCategory.status} ${await renameCategory.text()}`)
+  productCategory = (await renameCategory.json()).category
   const activeMaster = await fetch(`${base}/v2/transfer-master-items?active=true`, { headers: { Cookie: cookie } }).then((response) => response.json())
-  if (activeMaster.rows?.length !== 3 || activeMaster.rows.some((item) => !item.enabled)) throw new Error('调拨启用主数据读取错误')
+  if (activeMaster.rows?.length !== 3 || activeMaster.rows.some((item) => !item.enabled) || activeMaster.rows.filter((item) => item.category === 'product').some((item) => item.productCategory?.name !== '糖果新版')) throw new Error('调拨启用主数据或分类读取错误')
 
   const createdResponse = await fetch(`${base}/v2/transfer-requests`, {
     method: 'POST',
@@ -112,6 +129,13 @@ try {
   const transferData = await transferRead.json()
   const persisted = transferData.rows?.find((row) => row.id === created.id)
   if (!persisted || persisted.fromStoreKey !== 'guanshe' || persisted.storeKey !== 'tongying') throw new Error('调拨未从 PostgreSQL 永久读取')
+  if (persisted.items.find((item) => item.itemId === productOne.id)?.productCategory !== '糖果新版') throw new Error('新调拨未冻结产品分类快照')
+
+  const disableCategory = await fetch(`${base}/v2/product-categories/${productCategory.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ ...productCategory, name: '糖果最终', isActive: false }),
+  })
+  if (!disableCategory.ok) throw new Error(`产品分类停用失败：${disableCategory.status} ${await disableCategory.text()}`)
 
   const disableResponse = await fetch(`${base}/v2/transfer-master-items/${productOne.id}`, {
     method: 'PUT',
@@ -124,6 +148,7 @@ try {
   const historicalAfterRename = await fetch(`${base}/v2/transfer-requests`, { headers: { Cookie: cookie } }).then((response) => response.json())
   const frozen = historicalAfterRename.rows.find((row) => row.id === created.id)?.items.find((item) => item.itemId === productOne.id)
   if (frozen?.productName !== 'NO.1树莓') throw new Error('编辑主数据改写了历史调拨名称')
+  if (frozen?.productCategory !== '糖果新版') throw new Error('编辑或停用分类改写了历史调拨分类')
   const disabledCreate = await fetch(`${base}/v2/transfer-requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },

@@ -113,7 +113,10 @@ export function itemRows(items) {
 }
 
 async function findActiveTransferItem(row) {
-  const existing = await prisma.inventoryItem.findUnique({ where: { name: row.name } })
+  const existing = await prisma.inventoryItem.findUnique({
+    where: { name: row.name },
+    include: { productCategory: true },
+  })
   if (!existing || !existing.transferEnabled || existing.category !== row.category) {
     throw bad('货品已停用或不存在，请刷新后重试', 409)
   }
@@ -163,6 +166,7 @@ function serializeTransfer(r) {
       category: it.categorySnapshot || normalizeItemCategory(it.item.name, it.item.category),
       productName: it.itemNameSnapshot || it.item.name,
       itemCode: it.itemCodeSnapshot || '',
+      productCategory: it.productCategoryNameSnapshot || '',
       quantity: it.quantity,
       note: it.note,
     })),
@@ -529,7 +533,8 @@ function transferMasterData(body, category) {
   if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 999999) throw bad('排序必须是 0-999999 的整数')
   const code = category === 'product' ? String(body?.code || '').trim() : ''
   if (category === 'product' && (!code || code.length > 40)) throw bad('产品编号不能为空且不能超过 40 个字符')
-  return { name, code: code || null, enabled: body?.enabled !== false, sortOrder }
+  const productCategoryId = category === 'product' ? String(body?.productCategoryId || '').trim() || null : null
+  return { name, code: code || null, enabled: body?.enabled !== false, sortOrder, productCategoryId }
 }
 
 function serializeTransferMasterItem(item) {
@@ -540,6 +545,13 @@ function serializeTransferMasterItem(item) {
     code: item.transferCode || '',
     enabled: item.transferEnabled,
     sortOrder: item.transferSortOrder,
+    productCategoryId: item.productCategoryId || '',
+    productCategory: item.productCategory ? {
+      id: item.productCategory.id,
+      name: item.productCategory.name,
+      isActive: item.productCategory.isActive,
+      sortOrder: item.productCategory.sortOrder,
+    } : null,
     version: item.version,
     used: Boolean(item._count?.transferItems || item._count?.purchaseItems),
   }
@@ -548,6 +560,82 @@ function serializeTransferMasterItem(item) {
 function requireTransferMasterManager(user) {
   if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT)) throw bad('无权限', 403)
 }
+
+function serializeProductCategory(category) {
+  return {
+    id: category.id,
+    name: category.name,
+    sortOrder: category.sortOrder,
+    isActive: category.isActive,
+    version: category.version,
+    productCount: Number(category._count?.products || 0),
+    createdAt: category.createdAt,
+    updatedAt: category.updatedAt,
+  }
+}
+
+function productCategoryData(body) {
+  const name = String(body?.name || '').trim()
+  const sortOrder = Number(body?.sortOrder ?? 0)
+  if (!name || name.length > 30) throw bad('分类名称不能为空且不能超过 30 个字符')
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 999999) throw bad('排序必须是 0-999999 的整数')
+  return { name, sortOrder, isActive: body?.isActive !== false }
+}
+
+async function requireAssignableProductCategory(productCategoryId, currentCategoryId = '') {
+  if (!productCategoryId) return null
+  const category = await prisma.productCategory.findUnique({ where: { id: productCategoryId } })
+  if (!category) throw bad('产品分类不存在', 404)
+  if (!category.isActive && category.id !== currentCategoryId) throw bad('已停用分类不能接收产品', 409)
+  return category
+}
+
+v2Router.get('/product-categories', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
+  const rows = await prisma.productCategory.findMany({
+    where: active === undefined ? {} : { isActive: active },
+    include: { _count: { select: { products: true } } },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    take: 500,
+  })
+  res.json({ rows: rows.map(serializeProductCategory) })
+}))
+
+v2Router.post('/product-categories', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  const data = productCategoryData(req.body)
+  const duplicate = await prisma.productCategory.findFirst({ where: { name: { equals: data.name, mode: 'insensitive' } } })
+  if (duplicate) throw bad('分类名称已存在', 409)
+  const category = await prisma.productCategory.create({
+    data: { id: uid('pc'), ...data },
+    include: { _count: { select: { products: true } } },
+  })
+  res.status(201).json({ ok: true, category: serializeProductCategory(category) })
+}))
+
+v2Router.put('/product-categories/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  const version = Number(req.body?.version)
+  if (!Number.isInteger(version) || version < 1) throw bad('分类版本不正确，请刷新后重试')
+  const data = productCategoryData(req.body)
+  const duplicate = await prisma.productCategory.findFirst({
+    where: { id: { not: req.params.id }, name: { equals: data.name, mode: 'insensitive' } },
+  })
+  if (duplicate) throw bad('分类名称已存在', 409)
+  const updated = await prisma.productCategory.updateMany({
+    where: { id: req.params.id, version },
+    data: { ...data, version: { increment: 1 } },
+  })
+  if (updated.count !== 1) throw bad('分类已被其他人修改，请刷新后重试', 409)
+  const category = await prisma.productCategory.findUnique({
+    where: { id: req.params.id },
+    include: { _count: { select: { products: true } } },
+  })
+  res.json({ ok: true, category: serializeProductCategory(category) })
+}))
 
 v2Router.get('/transfer-master-items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
@@ -559,7 +647,7 @@ v2Router.get('/transfer-master-items', wrap(async (req, res) => {
       category: category || { in: ['product', 'material'] },
       ...(active === undefined ? {} : { transferEnabled: active }),
     },
-    include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+    include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
     orderBy: [{ category: 'asc' }, { transferSortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
@@ -572,6 +660,7 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
   const category = String(req.body?.category || '').trim()
   if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
   const data = transferMasterData(req.body, category)
+  await requireAssignableProductCategory(data.productCategoryId)
   const duplicate = await prisma.inventoryItem.findFirst({
     where: { OR: [
       { name: data.name },
@@ -587,10 +676,27 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
       transferCode: data.code,
       transferEnabled: data.enabled,
       transferSortOrder: data.sortOrder,
+      productCategoryId: data.productCategoryId,
     },
-    include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+    include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
   })
   res.status(201).json({ ok: true, item: serializeTransferMasterItem(row) })
+}))
+
+v2Router.put('/transfer-master-items/bulk-category', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map((id) => String(id || '').trim()).filter(Boolean))]
+  if (!ids.length || ids.length > 500) throw bad('请选择 1-500 个产品')
+  const productCategoryId = String(req.body?.productCategoryId || '').trim() || null
+  await requireAssignableProductCategory(productCategoryId)
+  const products = await prisma.inventoryItem.findMany({ where: { id: { in: ids }, category: 'product' }, select: { id: true } })
+  if (products.length !== ids.length) throw bad('批量归类中包含不存在或非产品资料', 409)
+  await prisma.inventoryItem.updateMany({
+    where: { id: { in: ids }, category: 'product' },
+    data: { productCategoryId, version: { increment: 1 } },
+  })
+  res.json({ ok: true, updated: ids.length })
 }))
 
 v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
@@ -601,6 +707,7 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw bad('资料版本不正确，请刷新后重试')
   const data = transferMasterData(req.body, existing.category)
+  await requireAssignableProductCategory(data.productCategoryId, existing.productCategoryId || '')
   const duplicate = await prisma.inventoryItem.findFirst({
     where: {
       id: { not: existing.id },
@@ -624,13 +731,14 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
         transferCode: data.code,
         transferEnabled: data.enabled,
         transferSortOrder: data.sortOrder,
+        productCategoryId: data.productCategoryId,
         version: { increment: 1 },
       },
     })
     if (updated.count !== 1) throw bad('资料已被其他人修改，请刷新后重试', 409)
     return tx.inventoryItem.findUnique({
       where: { id: existing.id },
-      include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+      include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
     })
   })
   res.json({ ok: true, item: serializeTransferMasterItem(row) })
@@ -670,6 +778,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
               itemNameSnapshot: row.name,
               itemCodeSnapshot: inventoryItemCode(item),
               categorySnapshot: row.category,
+              productCategoryNameSnapshot: row.category === 'product' ? item.productCategory?.name || '' : '',
             }
           }),
         ),

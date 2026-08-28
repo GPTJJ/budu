@@ -11,13 +11,19 @@
 
     const records = new URLSearchParams(location.search).has('records') ? [
       { id: 'tr-pending', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'tongying', fromStoreName: '官舍店', storeName: '通盈店', status: 'pending', note: '优先备货', createdBy: 'requester', createdAt: '2026-08-28T06:00:00.000Z', items: [{ id: 'ti-1', itemId: 'it-1', itemCode: 'NO.1', category: 'product', productName: 'NO.1树莓', quantity: 2, note: '' }] },
-      { id: 'tr-legacy', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'xidan', fromStoreName: '官舍店', storeName: '西单店', status: 'completed', note: '', createdBy: 'legacy', createdAt: '2026-08-08T06:00:00.000Z', items: [{ id: 'ti-2', itemId: 'it-2', itemCode: '', category: 'material', productName: '冰袋', quantity: 3, note: '' }] },
+      { id: 'tr-legacy', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'xidan', fromStoreName: '官舍店', storeName: '西单店', status: 'completed', note: '', createdBy: 'legacy', createdAt: '2026-08-08T06:00:00.000Z', shippedBy: 'legacy-shipper', shippedAt: '2026-08-09T01:00:00.000Z', items: [{ id: 'ti-2', itemId: 'it-2', itemCode: '', category: 'material', productName: '冰袋', productCategory: '', quantity: 3, note: '' }] },
       { id: 'tr-rejected', type: 'transfer', fromStoreKey: 'chaowai', storeKey: 'guanshe', fromStoreName: '朝外店', storeName: '官舍店', status: 'rejected', note: '', createdBy: 'legacy', createdAt: '2026-08-09T06:00:00.000Z', items: [{ id: 'ti-3', itemId: 'it-3', itemCode: '', category: 'product', productName: 'NO.2柠檬', quantity: 1, note: '' }] },
     ] : []
     seedCachedDataForTest({ inventoryRequests: records })
+    const categories = [
+      { id: 'c-candy', name: '糖果', sortOrder: 1, isActive: true, version: 1 },
+      { id: 'c-gift', name: '礼盒', sortOrder: 2, isActive: true, version: 1 },
+    ]
     const masterRows = [
-      { id: 'master-p1', category: 'product', name: 'NO.1树莓', code: 'NO.1', enabled: true, sortOrder: 1, version: 1 },
-      { id: 'master-p2', category: 'product', name: 'NO.2柠檬', code: 'NO.2', enabled: true, sortOrder: 2, version: 1 },
+      { id: 'master-p1', category: 'product', name: 'NO.1树莓', code: 'NO.1', enabled: true, sortOrder: 1, productCategoryId: 'c-candy', productCategory: categories[0], version: 1 },
+      { id: 'master-p2', category: 'product', name: 'NO.2柠檬', code: 'NO.2', enabled: true, sortOrder: 2, productCategoryId: '', productCategory: null, version: 1 },
+      { id: 'master-p3', category: 'product', name: '礼盒产品', code: 'GIFT-1', enabled: true, sortOrder: 3, productCategoryId: 'c-gift', productCategory: categories[1], version: 1 },
+      { id: 'master-p4', category: 'product', name: '停用产品', code: 'OFF', enabled: false, sortOrder: 4, productCategoryId: 'c-candy', productCategory: categories[0], version: 1 },
       { id: 'master-m1', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1 },
       { id: 'master-m2', category: 'material', name: '停用纸袋', code: '', enabled: false, sortOrder: 2, version: 1 },
     ]
@@ -37,6 +43,7 @@
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/userdata') return json({})
       if (path === '/api/v2/transfer-master-items' && method === 'GET') return json({ rows: masterRows.filter((item) => requestUrl.searchParams.get('active') !== 'true' || item.enabled) })
+      if (path === '/api/v2/product-categories' && method === 'GET') return json({ rows: categories.filter((item) => requestUrl.searchParams.get('active') !== 'true' || item.isActive) })
       if (path === '/api/v2/transfer-requests' && method === 'GET') return json({ rows: records })
       if (path === '/api/v2/transfer-requests' && method === 'POST') {
         const body = JSON.parse(options.body)
