@@ -33,6 +33,7 @@ const NODE_TEST_SUITE = [
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
   'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
+  'test-customer-request-wecom-unit.mjs', // CustomerRequest 固定 UserID 企微投递/幂等/隐私/深链
   'test-approval-ui-regressions.mjs', // 工资提交成功动画与移动端通知层级回归
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
   'test-wechat-config.mjs',         // 微信配置 fail-closed 校验（单元）
@@ -152,6 +153,7 @@ const CRITICAL_NODE_TEST = [
   'test-schedule-authority.mjs',
   'test-identity-authority.mjs',
   'test-customer-service-request.mjs',
+  'test-customer-request-wecom-unit.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）
@@ -184,6 +186,7 @@ const STRIPPED_ENV_KEYS = [
   'TENCENT_OCR_REGION', 'TENCENT_OCR_SECRET_ID', 'TENCENT_OCR_SECRET_KEY',
   // 微信 / 企业微信
   'WXWORK_CORP_ID', 'WXWORK_AGENT_ID', 'WXWORK_SECRET',
+  'CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID',
   'WXWORK_RECV_TOKEN', 'WXWORK_RECV_AES_KEY',
   'MP_APP_ID', 'MP_APP_SECRET', 'MP_TEMPLATE_ID',
   'WECHAT_WORK_WEBHOOK_URL',
@@ -200,7 +203,28 @@ function createTestEnv() {
   return createTestEnvFrom(process.env)
 }
 
+function isolatedTestDatabaseUrl(parentEnv) {
+  const raw = String(parentEnv.TEST_DATABASE_URL || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    if (!['localhost', '127.0.0.1', '::1'].includes(url.hostname)) return ''
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
 const testEnv = createTestEnv()
+const testDatabaseUrl = isolatedTestDatabaseUrl(process.env)
+if (process.env.TEST_DATABASE_URL && !testDatabaseUrl) {
+  console.error('TEST_DATABASE_URL 必须指向 loopback 隔离测试数据库')
+  process.exit(1)
+}
+if (testDatabaseUrl) {
+  testEnv.TEST_DATABASE_URL = testDatabaseUrl
+  testEnv.DATABASE_URL = testDatabaseUrl
+}
 
 /** 文件存在性预检（node --test 对缺失文件静默返回 0，需显式拦截） */
 function checkFiles(list) {
@@ -326,7 +350,7 @@ function verifyIsolation() {
 /** 从指定父进程环境构造隔离测试环境（供自验证复用同一剥离逻辑） */
 function createTestEnvFrom(parentEnv) {
   const env = {}
-  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT']) {
+  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'PLAYWRIGHT_BROWSERS_PATH']) {
     if (parentEnv[k] !== undefined) env[k] = parentEnv[k]
   }
   env.NODE_ENV = 'test'

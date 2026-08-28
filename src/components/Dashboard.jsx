@@ -15,6 +15,7 @@ import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { firstAccessibleModule, hasModuleAccess, hasPageAccess } from '../../shared/accountPermissions'
+import { consumeNotificationDeepLink } from '../utils/notificationNavigation'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
@@ -77,11 +78,12 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` // 默认当天
   })
   const [weekStart, setWeekStart] = useState(null)
-  const [view, setView] = useState(() => (
-    typeof window !== 'undefined' && window.location.hash === '#pos' && hasModuleAccess(user, 'store-pos')
-      ? 'store-pos'
-      : firstAccessibleModule(user)
-  ))
+  const [view, setView] = useState(() => {
+    const deepLinkTarget = consumeNotificationDeepLink((target) => hasModuleAccess(user, target))
+    if (deepLinkTarget) return deepLinkTarget
+    if (typeof window !== 'undefined' && window.location.hash === '#pos' && hasModuleAccess(user, 'store-pos')) return 'store-pos'
+    return firstAccessibleModule(user)
+  })
   const [pageKey, setPageKey] = useState(0)
   // 从人员管理跳转员工档案时的初始搜索目标（员工姓名/员工编号）
   const [profileTarget, setProfileTarget] = useState('')
