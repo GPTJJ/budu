@@ -93,7 +93,7 @@ export default function ShipTransferModal({ request, catalog = [], storeDisplay,
               {t('发货编辑')}
             </h3>
             <p className="mt-1 text-xs text-slate-400">
-              {t('从 {from} 调往 {to}', {
+              {t('调出 {from} → 调入 {to}', {
                 from: storeDisplay(request.fromStoreKey, request.fromStoreName),
                 to: storeDisplay(request.storeKey, request.storeName),
               })}

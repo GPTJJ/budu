@@ -274,7 +274,7 @@ export default function SettingsPage({ user, onBack }) {
           <div>
             <h3 className="text-[15px] font-bold text-slate-800">{t('微信提醒')}</h3>
             <p className="mt-0.5 text-xs text-slate-400">
-              {t('扫码授权一次绑定微信，工资条/审批/调货/发票/邮寄等站内通知将同步推送微信提醒，点击消息直达对应页面；微信仅提醒，不承载业务操作')}
+              {t('扫码授权一次绑定微信，工资条/审批/调拨/发票/邮寄等站内通知将同步推送微信提醒，点击消息直达对应页面；微信仅提醒，不承载业务操作')}
             </p>
           </div>
         </div>

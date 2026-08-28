@@ -45,7 +45,7 @@ const subMenus = {
     { key: 'product-center', label: '商品中心' },
   ],
   inventory: [
-    { key: 'inventory-transfer', label: '申请调货' },
+    { key: 'inventory-transfer', label: '门店调拨' },
     { key: 'inventory-purchase', label: '申请采购' },
   ],
 }

@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
-import { broadcast } from './notification-center.js'
+import { broadcast, notify } from './notification-center.js'
+import { listUsers } from './user-store.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
 import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
@@ -109,6 +110,38 @@ export function itemRows(items) {
   })
 }
 
+async function findOrCreateTransferItem(row) {
+  const existing = await prisma.inventoryItem.findUnique({ where: { name: row.name } })
+  if (existing) return existing
+  return prisma.inventoryItem.create({
+    data: {
+      id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name: row.name,
+      category: row.category,
+    },
+  })
+}
+
+function inventoryItemCode(item) {
+  return String(item?.sku || item?.barcode || item?.id || '')
+}
+
+async function transferStoreRecipients(storeKey) {
+  if (!storeKey) return []
+  const users = await listUsers()
+  return users.filter((user) =>
+    user.status !== 'disabled' &&
+    Array.isArray(user.storeKeys) &&
+    user.storeKeys.includes(storeKey) &&
+    canAccessTransferStore(user, storeKey),
+  )
+}
+
+async function notifyTransferStore(storeKey, options) {
+  const recipients = await transferStoreRecipients(storeKey)
+  await Promise.all(recipients.map((user) => notify({ ...options, username: user.username })))
+}
+
 function serializeTransfer(r) {
   return {
     id: r.id,
@@ -120,13 +153,18 @@ function serializeTransfer(r) {
     status: r.status,
     note: r.note,
     createdBy: r.createdBy,
+    shippedBy: r.shippedBy || '',
+    shippedAt: r.shippedAt || null,
+    withdrawnBy: r.withdrawnBy || '',
+    withdrawnAt: r.withdrawnAt || null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     items: r.items.map((it) => ({
       id: it.id,
       itemId: it.itemId,
-      category: normalizeItemCategory(it.item.name, it.item.category),
-      productName: it.item.name,
+      category: it.categorySnapshot || normalizeItemCategory(it.item.name, it.item.category),
+      productName: it.itemNameSnapshot || it.item.name,
+      itemCode: it.itemCodeSnapshot || '',
       quantity: it.quantity,
       note: it.note,
     })),
@@ -485,52 +523,58 @@ v2Router.delete('/daily-entries', wrap(async (req, res) => {
   res.json({ ok: true, deleted: result.count })
 }))
 
-// ---------- 调货 ----------
+// ---------- 门店调拨 ----------
 v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { items, note } = req.body || {}
   const fromStoreKey = String((req.body || {}).fromStoreKey || '').trim()
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '').trim()
-  const fromLocationName = String((req.body || {}).fromLocationName || '').trim().slice(0, 50)
-  const toLocationName = String((req.body || {}).toLocationName || '').trim().slice(0, 50)
   if (req.user?.role === 'public') throw bad('无权限', 403)
-  if (fromStoreKey && !isFixedStoreKey(fromStoreKey)) throw bad('调出门店不在正式门店目录')
-  if (toStoreKey && !isFixedStoreKey(toStoreKey)) throw bad('调入门店不在正式门店目录')
-  if (Boolean(fromStoreKey) === Boolean(fromLocationName)) throw bad('调出地点必须选择正式门店或填写一个临时地点')
-  if (Boolean(toStoreKey) === Boolean(toLocationName)) throw bad('调入地点必须选择正式门店或填写一个临时地点')
-  const fromLabel = fromStoreKey ? resolveStoreName(fromStoreKey) : fromLocationName
-  const toLabel = toStoreKey ? resolveStoreName(toStoreKey) : toLocationName
-  if (fromLabel.localeCompare(toLabel, 'zh-CN', { sensitivity: 'base' }) === 0) throw bad('调出/调入地点不能相同')
-  if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, fromStoreKey) && !canAccessTransferStore(req.user, toStoreKey)) {
-    throw bad('无权为所选门店发起调货', 403)
-  }
+  if (!isFixedStoreKey(fromStoreKey)) throw bad('请选择调出门店')
+  if (!isFixedStoreKey(toStoreKey)) throw bad('请选择调入门店')
+  if (fromStoreKey === toStoreKey) throw bad('调出门店不能与调入门店相同')
+  if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, toStoreKey)) throw bad('无权为所选调入门店创建调拨', 403)
   const rows = itemRows(items)
-  if (fromStoreKey) await ensureStore(fromStoreKey)
-  if (toStoreKey) await ensureStore(toStoreKey)
+  await ensureStore(fromStoreKey)
+  await ensureStore(toStoreKey)
   const created = await prisma.transferRequest.create({
     data: {
       id: `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      fromStoreKey: fromStoreKey || null,
-      toStoreKey: toStoreKey || null,
-      fromLocationName: fromStoreKey ? '' : fromLocationName,
-      toLocationName: toStoreKey ? '' : toLocationName,
+      fromStoreKey,
+      toStoreKey,
+      fromLocationName: '',
+      toLocationName: '',
       note: String(note || '').trim().slice(0, 200),
       createdBy: req.user.username,
       items: {
         create: await Promise.all(
           rows.map(async (row) => {
-            const item = await upsertItem(row.name)
-            return { id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, quantity: row.quantity, note: row.note }
+            const item = await findOrCreateTransferItem(row)
+            return {
+              id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+              itemId: item.id,
+              quantity: row.quantity,
+              note: row.note,
+              itemNameSnapshot: row.name,
+              itemCodeSnapshot: inventoryItemCode(item),
+              categorySnapshot: row.category,
+            }
           }),
         ),
       },
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
-  broadcast(
-    '新调货申请',
-    `**${fromLabel}** → **${toLabel}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出地点负责人尽快审核发货。`,
-  ).catch(() => {})
+  await notifyTransferStore(fromStoreKey, {
+    templateKey: 'transfer_new',
+    data: { fromStore: resolveStoreName(fromStoreKey), toStore: resolveStoreName(toStoreKey), count: created.items.length, submitter: req.user.username },
+    title: `新调拨待备货：${resolveStoreName(fromStoreKey)} → ${resolveStoreName(toStoreKey)}`,
+    content: `调入门店 ${resolveStoreName(toStoreKey)} 发起 · ${created.items.length} 种货品 · 提交人 ${req.user.username}`,
+    target: 'inventory-transfer',
+    refType: 'transfer',
+    refId: created.id,
+    priority: 'high',
+  })
   res.json({ ok: true, request: serializeTransfer(created) })
 }))
 
@@ -545,7 +589,6 @@ v2Router.get('/transfer-requests', wrap(async (req, res) => {
     where,
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
     orderBy: { createdAt: 'desc' },
-    take: 500,
   })
   res.json({ rows: rows.map(serializeTransfer) })
 }))
@@ -553,13 +596,16 @@ v2Router.get('/transfer-requests', wrap(async (req, res) => {
 v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
-  if (!t) throw bad('申请不存在', 404)
+  if (!t) throw bad('调拨不存在', 404)
   const transferAdmin = hasInventoryTransferAll(req.user)
   if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = t.status === 'rejected' && transferAdmin
-  if (t.status !== 'pending' && !canDeleteRejected) throw bad('仅待审核或已驳回申请可删除')
-  await prisma.transferRequest.delete({ where: { id: t.id } })
-  res.json({ ok: true })
+  if (t.status !== 'pending') throw bad('仅待备货调拨可撤回')
+  const updated = await prisma.transferRequest.update({
+    where: { id: t.id },
+    data: { status: 'canceled', withdrawnBy: req.user.username, withdrawnAt: new Date(), updatedAt: new Date() },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  })
+  res.json({ ok: true, request: serializeTransfer(updated) })
 }))
 
 async function getTransfer(id) {
@@ -572,38 +618,26 @@ async function getTransfer(id) {
 v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await getTransfer(req.params.id)
-  if (!t) throw bad('申请不存在', 404)
+  if (!t) throw bad('调拨不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
-  // 调货仅保留发货/收货提醒与记录，不校验、不扣减库存；发货后立即完成
-  // 发货门店可提交修改后的货品清单（items），以修改后的内容为准
-  const bodyItems = req.body && req.body.items
-  const rows = Array.isArray(bodyItems) ? itemRows(bodyItems) : null
-  const resolved = rows
-    ? await Promise.all(rows.map(async (r) => ({ ...r, item: await upsertItem(r.name, r.category) })))
-    : null
-  await prisma.$transaction(async (tx) => {
-    if (resolved) {
-      await tx.transferItem.deleteMany({ where: { requestId: t.id } })
-      for (const r of resolved) {
-        await tx.transferItem.create({
-          data: {
-            id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-            requestId: t.id,
-            itemId: r.item.id,
-            quantity: r.quantity,
-            note: r.note,
-          },
-        })
-      }
-    }
-    await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
+  if (Array.isArray(req.body?.items)) throw bad('发货不允许修改调拨明细')
+  const shippedAt = new Date()
+  await prisma.transferRequest.update({
+    where: { id: t.id },
+    data: { status: 'shipped', shippedBy: req.user.username, shippedAt, updatedAt: shippedAt },
   })
   const final = await getTransfer(t.id)
-  broadcast(
-    '调货已发货',
-    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入地点负责人留意收货。`,
-  ).catch(() => {})
+  await notify({
+    username: t.createdBy,
+    templateKey: 'transfer_shipped',
+    data: { fromStore: resolveStoreName(t.fromStoreKey), toStore: resolveStoreName(t.toStoreKey), count: final.items.length, operator: req.user.username },
+    title: `调拨已发货：${resolveStoreName(t.fromStoreKey)} → ${resolveStoreName(t.toStoreKey)}`,
+    content: `${final.items.length} 种货品 · 发货人 ${req.user.username}`,
+    target: 'inventory-transfer',
+    refType: 'transfer',
+    refId: t.id,
+  })
   res.json({ ok: true, request: serializeTransfer(final) })
 }))
 
@@ -613,23 +647,16 @@ v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
   if (!t) throw bad('申请不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可驳回')
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'rejected', updatedAt: new Date() } })
-  res.json({ ok: true, request: updated })
+  const updated = await prisma.transferRequest.update({
+    where: { id: t.id },
+    data: { status: 'rejected', updatedAt: new Date() },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  })
+  res.json({ ok: true, request: serializeTransfer(updated) })
 }))
 
 v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  const t = await getTransfer(req.params.id)
-  if (!t) throw bad('申请不存在', 404)
-  if (!canManageTransferStore(req.user, t.toStoreKey)) throw bad('无权限', 403)
-  if (!['pending', 'in_transit'].includes(t.status)) throw bad('当前状态不可收货')
-  // 收货仅确认与记录，不增减库存；确认后立即完成
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
-  broadcast(
-    '调货已收货',
-    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${t.items.length}** 种 · 确认人 **${req.user.username}**`,
-  ).catch(() => {})
-  res.json({ ok: true, request: updated })
+  throw bad('门店调拨 2.0 不需要确认收货', 410)
 }))
 
 // ---------- 采购 ----------

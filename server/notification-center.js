@@ -61,7 +61,7 @@ export function notificationDeepLink(target, refType = '', refId = '') {
   if (!baseUrl) return ''
   const nav = String(target || '').trim()
   const recordId = String(refId || '').trim()
-  if (!['store-mailing', 'finance-invoice'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
+  if (!['store-mailing', 'finance-invoice', 'inventory-transfer'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
   const url = new URL('/', baseUrl)
   url.searchParams.set('nav', nav)
   url.searchParams.set('refType', String(refType || '').slice(0, 40))
@@ -100,8 +100,8 @@ const BUILTIN_TEMPLATES = [
   { key: 'payroll_confirmed', name: '工资条已签收', description: '员工签收工资条通知', titleTpl: '{employeeName} 已签收工资条 {period}', contentTpl: '{employeeName} 已于 {time} 签收工资周期 {period} 的工资条', target: 'staff-payroll', defaultPriority: 'normal' },
   { key: 'payroll_recalled', name: '工资条已撤回', description: '工资条被管理员撤回通知', titleTpl: '工资条已撤回：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条已被撤回，不再需要签收；如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'high' },
   { key: 'payroll_deleted', name: '工资条已删除', description: '工资条记录被管理员删除通知', titleTpl: '工资条已删除：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条记录已删除，如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'normal' },
-  { key: 'transfer_new', name: '新调货申请', description: '有新的调货申请', titleTpl: '新调货申请：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'normal' },
-  { key: 'transfer_shipped', name: '调货已发货', description: '调货已发货通知', titleTpl: '调货已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
+  { key: 'transfer_new', name: '新门店调拨', description: '调出门店有新的待备货调拨', titleTpl: '新调拨待备货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'high' },
+  { key: 'transfer_shipped', name: '调拨已发货', description: '门店调拨已发货通知', titleTpl: '调拨已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
   { key: 'purchase_new', name: '新采购申请', description: '有新的采购申请', titleTpl: '新采购申请：{store}', contentTpl: '货品 {count} 种{supplier} · 提交人 {submitter}', target: 'inventory-purchase', defaultPriority: 'normal' },
   { key: 'invoice_new', name: '新发票申请', description: '有新的发票申请', titleTpl: '新发票申请：{store}', contentTpl: '抬头 {company} · 金额 ¥{amount} · 提交人 {submitter}', target: 'finance-invoice', defaultPriority: 'normal' },
   { key: 'mailing_new', name: '新门店邮寄', description: '有新的邮寄发件单', titleTpl: '新门店邮寄：{recipient}', contentTpl: '方式 {method} · 收件人 {recipient} · 提交人 {submitter}', target: 'store-mailing', defaultPriority: 'normal' },
@@ -169,7 +169,8 @@ export async function notify(opt) {
       data: { id: uid('nld'), notificationId: row.id, channel: 'inapp', status: 'sent' },
     })
     // 异步微信个人提醒（不阻塞业务；未配置通道或未绑定则记录 skipped）
-    pushWechat(row, title, content, target).catch(() => {})
+    const url = notificationDeepLink(target, opt.refType, opt.refId)
+    pushWechat(row, title, content, target, url).catch(() => {})
     return row
   } catch (e) {
     console.error('[notification-center]', e.message)
@@ -178,7 +179,7 @@ export async function notify(opt) {
 }
 
 /** 微信个人提醒：查绑定 → 按通道推送；未配置通道/未绑定 → skipped */
-export async function pushWechat(notification, title, content, target) {
+export async function pushWechat(notification, title, content, target, url = '') {
   const cfg = wechatPersonalConfig()
   if (!cfg) {
     await prisma.notificationDelivery.create({
@@ -195,7 +196,7 @@ export async function pushWechat(notification, title, content, target) {
     }).catch(() => {})
     return
   }
-  const result = await sendWechatPersonal(cfg, binding, { title, content, target })
+  const result = await sendWechatPersonal(cfg, binding, { title, content, target, url })
   // 失败时记录通道侧错误码（errcode/errmsg 安全、不泄露密钥），便于排查
   const errDetail = result.ok
     ? ''

@@ -68,10 +68,10 @@ try {
       'InventoryRequestPage',
       await render('/src/components/InventoryRequestPage.jsx', {
         type: 'transfer',
-        currentUser: { username: 'store1', role: 'store' },
+        currentUser: { username: 'store1', role: 'manager', status: 'active', storeKeys: ['guanshe'], permissions: {} },
         onBack: () => {},
       }),
-      ['申请调货', '提交申请', '物料', '待处理', '已处理'],
+      ['门店调拨 2.0', '创建调拨', '待备货', '已发货'],
     ],
     [
       'InventoryListModal',

@@ -47,7 +47,7 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.PRODUCT_CENTER, label: '商品中心' },
   ] },
   { key: 'inventory', label: '库存管理', modules: [
-    { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '申请调货' },
+    { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
   ] },
   { key: 'finance', label: '财务管理', modules: [

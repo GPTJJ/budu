@@ -384,6 +384,10 @@ model TransferRequest {
   status           String         @default("pending")
   note             String         @default("")
   createdBy        String         @default("")
+  shippedBy        String         @default("")
+  shippedAt        DateTime?
+  withdrawnBy      String         @default("")
+  withdrawnAt      DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @default(now())
   items            TransferItem[]
@@ -395,13 +399,16 @@ model TransferRequest {
 }
 
 model TransferItem {
-  id        String          @id
-  requestId String
-  itemId    String
-  quantity  Int
-  note      String          @default("")
-  request   TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  item      InventoryItem   @relation(fields: [itemId], references: [id])
+  id               String          @id
+  requestId        String
+  itemId           String
+  quantity         Int
+  note             String          @default("")
+  itemNameSnapshot String          @default("")
+  itemCodeSnapshot String          @default("")
+  categorySnapshot String          @default("")
+  request          TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item             InventoryItem   @relation(fields: [itemId], references: [id])
 }
 
 model PurchaseRequest {

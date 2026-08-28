@@ -26,6 +26,7 @@ import ShipTransferModal from './ShipTransferModal'
 import InventoryStockPanel from './InventoryStockPanel'
 import { t } from '../utils/text'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
+import StoreTransferPage from './StoreTransferPage'
 
 const inputCls = 'input'
 const TEMP_LOCATION_PREFIX = 'temporary:'
@@ -71,7 +72,7 @@ const TRANSFER_STATUS_STYLE = {
   rejected: 'bg-rose-50 text-rose-600',
 }
 
-export default function InventoryRequestPage({ type, currentUser, onBack }) {
+function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   /** 门店库存版块暂隐藏（后续再开发）；恢复时改为 true 即可 */
   const SHOW_STOCK_PANEL = false
   const isTransfer = type === 'transfer'
@@ -1240,4 +1241,9 @@ export default function InventoryRequestPage({ type, currentUser, onBack }) {
       )}
     </div>
   )
+}
+
+export default function InventoryRequestPage(props) {
+  if (props.type === 'transfer') return <StoreTransferPage currentUser={props.currentUser} onBack={props.onBack} />
+  return <LegacyInventoryRequestPage {...props} />
 }

@@ -54,6 +54,8 @@ const NODE_TEST_SUITE = [
   'test-invoice-qr-workflow.mjs', // 发票 QR-only：门店/金额/三选一类目锁定与公开只读合同 → critical
   'test-mailing-qr-workflow.mjs', // 门店邮寄 QR-only：配送组合/收款门禁/逐单复制 → critical
   'test-mailing-qr-migration-rehearsal.mjs', // 48→49 additive migration 与旧应用读取回滚合同 → critical
+  'test-store-transfer-draft.mjs', // 门店调拨 2.0 产品/物料草稿隔离、数量、历史状态展示
+  'test-store-transfer-migration-rehearsal.mjs', // 49→50 additive migration 与历史调拨摘要/旧应用读取
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
@@ -160,6 +162,8 @@ const CRITICAL_NODE_TEST = [
   'test-customer-request-wecom-unit.mjs',
   'test-mailing-qr-workflow.mjs',
   'test-mailing-qr-migration-rehearsal.mjs',
+  'test-store-transfer-draft.mjs',
+  'test-store-transfer-migration-rehearsal.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）

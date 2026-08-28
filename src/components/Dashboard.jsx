@@ -47,7 +47,7 @@ const pageTitles = {
   'store-orders': '订单记录',
   'store-pos': 'POS 点单',
   'product-center': '商品中心',
-  'inventory-transfer': '申请调货',
+  'inventory-transfer': '门店调拨',
   'inventory-purchase': '申请采购',
   finance: '财务利润',
   'finance-invoice': '发票开具',

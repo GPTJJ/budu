@@ -227,6 +227,10 @@ export async function loadUserData(options = {}) {
         status: r.status,
         note: r.note,
         createdBy: r.createdBy,
+        shippedBy: r.shippedBy || '',
+        shippedAt: r.shippedAt || null,
+        withdrawnBy: r.withdrawnBy || '',
+        withdrawnAt: r.withdrawnAt || null,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         history: [],
@@ -236,6 +240,7 @@ export async function loadUserData(options = {}) {
           quantity: it.quantity,
           note: it.note,
           itemId: it.itemId,
+          itemCode: it.itemCode || '',
         })),
       })
     }

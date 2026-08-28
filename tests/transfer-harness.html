@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Transfer 2.0 Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import StoreTransferPage from '/src/components/StoreTransferPage.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const records = new URLSearchParams(location.search).has('records') ? [
+      { id: 'tr-pending', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'tongying', fromStoreName: '官舍店', storeName: '通盈店', status: 'pending', note: '优先备货', createdBy: 'requester', createdAt: '2026-08-28T06:00:00.000Z', items: [{ id: 'ti-1', itemId: 'it-1', itemCode: 'NO.1', category: 'product', productName: 'NO.1树莓', quantity: 2, note: '' }] },
+      { id: 'tr-legacy', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'xidan', fromStoreName: '官舍店', storeName: '西单店', status: 'completed', note: '', createdBy: 'legacy', createdAt: '2026-08-08T06:00:00.000Z', items: [{ id: 'ti-2', itemId: 'it-2', itemCode: '', category: 'material', productName: '冰袋', quantity: 3, note: '' }] },
+      { id: 'tr-rejected', type: 'transfer', fromStoreKey: 'chaowai', storeKey: 'guanshe', fromStoreName: '朝外店', storeName: '官舍店', status: 'rejected', note: '', createdBy: 'legacy', createdAt: '2026-08-09T06:00:00.000Z', items: [{ id: 'ti-3', itemId: 'it-3', itemCode: '', category: 'product', productName: 'NO.2柠檬', quantity: 1, note: '' }] },
+    ] : []
+    seedCachedDataForTest({ inventoryRequests: records })
+    const requests = []
+    let imageExports = 0
+    const nativeCanvasToDataUrl = HTMLCanvasElement.prototype.toDataURL
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+      imageExports += 1
+      return nativeCanvasToDataUrl.apply(this, args)
+    }
+    window.open = () => { imageExports += 1; return null }
+    window.__transferTest = { records, requests, get imageExports() { return imageExports } }
+    window.fetch = async (url, options = {}) => {
+      const requestUrl = new URL(url, location.origin)
+      const path = requestUrl.pathname
+      const method = options.method || 'GET'
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/userdata') return json({})
+      if (path === '/api/v2/transfer-requests' && method === 'GET') return json({ rows: records })
+      if (path === '/api/v2/transfer-requests' && method === 'POST') {
+        const body = JSON.parse(options.body)
+        requests.push(body)
+        const row = { id: `tr-created-${records.length}`, type: 'transfer', fromStoreKey: body.fromStoreKey, storeKey: body.toStoreKey, fromStoreName: body.fromStoreKey, storeName: body.toStoreKey, status: 'pending', note: body.note, createdBy: 'manager-test', createdAt: new Date().toISOString(), items: body.items.map((item, index) => ({ id: `created-item-${index}`, itemId: `created-${index}`, itemCode: `CODE-${index}`, category: item.category, productName: item.name, quantity: item.quantity, note: item.note })) }
+        records.push(row)
+        return json({ ok: true, request: row })
+      }
+      const ship = path.match(/^\/api\/v2\/transfer-requests\/([^/]+)\/ship$/)
+      if (ship && method === 'POST') {
+        const row = records.find((item) => item.id === ship[1])
+        row.status = 'shipped'; row.shippedBy = 'manager-test'; row.shippedAt = new Date().toISOString()
+        return json({ ok: true, request: row })
+      }
+      const remove = path.match(/^\/api\/v2\/transfer-requests\/([^/]+)$/)
+      if (remove && method === 'DELETE') {
+        const row = records.find((item) => item.id === remove[1])
+        row.status = 'canceled'; row.withdrawnBy = 'manager-test'; row.withdrawnAt = new Date().toISOString()
+        return json({ ok: true, request: row })
+      }
+      if (path === '/api/v2/purchase-requests' || path === '/api/v2/stock' || path === '/api/v2/daily-entries' || path === '/api/v2/daily-pay-adjustments' || path === '/api/v2/pos/daily-summary' || path === '/api/v2/pos/product-sales' || path === '/api/v2/big-bonuses' || path === '/api/v2/staff-list') return json({ rows: [] })
+      if (path === '/api/v2/stores') return json({ rows: [{ key: 'guanshe', name: '官舍店' }, { key: 'tongying', name: '通盈店' }, { key: 'chaowai', name: '朝外店' }, { key: 'xidan', name: '西单店' }] })
+      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+    }
+    const user = { id: 'manager-test', username: 'manager-test', role: 'manager', status: 'active', storeKeys: ['guanshe'], permissions: {} }
+    createRoot(document.getElementById('root')).render(React.createElement(StoreTransferPage, { currentUser: user, onBack: () => {} }))
+  </script></body>
+</html>

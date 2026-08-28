@@ -30,10 +30,10 @@ export default function InventoryListModal({ request, onClose }) {
       items: items.filter((it) => catOf(it) === c),
     }))
     .filter((s) => s.items.length > 0)
-  const typeLabel = t(isTransfer ? '调货申请' : '采购申请')
+  const typeLabel = t(isTransfer ? '门店调拨' : '采购申请')
   const statusLabel = t(request.status === 'done' ? '已处理' : '待处理')
   const storeLine = isTransfer
-    ? t('从 {from} 调往 {to}', {
+    ? t('调出 {from} → 调入 {to}', {
         from: storeLabel(request.fromStoreKey, request.fromStoreName),
         to: storeLabel(request.storeKey, request.storeName),
       })
@@ -199,7 +199,7 @@ export default function InventoryListModal({ request, onClose }) {
                 budu · {t('货品清单')}
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
-                {t(isTransfer ? '调货申请' : '采购申请')}
+                {t(isTransfer ? '门店调拨' : '采购申请')}
                 {request.status === 'done' ? ` · ${t('已处理')}` : ` · ${t('待处理')}`}
               </p>
             </div>
@@ -211,7 +211,7 @@ export default function InventoryListModal({ request, onClose }) {
           <div className="mt-3 space-y-1 text-[12px] text-slate-500">
             <p>
               {isTransfer
-                ? t('从 {from} 调往 {to}', {
+                ? t('调出 {from} → 调入 {to}', {
                     from: storeLabel(request.fromStoreKey, request.fromStoreName),
                     to: storeLabel(request.storeKey, request.storeName),
                   })

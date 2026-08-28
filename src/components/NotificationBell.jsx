@@ -181,7 +181,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                               : r.type === 'center'
                                 ? r.priority === 'high' ? '重要' : '通知'
                               : r.type === 'transfer'
-                                ? '调货申请'
+                                ? '门店调拨'
                                 : '采购申请',
                         )}
                       </span>
@@ -224,7 +224,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
                               : r.type === 'asset'
                                 ? ''
                                 : r.type === 'transfer'
-                                  ? t('从 {from} 调往 {to}', {
+                                  ? t('调出 {from} → 调入 {to}', {
                                       from: storeLabel(r.fromStoreKey, r.fromStoreName),
                                       to: storeLabel(r.storeKey, r.storeName),
                                     })

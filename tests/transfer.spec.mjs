@@ -1,0 +1,80 @@
+import { expect, test } from '@playwright/test'
+
+test('记录中心只展示任务结构，创建表单进入独立页面', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html?records=1')
+  await expect(page.getByRole('heading', { name: '门店调拨 2.0' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: /待备货/ })).toBeVisible()
+  await expect(page.getByRole('tab', { name: /已发货/ })).toBeVisible()
+  await expect(page.getByLabel('调出门店')).toHaveCount(0)
+  await page.getByRole('button', { name: '创建调拨' }).click()
+  await expect(page.getByRole('heading', { name: '创建调拨' })).toBeVisible()
+  await expect(page.getByLabel('调出门店')).toBeVisible()
+  await expect(page.getByLabel('调入门店')).toHaveValue('guanshe')
+  await expect(page.getByLabel('调入门店')).toBeDisabled()
+})
+
+test('产品与物料草稿切换不继承选择、数量或临时状态', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html')
+  await page.getByRole('button', { name: '创建调拨' }).click()
+  await page.getByRole('button', { name: 'NO.1 树莓', exact: true }).click()
+  await page.getByLabel('产品批量数量').fill('6')
+  await page.getByRole('tab', { name: '物料' }).click()
+  await expect(page.getByRole('textbox', { name: '冰袋数量', exact: true })).toHaveValue('')
+  await page.getByRole('textbox', { name: '冰袋数量', exact: true }).fill('3')
+  await page.getByRole('tab', { name: '产品' }).click()
+  await expect(page.getByRole('button', { name: 'NO.1 树莓', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('产品批量数量')).toHaveValue('6')
+  await page.getByRole('tab', { name: '物料' }).click()
+  await expect(page.getByRole('textbox', { name: '冰袋数量', exact: true })).toHaveValue('3')
+})
+
+test('同店调拨显示精确错误，合法数据经过独立确认层提交', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html')
+  await page.getByRole('button', { name: '创建调拨' }).click()
+  await page.getByLabel('调出门店').selectOption('guanshe')
+  await expect(page.getByRole('alert')).toHaveText('调出门店不能与调入门店相同')
+  await page.getByLabel('调出门店').selectOption('tongying')
+  await page.getByRole('button', { name: 'NO.1 树莓', exact: true }).click()
+  await page.getByLabel('产品批量数量').fill('2')
+  await page.getByRole('button', { name: /加入清单/ }).click()
+  await page.getByRole('button', { name: /核对并提交/ }).click()
+  const dialog = page.getByRole('dialog', { name: '确认调拨信息' })
+  await expect(dialog).toContainText('北京通盈中心店 → 北京官舍店')
+  expect(await page.evaluate(() => window.__transferTest.requests.length)).toBe(0)
+  await dialog.getByRole('button', { name: '确认提交' }).click()
+  await expect(page.getByRole('status')).toContainText('等待调出门店备货')
+  expect(await page.evaluate(() => window.__transferTest.requests[0])).toMatchObject({ fromStoreKey: 'tongying', toStoreKey: 'guanshe', items: [{ name: 'NO.1树莓', quantity: 2, category: 'product' }] })
+})
+
+test('确认发货有二次确认并记录发货人；旧 completed 可靠展示为已发货', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html?records=1')
+  await page.locator('[data-transfer-record-id="tr-pending"]').click()
+  await page.getByRole('button', { name: '确认发货', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '确认已发货' })
+  await expect(dialog).toContainText('不会修改任何库存')
+  expect(await page.evaluate(() => window.__transferTest.records.find((item) => item.id === 'tr-pending').status)).toBe('pending')
+  await dialog.getByRole('button', { name: '确认已发货' }).click()
+  await expect(page.getByRole('tab', { name: /已发货/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('[data-transfer-record-id="tr-pending"]')).toContainText('发货人 manager-test')
+  await expect(page.locator('[data-transfer-record-id="tr-legacy"]')).toContainText('已发货')
+})
+
+test('调拨详情生成正式 Canvas 图片，历史缺失编码显示横线而不补造', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html?records=1')
+  await page.getByRole('tab', { name: /已发货/ }).click()
+  await page.locator('[data-transfer-record-id="tr-legacy"]').click()
+  const detail = page.getByRole('dialog', { name: '调拨详情' })
+  await expect(detail).toContainText('编码 —')
+  await detail.getByRole('button', { name: '调拨单图片' }).click()
+  await expect.poll(() => page.evaluate(() => window.__transferTest.imageExports)).toBeGreaterThan(0)
+})
+
+for (const width of [320, 375, 430, 768]) {
+  test(`${width}px 创建与记录页面无横向溢出`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/tests/transfer-harness.html?records=1')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    await page.getByRole('button', { name: '创建调拨' }).click()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}

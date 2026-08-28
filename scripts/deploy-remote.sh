@@ -22,29 +22,15 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Store Transfer 2.0 bootstrap gate: this branch initially uses the existing
-# production workflow only to run a read-only aggregate audit. It performs no
-# checkout, build, migration, restart, routing change, or database write.
-if [ "$ENV" = "prod" ] && [ -f scripts/audit-prod-transfer.sh ]; then
-  AUDIT_PATH="/dev/shm/budu-transfer-audit-${GITHUB_RUN_ID:-$$}.sh"
-  cleanup_transfer_audit() {
-    "${SSH_ARGS[@]}" "$USER@$HOST" "rm -f '$AUDIT_PATH'" >/dev/null 2>&1 || true
-  }
-  trap cleanup_transfer_audit EXIT
-  "${SCP_ARGS[@]}" scripts/audit-prod-transfer.sh "$USER@$HOST:$AUDIT_PATH"
-  "${SSH_ARGS[@]}" "$USER@$HOST" bash "$AUDIT_PATH" "$APP_DIR" "budu-nginx-1"
-  exit 0
-fi
-
-# Invoice QR-only is a no-schema-change successor to the verified Mailing QR-only
+# Store Transfer 2.0 is an additive successor to the verified Invoice QR-only
 # release. Production remains on the authority-aware blue/green path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="ce9f4e770224700628bb2f8de9a5579496774bdb"
+  EXPECTED_OLD_SHA="ae08380290e2d444ab8c76f6ea6e941b6b3dd9c9"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-invoice-qr-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-transfer-2-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-invoice-qr.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-transfer-2.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -67,7 +53,7 @@ if [ "$ENV" = "prod" ]; then
   [ -n "$TEST_DB_PORT" ] || { echo "==> 无法解析隔离测试数据库端口"; exit 1; }
   TEST_DATABASE_URL="postgresql://budu_test:budu_test_password@127.0.0.1:${TEST_DB_PORT}/budu_test?schema=public"
 
-  echo "==> Node 22：critical / Invoice + Mailing WebKit / WeCom / build 回归"
+  echo "==> Node 22：critical / Transfer + Invoice + Mailing WebKit / notification / build 回归"
   docker run --rm --network host --ipc=host \
     -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
     -e DATABASE_URL="$TEST_DATABASE_URL" \
@@ -78,13 +64,13 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 12m npm run test:critical && npx playwright test tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 15m npm run test:critical && npx playwright test tests/transfer.spec.mjs tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-invoice-qr-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-transfer-2-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"
