@@ -40,6 +40,49 @@ export function publicBaseUrl() {
   }
 }
 
+const CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT = 'budu'
+const CUSTOMER_REQUEST_WECOM_USER_ID = 'dh'
+
+/** CustomerRequest 企微固定绑定。只接受精确 BUDU 账号 → UserID 配置，绝不按姓名推断。 */
+export function customerRequestWecomRecipientBinding() {
+  const username = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME || '').trim()
+  const userId = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID || '').trim()
+  if (username !== CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT || userId !== CUSTOMER_REQUEST_WECOM_USER_ID) return null
+  return { username, userId }
+}
+
+export function customerRequestWecomRecipientUserId() {
+  return customerRequestWecomRecipientBinding()?.userId || ''
+}
+
+/** BUDU 站内深链：固定 HTTPS origin，记录 ID 只作为登录后的页面定位提示。 */
+export function notificationDeepLink(target, refType = '', refId = '') {
+  const baseUrl = publicBaseUrl()
+  if (!baseUrl) return ''
+  const nav = String(target || '').trim()
+  const recordId = String(refId || '').trim()
+  if (!['store-mailing', 'finance-invoice'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
+  const url = new URL('/', baseUrl)
+  url.searchParams.set('nav', nav)
+  url.searchParams.set('refType', String(refType || '').slice(0, 40))
+  url.searchParams.set('refId', recordId)
+  return url.toString()
+}
+
+export function formatBeijingNotificationTime(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
 /** 模板占位符渲染：{key} → 数据值（缺失留空） */
 export function renderTpl(tpl, data = {}) {
   return String(tpl || '').replace(/\{(\w+)\}/g, (_, k) => {
@@ -168,13 +211,18 @@ export async function pushWechat(notification, title, content, target) {
  *   errcode/errmsg 来自通道侧响应（不含任何密钥），供投递记录与测试接口排查。
  *   token 失效类错误（企微 40001/40014/42001、公众号 40001/40014）自动重取后重发一次。
  */
-export async function sendWechatPersonal(cfg, binding, { title, content, target }) {
+export async function sendWechatPersonal(cfg, binding, { title, content, target, url = '' }) {
   try {
     const baseUrl = publicBaseUrl()
     if (!baseUrl) return { ok: false, errcode: 'CONFIG_ERROR', errmsg: 'PUBLIC_BASE_URL 未配置或不安全' }
-    const jump = new URL('/', baseUrl)
-    if (target) jump.searchParams.set('nav', String(target))
-    const jumpUrl = jump.toString()
+    const fallback = new URL('/', baseUrl)
+    if (target) fallback.searchParams.set('nav', String(target))
+    let jumpUrl = fallback.toString()
+    if (url) {
+      const supplied = new URL(String(url))
+      if (supplied.origin !== baseUrl) return { ok: false, errcode: 'CONFIG_ERROR', errmsg: '跳转地址必须使用 BUDU public origin' }
+      jumpUrl = supplied.toString()
+    }
     if (cfg.channel === 'wecom') {
       return await sendWecomTextcard(cfg, binding, title, content, jumpUrl)
     }
@@ -182,9 +230,87 @@ export async function sendWechatPersonal(cfg, binding, { title, content, target 
       return await sendMpTemplate(cfg, binding, title, content, jumpUrl)
     }
     return { ok: false, errcode: 'NO_CHANNEL', errmsg: 'unknown channel' }
-  } catch (e) {
-    console.error('[notification-center] wechat send', e.message)
-    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: String(e.message).slice(0, 200) }
+  } catch {
+    console.error('[notification-center] wechat send failed')
+    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: 'local delivery error' }
+  }
+}
+
+/**
+ * CustomerRequest 专用企业微信投递。
+ * - 站内通知事务提交后调用，失败不回滚业务。
+ * - 固定配置 BUDU 账号 → UserID；不查姓名、不查角色、不广播。
+ * - 确定性 delivery 主键抢占，HTTP 重试/重复调用/进程重启不会重复发送。
+ */
+export async function deliverCustomerRequestWecom({
+  prismaClient = prisma,
+  notification,
+  requestId,
+  type,
+  storeName,
+  submittedAt,
+}) {
+  if (!notification?.id || !requestId || !['MAILING', 'INVOICE'].includes(type)) {
+    return { ok: false, status: 'skipped', reason: 'invalid customer request delivery event' }
+  }
+  const recipientBinding = customerRequestWecomRecipientBinding()
+  const recipientUserId = recipientBinding?.userId || ''
+  const deliveryId = `nld-csr-wecom-${crypto.createHash('sha256')
+    .update(`${requestId}\0${type}\0${recipientBinding?.username || 'missing'}\0${recipientUserId || 'missing'}`)
+    .digest('hex')
+    .slice(0, 32)}`
+  try {
+    await prismaClient.notificationDelivery.create({
+      data: {
+        id: deliveryId,
+        notificationId: notification.id,
+        channel: 'wecom',
+        status: 'pending',
+      },
+    })
+  } catch (error) {
+    if (error?.code === 'P2002') return { ok: true, status: 'duplicate' }
+    throw error
+  }
+
+  const cfg = wechatPersonalConfig()
+  if (!recipientUserId || !cfg || cfg.channel !== 'wecom') {
+    const reason = !recipientUserId ? 'customer request recipient not configured' : 'wecom app channel not configured'
+    await prismaClient.notificationDelivery.update({
+      where: { id: deliveryId },
+      data: { status: 'skipped', error: reason },
+    }).catch(() => {})
+    return { ok: false, status: 'skipped', reason }
+  }
+
+  const isMailing = type === 'MAILING'
+  const title = isMailing ? '【BUDU 新的邮寄信息】' : '【BUDU 新的开票申请】'
+  const action = isMailing
+    ? '顾客已提交收件信息，请进入 BUDU 核对并安排发货。'
+    : '顾客已提交开票资料，请进入 BUDU 核对并处理。'
+  const content = [
+    action,
+    `门店：${String(storeName || '未知门店').slice(0, 80)}`,
+    `提交时间：${formatBeijingNotificationTime(submittedAt)}`,
+  ].join('\n')
+  const url = notificationDeepLink(notification.target, notification.refType, notification.refId)
+  const result = await sendWechatPersonal(
+    cfg,
+    { openId: recipientUserId },
+    { title, content, target: notification.target, url },
+  )
+  const error = result.ok
+    ? ''
+    : `send failed (errcode=${result.errcode || 'UNKNOWN'}${result.errmsg ? ` ${String(result.errmsg).slice(0, 160)}` : ''})`.slice(0, 240)
+  await prismaClient.notificationDelivery.update({
+    where: { id: deliveryId },
+    data: { status: result.ok ? 'sent' : 'failed', error, sentAt: new Date() },
+  }).catch(() => {})
+  return {
+    ok: result.ok,
+    status: result.ok ? 'sent' : 'failed',
+    recipientCount: 1,
+    retried: Boolean(result.retried),
   }
 }
 
