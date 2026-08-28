@@ -295,15 +295,25 @@ export default function AssetCenterPage({ user, onBack }) {
               const statusMeta = STATUS_META[f.status] || STATUS_META.normal
               const icon = fileIcon(f.fileType)
               return (
-                <div key={f.id} className={card}>
+                <div key={f.id} className={card} data-testid={`asset-card-${f.id}`}>
                   <div className="flex items-start gap-3">
-                    {f.thumbnail ? (
-                      <img src={f.thumbnail} alt={f.name} className="h-11 w-11 shrink-0 rounded-xl object-cover" />
-                    ) : (
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600">
-                        {icon === 'image' ? <Eye className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPreview(f)}
+                      className="group relative grid h-11 min-h-11 w-11 min-w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-budu-50 text-budu-600 outline-none transition hover:ring-2 hover:ring-budu-200 active:scale-95 focus-visible:ring-2 focus-visible:ring-budu-500 focus-visible:ring-offset-2"
+                      aria-label={`预览 ${f.name}`}
+                      title={`预览 ${f.name}`}
+                      data-testid={`asset-preview-trigger-${f.id}`}
+                    >
+                      {f.thumbnail ? (
+                        <>
+                          <img src={f.thumbnail} alt="" className="h-full w-full object-cover transition duration-200 group-hover:scale-105" />
+                          <span className="absolute bottom-0.5 right-0.5 grid h-4 w-4 place-items-center rounded-full bg-slate-900/65 text-white shadow-sm" aria-hidden="true">
+                            <Eye className="h-2.5 w-2.5" />
+                          </span>
+                        </>
+                      ) : icon === 'image' ? <Eye className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
+                    </button>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold">{f.name}</p>
                       <p className="mt-0.5 text-xs text-slate-400">{categoryName(f.category)}</p>
@@ -327,8 +337,7 @@ export default function AssetCenterPage({ user, onBack }) {
                     <p className="text-[11px] text-slate-400">最后更新 {fmtTime(f.updatedAt)}</p>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
-                    <button onClick={() => setPreview(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Eye className="h-3.5 w-3.5" />预览</button>
+                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3" data-testid={`asset-actions-${f.id}`}>
                     <button onClick={() => downloadFile(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Download className="h-3.5 w-3.5" />下载</button>
                     <button onClick={() => { setEditing(f); setUploadOpen(true) }} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><Pencil className="h-3.5 w-3.5" />编辑</button>
                     <button onClick={() => setVersionsOpen(f)} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"><History className="h-3.5 w-3.5" />版本</button>
