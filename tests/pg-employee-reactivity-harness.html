@@ -41,7 +41,10 @@
           ] })
         }
         if (path.startsWith('/api/v2/daily-entry/overview')) {
+          const parsed = new URL(path, location.origin)
           return json({
+            storeKey: parsed.searchParams.get('store'),
+            date: parsed.searchParams.get('date'),
             salesDataSource: 'manual',
             salesDataStatus: 'waiting_input',
             entry: null,

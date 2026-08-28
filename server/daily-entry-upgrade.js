@@ -242,13 +242,17 @@ dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
 dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.query.store || '').trim()
+  const dateStr = String(req.query.date || '').trim()
   if (!storeKey) throw httpError('门店不能为空')
+  if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('日期格式应为 YYYY-MM-DD')
   if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
   await ensureStore(storeKey)
-  const [employees, users] = await Promise.all([
+  const [employees, users, schedule] = await Promise.all([
     prisma.employee.findMany({
-      where: { currentStoreKey: storeKey, status: { not: 'RESIGNED' } },
-      select: { id: true, employeeNo: true, name: true, status: true },
+      // 跨店值班是正常业务事实。候选权威是当前可参与工作的 canonical Employee.id，
+      // currentStoreKey 只用于排序提示，不能作为另一门店值班的排除条件。
+      where: { status: { in: ['ACTIVE', 'PROBATION'] } },
+      select: { id: true, employeeNo: true, name: true, status: true, currentStoreKey: true },
       orderBy: [{ name: 'asc' }, { employeeNo: 'asc' }],
     }),
     prisma.user.findMany({
@@ -256,24 +260,42 @@ dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
       select: { id: true, username: true, displayName: true, storeKeys: true },
       orderBy: { username: 'asc' },
     }),
+    dateStr ? prisma.schedule.findFirst({
+      where: { storeKey, date: dateStr },
+      select: { shifts: true },
+    }) : null,
   ])
+  const scheduledNames = new Set(
+    (Array.isArray(schedule?.shifts) ? schedule.shifts : [])
+      .map((shift) => String(shift?.staff || '').trim())
+      .filter(Boolean),
+  )
+  const employeeDirectory = employees
+    .map((employee) => ({
+      employeeId: employee.id,
+      employeeNo: employee.employeeNo,
+      label: employee.name,
+      status: employee.status,
+      currentStoreKey: employee.currentStoreKey,
+      scheduled: scheduledNames.has(employee.name),
+      priorityGroup: scheduledNames.has(employee.name) ? 1 : employee.currentStoreKey === storeKey ? 2 : 3,
+      participantType: PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+    }))
+    .sort((a, b) => a.priorityGroup - b.priorityGroup
+      || a.label.localeCompare(b.label, 'zh-CN')
+      || a.employeeNo.localeCompare(b.employeeNo, 'zh-CN'))
   const substitutes = users
     .filter((user) => Array.isArray(user.storeKeys) && user.storeKeys.includes(storeKey))
     .map((user) => ({
       participantUserId: user.id,
       label: user.displayName || user.username,
       username: user.username,
+      priorityGroup: 4,
       participantType: PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
     }))
   res.json({
     ok: true,
-    employees: employees.map((employee) => ({
-      employeeId: employee.id,
-      employeeNo: employee.employeeNo,
-      label: employee.name,
-      status: employee.status,
-      participantType: PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
-    })),
+    employees: employeeDirectory,
     substitutes,
   })
 }))

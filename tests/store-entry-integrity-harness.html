@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BUDU Store Entry Integrity Harness</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
+      import { loadUserData, prepareUserDataForUser, resetUserData } from '/src/utils/userData.js'
+      import '/src/index.css'
+
+      const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const keyOf = (store, date) => `${store}|${date}`
+      let releaseLegacy
+      let legacyPromise = new Promise((resolve) => { releaseLegacy = resolve })
+
+      window.__storeEntryTimeline = []
+      window.__overviewPlans = new Map()
+      window.__writes = []
+      window.__releaseSharedRefresh = () => releaseLegacy(json({ analysis: {}, productImages: {} }))
+      window.__triggerSharedRefresh = () => loadUserData({ userId: 'dev-store-integrity' })
+      window.__resetSharedRefresh = () => {
+        legacyPromise = new Promise((resolve) => { releaseLegacy = resolve })
+      }
+      window.__setOverviewPlan = (store, date, payloads) => {
+        window.__overviewPlans.set(keyOf(store, date), payloads.map((item) => ({ ...item })))
+      }
+
+      const historical = {
+        storeKey: 'xidan',
+        date: '2026-08-24',
+        salesDataSource: 'manual',
+        salesDataStatus: 'synced',
+        entry: {
+          id: 'de-xidan-20260824', status: 'confirmed', version: 7,
+          incCents: '1234500', ord: 37, hybridAdjustmentCents: '0', hybridAdjustmentNote: '',
+        },
+        pos: null,
+        staff: [{
+          id: 'dss-chen-20260824', employeeId: 'emp-chen', participantUserId: null,
+          participantType: 'EMPLOYEE', staffId: 'employee:emp-chen', staffName: '陈文慧',
+          actualHours: 12, historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS',
+          scheduledStartTime: '', scheduledEndTime: '', actualStartTime: '', actualEndTime: '',
+          breakMinutes: 0, attendanceStatus: 'normal',
+        }],
+      }
+      const empty = (store, date) => ({
+        storeKey: store, date, salesDataSource: 'manual', salesDataStatus: 'waiting_input',
+        entry: null, pos: null, staff: [],
+      })
+      const participants = {
+        employees: [
+          { employeeId: 'emp-home', employeeNo: 'BUDU-1001', label: '叶芷辰', currentStoreKey: 'xidan', participantType: 'EMPLOYEE', priorityGroup: 2 },
+          { employeeId: 'emp-chen', employeeNo: 'BUDU-1002', label: '陈文慧', currentStoreKey: 'chaowai', participantType: 'EMPLOYEE', priorityGroup: 3 },
+          { employeeId: 'emp-same-a', employeeNo: 'BUDU-1003', label: '同名员工', currentStoreKey: 'xidan', participantType: 'EMPLOYEE', priorityGroup: 2 },
+          { employeeId: 'emp-same-b', employeeNo: 'BUDU-1004', label: '同名员工', currentStoreKey: 'tongying', participantType: 'EMPLOYEE', priorityGroup: 3 },
+        ],
+        substitutes: [{ participantUserId: 'user-sub', label: '卡皮巴拉', participantType: 'NON_EMPLOYEE_SUBSTITUTE', priorityGroup: 4 }],
+      }
+
+      resetUserData()
+      prepareUserDataForUser('dev-store-integrity')
+      window.fetch = async (url, options = {}) => {
+        const path = String(url)
+        const method = options.method || 'GET'
+        window.__storeEntryTimeline.push({ event: 'request', path, method, at: performance.now() })
+        if (method !== 'GET') {
+          window.__writes.push({ path, method, body: options.body ? JSON.parse(options.body) : null })
+          return json({ ok: true })
+        }
+        if (path === '/api/userdata') return legacyPromise
+        if (path.startsWith('/api/v2/daily-entry/overview')) {
+          const parsed = new URL(path, location.origin)
+          const store = parsed.searchParams.get('store')
+          const date = parsed.searchParams.get('date')
+          const key = keyOf(store, date)
+          const queue = window.__overviewPlans.get(key)
+          const planned = queue && queue.length ? queue.shift() : null
+          if (planned?.delay) await wait(planned.delay)
+          if (planned?.status && planned.status !== 200) return json(planned.payload || { error: 'fixture load failed' }, planned.status)
+          const payload = planned?.payload || (key === 'xidan|2026-08-24' ? historical : empty(store, date))
+          window.__storeEntryTimeline.push({ event: 'response', key, entryId: payload.entry?.id || null, at: performance.now() })
+          return json(payload)
+        }
+        if (path.startsWith('/api/v2/daily-participants')) return json(participants)
+        if (path === '/api/v2/stores') return json({ rows: [
+          { key: 'guanshe', name: '北京官舍店' },
+          { key: 'xidan', name: '北京西单店' },
+          { key: 'tongying', name: '北京通盈中心店' },
+          { key: 'chaowai', name: '北京朝外店' },
+        ] })
+        if (path === '/api/v2/staff-list') return json({ rows: [] })
+        if (path.startsWith('/api/v2/')) return json({ rows: [] })
+        return json({ error: `unexpected request: ${path}` }, 404)
+      }
+
+      createRoot(document.getElementById('root')).render(React.createElement(StoreEntryPage, {
+        user: { id: 'dev-store-integrity', username: 'developer', role: 'developer', storeKeys: [] },
+        onBack: () => {},
+      }))
+    </script>
+  </body>
+</html>

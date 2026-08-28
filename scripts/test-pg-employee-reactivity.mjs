@@ -85,7 +85,7 @@ test('Gate 3 Boundary: 两个锁定 consumer 依赖更新信号且 EmployeeSheet
   const approvalSelectors = fs.readFileSync(path.join(root, 'src/components/approval/ApprovalSelectors.jsx'), 'utf8')
 
   assert.match(storeEntry, /daily-participants/, 'StoreEntryPage 必须消费稳定参与者目录')
-  assert.match(storeEntry, /onUserDataUpdated\([\s\S]*?loadOverview/, 'StoreEntryPage 必须响应 PG 更新信号重载参与者目录')
+  assert.match(storeEntry, /onUserDataUpdated\([\s\S]*?loadOverviewRef\.current/, 'StoreEntryPage 必须响应 PG 更新信号并按当前权威重载参与者目录')
   assert.match(approvalSelectors, /onUserDataUpdated\(\(\) => setDataVersion/)
   assert.match(approvalSelectors, /employeeList\('all', null\), \[dataVersion\]/)
   assert.match(approvalSelectors, /\(\) => onUserDataUpdated\(/, 'effect 必须把 unsubscribe 返回给 React')
