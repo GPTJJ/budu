@@ -6,9 +6,11 @@ printing their values. Only the release SHA, fixed CustomerRequest binding,
 payment-worker mode, name, image, and network are changed.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 
 if len(sys.argv) != 8:
@@ -45,15 +47,13 @@ args = [
     "--label", "budu.production-role=candidate",
     "--label", f"org.opencontainers.image.revision={release_sha}",
 ]
-for key, value in sorted(env.items()):
-    args.extend(["--env", f"{key}={value}"])
 
 for mount in source.get("Mounts") or []:
     mount_type = mount.get("Type")
     destination = mount.get("Destination")
     if mount_type not in {"bind", "volume"} or not destination:
         raise SystemExit(f"UNSUPPORTED_RUNTIME_MOUNT_{mount_type or 'unknown'}")
-    source_path = mount.get("Source") or mount.get("Name")
+    source_path = mount.get("Name") if mount_type == "volume" else mount.get("Source")
     if not source_path:
         raise SystemExit("RUNTIME_MOUNT_SOURCE_MISSING")
     spec = f"type={mount_type},source={source_path},target={destination}"
@@ -61,7 +61,23 @@ for mount in source.get("Mounts") or []:
         spec += ",readonly"
     args.extend(["--mount", spec])
 
+for key, value in sorted(env.items()):
+    if "\n" in key or "\n" in value or "\r" in key or "\r" in value:
+        raise SystemExit("RUNTIME_ENV_LINE_BREAK_INVALID")
+env_dir = "/dev/shm" if pathlib.Path("/dev/shm").is_dir() else None
+env_fd, env_path = tempfile.mkstemp(prefix=".budu-candidate-env-", dir=env_dir, text=True)
+with os.fdopen(env_fd, "w", encoding="utf-8") as env_file:
+    for key, value in sorted(env.items()):
+        env_file.write(f"{key}={value}\n")
+os.chmod(env_path, 0o600)
+args.extend(["--env-file", env_path])
+
 args.append(image)
-result = subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    result = subprocess.run(args, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+finally:
+    pathlib.Path(env_path).unlink(missing_ok=True)
+if result.returncode != 0:
+    raise SystemExit(f"DOCKER_RUN_FAILED_{result.returncode}")
 container_id = result.stdout.strip()
 print(json.dumps({"created": True, "containerIdPrefix": container_id[:12], "paymentMode": payment_mode}))

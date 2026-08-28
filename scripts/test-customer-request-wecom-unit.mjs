@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 process.env.PUBLIC_BASE_URL = 'https://budu.example'
 
@@ -179,6 +182,46 @@ test('CustomerRequest routing contains no name, employee, role or directory-sear
   }
   assert.equal(resolverSource.includes("where: { username: BUDU_USERNAME, disabledAt: null }"), true)
   assert.equal(resolverSource.includes("detailUrl.searchParams.set('userid', WECOM_USER_ID)"), true)
+})
+
+test('production clone keeps secrets out of process arguments and preserves named volumes', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-clone-test-'))
+  const fakeDocker = path.join(tempDir, 'docker')
+  const argsFile = path.join(tempDir, 'docker-args')
+  const bindingFile = path.join(tempDir, 'binding.json')
+  fs.writeFileSync(bindingFile, JSON.stringify({ username: 'budu', userId: 'dh' }), { mode: 0o600 })
+  fs.writeFileSync(fakeDocker, `#!/bin/sh
+if [ "$1" = "inspect" ]; then
+  printf '%s' '[{"Config":{"Env":["PRIVATE_TEST_VALUE=must-not-appear"]},"Mounts":[{"Type":"volume","Name":"named-data","Source":"/var/lib/docker/volumes/named-data/_data","Destination":"/app/data","RW":true},{"Type":"bind","Source":"/safe/cert.pem","Destination":"/run/cert.pem","RW":false}]}]'
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  printf '%s\\n' "$@" > "$FAKE_DOCKER_ARGS"
+  printf '%s\\n' 'fake-container-id'
+  exit 0
+fi
+exit 1
+`, { mode: 0o700 })
+  try {
+    const result = spawnSync('python3', [
+      path.resolve('scripts/clone-production-container.py'),
+      'old', 'candidate', 'image', 'release-sha', bindingFile, 'network', 'disabled',
+    ], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${tempDir}:${process.env.PATH}`, FAKE_DOCKER_ARGS: argsFile },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const dockerArgs = fs.readFileSync(argsFile, 'utf8')
+    assert.equal(dockerArgs.includes('--env-file'), true)
+    assert.equal(dockerArgs.includes('PRIVATE_TEST_VALUE'), false)
+    assert.equal(dockerArgs.includes('must-not-appear'), false)
+    assert.equal(dockerArgs.includes('type=volume,source=named-data,target=/app/data'), true)
+    assert.equal(dockerArgs.includes('type=bind,source=/safe/cert.pem,target=/run/cert.pem,readonly'), true)
+    assert.equal(result.stdout.includes('must-not-appear'), false)
+    assert.equal(result.stderr.includes('must-not-appear'), false)
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('record deep link is consumed into the existing authenticated focus contract', async () => {
