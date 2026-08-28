@@ -21,6 +21,7 @@ export const MODULE_KEYS = Object.freeze({
   PRODUCT_CENTER: 'product-center',
   INVENTORY_TRANSFER: 'inventory-transfer',
   INVENTORY_PURCHASE: 'inventory-purchase',
+  PRODUCT_MATERIAL_MANAGEMENT: 'product-material-management',
   FINANCE: 'finance',
   FINANCE_INVOICE: 'finance-invoice',
   APPROVAL: 'approval',
@@ -49,6 +50,7 @@ export const MODULE_GROUPS = Object.freeze([
   { key: 'inventory', label: '库存管理', modules: [
     { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
+    { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '产品物料管理' },
   ] },
   { key: 'finance', label: '财务管理', modules: [
     { key: MODULE_KEYS.FINANCE, label: '财务利润' },
@@ -69,11 +71,12 @@ const MANAGER_DEFAULTS = Object.freeze([
   MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL,
   MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS,
   MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE,
+  MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT,
   MODULE_KEYS.FINANCE_INVOICE, MODULE_KEYS.APPROVAL, MODULE_KEYS.SETTINGS,
   MODULE_KEYS.EMPLOYEE_PROFILE,
 ])
 
-const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MODULE_KEYS.PRODUCT_CENTER && key !== MODULE_KEYS.EMPLOYEE_PROFILE))
+const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MODULE_KEYS.PRODUCT_CENTER && key !== MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT && key !== MODULE_KEYS.EMPLOYEE_PROFILE))
 
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
@@ -92,7 +95,13 @@ function normalizeModules(value, role, legacyAssetCenter) {
   if (role === 'cashier') return Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, key === MODULE_KEYS.STORE_POS]))
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null
   const defaults = new Set(defaultModuleKeys(role, legacyAssetCenter))
-  return Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, source ? source[key] === true : defaults.has(key)]))
+  return Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key,
+    source
+      ? (key === MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT && !Object.prototype.hasOwnProperty.call(source, key)
+          ? defaults.has(key)
+          : source[key] === true)
+      : defaults.has(key),
+  ]))
 }
 
 export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCenter = false) {

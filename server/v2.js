@@ -14,8 +14,10 @@ import {
   canAccessTransferStore,
   canManageAccounts,
   canManageTransferStore,
+  hasModuleAccess,
   hasInventoryTransferAll,
   isSuperUser,
+  MODULE_KEYS,
 } from '../shared/accountPermissions.js'
 
 export const v2Router = Router()
@@ -110,20 +112,16 @@ export function itemRows(items) {
   })
 }
 
-async function findOrCreateTransferItem(row) {
+async function findActiveTransferItem(row) {
   const existing = await prisma.inventoryItem.findUnique({ where: { name: row.name } })
-  if (existing) return existing
-  return prisma.inventoryItem.create({
-    data: {
-      id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      name: row.name,
-      category: row.category,
-    },
-  })
+  if (!existing || !existing.transferEnabled || existing.category !== row.category) {
+    throw bad('货品已停用或不存在，请刷新后重试', 409)
+  }
+  return existing
 }
 
 function inventoryItemCode(item) {
-  return String(item?.sku || item?.barcode || item?.id || '')
+  return String(item?.transferCode || item?.sku || item?.barcode || item?.id || '')
 }
 
 async function transferStoreRecipients(storeKey) {
@@ -188,7 +186,7 @@ function serializePurchase(r) {
       id: it.id,
       itemId: it.itemId,
       category: normalizeItemCategory(it.item.name, it.item.category),
-      productName: it.item.name,
+      productName: it.itemNameSnapshot || it.item.name,
       quantity: it.orderedQty,
       receivedQty: it.receivedQty,
       note: it.note,
@@ -524,6 +522,120 @@ v2Router.delete('/daily-entries', wrap(async (req, res) => {
 }))
 
 // ---------- 门店调拨 ----------
+function transferMasterData(body, category) {
+  const name = String(body?.name || '').trim()
+  if (!name || name.length > 50) throw bad(`${category === 'product' ? '产品' : '物料'}名称不正确`)
+  const sortOrder = Number(body?.sortOrder ?? 0)
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 999999) throw bad('排序必须是 0-999999 的整数')
+  const code = category === 'product' ? String(body?.code || '').trim() : ''
+  if (category === 'product' && (!code || code.length > 40)) throw bad('产品编号不能为空且不能超过 40 个字符')
+  return { name, code: code || null, enabled: body?.enabled !== false, sortOrder }
+}
+
+function serializeTransferMasterItem(item) {
+  return {
+    id: item.id,
+    category: item.category,
+    name: item.name,
+    code: item.transferCode || '',
+    enabled: item.transferEnabled,
+    sortOrder: item.transferSortOrder,
+    version: item.version,
+    used: Boolean(item._count?.transferItems || item._count?.purchaseItems),
+  }
+}
+
+function requireTransferMasterManager(user) {
+  if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT)) throw bad('无权限', 403)
+}
+
+v2Router.get('/transfer-master-items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const category = String(req.query.category || '').trim()
+  if (category && !['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
+  const rows = await prisma.inventoryItem.findMany({
+    where: {
+      category: category || { in: ['product', 'material'] },
+      ...(active === undefined ? {} : { transferEnabled: active }),
+    },
+    include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+    orderBy: [{ category: 'asc' }, { transferSortOrder: 'asc' }, { name: 'asc' }],
+    take: 1000,
+  })
+  res.json({ rows: rows.map(serializeTransferMasterItem) })
+}))
+
+v2Router.post('/transfer-master-items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  const category = String(req.body?.category || '').trim()
+  if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  const data = transferMasterData(req.body, category)
+  const duplicate = await prisma.inventoryItem.findFirst({
+    where: { OR: [
+      { name: data.name },
+      ...(data.code ? [{ transferCode: data.code }] : []),
+    ] },
+  })
+  if (duplicate) throw bad(duplicate.name === data.name ? '名称已存在，请编辑现有资料' : '产品编号已存在', 409)
+  const row = await prisma.inventoryItem.create({
+    data: {
+      id: uid('it'),
+      name: data.name,
+      category,
+      transferCode: data.code,
+      transferEnabled: data.enabled,
+      transferSortOrder: data.sortOrder,
+    },
+    include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+  })
+  res.status(201).json({ ok: true, item: serializeTransferMasterItem(row) })
+}))
+
+v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.id } })
+  if (!existing || !['product', 'material'].includes(existing.category)) throw bad('产品或物料不存在', 404)
+  const version = Number(req.body?.version)
+  if (!Number.isInteger(version) || version < 1) throw bad('资料版本不正确，请刷新后重试')
+  const data = transferMasterData(req.body, existing.category)
+  const duplicate = await prisma.inventoryItem.findFirst({
+    where: {
+      id: { not: existing.id },
+      OR: [
+        { name: data.name },
+        ...(data.code ? [{ transferCode: data.code }] : []),
+      ],
+    },
+  })
+  if (duplicate) throw bad(duplicate.name === data.name ? '名称已存在' : '产品编号已存在', 409)
+
+  const row = await prisma.$transaction(async (tx) => {
+    if (existing.name !== data.name) {
+      await tx.transferItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
+      await tx.purchaseItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
+    }
+    const updated = await tx.inventoryItem.updateMany({
+      where: { id: existing.id, version },
+      data: {
+        name: data.name,
+        transferCode: data.code,
+        transferEnabled: data.enabled,
+        transferSortOrder: data.sortOrder,
+        version: { increment: 1 },
+      },
+    })
+    if (updated.count !== 1) throw bad('资料已被其他人修改，请刷新后重试', 409)
+    return tx.inventoryItem.findUnique({
+      where: { id: existing.id },
+      include: { _count: { select: { transferItems: true, purchaseItems: true } } },
+    })
+  })
+  res.json({ ok: true, item: serializeTransferMasterItem(row) })
+}))
+
 v2Router.post('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { items, note } = req.body || {}
@@ -549,7 +661,7 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
       items: {
         create: await Promise.all(
           rows.map(async (row) => {
-            const item = await findOrCreateTransferItem(row)
+            const item = await findActiveTransferItem(row)
             return {
               id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
               itemId: item.id,
@@ -683,7 +795,7 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
         create: await Promise.all(
           rows.map(async (row) => {
             const item = await upsertItem(row.name)
-            return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note }
+            return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note, itemNameSnapshot: item.name }
           }),
         ),
       },

@@ -20,6 +20,7 @@ export default function MobileBottomNav({ view, user, onNavigate, onMore }) {
 
   return (
     <nav
+      data-testid="mobile-bottom-nav"
       className="mobile-liquid-nav fixed inset-x-0 bottom-0 z-30 px-2 lg:hidden"
       style={{ paddingBottom: 'max(0.45rem, env(safe-area-inset-bottom))' }}
       aria-label={t('手机快捷导航')}

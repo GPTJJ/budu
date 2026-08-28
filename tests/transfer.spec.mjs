@@ -7,6 +7,7 @@ test('记录中心只展示任务结构，创建表单进入独立页面', async
   await expect(page.getByRole('tab', { name: /已发货/ })).toBeVisible()
   await expect(page.getByLabel('调出门店')).toHaveCount(0)
   await page.getByRole('button', { name: '创建调拨' }).click()
+  await expect(page.getByRole('button', { name: /核对并提交/ })).toBeDisabled()
   await expect(page.getByRole('heading', { name: '创建调拨' })).toBeVisible()
   await expect(page.getByLabel('调出门店')).toBeVisible()
   await expect(page.getByLabel('调入门店')).toHaveValue('guanshe')
@@ -69,12 +70,30 @@ test('调拨详情生成正式 Canvas 图片，历史缺失编码显示横线而
   await expect.poll(() => page.evaluate(() => window.__transferTest.imageExports)).toBeGreaterThan(0)
 })
 
-for (const width of [320, 375, 430, 768]) {
+for (const width of [320, 340, 375, 390, 430]) {
   test(`${width}px 创建与记录页面无横向溢出`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/tests/transfer-harness.html?records=1')
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
     await page.getByRole('button', { name: '创建调拨' }).click()
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    const submitBar = await page.getByTestId('transfer-submit-bar').boundingBox()
+    const bottomNav = await page.getByTestId('mobile-bottom-nav').boundingBox()
+    expect(submitBar.y + submitBar.height).toBeLessThanOrEqual(bottomNav.y + 1)
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }))
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+    const lastSection = await page.locator('[data-testid="transfer-create-page"] > section').last().boundingBox()
+    const submitAfterScroll = await page.getByTestId('transfer-submit-bar').boundingBox()
+    expect(lastSection.y + lastSection.height).toBeLessThanOrEqual(submitAfterScroll.y)
+    await expect(page.getByTestId('transfer-submit-bar')).toHaveAttribute('style', /safe-area-inset-bottom/)
   })
 }
+
+test('调拨选择器只读取启用的 PostgreSQL 主数据', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html')
+  await page.getByRole('button', { name: '创建调拨' }).click()
+  await expect(page.getByRole('button', { name: 'NO.1 树莓', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '物料' }).click()
+  await expect(page.getByRole('textbox', { name: '冰袋数量', exact: true })).toBeVisible()
+  await expect(page.getByText('停用纸袋', { exact: true })).toHaveCount(0)
+})

@@ -164,6 +164,8 @@ const CRITICAL_NODE_TEST = [
   'test-mailing-qr-migration-rehearsal.mjs',
   'test-store-transfer-draft.mjs',
   'test-store-transfer-migration-rehearsal.mjs',
+  'test-product-material-migration-rehearsal.mjs',
+  'test-product-material-contract.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）

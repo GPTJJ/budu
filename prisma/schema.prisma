@@ -165,6 +165,9 @@ model InventoryItem {
   isActive       Boolean        @default(false)
   trackInventory Boolean        @default(false)
   sortOrder      Int            @default(0)
+  transferCode      String?        @unique
+  transferEnabled   Boolean        @default(false)
+  transferSortOrder Int            @default(0)
   version        Int            @default(1)
   updatedAt      DateTime       @default(now()) @updatedAt
   createdAt      DateTime       @default(now())
@@ -586,14 +589,15 @@ model MemberConsumption {
 }
 
 model PurchaseItem {
-  id          String          @id
-  requestId   String
-  itemId      String
-  orderedQty  Int
-  receivedQty Int             @default(0)
-  note        String          @default("")
-  request     PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  item        InventoryItem   @relation(fields: [itemId], references: [id])
+  id               String          @id
+  requestId        String
+  itemId           String
+  orderedQty       Int
+  receivedQty      Int             @default(0)
+  note             String          @default("")
+  itemNameSnapshot String          @default("")
+  request          PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item             InventoryItem   @relation(fields: [itemId], references: [id])
 }
 
 model MailingRecord {

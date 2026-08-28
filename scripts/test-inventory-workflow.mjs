@@ -76,6 +76,21 @@ try {
   })
   if (sameStore.status !== 400 || (await sameStore.json()).error !== '调出门店不能与调入门店相同') throw new Error('同店调拨未按合同拒绝')
 
+  const createMaster = async (body) => {
+    const response = await fetch(`${base}/v2/transfer-master-items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) throw new Error(`产品物料主数据创建失败：${response.status} ${await response.text()}`)
+    return (await response.json()).item
+  }
+  const productOne = await createMaster({ category: 'product', code: 'NO.1', name: 'NO.1树莓', sortOrder: 1, enabled: true })
+  await createMaster({ category: 'product', code: 'NO.2', name: 'NO.2柠檬', sortOrder: 2, enabled: true })
+  await createMaster({ category: 'material', name: '冰袋', sortOrder: 1, enabled: true })
+  const activeMaster = await fetch(`${base}/v2/transfer-master-items?active=true`, { headers: { Cookie: cookie } }).then((response) => response.json())
+  if (activeMaster.rows?.length !== 3 || activeMaster.rows.some((item) => !item.enabled)) throw new Error('调拨启用主数据读取错误')
+
   const createdResponse = await fetch(`${base}/v2/transfer-requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -97,6 +112,24 @@ try {
   const transferData = await transferRead.json()
   const persisted = transferData.rows?.find((row) => row.id === created.id)
   if (!persisted || persisted.fromStoreKey !== 'guanshe' || persisted.storeKey !== 'tongying') throw new Error('调拨未从 PostgreSQL 永久读取')
+
+  const disableResponse = await fetch(`${base}/v2/transfer-master-items/${productOne.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ ...productOne, name: 'NO.1树莓（新版）', enabled: false }),
+  })
+  if (!disableResponse.ok) throw new Error(`产品编辑停用失败：${disableResponse.status} ${await disableResponse.text()}`)
+  const activeAfterDisable = await fetch(`${base}/v2/transfer-master-items?active=true`, { headers: { Cookie: cookie } }).then((response) => response.json())
+  if (activeAfterDisable.rows.some((item) => item.id === productOne.id)) throw new Error('停用产品仍出现在新建调拨主数据')
+  const historicalAfterRename = await fetch(`${base}/v2/transfer-requests`, { headers: { Cookie: cookie } }).then((response) => response.json())
+  const frozen = historicalAfterRename.rows.find((row) => row.id === created.id)?.items.find((item) => item.itemId === productOne.id)
+  if (frozen?.productName !== 'NO.1树莓') throw new Error('编辑主数据改写了历史调拨名称')
+  const disabledCreate = await fetch(`${base}/v2/transfer-requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ fromStoreKey: 'guanshe', toStoreKey: 'tongying', items: [{ name: 'NO.1树莓（新版）', quantity: 1, category: 'product' }] }),
+  })
+  if (disabledCreate.status !== 409 || !(await disabledCreate.text()).includes('货品已停用或不存在')) throw new Error('服务端允许停用产品创建新调拨')
 
   const editedShip = await fetch(`${base}/v2/transfer-requests/${created.id}/ship`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },

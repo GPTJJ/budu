@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Product Material Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import ProductMaterialManagementPage from '/src/components/ProductMaterialManagementPage.jsx'
+    import '/src/index.css'
+
+    const rows = [
+      { id: 'p-used', category: 'product', name: 'NO.1树莓', code: 'NO.1', enabled: true, sortOrder: 1, version: 1, used: true },
+      { id: 'p-off', category: 'product', name: '旧产品', code: 'OLD', enabled: false, sortOrder: 9, version: 1, used: false },
+      { id: 'm-used', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1, used: true },
+    ]
+    const requests = []
+    window.__productMaterialTest = { rows, requests }
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const method = options.method || 'GET'
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/transfer-master-items' && method === 'GET') return json({ rows })
+      if (path === '/api/v2/transfer-master-items' && method === 'POST') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const item = { ...body, id: `new-${rows.length}`, version: 1, used: false }
+        rows.push(item); return json({ ok: true, item }, 201)
+      }
+      const update = path.match(/^\/api\/v2\/transfer-master-items\/([^/]+)$/)
+      if (update && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const index = rows.findIndex((item) => item.id === update[1])
+        rows[index] = { ...rows[index], ...body, version: rows[index].version + 1 }
+        return json({ ok: true, item: rows[index] })
+      }
+      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+    }
+    createRoot(document.getElementById('root')).render(React.createElement(ProductMaterialManagementPage, { onBack: () => {} }))
+  </script></body>
+</html>

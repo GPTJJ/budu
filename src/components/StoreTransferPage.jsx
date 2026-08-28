@@ -6,7 +6,6 @@ import {
 import { allStores } from '../utils/selectors'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { api } from '../utils/api'
-import { MATERIAL_NAMES, NO_CANDY_NAMES } from '../utils/productCategories'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 import {
@@ -74,6 +73,8 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [masterItems, setMasterItems] = useState([])
+  const [masterLoading, setMasterLoading] = useState(true)
   const [version, setVersion] = useState(0)
   const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('inventory-transfer'))
 
@@ -96,6 +97,18 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   }, {})
   const products = picked.filter((item) => item.category === 'product')
   const materials = picked.filter((item) => item.category === 'material')
+  const activeProducts = masterItems.filter((item) => item.category === 'product' && item.enabled)
+  const activeMaterials = masterItems.filter((item) => item.category === 'material' && item.enabled)
+  const canReview = picked.length > 0 && picked.every((item) => validTransferQuantity(item.quantity))
+
+  useEffect(() => {
+    let active = true
+    api('/v2/transfer-master-items?active=true')
+      .then((data) => { if (active) { setMasterItems(data.rows || []); setError('') } })
+      .catch((err) => { if (active) setError(err.message) })
+      .finally(() => { if (active) setMasterLoading(false) })
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (!notificationFocusId) return
@@ -220,7 +233,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   }
 
   if (screen === 'create') return (
-    <div className="mx-auto max-w-3xl space-y-4 pb-28" data-testid="transfer-create-page">
+    <div className="mx-auto max-w-3xl space-y-4 pb-[calc(10rem+env(safe-area-inset-bottom))] sm:pb-28" data-testid="transfer-create-page">
       <header className="flex items-center gap-3">
         <button onClick={() => { resetCreate(); setScreen('records') }} className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-slate-500 shadow-card" aria-label="返回调拨记录"><ArrowLeft className="h-5 w-5" /></button>
         <div><h2 className="text-xl font-bold text-slate-900">创建调拨</h2><p className="text-xs text-slate-400">填写后先核对，再正式提交</p></div>
@@ -248,12 +261,13 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         {pickerTab === 'product' ? (
           <div className="mt-4" data-testid="transfer-product-draft">
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {NO_CANDY_NAMES.map((name) => {
-                const selected = draft.product.selectedNames.includes(name)
-                const [code, ...rest] = name.split(/(?=[\u4e00-\u9fa5])/)
-                return <button key={name} type="button" aria-pressed={selected} onClick={() => setDraft((current) => toggleDraftProduct(current, name))} className={`min-h-20 rounded-2xl border p-2 text-left transition ${selected ? 'border-budu-400 bg-budu-50 text-budu-700 ring-1 ring-budu-200' : 'border-slate-100 bg-white text-slate-600'}`}><span className="block text-base font-black">{code}</span><span className="mt-1 block text-xs font-semibold">{rest.join('')}</span></button>
+              {activeProducts.map((item) => {
+                const selected = draft.product.selectedNames.includes(item.name)
+                const displayName = item.code && item.name.startsWith(item.code) ? item.name.slice(item.code.length) : item.name
+                return <button key={item.id} type="button" aria-pressed={selected} onClick={() => setDraft((current) => toggleDraftProduct(current, item.name))} className={`min-h-20 rounded-2xl border p-2 text-left transition ${selected ? 'border-budu-400 bg-budu-50 text-budu-700 ring-1 ring-budu-200' : 'border-slate-100 bg-white text-slate-600'}`}><span className="block text-base font-black">{item.code || '—'}</span><span className="mt-1 block text-xs font-semibold">{displayName}</span></button>
               })}
             </div>
+            {!masterLoading && !activeProducts.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">暂无已启用产品，请先在产品物料管理中启用</p>}
             <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl bg-slate-50 p-3">
               <label className="min-w-[140px] flex-1 text-xs font-semibold text-slate-500">本批统一数量<input aria-label="产品批量数量" inputMode="numeric" value={draft.product.batchQuantity} onChange={(event) => setDraft((current) => setDraftProductQuantity(current, event.target.value.replace(/\D/g, '').slice(0, 6)))} placeholder="输入整数" className="input mt-1.5" /></label>
               <button type="button" onClick={addSelectedProducts} className="btn-primary min-h-11 px-5">加入清单 · {draft.product.selectedNames.length} 种</button>
@@ -261,10 +275,11 @@ export default function StoreTransferPage({ currentUser, onBack }) {
           </div>
         ) : (
           <div className="mt-4 space-y-2" data-testid="transfer-material-draft">
-            {MATERIAL_NAMES.map((name) => {
-              const value = draft.material.quantities[name] || ''
-              return <div key={name} className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 ${Number(value) > 0 ? 'border-budu-200 bg-budu-50/60' : 'border-slate-100 bg-white'}`}><span className="min-w-0 flex-1 text-sm font-semibold text-slate-700">{name}</span><QuantityControl value={value} onChange={(next) => changeMaterial(name, next)} ariaLabel={`${name}数量`} /></div>
+            {activeMaterials.map((item) => {
+              const value = draft.material.quantities[item.name] || ''
+              return <div key={item.id} className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 ${Number(value) > 0 ? 'border-budu-200 bg-budu-50/60' : 'border-slate-100 bg-white'}`}><span className="min-w-0 flex-1 text-sm font-semibold text-slate-700">{item.name}</span><QuantityControl value={value} onChange={(next) => changeMaterial(item.name, next)} ariaLabel={`${item.name}数量`} /></div>
             })}
+            {!masterLoading && !activeMaterials.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">暂无已启用物料，请先在产品物料管理中启用</p>}
           </div>
         )}
       </section>
@@ -280,7 +295,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
 
       <section className="rounded-[24px] bg-white p-4 shadow-card"><label className="text-xs font-bold uppercase tracking-[.18em] text-budu-500">4 · 备注<textarea aria-label="调拨备注" value={note} onChange={(event) => setNote(event.target.value.slice(0, 200))} rows="3" placeholder="整笔调拨共用备注（选填）" className="input mt-3 resize-none normal-case tracking-normal" /></label><p className="mt-1 text-right text-[11px] text-slate-300">{note.length}/200</p></section>
       {error && <p role="alert" className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600">{error}</p>}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-100 bg-white/95 p-3 backdrop-blur sm:static sm:rounded-[24px] sm:border-0 sm:shadow-card"><div className="mx-auto flex max-w-3xl items-center gap-3"><span className="min-w-0 flex-1 text-sm font-bold text-slate-600">{itemCountLabel(picked)}</span><button onClick={openReview} className="btn-primary min-h-12 px-7">5 · 核对并提交 <ChevronRight className="h-4 w-4" /></button></div></div>
+      <div data-testid="transfer-submit-bar" className="fixed inset-x-0 z-40 border-t border-slate-100 bg-white/95 p-3 backdrop-blur sm:static sm:rounded-[24px] sm:border-0 sm:shadow-card" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}><div className="mx-auto max-w-3xl"><button onClick={openReview} disabled={!canReview || busy} className="btn-primary min-h-12 w-full disabled:cursor-not-allowed disabled:opacity-40">核对并提交 <ChevronRight className="h-4 w-4" /></button></div></div>
       {reviewOpen && <Sheet title="确认调拨信息" onClose={() => setReviewOpen(false)}><div className="space-y-4 p-5"><div className="rounded-2xl bg-budu-50 p-4"><p className="text-xs text-budu-500">调拨方向</p><p className="mt-1 text-lg font-black text-budu-800">{storeLabel(fromStoreKey)} → {storeLabel(toStoreKey)}</p></div>{[['产品', products], ['物料', materials]].map(([label, rows]) => rows.length ? <div key={label}><h4 className="mb-2 text-xs font-bold text-slate-500">{label} · {rows.length} 种</h4><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{rows.map((item) => <div key={item.productName} className="flex justify-between gap-3 px-4 py-3 text-sm"><span className="font-semibold text-slate-700">{item.productName}</span><span className="font-black tabular-nums text-slate-800">× {item.quantity}</span></div>)}</div></div> : null)}<div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><span className="font-bold">备注：</span>{note.trim() || '—'}</div>{error && <p role="alert" className="text-sm font-semibold text-rose-500">{error}</p>}<div className="grid grid-cols-2 gap-3"><button onClick={() => setReviewOpen(false)} className="btn-secondary min-h-12">返回修改</button><button onClick={submit} disabled={busy} className="btn-primary min-h-12"><Check className="h-4 w-4" />{busy ? '提交中…' : '确认提交'}</button></div></div></Sheet>}
     </div>
   )

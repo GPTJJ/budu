@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import StoreTransferPage from '/src/components/StoreTransferPage.jsx'
+    import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -14,6 +15,12 @@
       { id: 'tr-rejected', type: 'transfer', fromStoreKey: 'chaowai', storeKey: 'guanshe', fromStoreName: '朝外店', storeName: '官舍店', status: 'rejected', note: '', createdBy: 'legacy', createdAt: '2026-08-09T06:00:00.000Z', items: [{ id: 'ti-3', itemId: 'it-3', itemCode: '', category: 'product', productName: 'NO.2柠檬', quantity: 1, note: '' }] },
     ] : []
     seedCachedDataForTest({ inventoryRequests: records })
+    const masterRows = [
+      { id: 'master-p1', category: 'product', name: 'NO.1树莓', code: 'NO.1', enabled: true, sortOrder: 1, version: 1 },
+      { id: 'master-p2', category: 'product', name: 'NO.2柠檬', code: 'NO.2', enabled: true, sortOrder: 2, version: 1 },
+      { id: 'master-m1', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1 },
+      { id: 'master-m2', category: 'material', name: '停用纸袋', code: '', enabled: false, sortOrder: 2, version: 1 },
+    ]
     const requests = []
     let imageExports = 0
     const nativeCanvasToDataUrl = HTMLCanvasElement.prototype.toDataURL
@@ -29,6 +36,7 @@
       const method = options.method || 'GET'
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/userdata') return json({})
+      if (path === '/api/v2/transfer-master-items' && method === 'GET') return json({ rows: masterRows.filter((item) => requestUrl.searchParams.get('active') !== 'true' || item.enabled) })
       if (path === '/api/v2/transfer-requests' && method === 'GET') return json({ rows: records })
       if (path === '/api/v2/transfer-requests' && method === 'POST') {
         const body = JSON.parse(options.body)
@@ -54,6 +62,9 @@
       return json({ error: `未模拟接口 ${method} ${path}` }, 404)
     }
     const user = { id: 'manager-test', username: 'manager-test', role: 'manager', status: 'active', storeKeys: ['guanshe'], permissions: {} }
-    createRoot(document.getElementById('root')).render(React.createElement(StoreTransferPage, { currentUser: user, onBack: () => {} }))
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(StoreTransferPage, { currentUser: user, onBack: () => {} }),
+      React.createElement(MobileBottomNav, { view: 'inventory-transfer', user, onNavigate: () => {}, onMore: () => {} }),
+    ))
   </script></body>
 </html>

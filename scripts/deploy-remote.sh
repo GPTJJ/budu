@@ -22,28 +22,15 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Temporary product/material bootstrap audit. This branch commit performs only
-# a read-only aggregate query against the currently routed production runtime.
-if [ "$ENV" = "prod" ] && [ -f scripts/audit-prod-product-material.sh ]; then
-  AUDIT_PATH="/dev/shm/budu-product-material-audit-${GITHUB_RUN_ID:-$$}.sh"
-  cleanup_product_material_audit() {
-    "${SSH_ARGS[@]}" "$USER@$HOST" "rm -f '$AUDIT_PATH'" >/dev/null 2>&1 || true
-  }
-  trap cleanup_product_material_audit EXIT
-  "${SCP_ARGS[@]}" scripts/audit-prod-product-material.sh "$USER@$HOST:$AUDIT_PATH"
-  "${SSH_ARGS[@]}" "$USER@$HOST" bash "$AUDIT_PATH" "$APP_DIR" "budu-nginx-1"
-  exit 0
-fi
-
-# Store Transfer 2.0 is an additive successor to the verified Invoice QR-only
+# Product/material management is an additive successor to the verified Store Transfer 2.0
 # release. Production remains on the authority-aware blue/green path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="ae08380290e2d444ab8c76f6ea6e941b6b3dd9c9"
+  EXPECTED_OLD_SHA="3f326ee46d82eab59444f4983fb0fa4ab9c8a2d8"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-transfer-2-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-product-material-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-transfer-2.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-product-material.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -77,17 +64,17 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 15m npm run test:critical && npx playwright test tests/transfer.spec.mjs tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 15m npm run test:critical && npx playwright test tests/product-material.spec.mjs tests/transfer.spec.mjs tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-transfer-2-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-product-material-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"
-  "${SCP_ARGS[@]}" scripts/deploy-prod-customer-request-wecom.sh "$USER@$HOST:${REMOTE_PREFIX}.deploy.sh"
+  "${SCP_ARGS[@]}" scripts/deploy-prod-product-material.sh "$USER@$HOST:${REMOTE_PREFIX}.deploy.sh"
   "${SSH_ARGS[@]}" "$USER@$HOST" bash "${REMOTE_PREFIX}.deploy.sh" \
     "${REMOTE_PREFIX}.bundle" \
     "${REMOTE_PREFIX}.resolver.mjs" \
