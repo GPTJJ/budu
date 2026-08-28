@@ -55,14 +55,16 @@ if [ "$ENV" = "prod" ]; then
   TEST_DATABASE_URL="postgresql://budu_test:budu_test_password@127.0.0.1:${TEST_DB_PORT}/budu_test?schema=public"
 
   echo "==> Node 22：critical / WeCom / build 回归"
-  docker run --rm --network host \
+  docker run --rm --network host --ipc=host \
     -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+    -e DATABASE_URL="$TEST_DATABASE_URL" \
     -e NODE_ENV=test \
     -e APP_ENV=test \
+    -e CI=1 \
     -v "$PWD:/work" \
     -w /work \
-    node:22-alpine \
-    sh -c 'npm ci && npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
+    mcr.microsoft.com/playwright:v1.55.0-noble \
+    bash -lc 'npm ci && npx prisma migrate deploy && npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
