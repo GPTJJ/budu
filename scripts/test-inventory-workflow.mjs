@@ -59,7 +59,9 @@ try {
   if (!save.ok) throw new Error(`库存 API 保存失败：${save.status} ${await save.text()}`)
   const read = await fetch(`${base}/userdata`, { headers: { Cookie: cookie } })
   const data = await read.json()
-  if (data.inventory?.length !== 2 || data.inventoryRequests?.[0]?.status !== 'shipped') {
+  // The legacy /userdata compatibility store normalizes "shipped" to its
+  // historical "in_transit" value. Canonical v2 transfer records stay shipped.
+  if (data.inventory?.length !== 2 || data.inventoryRequests?.[0]?.status !== 'in_transit') {
     throw new Error('库存 API 读取结果错误')
   }
 
