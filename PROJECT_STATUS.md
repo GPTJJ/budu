@@ -1,4 +1,10 @@
-# BUDU 项目状态快照（对话恢复指南）
+# LEGACY / HISTORICAL PROJECT STATUS
+
+> **STALE：本文件只保留历史记录，不再是当前状态入口。**
+> 新会话必须先读取 [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)，并按根目录 `AGENTS.md` 的 SESSION BOOTSTRAP 直接重新验证 Git、Runtime、DB、migration、writer、backup 与 rollback。
+> 本文件中的旧 SHA、部署说明、账号或环境信息不得视为当前权威，也不得复制到日志或新文档。
+
+# BUDU 项目状态快照（历史对话恢复指南）
 
 > 本文件是项目的“存档点”：即使对话丢失、换电脑或开新会话，
 > 任何新会话读一遍本文件即可完整恢复上下文，继续开发。
