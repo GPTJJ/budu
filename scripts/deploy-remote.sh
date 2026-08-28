@@ -22,20 +22,6 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Temporary post-deployment verification gate. This branch commit uses the
-# production workflow only to run a read-only aggregate audit: no checkout,
-# migration, restart, route change, or database write is performed.
-if [ "$ENV" = "prod" ] && [ -f scripts/audit-prod-transfer.sh ]; then
-  AUDIT_PATH="/dev/shm/budu-transfer-audit-${GITHUB_RUN_ID:-$$}.sh"
-  cleanup_transfer_audit() {
-    "${SSH_ARGS[@]}" "$USER@$HOST" "rm -f '$AUDIT_PATH'" >/dev/null 2>&1 || true
-  }
-  trap cleanup_transfer_audit EXIT
-  "${SCP_ARGS[@]}" scripts/audit-prod-transfer.sh "$USER@$HOST:$AUDIT_PATH"
-  "${SSH_ARGS[@]}" "$USER@$HOST" bash "$AUDIT_PATH" "$APP_DIR" "budu-nginx-1"
-  exit 0
-fi
-
 # Store Transfer 2.0 is an additive successor to the verified Invoice QR-only
 # release. Production remains on the authority-aware blue/green path below.
 if [ "$ENV" = "prod" ]; then
