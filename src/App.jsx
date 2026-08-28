@@ -9,8 +9,20 @@ import { lazyRetry } from './utils/lazyRetry'
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
 const loadDashboard = () => import('./components/Dashboard')
 const Dashboard = lazyRetry(loadDashboard)
+const CustomerRequestPage = lazyRetry(() => import('./components/CustomerRequestPage'))
 
 export default function App() {
+  if (window.location.pathname.replace(/\/+$/, '') === '/customer-request') {
+    return (
+      <Suspense fallback={<AppLoading />}>
+        <CustomerRequestPage />
+      </Suspense>
+    )
+  }
+  return <AuthenticatedApp />
+}
+
+function AuthenticatedApp() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)

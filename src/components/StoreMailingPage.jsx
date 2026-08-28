@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
-  ArrowLeft, CalendarDays, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Loader2, Mic, PackageCheck, Plus, Send, Sparkles,
+  ArrowLeft, CalendarDays, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Keyboard, Loader2, Mic, PackageCheck, Plus, QrCode, Send, Sparkles,
 } from 'lucide-react'
 import { api } from '../utils/api'
+import { allStores } from '../utils/selectors'
 import { mergeRecipientFields, parseRecipientText } from '../utils/addressParser'
 import { createOcrRequestId, fingerprintImageDataUrl, isMatchingOcrResponse, sha256Hex } from '../utils/ocrIntegrity'
-import qrUrl from '../assets/mailing-qr.jpg'
+import QrCodeModal from './QrCodeModal'
+import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 
 const STORAGE_KEY = 'budu-store-mailing'
 
@@ -71,7 +73,11 @@ function OptionGroup({ label, options, value, onChange }) {
   )
 }
 
-export default function StoreMailingPage({ onBack }) {
+export default function StoreMailingPage({ currentUser, onBack }) {
+  const availableStores = allStores().filter((store) => {
+    const keys = Array.isArray(currentUser?.storeKeys) ? currentUser.storeKeys : []
+    return ['developer', 'admin', 'finance'].includes(currentUser?.role) || keys.includes(store.key)
+  })
   const saved = loadSaved()
   const [method, setMethod] = useState(saved?.method || '顺丰邮寄')
   const [postage, setPostage] = useState(saved?.postage || '包邮')
@@ -99,6 +105,12 @@ export default function StoreMailingPage({ onBack }) {
   const [submitting, setSubmitting] = useState(false)
   const [shippingId, setShippingId] = useState('')
   const [exportDone, setExportDone] = useState(false)
+  const [qrStoreKey, setQrStoreKey] = useState(availableStores[0]?.key || '')
+  const [qrOpen, setQrOpen] = useState(false)
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState('')
+  const [qrRequest, setQrRequest] = useState(null)
+  const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('store-mailing'))
 
   useEffect(() => {
     try {
@@ -144,6 +156,26 @@ export default function StoreMailingPage({ onBack }) {
 
   useEffect(() => {
     loadRecords()
+  }, [])
+
+  useEffect(() => {
+    if (!notificationFocusId || records.length === 0) return
+    const row = records.find((record) => record.id === notificationFocusId)
+    if (!row) return
+    setActiveTab(row.status === 'shipped' ? 'shipped' : 'pending')
+    window.setTimeout(() => {
+      document.querySelector(`[data-mailing-record-id="${CSS.escape(notificationFocusId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+  }, [notificationFocusId, records])
+
+  useEffect(() => {
+    const receiveNotificationFocus = (event) => {
+      if (event.detail?.target !== 'store-mailing') return
+      const refId = takeNotificationRecordFocus('store-mailing') || String(event.detail?.refId || '')
+      if (refId) setNotificationFocusId(refId)
+    }
+    window.addEventListener('budu:notification-record-focus', receiveNotificationFocus)
+    return () => window.removeEventListener('budu:notification-record-focus', receiveNotificationFocus)
   }, [])
 
   const showTip = (text) => {
@@ -423,6 +455,59 @@ export default function StoreMailingPage({ onBack }) {
     }
   }
 
+  const generateCustomerQr = async () => {
+    setQrOpen(true)
+    setQrLoading(true)
+    setQrError('')
+    try {
+      const data = await api('/v2/customer-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'MAILING',
+          storeKey: qrStoreKey,
+          method,
+          postage,
+          fee: method === '顺丰邮寄' && postage === '不包邮' ? fee : '',
+        }),
+      })
+      setQrRequest(data)
+    } catch (e) {
+      setQrError(e.message || '二维码生成失败')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const regenerateCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
+    setQrError('')
+    try {
+      const data = await api(`/v2/customer-requests/${qrRequest.request.id}/regenerate`, { method: 'POST' })
+      setQrRequest(data)
+    } catch (e) {
+      setQrError(e.message || '二维码重新生成失败')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const cancelCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
+    setQrError('')
+    try {
+      await api(`/v2/customer-requests/${qrRequest.request.id}/cancel`, { method: 'POST' })
+      setQrRequest(null)
+      setQrOpen(false)
+      showTip('二维码已取消')
+    } catch (e) {
+      setQrError(e.message || '二维码取消失败')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
   const markShipped = async (id) => {
     setShippingId(id)
     try {
@@ -502,9 +587,34 @@ export default function StoreMailingPage({ onBack }) {
         <p className="text-sm text-slate-400">填写内容自动保存在本机，便于下次直接复制</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
+      <div className="grid grid-cols-1 gap-4">
       <div className="card p-5 sm:p-6">
         <div className="space-y-6">
+          <section className="rounded-3xl border border-budu-100 bg-gradient-to-br from-budu-50 to-white p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-slate-900">创建邮寄</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-500">让顾客扫码填写姓名、电话和收件地址，提交后自动进入待发货。</p>
+              </div>
+              <button type="button" onClick={generateCustomerQr} disabled={qrLoading || !qrStoreKey} className="btn-primary min-h-12 shrink-0 whitespace-nowrap px-4">
+                {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+                生成顾客填写二维码
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <label className="min-w-0 text-xs font-semibold text-slate-500">
+                本次服务门店
+                <select value={qrStoreKey} onChange={(e) => setQrStoreKey(e.target.value)} className="input mt-1 min-h-11 w-full">
+                  {availableStores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}
+                </select>
+              </label>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <span>无法扫码？</span>
+                <button type="button" onClick={() => document.getElementById('mailing-manual-fields')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="btn-secondary min-h-11 whitespace-nowrap px-3"><Keyboard className="h-4 w-4" />手动填写</button>
+                <button type="button" onClick={() => document.getElementById('mailing-smart-recognition')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="btn-secondary min-h-11 whitespace-nowrap px-3"><Sparkles className="h-4 w-4" />智能识别</button>
+              </div>
+            </div>
+          </section>
           <OptionGroup label="邮寄方式" options={['顺丰邮寄', '同城闪送']} value={method} onChange={setMethod} />
           <OptionGroup label="运费" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
           {method === '顺丰邮寄' && postage === '不包邮' && (
@@ -530,7 +640,7 @@ export default function StoreMailingPage({ onBack }) {
           )}
 
           {/* 智能识别：粘贴/图片/语音 → 拆分姓名电话地址 */}
-          <div className="space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
+          <div id="mailing-smart-recognition" className="scroll-mt-4 space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <Sparkles className="h-4 w-4 text-budu-600" />
               <p className="text-sm font-bold text-slate-700">智能识别收件信息</p>
@@ -599,7 +709,7 @@ export default function StoreMailingPage({ onBack }) {
             </div>
           </div>
 
-          <div className="space-y-4 border-t border-slate-100 pt-5">
+          <div id="mailing-manual-fields" className="scroll-mt-4 space-y-4 border-t border-slate-100 pt-5">
             <p className="text-sm font-medium text-slate-600">收件信息</p>
 
             <div>
@@ -707,12 +817,19 @@ export default function StoreMailingPage({ onBack }) {
           )}
         </div>
       </div>
-        <aside className="card h-fit p-5 text-center lg:w-64">
-          <p className="text-sm font-semibold text-slate-700">门店二维码</p>
-          <img src={qrUrl} alt="门店二维码" className="mx-auto mt-3 w-48 rounded-xl sm:w-56" />
-          <p className="mt-2 text-xs text-slate-400">扫码</p>
-        </aside>
       </div>
+
+      <QrCodeModal
+        open={qrOpen}
+        title="顾客填写收件信息"
+        description="微信扫码填写姓名、电话、地址及邮寄备注"
+        request={qrRequest}
+        loading={qrLoading}
+        error={qrError}
+        onRegenerate={regenerateCustomerQr}
+        onCancel={cancelCustomerQr}
+        onClose={() => setQrOpen(false)}
+      />
 
       {/* 发件记录 */}
       <div className="card overflow-hidden">
@@ -755,7 +872,7 @@ export default function StoreMailingPage({ onBack }) {
             <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
           ) : (
             visibleRecords.map((r) => (
-              <div key={r.id} className="flex flex-col gap-2 border-b border-slate-50 px-5 py-3 sm:flex-row sm:items-center sm:gap-4">
+              <div data-mailing-record-id={r.id} key={r.id} className={`flex flex-col gap-2 border-b border-slate-50 px-5 py-3 sm:flex-row sm:items-center sm:gap-4 ${notificationFocusId === r.id ? 'bg-budu-50 ring-1 ring-inset ring-budu-200' : ''}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[13px] font-semibold text-slate-700">{r.recipient}</span>

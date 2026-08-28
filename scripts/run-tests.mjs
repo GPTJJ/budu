@@ -49,6 +49,7 @@ const NODE_TEST_SUITE = [
   'test-store-directory.mjs',       // 固定四店目录与幽灵门店回归保护
   'test-item-category.mjs',         // 商品分类（单元）
   'test-ocr-map.mjs',               // OCR 映射（单元）
+  'test-customer-service-request.mjs', // 顾客自助二维码：token/并发/事务/通知/金额锁定 → critical
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
@@ -150,6 +151,7 @@ const CRITICAL_NODE_TEST = [
   'test-daily-entry-authority.mjs',
   'test-schedule-authority.mjs',
   'test-identity-authority.mjs',
+  'test-customer-service-request.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）

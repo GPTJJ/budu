@@ -26,3 +26,33 @@ export function prepareApprovalScope(notification) {
     /* Safari 隐私模式下不阻塞跳转 */
   }
 }
+
+const FOCUS_KEY = 'budu-notification-record-focus'
+
+export function prepareNotificationRecordFocus(notification) {
+  if (!notification?.target || !notification?.refId) return
+  const detail = {
+    target: String(notification.target),
+    refType: String(notification.refType || ''),
+    refId: String(notification.refId),
+  }
+  try {
+    sessionStorage.setItem(FOCUS_KEY, JSON.stringify(detail))
+  } catch {
+    /* Safari 隐私模式下不阻塞页面跳转 */
+  }
+  window.dispatchEvent(new CustomEvent('budu:notification-record-focus', { detail }))
+}
+
+export function takeNotificationRecordFocus(target) {
+  try {
+    const raw = sessionStorage.getItem(FOCUS_KEY)
+    if (!raw) return ''
+    const value = JSON.parse(raw)
+    if (value?.target !== target || !value?.refId) return ''
+    sessionStorage.removeItem(FOCUS_KEY)
+    return String(value.refId)
+  } catch {
+    return ''
+  }
+}

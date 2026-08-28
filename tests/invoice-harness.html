@@ -7,10 +7,13 @@
     import InvoicePage from '/src/components/InvoicePage.jsx'
     import '/src/index.css'
 
-    const rows = []
+    const rows = new URLSearchParams(location.search).has('records') ? [{
+      id: 'invoice-focus', storeKey: 'xidan', titleType: 'company', companyName: '测试企业有限公司', taxNo: '91110108MA01TEST2X', amountCents: '12345', category: '商品', email: 'invoice@example.test', note: '', status: 'pending', createdBy: 'finance-test', createdAt: '2026-08-28T06:00:00.000Z',
+    }] : []
     const companies = [
       { id: 'c1', name: '北京某某科技有限公司', taxNo: '91110108MA01ABCD2X' },
     ]
+    let customerRequestCount = 0
 
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
@@ -25,9 +28,18 @@
         rows.push({ id: 'i-' + rows.length, ...body, status: 'pending', createdAt: new Date().toISOString() })
         return json({ ok: true, invoice: rows[rows.length - 1] }, 201)
       }
+      if (path === '/api/v2/customer-requests' && options.method === 'POST') {
+        customerRequestCount += 1
+        return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'c'.repeat(43)}` }, 201)
+      }
+      if (/\/api\/v2\/customer-requests\/[^/]+\/regenerate$/.test(path) && options.method === 'POST') {
+        customerRequestCount += 1
+        return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'d'.repeat(43)}` }, 201)
+      }
+      if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 
-    createRoot(document.getElementById('root')).render(React.createElement(InvoicePage, { currentUser: { role: 'developer' }, onBack: () => {} }))
+    createRoot(document.getElementById('root')).render(React.createElement(InvoicePage, { currentUser: { id: 'dev-test', username: 'dev-test', role: 'developer', storeKeys: [] }, onBack: () => {} }))
   </script></body>
 </html>

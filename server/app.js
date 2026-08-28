@@ -15,6 +15,8 @@ import { scheduleRouter } from './schedule.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
 import { approvalRouter, ensureApprovalTemplates } from './approvals.js'
 import { notificationRouter } from './notifications.js'
+import { customerRequestRouter, publicCustomerRequestRouter } from './customer-requests.js'
+import { redactCustomerRequestUrl } from './customer-request-core.js'
 import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
@@ -253,7 +255,7 @@ export function createApp() {
     const requestId = crypto.randomUUID().slice(0, 8)
     res.setHeader('X-Request-Id', requestId)
     res.on('finish', () => {
-      console.log(`[req] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms ${requestId}`)
+      console.log(`[req] ${req.method} ${redactCustomerRequestUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - start}ms ${requestId}`)
     })
     next()
   })
@@ -603,6 +605,8 @@ export function createApp() {
     gitSha: GIT_SHA || '',
     dbOk: dbReady(),
   }))
+  // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
+  app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
   // 微信扫码绑定 OAuth 回调（公开：数据库一次性 state 防伪造/重放）
   app.use('/api/v2/wechat/bind/callback', wechatBindCallbackRouter)
@@ -638,7 +642,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -1303,7 +1307,7 @@ export function createApp() {
     if (req.path.startsWith('/api/')) return next()
     const index = path.join(DIST, 'index.html')
     if (fs.existsSync(index)) {
-      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Cache-Control', req.path === '/customer-request' ? 'no-store' : 'no-cache')
       return res.sendFile(index)
     }
     res.status(404).json({ error: '前端未构建，请先运行 npm run build' })

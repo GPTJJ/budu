@@ -29,6 +29,7 @@ model Store {
   bigBonuses                   BigOrderBonus[]
   memberConsumptions           MemberConsumption[]
   orders                       Order[]
+  customerServiceRequests      CustomerServiceRequest[]
 }
 
 /// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
@@ -55,6 +56,7 @@ model User {
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
 
   dailyStoreStaffParticipations DailyStoreStaff[] @relation("DailyStoreStaffParticipantUser")
+  customerServiceRequests        CustomerServiceRequest[]
 
   @@map("User")
 }
@@ -602,6 +604,49 @@ model MailingRecord {
   shippedAt DateTime?
 
   @@index([status, createdAt])
+}
+
+/** 顾客自助资料采集工作流：仅负责 token、状态与正式业务记录关联。 */
+model CustomerServiceRequest {
+  id                     String                        @id
+  type                   String
+  storeKey               String                        @map("store_key")
+  createdByUserId        String?                       @map("created_by_user_id")
+  createdByUsername      String                        @map("created_by_username")
+  handlerUsername        String                        @map("handler_username")
+  status                 String                        @default("WAITING_CUSTOMER")
+  expiresAt              DateTime                      @map("expires_at")
+  submittedAt            DateTime?                     @map("submitted_at")
+  cancelledAt            DateTime?                     @map("cancelled_at")
+  linkedBusinessRecordId String?                       @unique @map("linked_business_record_id")
+  requestMetadata        Json                          @default("{}") @map("request_metadata")
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @default(now()) @updatedAt @map("updated_at")
+  store                  Store                         @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  createdBy              User?                         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  tokens                 CustomerServiceRequestToken[]
+
+  @@index([type, status, createdAt])
+  @@index([storeKey, status, createdAt])
+  @@index([createdByUsername, type, status])
+  @@map("customer_service_requests")
+}
+
+/** 一次性公开授权；数据库只保存 SHA-256 hash，不保存二维码明文 token。 */
+model CustomerServiceRequestToken {
+  id            String                 @id
+  requestId     String                 @map("request_id")
+  tokenHash     String                 @unique @map("token_hash")
+  status        String                 @default("ACTIVE")
+  expiresAt     DateTime               @map("expires_at")
+  consumedAt    DateTime?              @map("consumed_at")
+  invalidatedAt DateTime?              @map("invalidated_at")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  request       CustomerServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, status])
+  @@index([expiresAt, status])
+  @@map("customer_service_request_tokens")
 }
 
 model AssetFile {

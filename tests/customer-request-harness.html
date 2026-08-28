@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Customer Request Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import CustomerRequestPage from '/src/components/CustomerRequestPage.jsx'
+    import '/src/index.css'
+
+    const params = new URLSearchParams(location.search)
+    const type = params.get('type') === 'invoice' ? 'INVOICE' : 'MAILING'
+    let submits = 0
+    window.__customerRequestTest = { get submits() { return submits } }
+    window.fetch = async (url, options = {}) => {
+      const path = new URL(url, location.origin).pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }))
+      if (path === '/api/public/customer-request' && (!options.method || options.method === 'GET')) {
+        if (params.has('expired')) return json({ error: '二维码已失效，请联系 budu 工作人员重新生成' }, 410)
+        return json({ ok: true, request: type === 'INVOICE'
+          ? { type, status: 'WAITING_CUSTOMER', expiresAt: '2026-08-28T17:30:00.000Z', invoiceAmountCents: '12345', invoiceCategory: '商品' }
+          : { type, status: 'WAITING_CUSTOMER', expiresAt: '2026-08-28T17:30:00.000Z' }
+        })
+      }
+      if (path === '/api/public/customer-request/submit' && options.method === 'POST') {
+        submits += 1
+        if (params.has('slow')) await new Promise((resolve) => setTimeout(resolve, 150))
+        return json({ ok: true, type, status: 'SUBMITTED' }, 201)
+      }
+      return json({ error: `未模拟接口 ${path}` }, 404)
+    }
+    if (!location.hash) location.hash = `token=${'z'.repeat(43)}`
+    createRoot(document.getElementById('root')).render(React.createElement(CustomerRequestPage))
+  </script></body>
+</html>

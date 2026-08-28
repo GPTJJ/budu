@@ -16,7 +16,7 @@ import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
-import { notificationTargetView } from '../utils/notificationNavigation'
+import { notificationTargetView, prepareNotificationRecordFocus } from '../utils/notificationNavigation'
 
 const yuan = (cents) => (Number(cents || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -45,6 +45,7 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
     if (item.type === 'center') {
       api(`/v2/notifications/read`, { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).catch(() => {})
       if (onNavigate) {
+        prepareNotificationRecordFocus(item)
         onNavigate(notificationTargetView(item.target))
       }
       return

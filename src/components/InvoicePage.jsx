@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Building2, CalendarClock, Camera, ClipboardPaste, Copy, ImageUp, Loader2, Mail, MapPin, Mic, Plus, Receipt, Sparkles, Trash2, User } from 'lucide-react'
+import { ArrowLeft, Building2, CalendarClock, Camera, ClipboardPaste, Copy, ImageUp, Loader2, Mail, MapPin, Mic, Plus, QrCode, Receipt, Sparkles, Trash2, User } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
 import { normalizeImage } from '../utils/image'
 import { parseInvoiceText } from '../utils/invoiceParser'
+import QrCodeModal from './QrCodeModal'
+import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 
 const inputCls = 'input'
 
@@ -39,6 +41,11 @@ export default function InvoicePage({ currentUser, onBack }) {
   const [ocrReady, setOcrReady] = useState(null)
   const [ocrBusy, setOcrBusy] = useState(false)
   const [preview, setPreview] = useState('')
+  const [qrOpen, setQrOpen] = useState(false)
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState('')
+  const [qrRequest, setQrRequest] = useState(null)
+  const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('finance-invoice'))
   const nameInputRef = useRef(null)
   const fileInputRef = useRef(null)
   const cameraInputRef = useRef(null)
@@ -76,6 +83,26 @@ export default function InvoicePage({ currentUser, onBack }) {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, store, dateFilter])
+
+  useEffect(() => {
+    if (!notificationFocusId) return
+    const row = [...pendingRows, ...doneRows].find((item) => item.id === notificationFocusId)
+    if (!row) return
+    setTab(row.status === 'done' ? 'done' : 'pending')
+    window.setTimeout(() => {
+      document.querySelector(`[data-invoice-record-id="${CSS.escape(notificationFocusId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 50)
+  }, [notificationFocusId, pendingRows, doneRows])
+
+  useEffect(() => {
+    const receiveNotificationFocus = (event) => {
+      if (event.detail?.target !== 'finance-invoice') return
+      const refId = takeNotificationRecordFocus('finance-invoice') || String(event.detail?.refId || '')
+      if (refId) setNotificationFocusId(refId)
+    }
+    window.addEventListener('budu:notification-record-focus', receiveNotificationFocus)
+    return () => window.removeEventListener('budu:notification-record-focus', receiveNotificationFocus)
+  }, [])
 
   const rows = useMemo(() => {
     if (tab === 'done') {
@@ -227,6 +254,64 @@ export default function InvoicePage({ currentUser, onBack }) {
     }
   }
 
+  const generateCustomerQr = async () => {
+    setError('')
+    const amountCents = Math.round((Number(form.amount) || 0) * 100)
+    if (!(amountCents > 0)) {
+      setError(t('请先填写正确的开票金额'))
+      return
+    }
+    setQrOpen(true)
+    setQrLoading(true)
+    setQrError('')
+    try {
+      const data = await api('/v2/customer-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'INVOICE',
+          storeKey: form.storeKey,
+          amountCents,
+          category: form.category.trim() || '其他',
+        }),
+      })
+      setQrRequest(data)
+    } catch (err) {
+      setQrError(t(err.message || '二维码生成失败'))
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const regenerateCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
+    setQrError('')
+    try {
+      const data = await api(`/v2/customer-requests/${qrRequest.request.id}/regenerate`, { method: 'POST' })
+      setQrRequest(data)
+    } catch (err) {
+      setQrError(t(err.message || '二维码重新生成失败'))
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const cancelCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
+    setQrError('')
+    try {
+      await api(`/v2/customer-requests/${qrRequest.request.id}/cancel`, { method: 'POST' })
+      setQrRequest(null)
+      setQrOpen(false)
+      setSavedTip(t('二维码已取消'))
+    } catch (err) {
+      setQrError(t(err.message || '二维码取消失败'))
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
   const handleFile = async (e) => {
     const file = e.target.files && e.target.files[0]
     e.target.value = ''
@@ -365,6 +450,19 @@ export default function InvoicePage({ currentUser, onBack }) {
       {error && <p className="rounded-xl bg-rose-50 px-4 py-2 text-xs font-medium text-rose-500">{error}</p>}
 
       <div className="card p-5">
+        <section className="mb-5 rounded-3xl border border-budu-100 bg-gradient-to-br from-budu-50 to-white p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-slate-900">顾客自助开票资料</h3>
+              <p className="mt-1 text-sm leading-6 text-slate-500">先在下方锁定门店、金额和发票内容，再让顾客扫码填写抬头、税号及接收邮箱。</p>
+            </div>
+            <button type="button" onClick={generateCustomerQr} disabled={qrLoading} className="btn-primary min-h-12 shrink-0 whitespace-nowrap px-4">
+              {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+              生成顾客开票二维码
+            </button>
+          </div>
+          <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-xs leading-5 text-slate-500">二维码金额以当前“开票金额”为准，生成后顾客只能查看，不能修改。工作人员手动录入继续保留。</p>
+        </section>
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="flex items-center gap-2 text-[15px] font-bold text-slate-800">
             <Building2 className="h-4 w-4 text-budu-500" />
@@ -536,6 +634,18 @@ export default function InvoicePage({ currentUser, onBack }) {
         </div>
       </div>
 
+      <QrCodeModal
+        open={qrOpen}
+        title="顾客填写开票信息"
+        description="微信扫码填写开票资料，金额由 budu 后台锁定"
+        request={qrRequest}
+        loading={qrLoading}
+        error={qrError}
+        onRegenerate={regenerateCustomerQr}
+        onCancel={cancelCustomerQr}
+        onClose={() => setQrOpen(false)}
+      />
+
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
           <h3 className="text-[15px] font-bold text-slate-800">{t('开票记录')}</h3>
@@ -566,11 +676,12 @@ export default function InvoicePage({ currentUser, onBack }) {
           {rows.map((r) => (
             <div
               key={r.id}
+              data-invoice-record-id={r.id}
               role={tab === 'pending' ? 'button' : undefined}
               tabIndex={tab === 'pending' ? 0 : undefined}
               onClick={tab === 'pending' ? () => copyRow(r) : undefined}
               onKeyDown={tab === 'pending' ? (e) => e.key === 'Enter' && copyRow(r) : undefined}
-              className={`rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:flex sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-5 sm:py-3 sm:shadow-none ${
+              className={`rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:flex sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-5 sm:py-3 sm:shadow-none ${notificationFocusId === r.id ? 'bg-budu-50 ring-1 ring-inset ring-budu-200' : ''} ${
                 tab === 'pending' ? 'cursor-pointer transition hover:border-budu-100 hover:bg-slate-50' : ''
               }`}
               title={tab === 'pending' ? t('点击复制抬头/税号/邮箱等信息') : undefined}
