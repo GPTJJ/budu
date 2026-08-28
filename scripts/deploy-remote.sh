@@ -22,12 +22,73 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# 北京生产已使用独立权威 PostgreSQL 网络。旧 docker compose 流程会把 api 接到
-# compose 自带 postgres，曾导致人员/门店数据错乱；在权威拓扑自动化完成前硬阻断。
+# CustomerRequest WeCom release has a dedicated authority-aware production path.
+# It self-disables after the verified old SHA changes; all other production releases
+# remain blocked from the unsafe compose topology below.
 if [ "$ENV" = "prod" ]; then
-  echo "==> 已阻断：生产环境必须使用 authority-aware green deployment，禁止 docker compose 直连生产"
-  exit 1
+  EXPECTED_OLD_SHA="b89a1d78aa2b48f07267b53468a1882cafddd2bb"
+  [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
+
+  TEST_DB_CONTAINER="budu-csr-wecom-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_PORT=""
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-csr-wecom.XXXXXX")"
+  cleanup_customer_request_release() {
+    docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
+    rm -f "$PROD_BUNDLE"
+  }
+  trap cleanup_customer_request_release EXIT
+
+  echo "==> 启动一次性 PostgreSQL 16 回归环境"
+  docker run -d --name "$TEST_DB_CONTAINER" \
+    -e POSTGRES_USER=budu_test \
+    -e POSTGRES_PASSWORD=budu_test_password \
+    -e POSTGRES_DB=budu_test \
+    -p 127.0.0.1::5432 \
+    postgres:16-alpine >/dev/null
+  for _attempt in $(seq 1 30); do
+    if docker exec "$TEST_DB_CONTAINER" pg_isready -U budu_test -d budu_test >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  docker exec "$TEST_DB_CONTAINER" pg_isready -U budu_test -d budu_test >/dev/null
+  TEST_DB_PORT="$(docker port "$TEST_DB_CONTAINER" 5432/tcp | awk -F: 'NR == 1 { print $NF }')"
+  [ -n "$TEST_DB_PORT" ] || { echo "==> 无法解析隔离测试数据库端口"; exit 1; }
+  TEST_DATABASE_URL="postgresql://budu_test:budu_test_password@127.0.0.1:${TEST_DB_PORT}/budu_test?schema=public"
+
+  echo "==> Node 22：critical / WeCom / build 回归"
+  docker run --rm --network host --ipc=host \
+    -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+    -e DATABASE_URL="$TEST_DATABASE_URL" \
+    -e NODE_ENV=test \
+    -e APP_ENV=test \
+    -e CI=1 \
+    -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    -v "$PWD:/work" \
+    -w /work \
+    mcr.microsoft.com/playwright:v1.55.0-noble \
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 12m npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
+  git diff --check
+  docker rm -f "$TEST_DB_CONTAINER" >/dev/null
+
+  echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
+  git bundle create "$PROD_BUNDLE" HEAD
+  REMOTE_PREFIX="/dev/shm/budu-csr-wecom-${SHA}"
+  "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
+  "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
+  "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"
+  "${SCP_ARGS[@]}" scripts/deploy-prod-customer-request-wecom.sh "$USER@$HOST:${REMOTE_PREFIX}.deploy.sh"
+  "${SSH_ARGS[@]}" "$USER@$HOST" bash "${REMOTE_PREFIX}.deploy.sh" \
+    "${REMOTE_PREFIX}.bundle" \
+    "${REMOTE_PREFIX}.resolver.mjs" \
+    "${REMOTE_PREFIX}.clone.py" \
+    "$SHA" \
+    "$EXPECTED_OLD_SHA" \
+    "$APP_DIR" \
+    "budu-nginx-1"
+  exit 0
 fi
+
+# 北京生产已使用独立权威 PostgreSQL 网络。旧 docker compose 流程会把 api 接到
+# compose 自带 postgres，曾导致人员/门店数据错乱；非专用发布继续硬阻断。
 
 wait_healthy() {
   local tries="$1"

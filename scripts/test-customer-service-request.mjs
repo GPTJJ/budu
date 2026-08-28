@@ -127,6 +127,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
   })
 
   await t.test('并发双提交：仅一个 Mailing、一个 Notification、一个 SUBMITTED', async () => {
+    const submitNow = new Date('2026-08-28T06:30:00.000Z')
     const payload = {
       recipient: '测试顾客',
       phone: '13800138000',
@@ -137,8 +138,8 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
       companyWebsite: '',
     }
     const results = await Promise.allSettled([
-      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload }),
-      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload }),
+      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload, now: submitNow }),
+      submitCustomerServiceRequest({ prismaClient: prisma, token: mailingToken, payload, now: submitNow }),
     ])
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
     const rejected = results.find((result) => result.status === 'rejected')
@@ -155,6 +156,15 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.equal(notification.title, '新的邮寄信息')
     assert.equal(notification.target, 'store-mailing')
     assert.equal(notification.refId, request.linkedBusinessRecordId)
+    let wecomDelivery = null
+    for (let attempt = 0; attempt < 50 && !wecomDelivery; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      wecomDelivery = await prisma.notificationDelivery.findFirst({
+        where: { notificationId: notification.id, channel: 'wecom' },
+      })
+    }
+    assert.ok(wecomDelivery, 'CustomerRequest 必须触发独立企微投递记录')
+    assert.equal(wecomDelivery.status, 'skipped', '企微缺配置不得阻塞正式 Mailing 与站内通知')
   })
 
   await t.test('重新生成语义：同门店旧 WAITING token 立即失效', async () => {
