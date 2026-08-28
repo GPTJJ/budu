@@ -5,7 +5,8 @@
  * The resulting UserID is written to a mode-0600 file and is never printed. Runtime
  * delivery uses only CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID; this script performs
  * a one-time, independently cross-checked mobile-to-UserID lookup before that setting is
- * installed.
+ * installed. An existing active BUDU WechatBinding is the primary authority;
+ * canonical Employee mobile lookup is only a verified fallback.
  */
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -26,35 +27,47 @@ try {
   })
   if (users.length !== 1) throw new Error(`BUDU_USER_CARDINALITY_${users.length}`)
 
-  const employees = await prisma.employee.findMany({
-    where: { userId: users[0].id },
-    include: { profile: true },
-  })
-  if (employees.length !== 1 || employees[0].name !== '胡东辉') {
-    throw new Error(`BUDU_EMPLOYEE_BINDING_CARDINALITY_${employees.length}`)
-  }
-
   const cfg = wechatPersonalConfig()
   if (!cfg || cfg.channel !== 'wecom') throw new Error('WECOM_APP_CONFIG_UNAVAILABLE')
   const accessToken = await wecomAccessToken(cfg.corpId, cfg.secret)
   if (!accessToken) throw new Error('WECOM_ACCESS_TOKEN_UNAVAILABLE')
 
-  const buduPhone = normalizePhone(employees[0].profile?.phone)
-  if (!/^1[3-9]\d{9}$/.test(buduPhone)) throw new Error('BUDU_VERIFIED_MOBILE_UNAVAILABLE')
-  const lookupUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/getuserid')
-  lookupUrl.searchParams.set('access_token', accessToken)
-  const lookupResponse = await fetch(lookupUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mobile: buduPhone }),
-    signal: AbortSignal.timeout(8000),
+  const bindings = await prisma.wechatBinding.findMany({
+    where: { username: users[0].username, channel: 'wecom', status: 'active' },
+    select: { openId: true },
   })
-  const lookup = await lookupResponse.json().catch(() => ({}))
-  if (!lookupResponse.ok || lookup.errcode !== 0 || typeof lookup.userid !== 'string') {
-    throw new Error(`WECOM_MOBILE_LOOKUP_${lookup.errcode ?? lookupResponse.status}`)
-  }
+  if (bindings.length > 1) throw new Error(`WECOM_BINDING_CARDINALITY_${bindings.length}`)
 
-  const userId = lookup.userid.trim()
+  let userId = bindings[0]?.openId?.trim() || ''
+  let bindingAuthority = Boolean(userId)
+  let mobileToUserIdLookup = false
+  let employee = null
+  if (!userId) {
+    const employees = await prisma.employee.findMany({
+      where: { userId: users[0].id },
+      include: { profile: true },
+    })
+    if (employees.length !== 1 || employees[0].name !== '胡东辉') {
+      throw new Error(`BUDU_EMPLOYEE_BINDING_CARDINALITY_${employees.length}`)
+    }
+    employee = employees[0]
+    const buduPhone = normalizePhone(employee.profile?.phone)
+    if (!/^1[3-9]\d{9}$/.test(buduPhone)) throw new Error('BUDU_VERIFIED_MOBILE_UNAVAILABLE')
+    const lookupUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/getuserid')
+    lookupUrl.searchParams.set('access_token', accessToken)
+    const lookupResponse = await fetch(lookupUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mobile: buduPhone }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const lookup = await lookupResponse.json().catch(() => ({}))
+    if (!lookupResponse.ok || lookup.errcode !== 0 || typeof lookup.userid !== 'string') {
+      throw new Error(`WECOM_MOBILE_LOOKUP_${lookup.errcode ?? lookupResponse.status}`)
+    }
+    userId = lookup.userid.trim()
+    mobileToUserIdLookup = true
+  }
   if (!/^[A-Za-z0-9._@-]{1,64}$/.test(userId)) throw new Error('WECOM_USER_ID_SHAPE_INVALID')
 
   const detailUrl = new URL('https://qyapi.weixin.qq.com/cgi-bin/user/get')
@@ -67,12 +80,13 @@ try {
   }
 
   const wecomPhone = normalizePhone(detail.mobile)
-  const buduEmail = normalizeEmail(employees[0].profile?.email)
+  const buduPhone = normalizePhone(employee?.profile?.phone)
+  const buduEmail = normalizeEmail(employee?.profile?.email)
   const wecomEmail = normalizeEmail(detail.email)
-  const phoneCrossCheck = Boolean(buduPhone && wecomPhone && buduPhone === wecomPhone)
+  const phoneCrossCheck = Boolean(employee && buduPhone && wecomPhone && buduPhone === wecomPhone)
   const emailCrossCheck = Boolean(buduEmail && wecomEmail && buduEmail === wecomEmail)
   const stableAccountCrossCheck = users[0].username === userId
-  if (!phoneCrossCheck) {
+  if (!bindingAuthority && !phoneCrossCheck) {
     throw new Error('WECOM_IDENTITY_CROSS_CHECK_FAILED')
   }
 
@@ -80,8 +94,9 @@ try {
   fs.chmodSync(outputPath, 0o600)
   process.stdout.write(`${JSON.stringify({
     buduUserCount: users.length,
-    canonicalEmployeeBinding: true,
-    mobileToUserIdLookup: true,
+    activeWecomBinding: bindingAuthority,
+    canonicalEmployeeBinding: Boolean(employee),
+    mobileToUserIdLookup,
     detailEndpointVerified: true,
     phoneCrossCheck,
     emailCrossCheck,
