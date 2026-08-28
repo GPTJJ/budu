@@ -155,6 +155,15 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.equal(notification.title, '新的邮寄信息')
     assert.equal(notification.target, 'store-mailing')
     assert.equal(notification.refId, request.linkedBusinessRecordId)
+    let wecomDelivery = null
+    for (let attempt = 0; attempt < 50 && !wecomDelivery; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      wecomDelivery = await prisma.notificationDelivery.findFirst({
+        where: { notificationId: notification.id, channel: 'wecom' },
+      })
+    }
+    assert.ok(wecomDelivery, 'CustomerRequest 必须触发独立企微投递记录')
+    assert.equal(wecomDelivery.status, 'skipped', '企微缺配置不得阻塞正式 Mailing 与站内通知')
   })
 
   await t.test('重新生成语义：同门店旧 WAITING token 立即失效', async () => {
