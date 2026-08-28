@@ -350,7 +350,7 @@ function verifyIsolation() {
 /** 从指定父进程环境构造隔离测试环境（供自验证复用同一剥离逻辑） */
 function createTestEnvFrom(parentEnv) {
   const env = {}
-  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT']) {
+  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'PLAYWRIGHT_BROWSERS_PATH']) {
     if (parentEnv[k] !== undefined) env[k] = parentEnv[k]
   }
   env.NODE_ENV = 'test'
