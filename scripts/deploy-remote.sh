@@ -61,10 +61,11 @@ if [ "$ENV" = "prod" ]; then
     -e NODE_ENV=test \
     -e APP_ENV=test \
     -e CI=1 \
+    -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 12m npm run test:critical && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
