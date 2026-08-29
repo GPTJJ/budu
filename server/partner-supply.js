@@ -335,7 +335,7 @@ partnerSupplyRouter.post('/partner-supply-orders', wrap(async (req, res) => {
     const subtotalCents = partnerUnitPriceCents * BigInt(input.quantity)
     totalAmountCents += subtotalCents
     return {
-      id: uid('psi'), orderId, productId: product.id,
+      id: uid('psi'), productId: product.id,
       productCodeSnapshot: productCode(product), productNameSnapshot: product.name,
       productCategoryNameSnapshot: product.productCategory?.name || '',
       retailPriceCentsSnapshot: product.salePriceCents, discountBpsSnapshot: effectiveDiscountBps,
