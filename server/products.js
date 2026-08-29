@@ -60,6 +60,8 @@ function productData(body) {
   const unit = text(body.unit || '份', 20, '单位', isActive)
   const transferEnabled = body.transferEnabled === true
   const partnerSupplyEnabled = body.partnerSupplyEnabled === true
+  const productGroupId = text(body.productGroupId, 120, '商品组') || null
+  const variantName = productGroupId ? text(body.variantName, 30, '款式名称', true) : ''
   const transferCodeInput = text(body.transferCode, 40, '商品编号')
   const transferCode = transferCodeInput || (transferEnabled ? sku || null : null)
   if (isActive && (!sku || salePriceCents === null || costPriceCents === null)) throw httpError('启用 POS 前请填写 SKU、售价和成本价')
@@ -82,6 +84,8 @@ function productData(body) {
     transferSortOrder: sortOrder,
     partnerSupplyEnabled,
     productCategoryId: text(body.productCategoryId, 120, '商品分类') || null,
+    productGroupId,
+    variantName,
   }
 }
 
@@ -91,6 +95,14 @@ async function requireProductCategory(productCategoryId, currentCategoryId = '')
   if (!category) throw httpError('商品分类不存在', 404)
   if (!category.isActive && category.id !== currentCategoryId) throw httpError('已停用分类不能接收商品', 409)
   return category
+}
+
+async function requireProductGroup(productGroupId, currentGroupId = '') {
+  if (!productGroupId) return null
+  const group = await prisma.productGroup.findUnique({ where: { id: productGroupId } })
+  if (!group) throw httpError('商品组不存在', 404)
+  if (!group.isActive && group.id !== currentGroupId) throw httpError('已停用商品组不能接收商品', 409)
+  return group
 }
 
 export function serializeProduct(product) {
@@ -115,6 +127,16 @@ export function serializeProduct(product) {
       isActive: product.productCategory.isActive,
       sortOrder: product.productCategory.sortOrder,
     } : null,
+    productGroupId: product.productGroupId || '',
+    productGroup: product.productGroup ? {
+      id: product.productGroup.id,
+      name: product.productGroup.name,
+      sortOrder: product.productGroup.sortOrder,
+      isActive: product.productGroup.isActive,
+      hasCoverImage: Boolean(product.productGroup.coverImage),
+      updatedAt: product.productGroup.updatedAt,
+    } : null,
+    variantName: product.variantName || '',
     trackInventory: product.trackInventory,
     sortOrder: product.sortOrder,
     version: product.version,
@@ -144,7 +166,7 @@ productsRouter.get('/products', wrap(async (req, res) => {
         { barcode: { contains: q, mode: 'insensitive' } },
       ] } : {}),
     },
-    include: { productCategory: true },
+    include: { productCategory: true, productGroup: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
@@ -156,9 +178,10 @@ productsRouter.post('/products', wrap(async (req, res) => {
   requireProductManager(req.user)
   const data = productData(req.body || {})
   await requireProductCategory(data.productCategoryId)
+  await requireProductGroup(data.productGroupId)
   const row = await prisma.inventoryItem.create({
     data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
-    include: { productCategory: true },
+    include: { productCategory: true, productGroup: true },
   })
   res.status(201).json({ ok: true, product: serializeProduct(row) })
 }))
@@ -223,7 +246,7 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
       if (!skuMatch && nameMatch) throw httpError(`「${row.data.name}」名称已存在；禁止按名称自动关联，请在商品中心编辑现有商品`, 409)
       const existing = skuMatch || null
       if (!existing) {
-        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data }, include: { productCategory: true } })
+        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data }, include: { productCategory: true, productGroup: true } })
         bySku.set(createdRow.sku, createdRow)
         byName.set(createdRow.name, createdRow)
         saved.push(createdRow)
@@ -244,8 +267,10 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         transferSortOrder: existing.transferSortOrder,
         partnerSupplyEnabled: existing.partnerSupplyEnabled,
         productCategoryId: existing.productCategoryId,
+        productGroupId: existing.productGroupId,
+        variantName: existing.variantName,
       }
-      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } }, include: { productCategory: true } })
+      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } }, include: { productCategory: true, productGroup: true } })
       if (existing.sku) bySku.delete(existing.sku)
       byName.delete(existing.name)
       bySku.set(updatedRow.sku, updatedRow)
@@ -308,7 +333,7 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
 
   const saved = await prisma.inventoryItem.findMany({
     where: { id: { in: ids }, category: 'product' },
-    include: { productCategory: true },
+    include: { productCategory: true, productGroup: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   })
   res.json({ ok: true, updated: saved.length, rows: saved.map(serializeProduct) })
@@ -323,6 +348,7 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
   if (!existing || existing.category !== 'product') throw httpError('商品不存在', 404)
   await requireProductCategory(data.productCategoryId, existing.productCategoryId || '')
+  await requireProductGroup(data.productGroupId, existing.productGroupId || '')
   const result = await prisma.inventoryItem.updateMany({
     where: { id: req.params.productId, category: 'product', version },
     data: { ...data, version: { increment: 1 } },
@@ -330,8 +356,118 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (result.count !== 1) {
     const latest = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
     if (!latest || latest.category !== 'product') throw httpError('商品不存在', 404)
-    return res.status(409).json({ error: '商品已被其他人修改，已返回最新数据', latest: serializeProduct(latest) })
+    const latestWithRelations = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true, productGroup: true } })
+    return res.status(409).json({ error: '商品已被其他人修改，已返回最新数据', latest: serializeProduct(latestWithRelations) })
   }
-  const row = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true } })
+  const row = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true, productGroup: true } })
   res.json({ ok: true, product: serializeProduct(row) })
+}))
+
+function productGroupData(body) {
+  const sortOrder = Number(body?.sortOrder ?? 0)
+  if (!Number.isInteger(sortOrder) || sortOrder < -999999 || sortOrder > 999999) throw httpError('商品组排序必须是 -999999 至 999999 的整数')
+  return {
+    name: text(body?.name, 50, '商品组名称', true),
+    coverImage: imageValue(body?.coverImage),
+    sortOrder,
+    isActive: body?.isActive !== false,
+  }
+}
+
+function productGroupMembers(body) {
+  const input = Array.isArray(body?.members) ? body.members : []
+  if (input.length > 100) throw httpError('每个商品组最多包含 100 个款式')
+  const seen = new Set()
+  return input.map((member) => {
+    const productId = text(member?.productId, 120, '商品')
+    if (!productId || seen.has(productId)) throw httpError('商品组成员重复或不正确')
+    seen.add(productId)
+    return { productId, variantName: text(member?.variantName, 30, '款式名称', true) }
+  })
+}
+
+function serializeProductGroup(group) {
+  return {
+    id: group.id,
+    name: group.name,
+    coverImage: group.coverImage || '',
+    hasCoverImage: Boolean(group.coverImage),
+    sortOrder: group.sortOrder,
+    isActive: group.isActive,
+    version: group.version,
+    memberCount: group.products?.length || 0,
+    members: (group.products || []).map((product) => ({ ...serializeProduct(product), image: '' })),
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
+  }
+}
+
+async function updateProductGroupMembers(tx, groupId, members) {
+  const ids = members.map((member) => member.productId)
+  const products = ids.length ? await tx.inventoryItem.findMany({ where: { id: { in: ids }, category: 'product' } }) : []
+  if (products.length !== ids.length) throw httpError('商品组中包含不存在或非产品资料', 409)
+  const occupied = products.find((product) => product.productGroupId && product.productGroupId !== groupId)
+  if (occupied) throw httpError(`商品「${occupied.name}」已属于其他商品组`, 409)
+  await tx.inventoryItem.updateMany({
+    where: { productGroupId: groupId, ...(ids.length ? { id: { notIn: ids } } : {}) },
+    data: { productGroupId: null, variantName: '', version: { increment: 1 } },
+  })
+  for (const member of members) {
+    const updated = await tx.inventoryItem.updateMany({
+      where: { id: member.productId, category: 'product', OR: [{ productGroupId: null }, { productGroupId: groupId }] },
+      data: { productGroupId: groupId, variantName: member.variantName, version: { increment: 1 } },
+    })
+    if (updated.count !== 1) throw httpError('商品已被加入其他商品组，请刷新后重试', 409)
+  }
+}
+
+const productGroupInclude = {
+  products: {
+    include: { productCategory: true, productGroup: true },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  },
+}
+
+productsRouter.get('/product-groups', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductViewer(req.user)
+  const rows = await prisma.productGroup.findMany({
+    include: productGroupInclude,
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    take: 500,
+  })
+  res.json({ rows: rows.map(serializeProductGroup) })
+}))
+
+productsRouter.post('/product-groups', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductManager(req.user)
+  const data = productGroupData(req.body || {})
+  const members = productGroupMembers(req.body || {})
+  const duplicate = await prisma.productGroup.findFirst({ where: { name: { equals: data.name, mode: 'insensitive' } } })
+  if (duplicate) throw httpError('商品组名称已存在', 409)
+  const group = await prisma.$transaction(async (tx) => {
+    const created = await tx.productGroup.create({ data: { id: `pg-${crypto.randomUUID()}`, ...data } })
+    await updateProductGroupMembers(tx, created.id, members)
+    return tx.productGroup.findUnique({ where: { id: created.id }, include: productGroupInclude })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.status(201).json({ ok: true, group: serializeProductGroup(group) })
+}))
+
+productsRouter.put('/product-groups/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductManager(req.user)
+  const version = Number(req.body?.version)
+  if (!Number.isInteger(version) || version < 1) throw httpError('商品组版本不正确，请刷新后重试')
+  const data = productGroupData(req.body || {})
+  const members = productGroupMembers(req.body || {})
+  const duplicate = await prisma.productGroup.findFirst({ where: { id: { not: req.params.id }, name: { equals: data.name, mode: 'insensitive' } } })
+  if (duplicate) throw httpError('商品组名称已存在', 409)
+  const group = await prisma.$transaction(async (tx) => {
+    const updated = await tx.productGroup.updateMany({ where: { id: req.params.id, version }, data: { ...data, version: { increment: 1 } } })
+    if (updated.count !== 1) throw httpError('商品组已被其他人修改，请刷新后重试', 409)
+    await updateProductGroupMembers(tx, req.params.id, members)
+    return tx.productGroup.findUnique({ where: { id: req.params.id }, include: productGroupInclude })
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  res.json({ ok: true, group: serializeProductGroup(group) })
 }))

@@ -172,6 +172,8 @@ model InventoryItem {
   transferSortOrder Int            @default(0)
   partnerSupplyEnabled Boolean     @default(false)
   productCategoryId String?
+  productGroupId    String?
+  variantName       String         @default("")
   version        Int            @default(1)
   updatedAt      DateTime       @default(now()) @updatedAt
   createdAt      DateTime       @default(now())
@@ -183,8 +185,10 @@ model InventoryItem {
   orderItems     OrderItem[]
   partnerSupplyItems PartnerSupplyItem[]
   productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+  productGroup    ProductGroup?    @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
 
   @@index([productCategoryId])
+  @@index([productGroupId])
   @@index([category, partnerSupplyEnabled])
 }
 
@@ -197,6 +201,20 @@ model ProductCategory {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @default(now()) @updatedAt
   products  InventoryItem[]
+
+  @@index([isActive, sortOrder])
+}
+
+model ProductGroup {
+  id         String          @id
+  name       String          @unique
+  coverImage String          @default("")
+  sortOrder  Int             @default(0)
+  isActive   Boolean         @default(true)
+  version    Int             @default(1)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @default(now()) @updatedAt
+  products   InventoryItem[]
 
   @@index([isActive, sortOrder])
 }

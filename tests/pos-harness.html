@@ -57,6 +57,8 @@
         stop() { stopped = true; window.clearTimeout(timer) },
       }
     }
+    const luckyGroup = { id: 'pg-lucky', name: '12号幸运小饼干', sortOrder: 20, isActive: true, hasCoverImage: true, updatedAt: '2026-08-29T00:00:00.000Z' }
+    const yetiGroup = { id: 'pg-yeti', name: '雪怪联名系列', sortOrder: 21, isActive: true, hasCoverImage: false, updatedAt: '2026-08-29T00:00:00.000Z' }
     const products = [
       { productId: 'p-1', name: '卡皮巴拉布丁', sku: 'BUDU-001', barcode: '690000000001', posCategory: '布丁', salePriceCents: '7200', costPriceCents: '2300', unit: '份', image: '', isActive: true, trackInventory: false, sortOrder: 1, version: 1 },
       { productId: 'p-2', name: '草莓奶油蛋糕', sku: 'BUDU-002', barcode: '690000000002', posCategory: '蛋糕', salePriceCents: '3800', costPriceCents: '1200', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 2, version: 1 },
@@ -66,6 +68,14 @@
       { productId: 'p-6', name: '榛果巧克力豆', sku: 'BUDU-006', barcode: '', posCategory: '巧克力豆', salePriceCents: '4800', costPriceCents: '1800', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 6, version: 1 },
       { productId: 'p-7', name: '森醒礼盒', sku: 'BUDU-007', barcode: '', posCategory: '森醒', salePriceCents: '6800', costPriceCents: '2600', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 7, version: 1 },
       { productId: 'p-8', name: '太妃糖组合装', sku: 'BUDU-008', barcode: '', posCategory: '太妃糖礼盒超长分类名称', salePriceCents: '8800', costPriceCents: '3200', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 8, version: 1 },
+      ...(params.get('groups') === '1' ? [
+        { productId: 'p-lucky-blue', name: '12号幸运小饼干-蓝', sku: 'LUCKY-12-BLUE', barcode: '', posCategory: '冰淇淋', salePriceCents: '7900', costPriceCents: '3000', unit: '个', image: '', hasImage: true, isActive: true, trackInventory: false, sortOrder: 20, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '蓝' },
+        { productId: 'p-lucky-green', name: '12号幸运小饼干-绿', sku: 'LUCKY-12-GREEN', barcode: '', posCategory: '冰淇淋', salePriceCents: '7900', costPriceCents: '3000', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 21, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '绿' },
+        { productId: 'p-lucky-yellow', name: '12号幸运小饼干-黄', sku: 'LUCKY-12-YELLOW', barcode: '', posCategory: '冰淇淋', salePriceCents: '8900', costPriceCents: '3400', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 22, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '黄' },
+        { productId: 'p-lucky-orange', name: '12号幸运小饼干-橙', sku: 'LUCKY-12-ORANGE', barcode: '', posCategory: '冰淇淋', salePriceCents: '8900', costPriceCents: '3400', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 23, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '橙' },
+        { productId: 'p-yeti-white', name: '雪怪联名系列-白', sku: 'YETI-WHITE', barcode: '', posCategory: '森醒', salePriceCents: '9900', costPriceCents: '4000', unit: '个', image: '', hasImage: true, isActive: true, trackInventory: false, sortOrder: 24, version: 1, productGroupId: yetiGroup.id, productGroup: yetiGroup, variantName: '白' },
+        { productId: 'p-yeti-black', name: '雪怪联名系列-黑', sku: 'YETI-BLACK', barcode: '', posCategory: '森醒', salePriceCents: '9900', costPriceCents: '4000', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 25, version: 1, productGroupId: yetiGroup.id, productGroup: yetiGroup, variantName: '黑' },
+      ] : []),
     ]
     const mirrorStores = [{ key: 'tongying', name: '北京通盈中心店' }]
     if (twoStores) mirrorStores.push({ key: 'xidan', name: '北京西单店' })
@@ -95,6 +105,7 @@
       if (path === '/api/v2/pos/products') return json({ rows: products })
       if (path === '/api/v2/pos/orders' && options.method === 'POST') {
         const body = JSON.parse(options.body)
+        window.__lastPosOrderBody = body
         const items = body.items.map((row) => {
           const p = products.find((pp) => pp.productId === row.productId)
           const gift = row.gift === true

@@ -16,8 +16,9 @@
       { productId: 'p-transfer', name: 'NO.1树莓', sku: '', transferCode: 'NO.1', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: null, costPriceCents: null, unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: true, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 2, version: 1 },
       { productId: 'p-partner', name: 'NO.2柠檬', sku: 'NO2', transferCode: 'NO.2', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: '500', costPriceCents: '200', unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: false, partnerSupplyEnabled: true, trackInventory: false, sortOrder: 3, version: 1 },
     ]
+    let groups = []
     const requests = []
-    window.__productCenterTest = { requests, get products() { return products }, categories }
+    window.__productCenterTest = { requests, get products() { return products }, get groups() { return groups }, categories }
     window.__productImportPayload = null
     const reply = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
     const categoryFor = (id) => categories.find((item) => item.id === id) || null
@@ -27,6 +28,7 @@
       const method = options.method || 'GET'
       if (path === '/api/v2/products' && method === 'GET') return reply({ rows: products })
       if (path === '/api/v2/product-categories' && method === 'GET') return reply({ rows: categories })
+      if (path === '/api/v2/product-groups' && method === 'GET') return reply({ rows: groups })
       if (path === '/api/v2/products/import' && method === 'POST') {
         const body = JSON.parse(options.body); window.__productImportPayload = body; requests.push({ method, path, body })
         const imported = body.rows.map((row, index) => {
@@ -53,8 +55,34 @@
       if (productUpdate && method === 'PUT') {
         const body = JSON.parse(options.body); requests.push({ method, path, body })
         const index = products.findIndex((item) => item.productId === productUpdate[1])
-        products[index] = { ...products[index], ...body, productCategory: categoryFor(body.productCategoryId), salePriceCents: body.salePriceCents || null, costPriceCents: body.costPriceCents || null, version: products[index].version + 1 }
+        const group = groups.find((item) => item.id === body.productGroupId)
+        products[index] = { ...products[index], ...body, productCategory: categoryFor(body.productCategoryId), productGroup: group ? { id: group.id, name: group.name, sortOrder: group.sortOrder, isActive: group.isActive } : null, salePriceCents: body.salePriceCents || null, costPriceCents: body.costPriceCents || null, version: products[index].version + 1 }
         return reply({ ok: true, product: products[index] })
+      }
+      if (path === '/api/v2/product-groups' && method === 'POST') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const id = `pg-new-${groups.length + 1}`
+        const summary = { id, name: body.name, sortOrder: Number(body.sortOrder), isActive: body.isActive, hasCoverImage: Boolean(body.coverImage), updatedAt: new Date().toISOString() }
+        products = products.map((product) => {
+          const member = body.members.find((item) => item.productId === product.productId)
+          return member ? { ...product, productGroupId: id, productGroup: summary, variantName: member.variantName, version: product.version + 1 } : product
+        })
+        const group = { ...summary, coverImage: body.coverImage || '', version: 1, memberCount: body.members.length, members: products.filter((product) => product.productGroupId === id) }
+        groups.push(group); return reply({ ok: true, group }, 201)
+      }
+      const groupUpdate = path.match(/^\/api\/v2\/product-groups\/([^/]+)$/)
+      if (groupUpdate && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const index = groups.findIndex((item) => item.id === groupUpdate[1])
+        const summary = { id: groupUpdate[1], name: body.name, sortOrder: Number(body.sortOrder), isActive: body.isActive, hasCoverImage: Boolean(body.coverImage), updatedAt: new Date().toISOString() }
+        products = products.map((product) => {
+          const member = body.members.find((item) => item.productId === product.productId)
+          if (member) return { ...product, productGroupId: summary.id, productGroup: summary, variantName: member.variantName, version: product.version + 1 }
+          if (product.productGroupId === summary.id) return { ...product, productGroupId: '', productGroup: null, variantName: '', version: product.version + 1 }
+          return product
+        })
+        groups[index] = { ...groups[index], ...summary, coverImage: body.coverImage || '', version: groups[index].version + 1, memberCount: body.members.length, members: products.filter((product) => product.productGroupId === summary.id) }
+        return reply({ ok: true, group: groups[index] })
       }
       if (path === '/api/v2/product-categories' && method === 'POST') {
         const body = JSON.parse(options.body); requests.push({ method, path, body })

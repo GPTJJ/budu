@@ -20,6 +20,8 @@ const emptyForm = {
   isActive: true,
   transferEnabled: false,
   partnerSupplyEnabled: false,
+  productGroupId: '',
+  variantName: '',
   trackInventory: false,
   sortOrder: 0,
   version: 1,
@@ -65,10 +67,55 @@ function CategoryManager({ categories, onClose, onSaved }) {
   return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="分类管理"><div className="my-6 w-full max-w-xl rounded-3xl bg-white shadow-2xl"><div className="flex items-center border-b border-slate-100 px-5 py-4"><div><h3 className="font-black text-slate-900">分类管理</h3><p className="text-xs text-slate-400">全系统唯一 ProductCategory</p></div><button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400" aria-label="关闭"><X className="h-5 w-5" /></button></div><div className="space-y-3 p-5"><div className="flex justify-end"><button onClick={() => setEditor({ id: '', name: '', sortOrder: String(categories.reduce((max, row) => Math.max(max, row.sortOrder), 0) + 1), isActive: true, version: 0 })} className="btn-primary min-h-10 px-4"><Plus className="h-4 w-4" />新增分类</button></div>{error && <p className="rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-600">{error}</p>}<div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{categories.map((category) => <div key={category.id} data-category-id={category.id} className="flex items-center gap-2 px-3 py-3"><div className="min-w-0 flex-1"><p className="truncate font-bold text-slate-800">{category.name}</p><p className="text-xs text-slate-400">排序 {category.sortOrder} · {category.productCount || 0} 个商品 · {category.isActive ? '已启用' : '已停用'}</p></div><button onClick={() => setEditor({ ...category, sortOrder: String(category.sortOrder) })} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label={`编辑分类${category.name}`}><Pencil className="h-4 w-4" /></button><button onClick={() => toggle(category)} disabled={busy} className="min-h-9 rounded-xl bg-budu-50 px-3 text-xs font-bold text-budu-600">{category.isActive ? '停用' : '启用'}</button></div>)}</div>{editor && <div className="space-y-3 rounded-2xl bg-slate-50 p-4"><label className="block text-xs font-bold text-slate-500">分类名称<input aria-label="分类名称" value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} className={inputClass} /></label><label className="block text-xs font-bold text-slate-500">分类排序<input aria-label="分类排序" type="number" min="0" value={editor.sortOrder} onChange={(event) => setEditor({ ...editor, sortOrder: event.target.value })} className={inputClass} /></label><label className="flex items-center justify-between text-sm font-bold text-slate-600">启用分类<input type="checkbox" checked={editor.isActive} onChange={(event) => setEditor({ ...editor, isActive: event.target.checked })} className="h-5 w-5 accent-budu-500" /></label><button onClick={save} disabled={busy} className="btn-primary min-h-11 w-full"><Check className="h-4 w-4" />保存分类</button></div>}</div></div></div>
 }
 
+function ProductGroupManager({ groups, products, onClose, onSaved }) {
+  const [editor, setEditor] = useState(null)
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const startEditor = (group = null) => {
+    setSearch('')
+    setError('')
+    setEditor(group ? {
+      id: group.id, name: group.name, coverImage: group.coverImage || '', sortOrder: String(group.sortOrder), isActive: group.isActive, version: group.version,
+      members: (group.members || []).map((member) => ({ productId: member.productId, variantName: member.variantName || '' })),
+    } : { id: '', name: '', coverImage: '', sortOrder: String(groups.reduce((max, row) => Math.max(max, row.sortOrder), 0) + 1), isActive: true, version: 0, members: [] })
+  }
+  const selected = new Map((editor?.members || []).map((member) => [member.productId, member]))
+  const candidates = products.filter((product) => !product.productGroupId || product.productGroupId === editor?.id).filter((product) => {
+    const q = search.trim().toLowerCase()
+    return !q || [product.name, product.sku, product.variantName].some((value) => String(value || '').toLowerCase().includes(q))
+  })
+  const toggleMember = (product) => setEditor((current) => ({
+    ...current,
+    members: current.members.some((member) => member.productId === product.productId)
+      ? current.members.filter((member) => member.productId !== product.productId)
+      : [...current.members, { productId: product.productId, variantName: product.variantName || '' }],
+  }))
+  const updateVariant = (productId, variantName) => setEditor((current) => ({ ...current, members: current.members.map((member) => member.productId === productId ? { ...member, variantName } : member) }))
+  const handleCover = async (file) => {
+    if (!file) return
+    try { const coverImage = await compressProductImage(file); setEditor((current) => ({ ...current, coverImage })); setError('') } catch (err) { setError(err.message) }
+  }
+  const save = async () => {
+    if (!editor?.name.trim() || busy) return
+    if (editor.members.some((member) => !member.variantName.trim())) { setError('已选择商品都必须填写款式名称'); return }
+    setBusy(true); setError('')
+    try {
+      const data = await api(editor.id ? `/v2/product-groups/${editor.id}` : '/v2/product-groups', {
+        method: editor.id ? 'PUT' : 'POST',
+        body: JSON.stringify({ ...editor, sortOrder: Number(editor.sortOrder), members: editor.members.map((member) => ({ ...member, variantName: member.variantName.trim() })) }),
+      })
+      await onSaved(data.group); setEditor(null)
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品组管理"><div className="my-4 flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"><div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div><h3 className="font-black text-slate-900">商品组管理</h3><p className="text-xs text-slate-400">只组织 POS 展示，真实 SKU 身份保持不变</p></div><button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400" aria-label="关闭商品组管理"><X className="h-5 w-5" /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{error && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-600">{error}</p>}{!editor ? <div className="space-y-3"><div className="flex justify-end"><button onClick={() => startEditor()} className="btn-primary min-h-10 px-4"><Plus className="h-4 w-4" />新建商品组</button></div><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{groups.length === 0 ? <p className="p-8 text-center text-sm text-slate-400">暂无商品组</p> : groups.map((group) => <div key={group.id} data-product-group-id={group.id} className="flex items-start gap-3 px-3 py-4"><div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{group.coverImage ? <img src={group.coverImage} alt="" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{group.name}</p><p className="mt-1 text-xs text-slate-400">{group.memberCount} 个款式 · 排序 {group.sortOrder} · {group.isActive ? 'POS 聚合 ✓' : '已停用'}</p><p className="mt-1 truncate text-xs text-slate-400">{(group.members || []).map((member) => member.variantName).filter(Boolean).join(' · ') || '尚未添加款式'}</p></div><button onClick={() => startEditor(group)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑商品组${group.name}`}><Pencil className="h-4 w-4" /></button></div>)}</div></div> : <div className="space-y-4"><button onClick={() => setEditor(null)} className="text-xs font-bold text-slate-400">← 返回商品组列表</button><div className="grid gap-4 sm:grid-cols-[140px_1fr]"><div><div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{editor.coverImage ? <img src={editor.coverImage} alt="商品组主图" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="h-7 w-7" /><span className="text-xs">可选主图</span></div>}</div><label className="mt-2 block cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-center text-xs font-bold text-slate-600">选择主图<input type="file" accept="image/*" className="hidden" onChange={(event) => handleCover(event.target.files?.[0])} /></label>{editor.coverImage && <button onClick={() => setEditor((current) => ({ ...current, coverImage: '' }))} className="mt-2 w-full text-xs text-slate-400">移除主图</button>}</div><div className="space-y-3"><label className="block text-xs font-bold text-slate-500">商品组名称<input aria-label="商品组名称" value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} className={inputClass} /></label><label className="block text-xs font-bold text-slate-500">商品组排序<input aria-label="商品组排序" type="number" value={editor.sortOrder} onChange={(event) => setEditor({ ...editor, sortOrder: event.target.value })} className={inputClass} /></label><label className="flex items-center justify-between rounded-xl bg-budu-50 p-3 text-sm font-bold text-slate-600">启用 POS 聚合<input aria-label="启用商品组" type="checkbox" checked={editor.isActive} onChange={(event) => setEditor({ ...editor, isActive: event.target.checked })} className="h-5 w-5 accent-budu-500" /></label></div></div><div className="rounded-2xl border border-slate-200 p-3"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索组内商品" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索商品名称 / SKU" className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none" /></label><div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{candidates.map((product) => { const member = selected.get(product.productId); return <div key={product.productId} className="rounded-xl bg-slate-50 p-3"><label className="flex items-start gap-2"><input aria-label={`加入商品组${product.name}`} type="checkbox" checked={Boolean(member)} onChange={() => toggleMember(product)} className="mt-1 h-4 w-4 accent-budu-500" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-700">{product.name}</span><span className="block truncate text-[11px] text-slate-400">SKU {product.sku || '—'}</span></span></label>{member && <label className="mt-2 block pl-6 text-[11px] font-bold text-slate-500">款式名称<input aria-label={`${product.name}款式名称`} value={member.variantName} onChange={(event) => updateVariant(product.productId, event.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}</div> })}</div></div><button onClick={save} disabled={busy || !editor.name.trim()} className="btn-primary min-h-11 w-full"><Check className="h-4 w-4" />{busy ? '保存中…' : '保存商品组'}</button></div>}</div></div></div>
+}
+
 export default function ProductCenterPage({ onBack, user }) {
   const canManage = Boolean(user && ['developer', 'admin', 'finance', 'manager'].includes(user.role))
   const [products, setProducts] = useState([])
   const [productCategories, setProductCategories] = useState([])
+  const [productGroups, setProductGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -81,6 +128,7 @@ export default function ProductCenterPage({ onBack, user }) {
   const [bulkCategoryId, setBulkCategoryId] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [form, setForm] = useState(null)
   const [importPreview, setImportPreview] = useState(null)
   const [importing, setImporting] = useState(false)
@@ -104,9 +152,10 @@ export default function ProductCenterPage({ onBack, user }) {
     setLoading(true)
     setError('')
     try {
-      const [data, categoryData] = await Promise.all([api('/v2/products'), api('/v2/product-categories')])
+      const [data, categoryData, groupData] = await Promise.all([api('/v2/products'), api('/v2/product-categories'), api('/v2/product-groups')])
       setProducts(data.rows || [])
       setProductCategories(categoryData.rows || [])
+      setProductGroups(groupData.rows || [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -244,6 +293,8 @@ export default function ProductCenterPage({ onBack, user }) {
         transferCode: form.transferCode,
         posCategory: form.posCategory,
         productCategoryId: form.productCategoryId,
+        productGroupId: form.productGroupId,
+        variantName: form.productGroupId ? form.variantName : '',
         salePriceCents: form.salePrice === '' ? '' : yuanToCents(form.salePrice),
         costPriceCents: form.costPrice === '' ? '' : yuanToCents(form.costPrice),
         unit: form.unit,
@@ -286,6 +337,12 @@ export default function ProductCenterPage({ onBack, user }) {
     setProducts((current) => current.map((item) => item.productCategoryId === saved.id ? { ...item, productCategory: saved } : item))
   }
 
+  const saveProductGroup = async (saved) => {
+    setProductGroups((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN')))
+    const data = await api('/v2/products')
+    setProducts(data.rows || [])
+  }
+
   const applyBulk = async ({ operation, purpose: targetPurpose, enabled }) => {
     if (!selectedIds.length || bulkBusy) return
     setBulkBusy(true); setError('')
@@ -308,6 +365,7 @@ export default function ProductCenterPage({ onBack, user }) {
           <p className="mt-0.5 text-xs text-slate-400">全门店共享商品主档 · 订单统一引用 product_id</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {canManage && <button onClick={() => setGroupManagerOpen(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm"><Package className="h-4 w-4" />商品组管理</button>}
           {canManage && <button onClick={() => setCategoryManagerOpen(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm"><FolderTree className="h-4 w-4" />分类管理</button>}
           {canManage && <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm hover:border-budu-200 hover:text-budu-600">
             <Upload className="h-4 w-4" />导入菜单
@@ -362,7 +420,7 @@ export default function ProductCenterPage({ onBack, user }) {
                   </div>
                   <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['合作商', item.partnerSupplyEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
-                  <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · 编号 {item.transferCode || '—'} · 排序 {item.sortOrder}</p>
+                  <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>
                 {canManage ? <button onClick={() => setForm(toForm(item))} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑${item.name}`}><Pencil className="h-4 w-4" /></button> : <span className="text-xs text-slate-300">只读</span>}
               </article>
@@ -439,6 +497,8 @@ export default function ProductCenterPage({ onBack, user }) {
                 <label className="text-xs font-semibold text-slate-500">SKU（POS）<input value={form.sku || ''} onChange={(e) => update('sku', e.target.value.toUpperCase().replace(/\s/g, ''))} placeholder="例如 BUDU-001" className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">商品编号（调拨）<input value={form.transferCode || ''} onChange={(e) => update('transferCode', e.target.value.trim())} placeholder="例如 NO.1" className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">商品分类<select aria-label="商品分类" value={form.productCategoryId || ''} onChange={(e) => update('productCategoryId', e.target.value)} className={inputClass}><option value="">未分类</option>{productCategories.filter((item) => item.isActive || item.id === form.productCategoryId).map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : '（停用）'}</option>)}</select></label>
+                <label className="text-xs font-semibold text-slate-500">商品组<select aria-label="商品组" value={form.productGroupId || ''} onChange={(e) => { update('productGroupId', e.target.value); if (!e.target.value) update('variantName', '') }} className={inputClass}><option value="">未分组</option>{productGroups.filter((item) => item.isActive || item.id === form.productGroupId).map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : '（停用）'}</option>)}</select></label>
+                {form.productGroupId && <label className="text-xs font-semibold text-slate-500">款式名称<input required aria-label="款式名称" value={form.variantName || ''} onChange={(e) => update('variantName', e.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}
                 <label className="text-xs font-semibold text-slate-500">单位<input value={form.unit || ''} onChange={(e) => update('unit', e.target.value)} placeholder="份 / 杯 / 个" className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">零售价（元）<input inputMode="decimal" value={form.salePrice} onChange={(e) => update('salePrice', e.target.value)} placeholder="0.00" className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">POS 成本价（元）<input inputMode="decimal" value={form.costPrice} onChange={(e) => update('costPrice', e.target.value)} placeholder="0.00" className={inputClass} /></label>
@@ -453,6 +513,7 @@ export default function ProductCenterPage({ onBack, user }) {
         </div>
       )}
       {categoryManagerOpen && <CategoryManager categories={productCategories} onClose={() => setCategoryManagerOpen(false)} onSaved={saveCategory} />}
+      {groupManagerOpen && <ProductGroupManager groups={productGroups} products={products} onClose={() => setGroupManagerOpen(false)} onSaved={saveProductGroup} />}
     </div>
   )
 }

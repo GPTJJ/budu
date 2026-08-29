@@ -60,7 +60,7 @@ test('Unified Product Center migration adds only an independent opt-in flag and 
     assert.equal(updated.isActive, true)
     assert.equal(updated.salePriceCents, 1000n)
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 54)
+    assert.equal(Number(migrations[0].count), 55)
   } finally {
     await client.$disconnect()
     await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)

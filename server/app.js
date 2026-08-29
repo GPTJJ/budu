@@ -619,6 +619,7 @@ export function createApp() {
     const pathname = req.path || ''
     const rule =
       (/^\/products(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
+      (/^\/product-groups(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/pos\/(?:config|orders|products|payments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_POS]) ||
       (/^\/pos\/(?:daily-summary|product-sales)(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.FINANCE]) ||
       (/^\/daily-entries(?:\/|$)/.test(pathname) && (req.method === 'GET'

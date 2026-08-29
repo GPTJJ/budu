@@ -82,6 +82,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   const [comboReady, setComboReady] = useState(false)
   const [discount, setDiscount] = useState('10')
   const [remark, setRemark] = useState('')
+  const [variantGroup, setVariantGroup] = useState(null)
   const [isDesktop, setIsDesktop] = useState(() => (
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(min-width: 1024px)').matches
@@ -225,9 +226,29 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     const q = query.trim().toLowerCase()
     return products.filter((product) => {
       if (category !== '全部' && product.posCategory !== category) return false
-      return !q || [product.name, product.sku, product.barcode].some((value) => String(value || '').toLowerCase().includes(q))
+      return !q || [product.name, product.sku, product.barcode, product.variantName, product.productGroup?.name].some((value) => String(value || '').toLowerCase().includes(q))
     })
   }, [products, query, category])
+  const catalogItems = useMemo(() => {
+    const singles = []
+    const grouped = new Map()
+    for (const product of visibleProducts) {
+      const group = product.productGroup?.isActive ? product.productGroup : null
+      if (!group) {
+        singles.push({ kind: 'product', key: `product:${product.productId}`, product, sortOrder: product.sortOrder })
+        continue
+      }
+      const current = grouped.get(group.id) || { kind: 'group', key: `group:${group.id}`, group, members: [], sortOrder: group.sortOrder }
+      current.members.push(product)
+      grouped.set(group.id, current)
+    }
+    const items = [...singles]
+    for (const item of grouped.values()) {
+      if (item.members.length === 1) items.push({ kind: 'product', key: `product:${item.members[0].productId}`, product: item.members[0], sortOrder: item.members[0].sortOrder })
+      else items.push(item)
+    }
+    return items.sort((a, b) => a.sortOrder - b.sortOrder || (a.kind === 'group' ? a.group.name : a.product.name).localeCompare((b.kind === 'group' ? b.group.name : b.product.name), 'zh-CN'))
+  }, [visibleProducts])
   // Balls 礼盒：SKU 前缀识别 combo 商品；口味候选 = 同分类非 combo 商品
   const isComboProduct = (product) => /BUDU-CHOC-BALLS/i.test(String(product?.sku || ''))
   const comboFlavors = useMemo(() => products.filter((p) => p.posCategory === '巧克力豆' && !isComboProduct(p)), [products])
@@ -807,13 +828,13 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <div className={`${isDesktop ? 'grid grid-cols-5' : 'flex overflow-x-auto'} min-w-0 flex-1 gap-2`} aria-label="商品分类" data-swipe-back-ignore="true">
               {categories.map((item) => <button key={item} onClick={() => setCategory(item)} title={item} className={`${isDesktop ? 'min-w-0 overflow-hidden rounded-lg px-2.5 py-2 text-[13px]' : `shrink-0 whitespace-nowrap ${isIpad ? 'rounded-xl px-4 py-2.5 text-[13px]' : 'rounded-full border px-4 py-2 text-[13px]'}`} font-bold transition ${category === item ? 'border-budu-500 bg-budu-500 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}><span className={isDesktop ? 'block truncate' : undefined}>{item}</span></button>)}
             </div>
-            {isDesktop && <span className="ml-3 mt-2 shrink-0 text-xs font-semibold text-slate-400">{visibleProducts.length} 个商品</span>}
+            {isDesktop && <span className="ml-3 mt-2 shrink-0 text-xs font-semibold text-slate-400">{catalogItems.length} 项{catalogItems.length === visibleProducts.length ? '' : ` · ${visibleProducts.length} 个 SKU`}</span>}
           </div>
           {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {loadingProducts ? (
               <div className="grid h-full place-items-center text-sm text-slate-400">正在加载商品…</div>
-            ) : visibleProducts.length === 0 ? (
+            ) : catalogItems.length === 0 ? (
               <div className="grid h-full place-items-center text-center text-slate-400">
                 <div>
                   <Package className="mx-auto h-8 w-8 text-slate-300" />
@@ -826,15 +847,24 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                 className={`grid gap-2 ${isIpad ? 'grid-cols-3' : (isDesktop ? '' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5')}`}
                 style={isDesktop && !isIpad ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' } : undefined}
               >
-                {visibleProducts.map((product) => {
-                  const quantity = Number(cart[product.productId] || 0)
-                  const imageSrc = product.hasImage ? `/api/v2/pos/products/${product.productId}/image?v=${encodeURIComponent(product.updatedAt || '')}` : ''
+                {catalogItems.map((item) => {
+                  const isGroup = item.kind === 'group'
+                  const product = isGroup ? null : item.product
+                  const members = isGroup ? item.members : [product]
+                  const quantity = members.reduce((sum, member) => sum + Number(cart[member.productId] || 0), 0)
+                  const groupImage = isGroup && item.group.hasCoverImage ? `/api/v2/pos/product-groups/${item.group.id}/image?v=${encodeURIComponent(item.group.updatedAt || '')}` : ''
+                  const fallbackImageProduct = members.find((member) => member.hasImage)
+                  const imageSrc = groupImage || (fallbackImageProduct ? `/api/v2/pos/products/${fallbackImageProduct.productId}/image?v=${encodeURIComponent(fallbackImageProduct.updatedAt || '')}` : '')
+                  const prices = [...new Set(members.map((member) => String(member.salePriceCents)))]
+                  const minimumPrice = members.reduce((minimum, member) => BigInt(member.salePriceCents) < minimum ? BigInt(member.salePriceCents) : minimum, BigInt(members[0].salePriceCents))
+                  const displayName = isGroup ? item.group.name : product.name
                   return (
                     <button
-                      key={product.productId}
+                      key={item.key}
                       data-testid="pos-product-card"
-                      data-product-id={product.productId}
-                      onClick={() => addProduct(product)}
+                      data-product-id={product?.productId}
+                      data-product-group-id={isGroup ? item.group.id : undefined}
+                      onClick={() => isGroup ? setVariantGroup(item) : addProduct(product)}
                       className={`relative overflow-hidden border border-slate-200 bg-white text-left shadow-sm transition hover:border-budu-300 hover:shadow-md active:scale-[0.97] active:border-budu-400 ${isDesktop || isIpad ? `flex items-center ${isIpad ? 'min-h-24 rounded-xl p-2.5' : 'min-h-[82px] rounded-lg p-2'}` : 'rounded-xl'}`}
                     >
                       <div className={isDesktop || isIpad ? `${isIpad ? 'h-16 w-16 rounded-xl' : 'h-12 w-12 rounded-lg'} shrink-0 overflow-hidden bg-slate-100` : 'aspect-square bg-slate-100'}>
@@ -852,14 +882,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                       <div className={isDesktop || isIpad ? `min-w-0 flex-1 ${isIpad ? 'pl-2.5' : 'pl-2'}` : 'p-1.5'}>
                         <p
                           data-testid="pos-product-name"
-                          title={product.name}
+                          title={displayName}
                           className={`font-bold text-slate-800 ${isIpad ? 'whitespace-normal break-words pr-5 text-[13px] leading-[1.35]' : (isDesktop ? 'truncate pr-4 text-xs leading-tight' : 'truncate text-[11px] leading-tight')}`}
                         >
-                          {product.name}
+                          {displayName}
                         </p>
                         <div className="mt-1 flex items-end justify-between gap-1">
-                          <span className={`${isDesktop || isIpad ? 'text-sm' : 'text-[13px]'} truncate font-black text-budu-600`}>{formatCents(product.salePriceCents)}</span>
-                          <span className="shrink-0 text-[10px] text-slate-400">/{product.unit}</span>
+                          <span className={`${isDesktop || isIpad ? 'text-sm' : 'text-[13px]'} truncate font-black text-budu-600`}>{formatCents(minimumPrice)}{isGroup && prices.length > 1 ? ' 起' : ''}</span>
+                          <span className="shrink-0 text-[10px] text-slate-400">{isGroup ? `${members.length} 个款式` : `/${product.unit}`}</span>
                         </div>
                       </div>
                     </button>
@@ -905,6 +935,21 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                 <div className="text-right"><button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>{cartDiscountAmount > 0n && <p className="mt-1 text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
               </div>
               <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="w-full rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建订单…' : '结算'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {variantGroup && (
+        <div className="fixed inset-0 z-[95]" role="dialog" aria-modal="true" aria-label={`选择${variantGroup.group.name}款式`}>
+          <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={() => setVariantGroup(null)} />
+          <div className={`${isDesktop ? 'absolute left-1/2 top-1/2 max-h-[80dvh] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-3xl' : 'absolute inset-x-0 bottom-0 max-h-[82dvh] rounded-t-3xl'} flex w-full flex-col overflow-hidden bg-white shadow-2xl`} style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div className="min-w-0"><h2 className="truncate font-black text-slate-900">{variantGroup.group.name}</h2><p className="mt-0.5 text-xs text-slate-400">选择款式</p></div><button onClick={() => setVariantGroup(null)} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl text-slate-400" aria-label="关闭款式选择"><X className="h-5 w-5" /></button></div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+              {variantGroup.members.map((member) => {
+                const imageSrc = member.hasImage ? `/api/v2/pos/products/${member.productId}/image?v=${encodeURIComponent(member.updatedAt || '')}` : ''
+                return <button key={member.productId} data-variant-product-id={member.productId} onClick={() => { addProduct(member); setVariantGroup(null) }} className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition hover:border-budu-300 active:scale-[0.99]"><div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{imageSrc ? <img src={imageSrc} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{member.variantName || member.name}</p><p className="mt-1 truncate text-xs text-slate-400">{member.name}</p></div><span className="shrink-0 font-black text-budu-600">{formatCents(member.salePriceCents)}</span></button>
+              })}
             </div>
           </div>
         </div>

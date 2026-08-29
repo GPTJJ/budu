@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware schema-neutral blue/green deployment for POS category UI.
+# Authority-aware additive blue/green deployment for ProductGroup.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,16 +17,16 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-pos-category-ui"
-MIGRATOR="budu-migrate-${SHORT_SHA}-pos-category-ui"
-BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-pos-category-ui"
-IMAGE="budu-api:pos-category-ui-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-product-group"
+MIGRATOR="budu-migrate-${SHORT_SHA}-product-group"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-product-group"
+IMAGE="budu-api:product-group-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-pos-category-ui-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-product-group-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/pos-category-ui-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/product-group-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -354,7 +354,34 @@ const health = await response.json()
 if (!response.ok || health.ok !== true || health.dbOk !== true || !String(health.gitSha || '').startsWith(process.env.EXPECTED_SHA_PREFIX)) {
   throw new Error('PUBLIC_HEALTH_AUTHORITY_MISMATCH')
 }
-console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 54 }))
+console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 55 }))
+NODE
+}
+
+verify_product_group_default_state() {
+  local container="$1"
+  docker exec -i "$container" node --input-type=module - <<'NODE'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  const rows = await prisma.$queryRawUnsafe(`
+    SELECT
+      (SELECT COUNT(*)::int FROM "ProductGroup") AS "groups",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "productGroupId" IS NOT NULL) AS "groupedProducts",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "variantName" <> '') AS "namedVariants"
+  `)
+  const result = {
+    groups: Number(rows[0]?.groups || 0),
+    groupedProducts: Number(rows[0]?.groupedProducts || 0),
+    namedVariants: Number(rows[0]?.namedVariants || 0),
+  }
+  if (result.groups !== 0 || result.groupedProducts !== 0 || result.namedVariants !== 0) {
+    throw new Error('PRODUCT_GROUP_DEFAULT_STATE_MISMATCH')
+  }
+  console.log(JSON.stringify(result))
+} finally {
+  await prisma.$disconnect()
+}
 NODE
 }
 
@@ -450,7 +477,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration54-pre-pos-category-ui-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration54-pre-product-group-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -473,13 +500,13 @@ BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
 BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
 echo "fresh migration54 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migration command in isolation. This UI-only release has
-# no new migration, so the ledger must remain at 54 and all facts stay unchanged.
+# Run the exact release migration command in isolation. ProductGroup is migration
+# 55 and must leave every pre-existing product and historical fact unchanged.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
 docker rm "$MIGRATOR" >/dev/null
-verify_database_authority "$OLD_CONTAINER" 54
+verify_database_authority "$OLD_CONTAINER" 55
 [ "$(mailing_business_digest "$OLD_CONTAINER")" = "$BEFORE_MAILING_DIGEST" ] || { echo "historical MailingRecord digest changed during additive migration" >&2; exit 1; }
 [ "$(invoice_business_digest "$OLD_CONTAINER")" = "$BEFORE_INVOICE_DIGEST" ] || { echo "historical Invoice digest changed during additive migration" >&2; exit 1; }
 [ "$(transfer_business_digest "$OLD_CONTAINER")" = "$BEFORE_TRANSFER_DIGEST" ] || { echo "historical TransferRequest digest changed during additive migration" >&2; exit 1; }
@@ -487,12 +514,14 @@ verify_database_authority "$OLD_CONTAINER" 54
 [ "$(inventory_master_core_digest "$OLD_CONTAINER")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed during additive migration" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
 verify_transfer_master_seed "$OLD_CONTAINER"
-echo "migration ledger remained at 54; historical transfer, purchase, mailing, invoice and product facts unchanged"
+verify_product_group_default_state "$OLD_CONTAINER"
+echo "migration ledger advanced 54 -> 55; ProductGroup default state empty; historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 54
+verify_database_authority "$CANDIDATE" 55
+verify_product_group_default_state "$CANDIDATE"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
 echo "unrouted read-only Candidate internal smoke PASS"
 
@@ -523,7 +552,8 @@ OLD_STOPPED=1
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve writer
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 54
+verify_database_authority "$CANDIDATE" 55
+verify_product_group_default_state "$CANDIDATE"
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
 TEMPLATE_CHANGED=1
@@ -541,7 +571,8 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 [ "$(inventory_master_core_digest "$CANDIDATE")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed after cutover" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$CANDIDATE")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed after cutover" >&2; exit 1; }
 verify_transfer_master_seed "$CANDIDATE"
+verify_product_group_default_state "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "POS two-row category UI blue/green deployment completed; schema and historical facts verified unchanged"
+echo "ProductGroup blue/green deployment completed; migration 54 -> 55 and historical facts verified unchanged"

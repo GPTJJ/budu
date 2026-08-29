@@ -99,6 +99,65 @@ test('iPad 横屏商品分类固定五列并按正式顺序换成两行', async 
   })).toEqual({ perRow: [5, 3], overflow: 0 })
 })
 
+test('POS 商品组聚合后选择款式仍把真实 SKU 加入订单', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=product-group-order&groups=1')
+  const luckyGroup = page.locator('[data-product-group-id="pg-lucky"]')
+  await expect(luckyGroup).toHaveCount(1)
+  await expect(luckyGroup).toContainText('12号幸运小饼干')
+  await expect(luckyGroup).toContainText('¥79.00 起')
+  await expect(luckyGroup).toContainText('4 个款式')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toHaveCount(0)
+  await expect(luckyGroup.locator('img')).toHaveAttribute('src', /\/api\/v2\/pos\/product-groups\/pg-lucky\/image/)
+
+  const samePriceGroup = page.locator('[data-product-group-id="pg-yeti"]')
+  await expect(samePriceGroup).toContainText('¥99.00')
+  await expect(samePriceGroup).not.toContainText('起')
+  await expect(samePriceGroup.locator('img')).toHaveAttribute('src', /\/api\/v2\/pos\/products\/p-yeti-white\/image/)
+
+  await luckyGroup.click()
+  const sheet = page.getByRole('dialog', { name: '选择12号幸运小饼干款式' })
+  await expect(sheet.locator('[data-variant-product-id]')).toHaveCount(4)
+  await expect(sheet.getByText('蓝', { exact: true })).toBeVisible()
+  await sheet.locator('[data-variant-product-id="p-lucky-blue"]').click()
+  await expect(page.getByText('12号幸运小饼干-蓝', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  const orderBody = await page.evaluate(() => window.__lastPosOrderBody)
+  expect(orderBody.items).toEqual([expect.objectContaining({ productId: 'p-lucky-blue', quantity: 1 })])
+})
+
+test('POS 商品组支持组名、款式与 SKU 搜索且单一结果直接展示真实商品', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=product-group-search&groups=1')
+  const search = page.getByPlaceholder('搜索商品名称 / SKU / 条码')
+  await search.fill('12号幸运小饼干')
+  await expect(page.locator('[data-product-group-id="pg-lucky"]')).toBeVisible()
+  await search.fill('蓝')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toBeVisible()
+  await expect(page.locator('[data-product-group-id="pg-lucky"]')).toHaveCount(0)
+  await search.fill('LUCKY-12-BLUE')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toBeVisible()
+  await page.locator('[data-product-id="p-lucky-blue"]').click()
+  await expect(page.getByTestId('pos-cart-panel').getByText('12号幸运小饼干-蓝', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
+for (const width of [320, 340, 375, 390, 430]) {
+  test(`${width}px POS 商品组与款式层无横向溢出`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 820 })
+    await page.goto(`/tests/pos-harness.html?user=product-group-mobile-${width}&groups=1`)
+    const group = page.locator('[data-product-group-id="pg-lucky"]')
+    await expect(group).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    await group.click()
+    const sheet = page.getByRole('dialog', { name: '选择12号幸运小饼干款式' })
+    await expect(sheet).toBeVisible()
+    const bounds = await sheet.locator(':scope > div').nth(1).boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.width).toBeLessThanOrEqual(width)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
 test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=layout-user')
   await expect(page.getByRole('heading', { name: '当前订单' })).toBeVisible()

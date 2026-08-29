@@ -59,6 +59,8 @@ const NODE_TEST_SUITE = [
   'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
   'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
   'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
+  'test-product-group-migration-rehearsal.mjs', // 54→55 仅新增 POS 展示分组，所有历史 InventoryItem 引用不变
+  'test-product-group-workflow.mjs', // 人工分组、互斥成员、真实 SKU 下单与跨域身份保持
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）

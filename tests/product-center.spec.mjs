@@ -66,6 +66,37 @@ test('分类管理支持新增、编辑、排序和启停', async ({ page }) => 
   await expect(category).toContainText('已停用')
 })
 
+test('商品组管理支持人工选择真实 SKU、款式名称与单品编辑', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '商品组管理' }).click()
+  const manager = page.getByRole('dialog', { name: '商品组管理' })
+  await manager.getByRole('button', { name: '新建商品组' }).click()
+  await manager.getByLabel('商品组名称').fill('幸运小饼干')
+  await manager.getByLabel('商品组排序').fill('8')
+  await manager.getByLabel('加入商品组卡皮巴拉布丁').check()
+  await manager.getByLabel('卡皮巴拉布丁款式名称').fill('蓝')
+  await manager.getByLabel('加入商品组茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试').check()
+  await manager.getByLabel('茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试款式名称').fill('绿')
+  await manager.getByRole('button', { name: '保存商品组' }).click()
+  const group = manager.locator('[data-product-group-id="pg-new-1"]')
+  await expect(group).toContainText('幸运小饼干')
+  await expect(group).toContainText('2 个款式')
+  await expect(group).toContainText('蓝')
+  await expect(group).toContainText('绿')
+  const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/product-groups'))
+  expect(request.body.members).toEqual(expect.arrayContaining([
+    { productId: 'p-pos', variantName: '蓝' },
+    { productId: 'p-long', variantName: '绿' },
+  ]))
+  await manager.getByRole('button', { name: '关闭商品组管理' }).click()
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await expect(page.getByLabel('商品组')).toHaveValue('pg-new-1')
+  await expect(page.getByLabel('款式名称')).toHaveValue('蓝')
+  await page.getByLabel('款式名称').fill('深蓝')
+  await page.getByRole('button', { name: '保存商品' }).click()
+  await expect(page.locator('[data-product-id="p-pos"]')).toContainText('幸运小饼干 / 深蓝')
+})
+
 test('商品中心仅按稳定 SKU 批量更新，预览后导入并上架', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
   const workbook = XLSX.utils.book_new()
@@ -122,6 +153,9 @@ for (const width of [320, 340, 375, 390, 430]) {
     expect(titleMetrics.height).toBeLessThanOrEqual(titleMetrics.lineHeight * 2 + 1)
     expect(titleMetrics.width).toBeGreaterThanOrEqual(120)
     await expect(page.locator('[data-product-id="p-pos"]').getByTestId('product-title')).toHaveText('卡皮巴拉布丁')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    await page.getByRole('button', { name: '商品组管理' }).click()
+    await expect(page.getByRole('dialog', { name: '商品组管理' })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
   })
 }

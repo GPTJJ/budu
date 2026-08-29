@@ -292,7 +292,7 @@ posRouter.get('/pos/products', wrap(async (req, res) => {
   requirePosUser(req.user)
   const rows = await prisma.inventoryItem.findMany({
     where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
-    include: { productCategory: true },
+    include: { productCategory: true, productGroup: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
@@ -315,6 +315,18 @@ posRouter.get('/pos/products/:productId/image', wrap(async (req, res) => {
   if (!product || !product.image) throw httpError('商品图片不存在', 404)
   const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(product.image))
   if (!match) throw httpError('商品图片格式不正确', 400)
+  res.setHeader('Cache-Control', 'public, max-age=86400')
+  res.setHeader('Content-Type', `image/${match[1]}`)
+  res.send(Buffer.from(match[2], 'base64'))
+}))
+
+posRouter.get('/pos/product-groups/:groupId/image', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { coverImage: true } })
+  if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
+  const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(group.coverImage))
+  if (!match) throw httpError('商品组主图格式不正确', 400)
   res.setHeader('Cache-Control', 'public, max-age=86400')
   res.setHeader('Content-Type', `image/${match[1]}`)
   res.send(Buffer.from(match[2], 'base64'))
