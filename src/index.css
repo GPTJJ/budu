@@ -249,6 +249,41 @@
   }
 }
 
+/* 商品中心：移动端先完整呈现商品名，SKU 下沉为次级信息。 */
+.product-mobile-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+@media (min-width: 431px) {
+  .product-title-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.5rem;
+  }
+
+  .product-mobile-title {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .product-title-line [data-testid='product-price'] {
+    margin-top: 0;
+  }
+}
+
 /* 审批中心 Bottom Sheet 弹出动画（200ms 轻量） */
 @keyframes sheet-up {
   from {

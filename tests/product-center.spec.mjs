@@ -95,9 +95,41 @@ test('商品中心可导出 Excel 菜单', async ({ page }) => {
 })
 
 for (const width of [320, 340, 375, 390, 430]) {
-  test(`${width}px 统一商品中心无横向滚动`, async ({ page }) => {
+  test(`${width}px 商品名称优先且无横向滚动`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/tests/product-center-harness.html')
+    const row = page.locator('[data-product-id="p-long"]')
+    const title = row.getByTestId('product-title')
+    await expect(title).toHaveText('茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试')
+    await expect(title).not.toContainText('BUDU-CHOC-JAS-04')
+    await expect(row.getByTestId('product-price')).toHaveText('¥138.00')
+    await expect(row.getByTestId('product-badges')).toContainText('POS ✓')
+    await expect(row.getByTestId('product-badges')).toContainText('调拨 —')
+    await expect(row.getByTestId('product-badges')).toContainText('合作商 —')
+    await expect(row.getByTestId('product-sku')).toContainText('BUDU-CHOC-JAS-04')
+    await expect(row.getByRole('button', { name: '编辑茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试' })).toBeVisible()
+    const titleMetrics = await title.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        height: element.getBoundingClientRect().height,
+        lineHeight: Number.parseFloat(style.lineHeight),
+        lineClamp: style.webkitLineClamp,
+        width: element.getBoundingClientRect().width,
+      }
+    })
+    expect(titleMetrics.lineClamp).toBe('2')
+    expect(titleMetrics.height).toBeGreaterThan(titleMetrics.lineHeight)
+    expect(titleMetrics.height).toBeLessThanOrEqual(titleMetrics.lineHeight * 2 + 1)
+    expect(titleMetrics.width).toBeGreaterThanOrEqual(120)
+    await expect(page.locator('[data-product-id="p-pos"]').getByTestId('product-title')).toHaveText('卡皮巴拉布丁')
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
   })
 }
+
+test('SKU 下沉后仍可搜索商品', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByLabel('搜索商品').fill('BUDU-CHOC-JAS-04')
+  await expect(page.locator('[data-product-id="p-long"]')).toBeVisible()
+  await expect(page.locator('[data-product-id="p-pos"]')).toHaveCount(0)
+})

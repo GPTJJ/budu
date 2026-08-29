@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware additive blue/green deployment for Unified Product Center.
+# Authority-aware schema-neutral blue/green deployment for Product Center UI.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,16 +17,16 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-unified-product"
-MIGRATOR="budu-migrate-${SHORT_SHA}-unified-product"
-BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-unified-product"
-IMAGE="budu-api:unified-product-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-product-title-ui"
+MIGRATOR="budu-migrate-${SHORT_SHA}-product-title-ui"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-product-title-ui"
+IMAGE="budu-api:product-title-ui-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-unified-product-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-product-title-ui-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/unified-product-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/product-title-ui-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -252,7 +252,7 @@ const prisma = new PrismaClient()
 try {
   const rows = await prisma.inventoryItem.findMany({
     orderBy: { id: 'asc' },
-    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, productCategoryId: true, version: true, updatedAt: true, createdAt: true },
+    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, partnerSupplyEnabled: true, productCategoryId: true, version: true, updatedAt: true, createdAt: true },
   })
   const serializable = rows.map((row) => ({ ...row, salePriceCents: row.salePriceCents === null ? null : String(row.salePriceCents), costPriceCents: row.costPriceCents === null ? null : String(row.costPriceCents) }))
   const digest = crypto.createHash('sha256').update(JSON.stringify(serializable)).digest('hex')
@@ -372,9 +372,9 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" 53
+verify_database_authority "$OLD_CONTAINER" 54
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=53 health=PASS writer=1"
+echo "production authority verified: DB=budu_bj006 migration=54 health=PASS writer=1"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -450,7 +450,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration53-pre-unified-product-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration54-pre-product-title-ui-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -471,10 +471,10 @@ BEFORE_TRANSFER_DIGEST="$(transfer_business_digest "$OLD_CONTAINER")"
 BEFORE_PURCHASE_DIGEST="$(purchase_business_digest "$OLD_CONTAINER")"
 BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
 BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
-echo "fresh migration53 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
+echo "fresh migration54 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migrator in isolation. Migration 54 only adds the
-# partnerSupplyEnabled opt-in flag and its index. Existing facts stay unchanged.
+# Run the exact release migration command in isolation. This UI-only release has
+# no new migration, so the ledger must remain at 54 and all facts stay unchanged.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
@@ -487,8 +487,7 @@ verify_database_authority "$OLD_CONTAINER" 54
 [ "$(inventory_master_core_digest "$OLD_CONTAINER")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed during additive migration" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
 verify_transfer_master_seed "$OLD_CONTAINER"
-verify_unified_product_state "$OLD_CONTAINER"
-echo "migration ledger advanced 53→54; partner opt-in defaults verified; historical transfer, purchase, mailing, invoice and product facts unchanged"
+echo "migration ledger remained at 54; historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
@@ -542,8 +541,7 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 [ "$(inventory_master_core_digest "$CANDIDATE")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed after cutover" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$CANDIDATE")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed after cutover" >&2; exit 1; }
 verify_transfer_master_seed "$CANDIDATE"
-verify_unified_product_state "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "Unified Product Center additive blue/green deployment completed; default opt-in and historical facts verified"
+echo "Product Center mobile title UI blue/green deployment completed; schema and historical facts verified unchanged"
