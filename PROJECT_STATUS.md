@@ -12,6 +12,23 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新生产快照（2026-08-29：开发者安全删除）
+
+- 状态：**VERIFIED — LIVE**
+- 生产代码 SHA：`b6bacb1f061fa10992ee097817d824a237db462f`
+- 发布分支：`codex/developer-safe-delete`
+- 成功 GitHub Actions：`33250216419`
+- Public health：`ok=true`、`env=prod`、`gitSha=b6bacb1f061f`、`dbOk=true`
+- PostgreSQL authority：`budu_bj006`
+- Migration ledger：`56`（新增 additive migration `20260829200000_developer_safe_delete`）
+- 交接 checkpoint：`docs/checkpoints/2026-08-29-developer-safe-delete-production.md`
+
+已上线仅开发者可用的业务记录安全删除：门店邮寄、开发票、库存调拨、采购申请、合作商供货均采用软删除，要求独立二级密码、删除原因并写入不可覆盖审计；普通列表、通知、统计和导出排除已删除记录，开发者可在系统设置的“已删除记录”中心审计和恢复，原 ID、子记录与历史事实保持不变。
+
+验证：独立 PostgreSQL 工作流覆盖五类高风险状态、权限、限流、排除、审计和恢复；WebKit gate 93/93，build PASS；生产迁移、writer、历史摘要、candidate、public health 和 375px 开发者 UI smoke 均通过。生产 smoke 未执行删除或恢复。
+
+当前下一步：无自动 Next Action；仅监控生产。任何真实删除/恢复均应由已授权开发者在 UI 中输入二级密码后明确执行。
+
 ## 最新进度快照（2026-08-23：V2.20，分支已合并 main，与线上一致）
 
 当前版本：**V2.20**（提交 `9a12dbf` 之后的最新 HEAD）。**main 分支 = 线上生产**，任何平台/设备 clone 或 GitHub 下载 zip 均为最新代码。
