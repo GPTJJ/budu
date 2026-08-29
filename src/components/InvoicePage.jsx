@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CalendarClock, Copy, Loader2, Mail, MapPin, QrCode, Receipt, Trash2 } from 'lucide-react'
+import { ArrowLeft, CalendarClock, Copy, Loader2, Mail, MapPin, QrCode, Receipt } from 'lucide-react'
 import { allStores, storeName } from '../utils/selectors'
 import { api } from '../utils/api'
 import { t } from '../utils/text'
 import QrCodeModal from './QrCodeModal'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
+import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
 
 const inputCls = 'input'
 
@@ -18,7 +19,7 @@ const fmtTime = (iso) => {
 
 const INVOICE_CATEGORIES = Object.freeze(['食品', '巧克力', '太妃糖'])
 
-export default function InvoicePage({ onBack }) {
+export default function InvoicePage({ currentUser, onBack }) {
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
   const [tab, setTab] = useState('pending')
@@ -450,16 +451,7 @@ export default function InvoicePage({ onBack }) {
                 >
                   {t(r.status === 'done' ? '标记待开票' : '标记已开票')}
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    remove(r.id)
-                  }}
-                  className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-100 text-slate-300 transition hover:border-rose-100 hover:bg-rose-50 hover:text-rose-500 sm:h-auto sm:w-auto sm:border-0 sm:p-1.5"
-                  aria-label={t('删除')}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <span onClick={(e) => e.stopPropagation()}><DeveloperSafeDeleteButton user={currentUser} type="invoice" record={{ ...r, title: r.companyName || '个人发票', subtitle: `${storeName(r.storeKey)} · ¥${yuan(r.amountCents)}` }} onDeleted={load} /></span>
               </div>
             </div>
           ))}

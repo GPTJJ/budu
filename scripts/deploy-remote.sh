@@ -25,7 +25,7 @@ run_remote() {
 # ProductGroup is an additive successor to the verified POS category UI release.
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="106397666673269f0b801c3767b80271f81b4cc5"
+  EXPECTED_OLD_SHA="8d2d20688de4ca3a358c83e602b2559b46512a4b"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
   TEST_DB_CONTAINER="budu-product-group-test-${GITHUB_RUN_ID:-$$}"
@@ -53,7 +53,7 @@ if [ "$ENV" = "prod" ]; then
   [ -n "$TEST_DB_PORT" ] || { echo "==> 无法解析隔离测试数据库端口"; exit 1; }
   TEST_DATABASE_URL="postgresql://budu_test:budu_test_password@127.0.0.1:${TEST_DB_PORT}/budu_test?schema=public"
 
-  echo "==> Node 22：ProductGroup / POS / Payment + Refund / Transfer / Partner / WebKit / build 回归"
+  echo "==> Node 22：Developer Safe Delete / POS / Payment + Refund / Transfer / Partner / WebKit / build 回归"
   docker run --rm --network host --ipc=host \
     -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
     -e DATABASE_URL="$TEST_DATABASE_URL" \
@@ -64,7 +64,7 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && node --test scripts/test-product-group-migration-rehearsal.mjs scripts/test-mailing-qr-migration-rehearsal.mjs scripts/test-partner-supply-migration-rehearsal.mjs scripts/test-product-category-migration-rehearsal.mjs scripts/test-product-material-migration-rehearsal.mjs scripts/test-store-transfer-migration-rehearsal.mjs scripts/test-unified-product-center-migration-rehearsal.mjs && node scripts/test-product-group-workflow.mjs && node scripts/test-unified-product-center-workflow.mjs && node --test scripts/test-product-image-performance.mjs scripts/test-pos-core.mjs scripts/test-payment-foundation.mjs scripts/test-payment-reconciliation.mjs scripts/test-store-transfer-draft.mjs scripts/test-partner-supply-contract.mjs scripts/test-partner-supply-workflow.mjs && npx playwright test tests/product-center.spec.mjs tests/pos-ipad.spec.mjs tests/product-material.spec.mjs tests/partner-supply.spec.mjs tests/transfer.spec.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && node --test scripts/test-developer-safe-delete-contract.mjs scripts/test-account-permissions.mjs scripts/test-product-group-migration-rehearsal.mjs scripts/test-mailing-qr-migration-rehearsal.mjs scripts/test-partner-supply-migration-rehearsal.mjs scripts/test-product-category-migration-rehearsal.mjs scripts/test-product-material-migration-rehearsal.mjs scripts/test-store-transfer-migration-rehearsal.mjs scripts/test-unified-product-center-migration-rehearsal.mjs && node scripts/test-developer-safe-delete-workflow.mjs && node scripts/test-product-group-workflow.mjs && node scripts/test-unified-product-center-workflow.mjs && node --test scripts/test-product-image-performance.mjs scripts/test-pos-core.mjs scripts/test-payment-foundation.mjs scripts/test-payment-reconciliation.mjs scripts/test-store-transfer-draft.mjs scripts/test-partner-supply-contract.mjs scripts/test-partner-supply-workflow.mjs && npx playwright test tests/product-center.spec.mjs tests/pos-ipad.spec.mjs tests/product-material.spec.mjs tests/partner-supply.spec.mjs tests/transfer.spec.mjs tests/mailing.spec.mjs tests/invoice.spec.mjs tests/settings.spec.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 

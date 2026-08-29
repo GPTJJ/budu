@@ -71,3 +71,16 @@ test('既有发票记录与待开票/已开票状态流保持可用', async ({ p
   await expect(page.locator('[data-invoice-record-id="invoice-focus"]')).toBeVisible()
   await expect(page.getByRole('button', { name: '标记待开票', exact: true })).toBeVisible()
 })
+
+test('开发者安全删除要求原因和二级密码，移动端 Bottom Sheet 不溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 820 })
+  await page.goto('/tests/invoice-harness.html?records=1')
+  await page.getByRole('button', { name: '安全删除', exact: true }).click()
+  await expect(page.getByText('开发者安全删除', { exact: true })).toBeVisible()
+  await page.getByText('录入错误', { exact: true }).click()
+  await page.getByLabel('安全删除二级密码').fill('separate-secret')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  await page.getByRole('button', { name: '验证二级密码并安全删除', exact: true }).click()
+  await expect(page.locator('[data-invoice-record-id="invoice-focus"]')).toHaveCount(0)
+  expect(await page.evaluate(() => window.__invoiceTest.lastSafeDelete)).toEqual({ reasonCode: 'input_error', reasonText: '', secondPassword: 'separate-secret' })
+})

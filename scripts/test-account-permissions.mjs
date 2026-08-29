@@ -10,12 +10,21 @@ import {
   hasPageAccess,
   normalizeAccountPermissions,
   hasModuleAccess,
+  hasDeveloperSensitiveRecordDelete,
 } from '../shared/accountPermissions.js'
 
 test('开发者始终拥有库存调拨全权限', () => {
   const user = { role: 'developer', storeKeys: [] }
   assert.equal(hasInventoryTransferAll(user), true)
   assert.equal(canManageTransferStore(user, 'any-store'), true)
+})
+
+test('敏感记录删除是不可下放的 developer 专属权限', () => {
+  assert.equal(hasDeveloperSensitiveRecordDelete({ role: 'developer' }), true)
+  for (const role of ['admin', 'finance', 'manager', 'staff', 'cashier', 'public']) {
+    assert.equal(hasDeveloperSensitiveRecordDelete({ role, permissions: { developerSensitiveRecordDelete: true } }), false)
+  }
+  assert.equal(hasDeveloperSensitiveRecordDelete({ role: 'developer', status: 'disabled' }), false)
 })
 
 test('调拨全权限不依赖角色和绑定门店', () => {

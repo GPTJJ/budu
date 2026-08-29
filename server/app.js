@@ -10,6 +10,7 @@ import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
 import { partnerSupplyRouter } from './partner-supply.js'
+import { developerSafeDeleteRouter } from './developer-safe-delete.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
@@ -647,7 +648,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
+  app.use('/api/v2', requireBusiness, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

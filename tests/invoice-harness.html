@@ -15,9 +15,11 @@
     ]
     let customerRequestCount = 0
     let lastCustomerRequest = null
+    let lastSafeDelete = null
     window.__invoiceTest = {
       get customerRequestCount() { return customerRequestCount },
       get lastCustomerRequest() { return lastCustomerRequest },
+      get lastSafeDelete() { return lastSafeDelete },
     }
 
     window.fetch = async (url, options = {}) => {
@@ -45,6 +47,11 @@
         return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'d'.repeat(43)}` }, 201)
       }
       if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
+      if (/\/api\/v2\/developer-sensitive-records\/invoice\/[^/]+\/delete$/.test(path) && options.method === 'POST') {
+        lastSafeDelete = JSON.parse(options.body)
+        rows.splice(0, rows.length)
+        return json({ ok: true })
+      }
       const statusMatch = path.match(/^\/api\/v2\/invoices\/([^/]+)\/status$/)
       if (statusMatch && options.method === 'POST') {
         const row = rows.find((item) => item.id === statusMatch[1])

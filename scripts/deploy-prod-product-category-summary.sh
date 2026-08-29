@@ -300,7 +300,14 @@ const prisma = new PrismaClient()
 try {
   const rows = await prisma.partnerSupplyOrder.findMany({
     orderBy: { id: 'asc' },
-    include: {
+    select: {
+      id: true, orderNo: true, partnerId: true, partnerNameSnapshot: true,
+      fromStoreKey: true, fromStoreNameSnapshot: true, businessDate: true, status: true,
+      defaultDiscountBpsSnapshot: true, effectiveDiscountBps: true, totalAmountCents: true,
+      note: true, createdById: true, createdBy: true, priceOverrideById: true,
+      priceOverrideBy: true, priceOverrideAt: true, shippedById: true, shippedBy: true,
+      shippedAt: true, withdrawnById: true, withdrawnBy: true, withdrawnAt: true,
+      version: true, createdAt: true, updatedAt: true,
       items: { orderBy: { id: 'asc' } },
       receipts: { orderBy: { id: 'asc' } },
     },
@@ -386,7 +393,7 @@ const health = await response.json()
 if (!response.ok || health.ok !== true || health.dbOk !== true || !String(health.gitSha || '').startsWith(process.env.EXPECTED_SHA_PREFIX)) {
   throw new Error('PUBLIC_HEALTH_AUTHORITY_MISMATCH')
 }
-console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 55 }))
+  console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 56 }))
 NODE
 }
 
@@ -516,7 +523,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration55-pre-product-group-retry-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration56-pre-developer-safe-delete-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -540,13 +547,13 @@ BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")
 BEFORE_PRODUCT_GROUP_DIGEST="$(product_group_authority_digest "$OLD_CONTAINER")"
 echo "fresh migration55 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migration command in isolation. Migration 55 was applied
-# by the fail-closed first attempt; this retry must keep the ledger and facts still.
+# Run the exact release migration command in isolation. The new release must move
+# the verified migration ledger from 55 to 56 without changing historical facts.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
 docker rm "$MIGRATOR" >/dev/null
-verify_database_authority "$OLD_CONTAINER" 55
+verify_database_authority "$OLD_CONTAINER" 56
 [ "$(mailing_business_digest "$OLD_CONTAINER")" = "$BEFORE_MAILING_DIGEST" ] || { echo "historical MailingRecord digest changed during additive migration" >&2; exit 1; }
 [ "$(invoice_business_digest "$OLD_CONTAINER")" = "$BEFORE_INVOICE_DIGEST" ] || { echo "historical Invoice digest changed during additive migration" >&2; exit 1; }
 [ "$(transfer_business_digest "$OLD_CONTAINER")" = "$BEFORE_TRANSFER_DIGEST" ] || { echo "historical TransferRequest digest changed during additive migration" >&2; exit 1; }
@@ -556,12 +563,12 @@ verify_database_authority "$OLD_CONTAINER" 55
 [ "$(product_group_authority_digest "$OLD_CONTAINER")" = "$BEFORE_PRODUCT_GROUP_DIGEST" ] || { echo "ProductGroup authority changed during additive migration" >&2; exit 1; }
 verify_transfer_master_integrity "$OLD_CONTAINER"
 verify_product_group_integrity "$OLD_CONTAINER"
-echo "migration ledger remained at 55; ProductGroup authority and historical transfer, purchase, mailing, invoice and product facts unchanged"
+echo "migration ledger advanced to 56; ProductGroup authority and historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 55
+verify_database_authority "$CANDIDATE" 56
 verify_product_group_integrity "$CANDIDATE"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
 echo "unrouted read-only Candidate internal smoke PASS"
@@ -593,7 +600,7 @@ OLD_STOPPED=1
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve writer
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 55
+verify_database_authority "$CANDIDATE" 56
 verify_product_group_integrity "$CANDIDATE"
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
@@ -617,4 +624,4 @@ verify_product_group_integrity "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "ProductGroup blue/green deployment completed; migration 55 authority and historical facts verified unchanged"
+echo "Developer Safe Delete blue/green deployment completed; migration 56 authority and historical facts verified unchanged"

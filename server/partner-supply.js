@@ -198,7 +198,7 @@ const orderInclude = {
 function scopedOrderWhere(user, query = {}, includeBusinessDate = true) {
   const requestedStore = text(query.fromStoreKey, 60, '发货门店')
   if (requestedStore && !canAccessPartnerSupplyStore(user, requestedStore)) throw bad('无权查看该门店供货记录', 403)
-  const where = {}
+  const where = { deletedAt: null }
   if (query.partnerId) where.partnerId = text(query.partnerId, 120, '合作商')
   if (requestedStore) where.fromStoreKey = requestedStore
   else if (!isSuperUser(user)) where.fromStoreKey = { in: Array.isArray(user.storeKeys) ? user.storeKeys : [] }
@@ -371,6 +371,7 @@ partnerSupplyRouter.post('/partner-supply-orders/:id/ship', wrap(async (req, res
   requireDb()
   const existing = await prisma.partnerSupplyOrder.findUnique({ where: { id: req.params.id } })
   if (!existing) throw bad('供货单不存在', 404)
+  if (existing.deletedAt) throw bad('已删除供货单不可继续操作', 409)
   if (!canConfirmPartnerSupply(req.user, existing.fromStoreKey)) throw bad('无权确认该门店发货', 403)
   if (existing.status !== 'pending') throw bad('只有待备货供货单可以确认发货', 409)
   const version = Number(req.body?.version)
@@ -393,6 +394,7 @@ partnerSupplyRouter.post('/partner-supply-orders/:id/withdraw', wrap(async (req,
   requireDb()
   const existing = await prisma.partnerSupplyOrder.findUnique({ where: { id: req.params.id }, include: { receipts: true } })
   if (!existing) throw bad('供货单不存在', 404)
+  if (existing.deletedAt) throw bad('已删除供货单不可继续操作', 409)
   const who = actor(req.user)
   if (existing.createdById !== who.id && existing.createdBy !== who.name && !isSuperUser(req.user)) throw bad('无权撤回该供货单', 403)
   if (existing.status !== 'pending') throw bad('只有待备货供货单可以撤回', 409)
@@ -419,6 +421,7 @@ partnerSupplyRouter.post('/partner-supply-orders/:id/receipts', wrap(async (req,
   const receipt = await prisma.$transaction(async (tx) => {
     const order = await tx.partnerSupplyOrder.findUnique({ where: { id: req.params.id }, include: { receipts: true } })
     if (!order) throw bad('供货单不存在', 404)
+    if (order.deletedAt) throw bad('已删除供货单不可继续操作', 409)
     if (order.status === 'withdrawn') throw bad('已撤回供货单不能登记收款', 409)
     const received = sumActiveReceipts(order)
     if (received + amountCents > order.totalAmountCents) throw bad('累计收款不能超过应收金额', 409)
@@ -436,6 +439,9 @@ partnerSupplyRouter.post('/partner-receipts/:id/void', wrap(async (req, res) => 
   if (!canRegisterPartnerReceipt(req.user)) throw bad('无权作废合作商收款', 403)
   const reason = text(req.body?.reason, 300, '作废原因', true)
   const who = actor(req.user)
+  const existing = await prisma.partnerReceipt.findUnique({ where: { id: req.params.id }, include: { order: true } })
+  if (!existing) throw bad('收款记录不存在', 404)
+  if (existing.order.deletedAt) throw bad('已删除供货单不可继续操作', 409)
   const updated = await prisma.partnerReceipt.updateMany({
     where: { id: req.params.id, status: 'active' },
     data: { status: 'voided', voidedById: who.id, voidedBy: who.name, voidedAt: new Date(), voidReason: reason },

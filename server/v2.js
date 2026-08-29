@@ -809,7 +809,7 @@ v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user?.role === 'public') throw bad('无权限', 403)
   const sf = hasInventoryTransferAll(req.user) ? null : storeFilter(req.user)
-  const where = {}
+  const where = { deletedAt: null }
   if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }, { createdBy: req.user.username }]
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.transferRequest.findMany({
@@ -824,6 +824,7 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
   if (!t) throw bad('调拨不存在', 404)
+  if (t.deletedAt) throw bad('已删除调拨不可继续操作', 409)
   const transferAdmin = hasInventoryTransferAll(req.user)
   if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('仅待备货调拨可撤回')
@@ -836,8 +837,8 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
 }))
 
 async function getTransfer(id) {
-  return prisma.transferRequest.findUnique({
-    where: { id },
+  return prisma.transferRequest.findFirst({
+    where: { id, deletedAt: null },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
 }
@@ -927,7 +928,7 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
 v2Router.get('/purchase-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const sf = storeFilter(req.user)
-  const where = sf ? { storeKey: sf } : {}
+  const where = { deletedAt: null, ...(sf ? { storeKey: sf } : {}) }
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.purchaseRequest.findMany({
     where,
@@ -939,20 +940,14 @@ v2Router.get('/purchase-requests', wrap(async (req, res) => {
 }))
 
 v2Router.delete('/purchase-requests/:id', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id } })
-  if (!p) throw bad('申请不存在', 404)
-  if (!isSuperUser(req.user) && p.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = p.status === 'rejected' && isSuperUser(req.user)
-  if (p.status !== 'pending' && !canDeleteRejected) throw bad('仅待处理或已驳回申请可删除')
-  await prisma.purchaseRequest.delete({ where: { id: p.id } })
-  res.json({ ok: true })
+  throw bad('该删除入口已停用，请由开发者通过安全删除操作', 410)
 }))
 
 v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id }, include: { items: { include: { item: true } } } })
   if (!p) throw bad('申请不存在', 404)
+  if (p.deletedAt) throw bad('已删除采购申请不可继续操作', 409)
   if (!isManager(req.user) || !canStore(req.user, p.storeKey)) throw bad('无权限', 403)
   if (p.status !== 'pending') throw bad('当前状态不可收货')
   const received = (req.body && req.body.items) || []
@@ -1481,7 +1476,7 @@ v2Router.get('/invoices', wrap(async (req, res) => {
   const month = String(req.query.month || '')
   const status = String(req.query.status || '')
   const date = String(req.query.date || '')
-  const where = { storeKey: whereStores(req.user, store || undefined) }
+  const where = { storeKey: whereStores(req.user, store || undefined), deletedAt: null }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
@@ -1546,20 +1541,14 @@ v2Router.post('/invoices/:id/status', wrap(async (req, res) => {
   if (status !== 'pending' && status !== 'done') throw bad('状态不正确')
   const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发票记录不存在', 404)
+  if (row.deletedAt) throw bad('已删除发票不可继续操作', 409)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   const updated = await prisma.invoice.update({ where: { id: row.id }, data: { status } })
   res.json({ ok: true, invoice: serializeInvoice(updated) })
 }))
 
 v2Router.delete('/invoices/:id', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canInvoice(req.user)) throw bad('无权限', 403)
-  const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
-  if (!row) throw bad('发票记录不存在', 404)
-  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
-  if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
-  await prisma.invoice.delete({ where: { id: row.id } })
-  res.json({ ok: true })
+  throw bad('该删除入口已停用，请由开发者通过安全删除操作', 410)
 }))
 
 // ---------- 门店邮寄发件记录 ----------
@@ -1569,7 +1558,7 @@ v2Router.get('/mailing-records', wrap(async (req, res) => {
   const status = String(req.query.status || '')
   const from = String(req.query.from || '')
   const to = String(req.query.to || '')
-  const where = {}
+  const where = { deletedAt: null }
   if (status === 'pending' || status === 'shipped') where.status = status
   if (/^\d{4}-\d{2}-\d{2}$/.test(from) || /^\d{4}-\d{2}-\d{2}$/.test(to)) {
     where.createdAt = {}
@@ -1622,6 +1611,7 @@ v2Router.post('/mailing-records/:id/ship', wrap(async (req, res) => {
   if (!canMailing(req.user)) throw bad('无权限', 403)
   const row = await prisma.mailingRecord.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发件记录不存在', 404)
+  if (row.deletedAt) throw bad('已删除邮寄记录不可继续操作', 409)
   if (row.status !== 'pending') throw bad('该记录已发货', 409)
   const updated = await prisma.mailingRecord.update({
     where: { id: row.id },

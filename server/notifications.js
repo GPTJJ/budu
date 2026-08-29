@@ -40,6 +40,21 @@ function allowedTargets(user) {
   return ['', ...ALL_MODULE_KEYS.filter((key) => hasModuleAccess(user, key))]
 }
 
+async function excludeDeletedBusinessRecords(where) {
+  const [mailing, invoices, transfers, purchases, partnerOrders] = await Promise.all([
+    prisma.mailingRecord.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
+    prisma.invoice.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
+    prisma.transferRequest.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
+    prisma.purchaseRequest.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
+    prisma.partnerSupplyOrder.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
+  ])
+  const excluded = [
+    ['mailing', mailing], ['invoice', invoices], ['transfer', transfers],
+    ['purchase', purchases], ['partner-supply-order', partnerOrders],
+  ].filter(([, rows]) => rows.length).map(([refType, rows]) => ({ refType, refId: { in: rows.map((row) => row.id) } }))
+  return excluded.length ? { ...where, NOT: { OR: excluded } } : where
+}
+
 /** 消息列表（分页；默认不含已删除；支持 status/unread 筛选） */
 notificationRouter.get('/notifications', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
@@ -53,7 +68,7 @@ notificationRouter.get('/notifications', wrap(async (req, res) => {
   if (type) where.refType = String(type)
   if (cursor) where.createdAt = { lt: new Date(String(cursor)) }
   const rows = await prisma.notification.findMany({
-    where,
+    where: await excludeDeletedBusinessRecords(where),
     orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
     take: Math.min(Number(limit) || 50, 200),
   })
@@ -67,7 +82,7 @@ notificationRouter.get('/notifications/unread-count', wrap(async (req, res) => {
     return res.json({ ok: true, count: 0 })
   }
   const count = await prisma.notification.count({
-    where: { username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } },
+    where: await excludeDeletedBusinessRecords({ username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } }),
   })
   res.json({ ok: true, count })
 }))

@@ -82,6 +82,7 @@ const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MO
 
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
+  DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
 })
 
 export function defaultModuleKeys(role, legacyAssetCenter = false) {
@@ -112,7 +113,18 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
     modules: normalizeModules(source.modules, role, legacyAssetCenter),
     [ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]:
       source[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL] === true,
+    [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
   }
+}
+
+/** 独立高风险权限：不可下放，只有在职 developer 拥有。 */
+export function hasDeveloperSensitiveRecordDelete(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role === 'developer' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE],
+  )
 }
 
 export function hasModuleAccess(user, moduleKey) {

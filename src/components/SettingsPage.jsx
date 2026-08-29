@@ -4,6 +4,7 @@ import { t } from '../utils/text'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
+import { DeletedRecordsCenter } from './DeveloperSafeDelete'
 
 const inputCls = 'input'
 
@@ -449,6 +450,8 @@ export default function SettingsPage({ user, onBack }) {
           )}
         </div>
       )}
+
+      {user?.role === 'developer' && <DeletedRecordsCenter user={user} />}
 
       <div className="card p-6">
         <div className="flex items-center gap-3">

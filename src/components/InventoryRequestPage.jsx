@@ -27,6 +27,7 @@ import InventoryStockPanel from './InventoryStockPanel'
 import { t } from '../utils/text'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 import StoreTransferPage from './StoreTransferPage'
+import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
 
 const inputCls = 'input'
 const TEMP_LOCATION_PREFIX = 'temporary:'
@@ -1115,7 +1116,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                     {t('收货入库')}
                   </button>
                 )}
-                {canDelete(r) && (
+                {isTransfer && canDelete(r) && (
                   <button
                     onClick={() => remove(r)}
                     className="rounded-lg p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
@@ -1124,6 +1125,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
+                <DeveloperSafeDeleteButton user={currentUser} type={isTransfer ? 'transfer' : 'purchase'} record={{ ...r, title: isTransfer ? `${storeDisplay(r.fromStoreKey, r.fromStoreName)} → ${storeDisplay(r.storeKey, r.storeName)}` : `${storeDisplay(r.storeKey, r.storeName)} · ${r.supplier || '采购申请'}`, subtitle: `${r.items?.length || 0} 项 · ${r.createdBy}` }} onDeleted={async () => { await loadUserData(); setVersion((value) => value + 1) }} />
               </div>
             </div>
           ))}
