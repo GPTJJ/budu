@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, normalizeSku, parseCents } from './pos-core.js'
+import { sendStoredImage } from './product-images.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 
 export const productsRouter = Router()
@@ -47,7 +48,7 @@ function optionalCents(value, label) {
   return parseCents(value, label)
 }
 
-function productData(body) {
+function productData(body, existingImage = '') {
   const sku = normalizeSku(body.sku)
   if (sku.length > 64) throw httpError('SKU 不能超过 64 个字符')
   const sortOrder = Number(body.sortOrder ?? 0)
@@ -74,7 +75,7 @@ function productData(body) {
     salePriceCents,
     costPriceCents,
     unit,
-    image: imageValue(body.image),
+    image: Object.prototype.hasOwnProperty.call(body, 'image') ? imageValue(body.image) : existingImage,
     barcode: text(body.barcode, 64, '条码'),
     isActive,
     trackInventory: body.trackInventory === true,
@@ -115,7 +116,8 @@ export function serializeProduct(product) {
     salePriceCents: product.salePriceCents == null ? null : product.salePriceCents.toString(),
     costPriceCents: product.costPriceCents == null ? null : product.costPriceCents.toString(),
     unit: product.unit,
-    image: product.image || '',
+    image: '',
+    hasImage: Boolean(product.image),
     barcode: product.barcode || '',
     isActive: product.isActive,
     transferEnabled: product.transferEnabled,
@@ -171,6 +173,29 @@ productsRouter.get('/products', wrap(async (req, res) => {
     take: 1000,
   })
   res.json({ rows: rows.map(serializeProduct) })
+}))
+
+async function productImage(req) {
+  const product = await prisma.inventoryItem.findUnique({
+    where: { id: req.params.productId },
+    select: { id: true, category: true, image: true, updatedAt: true },
+  })
+  if (!product || product.category !== 'product' || !product.image) throw httpError('商品图片不存在', 404)
+  return product
+}
+
+productsRouter.get('/products/:productId/image', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductViewer(req.user)
+  const product = await productImage(req)
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}` })
+}))
+
+productsRouter.get('/products/:productId/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductViewer(req.user)
+  const product = await productImage(req)
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}`, thumbnail: true })
 }))
 
 productsRouter.post('/products', wrap(async (req, res) => {
@@ -344,9 +369,9 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   requireProductManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw httpError('商品版本不正确，请刷新后重试')
-  const data = productData(req.body || {})
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
   if (!existing || existing.category !== 'product') throw httpError('商品不存在', 404)
+  const data = productData(req.body || {}, existing.image || '')
   await requireProductCategory(data.productCategoryId, existing.productCategoryId || '')
   await requireProductGroup(data.productGroupId, existing.productGroupId || '')
   const result = await prisma.inventoryItem.updateMany({
@@ -363,12 +388,12 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   res.json({ ok: true, product: serializeProduct(row) })
 }))
 
-function productGroupData(body) {
+function productGroupData(body, existingCoverImage = '') {
   const sortOrder = Number(body?.sortOrder ?? 0)
   if (!Number.isInteger(sortOrder) || sortOrder < -999999 || sortOrder > 999999) throw httpError('商品组排序必须是 -999999 至 999999 的整数')
   return {
     name: text(body?.name, 50, '商品组名称', true),
-    coverImage: imageValue(body?.coverImage),
+    coverImage: Object.prototype.hasOwnProperty.call(body || {}, 'coverImage') ? imageValue(body?.coverImage) : existingCoverImage,
     sortOrder,
     isActive: body?.isActive !== false,
   }
@@ -390,7 +415,7 @@ function serializeProductGroup(group) {
   return {
     id: group.id,
     name: group.name,
-    coverImage: group.coverImage || '',
+    coverImage: '',
     hasCoverImage: Boolean(group.coverImage),
     sortOrder: group.sortOrder,
     isActive: group.isActive,
@@ -439,6 +464,29 @@ productsRouter.get('/product-groups', wrap(async (req, res) => {
   res.json({ rows: rows.map(serializeProductGroup) })
 }))
 
+async function productGroupImage(req) {
+  const group = await prisma.productGroup.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, coverImage: true, updatedAt: true },
+  })
+  if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
+  return group
+}
+
+productsRouter.get('/product-groups/:id/image', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductViewer(req.user)
+  const group = await productGroupImage(req)
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}` })
+}))
+
+productsRouter.get('/product-groups/:id/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductViewer(req.user)
+  const group = await productGroupImage(req)
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}`, thumbnail: true })
+}))
+
 productsRouter.post('/product-groups', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
@@ -459,7 +507,9 @@ productsRouter.put('/product-groups/:id', wrap(async (req, res) => {
   requireProductManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw httpError('商品组版本不正确，请刷新后重试')
-  const data = productGroupData(req.body || {})
+  const existing = await prisma.productGroup.findUnique({ where: { id: req.params.id }, select: { coverImage: true } })
+  if (!existing) throw httpError('商品组不存在', 404)
+  const data = productGroupData(req.body || {}, existing.coverImage || '')
   const members = productGroupMembers(req.body || {})
   const duplicate = await prisma.productGroup.findFirst({ where: { id: { not: req.params.id }, name: { equals: data.name, mode: 'insensitive' } } })
   if (duplicate) throw httpError('商品组名称已存在', 409)

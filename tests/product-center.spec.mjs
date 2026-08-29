@@ -28,6 +28,19 @@ test('编辑商品可独立控制三个业务开关并复用正式分类', async
   await expect(row).toContainText('合作商 ✓')
   const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/products/p-pos'))
   expect(request.body).toMatchObject({ isActive: true, transferEnabled: true, partnerSupplyEnabled: true, productCategoryId: 'c-candy' })
+  expect(request.body).not.toHaveProperty('image')
+})
+
+test('商品中心列表只使用版本化 WebP 缩略图并延迟加载', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  const row = page.locator('[data-product-id="p-pos"]')
+  const image = row.locator('img')
+  await expect(image).toHaveAttribute('src', /\/api\/v2\/products\/p-pos\/thumbnail\?v=2026-08-29/)
+  await expect(image).toHaveAttribute('loading', 'lazy')
+  const payload = await page.evaluate(() => JSON.stringify(window.__productCenterTest.products))
+  expect(payload).not.toContain('data:image/')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await expect(page.getByAltText('商品预览')).toHaveAttribute('src', /\/api\/v2\/products\/p-pos\/image\?v=2026-08-29/)
 })
 
 test('批量管理支持分类及 POS、调拨、合作商开关', async ({ page }) => {

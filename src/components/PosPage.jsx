@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, ReceiptText, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
+import LazyImage from './LazyImage'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
@@ -852,9 +853,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                   const product = isGroup ? null : item.product
                   const members = isGroup ? item.members : [product]
                   const quantity = members.reduce((sum, member) => sum + Number(cart[member.productId] || 0), 0)
-                  const groupImage = isGroup && item.group.hasCoverImage ? `/api/v2/pos/product-groups/${item.group.id}/image?v=${encodeURIComponent(item.group.updatedAt || '')}` : ''
+                  const groupImage = isGroup && item.group.hasCoverImage ? `/api/v2/pos/product-groups/${item.group.id}/thumbnail?v=${encodeURIComponent(item.group.updatedAt || '')}` : ''
                   const fallbackImageProduct = members.find((member) => member.hasImage)
-                  const imageSrc = groupImage || (fallbackImageProduct ? `/api/v2/pos/products/${fallbackImageProduct.productId}/image?v=${encodeURIComponent(fallbackImageProduct.updatedAt || '')}` : '')
+                  const imageSrc = groupImage || (fallbackImageProduct ? `/api/v2/pos/products/${fallbackImageProduct.productId}/thumbnail?v=${encodeURIComponent(fallbackImageProduct.updatedAt || '')}` : '')
                   const prices = [...new Set(members.map((member) => String(member.salePriceCents)))]
                   const minimumPrice = members.reduce((minimum, member) => BigInt(member.salePriceCents) < minimum ? BigInt(member.salePriceCents) : minimum, BigInt(members[0].salePriceCents))
                   const displayName = isGroup ? item.group.name : product.name
@@ -869,7 +870,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                     >
                       <div className={isDesktop || isIpad ? `${isIpad ? 'h-16 w-16 rounded-xl' : 'h-12 w-12 rounded-lg'} shrink-0 overflow-hidden bg-slate-100` : 'aspect-square bg-slate-100'}>
                         {imageSrc ? (
-                          <img src={imageSrc} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" />
+                          <LazyImage src={imageSrc} alt="" onError={(e) => { e.currentTarget.style.display = 'none' }} className="h-full w-full object-cover" />
                         ) : (
                           <div className="grid h-full place-items-center"><Package className={`${isDesktop || isIpad ? 'h-5 w-5' : 'h-6 w-6'} text-slate-300`} /></div>
                         )}
@@ -947,8 +948,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div className="min-w-0"><h2 className="truncate font-black text-slate-900">{variantGroup.group.name}</h2><p className="mt-0.5 text-xs text-slate-400">选择款式</p></div><button onClick={() => setVariantGroup(null)} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl text-slate-400" aria-label="关闭款式选择"><X className="h-5 w-5" /></button></div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
               {variantGroup.members.map((member) => {
-                const imageSrc = member.hasImage ? `/api/v2/pos/products/${member.productId}/image?v=${encodeURIComponent(member.updatedAt || '')}` : ''
-                return <button key={member.productId} data-variant-product-id={member.productId} onClick={() => { addProduct(member); setVariantGroup(null) }} className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition hover:border-budu-300 active:scale-[0.99]"><div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{imageSrc ? <img src={imageSrc} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{member.variantName || member.name}</p><p className="mt-1 truncate text-xs text-slate-400">{member.name}</p></div><span className="shrink-0 font-black text-budu-600">{formatCents(member.salePriceCents)}</span></button>
+                const imageSrc = member.hasImage ? `/api/v2/pos/products/${member.productId}/thumbnail?v=${encodeURIComponent(member.updatedAt || '')}` : ''
+                return <button key={member.productId} data-variant-product-id={member.productId} onClick={() => { addProduct(member); setVariantGroup(null) }} className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left transition hover:border-budu-300 active:scale-[0.99]"><div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{imageSrc ? <LazyImage src={imageSrc} alt="" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{member.variantName || member.name}</p><p className="mt-1 truncate text-xs text-slate-400">{member.name}</p></div><span className="shrink-0 font-black text-budu-600">{formatCents(member.salePriceCents)}</span></button>
               })}
             </div>
           </div>
@@ -988,7 +989,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <div className="grid max-h-[38dvh] grid-cols-2 gap-2 overflow-y-auto">
               {comboFlavors.map((f) => {
                 const picked = comboSlots.filter((x) => x === String(f.name).replace(/^巧克力豆\./, '')).length
-                const imageSrc = f.hasImage ? `/api/v2/pos/products/${f.productId}/image?v=${encodeURIComponent(f.updatedAt || '')}` : ''
+                const imageSrc = f.hasImage ? `/api/v2/pos/products/${f.productId}/thumbnail?v=${encodeURIComponent(f.updatedAt || '')}` : ''
                 return (
                   <button
                     key={f.productId}
@@ -1006,7 +1007,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                     }`}
                   >
                     {imageSrc ? (
-                      <img src={imageSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                      <LazyImage src={imageSrc} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
                     ) : (
                       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100"><Package className="h-4 w-4 text-slate-300" /></div>
                     )}

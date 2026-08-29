@@ -10,6 +10,7 @@ import { wechatPayFrontendStatus } from './payments/wechat-config.js'
 import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
+import { sendStoredImage } from './product-images.js'
 import { MODULE_KEYS, canManageAccounts, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
 
 export const posRouter = Router()
@@ -311,25 +312,33 @@ posRouter.get('/pos/products', wrap(async (req, res) => {
 posRouter.get('/pos/products/:productId/image', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, select: { id: true, image: true, updatedAt: true } })
   if (!product || !product.image) throw httpError('商品图片不存在', 404)
-  const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(product.image))
-  if (!match) throw httpError('商品图片格式不正确', 400)
-  res.setHeader('Cache-Control', 'public, max-age=86400')
-  res.setHeader('Content-Type', `image/${match[1]}`)
-  res.send(Buffer.from(match[2], 'base64'))
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}` })
+}))
+
+posRouter.get('/pos/products/:productId/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, select: { id: true, image: true, updatedAt: true } })
+  if (!product || !product.image) throw httpError('商品图片不存在', 404)
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}`, thumbnail: true })
 }))
 
 posRouter.get('/pos/product-groups/:groupId/image', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { coverImage: true } })
+  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { id: true, coverImage: true, updatedAt: true } })
   if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
-  const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(group.coverImage))
-  if (!match) throw httpError('商品组主图格式不正确', 400)
-  res.setHeader('Cache-Control', 'public, max-age=86400')
-  res.setHeader('Content-Type', `image/${match[1]}`)
-  res.send(Buffer.from(match[2], 'base64'))
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}` })
+}))
+
+posRouter.get('/pos/product-groups/:groupId/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { id: true, coverImage: true, updatedAt: true } })
+  if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}`, thumbnail: true })
 }))
 
 posRouter.post('/pos/orders', wrap(async (req, res) => {

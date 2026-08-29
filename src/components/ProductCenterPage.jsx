@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
 import { analyzeProductMenuSheets, applyAutoSku } from '../utils/productExcel'
+import LazyImage from './LazyImage'
 
 const emptyForm = {
   productId: '',
@@ -16,6 +17,8 @@ const emptyForm = {
   costPrice: '',
   unit: '份',
   image: '',
+  imageDirty: false,
+  hasImage: false,
   barcode: '',
   isActive: true,
   transferEnabled: false,
@@ -35,7 +38,29 @@ function toForm(product) {
     ...product,
     salePrice: centsToYuan(product.salePriceCents),
     costPrice: centsToYuan(product.costPriceCents),
+    image: '',
+    imageDirty: false,
   }
+}
+
+function versionedImageUrl(path, updatedAt) {
+  return `${path}?v=${encodeURIComponent(updatedAt || '')}`
+}
+
+function productThumbnailUrl(product, prefix = '/api/v2/products') {
+  return product?.hasImage ? versionedImageUrl(`${prefix}/${product.productId}/thumbnail`, product.updatedAt) : ''
+}
+
+function productOriginalUrl(product) {
+  return product?.hasImage ? versionedImageUrl(`/api/v2/products/${product.productId}/image`, product.updatedAt) : ''
+}
+
+function groupThumbnailUrl(group, prefix = '/api/v2/product-groups') {
+  return group?.hasCoverImage ? versionedImageUrl(`${prefix}/${group.id}/thumbnail`, group.updatedAt) : ''
+}
+
+function groupOriginalUrl(group) {
+  return group?.hasCoverImage ? versionedImageUrl(`/api/v2/product-groups/${group.id}/image`, group.updatedAt) : ''
 }
 
 function purposeEnabled(product, purpose) {
@@ -76,9 +101,9 @@ function ProductGroupManager({ groups, products, onClose, onSaved }) {
     setSearch('')
     setError('')
     setEditor(group ? {
-      id: group.id, name: group.name, coverImage: group.coverImage || '', sortOrder: String(group.sortOrder), isActive: group.isActive, version: group.version,
+      id: group.id, name: group.name, coverImage: '', coverImageDirty: false, hasCoverImage: group.hasCoverImage, updatedAt: group.updatedAt, sortOrder: String(group.sortOrder), isActive: group.isActive, version: group.version,
       members: (group.members || []).map((member) => ({ productId: member.productId, variantName: member.variantName || '' })),
-    } : { id: '', name: '', coverImage: '', sortOrder: String(groups.reduce((max, row) => Math.max(max, row.sortOrder), 0) + 1), isActive: true, version: 0, members: [] })
+    } : { id: '', name: '', coverImage: '', coverImageDirty: false, hasCoverImage: false, updatedAt: '', sortOrder: String(groups.reduce((max, row) => Math.max(max, row.sortOrder), 0) + 1), isActive: true, version: 0, members: [] })
   }
   const selected = new Map((editor?.members || []).map((member) => [member.productId, member]))
   const candidates = products.filter((product) => !product.productGroupId || product.productGroupId === editor?.id).filter((product) => {
@@ -94,21 +119,27 @@ function ProductGroupManager({ groups, products, onClose, onSaved }) {
   const updateVariant = (productId, variantName) => setEditor((current) => ({ ...current, members: current.members.map((member) => member.productId === productId ? { ...member, variantName } : member) }))
   const handleCover = async (file) => {
     if (!file) return
-    try { const coverImage = await compressProductImage(file); setEditor((current) => ({ ...current, coverImage })); setError('') } catch (err) { setError(err.message) }
+    try { const coverImage = await compressProductImage(file); setEditor((current) => ({ ...current, coverImage, coverImageDirty: true, hasCoverImage: true })); setError('') } catch (err) { setError(err.message) }
   }
   const save = async () => {
     if (!editor?.name.trim() || busy) return
     if (editor.members.some((member) => !member.variantName.trim())) { setError('已选择商品都必须填写款式名称'); return }
     setBusy(true); setError('')
     try {
+      const body = { ...editor, sortOrder: Number(editor.sortOrder), members: editor.members.map((member) => ({ ...member, variantName: member.variantName.trim() })) }
+      delete body.coverImageDirty
+      delete body.hasCoverImage
+      delete body.updatedAt
+      if (editor.id && !editor.coverImageDirty) delete body.coverImage
       const data = await api(editor.id ? `/v2/product-groups/${editor.id}` : '/v2/product-groups', {
         method: editor.id ? 'PUT' : 'POST',
-        body: JSON.stringify({ ...editor, sortOrder: Number(editor.sortOrder), members: editor.members.map((member) => ({ ...member, variantName: member.variantName.trim() })) }),
+        body: JSON.stringify(body),
       })
       await onSaved(data.group); setEditor(null)
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
-  return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品组管理"><div className="my-4 flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"><div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div><h3 className="font-black text-slate-900">商品组管理</h3><p className="text-xs text-slate-400">只组织 POS 展示，真实 SKU 身份保持不变</p></div><button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400" aria-label="关闭商品组管理"><X className="h-5 w-5" /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{error && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-600">{error}</p>}{!editor ? <div className="space-y-3"><div className="flex justify-end"><button onClick={() => startEditor()} className="btn-primary min-h-10 px-4"><Plus className="h-4 w-4" />新建商品组</button></div><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{groups.length === 0 ? <p className="p-8 text-center text-sm text-slate-400">暂无商品组</p> : groups.map((group) => <div key={group.id} data-product-group-id={group.id} className="flex items-start gap-3 px-3 py-4"><div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{group.coverImage ? <img src={group.coverImage} alt="" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{group.name}</p><p className="mt-1 text-xs text-slate-400">{group.memberCount} 个款式 · 排序 {group.sortOrder} · {group.isActive ? 'POS 聚合 ✓' : '已停用'}</p><p className="mt-1 truncate text-xs text-slate-400">{(group.members || []).map((member) => member.variantName).filter(Boolean).join(' · ') || '尚未添加款式'}</p></div><button onClick={() => startEditor(group)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑商品组${group.name}`}><Pencil className="h-4 w-4" /></button></div>)}</div></div> : <div className="space-y-4"><button onClick={() => setEditor(null)} className="text-xs font-bold text-slate-400">← 返回商品组列表</button><div className="grid gap-4 sm:grid-cols-[140px_1fr]"><div><div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{editor.coverImage ? <img src={editor.coverImage} alt="商品组主图" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="h-7 w-7" /><span className="text-xs">可选主图</span></div>}</div><label className="mt-2 block cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-center text-xs font-bold text-slate-600">选择主图<input type="file" accept="image/*" className="hidden" onChange={(event) => handleCover(event.target.files?.[0])} /></label>{editor.coverImage && <button onClick={() => setEditor((current) => ({ ...current, coverImage: '' }))} className="mt-2 w-full text-xs text-slate-400">移除主图</button>}</div><div className="space-y-3"><label className="block text-xs font-bold text-slate-500">商品组名称<input aria-label="商品组名称" value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} className={inputClass} /></label><label className="block text-xs font-bold text-slate-500">商品组排序<input aria-label="商品组排序" type="number" value={editor.sortOrder} onChange={(event) => setEditor({ ...editor, sortOrder: event.target.value })} className={inputClass} /></label><label className="flex items-center justify-between rounded-xl bg-budu-50 p-3 text-sm font-bold text-slate-600">启用 POS 聚合<input aria-label="启用商品组" type="checkbox" checked={editor.isActive} onChange={(event) => setEditor({ ...editor, isActive: event.target.checked })} className="h-5 w-5 accent-budu-500" /></label></div></div><div className="rounded-2xl border border-slate-200 p-3"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索组内商品" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索商品名称 / SKU" className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none" /></label><div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{candidates.map((product) => { const member = selected.get(product.productId); return <div key={product.productId} className="rounded-xl bg-slate-50 p-3"><label className="flex items-start gap-2"><input aria-label={`加入商品组${product.name}`} type="checkbox" checked={Boolean(member)} onChange={() => toggleMember(product)} className="mt-1 h-4 w-4 accent-budu-500" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-700">{product.name}</span><span className="block truncate text-[11px] text-slate-400">SKU {product.sku || '—'}</span></span></label>{member && <label className="mt-2 block pl-6 text-[11px] font-bold text-slate-500">款式名称<input aria-label={`${product.name}款式名称`} value={member.variantName} onChange={(event) => updateVariant(product.productId, event.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}</div> })}</div></div><button onClick={save} disabled={busy || !editor.name.trim()} className="btn-primary min-h-11 w-full"><Check className="h-4 w-4" />{busy ? '保存中…' : '保存商品组'}</button></div>}</div></div></div>
+  const editorPreview = editor ? editor.coverImage || (!editor.coverImageDirty ? groupOriginalUrl(editor) : '') : ''
+  return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品组管理"><div className="my-4 flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"><div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div><h3 className="font-black text-slate-900">商品组管理</h3><p className="text-xs text-slate-400">只组织 POS 展示，真实 SKU 身份保持不变</p></div><button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400" aria-label="关闭商品组管理"><X className="h-5 w-5" /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{error && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-600">{error}</p>}{!editor ? <div className="space-y-3"><div className="flex justify-end"><button onClick={() => startEditor()} className="btn-primary min-h-10 px-4"><Plus className="h-4 w-4" />新建商品组</button></div><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{groups.length === 0 ? <p className="p-8 text-center text-sm text-slate-400">暂无商品组</p> : groups.map((group) => <div key={group.id} data-product-group-id={group.id} className="flex items-start gap-3 px-3 py-4"><div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{group.hasCoverImage ? <LazyImage src={groupThumbnailUrl(group)} alt="" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{group.name}</p><p className="mt-1 text-xs text-slate-400">{group.memberCount} 个款式 · 排序 {group.sortOrder} · {group.isActive ? 'POS 聚合 ✓' : '已停用'}</p><p className="mt-1 truncate text-xs text-slate-400">{(group.members || []).map((member) => member.variantName).filter(Boolean).join(' · ') || '尚未添加款式'}</p></div><button onClick={() => startEditor(group)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑商品组${group.name}`}><Pencil className="h-4 w-4" /></button></div>)}</div></div> : <div className="space-y-4"><button onClick={() => setEditor(null)} className="text-xs font-bold text-slate-400">← 返回商品组列表</button><div className="grid gap-4 sm:grid-cols-[140px_1fr]"><div><div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{editorPreview ? <img src={editorPreview} alt="商品组主图" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="h-7 w-7" /><span className="text-xs">可选主图</span></div>}</div><label className="mt-2 block cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-center text-xs font-bold text-slate-600">选择主图<input type="file" accept="image/*" className="hidden" onChange={(event) => handleCover(event.target.files?.[0])} /></label>{editorPreview && <button onClick={() => setEditor((current) => ({ ...current, coverImage: '', coverImageDirty: true, hasCoverImage: false }))} className="mt-2 w-full text-xs text-slate-400">移除主图</button>}</div><div className="space-y-3"><label className="block text-xs font-bold text-slate-500">商品组名称<input aria-label="商品组名称" value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} className={inputClass} /></label><label className="block text-xs font-bold text-slate-500">商品组排序<input aria-label="商品组排序" type="number" value={editor.sortOrder} onChange={(event) => setEditor({ ...editor, sortOrder: event.target.value })} className={inputClass} /></label><label className="flex items-center justify-between rounded-xl bg-budu-50 p-3 text-sm font-bold text-slate-600">启用 POS 聚合<input aria-label="启用商品组" type="checkbox" checked={editor.isActive} onChange={(event) => setEditor({ ...editor, isActive: event.target.checked })} className="h-5 w-5 accent-budu-500" /></label></div></div><div className="rounded-2xl border border-slate-200 p-3"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索组内商品" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索商品名称 / SKU" className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none" /></label><div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{candidates.map((product) => { const member = selected.get(product.productId); return <div key={product.productId} className="rounded-xl bg-slate-50 p-3"><label className="flex items-start gap-2"><input aria-label={`加入商品组${product.name}`} type="checkbox" checked={Boolean(member)} onChange={() => toggleMember(product)} className="mt-1 h-4 w-4 accent-budu-500" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-700">{product.name}</span><span className="block truncate text-[11px] text-slate-400">SKU {product.sku || '—'}</span></span></label>{member && <label className="mt-2 block pl-6 text-[11px] font-bold text-slate-500">款式名称<input aria-label={`${product.name}款式名称`} value={member.variantName} onChange={(event) => updateVariant(product.productId, event.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}</div> })}</div></div><button onClick={save} disabled={busy || !editor.name.trim()} className="btn-primary min-h-11 w-full"><Check className="h-4 w-4" />{busy ? '保存中…' : '保存商品组'}</button></div>}</div></div></div>
 }
 
 export default function ProductCenterPage({ onBack, user }) {
@@ -182,7 +213,8 @@ export default function ProductCenterPage({ onBack, user }) {
     if (!file) return
     setError('')
     try {
-      update('image', await compressProductImage(file))
+      const image = await compressProductImage(file)
+      setForm((current) => ({ ...current, image, imageDirty: true, hasImage: true }))
     } catch (e) {
       setError(e.message)
     }
@@ -298,7 +330,6 @@ export default function ProductCenterPage({ onBack, user }) {
         salePriceCents: form.salePrice === '' ? '' : yuanToCents(form.salePrice),
         costPriceCents: form.costPrice === '' ? '' : yuanToCents(form.costPrice),
         unit: form.unit,
-        image: form.image,
         barcode: form.barcode,
         isActive: form.isActive,
         transferEnabled: form.transferEnabled,
@@ -306,6 +337,7 @@ export default function ProductCenterPage({ onBack, user }) {
         trackInventory: form.trackInventory,
         sortOrder: Number(form.sortOrder),
         ...(form.productId ? { version: form.version } : {}),
+        ...(!form.productId || form.imageDirty ? { image: form.image } : {}),
       }
       const data = await api(form.productId ? `/v2/products/${form.productId}` : '/v2/products', {
         method: form.productId ? 'PUT' : 'POST',
@@ -412,7 +444,7 @@ export default function ProductCenterPage({ onBack, user }) {
             {rows.map((item) => (
               <article key={item.productId} data-product-id={item.productId} className="flex items-start gap-2.5 px-3 py-3 sm:gap-3 sm:px-4">
                 <input aria-label={`选择${item.name}`} type="checkbox" checked={selectedIds.includes(item.productId)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, item.productId])] : current.filter((id) => id !== item.productId))} className="mt-3 h-4 w-4 shrink-0 accent-budu-500" />
-                {item.image ? <img src={item.image} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-300"><Package className="h-5 w-5" /></div>}
+                {item.hasImage ? <LazyImage src={productThumbnailUrl(item)} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-300"><Package className="h-5 w-5" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="product-title-line">
                     <h3 data-testid="product-title" className="product-mobile-title font-black text-slate-800">{item.name}</h3>
@@ -488,9 +520,9 @@ export default function ProductCenterPage({ onBack, user }) {
             <div className="flex items-center border-b border-slate-100 px-6 py-4"><div><h3 className="text-lg font-bold text-slate-900">{form.productId ? '编辑商品' : '新增商品'}</h3><p className="text-xs text-slate-400">商品不支持删除，下架后保留历史关联</p></div><button type="button" onClick={() => setForm(null)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
             <div className="grid gap-5 p-6 md:grid-cols-[180px_1fr]">
               <div>
-                <div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{form.image ? <img src={form.image} alt="商品预览" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="mx-auto h-8 w-8" /><span className="mt-2 block text-xs">上传商品图片</span></div>}</div>
+                <div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{(form.image || (!form.imageDirty ? productOriginalUrl(form) : '')) ? <img src={form.image || productOriginalUrl(form)} alt="商品预览" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="mx-auto h-8 w-8" /><span className="mt-2 block text-xs">上传商品图片</span></div>}</div>
                 <label className="mt-3 block cursor-pointer rounded-xl border border-slate-200 px-3 py-2.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">选择图片<input type="file" accept="image/*" className="hidden" onChange={(e) => handleImage(e.target.files?.[0])} /></label>
-                {form.image && <button type="button" onClick={() => update('image', '')} className="mt-2 w-full text-xs text-slate-400 hover:text-rose-500">移除图片</button>}
+                {(form.image || (!form.imageDirty && form.hasImage)) && <button type="button" onClick={() => setForm((current) => ({ ...current, image: '', imageDirty: true, hasImage: false }))} className="mt-2 w-full text-xs text-slate-400 hover:text-rose-500">移除图片</button>}
               </div>
               <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                 <label className="text-xs font-semibold text-slate-500">商品名称<input required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} /></label>

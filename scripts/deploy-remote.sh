@@ -25,7 +25,7 @@ run_remote() {
 # ProductGroup is an additive successor to the verified POS category UI release.
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="bc616969f7929f1635effc5f383463c667e47d3c"
+  EXPECTED_OLD_SHA="aaa7dd39ac07e510de883565549a1dd8ec1f7c15"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
   TEST_DB_CONTAINER="budu-product-group-test-${GITHUB_RUN_ID:-$$}"
@@ -64,7 +64,7 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && node --test scripts/test-product-group-migration-rehearsal.mjs scripts/test-mailing-qr-migration-rehearsal.mjs scripts/test-partner-supply-migration-rehearsal.mjs scripts/test-product-category-migration-rehearsal.mjs scripts/test-product-material-migration-rehearsal.mjs scripts/test-store-transfer-migration-rehearsal.mjs scripts/test-unified-product-center-migration-rehearsal.mjs && node scripts/test-product-group-workflow.mjs && node scripts/test-unified-product-center-workflow.mjs && node --test scripts/test-pos-core.mjs scripts/test-payment-foundation.mjs scripts/test-payment-reconciliation.mjs scripts/test-store-transfer-draft.mjs scripts/test-partner-supply-contract.mjs scripts/test-partner-supply-workflow.mjs && npx playwright test tests/product-center.spec.mjs tests/pos-ipad.spec.mjs tests/product-material.spec.mjs tests/partner-supply.spec.mjs tests/transfer.spec.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && node --test scripts/test-product-group-migration-rehearsal.mjs scripts/test-mailing-qr-migration-rehearsal.mjs scripts/test-partner-supply-migration-rehearsal.mjs scripts/test-product-category-migration-rehearsal.mjs scripts/test-product-material-migration-rehearsal.mjs scripts/test-store-transfer-migration-rehearsal.mjs scripts/test-unified-product-center-migration-rehearsal.mjs && node scripts/test-product-group-workflow.mjs && node scripts/test-unified-product-center-workflow.mjs && node --test scripts/test-product-image-performance.mjs scripts/test-pos-core.mjs scripts/test-payment-foundation.mjs scripts/test-payment-reconciliation.mjs scripts/test-store-transfer-draft.mjs scripts/test-partner-supply-contract.mjs scripts/test-partner-supply-workflow.mjs && npx playwright test tests/product-center.spec.mjs tests/pos-ipad.spec.mjs tests/product-material.spec.mjs tests/partner-supply.spec.mjs tests/transfer.spec.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
