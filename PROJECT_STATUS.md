@@ -15,17 +15,17 @@
 ## 最新生产快照（2026-08-29：开发者安全删除）
 
 - 状态：**VERIFIED — LIVE**
-- 生产代码 SHA：`b6bacb1f061fa10992ee097817d824a237db462f`
+- 生产代码 SHA：`35951cfdc8b24f0291b157a25ccf097f6e7c4522`
 - 发布分支：`codex/developer-safe-delete`
-- 成功 GitHub Actions：`33250216419`
-- Public health：`ok=true`、`env=prod`、`gitSha=b6bacb1f061f`、`dbOk=true`
+- 成功 GitHub Actions：`33253298589`
+- Public health：`ok=true`、`env=prod`、`gitSha=35951cfdc8b2`、`dbOk=true`
 - PostgreSQL authority：`budu_bj006`
 - Migration ledger：`56`（新增 additive migration `20260829200000_developer_safe_delete`）
-- 交接 checkpoint：`docs/checkpoints/2026-08-29-developer-safe-delete-production.md`
+- 交接 checkpoint：`docs/checkpoints/2026-08-29-developer-safe-delete-sheet-ui-production.md`
 
 已上线仅开发者可用的业务记录安全删除：门店邮寄、开发票、库存调拨、采购申请、合作商供货均采用软删除，要求独立二级密码、删除原因并写入不可覆盖审计；普通列表、通知、统计和导出排除已删除记录，开发者可在系统设置的“已删除记录”中心审计和恢复，原 ID、子记录与历史事实保持不变。
 
-验证：独立 PostgreSQL 工作流覆盖五类高风险状态、权限、限流、排除、审计和恢复；WebKit gate 93/93，build PASS；生产迁移、writer、历史摘要、candidate、public health 和 375px 开发者 UI smoke 均通过。生产 smoke 未执行删除或恢复。
+移动端 Bottom Sheet 穿模已收尾：安全删除/恢复共用 Overlay 通过 Portal 位于全局导航之上，锁定背景滚动，按 Visual Viewport 适配键盘，内容独立滚动，操作区固定并适配 safe area。验证：发布 Gate 99/99、build PASS；320/340/375/390/430 与 iPad WebKit 通过；生产 375×460 smoke 确认密码框和操作区同时可见、取消/重开/导航恢复且控制台零错误。生产 smoke 未执行删除或恢复。
 
 当前下一步：无自动 Next Action；仅监控生产。任何真实删除/恢复均应由已授权开发者在 UI 中输入二级密码后明确执行。
 
