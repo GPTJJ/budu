@@ -106,6 +106,31 @@ async function requireProductGroup(productGroupId, currentGroupId = '') {
   return group
 }
 
+export const productListSelect = {
+  id: true,
+  name: true,
+  sku: true,
+  posCategory: true,
+  transferCode: true,
+  salePriceCents: true,
+  costPriceCents: true,
+  unit: true,
+  barcode: true,
+  isActive: true,
+  transferEnabled: true,
+  partnerSupplyEnabled: true,
+  productCategoryId: true,
+  productGroupId: true,
+  variantName: true,
+  trackInventory: true,
+  sortOrder: true,
+  version: true,
+  createdAt: true,
+  updatedAt: true,
+  productCategory: { select: { id: true, name: true, isActive: true, sortOrder: true } },
+  productGroup: { select: { id: true, name: true, sortOrder: true, isActive: true, updatedAt: true } },
+}
+
 export function serializeProduct(product) {
   return {
     productId: product.id,
@@ -117,7 +142,7 @@ export function serializeProduct(product) {
     costPriceCents: product.costPriceCents == null ? null : product.costPriceCents.toString(),
     unit: product.unit,
     image: '',
-    hasImage: Boolean(product.image),
+    hasImage: product.hasImage === true || Boolean(product.image),
     barcode: product.barcode || '',
     isActive: product.isActive,
     transferEnabled: product.transferEnabled,
@@ -135,7 +160,7 @@ export function serializeProduct(product) {
       name: product.productGroup.name,
       sortOrder: product.productGroup.sortOrder,
       isActive: product.productGroup.isActive,
-      hasCoverImage: Boolean(product.productGroup.coverImage),
+      hasCoverImage: product.productGroup.hasCoverImage === true || Boolean(product.productGroup.coverImage),
       updatedAt: product.productGroup.updatedAt,
     } : null,
     variantName: product.variantName || '',
@@ -154,7 +179,7 @@ productsRouter.get('/products', wrap(async (req, res) => {
   const productCategoryId = text(req.query.category, 120, '商品分类')
   const purpose = text(req.query.purpose, 20, '业务用途')
   const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
-  const rows = await prisma.inventoryItem.findMany({
+  const [rows, imageRows, groupCoverRows] = await Promise.all([prisma.inventoryItem.findMany({
     where: {
       category: 'product',
       ...(productCategoryId ? { productCategoryId } : {}),
@@ -168,11 +193,23 @@ productsRouter.get('/products', wrap(async (req, res) => {
         { barcode: { contains: q, mode: 'insensitive' } },
       ] } : {}),
     },
-    include: { productCategory: true, productGroup: true },
+    select: productListSelect,
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
-  })
-  res.json({ rows: rows.map(serializeProduct) })
+  }), prisma.inventoryItem.findMany({
+    where: { category: 'product', image: { not: '' } },
+    select: { id: true },
+  }), prisma.productGroup.findMany({
+    where: { coverImage: { not: '' } },
+    select: { id: true },
+  })])
+  const imageIds = new Set(imageRows.map((row) => row.id))
+  const groupCoverIds = new Set(groupCoverRows.map((row) => row.id))
+  res.json({ rows: rows.map((product) => serializeProduct({
+    ...product,
+    hasImage: imageIds.has(product.id),
+    productGroup: product.productGroup ? { ...product.productGroup, hasCoverImage: groupCoverIds.has(product.productGroup.id) } : null,
+  })) })
 }))
 
 async function productImage(req) {
@@ -416,7 +453,7 @@ function serializeProductGroup(group) {
     id: group.id,
     name: group.name,
     coverImage: '',
-    hasCoverImage: Boolean(group.coverImage),
+    hasCoverImage: group.hasCoverImage === true || Boolean(group.coverImage),
     sortOrder: group.sortOrder,
     isActive: group.isActive,
     version: group.version,
@@ -453,15 +490,45 @@ const productGroupInclude = {
   },
 }
 
+const productGroupListSelect = {
+  id: true,
+  name: true,
+  sortOrder: true,
+  isActive: true,
+  version: true,
+  createdAt: true,
+  updatedAt: true,
+  products: {
+    select: productListSelect,
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  },
+}
+
 productsRouter.get('/product-groups', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductViewer(req.user)
-  const rows = await prisma.productGroup.findMany({
-    include: productGroupInclude,
+  const [rows, imageRows, groupCoverRows] = await Promise.all([prisma.productGroup.findMany({
+    select: productGroupListSelect,
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 500,
-  })
-  res.json({ rows: rows.map(serializeProductGroup) })
+  }), prisma.inventoryItem.findMany({
+    where: { category: 'product', image: { not: '' } },
+    select: { id: true },
+  }), prisma.productGroup.findMany({
+    where: { coverImage: { not: '' } },
+    select: { id: true },
+  })])
+  const imageIds = new Set(imageRows.map((row) => row.id))
+  const groupCoverIds = new Set(groupCoverRows.map((row) => row.id))
+  res.json({ rows: rows.map((group) => serializeProductGroup({
+    ...group,
+    hasCoverImage: groupCoverIds.has(group.id),
+    products: group.products.map((product) => ({
+      ...product,
+      hasImage: imageIds.has(product.id),
+      productGroup: product.productGroup ? { ...product.productGroup, hasCoverImage: groupCoverIds.has(product.productGroup.id) } : null,
+    })),
+  })) })
 }))
 
 async function productGroupImage(req) {

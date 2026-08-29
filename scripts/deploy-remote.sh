@@ -25,7 +25,7 @@ run_remote() {
 # ProductGroup is an additive successor to the verified POS category UI release.
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="aaa7dd39ac07e510de883565549a1dd8ec1f7c15"
+  EXPECTED_OLD_SHA="106397666673269f0b801c3767b80271f81b4cc5"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
   TEST_DB_CONTAINER="budu-product-group-test-${GITHUB_RUN_ID:-$$}"

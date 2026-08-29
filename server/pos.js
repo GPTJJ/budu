@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
-import { serializeProduct } from './products.js'
+import { productListSelect, serializeProduct } from './products.js'
 import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, buildRecognizedRevenueWhere, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
@@ -291,20 +291,32 @@ posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {
 posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  const rows = await prisma.inventoryItem.findMany({
+  const [rows, imageRows, groupCoverRows] = await Promise.all([prisma.inventoryItem.findMany({
     where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
-    include: { productCategory: true, productGroup: true },
+    select: productListSelect,
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
-  })
+  }), prisma.inventoryItem.findMany({
+    where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null }, image: { not: '' } },
+    select: { id: true },
+  }), prisma.productGroup.findMany({
+    where: { coverImage: { not: '' } },
+    select: { id: true },
+  })])
+  const imageIds = new Set(imageRows.map((row) => row.id))
+  const groupCoverIds = new Set(groupCoverRows.map((row) => row.id))
   res.json({
     rows: rows.map((product) => ({
-      ...serializeProduct(product),
+      ...serializeProduct({
+        ...product,
+        hasImage: imageIds.has(product.id),
+        productGroup: product.productGroup ? { ...product.productGroup, hasCoverImage: groupCoverIds.has(product.productGroup.id) } : null,
+      }),
       // ProductCategory is canonical. posCategory remains display-only legacy fallback
       // until administrators classify every historical POS product.
       posCategory: product.productCategory?.name || product.posCategory || '其他',
       image: '',
-      hasImage: Boolean(product.image),
+      hasImage: imageIds.has(product.id),
     })),
   })
 }))

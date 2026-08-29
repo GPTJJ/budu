@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import sharp from 'sharp'
 import { createWebpThumbnail, imageVersion, resetProductImageCacheForTests, sendStoredImage } from '../server/product-images.js'
@@ -33,6 +34,18 @@ test('product list serialization never returns the PostgreSQL Base64 original', 
   assert.equal(row.image, '')
   assert.equal(row.hasImage, true)
   assert.doesNotMatch(JSON.stringify(row), /data:image\//)
+})
+
+test('product and POS list queries do not read PostgreSQL image payloads', async () => {
+  const [productsSource, posSource] = await Promise.all([
+    readFile(new URL('../server/products.js', import.meta.url), 'utf8'),
+    readFile(new URL('../server/pos.js', import.meta.url), 'utf8'),
+  ])
+  assert.match(productsSource, /export const productListSelect = \{/)
+  assert.match(productsSource, /select: productListSelect/)
+  assert.match(productsSource, /where: \{ category: 'product', image: \{ not: '' \} \},\s*select: \{ id: true \}/)
+  assert.match(posSource, /import \{ productListSelect, serializeProduct \}/)
+  assert.match(posSource, /select: productListSelect/)
 })
 
 test('thumbnail is a cached WebP constrained to 320px', async () => {
