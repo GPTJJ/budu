@@ -15,6 +15,7 @@
     const scanDelay = Number(params.get('scanDelay') || 20)
     const duplicateScan = params.get('duplicate') === '1'
     const payMode = params.get('paymode') || 'success'
+    const livePos = params.get('posmode') === 'live'
     // R2：双门店（验证 POS 配置按当前门店拉取）与过期配置响应（验证门店切换丢弃旧响应）
     const twoStores = params.get('stores') === '2'
     const configStale = params.get('configStale') === '1'
@@ -97,9 +98,8 @@
           if (storeId === 'xidan') return respond()
           return new Promise((resolve) => setTimeout(() => resolve(respond()), 300))
         }
-        const live = params.get('posmode') === 'live'
-        return json(live
-          ? { mode: 'live', mock: false, channels: ['cash'] }
+        return json(livePos
+          ? { mode: 'live', mock: false, channels: params.get('alipay') === '1' ? ['cash', 'alipay'] : ['cash'] }
           : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
       }
       if (path === '/api/v2/pos/products') return json({ rows: products })
@@ -131,7 +131,7 @@
         if (['wechat', 'alipay'].includes(body.channel) && !body.authCode) return json({ error: '请扫描有效的顾客付款码' }, 400)
         const failed = String(body.authCode || '').startsWith('FAIL')
         const pending = payMode === 'pending' && ['wechat', 'alipay'].includes(body.channel)
-        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
+        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: livePos && body.channel === 'alipay' ? 'alipay' : 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
         order = pending
           ? { ...order, status: 'pending_payment', paymentStatus: 'pending', paymentMethod: null, payments: [payment] }
           : failed

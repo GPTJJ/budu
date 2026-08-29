@@ -5,11 +5,10 @@ import { MockPaymentProvider } from './providers/mock.js'
 import { CashPaymentProvider } from './providers/cash.js'
 import { WechatPayProvider } from './providers/wechat-pay.js'
 import { AlipayProvider } from './providers/alipay.js'
-import { wechatPayConfig, wechatPayStoreAllowed } from './wechat-config.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
-const SENSITIVE_KEYS = /^(authcode|auth_code|code|secret|apikey|api_key|privatekey|private_key|password|cert|key)$/i
+const SENSITIVE_KEYS = /^(authcode|auth_code|code|secret|apikey|api_key|privatekey|private_key|password|cert|key|sign|buyer_id|buyer_logon_id|open_id|user_id)$/i
 
 const paymentNo = () => `PAY${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 14).toUpperCase()}`
 
@@ -88,19 +87,20 @@ export class PaymentService {
     })
   }
 
-  /**
-   * 订单是否存在未解决的微信支付（created 已发起 / pending / 待核对）。
-   * 存在时订单不得取消、不得开启其他支付渠道。
-   */
-  async unresolvedWechatPayment(orderId) {
+  /** 订单是否存在未解决的支付；存在时不得取消或开启其他支付渠道。 */
+  async unresolvedPayment(orderId) {
     return this.prisma.payment.findFirst({
       where: {
         orderId,
-        provider: 'wechat_pay',
         OR: [{ status: 'created' }, { status: 'pending' }, { reconciliationRequired: true }],
       },
       orderBy: { createdAt: 'desc' },
     })
+  }
+
+  // 兼容旧调用与旧测试；通用权威为 unresolvedPayment()。
+  async unresolvedWechatPayment(orderId) {
+    return this.unresolvedPayment(orderId)
   }
 
   validateReplay(payment, input) {
@@ -190,17 +190,10 @@ export class PaymentService {
       throw httpError('当前订单状态不可创建支付', 409)
     }
     if (order.payableAmount <= 0n) throw httpError('订单应付金额必须大于 0')
-    // D：真实微信付款码支付必须服务端按 ORDER storeId 强制校验灰度名单。
-    // 客户端/UI 状态不是安全边界。
-    if (providerName === 'wechat_pay') {
-      const provider = this.provider(providerName)
-      const config = typeof provider.config === 'function' ? provider.config() : wechatPayConfig()
-      if (!config.enabled || !config.configured || paymentMode() !== 'live') {
-        throw httpError('微信支付未开通或配置不完整', 501)
-      }
-      if (!wechatPayStoreAllowed(order.storeId, config)) {
-        throw httpError('当前门店未授权微信支付', 403)
-      }
+    // Provider 自己负责配置完整性和门店灰度；UI 永远不是安全边界。
+    const provider = this.provider(providerName)
+    if (typeof provider.assertAvailable === 'function') {
+      provider.assertAvailable({ storeId: order.storeId, mode: paymentMode(), authCode: input.authCode })
     }
 
     const no = paymentNo()
@@ -249,13 +242,12 @@ export class PaymentService {
 
     await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
-    const provider = this.provider(providerName)
     // C：外部网络请求发出前，以单条原子更新持久化「已尝试发起」崩溃标记：
     //   networkAttemptStartedAt（核对器只恢复 created+已发起 的支付）、
     //   reconciliationRequired=true（进入核对队列）、nextActionAt=null（立即可核对）。
     // 三条字段必须同一条语句写入；进程在标记落库后、响应应用前崩溃时，
     // 核对器重启后即可按 orderquery 恢复，绝不盲查本地未发起的支付。
-    if (providerName === 'wechat_pay') {
+    if (provider.capability?.('ambiguousResultRecovery')) {
       await this.prisma.payment.update({
         where: { id: payment.id },
         data: {
@@ -418,22 +410,24 @@ export class PaymentService {
     return this.refundResult(refundId)
   }
 
-  /** 查询并推进一条微信退款；查询不到且申请已超过 60 秒时，用原退款单号安全重提。 */
+  /** 查询并推进一条 Provider 退款；按 Provider 能力决定是否允许原退款单号安全重提。 */
   async reconcileRefund(refundId, { resubmitIfMissing = true } = {}) {
     const refund = await this.prisma.refund.findUnique({ where: { id: refundId } })
     if (!refund) throw httpError('退款记录不存在', 404)
     if (refund.status !== 'pending') return this.refundResult(refund.id)
     const payment = await this.prisma.payment.findUnique({ where: { id: refund.paymentId } })
     if (!payment) throw httpError('退款对应的支付记录不存在', 404)
-    if (payment.provider !== 'wechat_pay') return this.refundResult(refund.id)
     const provider = this.provider(payment.provider)
+    const supportsRefundQuery = provider.capability?.('supportsRefundQuery') ?? typeof provider.queryRefund === 'function'
+    if (!supportsRefundQuery) return this.refundResult(refund.id)
     let result = await provider.queryRefund(payment, {
       refundNo: refund.refundNo,
       providerRefundNo: refund.providerRefundNo,
       refundAmount: refund.refundAmount,
     })
     const ageMs = Date.now() - new Date(refund.createdAt).getTime()
-    if (result.notFound && resubmitIfMissing && ageMs >= 60_000) {
+    const resubmitAfterMs = Number(provider.capability?.('refundResubmitAfterMs') || 0)
+    if (result.notFound && resubmitIfMissing && resubmitAfterMs > 0 && ageMs >= resubmitAfterMs) {
       result = await provider.refundPayment(payment, {
         refundNo: refund.refundNo,
         refundAmount: refund.refundAmount,
@@ -468,11 +462,14 @@ export class PaymentService {
     if (!payment) throw httpError('订单没有成功支付的支付单，无法退款', 409)
     const pendingRefund = order.refunds.find((refund) => refund.status === 'pending')
     if (pendingRefund) throw httpError('该订单已有退款处理中，请等待退款结果后再操作', 409)
-    if (payment.provider === 'wechat_pay' && order.refunds.length > 0) {
+    const provider = this.provider(payment.provider)
+    const repeatDelayMs = Number(provider.capability?.('refundRepeatDelayMs') || 0)
+    if (repeatDelayMs > 0 && order.refunds.length > 0) {
       const latestAt = Math.max(...order.refunds.map((refund) => new Date(refund.createdAt).getTime()).filter(Number.isFinite))
-      const waitMs = latestAt + 60_000 - Date.now()
+      const waitMs = latestAt + repeatDelayMs - Date.now()
       if (Number.isFinite(waitMs) && waitMs > 0) {
-        throw httpError(`同一微信订单的多次退款需间隔 1 分钟，请约 ${Math.ceil(waitMs / 1000)} 秒后重试`, 409)
+        const message = String(provider.capability?.('refundRepeatMessage') || '同一支付单的多次退款需等待')
+        throw httpError(`${message}，请约 ${Math.ceil(waitMs / 1000)} 秒后重试`, 409)
       }
     }
 
@@ -573,7 +570,7 @@ export class PaymentService {
     }
     let providerResult
     try {
-      providerResult = await this.provider(payment.provider).refundPayment(payment, {
+      providerResult = await provider.refundPayment(payment, {
         refundNo: no,
         refundAmount: amount,
         totalAmount: order.payableAmount,
@@ -627,6 +624,9 @@ export class PaymentService {
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.payment.findUnique({ where: { id: payment.id }, include: { order: true } })
       if (!current) throw httpError('支付记录不存在', 404)
+      if (verified.merchantTradeNo && String(verified.merchantTradeNo) !== current.merchantTradeNo) throw httpError('支付事件商户单号不匹配', 409)
+      if (verified.amount != null && BigInt(verified.amount) !== current.amount) throw httpError('支付事件金额不匹配', 409)
+      if (verified.currency && String(verified.currency) !== current.currency) throw httpError('支付事件币种不匹配', 409)
       await tx.payment.update({
         where: { id: current.id },
         data: {

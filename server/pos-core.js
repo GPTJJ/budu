@@ -132,13 +132,13 @@ export function assertOrderDeletable(order) {
 }
 
 /**
- * 订单取消守卫：存在未解决的微信支付（可能已扣款）时禁止取消，
+ * 订单取消守卫：存在任何未解决的外部支付（可能已扣款）时禁止取消，
  * 必须等查询/撤销到明确终态（failed/closed/revoked）后才能取消。
  */
-export function assertOrderCancelable(order, unresolvedWechatPayment) {
+export function assertOrderCancelable(order, unresolvedPayment) {
   if (order.status === 'cancelled') return
-  if (unresolvedWechatPayment) {
-    throw httpError('订单存在未核对的微信支付，请先完成核对后再操作', 409)
+  if (unresolvedPayment) {
+    throw httpError('订单存在未核对的支付，请先完成核对后再操作', 409)
   }
 }
 

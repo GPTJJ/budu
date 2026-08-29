@@ -5,7 +5,7 @@ import LazyImage from './LazyImage'
 import { allStores } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
-import { isValidWechatAuthCode } from '../utils/cameraScanner'
+import { isValidAlipayAuthCode, isValidWechatAuthCode } from '../utils/cameraScanner'
 import OrderRecordsPage from './OrderRecordsPage'
 import useSwipeBack from '../hooks/useSwipeBack'
 import {
@@ -512,6 +512,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       setScannerChannel('wechat')
       return
     }
+    if (paymentMethod === 'alipay' && !mockMode && !isValidAlipayAuthCode(authCode)) {
+      setError('付款码无效，请重新扫描顾客的支付宝付款码')
+      setScannerChannel('alipay')
+      return
+    }
     completePayment(paymentMethod, authCode)
   }
 
@@ -615,12 +620,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     }
   }
 
-  const hasUnresolvedWechat = () =>
-    Boolean(payment && payment.provider === 'wechat_pay' && ['created', 'pending'].includes(payment.status))
+  const hasUnresolvedPayment = () => Boolean(payment && ['created', 'pending'].includes(payment.status))
 
   const returnToOrdering = () => {
-    if (hasUnresolvedWechat()) {
-      setError('存在未核对的微信支付，请先完成核对（继续核对，或取消并核对）')
+    if (hasUnresolvedPayment()) {
+      setError('存在未核对的支付，请先完成核对（继续核对，或取消并核对）')
       return
     }
     savePendingOrder(user.id, storeId, '')
@@ -697,7 +701,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       return (
         <button
           key={channel}
-          disabled={Boolean(paying) || !enabled}
+          disabled={Boolean(paying) || !enabled || Boolean(pendingPayment)}
           onClick={() => startPayment(channel)}
           className={`rounded-2xl border px-3 py-6 font-bold disabled:opacity-40 ${colorClass}`}
         >
@@ -717,7 +721,9 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">
                 {payment?.provider === 'wechat_pay'
                   ? '正在核对微信扣款结果，请勿再次扫码或改用其他支付方式'
-                  : '正在确认支付，请勿重复付款'}
+                  : payment?.provider === 'alipay'
+                    ? '正在核对支付宝扣款结果，请勿再次扫码或改用其他支付方式'
+                    : '正在确认支付，请勿重复付款'}
               </div>
             )}
             {payment && !['success'].includes(payment.status) && (

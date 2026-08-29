@@ -12,6 +12,18 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 支付宝 Candidate（2026-08-29，未上线）
+
+- 状态：**CANDIDATE READY FOR REVIEW — NOT DEPLOYED**
+- 分支：`codex/alipay-candidate`
+- 生产仍为：`35951cfdc8b24f0291b157a25ccf097f6e7c4522`，支付宝未配置、未开启、未切流量。
+- Migration：**NONE**；复用现有 `Order` / `Payment` / `Refund` / `PaymentLog` 与 PostgreSQL 幂等约束。
+- Candidate 能力：支付宝 OpenAPI V3 商家扫顾客付款码、查询、撤销、RSA2 异步通知、未决支付崩溃恢复、退款申请/查询、POS 门店灰度开关。
+- 安全边界：付款码不持久化；金额/币种/商户/应用/卖家身份不一致不能完成订单；未知网络结果保持 pending 并走原单查询；生产默认 `ALIPAY_ENABLED=0`。
+- 验证：支付宝/微信支付黄金测试 124/124、真实隔离 PostgreSQL 幂等与并发退款、POS iPad WebKit 27/27、build 均 PASS。完整旧测试入口仍有 6 个与本变更无关的既有陈旧断言（固定 migration 数 55、旧部署脚本文案），未在支付任务中扩大范围修复。
+- 交接 checkpoint：`docs/checkpoints/2026-08-29-alipay-gates-0-8-candidate.md`
+- 下一 Gate：Reviewer 审核 Candidate；未经新授权不得开启生产支付宝、不得切 nginx、不得执行真实支付或退款。
+
 ## 最新生产快照（2026-08-29：开发者安全删除）
 
 - 状态：**VERIFIED — LIVE**

@@ -8,6 +8,8 @@ import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
 import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
+import { alipayFrontendStatus } from './payments/alipay-config.js'
+import { ALIPAY_AUTH_CODE_RE } from './payments/providers/alipay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
 import { sendStoredImage } from './product-images.js'
@@ -46,6 +48,10 @@ function paymentAuthCode(body, channel) {
     if (!WECHAT_AUTH_CODE_RE.test(authCode)) {
       throw httpError('请扫描有效的微信付款码（18 位数字）')
     }
+    return authCode
+  }
+  if (channel === 'alipay' && paymentMode() === 'live') {
+    if (!ALIPAY_AUTH_CODE_RE.test(authCode)) throw httpError('请扫描有效的支付宝付款码（纯数字）')
     return authCode
   }
   if (authCode.length < 6 || authCode.length > 512 || /[\u0000-\u001f\u007f]/.test(authCode)) {
@@ -201,15 +207,17 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   let storeKey = ''
   if (requestedStore) {
     if (!canStore(req.user, requestedStore)) {
-      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false } })
+      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false }, alipay: { enabled: false } })
     }
     storeKey = requestedStore
   } else {
     storeKey = String(req.user?.storeKeys?.[0] || '')
   }
   const wechat = wechatPayFrontendStatus(storeKey, mode)
+  const alipay = alipayFrontendStatus(storeKey, mode)
   if (wechat.enabled) channels.push('wechat')
-  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled } })
+  if (alipay.enabled) channels.push('alipay')
+  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled } })
 }))
 
 posRouter.get('/pos/orders', wrap(async (req, res) => {
@@ -476,9 +484,9 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   assertOrderTransition(current.status, 'cancelled')
   const active = await paymentService.activePayment(current.id)
   if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
-  // E：存在未解决的微信支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
-  const unresolvedWechat = await paymentService.unresolvedWechatPayment(current.id)
-  assertOrderCancelable(current, unresolvedWechat)
+  // E：存在未解决的外部支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
+  const unresolvedPayment = await paymentService.unresolvedPayment(current.id)
+  assertOrderCancelable(current, unresolvedPayment)
   if (active) await paymentService.closePayment(active.id)
   current = await prisma.order.findUnique({ where: { id: current.id } })
   const changed = await prisma.order.updateMany({

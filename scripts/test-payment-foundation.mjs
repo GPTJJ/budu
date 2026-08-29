@@ -268,6 +268,33 @@ test('退款幂等：相同 requestKey 只创建一条退款；超量退款被�
   )
 })
 
+test('并发不同 requestKey 受数据库 pending guard 保护，且累计退款不可超额', async () => {
+  const db = refundDb()
+  let releaseProvider
+  class DelayedCashProvider extends CashPaymentProvider {
+    async refundPayment(payment, input) {
+      return new Promise((resolve) => { releaseProvider = () => resolve({ status: 'completed', providerRefundNo: `CASH-${input.refundNo}` }) })
+    }
+  }
+  const service = new PaymentService(db, new Map([['cash', new DelayedCashProvider()]]))
+  const first = service.createRefund({
+    orderId: 'refund-order', requestKey: 'refund-concurrent-a', operator: 'dev',
+    items: [{ orderItemId: 'oi-1', quantity: 1 }],
+  })
+  while (db.refunds.length === 0) await new Promise((resolve) => setImmediate(resolve))
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'refund-order', requestKey: 'refund-concurrent-b', operator: 'dev', items: [{ orderItemId: 'oi-1', quantity: 1 }] }),
+    /退款处理中/,
+  )
+  assert.equal(db.refunds.length, 1)
+  releaseProvider()
+  await first
+  await assert.rejects(
+    () => service.createRefund({ orderId: 'refund-order', requestKey: 'refund-over-guard', operator: 'dev', items: [{ orderItemId: 'oi-1', quantity: 2 }] }),
+    /可退数量不足/,
+  )
+})
+
 test('折扣订单分次退款按行实付金额分摊，累计不多退也不少退', async () => {
   const db = refundDb()
   db.orders[0].subtotal = 303n
@@ -343,6 +370,7 @@ test('同一真实微信订单的多次退款强制间隔一分钟', async () =>
   const db = refundDb()
   db.payments[0].provider = 'wechat_pay'
   const provider = {
+    capability: (name) => name === 'refundRepeatDelayMs' ? 60_000 : name === 'refundRepeatMessage' ? '同一微信订单的多次退款需间隔 1 分钟' : false,
     refundPayment: async () => ({ status: 'completed', providerRefundNo: `WXRF-${db.refunds.length + 1}` }),
   }
   const service = new PaymentService(db, new Map([['wechat_pay', provider]]))
@@ -381,7 +409,7 @@ test('微信退款核对器只扫描 pending 微信退款，并限制轮询间�
   }
   const reconciler = new RefundReconciler({ service, intervalMs: 5000 })
   await reconciler.tick()
-  assert.deepEqual(whereSeen[0], { status: 'pending', payment: { provider: 'wechat_pay' } })
+  assert.deepEqual(whereSeen[0], { status: 'pending', payment: { provider: { in: ['wechat_pay'] } } })
   assert.deepEqual(queried, ['refund-pending-1'])
   assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '1000' }).intervalMs, 30000)
   assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '45000' }).intervalMs, 45000)
