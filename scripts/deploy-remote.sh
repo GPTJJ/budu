@@ -24,7 +24,7 @@ run_remote() {
 
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="d429eb5e1147617de5cfb6d621733759a352e479"
+  EXPECTED_OLD_SHA="23e65ed8e2cf30f40a98b2c28c30eec985070974"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
   TEST_DB_CONTAINER="budu-product-group-test-${GITHUB_RUN_ID:-$$}"

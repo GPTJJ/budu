@@ -182,13 +182,11 @@ export function DeveloperSafeDeleteButton({ user, type, record, onDeleted, class
                 className="input mt-1 w-full"
                 value={secondPassword}
                 onChange={(e) => setSecondPassword(e.target.value)}
-                onFocus={(event) =>
+                onFocus={({ currentTarget }) =>
                   window.setTimeout(
                     () =>
-                      event.currentTarget.scrollIntoView({
-                        block: 'center',
-                        behavior: 'smooth',
-                      }),
+                      currentTarget.isConnected &&
+                      currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' }),
                     120,
                   )
                 }
@@ -339,13 +337,11 @@ export function DeletedRecordsCenter({ user }) {
                 className="input mt-1 w-full"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                onFocus={(event) =>
+                onFocus={({ currentTarget }) =>
                   window.setTimeout(
                     () =>
-                      event.currentTarget.scrollIntoView({
-                        block: 'center',
-                        behavior: 'smooth',
-                      }),
+                      currentTarget.isConnected &&
+                      currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' }),
                     120,
                   )
                 }

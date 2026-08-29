@@ -91,6 +91,8 @@ test('开发者安全删除要求原因和二级密码，业务提交载荷保�
 
 for (const width of [320, 340, 375, 390, 430]) {
   test(`${width}px 安全删除 Sheet 覆盖导航、锁定背景并在键盘视口中保持操作可达`, async ({ page }) => {
+    const pageErrors = []
+    page.on('pageerror', (error) => pageErrors.push(error.message))
     await page.setViewportSize({ width, height: 820 })
     await page.goto('/tests/invoice-harness.html?records=1')
     await page.getByRole('button', { name: '安全删除', exact: true }).evaluate((element) => element.click())
@@ -155,6 +157,7 @@ for (const width of [320, 340, 375, 390, 430]) {
     await nav.getByRole('button', { name: '底部导航测试' }).click()
     expect(await page.evaluate(() => window.__invoiceTest.navClicks)).toBe(1)
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    expect(pageErrors).toEqual([])
   })
 }
 
