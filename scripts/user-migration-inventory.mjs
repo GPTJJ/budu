@@ -130,7 +130,7 @@ const USERNAME_MAX_LEN = 20
 const ALL_MODULE_KEYS = new Set([
   'overview', 'analysis', 'staff', 'staff-payroll',
   'store-entry', 'store-schedule', 'store-mailing', 'store-pos', 'product-center',
-  'inventory-transfer', 'inventory-purchase',
+  'inventory-transfer', 'inventory-purchase', 'partner-supply', 'product-material-management',
   'finance', 'finance-invoice',
   'approval', 'asset-center', 'settings',
 ])
@@ -144,7 +144,7 @@ const MODULE_ASSET_CENTER = 'asset-center'
 const MANAGER_DEFAULTS = [
   'overview', 'analysis', 'staff', 'staff-payroll',
   'store-entry', 'store-schedule', 'store-mailing', 'store-pos',
-  'product-center', 'inventory-transfer', 'inventory-purchase',
+  'product-center', 'inventory-transfer', 'inventory-purchase', 'partner-supply', 'product-material-management',
   'finance-invoice', 'approval', 'settings',
 ]
 const STAFF_DEFAULTS = MANAGER_DEFAULTS.filter((k) => k !== 'product-center')
@@ -159,7 +159,7 @@ function defaultModuleKeys(role, legacyAssetCenter) {
 }
 /** 复现 normalizeModules + hasModuleAccess 的账号级有效模块集（shared/accountPermissions.js L87-109）
  * 真实语义：source ? source[key] === true : defaults.has(key)
- * - 存在合法 permissions.modules source → 只按存储值 source[key]===true，绝不恢复角色默认模块（含 assetCenter fallback）
+ * - 存在合法 permissions.modules source → 保留存储值；对上线后新增且旧记录尚无键的模块按角色默认补齐
  * - 无 source → 才使用 defaultModuleKeys(role, legacyAssetCenter) 默认集
  * - developer / cashier 固定（normalizeModules 对二者不看 source）
  */
@@ -173,8 +173,9 @@ function runtimeEffectiveModules(u) {
   const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
   const source = p && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules) ? p.modules : null
   if (source) {
-    // 严格 source 语义：只保留 source[key] === true；被 false/未 true 的默认模块不得恢复
-    const modules = [...ALL_MODULE_KEYS].filter((key) => source[key] === true)
+    const legacyDefaultKeys = new Set(['partner-supply', 'product-material-management'])
+    const defaults = new Set(defaultModuleKeys(role, u.assetCenter === true))
+    const modules = [...ALL_MODULE_KEYS].filter((key) => source[key] === true || (legacyDefaultKeys.has(key) && !Object.prototype.hasOwnProperty.call(source, key) && defaults.has(key)))
     return { modules, basis: 'stored' }
   }
   const defaults = defaultModuleKeys(role, u.assetCenter === true)

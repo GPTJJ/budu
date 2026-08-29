@@ -9,6 +9,7 @@ import { getUserById, getUserByUsername, listUsers, createUser, updateUser, dele
 import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
+import { partnerSupplyRouter } from './partner-supply.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
@@ -630,6 +631,7 @@ export function createApp() {
       (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/transfer-master-items(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/(?:partners|partner-supply|partner-receipts)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_SUPPLY]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:stock|items|waste-records)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:expenses|profit|export\/profit)(?:\/|$)/.test(pathname) && [MODULE_KEYS.FINANCE]) ||
@@ -644,7 +646,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

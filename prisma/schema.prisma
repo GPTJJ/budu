@@ -30,6 +30,8 @@ model Store {
   memberConsumptions           MemberConsumption[]
   orders                       Order[]
   customerServiceRequests      CustomerServiceRequest[]
+  partnerDefaults              Partner[]            @relation("PartnerDefaultStore")
+  partnerSupplyOrders          PartnerSupplyOrder[] @relation("PartnerSupplyStore")
 }
 
 /// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
@@ -178,6 +180,7 @@ model InventoryItem {
   purchaseItems  PurchaseItem[]
   waste          WasteRecord[]
   orderItems     OrderItem[]
+  partnerSupplyItems PartnerSupplyItem[]
   productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
 
   @@index([productCategoryId])
@@ -194,6 +197,102 @@ model ProductCategory {
   products  InventoryItem[]
 
   @@index([isActive, sortOrder])
+}
+
+model Partner {
+  id                 String               @id
+  name               String               @unique
+  contactName        String               @default("")
+  contactPhone       String               @default("")
+  defaultStoreKey    String
+  defaultDiscountBps Int                  @default(6500)
+  isActive           Boolean              @default(true)
+  note               String               @default("")
+  version            Int                  @default(1)
+  createdBy          String               @default("")
+  updatedBy          String               @default("")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @default(now()) @updatedAt
+  defaultStore       Store                @relation("PartnerDefaultStore", fields: [defaultStoreKey], references: [key], onDelete: Restrict)
+  supplyOrders       PartnerSupplyOrder[]
+
+  @@index([isActive, name])
+}
+
+model PartnerSupplyOrder {
+  id                         String              @id
+  orderNo                    String              @unique
+  partnerId                  String
+  partnerNameSnapshot        String
+  fromStoreKey               String
+  fromStoreNameSnapshot      String
+  businessDate               DateTime            @db.Date
+  status                     String              @default("pending")
+  defaultDiscountBpsSnapshot Int
+  effectiveDiscountBps       Int
+  totalAmountCents           BigInt
+  note                       String              @default("")
+  createdById                String              @default("")
+  createdBy                  String              @default("")
+  priceOverrideById          String              @default("")
+  priceOverrideBy            String              @default("")
+  priceOverrideAt            DateTime?
+  shippedById                String              @default("")
+  shippedBy                  String              @default("")
+  shippedAt                  DateTime?
+  withdrawnById              String              @default("")
+  withdrawnBy                String              @default("")
+  withdrawnAt                DateTime?
+  version                    Int                 @default(1)
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @default(now()) @updatedAt
+  partner                    Partner             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  fromStore                  Store               @relation("PartnerSupplyStore", fields: [fromStoreKey], references: [key], onDelete: Restrict)
+  items                      PartnerSupplyItem[]
+  receipts                   PartnerReceipt[]
+
+  @@index([partnerId, businessDate])
+  @@index([fromStoreKey, businessDate])
+  @@index([status, businessDate])
+}
+
+model PartnerSupplyItem {
+  id                          String             @id
+  orderId                     String
+  productId                   String
+  productCodeSnapshot         String
+  productNameSnapshot         String
+  productCategoryNameSnapshot String             @default("")
+  retailPriceCentsSnapshot    BigInt
+  discountBpsSnapshot         Int
+  partnerUnitPriceCents       BigInt
+  quantity                    Int
+  subtotalCents               BigInt
+  order                       PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product                     InventoryItem      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, productId])
+  @@index([productId])
+}
+
+model PartnerReceipt {
+  id              String             @id
+  orderId         String
+  amountCents     BigInt
+  receivedDate    DateTime           @db.Date
+  note            String             @default("")
+  status          String             @default("active")
+  createdById     String             @default("")
+  createdBy       String             @default("")
+  createdAt       DateTime           @default(now())
+  voidedById      String             @default("")
+  voidedBy        String             @default("")
+  voidedAt        DateTime?
+  voidReason      String             @default("")
+  order           PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@index([receivedDate])
 }
 
 model Order {

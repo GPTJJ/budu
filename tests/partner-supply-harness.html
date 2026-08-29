@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>BUDU Partner Supply Test</title></head><body class="m-0"><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import PartnerSupplyPage from '/src/components/PartnerSupplyPage.jsx'
+import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
+import { seedCachedDataForTest } from '/src/utils/userData.js'
+import '/src/index.css'
+
+seedCachedDataForTest({ stores: [{ key: 'tongying', name: '北京通盈中心店' }, { key: 'guanshe', name: '北京官舍店' }, { key: 'chaowai', name: '北京朝外店' }, { key: 'xidan', name: '北京西单店' }] })
+const categories = [{ id: 'cat-candy', name: '糖果', sortOrder: 1, isActive: true }, { id: 'cat-gift', name: '礼盒', sortOrder: 2, isActive: true }]
+const partners = [{ id: 'partner-qhd', name: '秦皇岛合作商', contactName: '王女士', contactPhone: '13800000000', defaultStoreKey: 'guanshe', defaultStoreName: '北京官舍店', defaultDiscountBps: 6500, isActive: true, note: '', version: 1, orderCount: 2 }]
+const products = [
+  { id: 'p1', code: 'NO.1', name: 'NO.1树莓', salePriceCents: '500', categoryId: 'cat-candy', category: categories[0], enabled: true },
+  { id: 'p2', code: 'NO.2', name: 'NO.2柠檬', salePriceCents: '600', categoryId: '', category: null, enabled: true },
+  { id: 'p3', code: 'GIFT-1', name: '礼盒套装', salePriceCents: '', categoryId: 'cat-gift', category: categories[1], enabled: true },
+]
+const baseItem = { id: 'si1', productId: 'p1', productCode: 'NO.1', productName: 'NO.1树莓', productCategory: '糖果', retailPriceCents: '500', discountBps: 6500, partnerUnitPriceCents: '325', quantity: 100, subtotalCents: '32500' }
+const orders = [
+  { id: 'order-pending', orderNo: 'PS-20260829-AAA111', partnerId: 'partner-qhd', partnerName: '秦皇岛合作商', fromStoreKey: 'guanshe', fromStoreName: '北京官舍店', businessDate: '2026-08-29', status: 'pending', defaultDiscountBps: 6500, effectiveDiscountBps: 6500, totalAmountCents: '32500', receivedAmountCents: '20000', outstandingAmountCents: '12500', paymentStatus: 'partial', note: '微信群订单', createdById: 'dev-1', createdBy: 'developer-test', createdAt: '2026-08-29T06:00:00.000Z', version: 1, items: [baseItem], receipts: [{ id: 'r1', amountCents: '20000', receivedDate: '2026-08-29', note: '微信转账', status: 'active', createdBy: 'finance-test', createdAt: '2026-08-29T07:00:00.000Z' }] },
+  { id: 'order-shipped', orderNo: 'PS-20260828-BBB222', partnerId: 'partner-qhd', partnerName: '秦皇岛合作商', fromStoreKey: 'guanshe', fromStoreName: '北京官舍店', businessDate: '2026-08-28', status: 'shipped', defaultDiscountBps: 6500, effectiveDiscountBps: 6500, totalAmountCents: '32500', receivedAmountCents: '32500', outstandingAmountCents: '0', paymentStatus: 'settled', note: '', createdById: 'dev-1', createdBy: 'developer-test', createdAt: '2026-08-28T06:00:00.000Z', shippedById: 'dev-1', shippedBy: 'developer-test', shippedAt: '2026-08-28T09:00:00.000Z', version: 2, items: [baseItem], receipts: [{ id: 'r2', amountCents: '32500', receivedDate: '2026-08-28', note: '全款', status: 'active', createdBy: 'finance-test', createdAt: '2026-08-28T07:00:00.000Z' }] },
+]
+const requests = []
+let imageExports = 0
+const nativeCanvas = HTMLCanvasElement.prototype.toDataURL
+HTMLCanvasElement.prototype.toDataURL = function (...args) { imageExports += 1; return nativeCanvas.apply(this, args) }
+window.__partnerSupplyTest = { partners, products, orders, requests, get imageExports() { return imageExports } }
+const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+window.fetch = async (url, options = {}) => {
+  const requestUrl = new URL(url, location.origin)
+  const path = requestUrl.pathname
+  const method = options.method || 'GET'
+  if (path === '/api/v2/partners' && method === 'GET') return json({ rows: partners })
+  if (path === '/api/v2/partners' && method === 'POST') { const body = JSON.parse(options.body); const row = { id: `partner-${partners.length}`, ...body, defaultStoreName: '北京官舍店', version: 1, orderCount: 0 }; partners.push(row); requests.push({ type: 'partner-create', body }); return json({ ok: true, partner: row }, 201) }
+  const partnerEdit = path.match(/^\/api\/v2\/partners\/([^/]+)$/)
+  if (partnerEdit && method === 'PUT') { const body = JSON.parse(options.body); const index = partners.findIndex((row) => row.id === partnerEdit[1]); partners[index] = { ...partners[index], ...body, version: partners[index].version + 1 }; requests.push({ type: 'partner-edit', body }); return json({ ok: true, partner: partners[index] }) }
+  if (path === '/api/v2/partner-supply-products') return json({ rows: products })
+  if (path === '/api/v2/product-categories') return json({ rows: categories })
+  if (path === '/api/v2/partner-supply-orders' && method === 'GET') return json({ rows: orders })
+  if (path === '/api/v2/partner-supply-orders' && method === 'POST') { const body = JSON.parse(options.body); requests.push({ type: 'order-create', body }); const row = { ...orders[0], id: `order-${orders.length}`, orderNo: 'PS-20260829-NEW123', status: 'pending', receivedAmountCents: '0', outstandingAmountCents: '32500', paymentStatus: 'unpaid', receipts: [], version: 1 }; orders.unshift(row); return json({ ok: true, order: row }, 201) }
+  const ship = path.match(/^\/api\/v2\/partner-supply-orders\/([^/]+)\/ship$/)
+  if (ship && method === 'POST') { const row = orders.find((item) => item.id === ship[1]); row.status = 'shipped'; row.shippedBy = 'developer-test'; row.shippedAt = new Date().toISOString(); row.version += 1; return json({ ok: true, order: row }) }
+  const withdraw = path.match(/^\/api\/v2\/partner-supply-orders\/([^/]+)\/withdraw$/)
+  if (withdraw && method === 'POST') { const row = orders.find((item) => item.id === withdraw[1]); row.status = 'withdrawn'; row.withdrawnBy = 'developer-test'; row.version += 1; return json({ ok: true, order: row }) }
+  const receipt = path.match(/^\/api\/v2\/partner-supply-orders\/([^/]+)\/receipts$/)
+  if (receipt && method === 'POST') { const body = JSON.parse(options.body); requests.push({ type: 'receipt', body }); const row = orders.find((item) => item.id === receipt[1]); row.receipts.push({ id: `r-${row.receipts.length}`, ...body, status: 'active', createdBy: 'developer-test', createdAt: new Date().toISOString() }); row.receivedAmountCents = String(Number(row.receivedAmountCents) + Number(body.amountCents)); row.outstandingAmountCents = String(Number(row.totalAmountCents) - Number(row.receivedAmountCents)); row.paymentStatus = row.outstandingAmountCents === '0' ? 'settled' : 'partial'; return json({ ok: true, order: row }, 201) }
+  if (path === '/api/v2/partner-supply-report') return json({ summary: [{ partnerId: 'partner-qhd', partnerName: '秦皇岛合作商', orderCount: 2, supplyAmountCents: '65000', receivedAmountCents: '52500', outstandingAmountCents: '12500' }], orders, receipts: orders.flatMap((order) => order.receipts.filter((item) => item.status === 'active').map((item) => ({ ...item, orderId: order.id, orderNo: order.orderNo, partnerName: order.partnerName }))) })
+  return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+}
+const user = { id: 'dev-1', username: 'developer-test', role: 'developer', status: 'active', storeKeys: ['guanshe'], permissions: {} }
+createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null, React.createElement(PartnerSupplyPage, { currentUser: user, onBack: () => {} }), React.createElement(MobileBottomNav, { view: 'partner-supply', user, onNavigate: () => {}, onMore: () => {} })))
+</script></body></html>

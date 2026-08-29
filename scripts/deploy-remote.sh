@@ -22,15 +22,15 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Product category and transfer summary are an additive successor to the verified
-# product/material release. Production remains on the authority-aware green deployment path below.
+# Partner supply is an additive successor to the verified product-category release.
+# Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="4a957cbcba88b500f5c02f5d61df468767041ff3"
+  EXPECTED_OLD_SHA="92a736a84f6e4ff9a745467633cb5b4b863edf4f"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-product-category-summary-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-partner-supply-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-product-category-summary.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-partner-supply.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -64,13 +64,13 @@ if [ "$ENV" = "prod" ]; then
     -v "$PWD:/work" \
     -w /work \
     mcr.microsoft.com/playwright:v1.55.0-noble \
-    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 15m npm run test:critical && npx playwright test tests/product-material.spec.mjs tests/transfer.spec.mjs tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
+    bash -lc 'npm ci && npx prisma migrate deploy && timeout --signal=TERM --kill-after=30s 15m npm run test:critical && npx playwright test tests/partner-supply.spec.mjs tests/product-material.spec.mjs tests/transfer.spec.mjs tests/invoice.spec.mjs tests/mailing.spec.mjs tests/customer-request.spec.mjs && node --test scripts/test-notification-center.mjs && npm run build'
   git diff --check
   docker rm -f "$TEST_DB_CONTAINER" >/dev/null
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-product-category-summary-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-partner-supply-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"

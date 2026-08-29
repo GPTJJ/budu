@@ -3,6 +3,7 @@ export const NOTIFICATION_TARGET_VIEWS = {
   approval: 'approval',
   'inventory-transfer': 'inventory-transfer',
   'inventory-purchase': 'inventory-purchase',
+  'partner-supply': 'partner-supply',
   'finance-invoice': 'finance-invoice',
   'store-mailing': 'store-mailing',
   'asset-center': 'asset-center',
@@ -36,7 +37,7 @@ export function consumeNotificationDeepLink(canOpen = () => true) {
   const target = String(params.get('nav') || '')
   const refType = String(params.get('refType') || '')
   const refId = String(params.get('refId') || '')
-  if (!['store-mailing', 'finance-invoice', 'inventory-transfer'].includes(target) || !/^[A-Za-z0-9._:-]{1,160}$/.test(refId)) return ''
+  if (!['store-mailing', 'finance-invoice', 'inventory-transfer', 'partner-supply'].includes(target) || !/^[A-Za-z0-9._:-]{1,160}$/.test(refId)) return ''
   params.delete('nav')
   params.delete('refType')
   params.delete('refId')

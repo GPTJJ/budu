@@ -61,7 +61,7 @@ export function notificationDeepLink(target, refType = '', refId = '') {
   if (!baseUrl) return ''
   const nav = String(target || '').trim()
   const recordId = String(refId || '').trim()
-  if (!['store-mailing', 'finance-invoice', 'inventory-transfer'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
+  if (!['store-mailing', 'finance-invoice', 'inventory-transfer', 'partner-supply'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
   const url = new URL('/', baseUrl)
   url.searchParams.set('nav', nav)
   url.searchParams.set('refType', String(refType || '').slice(0, 40))
@@ -102,6 +102,8 @@ const BUILTIN_TEMPLATES = [
   { key: 'payroll_deleted', name: '工资条已删除', description: '工资条记录被管理员删除通知', titleTpl: '工资条已删除：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条记录已删除，如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'normal' },
   { key: 'transfer_new', name: '新门店调拨', description: '调出门店有新的待备货调拨', titleTpl: '新调拨待备货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'high' },
   { key: 'transfer_shipped', name: '调拨已发货', description: '门店调拨已发货通知', titleTpl: '调拨已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
+  { key: 'partner_supply_new', name: '新合作商供货', description: '发货门店有新的合作商供货单待备货', titleTpl: '{partner} 有新的供货单待备货', contentTpl: '发货门店 {store} · 产品 {count} 种 · 创建人 {submitter}', target: 'partner-supply', defaultPriority: 'high' },
+  { key: 'partner_supply_shipped', name: '合作商供货已发货', description: '合作商供货单发货结果通知创建人', titleTpl: '{partner} 供货单已发货', contentTpl: '发货门店 {store} · 操作人 {operator}', target: 'partner-supply', defaultPriority: 'normal' },
   { key: 'purchase_new', name: '新采购申请', description: '有新的采购申请', titleTpl: '新采购申请：{store}', contentTpl: '货品 {count} 种{supplier} · 提交人 {submitter}', target: 'inventory-purchase', defaultPriority: 'normal' },
   { key: 'invoice_new', name: '新发票申请', description: '有新的发票申请', titleTpl: '新发票申请：{store}', contentTpl: '抬头 {company} · 金额 ¥{amount} · 提交人 {submitter}', target: 'finance-invoice', defaultPriority: 'normal' },
   { key: 'mailing_new', name: '新门店邮寄', description: '有新的邮寄发件单', titleTpl: '新门店邮寄：{recipient}', contentTpl: '方式 {method} · 收件人 {recipient} · 提交人 {submitter}', target: 'store-mailing', defaultPriority: 'normal' },
