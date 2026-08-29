@@ -40,9 +40,9 @@ test('Gate 25 H: 明细工时按 employeeId 独立（emp-A 8h / emp-B 6h）', as
   await page.goto('/tests/gate25-export-harness.html?hours=diff')
   await page.getByRole('button', { name: '预览' }).click()
   await expect(page.getByText('稳定计算', { exact: true }).first()).toBeVisible()
-  // 定位「工时(h)」列索引（明细默认 tab）
+  // 定位权威「计薪工时(h)」列索引（明细默认 tab）
   const headers = await page.locator('thead th').allInnerTexts()
-  const hIdx = headers.indexOf('工时(h)')
+  const hIdx = headers.indexOf('计薪工时(h)')
   expect(hIdx).toBeGreaterThan(-1)
   const rows = page.locator('tbody tr')
   await expect(rows).toHaveCount(2)

@@ -33,16 +33,16 @@ test('Gate 27 A/B: 同店同名两行独立发放（金额/收件人/快照各�
   expect(pb.snapshot.summary.total).toBe(460)
   expect(pa.snapshot.summary.adjustment).toBe(500) // 仅调整日 +500（考勤日无调整）
   expect(pb.snapshot.summary.adjustment).toBe(-50)
-  // 快照逐日明细：31 天；考勤日工时按各自 DailyStoreStaff.actualHours；仅调整日真实表示（工时 0）
+  // 快照逐日明细：31 天；统一读取权威 payableHours；仅调整日真实表示（计薪工时 0）
   expect(pa.snapshot.days.length).toBe(31)
   const dayA01 = pa.snapshot.days.find((d) => d.day === '08-01')
   const dayB01 = pb.snapshot.days.find((d) => d.day === '08-01')
   const dayA10 = pa.snapshot.days.find((d) => d.day === '08-10')
   const dayB10 = pb.snapshot.days.find((d) => d.day === '08-10')
-  expect(dayA01.hours).toBe(8)
+  expect(dayA01.payableHours).toBe(8)
   expect(dayA01.hasData).toBe(true)
-  expect(dayB01.hours).toBe(6)
-  expect(dayA10.hours).toBe(0)
+  expect(dayB01.payableHours).toBe(6)
+  expect(dayA10.payableHours).toBe(0)
   expect(dayA10.adjustment).toBe(500)
   expect(dayA10.pay).toBe(500)
   expect(dayB10.adjustment).toBe(-50)
@@ -113,12 +113,12 @@ test('Gate 27 H: 调整仅日员工（0 天 / 0 时 / 500）可见可发', async
   expect(posted.rows[0].employeeId).toBe('emp-A')
   expect(posted.rows[0].totalCents).toBe(50000)
   expect(posted.rows[0].snapshot.summary.workedDays).toBe(0)
-  expect(posted.rows[0].snapshot.summary.hours).toBe(0)
+  expect(posted.rows[0].snapshot.summary.payableHours).toBe(0)
   expect(posted.rows[0].snapshot.summary.total).toBe(500)
-  // 快照逐日：仅调整日真实表示（工时 0、调整 500），其余日 hasData=false
+  // 快照逐日：仅调整日真实表示（计薪工时 0、调整 500），其余日 hasData=false
   const day10 = posted.rows[0].snapshot.days.find((d) => d.day === '08-10')
   expect(day10.hasData).toBe(true)
-  expect(day10.hours).toBe(0)
+  expect(day10.payableHours).toBe(0)
   expect(day10.adjustment).toBe(500)
   expect(day10.pay).toBe(500)
   expect(posted.rows[0].snapshot.days.find((d) => d.day === '08-02').hasData).toBe(false)

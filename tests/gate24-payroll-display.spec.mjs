@@ -33,8 +33,8 @@ test('Gate 24 D: LEGACY 重名模式显示身份模糊且不给精确金额', as
   const cards = page.locator('.card').filter({ hasText: '张伟' })
   await expect(cards).toHaveCount(2)
   await expect(page.getByText('身份模糊', { exact: true })).toHaveCount(2)
-  // 最终工资应为「—」（无法归属，绝不以 ¥0.00 冒充零工资）
-  await expect(cards.first().getByText('—', { exact: true }).first()).toBeVisible()
+  // 无法归属时明确显示无工资数据，绝不以 ¥0.00 冒充零工资。
+  await expect(cards.first().getByText('暂无工资数据', { exact: true })).toBeVisible()
   await expect(cards.first().getByText('¥0.00', { exact: true })).toHaveCount(0)
 })
 

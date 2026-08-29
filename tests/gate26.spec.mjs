@@ -31,7 +31,7 @@ test('Gate 26 K: 导出明细 = 考勤 ∪ 调整（调整独占行 工时0/原�
   const idx = {
     date: headers.indexOf('日期'),
     no: headers.indexOf('员工编号'),
-    hours: headers.indexOf('工时(h)'),
+    hours: headers.indexOf('计薪工时(h)'),
     auto: headers.indexOf('自动工资(元)'),
     adj: headers.indexOf('薪资调整(元)'),
     final: headers.indexOf('最终工资(元)'),
