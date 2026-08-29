@@ -22,10 +22,9 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# ProductGroup is an additive successor to the verified POS category UI release.
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="8d2d20688de4ca3a358c83e602b2559b46512a4b"
+  EXPECTED_OLD_SHA="b6bacb1f061fa10992ee097817d824a237db462f"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
   TEST_DB_CONTAINER="budu-product-group-test-${GITHUB_RUN_ID:-$$}"

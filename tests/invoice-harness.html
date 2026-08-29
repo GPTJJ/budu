@@ -1,66 +1,141 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Invoice Test</title></head>
-  <body class="m-0"><div id="root"></div><script type="module">
-    import React from 'react'
-    import { createRoot } from 'react-dom/client'
-    import InvoicePage from '/src/components/InvoicePage.jsx'
-    import '/src/index.css'
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BUDU Invoice Test</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <nav data-testid="mobile-bottom-nav" aria-label="测试全局底部导航" style="position: fixed; inset-inline: 0; bottom: 0; z-index: 190; height: 72px; background: white">
+      <button type="button" style="width: 100%; height: 100%" onclick="window.__invoiceNavClicks = (window.__invoiceNavClicks || 0) + 1">底部导航测试</button>
+    </nav>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import InvoicePage from '/src/components/InvoicePage.jsx'
+      import '/src/index.css'
 
-    const rows = new URLSearchParams(location.search).has('records') ? [{
-      id: 'invoice-focus', storeKey: 'xidan', titleType: 'company', companyName: '测试企业有限公司', taxNo: '91110108MA01TEST2X', amountCents: '12345', category: '商品', email: 'invoice@example.test', note: '', status: 'pending', createdBy: 'finance-test', createdAt: '2026-08-28T06:00:00.000Z',
-    }] : []
-    const companies = [
-      { id: 'c1', name: '北京某某科技有限公司', taxNo: '91110108MA01ABCD2X' },
-    ]
-    let customerRequestCount = 0
-    let lastCustomerRequest = null
-    let lastSafeDelete = null
-    window.__invoiceTest = {
-      get customerRequestCount() { return customerRequestCount },
-      get lastCustomerRequest() { return lastCustomerRequest },
-      get lastSafeDelete() { return lastSafeDelete },
-    }
+      const rows = new URLSearchParams(location.search).has('records')
+        ? [
+            {
+              id: 'invoice-focus',
+              storeKey: 'xidan',
+              titleType: 'company',
+              companyName: '测试企业有限公司',
+              taxNo: '91110108MA01TEST2X',
+              amountCents: '12345',
+              category: '商品',
+              email: 'invoice@example.test',
+              note: '',
+              status: 'pending',
+              createdBy: 'finance-test',
+              createdAt: '2026-08-28T06:00:00.000Z',
+            },
+          ]
+        : []
+      const companies = [{ id: 'c1', name: '北京某某科技有限公司', taxNo: '91110108MA01ABCD2X' }]
+      let customerRequestCount = 0
+      let lastCustomerRequest = null
+      let lastSafeDelete = null
+      window.__invoiceTest = {
+        get customerRequestCount() {
+          return customerRequestCount
+        },
+        get lastCustomerRequest() {
+          return lastCustomerRequest
+        },
+        get lastSafeDelete() {
+          return lastSafeDelete
+        },
+        get navClicks() {
+          return window.__invoiceNavClicks || 0
+        },
+      }
 
-    window.fetch = async (url, options = {}) => {
-      const requestUrl = new URL(url, location.origin)
-      const path = requestUrl.pathname
-      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
-      if (path === '/api/v2/invoices/ocr-status') return json({ ok: true, configured: true })
-      if (path === '/api/v2/invoices/companies') return json({ rows: companies })
-      if (path === '/api/v2/invoices' && (!options.method || options.method === 'GET')) {
-        const status = requestUrl.searchParams.get('status')
-        return json({ rows: status ? rows.filter((row) => row.status === status) : rows })
+      window.fetch = async (url, options = {}) => {
+        const requestUrl = new URL(url, location.origin)
+        const path = requestUrl.pathname
+        const json = (data, status = 200) =>
+          Promise.resolve(
+            new Response(JSON.stringify(data), {
+              status,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        if (path === '/api/v2/invoices/ocr-status') return json({ ok: true, configured: true })
+        if (path === '/api/v2/invoices/companies') return json({ rows: companies })
+        if (path === '/api/v2/invoices' && (!options.method || options.method === 'GET')) {
+          const status = requestUrl.searchParams.get('status')
+          return json({
+            rows: status ? rows.filter((row) => row.status === status) : rows,
+          })
+        }
+        if (path === '/api/v2/invoices' && options.method === 'POST') {
+          const body = JSON.parse(options.body)
+          rows.push({
+            id: 'i-' + rows.length,
+            ...body,
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+          })
+          return json({ ok: true, invoice: rows[rows.length - 1] }, 201)
+        }
+        if (path === '/api/v2/customer-requests' && options.method === 'POST') {
+          customerRequestCount += 1
+          lastCustomerRequest = JSON.parse(options.body)
+          return json(
+            {
+              ok: true,
+              request: {
+                id: `csr-${customerRequestCount}`,
+                expiresAt: '2026-08-28T17:30:00.000Z',
+              },
+              publicUrl: `https://example.test/customer-request#token=${'c'.repeat(43)}`,
+            },
+            201,
+          )
+        }
+        if (/\/api\/v2\/customer-requests\/[^/]+\/regenerate$/.test(path) && options.method === 'POST') {
+          customerRequestCount += 1
+          return json(
+            {
+              ok: true,
+              request: {
+                id: `csr-${customerRequestCount}`,
+                expiresAt: '2026-08-28T17:30:00.000Z',
+              },
+              publicUrl: `https://example.test/customer-request#token=${'d'.repeat(43)}`,
+            },
+            201,
+          )
+        }
+        if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
+        if (/\/api\/v2\/developer-sensitive-records\/invoice\/[^/]+\/delete$/.test(path) && options.method === 'POST') {
+          lastSafeDelete = JSON.parse(options.body)
+          rows.splice(0, rows.length)
+          return json({ ok: true })
+        }
+        const statusMatch = path.match(/^\/api\/v2\/invoices\/([^/]+)\/status$/)
+        if (statusMatch && options.method === 'POST') {
+          const row = rows.find((item) => item.id === statusMatch[1])
+          if (row) row.status = JSON.parse(options.body).status
+          return json({ ok: true, invoice: row })
+        }
+        return json({ error: `未模拟接口 ${path}` }, 404)
       }
-      if (path === '/api/v2/invoices' && options.method === 'POST') {
-        const body = JSON.parse(options.body)
-        rows.push({ id: 'i-' + rows.length, ...body, status: 'pending', createdAt: new Date().toISOString() })
-        return json({ ok: true, invoice: rows[rows.length - 1] }, 201)
-      }
-      if (path === '/api/v2/customer-requests' && options.method === 'POST') {
-        customerRequestCount += 1
-        lastCustomerRequest = JSON.parse(options.body)
-        return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'c'.repeat(43)}` }, 201)
-      }
-      if (/\/api\/v2\/customer-requests\/[^/]+\/regenerate$/.test(path) && options.method === 'POST') {
-        customerRequestCount += 1
-        return json({ ok: true, request: { id: `csr-${customerRequestCount}`, expiresAt: '2026-08-28T17:30:00.000Z' }, publicUrl: `https://example.test/customer-request#token=${'d'.repeat(43)}` }, 201)
-      }
-      if (/\/api\/v2\/customer-requests\/[^/]+\/cancel$/.test(path) && options.method === 'POST') return json({ ok: true })
-      if (/\/api\/v2\/developer-sensitive-records\/invoice\/[^/]+\/delete$/.test(path) && options.method === 'POST') {
-        lastSafeDelete = JSON.parse(options.body)
-        rows.splice(0, rows.length)
-        return json({ ok: true })
-      }
-      const statusMatch = path.match(/^\/api\/v2\/invoices\/([^/]+)\/status$/)
-      if (statusMatch && options.method === 'POST') {
-        const row = rows.find((item) => item.id === statusMatch[1])
-        if (row) row.status = JSON.parse(options.body).status
-        return json({ ok: true, invoice: row })
-      }
-      return json({ error: `未模拟接口 ${path}` }, 404)
-    }
 
-    createRoot(document.getElementById('root')).render(React.createElement(InvoicePage, { currentUser: { id: 'dev-test', username: 'dev-test', role: 'developer', storeKeys: [] }, onBack: () => {} }))
-  </script></body>
+      createRoot(document.getElementById('root')).render(
+        React.createElement(InvoicePage, {
+          currentUser: {
+            id: 'dev-test',
+            username: 'dev-test',
+            role: 'developer',
+            storeKeys: [],
+          },
+          onBack: () => {},
+        }),
+      )
+    </script>
+  </body>
 </html>

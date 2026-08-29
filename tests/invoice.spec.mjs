@@ -72,15 +72,101 @@ test('既有发票记录与待开票/已开票状态流保持可用', async ({ p
   await expect(page.getByRole('button', { name: '标记待开票', exact: true })).toBeVisible()
 })
 
-test('开发者安全删除要求原因和二级密码，移动端 Bottom Sheet 不溢出', async ({ page }) => {
+test('开发者安全删除要求原因和二级密码，业务提交载荷保持不变', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 820 })
   await page.goto('/tests/invoice-harness.html?records=1')
-  await page.getByRole('button', { name: '安全删除', exact: true }).click()
+  await page.getByRole('button', { name: '安全删除', exact: true }).evaluate((element) => element.click())
   await expect(page.getByText('开发者安全删除', { exact: true })).toBeVisible()
   await page.getByText('录入错误', { exact: true }).click()
   await page.getByLabel('安全删除二级密码').fill('separate-secret')
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
-  await page.getByRole('button', { name: '验证二级密码并安全删除', exact: true }).click()
+  await page.getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.locator('[data-invoice-record-id="invoice-focus"]')).toHaveCount(0)
-  expect(await page.evaluate(() => window.__invoiceTest.lastSafeDelete)).toEqual({ reasonCode: 'input_error', reasonText: '', secondPassword: 'separate-secret' })
+  expect(await page.evaluate(() => window.__invoiceTest.lastSafeDelete)).toEqual({
+    reasonCode: 'input_error',
+    reasonText: '',
+    secondPassword: 'separate-secret',
+  })
+})
+
+for (const width of [320, 340, 375, 390, 430]) {
+  test(`${width}px 安全删除 Sheet 覆盖导航、锁定背景并在键盘视口中保持操作可达`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 820 })
+    await page.goto('/tests/invoice-harness.html?records=1')
+    await page.getByRole('button', { name: '安全删除', exact: true }).evaluate((element) => element.click())
+
+    const overlay = page.getByTestId('developer-safe-delete-overlay')
+    const sheet = page.getByTestId('developer-safe-delete-sheet')
+    const scroll = page.getByTestId('developer-safe-delete-scroll')
+    const actions = page.getByTestId('developer-safe-delete-actions')
+    const nav = page.getByTestId('mobile-bottom-nav')
+    await expect(overlay).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认删除', exact: true })).toBeVisible()
+
+    const layers = await page.evaluate(() => ({
+      overlay: Number(getComputedStyle(document.querySelector('[data-testid="developer-safe-delete-overlay"]')).zIndex),
+      nav: Number(getComputedStyle(document.querySelector('[data-testid="mobile-bottom-nav"]')).zIndex),
+      bodyPosition: document.body.style.position,
+      bodyOverflow: document.body.style.overflow,
+      htmlOverflow: document.documentElement.style.overflow,
+    }))
+    expect(layers.overlay).toBeGreaterThan(layers.nav)
+    expect(layers).toMatchObject({
+      bodyPosition: 'fixed',
+      bodyOverflow: 'hidden',
+      htmlOverflow: 'hidden',
+    })
+
+    await page.getByText('录入错误', { exact: true }).click()
+    const password = page.getByLabel('安全删除二级密码')
+    await password.focus()
+    await password.fill('separate-secret')
+    await page.setViewportSize({ width, height: 460 })
+    await expect(password).toBeVisible()
+    await expect(actions).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认删除', exact: true })).toBeInViewport()
+    const compact = await sheet.evaluate((element) => ({
+      bottom: element.getBoundingClientRect().bottom,
+      height: element.getBoundingClientRect().height,
+    }))
+    expect(compact.bottom).toBeLessThanOrEqual(461)
+    expect(compact.height).toBeLessThanOrEqual(460)
+    await scroll.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+    expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+
+    await page.mouse.click(width / 2, 450)
+    expect(await page.evaluate(() => window.__invoiceTest.navClicks)).toBe(0)
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(overlay).toHaveCount(0)
+    expect(
+      await page.evaluate(() => ({
+        position: document.body.style.position,
+        overflow: document.body.style.overflow,
+        htmlOverflow: document.documentElement.style.overflow,
+      })),
+    ).toEqual({ position: '', overflow: '', htmlOverflow: '' })
+
+    await page.setViewportSize({ width, height: 820 })
+    await page.getByRole('button', { name: '安全删除', exact: true }).evaluate((element) => element.click())
+    await expect(overlay).toHaveCount(1)
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+    await nav.getByRole('button', { name: '底部导航测试' }).click()
+    expect(await page.evaluate(() => window.__invoiceTest.navClicks)).toBe(1)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
+test('iPad WebKit 安全删除 Sheet 居中且操作区不被导航遮挡', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.goto('/tests/invoice-harness.html?records=1')
+  await page.getByRole('button', { name: '安全删除', exact: true }).evaluate((element) => element.click())
+  await page.getByText('测试数据', { exact: true }).click()
+  await page.getByLabel('安全删除二级密码').fill('separate-secret')
+  await expect(page.getByTestId('developer-safe-delete-actions')).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认删除', exact: true })).toBeInViewport()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(page.getByTestId('developer-safe-delete-overlay')).toHaveCount(0)
 })

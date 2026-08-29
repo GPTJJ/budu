@@ -444,10 +444,10 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" 55
+verify_database_authority "$OLD_CONTAINER" 56
 verify_product_group_integrity "$OLD_CONTAINER"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=55 health=PASS writer=1 ProductGroup-integrity=PASS"
+echo "production authority verified: DB=budu_bj006 migration=56 health=PASS writer=1 ProductGroup-integrity=PASS"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -523,7 +523,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration56-pre-developer-safe-delete-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration56-pre-safe-delete-sheet-ui-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -545,10 +545,10 @@ BEFORE_PURCHASE_DIGEST="$(purchase_business_digest "$OLD_CONTAINER")"
 BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
 BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
 BEFORE_PRODUCT_GROUP_DIGEST="$(product_group_authority_digest "$OLD_CONTAINER")"
-echo "fresh migration55 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
+echo "fresh migration56 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migration command in isolation. The new release must move
-# the verified migration ledger from 55 to 56 without changing historical facts.
+# Run the exact release migration command in isolation. This UI-only release has
+# no new migration, so the verified ledger must remain at 56.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
@@ -563,7 +563,7 @@ verify_database_authority "$OLD_CONTAINER" 56
 [ "$(product_group_authority_digest "$OLD_CONTAINER")" = "$BEFORE_PRODUCT_GROUP_DIGEST" ] || { echo "ProductGroup authority changed during additive migration" >&2; exit 1; }
 verify_transfer_master_integrity "$OLD_CONTAINER"
 verify_product_group_integrity "$OLD_CONTAINER"
-echo "migration ledger advanced to 56; ProductGroup authority and historical transfer, purchase, mailing, invoice and product facts unchanged"
+echo "migration ledger remains at 56; ProductGroup authority and historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
