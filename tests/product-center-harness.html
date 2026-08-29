@@ -6,22 +6,68 @@
     import { createRoot } from 'react-dom/client'
     import ProductCenterPage from '/src/components/ProductCenterPage.jsx'
 
-    let products = [{ productId: 'p-1', name: '卡皮巴拉布丁', sku: 'BUDU-001', posCategory: '甜品', salePriceCents: '7200', costPriceCents: '2350', unit: '份', image: '', barcode: '', isActive: false, trackInventory: false, sortOrder: 0, version: 1 }]
+    const categories = [
+      { id: 'c-dessert', name: '甜品', sortOrder: 1, isActive: true, version: 1, productCount: 1 },
+      { id: 'c-candy', name: '太妃糖', sortOrder: 2, isActive: true, version: 1, productCount: 2 },
+    ]
+    let products = [
+      { productId: 'p-pos', name: '卡皮巴拉布丁', sku: 'BUDU-001', transferCode: '', productCategoryId: 'c-dessert', productCategory: categories[0], posCategory: '甜品', salePriceCents: '7200', costPriceCents: '2350', unit: '份', image: '', barcode: '', isActive: true, transferEnabled: false, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 1, version: 1 },
+      { productId: 'p-transfer', name: 'NO.1树莓', sku: '', transferCode: 'NO.1', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: null, costPriceCents: null, unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: true, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 2, version: 1 },
+      { productId: 'p-partner', name: 'NO.2柠檬', sku: 'NO2', transferCode: 'NO.2', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: '500', costPriceCents: '200', unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: false, partnerSupplyEnabled: true, trackInventory: false, sortOrder: 3, version: 1 },
+    ]
+    const requests = []
+    window.__productCenterTest = { requests, get products() { return products }, categories }
     window.__productImportPayload = null
     const reply = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+    const categoryFor = (id) => categories.find((item) => item.id === id) || null
     window.fetch = async (url, options = {}) => {
-      if (url === '/api/v2/products' && (!options.method || options.method === 'GET')) return reply({ rows: products })
-      if (url === '/api/v2/products/import' && options.method === 'POST') {
-        const body = JSON.parse(options.body)
-        window.__productImportPayload = body
+      const parsed = new URL(url, location.origin)
+      const path = parsed.pathname
+      const method = options.method || 'GET'
+      if (path === '/api/v2/products' && method === 'GET') return reply({ rows: products })
+      if (path === '/api/v2/product-categories' && method === 'GET') return reply({ rows: categories })
+      if (path === '/api/v2/products/import' && method === 'POST') {
+        const body = JSON.parse(options.body); window.__productImportPayload = body; requests.push({ method, path, body })
         const imported = body.rows.map((row, index) => {
-          const old = products.find((item) => item.sku === row.sku || item.name === row.name)
-          return { ...(old || {}), ...row, productId: old?.productId || `p-${index + 2}`, image: old?.image || '', barcode: row.barcode || old?.barcode || '', isActive: true, trackInventory: row.trackInventory ?? old?.trackInventory ?? false, sortOrder: Number(row.sortOrder || old?.sortOrder || 0), version: (old?.version || 0) + 1 }
+          const old = products.find((item) => item.sku && item.sku === row.sku)
+          return { ...(old || {}), ...row, productId: old?.productId || `p-import-${index}`, productCategory: categoryFor(row.productCategoryId), image: old?.image || '', barcode: row.barcode || old?.barcode || '', isActive: true, transferEnabled: old?.transferEnabled || false, partnerSupplyEnabled: old?.partnerSupplyEnabled || false, trackInventory: row.trackInventory ?? old?.trackInventory ?? false, sortOrder: Number(row.sortOrder || old?.sortOrder || 0), version: (old?.version || 0) + 1 }
         })
         products = [...products.filter((item) => !imported.some((row) => row.productId === item.productId)), ...imported]
-        return reply({ ok: true, created: imported.filter((row) => row.productId !== 'p-1').length, updated: imported.filter((row) => row.productId === 'p-1').length, rows: imported })
+        return reply({ ok: true, created: imported.filter((row) => !['p-pos', 'p-transfer', 'p-partner'].includes(row.productId)).length, updated: imported.filter((row) => ['p-pos', 'p-transfer', 'p-partner'].includes(row.productId)).length, rows: imported })
       }
-      return reply({ error: 'not found' }, 404)
+      if (path === '/api/v2/products/bulk' && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const key = body.purpose === 'pos' ? 'isActive' : body.purpose === 'transfer' ? 'transferEnabled' : 'partnerSupplyEnabled'
+        products = products.map((item) => !body.ids.includes(item.productId) ? item : body.operation === 'category'
+          ? { ...item, productCategoryId: body.productCategoryId || '', productCategory: categoryFor(body.productCategoryId), version: item.version + 1 }
+          : { ...item, [key]: body.enabled, version: item.version + 1 })
+        return reply({ ok: true, updated: body.ids.length, rows: products.filter((item) => body.ids.includes(item.productId)) })
+      }
+      if (path === '/api/v2/products' && method === 'POST') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const product = { ...body, productId: `p-new-${products.length}`, productCategory: categoryFor(body.productCategoryId), salePriceCents: body.salePriceCents || null, costPriceCents: body.costPriceCents || null, version: 1 }
+        products.push(product); return reply({ ok: true, product }, 201)
+      }
+      const productUpdate = path.match(/^\/api\/v2\/products\/([^/]+)$/)
+      if (productUpdate && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const index = products.findIndex((item) => item.productId === productUpdate[1])
+        products[index] = { ...products[index], ...body, productCategory: categoryFor(body.productCategoryId), salePriceCents: body.salePriceCents || null, costPriceCents: body.costPriceCents || null, version: products[index].version + 1 }
+        return reply({ ok: true, product: products[index] })
+      }
+      if (path === '/api/v2/product-categories' && method === 'POST') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const category = { ...body, id: `c-new-${categories.length}`, version: 1, productCount: 0 }
+        categories.push(category); return reply({ ok: true, category }, 201)
+      }
+      const categoryUpdate = path.match(/^\/api\/v2\/product-categories\/([^/]+)$/)
+      if (categoryUpdate && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const index = categories.findIndex((item) => item.id === categoryUpdate[1])
+        categories[index] = { ...categories[index], ...body, sortOrder: Number(body.sortOrder), version: categories[index].version + 1 }
+        return reply({ ok: true, category: categories[index] })
+      }
+      return reply({ error: `未模拟接口 ${method} ${path}` }, 404)
     }
     createRoot(document.getElementById('root')).render(React.createElement(ProductCenterPage, { user: { role: 'developer' }, onBack: () => {} }))
   </script></body>

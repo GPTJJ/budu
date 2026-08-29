@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, normalizeSku, parseCents } from './pos-core.js'
-import { isSuperUser } from '../shared/accountPermissions.js'
+import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 
 export const productsRouter = Router()
 
@@ -21,7 +21,7 @@ const wrap = (handler) => async (req, res) => {
 }
 
 function requireProductManager(user) {
-  if (!user || (!isSuperUser(user) && user.role !== 'manager')) throw httpError('无权限', 403)
+  if (!user || (!isSuperUser(user) && !(user.role === 'manager' && hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)))) throw httpError('无权限', 403)
 }
 
 function requireProductViewer(user) {
@@ -42,27 +42,55 @@ function imageValue(value) {
   return image
 }
 
+function optionalCents(value, label) {
+  if (value === '' || value === null || value === undefined) return null
+  return parseCents(value, label)
+}
+
 function productData(body) {
   const sku = normalizeSku(body.sku)
-  if (!sku) throw httpError('请填写 SKU')
   if (sku.length > 64) throw httpError('SKU 不能超过 64 个字符')
   const sortOrder = Number(body.sortOrder ?? 0)
   if (!Number.isInteger(sortOrder) || sortOrder < -999999 || sortOrder > 999999) {
     throw httpError('排序必须是 -999999 至 999999 的整数')
   }
+  const isActive = body.isActive !== false
+  const salePriceCents = optionalCents(body.salePriceCents, '售价')
+  const costPriceCents = optionalCents(body.costPriceCents, '成本价')
+  const unit = text(body.unit || '份', 20, '单位', isActive)
+  const transferEnabled = body.transferEnabled === true
+  const partnerSupplyEnabled = body.partnerSupplyEnabled === true
+  const transferCodeInput = text(body.transferCode, 40, '商品编号')
+  const transferCode = transferCodeInput || (transferEnabled ? sku || null : null)
+  if (isActive && (!sku || salePriceCents === null || costPriceCents === null)) throw httpError('启用 POS 前请填写 SKU、售价和成本价')
+  if (transferEnabled && !transferCode) throw httpError('启用门店调拨前请填写 SKU 或商品编号')
+  if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
   return {
     name: text(body.name, 50, '商品名称', true),
-    sku,
-    posCategory: text(body.posCategory, 30, '商品分类', true),
-    salePriceCents: parseCents(body.salePriceCents, '售价'),
-    costPriceCents: parseCents(body.costPriceCents, '成本价'),
-    unit: text(body.unit, 20, '单位', true),
+    sku: sku || null,
+    posCategory: text(body.posCategory, 30, '旧 POS 分类'),
+    salePriceCents,
+    costPriceCents,
+    unit,
     image: imageValue(body.image),
     barcode: text(body.barcode, 64, '条码'),
-    isActive: body.isActive !== false,
+    isActive,
     trackInventory: body.trackInventory === true,
     sortOrder,
+    transferCode,
+    transferEnabled,
+    transferSortOrder: sortOrder,
+    partnerSupplyEnabled,
+    productCategoryId: text(body.productCategoryId, 120, '商品分类') || null,
   }
+}
+
+async function requireProductCategory(productCategoryId, currentCategoryId = '') {
+  if (!productCategoryId) return null
+  const category = await prisma.productCategory.findUnique({ where: { id: productCategoryId } })
+  if (!category) throw httpError('商品分类不存在', 404)
+  if (!category.isActive && category.id !== currentCategoryId) throw httpError('已停用分类不能接收商品', 409)
+  return category
 }
 
 export function serializeProduct(product) {
@@ -71,12 +99,22 @@ export function serializeProduct(product) {
     name: product.name,
     sku: product.sku,
     posCategory: product.posCategory,
+    transferCode: product.transferCode || '',
     salePriceCents: product.salePriceCents == null ? null : product.salePriceCents.toString(),
     costPriceCents: product.costPriceCents == null ? null : product.costPriceCents.toString(),
     unit: product.unit,
     image: product.image || '',
     barcode: product.barcode || '',
     isActive: product.isActive,
+    transferEnabled: product.transferEnabled,
+    partnerSupplyEnabled: product.partnerSupplyEnabled,
+    productCategoryId: product.productCategoryId || '',
+    productCategory: product.productCategory ? {
+      id: product.productCategory.id,
+      name: product.productCategory.name,
+      isActive: product.productCategory.isActive,
+      sortOrder: product.productCategory.sortOrder,
+    } : null,
     trackInventory: product.trackInventory,
     sortOrder: product.sortOrder,
     version: product.version,
@@ -89,19 +127,24 @@ productsRouter.get('/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductViewer(req.user)
   const q = text(req.query.q, 80, '搜索词')
-  const posCategory = text(req.query.category, 30, '商品分类')
+  const productCategoryId = text(req.query.category, 120, '商品分类')
+  const purpose = text(req.query.purpose, 20, '业务用途')
   const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
   const rows = await prisma.inventoryItem.findMany({
     where: {
-      sku: { not: null },
-      ...(posCategory ? { posCategory } : {}),
-      ...(active === undefined ? {} : { isActive: active }),
+      category: 'product',
+      ...(productCategoryId ? { productCategoryId } : {}),
+      ...(purpose === 'pos' ? { isActive: active ?? true } : {}),
+      ...(purpose === 'transfer' ? { transferEnabled: active ?? true } : {}),
+      ...(purpose === 'partner' ? { partnerSupplyEnabled: active ?? true } : {}),
       ...(q ? { OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { sku: { contains: normalizeSku(q), mode: 'insensitive' } },
+        { transferCode: { contains: q, mode: 'insensitive' } },
         { barcode: { contains: q, mode: 'insensitive' } },
       ] } : {}),
     },
+    include: { productCategory: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
@@ -112,13 +155,10 @@ productsRouter.post('/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
   const data = productData(req.body || {})
-  const row = await prisma.$transaction(async (tx) => {
-    const existing = await tx.inventoryItem.findUnique({ where: { name: data.name } })
-    if (!existing) return tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data } })
-    if (existing.sku) throw httpError('商品名称已存在', 409)
-    const upgraded = await tx.inventoryItem.updateMany({ where: { id: existing.id, sku: null }, data: { ...data, version: { increment: 1 } } })
-    if (upgraded.count !== 1) throw httpError('商品已被其他人更新，请刷新后重试', 409)
-    return tx.inventoryItem.findUnique({ where: { id: existing.id } })
+  await requireProductCategory(data.productCategoryId)
+  const row = await prisma.inventoryItem.create({
+    data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
+    include: { productCategory: true },
   })
   res.status(201).json({ ok: true, product: serializeProduct(row) })
 }))
@@ -141,6 +181,8 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
       image: '',
       barcode: body.barcode || '',
       isActive: true,
+      transferEnabled: false,
+      partnerSupplyEnabled: false,
       trackInventory: body.trackInventory === true,
       sortOrder: body.sortOrder === '' || body.sortOrder == null ? index : body.sortOrder,
     })
@@ -178,9 +220,10 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
       if (skuMatch && nameMatch && skuMatch.id !== nameMatch.id) {
         throw httpError(`「${row.data.name}」的 SKU 与菜品名匹配到不同商品，请先检查 Excel`, 409)
       }
-      const existing = skuMatch || nameMatch || null
+      if (!skuMatch && nameMatch) throw httpError(`「${row.data.name}」名称已存在；禁止按名称自动关联，请在商品中心编辑现有商品`, 409)
+      const existing = skuMatch || null
       if (!existing) {
-        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data } })
+        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data }, include: { productCategory: true } })
         bySku.set(createdRow.sku, createdRow)
         byName.set(createdRow.name, createdRow)
         saved.push(createdRow)
@@ -196,8 +239,13 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         sortOrder: row.provided.sortOrder ? row.data.sortOrder : existing.sortOrder,
         trackInventory: row.provided.trackInventory ? row.data.trackInventory : existing.trackInventory,
         isActive: true,
+        transferCode: existing.transferCode,
+        transferEnabled: existing.transferEnabled,
+        transferSortOrder: existing.transferSortOrder,
+        partnerSupplyEnabled: existing.partnerSupplyEnabled,
+        productCategoryId: existing.productCategoryId,
       }
-      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } } })
+      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } }, include: { productCategory: true } })
       if (existing.sku) bySku.delete(existing.sku)
       byName.delete(existing.name)
       bySku.set(updatedRow.sku, updatedRow)
@@ -216,21 +264,74 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
   })
 }))
 
+productsRouter.put('/products/bulk', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductManager(req.user)
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map((id) => String(id || '').trim()).filter(Boolean))]
+  if (!ids.length || ids.length > 500) throw httpError('请选择 1-500 个商品')
+  const rows = await prisma.inventoryItem.findMany({ where: { id: { in: ids }, category: 'product' } })
+  if (rows.length !== ids.length) throw httpError('所选商品包含不存在的商品资料', 409)
+
+  const operation = String(req.body?.operation || '')
+  if (operation === 'category') {
+    const productCategoryId = String(req.body?.productCategoryId || '').trim() || null
+    await requireProductCategory(productCategoryId)
+    await prisma.inventoryItem.updateMany({
+      where: { id: { in: ids }, category: 'product' },
+      data: { productCategoryId, version: { increment: 1 } },
+    })
+  } else if (operation === 'purpose') {
+    const purpose = String(req.body?.purpose || '')
+    const enabled = req.body?.enabled === true
+    if (!['pos', 'transfer', 'partner'].includes(purpose)) throw httpError('业务用途不正确')
+    if (enabled && purpose === 'pos' && rows.some((row) => !row.sku || row.salePriceCents === null || row.costPriceCents === null)) {
+      throw httpError('所选商品中存在缺少 SKU、售价或成本价的商品，不能批量启用 POS', 409)
+    }
+    if (enabled && purpose === 'transfer' && rows.some((row) => !row.transferCode && !row.sku)) {
+      throw httpError('所选商品中存在缺少 SKU 和商品编号的商品，不能批量启用调拨', 409)
+    }
+    if (enabled && purpose === 'partner' && rows.some((row) => row.salePriceCents === null || row.salePriceCents <= 0n)) {
+      throw httpError('所选商品中存在未设置有效零售价的商品，不能批量启用合作商供货', 409)
+    }
+    const field = purpose === 'pos' ? 'isActive' : purpose === 'transfer' ? 'transferEnabled' : 'partnerSupplyEnabled'
+    await prisma.$transaction(rows.map((row) => prisma.inventoryItem.update({
+      where: { id: row.id },
+      data: {
+        [field]: enabled,
+        ...(purpose === 'transfer' && enabled && !row.transferCode ? { transferCode: row.sku } : {}),
+        version: { increment: 1 },
+      },
+    })))
+  } else {
+    throw httpError('批量操作不正确')
+  }
+
+  const saved = await prisma.inventoryItem.findMany({
+    where: { id: { in: ids }, category: 'product' },
+    include: { productCategory: true },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  })
+  res.json({ ok: true, updated: saved.length, rows: saved.map(serializeProduct) })
+}))
+
 productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw httpError('商品版本不正确，请刷新后重试')
   const data = productData(req.body || {})
+  const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
+  if (!existing || existing.category !== 'product') throw httpError('商品不存在', 404)
+  await requireProductCategory(data.productCategoryId, existing.productCategoryId || '')
   const result = await prisma.inventoryItem.updateMany({
-    where: { id: req.params.productId, sku: { not: null }, version },
+    where: { id: req.params.productId, category: 'product', version },
     data: { ...data, version: { increment: 1 } },
   })
   if (result.count !== 1) {
     const latest = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
-    if (!latest || !latest.sku) throw httpError('商品不存在', 404)
+    if (!latest || latest.category !== 'product') throw httpError('商品不存在', 404)
     return res.status(409).json({ error: '商品已被其他人修改，已返回最新数据', latest: serializeProduct(latest) })
   }
-  const row = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
+  const row = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true } })
   res.json({ ok: true, product: serializeProduct(row) })
 }))

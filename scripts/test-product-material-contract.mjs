@@ -8,12 +8,14 @@ import { defaultModuleKeys, MODULE_KEYS } from '../shared/accountPermissions.js'
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('产品物料管理位于申请采购正下方且默认只向管理角色开放', () => {
+test('统一商品中心独立存在，库存导航仅保留物料管理且默认只向管理角色开放', () => {
   const sidebar = read('src/components/Sidebar.jsx')
+  const productCenter = sidebar.indexOf("{ key: 'product-center', label: '商品中心' }")
   const transfer = sidebar.indexOf("{ key: 'inventory-transfer', label: '门店调拨' }")
   const purchase = sidebar.indexOf("{ key: 'inventory-purchase', label: '申请采购' }")
-  const master = sidebar.indexOf("{ key: 'product-material-management', label: '产品物料管理' }")
-  assert.ok(transfer >= 0 && transfer < purchase && purchase < master)
+  const material = sidebar.indexOf("{ key: 'product-material-management', label: '物料管理' }")
+  assert.ok(productCenter >= 0)
+  assert.ok(transfer >= 0 && transfer < purchase && purchase < material)
   assert.ok(defaultModuleKeys('manager').includes(MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT))
   assert.ok(!defaultModuleKeys('staff').includes(MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT))
 })
@@ -33,22 +35,31 @@ test('主数据 API 没有物理删除路径且服务端拒绝停用货品新调
   assert.match(source, /货品已停用或不存在，请刷新后重试/)
 })
 
-test('产品管理与调拨选择器共同读取 PostgreSQL 产品分类且没有写死分类', () => {
-  const management = read('src/components/ProductMaterialManagementPage.jsx')
+test('统一商品中心与调拨选择器共同读取 PostgreSQL 产品分类且物料页面不承担产品权威', () => {
+  const management = read('src/components/ProductCenterPage.jsx')
+  const materials = read('src/components/ProductMaterialManagementPage.jsx')
   const transfer = read('src/components/StoreTransferPage.jsx')
   const server = read('server/v2.js')
+  const app = read('server/app.js')
   assert.match(management, /\/v2\/product-categories/)
+  assert.match(management, /\/v2\/products/)
+  assert.match(materials, /transfer-master-items\?category=material/)
+  assert.doesNotMatch(materials, /product-categories|category: 'product'/)
   assert.match(transfer, /\/v2\/product-categories\?active=true/)
   assert.match(server, /prisma\.productCategory/)
+  assert.match(app, /product-categories[\s\S]*MODULE_KEYS\.PRODUCT_CENTER/)
+  assert.match(server, /category === 'product'\) requireProductCategoryManager/)
   assert.doesNotMatch(`${management}\n${transfer}`, /\[['"]糖果|\[['"]礼盒|const\s+PRODUCT_CATEGORIES/)
 })
 
 test('分类和产品均无物理删除，批量归类与历史分类快照由服务端保护', () => {
-  const source = read('server/v2.js')
-  assert.doesNotMatch(source, /delete\('\/product-categories/)
-  assert.match(source, /transfer-master-items\/bulk-category/)
-  assert.match(source, /productCategoryNameSnapshot/)
-  assert.match(source, /item\.productCategory\?\.name \|\| ''/)
+  const categories = read('server/v2.js')
+  const products = read('server/products.js')
+  assert.doesNotMatch(categories, /delete\('\/product-categories/)
+  assert.doesNotMatch(products, /delete\('\/products/)
+  assert.match(products, /productsRouter\.put\('\/products\/bulk'/)
+  assert.match(categories, /productCategoryNameSnapshot/)
+  assert.match(categories, /item\.productCategory\?\.name \|\| ''/)
 })
 
 test('调拨 Excel 使用已发货、发货时间、门店方向并生成汇总和明细 Sheet', () => {

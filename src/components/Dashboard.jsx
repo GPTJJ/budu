@@ -52,7 +52,7 @@ const pageTitles = {
   'inventory-transfer': '门店调拨',
   'inventory-purchase': '申请采购',
   'partner-supply': '合作商供货',
-  'product-material-management': '产品物料管理',
+  'product-material-management': '物料管理',
   finance: '财务利润',
   'finance-invoice': '发票开具',
   approval: '审批中心',

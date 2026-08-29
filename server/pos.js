@@ -291,12 +291,20 @@ posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const rows = await prisma.inventoryItem.findMany({
-    where: { isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
+    where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
+    include: { productCategory: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
   res.json({
-    rows: rows.map((product) => ({ ...serializeProduct(product), image: '', hasImage: Boolean(product.image) })),
+    rows: rows.map((product) => ({
+      ...serializeProduct(product),
+      // ProductCategory is canonical. posCategory remains display-only legacy fallback
+      // until administrators classify every historical POS product.
+      posCategory: product.productCategory?.name || product.posCategory || '其他',
+      image: '',
+      hasImage: Boolean(product.image),
+    })),
   })
 }))
 

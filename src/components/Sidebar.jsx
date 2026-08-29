@@ -48,7 +48,7 @@ const subMenus = {
     { key: 'inventory-transfer', label: '门店调拨' },
     { key: 'inventory-purchase', label: '申请采购' },
     { key: 'partner-supply', label: '合作商供货' },
-    { key: 'product-material-management', label: '产品物料管理' },
+    { key: 'product-material-management', label: '物料管理' },
   ],
 }
 

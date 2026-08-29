@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware additive blue/green deployment for partner supply.
+# Authority-aware additive blue/green deployment for Unified Product Center.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,16 +17,16 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-partner-supply"
-MIGRATOR="budu-migrate-${SHORT_SHA}-partner-supply"
-BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-partner-supply"
-IMAGE="budu-api:partner-supply-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-unified-product"
+MIGRATOR="budu-migrate-${SHORT_SHA}-unified-product"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-unified-product"
+IMAGE="budu-api:unified-product-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-partner-supply-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-unified-product-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/partner-supply-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/unified-product-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -263,6 +263,29 @@ try {
 NODE
 }
 
+partner_supply_business_digest() {
+  local container="$1"
+  docker exec -i "$container" node --input-type=module - <<'NODE'
+import crypto from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  const rows = await prisma.partnerSupplyOrder.findMany({
+    orderBy: { id: 'asc' },
+    include: {
+      items: { orderBy: { id: 'asc' } },
+      receipts: { orderBy: { id: 'asc' } },
+    },
+  })
+  const serialized = JSON.stringify(rows, (_key, value) => typeof value === 'bigint' ? value.toString() : value)
+  const digest = crypto.createHash('sha256').update(serialized).digest('hex')
+  process.stdout.write(rows.length + ':' + digest)
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+}
+
 verify_transfer_master_seed() {
   local container="$1"
   docker exec -i "$container" node --input-type=module - <<'NODE'
@@ -293,7 +316,7 @@ NODE
 }
 
 
-verify_partner_supply_seed() {
+verify_unified_product_state() {
   local container="$1"
   docker exec -i "$container" node --input-type=module - <<'NODE'
 import { PrismaClient } from '@prisma/client'
@@ -301,22 +324,18 @@ const prisma = new PrismaClient()
 try {
   const rows = await prisma.$queryRawUnsafe(`
     SELECT
-      (SELECT COUNT(*)::int FROM "Partner") AS "partners",
-      (SELECT COUNT(*)::int FROM "Partner" WHERE "id" = 'partner-qinhuangdao-v1' AND "name" = '秦皇岛合作商' AND "defaultStoreKey" = 'guanshe' AND "defaultDiscountBps" = 6500 AND "isActive" = true) AS "expectedPartners",
-      (SELECT COUNT(*)::int FROM "PartnerSupplyOrder") AS "orders",
-      (SELECT COUNT(*)::int FROM "PartnerSupplyItem") AS "items",
-      (SELECT COUNT(*)::int FROM "PartnerReceipt") AS "receipts"
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "category" = 'product') AS "products",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "category" = 'material') AS "materials",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "category" = 'product' AND "partnerSupplyEnabled") AS "partnerEnabled",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "category" = 'product' AND "partnerSupplyEnabled" AND "salePriceCents" > 0) AS "partnerSelectable"
   `)
   const result = {
-    partners: Number(rows[0]?.partners || 0),
-    expectedPartners: Number(rows[0]?.expectedPartners || 0),
-    orders: Number(rows[0]?.orders || 0),
-    items: Number(rows[0]?.items || 0),
-    receipts: Number(rows[0]?.receipts || 0),
+    products: Number(rows[0]?.products || 0),
+    materials: Number(rows[0]?.materials || 0),
+    partnerEnabled: Number(rows[0]?.partnerEnabled || 0),
+    partnerSelectable: Number(rows[0]?.partnerSelectable || 0),
   }
-  if (result.partners !== 1 || result.expectedPartners !== 1 || result.orders !== 0 || result.items !== 0 || result.receipts !== 0) {
-    throw new Error('PARTNER_SUPPLY_SEED_OR_EMPTY_FACTS_MISMATCH')
-  }
+  if (result.products < 85 || result.materials < 26 || result.partnerEnabled !== 0 || result.partnerSelectable !== 0) throw new Error('UNIFIED_PRODUCT_DEFAULT_OPT_IN_MISMATCH')
   console.log(JSON.stringify(result))
 } finally {
   await prisma.$disconnect()
@@ -335,7 +354,7 @@ const health = await response.json()
 if (!response.ok || health.ok !== true || health.dbOk !== true || !String(health.gitSha || '').startsWith(process.env.EXPECTED_SHA_PREFIX)) {
   throw new Error('PUBLIC_HEALTH_AUTHORITY_MISMATCH')
 }
-console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 53 }))
+console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrations: 54 }))
 NODE
 }
 
@@ -353,9 +372,9 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" 52
+verify_database_authority "$OLD_CONTAINER" 53
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=52 health=PASS writer=1"
+echo "production authority verified: DB=budu_bj006 migration=53 health=PASS writer=1"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -431,7 +450,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration52-pre-partner-supply-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration53-pre-unified-product-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -451,28 +470,30 @@ BEFORE_INVOICE_DIGEST="$(invoice_business_digest "$OLD_CONTAINER")"
 BEFORE_TRANSFER_DIGEST="$(transfer_business_digest "$OLD_CONTAINER")"
 BEFORE_PURCHASE_DIGEST="$(purchase_business_digest "$OLD_CONTAINER")"
 BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
-echo "fresh migration52 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
+BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
+echo "fresh migration53 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migrator in isolation. Migration 53 only adds partner master,
-# partner supply facts and the explicit Qinhuangdao partner seed. Existing facts stay unchanged.
+# Run the exact release migrator in isolation. Migration 54 only adds the
+# partnerSupplyEnabled opt-in flag and its index. Existing facts stay unchanged.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
 docker rm "$MIGRATOR" >/dev/null
-verify_database_authority "$OLD_CONTAINER" 53
+verify_database_authority "$OLD_CONTAINER" 54
 [ "$(mailing_business_digest "$OLD_CONTAINER")" = "$BEFORE_MAILING_DIGEST" ] || { echo "historical MailingRecord digest changed during additive migration" >&2; exit 1; }
 [ "$(invoice_business_digest "$OLD_CONTAINER")" = "$BEFORE_INVOICE_DIGEST" ] || { echo "historical Invoice digest changed during additive migration" >&2; exit 1; }
 [ "$(transfer_business_digest "$OLD_CONTAINER")" = "$BEFORE_TRANSFER_DIGEST" ] || { echo "historical TransferRequest digest changed during additive migration" >&2; exit 1; }
 [ "$(purchase_business_digest "$OLD_CONTAINER")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed during additive migration" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$OLD_CONTAINER")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed during additive migration" >&2; exit 1; }
+[ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
 verify_transfer_master_seed "$OLD_CONTAINER"
-verify_partner_supply_seed "$OLD_CONTAINER"
-echo "migration ledger advanced 52→53; partner seed verified; historical transfer, purchase, mailing, invoice and product facts unchanged"
+verify_unified_product_state "$OLD_CONTAINER"
+echo "migration ledger advanced 53→54; partner opt-in defaults verified; historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 53
+verify_database_authority "$CANDIDATE" 54
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
 echo "unrouted read-only Candidate internal smoke PASS"
 
@@ -503,7 +524,7 @@ OLD_STOPPED=1
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" preserve writer
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
-verify_database_authority "$CANDIDATE" 53
+verify_database_authority "$CANDIDATE" 54
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
 TEMPLATE_CHANGED=1
@@ -519,9 +540,10 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 [ "$(transfer_business_digest "$CANDIDATE")" = "$BEFORE_TRANSFER_DIGEST" ] || { echo "historical TransferRequest digest changed after cutover" >&2; exit 1; }
 [ "$(purchase_business_digest "$CANDIDATE")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed after cutover" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$CANDIDATE")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed after cutover" >&2; exit 1; }
+[ "$(partner_supply_business_digest "$CANDIDATE")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed after cutover" >&2; exit 1; }
 verify_transfer_master_seed "$CANDIDATE"
-verify_partner_supply_seed "$CANDIDATE"
+verify_unified_product_state "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "Partner supply additive blue/green deployment completed; partner seed verified and historical facts unchanged"
+echo "Unified Product Center additive blue/green deployment completed; default opt-in and historical facts verified"

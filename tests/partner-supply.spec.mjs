@@ -36,16 +36,20 @@ test('创建供货单默认带出合作商政策并复用分类、搜索、多�
   await expect.poll(() => page.evaluate(() => window.__partnerSupplyTest.requests.find((item) => item.type === 'order-create')?.body)).toMatchObject({ partnerId: 'partner-qhd', fromStoreKey: 'guanshe', effectiveDiscountBps: 6500, items: [{ productId: 'p1', quantity: 100 }] })
 })
 
-test('无正式零售价产品不可选择，未分类产品可按编号搜索', async ({ page }) => {
+test('后端只返回已启用且有正式零售价商品，未分类产品可按编号搜索', async ({ page }) => {
   await page.goto('/tests/partner-supply-harness.html')
   await page.getByRole('button', { name: /创建供货单/ }).click()
   const sheet = page.getByTestId('partner-supply-create')
-  await sheet.getByRole('button', { name: '礼盒', exact: true }).click()
-  await expect(sheet.getByRole('button', { name: /礼盒套装/ })).toBeDisabled()
-  await expect(sheet.getByText('未设零售价')).toBeVisible()
+  await expect(sheet.getByText('礼盒套装')).toHaveCount(0)
   await sheet.getByRole('button', { name: '未分类', exact: true }).click()
   await sheet.getByLabel('搜索产品').fill('NO.2')
   await expect(sheet.getByRole('button', { name: /NO\.2柠檬/ })).toBeVisible()
+})
+
+test('确无合作商供货商品时显示明确引导空状态', async ({ page }) => {
+  await page.goto('/tests/partner-supply-harness.html?emptyProducts=1')
+  await page.getByRole('button', { name: /创建供货单/ }).click()
+  await expect(page.getByTestId('partner-supply-create')).toContainText('暂无已启用的合作商供货商品，请前往商品中心设置。')
 })
 
 test('合作商管理支持新增编辑门店折扣与停用且不提供物理删除', async ({ page }) => {

@@ -309,7 +309,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
               const value = draft.material.quantities[item.name] || ''
               return <div key={item.id} className={`flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 ${Number(value) > 0 ? 'border-budu-200 bg-budu-50/60' : 'border-slate-100 bg-white'}`}><span className="min-w-0 flex-1 text-sm font-semibold text-slate-700">{item.name}</span><QuantityControl value={value} onChange={(next) => changeMaterial(item.name, next)} ariaLabel={`${item.name}数量`} /></div>
             })}
-            {!masterLoading && !activeMaterials.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">暂无已启用物料，请先在产品物料管理中启用</p>}
+            {!masterLoading && !activeMaterials.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">暂无已启用物料，请先在物料管理中启用</p>}
           </div>
         )}
       </section>

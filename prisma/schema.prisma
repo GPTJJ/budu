@@ -170,6 +170,7 @@ model InventoryItem {
   transferCode      String?        @unique
   transferEnabled   Boolean        @default(false)
   transferSortOrder Int            @default(0)
+  partnerSupplyEnabled Boolean     @default(false)
   productCategoryId String?
   version        Int            @default(1)
   updatedAt      DateTime       @default(now()) @updatedAt
@@ -184,6 +185,7 @@ model InventoryItem {
   productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
 
   @@index([productCategoryId])
+  @@index([category, partnerSupplyEnabled])
 }
 
 model ProductCategory {

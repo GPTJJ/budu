@@ -52,7 +52,7 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
     { key: MODULE_KEYS.PARTNER_SUPPLY, label: '合作商供货' },
-    { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '产品物料管理' },
+    { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '物料管理' },
   ] },
   { key: 'finance', label: '财务管理', modules: [
     { key: MODULE_KEYS.FINANCE, label: '财务利润' },

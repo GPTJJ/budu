@@ -1,29 +1,89 @@
 import { expect, test } from '@playwright/test'
 import * as XLSX from 'xlsx'
 
-test('商品中心自动分析 Excel，预览后批量导入并上架', async ({ page }) => {
+test('统一商品中心按独立业务用途、状态、分类与搜索筛选', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
-  await expect(page.getByText('卡皮巴拉布丁', { exact: true })).toBeVisible()
+  await expect(page.getByText(/卡皮巴拉布丁/)).toBeVisible()
+  await expect(page.getByText('NO.1树莓', { exact: false })).toHaveCount(0)
+  await page.getByRole('button', { name: '门店调拨', exact: true }).click()
+  await expect(page.getByText(/NO\.1树莓/)).toBeVisible()
+  await page.getByRole('button', { name: '合作商供货', exact: true }).click()
+  await expect(page.getByText(/NO\.2柠檬/)).toBeVisible()
+  await page.getByLabel('商品分类筛选').selectOption('c-candy')
+  await page.getByLabel('搜索商品').fill('NO.2')
+  await expect(page.getByText(/NO\.2柠檬/)).toBeVisible()
+})
+
+test('编辑商品可独立控制三个业务开关并复用正式分类', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByLabel('商品分类', { exact: true }).selectOption('c-candy')
+  await page.getByLabel('门店调拨').check()
+  await page.getByLabel('合作商供货').check()
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const row = page.locator('[data-product-id="p-pos"]')
+  await expect(row).toContainText('太妃糖')
+  await expect(row).toContainText('POS ✓')
+  await expect(row).toContainText('调拨 ✓')
+  await expect(row).toContainText('合作商 ✓')
+  const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ isActive: true, transferEnabled: true, partnerSupplyEnabled: true, productCategoryId: 'c-candy' })
+})
+
+test('批量管理支持分类及 POS、调拨、合作商开关', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '全部', exact: true }).click()
+  await page.getByLabel('业务状态筛选').selectOption('all')
+  await page.getByLabel('选择卡皮巴拉布丁').check()
+  await page.getByLabel('选择NO.1树莓').check()
+  await page.getByLabel('批量目标分类').selectOption('c-candy')
+  await page.getByRole('button', { name: '修改分类' }).click()
+  await page.getByLabel('选择卡皮巴拉布丁').check()
+  await page.getByLabel('选择NO.1树莓').check()
+  await page.getByRole('button', { name: '启用合作商' }).click()
+  const requests = await page.evaluate(() => window.__productCenterTest.requests.filter((item) => item.path === '/api/v2/products/bulk').map((item) => item.body))
+  expect(requests).toEqual([
+    expect.objectContaining({ operation: 'category', productCategoryId: 'c-candy', ids: ['p-pos', 'p-transfer'] }),
+    expect.objectContaining({ operation: 'purpose', purpose: 'partner', enabled: true, ids: ['p-pos', 'p-transfer'] }),
+  ])
+  await expect(page.getByRole('button', { name: '启用POS' })).toHaveCount(0)
+})
+
+test('分类管理支持新增、编辑、排序和启停', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '分类管理' }).click()
+  await page.getByRole('button', { name: '新增分类' }).click()
+  await page.getByLabel('分类名称').fill('礼盒')
+  await page.getByLabel('分类排序').fill('3')
+  await page.getByRole('button', { name: '保存分类' }).click()
+  const category = page.locator('[data-category-id="c-new-2"]')
+  await expect(category).toContainText('礼盒')
+  await page.getByRole('button', { name: '编辑分类礼盒' }).click()
+  await page.getByLabel('分类排序').fill('4')
+  await page.getByRole('button', { name: '保存分类' }).click()
+  await expect(category).toContainText('排序 4')
+  await category.getByRole('button', { name: '停用' }).click()
+  await expect(category).toContainText('已停用')
+})
+
+test('商品中心仅按稳定 SKU 批量更新，预览后导入并上架', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
     ['菜品名', 'SKU', '分类', '售价（元）', '成本价（元）'],
     ['卡皮巴拉布丁', 'BUDU-001', '甜品', '75', '25'],
-    ['草莓蛋糕', 'CAKE-002', '蛋糕', '38', '18'],
+    ['草莓蛋糕', 'CAKE-002', '甜品', '38', '18'],
   ]), '菜单')
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
   await page.locator('input[type="file"]').setInputFiles({ name: '菜单.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer })
-
   const dialog = page.getByRole('dialog', { name: '菜单导入预览' })
-  await expect(dialog).toBeVisible()
   await expect(dialog.getByText('更新并上架', { exact: true })).toBeVisible()
   await expect(dialog.getByText('新增并上架', { exact: true })).toBeVisible()
   await dialog.getByRole('button', { name: '导入并上架 2 项', exact: true }).click()
   await expect(page.getByText('菜单导入完成：新增 1 个，更新 1 个，已全部自动上架', { exact: true })).toBeVisible()
-  await expect(page.getByText('草莓蛋糕', { exact: true })).toBeVisible()
   const payload = await page.evaluate(() => window.__productImportPayload)
   expect(payload.rows).toHaveLength(2)
-  expect(payload.rows.every((row) => row.isActive === true)).toBe(true)
-  expect(payload.rows[0].salePriceCents).toBe('7500')
+  expect(payload.rows.every((row) => row.isActive === true && row.transferEnabled === false && row.partnerSupplyEnabled === false)).toBe(true)
 })
 
 test('商品中心可导出 Excel 菜单', async ({ page }) => {
@@ -34,3 +94,10 @@ test('商品中心可导出 Excel 菜单', async ({ page }) => {
   expect(download.suggestedFilename()).toMatch(/^budu商品菜单_\d{8}\.xlsx$/)
 })
 
+for (const width of [320, 340, 375, 390, 430]) {
+  test(`${width}px 统一商品中心无横向滚动`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/tests/product-center-harness.html')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}

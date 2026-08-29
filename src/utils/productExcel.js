@@ -133,7 +133,8 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
       const skuMatch = existingBySku.get(sku)
       const nameMatch = existingByName.get(name)
       if (skuMatch && nameMatch && skuMatch.productId !== nameMatch.productId) errors.push('SKU 与菜品名分别匹配到不同商品')
-      const matched = skuMatch || nameMatch || null
+      if (!skuMatch && nameMatch) errors.push('名称已存在；禁止按名称自动关联，请编辑现有商品')
+      const matched = skuMatch || null
       parsed.push({
         sourceSheet: sheet.name || '未命名工作表',
         sourceRow: rowIndex + 1,
@@ -169,4 +170,3 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
     sheetErrors,
   }
 }
-

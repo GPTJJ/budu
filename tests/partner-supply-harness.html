@@ -13,7 +13,6 @@ const partners = [{ id: 'partner-qhd', name: '秦皇岛合作商', contactName: 
 const products = [
   { id: 'p1', code: 'NO.1', name: 'NO.1树莓', salePriceCents: '500', categoryId: 'cat-candy', category: categories[0], enabled: true },
   { id: 'p2', code: 'NO.2', name: 'NO.2柠檬', salePriceCents: '600', categoryId: '', category: null, enabled: true },
-  { id: 'p3', code: 'GIFT-1', name: '礼盒套装', salePriceCents: '', categoryId: 'cat-gift', category: categories[1], enabled: true },
 ]
 const baseItem = { id: 'si1', productId: 'p1', productCode: 'NO.1', productName: 'NO.1树莓', productCategory: '糖果', retailPriceCents: '500', discountBps: 6500, partnerUnitPriceCents: '325', quantity: 100, subtotalCents: '32500' }
 const orders = [
@@ -34,7 +33,7 @@ window.fetch = async (url, options = {}) => {
   if (path === '/api/v2/partners' && method === 'POST') { const body = JSON.parse(options.body); const row = { id: `partner-${partners.length}`, ...body, defaultStoreName: '北京官舍店', version: 1, orderCount: 0 }; partners.push(row); requests.push({ type: 'partner-create', body }); return json({ ok: true, partner: row }, 201) }
   const partnerEdit = path.match(/^\/api\/v2\/partners\/([^/]+)$/)
   if (partnerEdit && method === 'PUT') { const body = JSON.parse(options.body); const index = partners.findIndex((row) => row.id === partnerEdit[1]); partners[index] = { ...partners[index], ...body, version: partners[index].version + 1 }; requests.push({ type: 'partner-edit', body }); return json({ ok: true, partner: partners[index] }) }
-  if (path === '/api/v2/partner-supply-products') return json({ rows: products })
+  if (path === '/api/v2/partner-supply-products') return json({ rows: new URL(location.href).searchParams.has('emptyProducts') ? [] : products })
   if (path === '/api/v2/product-categories') return json({ rows: categories })
   if (path === '/api/v2/partner-supply-orders' && method === 'GET') return json({ rows: orders })
   if (path === '/api/v2/partner-supply-orders' && method === 'POST') { const body = JSON.parse(options.body); requests.push({ type: 'order-create', body }); const row = { ...orders[0], id: `order-${orders.length}`, orderNo: 'PS-20260829-NEW123', status: 'pending', receivedAmountCents: '0', outstandingAmountCents: '32500', paymentStatus: 'unpaid', receipts: [], version: 1 }; orders.unshift(row); return json({ ok: true, order: row }, 201) }

@@ -271,7 +271,7 @@ partnerSupplyRouter.get('/partner-supply-products', wrap(async (req, res) => {
   requireDb()
   requirePartnerModule(req.user)
   const rows = await prisma.inventoryItem.findMany({
-    where: { category: 'product', transferEnabled: true, isActive: true },
+    where: { category: 'product', partnerSupplyEnabled: true, salePriceCents: { gt: 0n } },
     include: { productCategory: true },
     orderBy: [{ transferSortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
@@ -283,7 +283,7 @@ partnerSupplyRouter.get('/partner-supply-products', wrap(async (req, res) => {
     salePriceCents: row.salePriceCents?.toString() || '',
     categoryId: row.productCategoryId || '',
     category: row.productCategory ? { id: row.productCategory.id, name: row.productCategory.name, isActive: row.productCategory.isActive, sortOrder: row.productCategory.sortOrder } : null,
-    enabled: row.transferEnabled && row.isActive,
+    enabled: row.partnerSupplyEnabled,
   })) })
 }))
 
@@ -328,7 +328,7 @@ partnerSupplyRouter.post('/partner-supply-orders', wrap(async (req, res) => {
   const orderId = uid('pso')
   const itemRows = itemInputs.map((input) => {
     const product = byId.get(input.productId)
-    if (!product || product.category !== 'product' || !product.transferEnabled || !product.isActive) throw bad('产品已停用，请刷新后重试', 409)
+    if (!product || product.category !== 'product' || !product.partnerSupplyEnabled) throw bad('产品未启用合作商供货，请刷新后重试', 409)
     if (product.salePriceCents === null || product.salePriceCents <= 0n) throw bad(`产品「${product.name}」尚未设置有效零售价`, 409)
     const partnerUnitPriceCents = (product.salePriceCents * BigInt(effectiveDiscountBps) + 5000n) / 10000n
     if (partnerUnitPriceCents <= 0n) throw bad(`产品「${product.name}」合作价无效`, 409)

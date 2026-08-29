@@ -30,7 +30,7 @@ try {
   const productResponse = await fetch(`${base}/v2/transfer-master-items`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ category: 'product', code: 'NO.1', name: 'NO.1树莓', productCategoryId: category.id, sortOrder: 1, enabled: true }) })
   if (!productResponse.ok) throw new Error(`产品创建失败：${productResponse.status} ${await productResponse.text()}`)
   const product = (await productResponse.json()).item
-  await prisma.inventoryItem.update({ where: { id: product.id }, data: { salePriceCents: 500n, isActive: true } })
+  await prisma.inventoryItem.update({ where: { id: product.id }, data: { salePriceCents: 500n, isActive: true, partnerSupplyEnabled: true } })
 
   const partnerResponse = await fetch(`${base}/v2/partners`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ name: '秦皇岛合作商', contactName: '合作联系人', contactPhone: '13800000000', defaultStoreKey: 'guanshe', defaultDiscountBps: 6500, isActive: true, note: '真实合作商资料' }) })
   if (!partnerResponse.ok) throw new Error(`合作商创建失败：${partnerResponse.status} ${await partnerResponse.text()}`)
@@ -101,6 +101,9 @@ try {
   const enablePartner = await fetch(`${base}/v2/partners/${partner.id}`, { method: 'PUT', headers: jsonHeaders(cookie), body: JSON.stringify({ ...partner, isActive: true }) })
   partner = (await enablePartner.json()).partner
   await prisma.inventoryItem.update({ where: { id: product.id }, data: { transferEnabled: false } })
+  const independentProducts = await fetch(`${base}/v2/partner-supply-products`, { headers: { Cookie: cookie } }).then((response) => response.json())
+  if (!independentProducts.rows.some((row) => row.id === product.id)) throw new Error('合作商供货错误依赖了门店调拨开关')
+  await prisma.inventoryItem.update({ where: { id: product.id }, data: { partnerSupplyEnabled: false } })
   const disabledProductCreate = await createOrder('2026-08-23')
   if (disabledProductCreate.status !== 409) throw new Error('停用产品仍可创建新供货单')
   const activeProducts = await fetch(`${base}/v2/partner-supply-products`, { headers: { Cookie: cookie } }).then((response) => response.json())

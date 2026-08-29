@@ -45,7 +45,7 @@ test('Partner Supply additive migration seeds explicit partner data and preserve
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 53)
+    assert.equal(Number(migrations[0].count), 54)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex'), digest)
     assert.deepEqual(await client.$queryRawUnsafe(`SELECT (SELECT COUNT(*)::int FROM "StockBalance") AS balances, (SELECT COUNT(*)::int FROM "StockLedger") AS ledger`), stockBefore)
     const partner = await client.partner.findUnique({ where: { id: 'partner-qinhuangdao-v1' } })

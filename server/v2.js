@@ -561,6 +561,10 @@ function requireTransferMasterManager(user) {
   if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT)) throw bad('无权限', 403)
 }
 
+function requireProductCategoryManager(user) {
+  if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)) throw bad('无权限', 403)
+}
+
 function serializeProductCategory(category) {
   return {
     id: category.id,
@@ -604,7 +608,7 @@ v2Router.get('/product-categories', wrap(async (req, res) => {
 
 v2Router.post('/product-categories', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  requireTransferMasterManager(req.user)
+  requireProductCategoryManager(req.user)
   const data = productCategoryData(req.body)
   const duplicate = await prisma.productCategory.findFirst({ where: { name: { equals: data.name, mode: 'insensitive' } } })
   if (duplicate) throw bad('分类名称已存在', 409)
@@ -617,7 +621,7 @@ v2Router.post('/product-categories', wrap(async (req, res) => {
 
 v2Router.put('/product-categories/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  requireTransferMasterManager(req.user)
+  requireProductCategoryManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw bad('分类版本不正确，请刷新后重试')
   const data = productCategoryData(req.body)
@@ -656,9 +660,10 @@ v2Router.get('/transfer-master-items', wrap(async (req, res) => {
 
 v2Router.post('/transfer-master-items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  requireTransferMasterManager(req.user)
   const category = String(req.body?.category || '').trim()
   if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  if (category === 'product') requireProductCategoryManager(req.user)
+  else requireTransferMasterManager(req.user)
   const data = transferMasterData(req.body, category)
   await requireAssignableProductCategory(data.productCategoryId)
   const duplicate = await prisma.inventoryItem.findFirst({
@@ -685,7 +690,7 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
 
 v2Router.put('/transfer-master-items/bulk-category', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  requireTransferMasterManager(req.user)
+  requireProductCategoryManager(req.user)
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map((id) => String(id || '').trim()).filter(Boolean))]
   if (!ids.length || ids.length > 500) throw bad('请选择 1-500 个产品')
   const productCategoryId = String(req.body?.productCategoryId || '').trim() || null
@@ -701,9 +706,10 @@ v2Router.put('/transfer-master-items/bulk-category', wrap(async (req, res) => {
 
 v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  requireTransferMasterManager(req.user)
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.id } })
   if (!existing || !['product', 'material'].includes(existing.category)) throw bad('产品或物料不存在', 404)
+  if (existing.category === 'product') requireProductCategoryManager(req.user)
+  else requireTransferMasterManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw bad('资料版本不正确，请刷新后重试')
   const data = transferMasterData(req.body, existing.category)

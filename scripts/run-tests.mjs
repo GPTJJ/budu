@@ -58,6 +58,7 @@ const NODE_TEST_SUITE = [
   'test-store-transfer-migration-rehearsal.mjs', // 49→50 additive migration 与历史调拨摘要/旧应用读取
   'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
   'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
+  'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
@@ -106,6 +107,7 @@ const DIRECT_SUITE = [
   'test-payroll-self-scope.mjs', // Gate 29L：员工本人范围只认 User.employeeId → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-partner-supply-workflow.mjs', // 合作商供货价格快照/发货/多笔收款/通知/零库存副作用 → critical
+  'test-unified-product-center-workflow.mjs', // 单一 InventoryItem、独立业务开关、批量管理与稳定身份 → critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
   'test-payroll-integration.mjs',   // Payroll 集成（Vite 内存服务）→ critical
@@ -142,6 +144,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-self-scope.mjs',
   'test-inventory-workflow.mjs',
   'test-partner-supply-workflow.mjs',
+  'test-unified-product-center-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',
   'test-payroll-integration.mjs',
@@ -174,6 +177,7 @@ const CRITICAL_NODE_TEST = [
   'test-transfer-summary-export.mjs',
   'test-partner-supply-contract.mjs',
   'test-partner-supply-migration-rehearsal.mjs',
+  'test-unified-product-center-migration-rehearsal.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）

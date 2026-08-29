@@ -630,7 +630,7 @@ export function createApp() {
       (/^\/store-sales-source/.test(pathname) && [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.SETTINGS]) ||
       (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/transfer-master-items(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
-      (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/(?:partners|partner-supply|partner-receipts)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_SUPPLY]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:stock|items|waste-records)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ||
