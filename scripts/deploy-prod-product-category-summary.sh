@@ -250,9 +250,11 @@ import crypto from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 try {
+  // updatedAt is application metadata and can move on a no-op legacy editor
+  // save. Every product identity and mutable business field remains protected.
   const rows = await prisma.inventoryItem.findMany({
     orderBy: { id: 'asc' },
-    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, partnerSupplyEnabled: true, productCategoryId: true, version: true, updatedAt: true, createdAt: true },
+    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, partnerSupplyEnabled: true, productCategoryId: true, version: true, createdAt: true },
   })
   const serializable = rows.map((row) => ({ ...row, salePriceCents: row.salePriceCents === null ? null : String(row.salePriceCents), costPriceCents: row.costPriceCents === null ? null : String(row.costPriceCents) }))
   const digest = crypto.createHash('sha256').update(JSON.stringify(serializable)).digest('hex')
@@ -399,9 +401,10 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" 54
+verify_database_authority "$OLD_CONTAINER" 55
+verify_product_group_default_state "$OLD_CONTAINER"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=54 health=PASS writer=1"
+echo "production authority verified: DB=budu_bj006 migration=55 health=PASS writer=1 ProductGroup-default=empty"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -477,7 +480,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration54-pre-product-group-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration55-pre-product-group-retry-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -498,10 +501,10 @@ BEFORE_TRANSFER_DIGEST="$(transfer_business_digest "$OLD_CONTAINER")"
 BEFORE_PURCHASE_DIGEST="$(purchase_business_digest "$OLD_CONTAINER")"
 BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
 BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
-echo "fresh migration54 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
+echo "fresh migration55 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
-# Run the exact release migration command in isolation. ProductGroup is migration
-# 55 and must leave every pre-existing product and historical fact unchanged.
+# Run the exact release migration command in isolation. Migration 55 was applied
+# by the fail-closed first attempt; this retry must keep the ledger and facts still.
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
 [ "$(docker wait "$MIGRATOR")" = "0" ] || { docker logs --tail 80 "$MIGRATOR"; exit 1; }
@@ -515,7 +518,7 @@ verify_database_authority "$OLD_CONTAINER" 55
 [ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
 verify_transfer_master_seed "$OLD_CONTAINER"
 verify_product_group_default_state "$OLD_CONTAINER"
-echo "migration ledger advanced 54 -> 55; ProductGroup default state empty; historical transfer, purchase, mailing, invoice and product facts unchanged"
+echo "migration ledger remained at 55; ProductGroup default state empty; historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
@@ -575,4 +578,4 @@ verify_product_group_default_state "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "ProductGroup blue/green deployment completed; migration 54 -> 55 and historical facts verified unchanged"
+echo "ProductGroup blue/green deployment completed; migration 55 authority and historical facts verified unchanged"
