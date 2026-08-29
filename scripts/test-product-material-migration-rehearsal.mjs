@@ -52,7 +52,7 @@ test('产品物料 additive migration preserves legacy business facts and seeds 
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 53)
+    assert.equal(Number(migrations[0].count), 54)
     const after = await client.$queryRawUnsafe(oldProjection)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(after)).digest('hex'), digest)
     const counts = await client.$queryRawUnsafe(`SELECT category, COUNT(*)::int AS count FROM "InventoryItem" WHERE "transferEnabled" = true GROUP BY category ORDER BY category`)

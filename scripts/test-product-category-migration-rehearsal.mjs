@@ -44,7 +44,7 @@ test('产品分类 additive migration leaves every product uncategorized and pre
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 53)
+    assert.equal(Number(migrations[0].count), 54)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex'), digest)
     assert.equal(await client.productCategory.count(), 0)
     assert.equal(await client.inventoryItem.count({ where: { productCategoryId: { not: null } } }), 0)
