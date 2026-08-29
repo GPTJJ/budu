@@ -803,11 +803,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
         </aside>}
 
         <main data-testid="pos-catalog-panel" className="flex min-h-0 min-w-0 flex-1 flex-col bg-slate-100">
-          <div className={`flex shrink-0 items-center border-b border-slate-200 bg-white ${isDesktop ? 'h-14 px-3' : 'px-3 py-2.5'}`}>
-            <div className={`flex min-w-0 flex-1 overflow-x-auto ${isIpad || !isDesktop ? 'gap-2' : 'gap-1.5'}`} aria-label="商品分类" data-swipe-back-ignore="true">
-              {categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 whitespace-nowrap font-bold transition ${isIpad ? 'rounded-xl px-4 py-2.5 text-[13px]' : (isDesktop ? 'rounded-lg px-3.5 py-2 text-[13px]' : 'rounded-full border px-4 py-2 text-[13px]')} ${category === item ? 'border-budu-500 bg-budu-500 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}>{item}</button>)}
+          <div className={`flex shrink-0 border-b border-slate-200 bg-white ${isDesktop ? 'items-start px-3 py-2' : 'items-center px-3 py-2.5'}`}>
+            <div className={`${isDesktop ? 'grid grid-cols-5' : 'flex overflow-x-auto'} min-w-0 flex-1 gap-2`} aria-label="商品分类" data-swipe-back-ignore="true">
+              {categories.map((item) => <button key={item} onClick={() => setCategory(item)} title={item} className={`${isDesktop ? 'min-w-0 overflow-hidden rounded-lg px-2.5 py-2 text-[13px]' : `shrink-0 whitespace-nowrap ${isIpad ? 'rounded-xl px-4 py-2.5 text-[13px]' : 'rounded-full border px-4 py-2 text-[13px]'}`} font-bold transition ${category === item ? 'border-budu-500 bg-budu-500 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}><span className={isDesktop ? 'block truncate' : undefined}>{item}</span></button>)}
             </div>
-            {isDesktop && <span className="ml-3 shrink-0 text-xs font-semibold text-slate-400">{visibleProducts.length} 个商品</span>}
+            {isDesktop && <span className="ml-3 mt-2 shrink-0 text-xs font-semibold text-slate-400">{visibleProducts.length} 个商品</span>}
           </div>
           {error && <div className={`shrink-0 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600 ${isDesktop ? 'mx-4 mt-3' : 'mx-3 mt-2'}`}>{error}</div>}
           <div className="min-h-0 flex-1 overflow-y-auto p-3">

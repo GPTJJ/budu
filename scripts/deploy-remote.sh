@@ -22,16 +22,16 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
-# Product Center mobile title UI is a schema-neutral successor to the verified
-# Unified Product Center release. Production remains on the authority-aware
+# POS two-row category UI is a schema-neutral successor to the verified Product
+# Center mobile-title release. Production remains on the authority-aware
 # blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
-  EXPECTED_OLD_SHA="d78e1e606e1451c6a83b8b359fb6253f78527af8"
+  EXPECTED_OLD_SHA="976005b6fc1624586162d47ae136dfbf12ce4df6"
   [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "==> 本地 release SHA 不一致"; exit 1; }
 
-  TEST_DB_CONTAINER="budu-product-title-ui-test-${GITHUB_RUN_ID:-$$}"
+  TEST_DB_CONTAINER="budu-pos-category-ui-test-${GITHUB_RUN_ID:-$$}"
   TEST_DB_PORT=""
-  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-product-title-ui.XXXXXX")"
+  PROD_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/budu-pos-category-ui.XXXXXX")"
   cleanup_customer_request_release() {
     docker rm -f "$TEST_DB_CONTAINER" >/dev/null 2>&1 || true
     rm -f "$PROD_BUNDLE"
@@ -71,7 +71,7 @@ if [ "$ENV" = "prod" ]; then
 
   echo "==> 上传 exact bundle 与 authority-aware deployment helpers"
   git bundle create "$PROD_BUNDLE" HEAD
-  REMOTE_PREFIX="/dev/shm/budu-product-title-ui-${SHA}"
+  REMOTE_PREFIX="/dev/shm/budu-pos-category-ui-${SHA}"
   "${SCP_ARGS[@]}" "$PROD_BUNDLE" "$USER@$HOST:${REMOTE_PREFIX}.bundle"
   "${SCP_ARGS[@]}" scripts/resolve-customer-request-wecom-recipient.mjs "$USER@$HOST:${REMOTE_PREFIX}.resolver.mjs"
   "${SCP_ARGS[@]}" scripts/clone-production-container.py "$USER@$HOST:${REMOTE_PREFIX}.clone.py"

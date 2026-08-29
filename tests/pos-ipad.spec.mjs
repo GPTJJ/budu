@@ -56,6 +56,49 @@ async function enterPayment(page, url) {
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
 }
 
+test('iPad 横屏商品分类固定五列并按正式顺序换成两行', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=category-layout')
+  const categoryRegion = page.getByLabel('商品分类')
+  const buttons = categoryRegion.getByRole('button')
+  await expect(buttons).toHaveCount(8)
+  await expect(buttons.first()).toHaveText('全部')
+  const layout = await categoryRegion.evaluate((region) => {
+    const rects = [...region.querySelectorAll('button')].map((button) => {
+      const rect = button.getBoundingClientRect()
+      return { text: button.textContent.trim(), x: rect.x, y: rect.y, width: rect.width, right: rect.right, bottom: rect.bottom }
+    })
+    const rows = [...new Set(rects.map((rect) => Math.round(rect.y)))]
+    return {
+      rects,
+      rows,
+      perRow: rows.map((rowY) => rects.filter((rect) => Math.round(rect.y) === rowY).length),
+      region: region.getBoundingClientRect().toJSON(),
+      pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }
+  })
+  expect(layout.rects.map((item) => item.text)).toEqual(['全部', '布丁', '蛋糕', '饮品', '冰淇淋', '巧克力豆', '森醒', '太妃糖礼盒超长分类名称'])
+  expect(layout.rows).toHaveLength(2)
+  expect(layout.perRow).toEqual([5, 3])
+  expect(Math.max(...layout.rects.map((item) => item.width)) - Math.min(...layout.rects.map((item) => item.width))).toBeLessThanOrEqual(1)
+  expect(Math.max(...layout.rects.map((item) => item.right))).toBeLessThanOrEqual(layout.region.right + 1)
+  expect(layout.pageOverflow).toBe(0)
+
+  await page.getByRole('button', { name: '冰淇淋', exact: true }).click()
+  await expect(page.getByRole('button', { name: /香草冰淇淋/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toHaveCount(0)
+  await page.getByRole('button', { name: '全部', exact: true }).click()
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect.poll(() => categoryRegion.evaluate((region) => {
+    const rows = [...new Set([...region.querySelectorAll('button')].map((button) => Math.round(button.getBoundingClientRect().y)))]
+    return {
+      perRow: rows.map((rowY) => [...region.querySelectorAll('button')].filter((button) => Math.round(button.getBoundingClientRect().y) === rowY).length),
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }
+  })).toEqual({ perRow: [5, 3], overflow: 0 })
+})
+
 test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=layout-user')
   await expect(page.getByRole('heading', { name: '当前订单' })).toBeVisible()

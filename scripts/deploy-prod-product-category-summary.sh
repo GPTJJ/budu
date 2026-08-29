@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Authority-aware schema-neutral blue/green deployment for Product Center UI.
+# Authority-aware schema-neutral blue/green deployment for POS category UI.
 # Runs on the Beijing host after the release bundle and helper scripts are uploaded.
 set -Eeuo pipefail
 
@@ -17,16 +17,16 @@ APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SELF_PATH="$0"
 SHORT_SHA="${RELEASE_SHA:0:7}"
-CANDIDATE="budu-prod-${SHORT_SHA}-product-title-ui"
-MIGRATOR="budu-migrate-${SHORT_SHA}-product-title-ui"
-BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-product-title-ui"
-IMAGE="budu-api:product-title-ui-${SHORT_SHA}"
+CANDIDATE="budu-prod-${SHORT_SHA}-pos-category-ui"
+MIGRATOR="budu-migrate-${SHORT_SHA}-pos-category-ui"
+BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-pos-category-ui"
+IMAGE="budu-api:pos-category-ui-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
 ENV_FILE="${APP_DIR}/.env.production"
-WORK_ROOT="$(mktemp -d "/dev/shm/budu-product-title-ui-${SHORT_SHA}.XXXXXX")"
+WORK_ROOT="$(mktemp -d "/dev/shm/budu-pos-category-ui-${SHORT_SHA}.XXXXXX")"
 BINDING_FILE="${WORK_ROOT}/recipient-binding.json"
-ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/product-title-ui-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/pos-category-ui-${SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONTAINER=""
 OLD_STOPPED=0
 TEMPLATE_CHANGED=0
@@ -450,7 +450,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="budu_bj006-migration54-pre-product-title-ui-${SHORT_SHA}.dump"
+BACKUP_NAME="budu_bj006-migration54-pre-pos-category-ui-${SHORT_SHA}.dump"
 # Write the dump as the invoking deployment user so the protected host-side
 # rollback copy can be permission-locked without requiring privileged chmod.
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
@@ -544,4 +544,4 @@ verify_transfer_master_seed "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
-echo "Product Center mobile title UI blue/green deployment completed; schema and historical facts verified unchanged"
+echo "POS two-row category UI blue/green deployment completed; schema and historical facts verified unchanged"
