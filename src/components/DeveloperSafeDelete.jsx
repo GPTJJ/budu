@@ -26,11 +26,16 @@ function Overlay({ title, subtitle, children, actions, onClose }) {
       bodyWidth: document.body.style.width,
       htmlOverflow: document.documentElement.style.overflow,
     }
-    const updateViewport = () =>
+    const updateViewport = () => {
+      const focused = document.activeElement
       setViewport({
         height: window.visualViewport?.height || window.innerHeight,
         top: window.visualViewport?.offsetTop || 0,
       })
+      if (focused instanceof HTMLElement && focused.closest('[data-testid="developer-safe-delete-sheet"]')) {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => focused.isConnected && focused.scrollIntoView({ block: 'center' })))
+      }
+    }
     document.documentElement.style.overflow = 'hidden'
     document.body.style.overflow = 'hidden'
     document.body.style.position = 'fixed'

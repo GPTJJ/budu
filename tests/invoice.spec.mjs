@@ -122,7 +122,7 @@ for (const width of [320, 340, 375, 390, 430]) {
     await password.focus()
     await password.fill('separate-secret')
     await page.setViewportSize({ width, height: 460 })
-    await expect(password).toBeVisible()
+    await expect(password).toBeInViewport()
     await expect(actions).toBeVisible()
     await expect(page.getByRole('button', { name: '确认删除', exact: true })).toBeInViewport()
     const compact = await sheet.evaluate((element) => ({
