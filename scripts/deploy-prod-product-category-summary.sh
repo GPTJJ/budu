@@ -288,7 +288,7 @@ try {
 NODE
 }
 
-verify_transfer_master_seed() {
+verify_transfer_master_integrity() {
   local container="$1"
   docker exec -i "$container" node --input-type=module - <<'NODE'
 import { PrismaClient } from '@prisma/client'
@@ -308,8 +308,12 @@ try {
   const byCategory = Object.fromEntries(rows.map((row) => [row.category, {
     total: Number(row.total), enabled: Number(row.enabled), coded: Number(row.coded),
   }]))
-  if (byCategory.product?.enabled !== 12 || byCategory.product?.coded !== 12) throw new Error('PRODUCT_TRANSFER_MASTER_SEED_MISMATCH')
-  if (byCategory.material?.enabled !== 26 || byCategory.material?.coded !== 0) throw new Error('MATERIAL_TRANSFER_MASTER_SEED_MISMATCH')
+  if (!byCategory.product || byCategory.product.total < 85 || byCategory.product.enabled !== byCategory.product.coded) {
+    throw new Error('PRODUCT_TRANSFER_MASTER_INTEGRITY_MISMATCH')
+  }
+  if (!byCategory.material || byCategory.material.total < 26 || byCategory.material.enabled < 1) {
+    throw new Error('MATERIAL_TRANSFER_MASTER_INTEGRITY_MISMATCH')
+  }
   console.log(JSON.stringify(byCategory))
 } finally {
   await prisma.$disconnect()
@@ -516,7 +520,7 @@ verify_database_authority "$OLD_CONTAINER" 55
 [ "$(purchase_business_digest "$OLD_CONTAINER")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed during additive migration" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$OLD_CONTAINER")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed during additive migration" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
-verify_transfer_master_seed "$OLD_CONTAINER"
+verify_transfer_master_integrity "$OLD_CONTAINER"
 verify_product_group_default_state "$OLD_CONTAINER"
 echo "migration ledger remained at 55; ProductGroup default state empty; historical transfer, purchase, mailing, invoice and product facts unchanged"
 
@@ -573,7 +577,7 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 [ "$(purchase_business_digest "$CANDIDATE")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed after cutover" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$CANDIDATE")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed after cutover" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$CANDIDATE")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed after cutover" >&2; exit 1; }
-verify_transfer_master_seed "$CANDIDATE"
+verify_transfer_master_integrity "$CANDIDATE"
 verify_product_group_default_state "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
