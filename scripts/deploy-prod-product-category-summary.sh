@@ -254,11 +254,37 @@ try {
   // save. Every product identity and mutable business field remains protected.
   const rows = await prisma.inventoryItem.findMany({
     orderBy: { id: 'asc' },
-    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, partnerSupplyEnabled: true, productCategoryId: true, version: true, createdAt: true },
+    select: { id: true, name: true, unit: true, spec: true, barcode: true, category: true, image: true, sku: true, posCategory: true, salePriceCents: true, costPriceCents: true, isActive: true, trackInventory: true, sortOrder: true, transferCode: true, transferEnabled: true, transferSortOrder: true, partnerSupplyEnabled: true, productCategoryId: true, productGroupId: true, variantName: true, version: true, createdAt: true },
   })
   const serializable = rows.map((row) => ({ ...row, salePriceCents: row.salePriceCents === null ? null : String(row.salePriceCents), costPriceCents: row.costPriceCents === null ? null : String(row.costPriceCents) }))
   const digest = crypto.createHash('sha256').update(JSON.stringify(serializable)).digest('hex')
   process.stdout.write(rows.length + ':' + digest)
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+}
+
+product_group_authority_digest() {
+  local container="$1"
+  docker exec -i "$container" node --input-type=module - <<'NODE'
+import crypto from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  // ProductGroup is presentation metadata, but it is still canonical business
+  // data. Keep its rows and every member relation immutable during deployment.
+  const groups = await prisma.productGroup.findMany({
+    orderBy: { id: 'asc' },
+    select: { id: true, name: true, coverImage: true, sortOrder: true, isActive: true, version: true, createdAt: true },
+  })
+  const members = await prisma.inventoryItem.findMany({
+    where: { OR: [{ productGroupId: { not: null } }, { variantName: { not: '' } }] },
+    orderBy: { id: 'asc' },
+    select: { id: true, category: true, productGroupId: true, variantName: true, version: true },
+  })
+  const digest = crypto.createHash('sha256').update(JSON.stringify({ groups, members })).digest('hex')
+  process.stdout.write(`${groups.length}:${members.length}:${digest}`)
 } finally {
   await prisma.$disconnect()
 }
@@ -364,7 +390,7 @@ console.log(JSON.stringify({ publicHealth: true, database: 'budu_bj006', migrati
 NODE
 }
 
-verify_product_group_default_state() {
+verify_product_group_integrity() {
   local container="$1"
   docker exec -i "$container" node --input-type=module - <<'NODE'
 import { PrismaClient } from '@prisma/client'
@@ -374,15 +400,21 @@ try {
     SELECT
       (SELECT COUNT(*)::int FROM "ProductGroup") AS "groups",
       (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "productGroupId" IS NOT NULL) AS "groupedProducts",
-      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "variantName" <> '') AS "namedVariants"
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "variantName" <> '') AS "namedVariants",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "productGroupId" IS NOT NULL AND "category" <> 'product') AS "nonProductMembers",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "productGroupId" IS NULL AND "variantName" <> '') AS "orphanVariantNames",
+      (SELECT COUNT(*)::int FROM "InventoryItem" WHERE "productGroupId" IS NOT NULL AND "variantName" = '') AS "unnamedGroupMembers"
   `)
   const result = {
     groups: Number(rows[0]?.groups || 0),
     groupedProducts: Number(rows[0]?.groupedProducts || 0),
     namedVariants: Number(rows[0]?.namedVariants || 0),
+    nonProductMembers: Number(rows[0]?.nonProductMembers || 0),
+    orphanVariantNames: Number(rows[0]?.orphanVariantNames || 0),
+    unnamedGroupMembers: Number(rows[0]?.unnamedGroupMembers || 0),
   }
-  if (result.groups !== 0 || result.groupedProducts !== 0 || result.namedVariants !== 0) {
-    throw new Error('PRODUCT_GROUP_DEFAULT_STATE_MISMATCH')
+  if (result.nonProductMembers !== 0 || result.orphanVariantNames !== 0 || result.unnamedGroupMembers !== 0 || result.groupedProducts !== result.namedVariants) {
+    throw new Error('PRODUCT_GROUP_INTEGRITY_MISMATCH')
   }
   console.log(JSON.stringify(result))
 } finally {
@@ -406,9 +438,9 @@ docker inspect "$OLD_CONTAINER" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
 verify_database_authority "$OLD_CONTAINER" 55
-verify_product_group_default_state "$OLD_CONTAINER"
+verify_product_group_integrity "$OLD_CONTAINER"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database-connected application writer" >&2; exit 1; }
-echo "production authority verified: DB=budu_bj006 migration=55 health=PASS writer=1 ProductGroup-default=empty"
+echo "production authority verified: DB=budu_bj006 migration=55 health=PASS writer=1 ProductGroup-integrity=PASS"
 
 # Verify the locked BUDU account and exact directory UserID on the trusted production IP.
 # The binding is written to a protected file; no name lookup participates.
@@ -505,6 +537,7 @@ BEFORE_TRANSFER_DIGEST="$(transfer_business_digest "$OLD_CONTAINER")"
 BEFORE_PURCHASE_DIGEST="$(purchase_business_digest "$OLD_CONTAINER")"
 BEFORE_MASTER_CORE_DIGEST="$(inventory_master_core_digest "$OLD_CONTAINER")"
 BEFORE_PARTNER_SUPPLY_DIGEST="$(partner_supply_business_digest "$OLD_CONTAINER")"
+BEFORE_PRODUCT_GROUP_DIGEST="$(product_group_authority_digest "$OLD_CONTAINER")"
 echo "fresh migration55 backup integrity PASS; protected rollback copy created; historical and product authority baselines locked"
 
 # Run the exact release migration command in isolation. Migration 55 was applied
@@ -520,15 +553,16 @@ verify_database_authority "$OLD_CONTAINER" 55
 [ "$(purchase_business_digest "$OLD_CONTAINER")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed during additive migration" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$OLD_CONTAINER")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed during additive migration" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$OLD_CONTAINER")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed during additive migration" >&2; exit 1; }
+[ "$(product_group_authority_digest "$OLD_CONTAINER")" = "$BEFORE_PRODUCT_GROUP_DIGEST" ] || { echo "ProductGroup authority changed during additive migration" >&2; exit 1; }
 verify_transfer_master_integrity "$OLD_CONTAINER"
-verify_product_group_default_state "$OLD_CONTAINER"
-echo "migration ledger remained at 55; ProductGroup default state empty; historical transfer, purchase, mailing, invoice and product facts unchanged"
+verify_product_group_integrity "$OLD_CONTAINER"
+echo "migration ledger remained at 55; ProductGroup authority and historical transfer, purchase, mailing, invoice and product facts unchanged"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate container name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 verify_database_authority "$CANDIDATE" 55
-verify_product_group_default_state "$CANDIDATE"
+verify_product_group_integrity "$CANDIDATE"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
 echo "unrouted read-only Candidate internal smoke PASS"
 
@@ -560,7 +594,7 @@ python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$B
 docker update --restart unless-stopped "$CANDIDATE" >/dev/null
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 verify_database_authority "$CANDIDATE" 55
-verify_product_group_default_state "$CANDIDATE"
+verify_product_group_integrity "$CANDIDATE"
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
 TEMPLATE_CHANGED=1
@@ -577,8 +611,9 @@ verify_public_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 [ "$(purchase_business_digest "$CANDIDATE")" = "$BEFORE_PURCHASE_DIGEST" ] || { echo "historical PurchaseRequest digest changed after cutover" >&2; exit 1; }
 [ "$(inventory_master_core_digest "$CANDIDATE")" = "$BEFORE_MASTER_CORE_DIGEST" ] || { echo "InventoryItem canonical core changed after cutover" >&2; exit 1; }
 [ "$(partner_supply_business_digest "$CANDIDATE")" = "$BEFORE_PARTNER_SUPPLY_DIGEST" ] || { echo "historical PartnerSupply facts changed after cutover" >&2; exit 1; }
+[ "$(product_group_authority_digest "$CANDIDATE")" = "$BEFORE_PRODUCT_GROUP_DIGEST" ] || { echo "ProductGroup authority changed after cutover" >&2; exit 1; }
 verify_transfer_master_integrity "$CANDIDATE"
-verify_product_group_default_state "$CANDIDATE"
+verify_product_group_integrity "$CANDIDATE"
 
 printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
 DEPLOY_OK=1
