@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import SchedulePage from '/src/components/SchedulePage.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -117,11 +118,14 @@
 
     const registerNavigationGuard = (guard) => { window.scheduleNavigationGuard = guard }
     window.triggerExternalNavigation = () => window.scheduleNavigationGuard?.(() => { window.externalNavigationCount = (window.externalNavigationCount || 0) + 1 })
-    createRoot(document.getElementById('root')).render(React.createElement(SchedulePage, {
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(SchedulePage, {
       user: USER,
       canEdit,
       onBack: () => { window.backCount += 1 },
       registerNavigationGuard,
-    }))
+      }),
+    ))
   </script></body>
 </html>

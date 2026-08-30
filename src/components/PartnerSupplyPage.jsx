@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { DeveloperSafeDeleteButton } from "./DeveloperSafeDelete";
+import { OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from "./overlay/OverlayPrimitives";
 import { api } from "../utils/api";
 import { allStores, storeName } from "../utils/selectors";
 import { takeNotificationRecordFocus } from "../utils/notificationNavigation";
@@ -65,17 +66,20 @@ const strictAmountCents = (value) => {
 
 function Sheet({ title, onClose, children, wide = false }) {
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4">
+    <OverlayViewport className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4">
       <button
         type="button"
         aria-label="关闭遮罩"
         onClick={onClose}
-        className="absolute inset-0 bg-slate-950/45 backdrop-blur-[2px]"
+        className="budu-overlay-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-[2px]"
       />
-      <section
-        className={`relative max-h-[92dvh] w-full overflow-y-auto rounded-t-[28px] bg-white pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[28px] ${wide ? "sm:max-w-4xl" : "sm:max-w-xl"}`}
+      <OverlayPanel
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`relative flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[28px] ${wide ? "sm:max-w-4xl" : "sm:max-w-xl"}`}
       >
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-5 py-4 backdrop-blur">
+        <OverlayHeader className="flex items-center justify-between border-b border-slate-100 bg-white/95 px-5 py-4 backdrop-blur">
           <h3 className="text-lg font-black text-slate-800">{title}</h3>
           <button
             type="button"
@@ -85,10 +89,10 @@ function Sheet({ title, onClose, children, wide = false }) {
           >
             <X className="h-5 w-5" />
           </button>
-        </header>
-        {children}
-      </section>
-    </div>
+        </OverlayHeader>
+        <OverlayScrollRegion className="pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</OverlayScrollRegion>
+      </OverlayPanel>
+    </OverlayViewport>
   );
 }
 

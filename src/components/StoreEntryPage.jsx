@@ -90,7 +90,7 @@ function StaffMultiSelect({ participants, selectedRows, onToggle, disabled }) {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30 bg-slate-900/10 sm:bg-transparent" onClick={() => setOpen(false)} />
+          <div data-budu-overlay-ignore className="fixed inset-0 z-30 bg-slate-900/10 sm:bg-transparent" onClick={() => setOpen(false)} />
           <div
             data-testid="staff-candidate-panel"
             className="fixed inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-40 max-h-[min(70vh,30rem)] overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:left-0 sm:top-full sm:mt-1 sm:max-h-72 sm:w-full sm:pb-2 sm:shadow-lg"

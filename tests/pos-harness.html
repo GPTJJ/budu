@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import PosPage from '/src/components/PosPage.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -154,6 +155,9 @@
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
     window.__posExitCount = 0
-    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }))
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }),
+    ))
   </script></body>
 </html>

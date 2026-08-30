@@ -12,6 +12,7 @@
       import { createRoot } from 'react-dom/client'
       import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
       import { EmployeeSheet } from '/src/components/approval/ApprovalSelectors.jsx'
+      import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
       import { loadUserData, seedCachedDataForTest } from '/src/utils/userData.js'
       import '/src/index.css'
 
@@ -91,7 +92,10 @@
             user: { id: 'dev-1', username: 'developer', role: 'developer', storeKeys: [] },
             onBack: () => {},
           })
-      createRoot(document.getElementById('root')).render(element)
+      createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+        React.createElement(OverlayStackManager),
+        element,
+      ))
     </script>
   </body>
 </html>

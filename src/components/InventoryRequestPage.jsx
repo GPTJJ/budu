@@ -706,7 +706,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
 
                 {productMenuOpen && (
                   <>
-                    <div className="fixed inset-0 z-30" onClick={() => setProductMenuOpen(false)} />
+                    <div data-budu-overlay-ignore className="fixed inset-0 z-30" onClick={() => setProductMenuOpen(false)} />
                     <div className="absolute left-0 top-full z-40 mt-1 w-[340px] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-lg sm:w-[440px]">
                       {/* 二级菜单：产品分类 */}
                       <div className="flex flex-wrap gap-1.5">

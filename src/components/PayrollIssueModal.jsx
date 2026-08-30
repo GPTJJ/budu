@@ -255,9 +255,9 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[96] flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-4 shadow-lg sm:p-6">
+    <div className="budu-overlay-viewport fixed inset-0 z-[96] flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="budu-overlay-scroll relative max-h-[94dvh] w-full max-w-3xl rounded-2xl bg-white p-4 shadow-lg sm:p-6">
         <div className="flex items-center gap-3">
           <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-50 text-budu-600"><BadgeDollarSign className="h-6 w-6" /></div>
           <div className="min-w-0 flex-1">

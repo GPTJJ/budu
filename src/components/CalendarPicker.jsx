@@ -93,8 +93,8 @@ export default function CalendarPicker({ month, day, weekStart, onSelect, onWeek
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="fixed left-3 right-3 top-[calc(7rem+env(safe-area-inset-top))] z-40 mx-auto w-auto max-w-[340px] rounded-2xl bg-white p-4 shadow-lg ring-1 ring-slate-100 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[300px]">
+          <div data-budu-overlay-ignore className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="fixed left-3 right-3 top-[calc(7rem+env(safe-area-inset-top))] z-40 mx-auto w-auto max-w-[340px] rounded-2xl bg-white p-4 shadow-lg ring-1 ring-slate-100 sm:absolute sm:left-0 sm:right-auto sm:top-full sm:mt-2 sm:w-[300px]">
             {/* 年月切换 + 今天 */}
             <div className="flex items-center justify-between gap-2">
               <button

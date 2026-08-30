@@ -420,16 +420,16 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       </section>
 
       {refundOrder && (
-        <div className="fixed inset-0 z-[95] grid place-items-center overflow-y-auto bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单退款">
-          <div className="flex min-h-[100dvh] w-full max-w-xl flex-col bg-white shadow-2xl sm:my-6 sm:min-h-0 sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
-            <div className="sticky top-0 z-10 flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
+        <div className="budu-overlay-viewport fixed inset-0 z-[95] grid place-items-center bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单退款">
+          <div className="budu-overlay-panel flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl sm:my-6 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
+            <div className="budu-overlay-header flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">订单退款</h3>
                 <p className="mt-0.5 font-mono text-xs text-slate-400">{refundOrder.orderNo}</p>
               </div>
               <button onClick={() => setRefundOrder(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            <div className="budu-overlay-scroll p-4 sm:p-6">
               <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4 text-center text-sm">
                 <div><p className="text-xs text-slate-400">订单金额</p><p className="mt-1 font-bold tabular-nums text-slate-800">{formatCents(refundOrder.payableAmount)}</p></div>
                 <div><p className="text-xs text-slate-400">已退款</p><p className="mt-1 font-bold tabular-nums text-rose-600">{formatCents(orderRefundedCents(refundOrder))}</p></div>
@@ -487,8 +487,8 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       )}
 
       {cancelOrder && (
-        <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="作废订单确认">
-          <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="budu-overlay-viewport fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="作废订单确认">
+          <div className="budu-overlay-scroll w-full max-w-md rounded-3xl bg-white shadow-2xl">
             <div className="p-5 sm:p-6">
               <div className="flex items-start gap-4">
                 <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-rose-100"><Ban className="h-6 w-6 text-rose-600" /></div>
@@ -526,8 +526,8 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       )}
 
       {deleteOrder && (
-        <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="删除订单确认">
-          <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="budu-overlay-viewport fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="删除订单确认">
+          <div className="budu-overlay-scroll w-full max-w-md rounded-3xl bg-white shadow-2xl">
             <div className="p-5 sm:p-6">
               <div className="flex items-start gap-4">
                 <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-rose-100"><AlertTriangle className="h-6 w-6 text-rose-600" /></div>
@@ -559,16 +559,16 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       )}
 
       {detail && (
-        <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单明细">
-          <div className="flex min-h-[100dvh] w-full max-w-3xl flex-col bg-white shadow-2xl sm:my-6 sm:min-h-0 sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
-            <div className="sticky top-0 z-10 flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
+        <div className="budu-overlay-viewport fixed inset-0 z-[90] grid place-items-center bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单明细">
+          <div className="budu-overlay-panel flex h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:my-6 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
+            <div className="budu-overlay-header flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">订单明细</h3>
                 <p className="mt-0.5 font-mono text-xs text-slate-400">{detail.orderNo}</p>
               </div>
               <button onClick={() => setDetail(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
-            <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6">
+            <div className="budu-overlay-scroll grid gap-5 p-4 sm:p-6">
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm sm:grid-cols-4">
                 <div><p className="text-xs text-slate-400">门店</p><p className="mt-1 font-semibold text-slate-700">{detail.storeName}</p></div>
                 <div><p className="text-xs text-slate-400">收银员</p><p className="mt-1 font-semibold text-slate-700">{detail.cashierNameSnapshot}</p></div>

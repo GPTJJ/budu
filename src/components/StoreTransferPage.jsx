@@ -19,6 +19,7 @@ import {
 } from '../utils/storeTransfer'
 import { exportTransferExcel, exportTransferImage } from '../utils/storeTransferExport'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
+import { OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from './overlay/OverlayPrimitives'
 
 const statusStyle = {
   pending: 'bg-amber-50 text-amber-700',
@@ -31,16 +32,16 @@ const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { 
 
 function Sheet({ title, children, onClose, labelledBy = 'transfer-sheet-title' }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
-      <button className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={onClose} aria-label="关闭" />
-      <section role="dialog" aria-modal="true" aria-labelledby={labelledBy} className="relative max-h-[92vh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-xl sm:rounded-[28px]">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-5 py-4 backdrop-blur">
+    <OverlayViewport className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+      <button className="budu-overlay-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={onClose} aria-label="关闭" />
+      <OverlayPanel role="dialog" aria-modal="true" aria-labelledby={labelledBy} className="relative flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-xl sm:rounded-[28px]">
+        <OverlayHeader data-testid="transfer-sheet-header" className="flex items-center justify-between border-b border-slate-100 bg-white/95 px-5 py-4 backdrop-blur">
           <h3 id={labelledBy} className="text-base font-bold text-slate-900">{title}</h3>
           <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-500" aria-label="关闭"><X className="h-4 w-4" /></button>
-        </div>
-        {children}
-      </section>
-    </div>
+        </OverlayHeader>
+        <OverlayScrollRegion data-testid="transfer-sheet-scroll">{children}</OverlayScrollRegion>
+      </OverlayPanel>
+    </OverlayViewport>
   )
 }
 

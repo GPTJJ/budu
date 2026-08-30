@@ -5,6 +5,7 @@ import { api } from './utils/api'
 import { loadUserData, prepareUserDataForUser, resetUserData } from './utils/userData'
 import { t } from './utils/text'
 import { lazyRetry } from './utils/lazyRetry'
+import { OverlayStackManager } from './components/overlay/OverlayPrimitives'
 
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
 const loadDashboard = () => import('./components/Dashboard')
@@ -14,12 +15,15 @@ const CustomerRequestPage = lazyRetry(() => import('./components/CustomerRequest
 export default function App() {
   if (window.location.pathname.replace(/\/+$/, '') === '/customer-request') {
     return (
-      <Suspense fallback={<AppLoading />}>
-        <CustomerRequestPage />
-      </Suspense>
+      <>
+        <OverlayStackManager />
+        <Suspense fallback={<AppLoading />}>
+          <CustomerRequestPage />
+        </Suspense>
+      </>
     )
   }
-  return <AuthenticatedApp />
+  return <><OverlayStackManager /><AuthenticatedApp /></>
 }
 
 function AuthenticatedApp() {

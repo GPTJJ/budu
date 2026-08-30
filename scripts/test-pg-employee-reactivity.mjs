@@ -55,6 +55,8 @@ test('Gate 3 Scenario B: EmployeeSheet 原地更新、搜索正常且卸载安�
     await page.goto(`${baseUrl}tests/pg-employee-reactivity-harness.html?mode=employee`)
     await page.getByText('未找到匹配员工', { exact: true }).waitFor()
     assert.equal(await page.evaluate(() => window.__employeeSheetMounts), 1)
+    assert.equal(await page.evaluate(() => document.body.style.position), 'fixed', '审批 EmployeeSheet 必须锁定背景')
+    assert.equal(await page.getByRole('dialog', { name: '选择员工' }).evaluate((element) => getComputedStyle(element).overscrollBehaviorY), 'contain')
 
     await page.evaluate((rows) => window.__publishStaff(rows), pgStaff)
     await page.getByText('张三', { exact: true }).waitFor()
@@ -73,6 +75,7 @@ test('Gate 3 Scenario B: EmployeeSheet 原地更新、搜索正常且卸载安�
 
     await page.evaluate(() => window.__unmountEmployeeSheet())
     await page.waitForFunction(() => window.__employeeSheetUnmounts === 1)
+    await page.waitForFunction(() => document.body.style.position === '')
     await page.evaluate((rows) => window.__publishStaff(rows), [pgStaff[1]])
     assert.deepEqual(errors, [])
   } finally {

@@ -362,9 +362,9 @@ export default function AssetCenterPage({ user, onBack }) {
 
 function ModalShell({ title, subtitle, onClose, children, wide }) {
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative max-h-[90vh] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} overflow-y-auto rounded-2xl bg-white p-6 shadow-lg`}>
+    <div data-budu-overlay-root className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={title} className={`budu-overlay-scroll relative max-h-[90dvh] w-full ${wide ? 'max-w-3xl' : 'max-w-xl'} rounded-2xl bg-white p-6 shadow-lg`}>
         <div className="flex items-start gap-3">
           <div>
             <h3 className="text-lg font-bold">{title}</h3>

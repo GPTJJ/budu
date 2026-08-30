@@ -6,15 +6,16 @@ import { Check, ChevronRight, Search } from 'lucide-react'
 import { employeeList, storeName } from '../../utils/selectors'
 import { api } from '../../utils/api'
 import { onUserDataUpdated } from '../../utils/userData'
+import { OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from '../overlay/OverlayPrimitives'
 
 /** 通用底部弹出容器：半透明遮罩 + 取消/确定 + 安全区 */
 export function BottomSheet({ open, title, onClose, onConfirm, confirmDisabled, children }) {
   if (!open) return null
   return createPortal(
-    <div className="fixed inset-0 z-[98]">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} aria-hidden="true" />
-      <div className="sheet-up absolute inset-x-0 bottom-0 mx-auto w-full max-w-lg rounded-t-2xl bg-white shadow-lg">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+    <OverlayViewport className="fixed inset-0 z-[98]">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/40" onClick={onClose} aria-hidden="true" />
+      <OverlayPanel role="dialog" aria-modal="true" aria-label={title} className="sheet-up absolute inset-x-0 bottom-0 mx-auto flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-lg">
+        <OverlayHeader className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <button onClick={onClose} className="min-h-11 px-2 text-sm text-slate-400 active:opacity-60">
             取消
           </button>
@@ -26,10 +27,10 @@ export function BottomSheet({ open, title, onClose, onConfirm, confirmDisabled, 
           >
             确定
           </button>
-        </div>
-        <div className="max-h-[58vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]">{children}</div>
-      </div>
-    </div>,
+        </OverlayHeader>
+        <OverlayScrollRegion className="max-h-[58dvh] pb-[env(safe-area-inset-bottom)]">{children}</OverlayScrollRegion>
+      </OverlayPanel>
+    </OverlayViewport>,
     document.body,
   )
 }

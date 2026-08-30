@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import OrderRecordsPage from '/src/components/OrderRecordsPage.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -134,10 +135,13 @@
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 
-    createRoot(document.getElementById('root')).render(React.createElement(OrderRecordsPage, {
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(OrderRecordsPage, {
       user: { id: 'user-1', username: 'dev', role: testParams.get('role') || 'developer', storeKeys: ['store-1'] },
       onBack: () => {},
       onPay: (order) => { window.__payOrder = { id: order.id, orderNo: order.orderNo } },
-    }))
+      }),
+    ))
   </script></body>
 </html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>BUDU Overlay Scroll Contract</title>
+  </head>
+  <body class="m-0">
+    <div id="root"></div>
+    <script type="module">
+      import React, { useState } from 'react'
+      import { createRoot } from 'react-dom/client'
+      import {
+        OverlayFooter,
+        OverlayHeader,
+        OverlayPanel,
+        OverlayScrollRegion,
+        OverlayStackManager,
+        OverlayViewport,
+      } from '/src/components/overlay/OverlayPrimitives.jsx'
+      import '/src/index.css'
+
+      const rows = Array.from({ length: 70 }, (_, index) => `弹层长内容 ${index + 1}`)
+
+      function ContractOverlay({ short = false, onClose }) {
+        const [nested, setNested] = useState(false)
+        return React.createElement(React.Fragment, null,
+          React.createElement(OverlayViewport, { className: 'fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 sm:items-center sm:p-6', 'data-testid': 'overlay-root' },
+            React.createElement(OverlayPanel, { role: 'dialog', 'aria-modal': 'true', 'aria-label': short ? '短内容弹层' : '长内容弹层', className: 'relative flex max-h-[82dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl' },
+              React.createElement(OverlayHeader, { className: 'flex items-center justify-between border-b border-slate-100 px-5 py-4', 'data-testid': 'overlay-header' },
+                React.createElement('strong', null, short ? '短内容弹层' : '长内容弹层'),
+                React.createElement('button', { onClick: onClose, 'aria-label': '关闭父弹层' }, '×'),
+              ),
+              React.createElement(OverlayScrollRegion, { className: 'space-y-3 p-5', 'data-testid': 'overlay-scroll' },
+                ...(short ? [React.createElement('p', { key: 'short' }, '短内容仍保持单一滚动契约')] : rows.map((row) => React.createElement('p', { key: row, className: 'rounded-xl bg-slate-50 p-3' }, row))),
+                React.createElement('label', { key: 'input', className: 'block' }, '输入测试', React.createElement('input', { 'aria-label': '键盘输入测试', className: 'input mt-2' })),
+              ),
+              React.createElement(OverlayFooter, { className: 'flex gap-3 border-t border-slate-100 bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3', 'data-testid': 'overlay-footer' },
+                React.createElement('button', { onClick: () => setNested(true), className: 'btn-secondary min-h-11 flex-1' }, '打开子确认'),
+                React.createElement('button', { onClick: onClose, className: 'btn-primary min-h-11 flex-1' }, '完成'),
+              ),
+            ),
+          ),
+          nested && React.createElement(OverlayViewport, { className: 'fixed inset-0 z-[60] grid place-items-center bg-slate-950/55 p-4', 'data-testid': 'nested-root' },
+            React.createElement(OverlayPanel, { role: 'dialog', 'aria-modal': 'true', 'aria-label': '子确认', className: 'w-full max-w-sm rounded-2xl bg-white p-5' },
+              React.createElement('p', null, '关闭子层后父层仍保持锁定'),
+              React.createElement('button', { onClick: () => setNested(false), className: 'btn-primary mt-4 min-h-11 w-full' }, '关闭子确认'),
+            ),
+          ),
+        )
+      }
+
+      function Harness() {
+        const [overlay, setOverlay] = useState('')
+        return React.createElement(React.Fragment, null,
+          React.createElement(OverlayStackManager),
+          React.createElement('div', { className: 'fixed left-3 top-3 z-10 flex gap-2' },
+            React.createElement('button', { onClick: () => setOverlay('long'), className: 'btn-primary p-3' }, '打开长弹层'),
+            React.createElement('button', { onClick: () => setOverlay('short'), className: 'btn-secondary p-3' }, '打开短弹层'),
+            React.createElement('button', { onClick: () => setOverlay('legacy'), className: 'btn-secondary p-3' }, '打开旧弹层'),
+          ),
+          React.createElement('main', { 'data-testid': 'background', className: 'bg-slate-50 p-6 pt-24', style: { minHeight: '2600px' } }, '背景页面滚动位置必须恢复'),
+          (overlay === 'long' || overlay === 'short') && React.createElement(ContractOverlay, { short: overlay === 'short', onClose: () => setOverlay('') }),
+          overlay === 'legacy' && React.createElement('div', { className: 'fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4', 'data-testid': 'legacy-root' },
+            React.createElement('div', { className: 'max-h-[70dvh] overflow-y-auto rounded-2xl bg-white p-5' },
+              React.createElement('p', null, '历史 fixed + inset-0 弹层也由共享栈锁定'),
+              React.createElement('button', { onClick: () => setOverlay(''), className: 'btn-primary mt-4' }, '关闭旧弹层'),
+            ),
+          ),
+        )
+      }
+
+      createRoot(document.getElementById('root')).render(React.createElement(Harness))
+    </script>
+  </body>
+</html>

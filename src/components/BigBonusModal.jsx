@@ -123,10 +123,10 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-6 pb-4">
+    <div data-budu-overlay-root className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={t('大单奖金')} className="budu-overlay-panel relative flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
+        <div className="budu-overlay-header flex items-start justify-between gap-4 border-b border-slate-100 p-6 pb-4">
           <div>
             <h3 className="flex items-center gap-2 text-lg font-bold text-slate-800">
               <Award className="h-5 w-5 text-amber-500" />

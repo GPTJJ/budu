@@ -32,11 +32,8 @@ export default function ShipTransferModal({ request, catalog = [], storeDisplay,
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
     }
   }, [onClose])
 
@@ -83,10 +80,10 @@ export default function ShipTransferModal({ request, catalog = [], storeDisplay,
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+    <div data-budu-overlay-root className="budu-overlay-viewport fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={t('发货编辑')} className="budu-overlay-panel relative flex max-h-[88dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-lg">
+        <div className="budu-overlay-header flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <Truck className="h-4 w-4 text-blue-500" />
@@ -111,7 +108,7 @@ export default function ShipTransferModal({ request, catalog = [], storeDisplay,
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="budu-overlay-scroll p-5">
           <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
             {t('可修改数量、备注，也可新增或删除货品；确认发货后以修改后的清单为准')}
           </p>

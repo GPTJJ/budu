@@ -163,9 +163,9 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('调整每日薪资')}>
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
+    <div className="budu-overlay-viewport fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('调整每日薪资')}>
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="budu-overlay-scroll relative max-h-[90dvh] w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600">
             <BadgeDollarSign className="h-5 w-5" />

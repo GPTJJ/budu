@@ -14,6 +14,7 @@
       import React from 'react'
       import { createRoot } from 'react-dom/client'
       import InvoicePage from '/src/components/InvoicePage.jsx'
+      import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
       import '/src/index.css'
 
       const rows = new URLSearchParams(location.search).has('records')
@@ -126,15 +127,20 @@
       }
 
       createRoot(document.getElementById('root')).render(
-        React.createElement(InvoicePage, {
-          currentUser: {
-            id: 'dev-test',
-            username: 'dev-test',
-            role: 'developer',
-            storeKeys: [],
-          },
-          onBack: () => {},
-        }),
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(OverlayStackManager),
+          React.createElement(InvoicePage, {
+            currentUser: {
+              id: 'dev-test',
+              username: 'dev-test',
+              role: 'developer',
+              storeKeys: [],
+            },
+            onBack: () => {},
+          }),
+        ),
       )
     </script>
   </body>

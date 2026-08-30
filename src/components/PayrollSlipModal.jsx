@@ -61,9 +61,9 @@ export default function PayrollSlipModal({ notice, onClose, onConfirmed, onOpenP
   const busy = confirming || Boolean(acting)
 
   return createPortal(
-    <div className="fixed inset-0 z-[96] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
+    <div className="budu-overlay-viewport fixed inset-0 z-[96] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="budu-overlay-scroll relative max-h-[88dvh] w-full max-w-2xl rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-slate-400">

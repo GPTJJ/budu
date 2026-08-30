@@ -107,27 +107,24 @@ function MiniTrend({ values, hidden }) {
 function BottomSheet({ title, onClose, children }) {
   useEffect(() => {
     const onKeyDown = (event) => event.key === 'Escape' && onClose()
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     window.addEventListener('keydown', onKeyDown)
     return () => {
-      document.body.style.overflow = previous
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <button type="button" className="absolute inset-0 bg-slate-900/35 backdrop-blur-[2px]" onClick={onClose} aria-label="关闭" />
-      <div className="relative flex max-h-[82dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:rounded-[1.75rem]">
+    <div className="budu-overlay-viewport fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <button type="button" className="budu-overlay-backdrop absolute inset-0 bg-slate-900/35 backdrop-blur-[2px]" onClick={onClose} aria-label="关闭" />
+      <div className="budu-overlay-panel relative flex max-h-[82dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-2xl sm:rounded-[1.75rem]">
         <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="budu-overlay-header flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <h3 className="font-bold text-slate-800">{title}</h3>
           <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400" aria-label="关闭">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 sm:px-5">
+        <div className="budu-overlay-scroll px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 sm:px-5">
           {children}
         </div>
       </div>

@@ -18,14 +18,6 @@ function Overlay({ title, subtitle, children, actions, onClose }) {
   }))
 
   useEffect(() => {
-    const scrollY = window.scrollY
-    const previous = {
-      bodyOverflow: document.body.style.overflow,
-      bodyPosition: document.body.style.position,
-      bodyTop: document.body.style.top,
-      bodyWidth: document.body.style.width,
-      htmlOverflow: document.documentElement.style.overflow,
-    }
     const updateViewport = () => {
       const focused = document.activeElement
       setViewport({
@@ -36,11 +28,6 @@ function Overlay({ title, subtitle, children, actions, onClose }) {
         window.requestAnimationFrame(() => window.requestAnimationFrame(() => focused.isConnected && focused.scrollIntoView({ block: 'center' })))
       }
     }
-    document.documentElement.style.overflow = 'hidden'
-    document.body.style.overflow = 'hidden'
-    document.body.style.position = 'fixed'
-    document.body.style.top = `-${scrollY}px`
-    document.body.style.width = '100%'
     window.visualViewport?.addEventListener('resize', updateViewport)
     window.visualViewport?.addEventListener('scroll', updateViewport)
     window.addEventListener('resize', updateViewport)
@@ -48,12 +35,6 @@ function Overlay({ title, subtitle, children, actions, onClose }) {
       window.visualViewport?.removeEventListener('resize', updateViewport)
       window.visualViewport?.removeEventListener('scroll', updateViewport)
       window.removeEventListener('resize', updateViewport)
-      document.documentElement.style.overflow = previous.htmlOverflow
-      document.body.style.overflow = previous.bodyOverflow
-      document.body.style.position = previous.bodyPosition
-      document.body.style.top = previous.bodyTop
-      document.body.style.width = previous.bodyWidth
-      window.scrollTo(0, scrollY)
     }
   }, [])
 
