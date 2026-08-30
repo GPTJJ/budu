@@ -88,6 +88,11 @@
     overscroll-behavior: contain;
   }
 
+  [data-budu-overlay-root],
+  .fixed.inset-0:not([data-budu-overlay-ignore]) {
+    margin: 0 !important;
+  }
+
   [data-budu-overlay-root] .overflow-y-auto,
   [role='dialog'][aria-modal='true'] .overflow-y-auto,
   [role='dialog'][aria-modal='true'].overflow-y-auto,
