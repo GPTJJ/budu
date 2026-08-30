@@ -7,6 +7,35 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum OrderSource {
+  STORE_POS
+  MEITUAN
+  TAOBAO_FLASH
+  JD_INSTANT
+  OTHER
+}
+
+enum EntryMode {
+  POS_CHECKOUT
+  MANUAL_POS
+}
+
+enum SettlementAuthority {
+  PAYMENT
+  EXTERNAL
+}
+
+enum ExternalSettlementType {
+  PLATFORM
+  CUSTOM
+}
+
+enum ExternalSettlementStatus {
+  PENDING
+  CONFIRMED
+  VOIDED
+}
+
 model Store {
   key                          String                   @id
   name                         String                   @unique
@@ -327,40 +356,72 @@ model PartnerReceipt {
 }
 
 model Order {
-  id                  String       @id
-  orderNo             String       @unique @map("order_no")
-  storeId             String       @map("store_id")
-  cashierId           String       @map("cashier_id")
-  cashierNameSnapshot String       @default("") @map("cashier_name_snapshot")
-  subtotal            BigInt       @default(0)
-  discountAmount      BigInt       @default(0) @map("discount_amount")
-  payableAmount       BigInt       @default(0) @map("payable_amount")
-  businessDate        DateTime?    @map("business_date") @db.Date
-  discountPercent     Int          @default(100) @map("discount_percent")
-  remark              String       @default("")
-  status              String       @default("draft")
-  paymentStatus       String       @default("unpaid") @map("payment_status")
-  paymentMethod       String?      @map("payment_method")
-  paymentMode         String       @default("mock") @map("payment_mode")
-  checkoutKey         String       @unique @map("checkout_key")
-  cartHash            String       @map("cart_hash")
-  version             Int          @default(1)
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at")
-  completedAt         DateTime?    @map("completed_at")
-  cancelledAt         DateTime?    @map("cancelled_at")
-  cancelledBy         String       @default("") @map("cancelled_by")
-  cancelReason        String       @default("") @map("cancel_reason")
-  store               Store        @relation(fields: [storeId], references: [key], onDelete: Restrict)
+  id                  String              @id
+  orderNo             String              @unique @map("order_no")
+  storeId             String              @map("store_id")
+  cashierId           String              @map("cashier_id")
+  cashierNameSnapshot String              @default("") @map("cashier_name_snapshot")
+  subtotal            BigInt              @default(0)
+  discountAmount      BigInt              @default(0) @map("discount_amount")
+  payableAmount       BigInt              @default(0) @map("payable_amount")
+  businessDate        DateTime?           @map("business_date") @db.Date
+  discountPercent     Int                 @default(100) @map("discount_percent")
+  remark              String              @default("")
+  status              String              @default("draft")
+  paymentStatus       String              @default("unpaid") @map("payment_status")
+  paymentMethod       String?             @map("payment_method")
+  paymentMode         String              @default("mock") @map("payment_mode")
+  orderSource         OrderSource         @default(STORE_POS) @map("order_source")
+  entryMode           EntryMode           @default(POS_CHECKOUT) @map("entry_mode")
+  settlementAuthority SettlementAuthority @default(PAYMENT) @map("settlement_authority")
+  sourceOrderRef      String?             @map("source_order_ref")
+  checkoutKey         String              @unique @map("checkout_key")
+  cartHash            String              @map("cart_hash")
+  version             Int                 @default(1)
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @default(now()) @updatedAt @map("updated_at")
+  completedAt         DateTime?           @map("completed_at")
+  cancelledAt         DateTime?           @map("cancelled_at")
+  cancelledBy         String              @default("") @map("cancelled_by")
+  cancelReason        String              @default("") @map("cancel_reason")
+  store               Store               @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
   payments            Payment[]
+  externalSettlement  ExternalSettlement?
   refunds             Refund[]
   paymentLogs         PaymentLog[]
 
   @@index([storeId, createdAt])
   @@index([cashierId, createdAt])
   @@index([status, paymentStatus])
+  @@index([orderSource, businessDate, status])
+  @@index([settlementAuthority, status])
   @@map("orders")
+}
+
+model ExternalSettlement {
+  id             String                   @id
+  settlementNo   String                   @unique @map("settlement_no")
+  orderId        String                   @unique @map("order_id")
+  settlementType ExternalSettlementType   @map("settlement_type")
+  amountCents    BigInt                   @map("amount_cents")
+  currency       String                   @default("CNY")
+  status         ExternalSettlementStatus @default(PENDING)
+  requestKey     String                   @unique @map("request_key")
+  note           String                   @default("")
+  recordedBy     String                   @map("recorded_by")
+  recordedAt     DateTime                 @default(now()) @map("recorded_at")
+  confirmedBy    String                   @default("") @map("confirmed_by")
+  confirmedAt    DateTime?                @map("confirmed_at")
+  voidedBy       String                   @default("") @map("voided_by")
+  voidedAt       DateTime?                @map("voided_at")
+  voidReason     String                   @default("") @map("void_reason")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @default(now()) @updatedAt @map("updated_at")
+  order          Order                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([status, recordedAt])
+  @@map("external_settlements")
 }
 
 model Payment {

@@ -420,6 +420,8 @@ function PermissionModal({ user, onClose, onSaved }) {
   const initialModules = user.permissions?.modules || {}
   const [modules, setModules] = useState(initialModules)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
+  const [externalOrderCreate, setExternalOrderCreate] = useState(user.permissions?.externalOrderCreate === true)
+  const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -434,6 +436,8 @@ function PermissionModal({ user, onClose, onSaved }) {
   const resetDefaults = () => {
     const defaults = new Set(defaultModuleKeys(user.role, user.assetCenter === true))
     setModules(Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)])))
+    setExternalOrderCreate(false)
+    setExternalSettlementConfirm(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -441,7 +445,12 @@ function PermissionModal({ user, onClose, onSaved }) {
     try {
       await api(`/admin/users/${user.id}/permissions`, {
         method: 'PUT',
-        body: JSON.stringify({ modules, inventoryTransferAll: transferAll }),
+        body: JSON.stringify({
+          modules,
+          inventoryTransferAll: transferAll,
+          externalOrderCreate,
+          externalSettlementConfirm,
+        }),
       })
       await onSaved()
       try {
@@ -494,6 +503,19 @@ function PermissionModal({ user, onClose, onSaved }) {
             <input type="checkbox" checked={transferAll} onChange={(e) => setTransferAll(e.target.checked)} className="h-4 w-4 accent-amber-500" />
             {t('允许管理全部门店的库存调拨（不受账号门店绑定限制）')}
           </label>
+        )}
+        {modules['store-pos'] === true && (
+          <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-bold text-slate-700">{t('外部平台订单权限（功能尚未在 POS 开放）')}</p>
+            <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalOrderCreate} onChange={(e) => setExternalOrderCreate(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许创建外部平台订单')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalSettlementConfirm} onChange={(e) => setExternalSettlementConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许确认外部平台结算')}
+            </label>
+          </section>
         )}
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
@@ -572,6 +594,16 @@ function AccountCard({ u, isSelf, currentUser, onChangeRole, onPermission, onBin
             {u.permissions?.inventoryTransferAll && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-[#ecfaf1] px-2 py-1 text-xs font-medium text-[#24a65a]">
                 ✓ {t('库存调拨全权限')}
+              </span>
+            )}
+            {u.permissions?.externalOrderCreate && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
+                ✓ {t('外部订单创建')}
+              </span>
+            )}
+            {u.permissions?.externalSettlementConfirm && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700">
+                ✓ {t('外部结算确认')}
               </span>
             )}
           </div>
