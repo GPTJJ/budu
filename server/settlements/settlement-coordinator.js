@@ -4,6 +4,12 @@ import { httpError } from '../pos-core.js'
 const PAYMENT_PROOF_STATUSES = Object.freeze(['success', 'partially_refunded', 'refunded'])
 
 export class SettlementCoordinator {
+  async lockOrder(tx, orderId) {
+    if (typeof tx.$queryRawUnsafe === 'function') {
+      await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS locked', orderId)
+    }
+  }
+
   async settlePayment(tx, { paymentId, completedAt = new Date() }) {
     const payment = await tx.payment.findUnique({ where: { id: paymentId }, include: { order: true } })
     if (!payment) throw httpError('支付结算事实不存在', 404)
@@ -68,6 +74,63 @@ export class SettlementCoordinator {
       if (completed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
     }
     return tx.order.findUnique({ where: { id: order.id } })
+  }
+
+  async applyCompletedRefund(tx, { refundId }) {
+    const refund = await tx.refund.findUnique({ where: { id: refundId } })
+    if (!refund) throw httpError('退款事实不存在', 404)
+    if (refund.status !== 'completed') throw httpError('退款尚未完成', 409)
+    await this.lockOrder(tx, refund.orderId)
+
+    const order = await tx.order.findUnique({ where: { id: refund.orderId } })
+    if (!order) throw httpError('退款订单不存在', 404)
+    const completedRefunds = await tx.refund.findMany({ where: { orderId: order.id, status: 'completed' } })
+    const completedTotal = completedRefunds.reduce((sum, row) => sum + BigInt(row.refundAmount), 0n)
+    if (completedTotal <= 0n || completedTotal > order.payableAmount) throw httpError('累计退款金额超出订单可退金额', 409)
+
+    const fullyRefunded = completedTotal === order.payableAmount
+    const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
+    if (refund.refundMode === 'PAYMENT') {
+      if (order.settlementAuthority !== 'PAYMENT' || !refund.paymentId || refund.externalSettlementId) {
+        throw httpError('PAYMENT 退款权威不匹配', 409)
+      }
+      const payment = await tx.payment.findUnique({ where: { id: refund.paymentId } })
+      if (!payment || payment.orderId !== order.id) throw httpError('退款 Payment 与订单不匹配', 409)
+      const changed = await tx.payment.updateMany({
+        where: { id: payment.id, status: { in: ['success', 'partially_refunded', nextOrderStatus] } },
+        data: { status: nextOrderStatus },
+      })
+      if (changed.count !== 1) throw httpError('Payment 退款状态已变化，请核对', 409)
+    } else if (refund.refundMode === 'MANUAL_EXTERNAL') {
+      if (order.settlementAuthority !== 'EXTERNAL' || refund.paymentId || !refund.externalSettlementId) {
+        throw httpError('MANUAL_EXTERNAL 退款权威不匹配', 409)
+      }
+      const settlement = await tx.externalSettlement.findUnique({ where: { id: refund.externalSettlementId } })
+      if (!settlement || settlement.orderId !== order.id) throw httpError('退款 ExternalSettlement 与订单不匹配', 409)
+      const nextSettlementStatus = fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED'
+      const changed = await tx.externalSettlement.updateMany({
+        where: { id: settlement.id, status: { in: ['CONFIRMED', 'PARTIALLY_REFUNDED', nextSettlementStatus] } },
+        data: { status: nextSettlementStatus },
+      })
+      if (changed.count !== 1) throw httpError('ExternalSettlement 退款状态已变化，请核对', 409)
+    } else {
+      throw httpError('退款模式不正确', 409)
+    }
+
+    if (order.status !== nextOrderStatus || order.paymentStatus !== nextOrderStatus) {
+      assertOrderTransition(order.status, nextOrderStatus)
+      assertOrderPaymentTransition(order.paymentStatus, nextOrderStatus)
+      const changed = await tx.order.updateMany({
+        where: { id: order.id, status: order.status, paymentStatus: order.paymentStatus },
+        data: { status: nextOrderStatus, paymentStatus: nextOrderStatus, version: { increment: 1 } },
+      })
+      if (changed.count !== 1) throw httpError('订单退款状态已变化，请刷新后重试', 409)
+    }
+    return {
+      completedTotal,
+      orderBefore: order,
+      order: await tx.order.findUnique({ where: { id: order.id } }),
+    }
   }
 }
 

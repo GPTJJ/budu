@@ -16,11 +16,14 @@ import {
   canManageAccounts,
   hasExternalOrderCreate,
   hasExternalSettlementConfirm,
+  hasManualExternalRefundConfirm,
+  hasManualExternalRefundRecord,
   hasModuleAccess,
   isSuperUser,
 } from '../shared/accountPermissions.js'
 import { externalSettlementService } from './settlements/index.js'
 import { assertNoClientSettlementState, serializeExternalSettlement } from './settlements/settlement-contract.js'
+import { manualExternalRefundService } from './refunds/index.js'
 
 export const posRouter = Router()
 
@@ -77,10 +80,14 @@ function serializeRefund(refund) {
     refundNo: refund.refundNo,
     orderId: refund.orderId,
     paymentId: refund.paymentId,
+    externalSettlementId: refund.externalSettlementId,
+    refundMode: refund.refundMode,
     amount: refund.refundAmount.toString(),
     reason: refund.reason,
     status: refund.status,
     providerRefundNo: refund.providerRefundNo,
+    externalCompletedAt: refund.externalCompletedAt,
+    externalRefundReference: refund.externalRefundReference,
     requestedBy: refund.requestedBy,
     approvedBy: refund.approvedBy,
     createdAt: refund.createdAt,
@@ -289,6 +296,27 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   })
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
   res.status(201).json({ ok: true, refund: serializeRefund(result.refund), order: serializeOrder(order) })
+}))
+
+// RC-2B internal authority API only. It records a refund that has already
+// completed on an external platform and never invokes a Payment provider.
+posRouter.post('/pos/orders/:id/manual-external-refunds', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasManualExternalRefundRecord(req.user) || !hasManualExternalRefundConfirm(req.user)) {
+    throw httpError('无人工外部退款记录及确认权限', 403)
+  }
+  const current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  if (!canStore(req.user, current.storeId)) throw httpError('无权记录该门店外部退款', 403)
+  const result = await manualExternalRefundService.createCompletedRefund({
+    ...(req.body || {}),
+    orderId: current.id,
+    actor: req.user.username,
+  })
+  const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  const refund = order.refunds.find((item) => item.id === result.refundId)
+  res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, refund: serializeRefund(refund), order: serializeOrder(order) })
 }))
 
 posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {

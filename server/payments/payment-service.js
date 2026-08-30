@@ -293,7 +293,7 @@ export class PaymentService {
     if (response.reconciliation) {
       await this.logEvent(payment, order, 'payment.reconciliation.required', {
         status: payment.status,
-        providerTradeNo: payment.providerTradeNo,
+        providerTradeNo: payment?.providerTradeNo,
       })
     }
     await this.logEvent(payment, order, 'payment.provider.response', {
@@ -377,6 +377,9 @@ export class PaymentService {
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.refund.findUnique({ where: { id: refundId } })
       if (!current || current.status === 'completed') return
+      if (current.refundMode !== 'PAYMENT' || !current.paymentId || current.externalSettlementId) {
+        throw httpError('退款不属于 Payment authority', 409)
+      }
       if (current.status !== 'pending') throw httpError('当前退款状态不可完成', 409)
       const won = await tx.refund.updateMany({
         where: { id: refundId, status: 'pending' },
@@ -387,33 +390,11 @@ export class PaymentService {
         },
       })
       if (won.count !== 1) return
-
-      const order = await tx.order.findUnique({
-        where: { id: current.orderId },
-        include: { payments: true, refunds: true },
-      })
-      if (!order) throw httpError('退款订单不存在', 404)
-      const refundedTotal = (order.refunds || [])
-        .filter((refund) => refund.status === 'completed')
-        .reduce((sum, refund) => sum + refund.refundAmount, 0n)
-      const fullyRefunded = refundedTotal >= order.payableAmount
-      const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      const nextPaymentStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      assertOrderTransition(order.status, nextOrderStatus)
-      assertOrderPaymentTransition(order.paymentStatus, nextPaymentStatus)
-      const updated = await tx.order.updateMany({
-        where: { id: order.id, status: order.status, paymentStatus: order.paymentStatus },
-        data: { status: nextOrderStatus, paymentStatus: nextPaymentStatus, version: { increment: 1 } },
-      })
-      if (updated.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
-      await tx.payment.updateMany({
-        where: { id: current.paymentId, status: { in: ['success', 'partially_refunded'] } },
-        data: { status: nextPaymentStatus },
-      })
-      const payment = (order.payments || []).find((item) => item.id === current.paymentId) || { id: current.paymentId, orderId: order.id }
-      await this.logEvent(payment, order, 'refund.completed', {
-        status: nextPaymentStatus,
-        providerTradeNo: payment.providerTradeNo,
+      const state = await this.settlementCoordinator.applyCompletedRefund(tx, { refundId: current.id })
+      const payment = await tx.payment.findUnique({ where: { id: current.paymentId } })
+      await this.logEvent(payment || { id: current.paymentId, orderId: current.orderId }, state.orderBefore, 'refund.completed', {
+        status: state.order.paymentStatus,
+        providerTradeNo: payment?.providerTradeNo,
         failureCode: '',
         failureMessage: '',
         callbackAt: new Date(),
@@ -426,6 +407,9 @@ export class PaymentService {
   async reconcileRefund(refundId, { resubmitIfMissing = true } = {}) {
     const refund = await this.prisma.refund.findUnique({ where: { id: refundId } })
     if (!refund) throw httpError('退款记录不存在', 404)
+    if (refund.refundMode !== 'PAYMENT' || !refund.paymentId || refund.externalSettlementId) {
+      throw httpError('Manual External Refund 不进入 Payment 核对', 409)
+    }
     if (refund.status !== 'pending') return this.refundResult(refund.id)
     const payment = await this.prisma.payment.findUnique({ where: { id: refund.paymentId } })
     if (!payment) throw httpError('退款对应的支付记录不存在', 404)
@@ -551,12 +535,16 @@ export class PaymentService {
             refundNo: no,
             orderId: order.id,
             paymentId: payment.id,
+            externalSettlementId: null,
+            refundMode: 'PAYMENT',
             refundAmount: amount,
             reason,
             status: 'pending',
             requestKey,
             requestedBy: operator,
             approvedBy: operator,
+            externalCompletedAt: null,
+            externalRefundReference: null,
             completedAt: null,
             items: {
               create: lines.map((line) => ({

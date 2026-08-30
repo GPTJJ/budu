@@ -431,6 +431,8 @@ function PermissionModal({ user, onClose, onSaved }) {
   const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
   const [externalOrderCreate, setExternalOrderCreate] = useState(user.permissions?.externalOrderCreate === true)
   const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
+  const [manualExternalRefundRecord, setManualExternalRefundRecord] = useState(user.permissions?.manualExternalRefundRecord === true)
+  const [manualExternalRefundConfirm, setManualExternalRefundConfirm] = useState(user.permissions?.manualExternalRefundConfirm === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -449,6 +451,8 @@ function PermissionModal({ user, onClose, onSaved }) {
     setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
     setExternalOrderCreate(false)
     setExternalSettlementConfirm(false)
+    setManualExternalRefundRecord(false)
+    setManualExternalRefundConfirm(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -462,6 +466,8 @@ function PermissionModal({ user, onClose, onSaved }) {
           dailyEntry,
           externalOrderCreate,
           externalSettlementConfirm,
+          manualExternalRefundRecord,
+          manualExternalRefundConfirm,
         }),
       })
       await onSaved()
@@ -548,6 +554,14 @@ function PermissionModal({ user, onClose, onSaved }) {
             <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
               <input type="checkbox" checked={externalSettlementConfirm} onChange={(e) => setExternalSettlementConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
               {t('允许确认外部平台结算')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={manualExternalRefundRecord} onChange={(e) => setManualExternalRefundRecord(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许记录人工外部退款')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={manualExternalRefundConfirm} onChange={(e) => setManualExternalRefundConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许确认人工外部退款事实')}
             </label>
           </section>
         )}
@@ -638,6 +652,16 @@ function AccountCard({ u, isSelf, currentUser, onChangeRole, onPermission, onBin
             {u.permissions?.externalSettlementConfirm && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700">
                 ✓ {t('外部结算确认')}
+              </span>
+            )}
+            {u.permissions?.manualExternalRefundRecord && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                ✓ {t('外部退款记录')}
+              </span>
+            )}
+            {u.permissions?.manualExternalRefundConfirm && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">
+                ✓ {t('外部退款确认')}
               </span>
             )}
           </div>
