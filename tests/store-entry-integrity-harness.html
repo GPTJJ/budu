@@ -26,6 +26,7 @@
       window.__storeEntryTimeline = []
       window.__overviewPlans = new Map()
       window.__participantPlans = new Map()
+      window.__ledgerPlans = new Map()
       window.__writes = []
       window.__confirmFailure = false
       window.__moduleLeft = false
@@ -41,6 +42,9 @@
       }
       window.__setParticipantPlan = (store, date, payloads) => {
         window.__participantPlans.set(keyOf(store, date), payloads.map((item) => structuredClone(item)))
+      }
+      window.__setLedgerPlan = (month, store, status, payloads) => {
+        window.__ledgerPlans.set(`${month}|${store}|${status}`, payloads.map((item) => structuredClone(item)))
       }
 
       const historical = {
@@ -115,6 +119,17 @@
           return json({ ok: true })
         }
         if (path === '/api/userdata') return legacyPromise
+        if (path.startsWith('/api/v2/daily-entry/ledger')) {
+          const parsed = new URL(path, location.origin)
+          const month = parsed.searchParams.get('month')
+          const storeKey = parsed.searchParams.get('store')
+          const status = parsed.searchParams.get('status') || 'all'
+          const queue = window.__ledgerPlans.get(`${month}|${storeKey}|${status}`)
+          const planned = queue && queue.length ? queue.shift() : null
+          if (planned?.delay) await wait(planned.delay)
+          if (planned?.status && planned.status !== 200) return json(planned.payload || { error: 'ledger fixture unavailable' }, planned.status)
+          return json(planned?.payload || { ok: true, month, storeKey, rows: [] })
+        }
         if (path.startsWith('/api/v2/daily-entry/overview')) {
           const parsed = new URL(path, location.origin)
           const store = parsed.searchParams.get('store')

@@ -21,7 +21,7 @@ after(async () => {
 async function openHarness(width = 375, browserInstance = browser, height = 812) {
   const page = await browserInstance.newPage({ viewport: { width, height } })
   await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-  await page.locator('select').selectOption('xidan')
+  await page.getByTestId('daily-entry-store').selectOption('xidan')
   await page.locator('input[type=date]').fill('2026-08-24')
   const numbers = page.locator('input[type=number]')
   await assert.doesNotReject(() => numbers.nth(0).waitFor())
@@ -67,10 +67,65 @@ const participantDirectory = (scheduledEmployeeIds = [], unresolved = []) => ({
   schedule: { scheduledEmployeeIds, unresolved, updatedAt: '2026-08-31T00:00:00.000Z' },
 })
 
+const ledgerStaff = (id, name, hours, overrides = {}) => ({
+  id: `dss-${id}`, employeeId: id, participantUserId: '', participantType: 'EMPLOYEE',
+  staffId: `employee:${id}`, staffName: name, actualHours: hours,
+  historicalPayrollHours: null, payableHoursSource: 'ACTUAL_HOURS', attendanceStatus: 'normal',
+  ...overrides,
+})
+
+const ledgerRow = (date, overrides = {}) => ({
+  id: `de-ledger-${date}`, storeKey: 'xidan', storeName: '北京西单店', date,
+  status: 'confirmed', baseStatus: 'confirmed', incCents: '128800', ord: 18, avgCents: '7155',
+  salesDataSource: 'manual', salesSourceLabel: '美团收银 · 人工录入', confirmedBy: '店长',
+  confirmedAt: `${date}T14:00:00.000Z`, version: 2,
+  completeness: { status: 'COMPLETE', code: 'COMPLETE', issues: [] },
+  staff: [ledgerStaff('emp-home', '叶芷辰', 8)], revisionCount: 0, audits: [],
+  ...overrides,
+})
+
+const ledgerRows = [
+  ledgerRow('2026-08-28'),
+  ledgerRow('2026-08-27', {
+    status: 'revised', revisionCount: 1,
+    staff: [ledgerStaff('emp-chen', '陈文慧', 7.5), ledgerStaff('emp-home', '叶芷辰', 8)],
+    audits: [{ id: 'audit-revision', module: 'daily_revision', reason: '补正实际工时', operatorName: '管理员', createdAt: '2026-08-28T10:00:00.000Z', revision: true }],
+  }),
+  ledgerRow('2026-08-26', {
+    status: 'draft', baseStatus: 'draft', confirmedBy: '', confirmedAt: null, version: 1,
+    completeness: { status: 'INCOMPLETE', code: 'DRAFT_ENTRY', issues: [{ code: 'DRAFT_ENTRY' }] },
+  }),
+  ledgerRow('2026-08-25', {
+    completeness: { status: 'INCOMPLETE', code: 'MISSING_ACTUAL_HOURS', issues: [{ code: 'MISSING_ACTUAL_HOURS', participantKey: 'employee:emp-home' }] },
+    staff: [ledgerStaff('emp-home', '叶芷辰', null)],
+  }),
+  ledgerRow('2026-08-24', {
+    completeness: { status: 'INCOMPLETE', code: 'UNRESOLVED_EMPLOYEE', issues: [{ code: 'UNRESOLVED_EMPLOYEE', participantKey: 'legacy:旧员工' }] },
+    staff: [ledgerStaff('', '旧员工', null, { id: 'dss-legacy', employeeId: '', participantType: 'LEGACY_UNKNOWN', staffId: 'legacy:旧员工', historicalPayrollHours: 7, payableHoursSource: 'LEGACY_PAYROLL_HOURS', attendanceStatus: 'HISTORICAL_UNOBSERVED' })],
+  }),
+  ledgerRow('2026-08-23', {
+    salesDataSource: 'pos', salesSourceLabel: 'BUDU POS', incCents: '88000', ord: 8, avgCents: '11000',
+  }),
+]
+
+async function openLedgerHarness(width = 390, browserInstance = browser, height = 844) {
+  const page = await browserInstance.newPage({ viewport: { width, height } })
+  await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
+  await page.evaluate((rows) => {
+    window.__setLedgerPlan('2026-08', 'xidan', 'all', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows } }])
+    window.__setLedgerPlan('2026-08', 'xidan', 'draft', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: rows.filter((row) => row.baseStatus === 'draft') } }])
+    window.__setLedgerPlan('2026-08', 'xidan', 'confirmed', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: rows.filter((row) => row.baseStatus === 'confirmed') } }])
+    window.__setLedgerPlan('2026-08', 'xidan', 'anomaly', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: rows.filter((row) => row.completeness.status !== 'COMPLETE') } }])
+  }, ledgerRows)
+  await page.getByTestId('ledger-store-filter').selectOption('xidan')
+  await page.getByTestId('ledger-card-2026-08-28').waitFor()
+  return page
+}
+
 async function openEditableHarness(width = 375, browserInstance = browser, height = 812, date = '2026-08-22') {
   const page = await browserInstance.newPage({ viewport: { width, height } })
   await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-  await page.locator('select').selectOption('xidan')
+  await page.getByTestId('daily-entry-store').selectOption('xidan')
   await page.evaluate((draft) => window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }]), payload('xidan', date, 88000, 8, editableStaff))
   await page.locator('input[type=date]').fill(date)
   await page.waitForFunction(() => {
@@ -126,7 +181,7 @@ test('rapid date switching keeps only the final composite authority', async () =
   const page = await browser.newPage({ viewport: { width: 375, height: 812 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-    await page.locator('select').selectOption('xidan')
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
     await page.evaluate(([a, b, c]) => {
       window.__setOverviewPlan('xidan', '2026-08-22', [{ delay: 180, payload: a }])
       window.__setOverviewPlan('xidan', '2026-08-23', [{ delay: 120, payload: b }])
@@ -163,7 +218,7 @@ test('rapid store switching keeps only the final store/date authority', async ()
       payload('tongying', '2026-08-24', 222200, 22),
       payload('chaowai', '2026-08-24', 444400, 44),
     ])
-    const store = page.locator('select')
+    const store = page.getByTestId('daily-entry-store')
     await store.selectOption('xidan')
     await store.selectOption('tongying')
     await store.selectOption('chaowai')
@@ -195,7 +250,7 @@ test('REAL_ZERO stays distinguishable from loading and failed authority', async 
   const page = await browser.newPage({ viewport: { width: 340, height: 760 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-    await page.locator('select').selectOption('xidan')
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
     await page.evaluate((zero) => window.__setOverviewPlan('xidan', '2026-08-20', [{ delay: 80, payload: zero }]), payload('xidan', '2026-08-20', 0, 0))
     await page.locator('input[type=date]').fill('2026-08-20')
     await page.getByText('正在加载…').waitFor()
@@ -265,7 +320,7 @@ test('Schedule Employee.id prefills only the local draft with blank actualHours 
   const page = await browser.newPage({ viewport: { width: 375, height: 812 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-    await page.locator('select').selectOption('xidan')
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
     const day = '2026-08-17'
     await page.evaluate(([draft, directory]) => {
       window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }])
@@ -292,7 +347,7 @@ test('reopening a clean Daily Entry reads the latest schedule instead of stale p
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-    await page.locator('select').selectOption('xidan')
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
     const firstDay = '2026-08-16'
     const otherDay = '2026-08-15'
     await page.evaluate(([first, other, firstDirectory, updatedDirectory, otherDirectory]) => {
@@ -324,7 +379,7 @@ test('POS sales stay read-only while staff facts use the atomic confirmation', a
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
-    await page.locator('select').selectOption('xidan')
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
     await page.evaluate(([draft, directory]) => {
       window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }])
       window.__setParticipantPlan('xidan', draft.date, [directory])
@@ -361,7 +416,7 @@ test('dirty date, store and module transitions use the BUDU overlay guard', asyn
     assert.equal(await page.evaluate(() => window.__moduleLeft), false)
     await page.getByRole('button', { name: '继续编辑', exact: true }).click()
 
-    const store = page.locator('select')
+    const store = page.getByTestId('daily-entry-store')
     await store.selectOption('tongying')
     await page.getByTestId('daily-entry-unsaved-dialog').waitFor()
     assert.equal(await store.inputValue(), 'xidan')
@@ -369,7 +424,7 @@ test('dirty date, store and module transitions use the BUDU overlay guard', asyn
     assert.equal(await page.locator('input[type=number]').nth(0).inputValue(), '666.66')
     await store.selectOption('tongying')
     await page.getByRole('button', { name: '放弃修改', exact: true }).click()
-    await page.waitForFunction(() => document.querySelector('select')?.value === 'tongying')
+    await page.waitForFunction(() => document.querySelector('[data-testid="daily-entry-store"]')?.value === 'tongying')
     assert.equal(await page.evaluate(() => window.__writes.length), 0)
   } finally {
     await page.close()
@@ -387,6 +442,100 @@ test('confirmed historical facts are read-only in ordinary daily entry', async (
     assert.equal(await page.getByRole('button', { name: '取消确认' }).count(), 0)
   } finally {
     await page.close()
+  }
+})
+
+test('Daily Fact Ledger renders saved manual/POS facts, completeness and real revision audit', async () => {
+  const page = await openLedgerHarness()
+  try {
+    assert.equal(await page.locator('[data-testid^="ledger-card-"]').count(), ledgerRows.length)
+    await page.getByText('美团收银 · 人工录入', { exact: false }).first().waitFor()
+    await page.getByText('来源：BUDU POS', { exact: true }).waitFor()
+    await page.getByText('已修正', { exact: true }).waitFor()
+    assert.equal(await page.getByText('已修正', { exact: true }).count(), 1, 'only a real post-confirm audit may derive revised')
+    assert.ok(await page.getByText('待完善', { exact: true }).count() >= 2)
+    await page.getByTestId('ledger-card-2026-08-27').getByRole('button', { name: '查看详情' }).click()
+    const detail = page.getByTestId('daily-ledger-detail')
+    await detail.waitFor()
+    await detail.getByText('陈文慧', { exact: true }).waitFor()
+    await detail.getByText('确认后修正 · daily_revision', { exact: true }).waitFor()
+    await detail.getByText(/补正实际工时 · 管理员/).waitFor()
+    assert.equal(await detail.getByText('排班预填', { exact: true }).count(), 0, 'ledger detail must not reconstruct from Schedule')
+    await detail.getByRole('button', { name: '关闭', exact: true }).click()
+
+    await page.getByTestId('ledger-status-filter').selectOption('draft')
+    await page.getByTestId('ledger-card-2026-08-26').waitFor()
+    assert.equal(await page.locator('[data-testid^="ledger-card-"]').count(), 1)
+    await page.getByTestId('ledger-card-2026-08-26').getByRole('button', { name: '查看详情' }).click()
+    await page.getByRole('button', { name: '继续填写这一天' }).waitFor()
+  } finally {
+    await page.close()
+  }
+})
+
+test('Daily Fact Ledger anomaly filter keeps missing hours and legacy identity explicit', async () => {
+  const page = await openLedgerHarness(375)
+  try {
+    await page.getByTestId('ledger-status-filter').selectOption('anomaly')
+    await page.getByTestId('ledger-card-2026-08-25').waitFor()
+    assert.equal(await page.getByTestId('ledger-card-2026-08-28').count(), 0)
+    await page.getByTestId('ledger-card-2026-08-24').getByRole('button', { name: '查看详情' }).click()
+    const detail = page.getByTestId('daily-ledger-detail')
+    await detail.getByText('员工身份未解析', { exact: true }).waitFor()
+    await detail.getByText(/历史身份待解析 · 历史计薪工时权威/).waitFor()
+  } finally {
+    await page.close()
+  }
+})
+
+for (const width of [320, 340, 375, 390, 430]) {
+  test(`Daily Fact Ledger cards and detail stay bounded at ${width}px`, async () => {
+    const page = await openLedgerHarness(width)
+    try {
+      await page.getByTestId('ledger-card-2026-08-27').getByRole('button', { name: '查看详情' }).click()
+      await page.getByTestId('daily-ledger-detail').waitFor()
+      const metrics = await page.evaluate(() => ({
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        ledgerOverflow: (() => {
+          const node = document.querySelector('[data-testid="daily-fact-ledger"]')
+          return node.scrollWidth - node.clientWidth
+        })(),
+        detailOverflow: (() => {
+          const node = document.querySelector('[data-testid="daily-ledger-detail"] [role="dialog"]')
+          return node.scrollWidth - node.clientWidth
+        })(),
+      }))
+      assert.ok(metrics.documentOverflow <= 0, JSON.stringify(metrics))
+      assert.ok(metrics.ledgerOverflow <= 0, JSON.stringify(metrics))
+      assert.ok(metrics.detailOverflow <= 0, JSON.stringify(metrics))
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+test('WebKit Daily Fact Ledger cards and internal detail scroll remain bounded', async () => {
+  for (const [width, height] of [[390, 844], [768, 1024]]) {
+    const page = await openLedgerHarness(width, webkitBrowser, height)
+    try {
+      await page.getByTestId('ledger-card-2026-08-27').getByRole('button', { name: '查看详情' }).click()
+      const detail = page.getByTestId('daily-ledger-detail')
+      await detail.waitFor()
+      const metrics = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="daily-ledger-detail"] [role="dialog"]')
+        const scroller = panel?.querySelector('.overflow-y-auto')
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          panelOverflow: panel.scrollWidth - panel.clientWidth,
+          canScrollInternally: scroller.scrollHeight >= scroller.clientHeight,
+        }
+      })
+      assert.ok(metrics.overflow <= 0, JSON.stringify(metrics))
+      assert.ok(metrics.panelOverflow <= 0, JSON.stringify(metrics))
+      assert.equal(metrics.canScrollInternally, true)
+    } finally {
+      await page.close()
+    }
   }
 })
 

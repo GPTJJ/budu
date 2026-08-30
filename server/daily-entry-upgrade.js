@@ -19,6 +19,7 @@ import {
   OPERATIONAL_IDENTITY_TYPES,
   PAYROLL_PARTICIPANT_TYPES,
 } from './payroll-participant-authority.js'
+import { resolveDailyEntryCompleteness } from './daily-entry-completeness.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -142,6 +143,34 @@ async function aggregatePosDay(storeId, dateStr, prismaClient = prisma) {
     avgOrderCents: toStr(orderCount > 0 ? effectiveAfterRefund / BigInt(orderCount) : 0n),
     byChannel: Object.fromEntries(Object.entries(byChannel).map(([key, value]) => [key, toStr(value)])),
   }
+}
+
+async function aggregatePosPeriod(storeId, start, end, prismaClient = prisma) {
+  const [orders, refunds] = await Promise.all([
+    prismaClient.order.findMany({
+      where: buildRecognizedRevenueWhere({ storeId, businessDate: { gte: start, lt: end } }),
+      select: { businessDate: true, subtotal: true, payableAmount: true, discountAmount: true },
+    }),
+    prismaClient.refund.findMany({
+      where: { status: 'completed', order: { is: { storeId, businessDate: { gte: start, lt: end } } } },
+      select: { refundAmount: true, order: { select: { businessDate: true } } },
+    }),
+  ])
+  const groups = new Map()
+  const ensure = (dateStr) => {
+    const current = groups.get(dateStr) || { originalSales: 0n, effectiveSales: 0n, discountAmount: 0n, refundAmount: 0n, orderCount: 0 }
+    groups.set(dateStr, current)
+    return current
+  }
+  for (const order of orders) {
+    const group = ensure(isoDate(order.businessDate))
+    group.originalSales += order.subtotal
+    group.effectiveSales += order.payableAmount
+    group.discountAmount += order.discountAmount
+    group.orderCount += 1
+  }
+  for (const refund of refunds) ensure(isoDate(refund.order.businessDate)).refundAmount += refund.refundAmount
+  return groups
 }
 
 function serializeEntry(entry) {
@@ -382,6 +411,97 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
     entry: serializeEntry(entry),
     staff: staff.map(serializeStaff),
   })
+}))
+
+function isConfirmedRevisionAudit(entry, audit) {
+  if (!entry?.confirmedAt || !audit?.createdAt || new Date(audit.createdAt) <= new Date(entry.confirmedAt)) return false
+  if (audit.module === 'daily_confirmation') return false
+  if (audit.module === 'daily_status' && audit.afterValue?.status === 'confirmed') return false
+  return ['daily_revision', 'daily_staff', 'sales_manual', 'daily_status'].includes(audit.module)
+}
+
+dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const month = String(req.query.month || '').trim()
+  const storeKey = String(req.query.store || '').trim()
+  const statusFilter = String(req.query.status || 'all').trim()
+  if (!/^\d{4}-\d{2}$/.test(month)) throw httpError('月份格式应为 YYYY-MM')
+  if (!storeKey || !canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
+  if (!['all', 'draft', 'confirmed', 'anomaly'].includes(statusFilter)) throw httpError('状态筛选不正确')
+  const store = await ensureStore(storeKey)
+  const [year, monthNo] = month.split('-').map(Number)
+  const start = new Date(Date.UTC(year, monthNo - 1, 1))
+  const end = new Date(Date.UTC(year, monthNo, 1))
+  const [entries, staffRows, audits, employees, posGroups] = await Promise.all([
+    prisma.dailyEntry.findMany({ where: { storeKey, date: { gte: start, lt: end } }, orderBy: { date: 'desc' } }),
+    prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: { gte: start, lt: end } }, orderBy: [{ date: 'desc' }, { staffNameSnapshot: 'asc' }] }),
+    prisma.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: { gte: start, lt: end } }, orderBy: { createdAt: 'desc' } }),
+    prisma.employee.findMany({ select: { id: true } }),
+    aggregatePosPeriod(storeKey, start, end),
+  ])
+  const staffByDate = new Map()
+  for (const row of staffRows) {
+    const dateStr = isoDate(row.date)
+    const list = staffByDate.get(dateStr) || []
+    list.push(row)
+    staffByDate.set(dateStr, list)
+  }
+  const auditByDate = new Map()
+  for (const audit of audits) {
+    const dateStr = isoDate(audit.date)
+    const list = auditByDate.get(dateStr) || []
+    list.push(audit)
+    auditByDate.set(dateStr, list)
+  }
+  const knownEmployeeIds = new Set(employees.map((employee) => employee.id))
+  let rows = entries.map((entry) => {
+    const dateStr = isoDate(entry.date)
+    const staff = staffByDate.get(dateStr) || []
+    const entryAudits = auditByDate.get(dateStr) || []
+    const revisionAudits = entryAudits.filter((audit) => isConfirmedRevisionAudit(entry, audit))
+    const source = effectiveSource(store, dateStr)
+    const pos = posGroups.get(dateStr)
+    const incCents = source === 'manual'
+      ? entry.incCents
+      : (pos?.effectiveSales || 0n) + entry.hybridAdjustmentCents
+    const ord = source === 'manual' ? entry.ord : (pos?.orderCount || 0)
+    const completeness = resolveDailyEntryCompleteness({ entry, staffRows: staff, knownEmployeeIds })
+    const derivedStatus = entry.status === 'confirmed' && revisionAudits.length > 0 ? 'revised' : entry.status
+    return {
+      id: entry.id,
+      storeKey,
+      storeName: store.name,
+      date: dateStr,
+      status: derivedStatus,
+      baseStatus: entry.status,
+      incCents: incCents.toString(),
+      ord,
+      avgCents: (ord > 0 ? incCents / BigInt(ord) : 0n).toString(),
+      salesDataSource: source,
+      salesSourceLabel: source === 'manual' ? '美团收银 · 人工录入' : 'BUDU POS',
+      confirmedBy: entry.confirmedBy,
+      confirmedAt: entry.confirmedAt,
+      version: entry.version,
+      completeness,
+      staff: staff.map(serializeStaff),
+      revisionCount: revisionAudits.length,
+      audits: entryAudits.map((audit) => ({
+        id: audit.id,
+        module: audit.module,
+        fieldName: audit.fieldName,
+        beforeValue: audit.beforeValue,
+        afterValue: audit.afterValue,
+        reason: audit.reason,
+        operatorName: audit.operatorName,
+        createdAt: audit.createdAt,
+        revision: revisionAudits.some((candidate) => candidate.id === audit.id),
+      })),
+    }
+  })
+  if (statusFilter === 'draft') rows = rows.filter((row) => row.baseStatus === 'draft')
+  if (statusFilter === 'confirmed') rows = rows.filter((row) => row.baseStatus === 'confirmed')
+  if (statusFilter === 'anomaly') rows = rows.filter((row) => row.completeness.status !== 'COMPLETE')
+  res.json({ ok: true, month, storeKey, rows })
 }))
 
 dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {

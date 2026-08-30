@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, ShieldAlert, Trash2, Users, WalletCards,
+  ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, ShieldAlert, Users, WalletCards,
 } from 'lucide-react'
-import {
-  allStores, currentEmployeeDirectory, dailyRows, dailyStoreStaffRows, monthLabel, localEntries,
-} from '../utils/selectors'
-import { formatMoney } from '../utils/format'
+import { allStores } from '../utils/selectors'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import {
-  getDailyStoreStaffMonthState, loadDailyStoreStaffMonth, loadUserData, onUserDataUpdated,
-} from '../utils/userData'
+import { loadUserData, onUserDataUpdated } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
-import { resolvePerformanceDutyStaff } from '../utils/storeEntryParticipantDisplay'
 import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability } from '../../shared/accountPermissions'
 import { OverlayPanel, OverlayViewport } from './overlay/OverlayPrimitives'
 
@@ -85,6 +79,34 @@ export function buildScheduleDraftRows(directory, existingRows, confirmed) {
 }
 
 const inputCls = 'input'
+
+const LEDGER_STATUS = Object.freeze({
+  draft: { label: '待确认', className: 'bg-amber-50 text-amber-700' },
+  confirmed: { label: '已确认', className: 'bg-emerald-50 text-emerald-700' },
+  revised: { label: '已修正', className: 'bg-violet-50 text-violet-700' },
+})
+
+const COMPLETENESS_LABELS = Object.freeze({
+  COMPLETE: '事实完整',
+  MISSING_DAILY_ENTRY: '缺少每日记录',
+  DRAFT_ENTRY: '尚未闭店确认',
+  MISSING_ATTENDANCE: '缺少实际值班事实',
+  MISSING_ACTUAL_HOURS: '实际工时未填写',
+  UNRESOLVED_EMPLOYEE: '员工身份未解析',
+  INVALID_ATTENDANCE_AUTHORITY: '值班事实异常',
+})
+
+function ledgerMonthLabel(month) {
+  const [year, monthNo] = String(month || '').split('-')
+  return year && monthNo ? `${year}年${Number(monthNo)}月` : month
+}
+
+function staffHoursLabel(row) {
+  const hours = row?.payableHoursSource === 'LEGACY_PAYROLL_HOURS'
+    ? row?.historicalPayrollHours
+    : row?.actualHours
+  return hours === null || hours === undefined || hours === '' ? '工时待补' : `${hours} 小时`
+}
 
 function Field({ label, icon: Icon, children }) {
   return (
@@ -187,7 +209,6 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [loadingOverview, setLoadingOverview] = useState(true)
   const overviewRef = useRef(null)
   const [error, setError] = useState('')
-  const [savedTip, setSavedTip] = useState('')
   const [inc, setInc] = useState('')
   const [ord, setOrd] = useState('')
   const [staffRows, setStaffRows] = useState([])
@@ -202,6 +223,14 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [authorityStatus, setAuthorityStatus] = useState('loading')
   const [loadedAuthorityKey, setLoadedAuthorityKey] = useState('')
   const [refreshNotice, setRefreshNotice] = useState('')
+  const [ledgerMonth, setLedgerMonth] = useState(() => todayStr().slice(0, 7))
+  const [ledgerStore, setLedgerStore] = useState(() => (visibleStores[0] ? visibleStores[0].key : ''))
+  const [ledgerStatus, setLedgerStatus] = useState('all')
+  const [ledgerRows, setLedgerRows] = useState([])
+  const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [ledgerError, setLedgerError] = useState('')
+  const [ledgerDetail, setLedgerDetail] = useState(null)
+  const [ledgerRefresh, setLedgerRefresh] = useState(0)
   const authorityGenerationRef = useRef(0)
   const selectedAuthorityRef = useRef(null)
   const loadedAuthorityRef = useRef('')
@@ -223,12 +252,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     }
   }
 
-  const month = date && date.length >= 7 ? date.slice(0, 7) : '2026-07'
   const storeInfo = allStores().find((s) => s.key === store)
-  const rows = dailyRows(month, store)
-  const performanceStaffMonth = getDailyStoreStaffMonthState(month)
-  const performanceStaffRows = dailyStoreStaffRows(month)
-  const performanceEmployeeDirectory = currentEmployeeDirectory('all')
+  const ledgerStoreInfo = allStores().find((s) => s.key === ledgerStore)
   const source = overview?.salesDataSource || 'manual'
   const confirmed = overview?.entry?.status === 'confirmed'
   const salesDataStatus = overview?.salesDataStatus || 'waiting_input'
@@ -341,8 +366,35 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   }, [])
 
   useEffect(() => {
-    loadDailyStoreStaffMonth(month).catch(() => {})
-  }, [month, user?.id])
+    if (visibleStores.some((candidate) => candidate.key === ledgerStore)) return
+    setLedgerStore(visibleStores[0]?.key || '')
+  }, [ledgerStore, visibleStores])
+
+  useEffect(() => {
+    if (!ledgerStore) {
+      setLedgerRows([])
+      return undefined
+    }
+    let cancelled = false
+    setLedgerLoading(true)
+    setLedgerError('')
+    api(`/v2/daily-entry/ledger?month=${encodeURIComponent(ledgerMonth)}&store=${encodeURIComponent(ledgerStore)}&status=${encodeURIComponent(ledgerStatus)}`)
+      .then((result) => {
+        if (cancelled) return
+        if (result?.storeKey !== ledgerStore || result?.month !== ledgerMonth) throw new Error('每日事实账本响应权威不一致，请重试')
+        setLedgerRows(Array.isArray(result.rows) ? result.rows : [])
+      })
+      .catch((ledgerLoadError) => {
+        if (!cancelled) {
+          setLedgerRows([])
+          setLedgerError(ledgerLoadError.message)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLedgerLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [ledgerMonth, ledgerRefresh, ledgerStatus, ledgerStore])
 
   useEffect(() => {
     const onBeforeUnload = (event) => {
@@ -413,11 +465,6 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     reloadCurrentAuthority()
   }
 
-  const tip = (message, ok = true) => {
-    setSavedTip(message)
-    setTimeout(() => setSavedTip(''), 2500)
-  }
-
   const toggleStaff = (participant) => {
     if (hasHistoricalStaff || !authorityReady) return
     const exists = staffRows.some((row) => (
@@ -485,6 +532,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       setStaffRows(serializeStaffRows(result.staff))
       await refreshAll()
       await reloadCurrentAuthority()
+      setLedgerRefresh((current) => current + 1)
       setFeedback({ title: t('确认成功'), description: t('今日营业与实际值班事实已一次确认') })
     } catch (e) {
       setError(e.message)
@@ -493,28 +541,13 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     }
   }
 
-  const handleEdit = (r) => {
+  const handleLedgerEdit = (row) => {
     requestTransition(() => {
-      setDate(`${month}-${r.d}`)
+      setStore(row.storeKey)
+      setDate(row.date)
+      setLedgerDetail(null)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     })
-  }
-
-  const handleDelete = async (d) => {
-    if (!window.confirm(t('确定删除该日业绩吗？删除后不可恢复'))) return
-    setError('')
-    try {
-      await api('/v2/daily-entries', {
-        method: 'DELETE',
-        body: JSON.stringify({ storeKey: store, date: `${month}-${d.slice(3)}` }),
-      })
-      await refreshAll()
-      await reloadCurrentAuthority()
-      tip(t('当日业绩已删除 ✓'))
-    } catch (e) {
-      setError(e.message)
-      await refreshAll()
-    }
   }
 
   const statusBadge = () => {
@@ -568,7 +601,6 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
           <button type="button" onClick={() => requestTransition(retryCurrentAuthority)} className="whitespace-nowrap rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold">重新加载</button>
         </div>
       )}
-      {savedTip && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-600">{savedTip}</div>}
 
       {visibleStores.length === 0 && (
         <div className="card grid place-items-center p-10 text-center">
@@ -583,7 +615,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       <div className="card p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={t('门店')} icon={Building2}>
-            <select value={store} onChange={(e) => { const next = e.target.value; requestTransition(() => setStore(next)) }} className={inputCls}>
+            <select data-testid="daily-entry-store" value={store} onChange={(e) => { const next = e.target.value; requestTransition(() => setStore(next)) }} className={inputCls}>
               {visibleStores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
             </select>
           </Field>
@@ -714,75 +746,96 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         </div>
       </section>
 
-      <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-          <h3 className="text-[15px] font-bold text-slate-800">{t('业绩明细')}</h3>
-          <span className="rounded-lg bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">{monthLabel(month)} · {storeInfo ? storeInfo.name : ''}</span>
+      <section className="card p-4 sm:p-5" data-testid="daily-fact-ledger">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-bold text-slate-800">每日事实账本</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-400">仅展示已保存的营业与实际值班事实，不使用当前排班反推历史。</p>
+          </div>
+          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[36rem]">
+            <label className="min-w-0 text-[11px] font-semibold text-slate-500">
+              月份
+              <input data-testid="ledger-month-filter" type="month" value={ledgerMonth} onChange={(event) => setLedgerMonth(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`} />
+            </label>
+            <label className="min-w-0 text-[11px] font-semibold text-slate-500">
+              门店
+              <select data-testid="ledger-store-filter" value={ledgerStore} onChange={(event) => setLedgerStore(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`}>
+                {visibleStores.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.name}</option>)}
+              </select>
+            </label>
+            <label className="min-w-0 text-[11px] font-semibold text-slate-500">
+              状态
+              <select data-testid="ledger-status-filter" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`}>
+                <option value="all">全部</option>
+                <option value="draft">待确认</option>
+                <option value="confirmed">已确认 / 已修正</option>
+                <option value="anomaly">待完善</option>
+              </select>
+            </label>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] text-left text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 text-xs text-slate-400">
-                <th className="px-5 py-3 font-semibold">{t('日期')}</th>
-                <th className="px-4 py-3 font-semibold">{t('值班人员')}</th>
-                <th className="px-4 py-3 font-semibold">{t('营业收入')}</th>
-                <th className="px-4 py-3 font-semibold">{t('订单数')}</th>
-                <th className="px-4 py-3 font-semibold">{t('客单价')}</th>
-                <th className="px-4 py-3 font-semibold">{t('来源')}</th>
-                <th className="px-4 py-3 font-semibold text-right">{t('操作')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const entry = localEntries()[`${month}|${store}|${r.d}`]
-                const performanceDate = `${month}-${String(r.d || '').includes('-') ? String(r.d).slice(3) : String(r.d)}`
-                const dutyStaff = resolvePerformanceDutyStaff({
-                  monthRows: performanceStaffRows,
-                  monthLoaded: performanceStaffMonth.status === 'loaded' && performanceStaffMonth.hasPayload,
-                  storeKey: store,
-                  date: performanceDate,
-                  legacyStaffNames: entry && Array.isArray(entry.staff) ? entry.staff : [],
-                  employeeDirectory: performanceEmployeeDirectory,
-                })
-                return (
-                  <tr key={r.d} className="border-t border-slate-50 transition hover:bg-slate-50">
-                    <td className="px-5 py-3 font-medium text-slate-700">{r.d}</td>
-                    <td className="px-4 py-3" data-testid={`performance-duty-staff-${performanceDate}`} data-authority={dutyStaff.source}>
-                      {dutyStaff.source === 'unresolved' ? (
-                        <span aria-label="值班人员载入中" className="text-xs text-slate-300">…</span>
-                      ) : dutyStaff.participants.length > 0 ? (
-                        <div className="flex min-w-0 flex-wrap gap-1">
-                          {dutyStaff.participants.map((participant) => (
-                            <span
-                              key={participant.key}
-                              title={participant.label}
-                              data-participant-key={participant.key}
-                              className="max-w-full break-words rounded-md bg-budu-50 px-1.5 py-0.5 text-[11px] font-semibold text-budu-600"
-                            >
-                              {participant.label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : <span className="text-xs text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">¥{formatMoney(r.inc)}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{r.ord.toLocaleString('zh-CN')}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">¥{r.ord > 0 ? (r.inc / r.ord).toFixed(2) : '0.00'}</td>
-                    <td className="px-4 py-3">{r.local ? <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">{t('本地录入')}</span> : <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">{t('报表')}</span>}</td>
-                    <td className="px-4 py-3 text-right">
-                      {r.local && entry?.status !== 'confirmed' && canEdit && (
-                        <div className="inline-flex items-center gap-1"><button onClick={() => handleEdit(r)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50"><Pencil className="h-3.5 w-3.5" />{t('修改')}</button><button onClick={() => handleDelete(r.d)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" />{t('删除')}</button></div>
-                      )}
-                      {r.local && entry?.status === 'confirmed' && <span className="text-xs font-semibold text-slate-400">已确认·只读</span>}
-                    </td>
-                  </tr>
-                )
-              })}
-              {rows.length === 0 && <tr><td colSpan="7" className="px-5 py-12 text-center text-sm text-slate-300">{t('暂无数据，请在上方录入')}</td></tr>}
-            </tbody>
-          </table>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+          <span>{ledgerMonthLabel(ledgerMonth)}</span>
+          <span>·</span>
+          <span>{ledgerStoreInfo?.name || ledgerStore}</span>
+          <span>·</span>
+          <span>{ledgerRows.length} 条已保存记录</span>
         </div>
-      </div>
+
+        {ledgerError && <p className="mt-4 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-600">{ledgerError}</p>}
+        {ledgerLoading ? (
+          <p className="mt-5 py-8 text-center text-sm text-slate-400">正在读取事实账本…</p>
+        ) : ledgerRows.length === 0 ? (
+          <p className="mt-5 rounded-2xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-400">当前筛选范围暂无已保存记录</p>
+        ) : (
+          <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-2">
+            {ledgerRows.map((row) => {
+              const status = LEDGER_STATUS[row.status] || LEDGER_STATUS.draft
+              const complete = row.completeness?.status === 'COMPLETE'
+              return (
+                <article key={row.id} data-testid={`ledger-card-${row.date}`} className="min-w-0 rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_30px_rgba(15,23,42,0.04)]">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-slate-800">{row.date}</p>
+                      <p className="mt-1 truncate text-[11px] text-slate-400">{row.storeName}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      <span className={`rounded-lg px-2 py-1 text-[10px] font-bold ${status.className}`}>{status.label}</span>
+                      <span className={`rounded-lg px-2 py-1 text-[10px] font-bold ${complete ? 'bg-slate-100 text-slate-500' : 'bg-rose-50 text-rose-600'}`}>
+                        {complete ? '事实完整' : '待完善'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-50/80 p-3">
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(row.incCents))}</p></div>
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{row.ord}</p></div>
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(row.avgCents))}</p></div>
+                  </div>
+
+                  <div className="mt-3 min-w-0">
+                    <p className="text-[10px] font-semibold text-slate-400">实际值班</p>
+                    <div className="mt-1.5 flex min-w-0 flex-wrap gap-1.5">
+                      {row.staff.length > 0 ? row.staff.slice(0, 3).map((staffRow) => (
+                        <span key={staffRow.id || staffRow.staffId} className="max-w-full truncate rounded-lg bg-budu-50 px-2 py-1 text-[11px] font-semibold text-budu-700">
+                          {staffRow.staffName} · {staffHoursLabel(staffRow)}
+                        </span>
+                      )) : <span className="text-xs text-slate-300">暂无实际值班事实</span>}
+                      {row.staff.length > 3 && <span className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500">另 {row.staff.length - 3} 人</span>}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex min-w-0 items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <span className="min-w-0 truncate text-[11px] text-slate-400">来源：{row.salesSourceLabel}</span>
+                    <button type="button" onClick={() => setLedgerDetail(row)} className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">查看详情</button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
 
       <p className="text-center text-[11px] text-slate-300">
         {t('营业数据以门店来源为准（POS 自动同步 / 人工录入）；值班与工时以每日实际确认为准，用于工资与人效计算')}
@@ -790,6 +843,89 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       </>)}
 
       {exportOpen && <StoreEntryExportModal storeKey={store} storeName={storeInfo ? storeInfo.name : ''} onClose={() => setExportOpen(false)} />}
+
+      {ledgerDetail && (
+        <OverlayViewport data-testid="daily-ledger-detail" className="fixed inset-0 z-[105] flex items-end justify-center p-0 sm:items-center sm:p-4">
+          <button type="button" aria-label="关闭每日事实详情" className="budu-overlay-backdrop absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={() => setLedgerDetail(null)} />
+          <OverlayPanel role="dialog" aria-modal="true" aria-labelledby="daily-ledger-detail-title" className="relative flex max-h-[min(92dvh,52rem)] w-full min-w-0 flex-col overflow-hidden rounded-t-3xl bg-white shadow-xl sm:max-w-2xl sm:rounded-3xl">
+            <div className="flex min-w-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+              <div className="min-w-0">
+                <h3 id="daily-ledger-detail-title" className="truncate text-base font-black text-slate-800">{ledgerDetail.date} · 每日事实</h3>
+                <p className="mt-1 truncate text-xs text-slate-400">{ledgerDetail.storeName} · {ledgerDetail.salesSourceLabel}</p>
+              </div>
+              <button type="button" onClick={() => setLedgerDetail(null)} className="shrink-0 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">关闭</button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(ledgerDetail.incCents))}</p></div>
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{ledgerDetail.ord}</p></div>
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(ledgerDetail.avgCents))}</p></div>
+              </div>
+
+              <section className="mt-5">
+                <h4 className="text-xs font-black text-slate-700">完整性</h4>
+                <div className={`mt-2 rounded-2xl px-3 py-3 text-sm ${ledgerDetail.completeness?.status === 'COMPLETE' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                  <p className="font-bold">{COMPLETENESS_LABELS[ledgerDetail.completeness?.code] || ledgerDetail.completeness?.code || '未知'}</p>
+                  {ledgerDetail.completeness?.issues?.length > 1 && <p className="mt-1 text-xs opacity-75">共 {ledgerDetail.completeness.issues.length} 项待完善</p>}
+                </div>
+              </section>
+
+              <section className="mt-5">
+                <h4 className="text-xs font-black text-slate-700">实际值班与计薪输入事实</h4>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {ledgerDetail.staff.length > 0 ? ledgerDetail.staff.map((staffRow) => (
+                    <div key={staffRow.id || staffRow.staffId} className="min-w-0 rounded-2xl border border-slate-100 p-3">
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="truncate text-sm font-bold text-slate-700">{staffRow.staffName}</span>
+                        <span className="shrink-0 text-xs font-semibold tabular-nums text-budu-600">{staffHoursLabel(staffRow)}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {staffRow.participantType === 'EMPLOYEE' ? '稳定 employeeId' : staffRow.participantType === 'NON_EMPLOYEE_SUBSTITUTE' ? '运营替代 · 不计工资' : '历史身份待解析'}
+                        {staffRow.payableHoursSource === 'LEGACY_PAYROLL_HOURS' ? ' · 历史计薪工时权威' : ' · 实际工时权威'}
+                      </p>
+                    </div>
+                  )) : <p className="rounded-2xl bg-slate-50 px-3 py-5 text-center text-xs text-slate-400 sm:col-span-2">没有已保存的实际值班事实</p>}
+                </div>
+              </section>
+
+              <section className="mt-5">
+                <h4 className="text-xs font-black text-slate-700">确认事实</h4>
+                <div className="mt-2 rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
+                  {ledgerDetail.baseStatus === 'confirmed' ? (
+                    <>
+                      <p>确认人：{ledgerDetail.confirmedBy || '系统记录'}</p>
+                      <p>确认时间：{ledgerDetail.confirmedAt ? new Date(ledgerDetail.confirmedAt).toLocaleString('zh-CN', { hour12: false }) : '暂无'}</p>
+                      <p>记录版本：{ledgerDetail.version}</p>
+                    </>
+                  ) : <p>尚未闭店确认</p>}
+                </div>
+              </section>
+
+              <section className="mt-5">
+                <h4 className="text-xs font-black text-slate-700">审计历史</h4>
+                <div className="mt-2 space-y-2">
+                  {ledgerDetail.audits.length > 0 ? ledgerDetail.audits.map((audit) => (
+                    <div key={audit.id} className={`rounded-2xl border px-3 py-3 text-xs ${audit.revision ? 'border-violet-100 bg-violet-50/60' : 'border-slate-100'}`}>
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="truncate font-bold text-slate-700">{audit.revision ? '确认后修正' : '事实记录'} · {audit.module}</span>
+                        <span className="shrink-0 text-[10px] text-slate-400">{new Date(audit.createdAt).toLocaleString('zh-CN', { hour12: false })}</span>
+                      </div>
+                      <p className="mt-1 break-words leading-5 text-slate-500">{audit.reason || '系统记录'}{audit.operatorName ? ` · ${audit.operatorName}` : ''}</p>
+                    </div>
+                  )) : <p className="rounded-2xl bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">暂无确认后修正审计</p>}
+                </div>
+              </section>
+
+              {ledgerDetail.baseStatus === 'draft' && canEdit && (
+                <button type="button" onClick={() => handleLedgerEdit(ledgerDetail)} className="mt-5 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
+                  <Pencil className="h-4 w-4" />继续填写这一天
+                </button>
+              )}
+            </div>
+          </OverlayPanel>
+        </OverlayViewport>
+      )}
 
       {discardOpen && (
         <OverlayViewport data-testid="daily-entry-unsaved-dialog" className="fixed inset-0 z-[110] grid place-items-center p-4">

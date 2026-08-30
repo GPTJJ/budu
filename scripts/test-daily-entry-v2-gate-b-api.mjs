@@ -242,7 +242,56 @@ try {
   assert.equal(draftDelete.status, 200, await draftDelete.text())
   assert.equal(await prisma.dailyEntry.count({ where: { id: 'de-gb-draft-delete' } }), 0)
 
-  console.log('DAILY ENTRY V2 GATE B API TEST OK')
+  // Gate D ledger: saved DailyEntry/DailyStoreStaff facts only, stable status derivation,
+  // store scope, and machine-readable completeness. Confirmation audits must not
+  // falsely turn an ordinary confirmed day into "revised".
+  await prisma.dailyEntry.create({ data: {
+    id: 'de-gd-draft', storeKey: 'tongying', date: date('2026-09-12'), incCents: 33300n, ord: 3, version: 1, status: 'draft',
+  } })
+  await prisma.dailyEntry.create({ data: {
+    id: 'de-gd-legacy', storeKey: 'tongying', date: date('2026-09-13'), incCents: 44400n, ord: 4, version: 3,
+    status: 'confirmed', confirmedAt: new Date('2026-09-13T14:00:00.000Z'), confirmedBy: 'historical-import',
+  } })
+  await prisma.dailyStoreStaff.create({ data: {
+    id: 'dss-gd-legacy', storeId: 'tongying', date: date('2026-09-13'), employeeId: null,
+    participantType: 'LEGACY_UNKNOWN', participantUserId: null, staffId: 'legacy:旧员工', staffNameSnapshot: '旧员工',
+    actualHours: null, historicalPayrollHours: 7, payableHoursSource: 'LEGACY_PAYROLL_HOURS', attendanceStatus: 'HISTORICAL_UNOBSERVED',
+  } })
+  const ledgerBeforeRevision = await request(base, '/v2/daily-entry/ledger?month=2026-09&store=tongying&status=all', { cookie: devCookie })
+  if (ledgerBeforeRevision.status !== 200) assert.fail(`ledger failed: ${ledgerBeforeRevision.status} ${await ledgerBeforeRevision.text()}`)
+  const ledgerBeforeJson = await ledgerBeforeRevision.json()
+  const ordinaryConfirmed = ledgerBeforeJson.rows.find((row) => row.date === '2026-09-01')
+  assert.equal(ordinaryConfirmed.status, 'confirmed', 'confirmation audit is not a post-confirm revision')
+  assert.equal(ordinaryConfirmed.salesSourceLabel, '美团收银 · 人工录入')
+  assert.equal(ordinaryConfirmed.incCents, '128800')
+  assert.equal(ordinaryConfirmed.ord, 18)
+  assert.equal(ordinaryConfirmed.avgCents, '7155')
+  assert.equal(ordinaryConfirmed.completeness.status, 'COMPLETE')
+  assert.deepEqual(ordinaryConfirmed.staff.map((row) => row.employeeId).sort(), ['emp-gb-a', 'emp-gb-b'])
+  assert.equal(ledgerBeforeJson.rows.find((row) => row.date === '2026-09-12').completeness.code, 'DRAFT_ENTRY')
+  assert.equal(ledgerBeforeJson.rows.find((row) => row.date === '2026-09-13').completeness.code, 'UNRESOLVED_EMPLOYEE')
+
+  await prisma.dailyEntryAuditLog.create({ data: {
+    id: 'audit-gd-real-revision', storeId: 'tongying', date: date('2026-09-01'), module: 'daily_revision',
+    fieldName: 'facts', beforeValue: { incCents: '128800' }, afterValue: { incCents: '128800' },
+    reason: 'Gate D controlled revision fixture', operatorId: 'gate-b-dev', operatorName: 'gate-b-dev',
+    createdAt: new Date(Date.now() + 1000),
+  } })
+  const confirmedLedger = await request(base, '/v2/daily-entry/ledger?month=2026-09&store=tongying&status=confirmed', { cookie: devCookie })
+  if (confirmedLedger.status !== 200) assert.fail(`confirmed ledger failed: ${confirmedLedger.status} ${await confirmedLedger.text()}`)
+  const confirmedLedgerJson = await confirmedLedger.json()
+  assert.equal(confirmedLedgerJson.rows.find((row) => row.date === '2026-09-01').status, 'revised')
+  assert.equal(confirmedLedgerJson.rows.some((row) => row.date === '2026-09-12'), false)
+  const anomalyLedger = await request(base, '/v2/daily-entry/ledger?month=2026-09&store=tongying&status=anomaly', { cookie: devCookie })
+  if (anomalyLedger.status !== 200) assert.fail(`anomaly ledger failed: ${anomalyLedger.status} ${await anomalyLedger.text()}`)
+  const anomalyLedgerJson = await anomalyLedger.json()
+  assert.ok(anomalyLedgerJson.rows.some((row) => row.date === '2026-09-12'))
+  assert.ok(anomalyLedgerJson.rows.some((row) => row.date === '2026-09-13'))
+  assert.equal(anomalyLedgerJson.rows.some((row) => row.date === '2026-09-01'), false)
+  const crossStoreLedger = await request(base, '/v2/daily-entry/ledger?month=2026-09&store=xidan&status=all', { cookie: staffCookie })
+  assert.equal(crossStoreLedger.status, 403)
+
+  console.log('DAILY ENTRY V2 GATE B-D API TEST OK')
 } finally {
   await new Promise((resolve) => server.close(resolve))
   await prisma.$disconnect().catch(() => {})
