@@ -43,12 +43,17 @@ export function publicBaseUrl() {
 const CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT = 'budu'
 const CUSTOMER_REQUEST_WECOM_USER_ID = 'dh'
 
-/** CustomerRequest 企微固定绑定。只接受精确 BUDU 账号 → UserID 配置，绝不按姓名推断。 */
-export function customerRequestWecomRecipientBinding() {
+/** 已验证的 BUDU developer 企微固定绑定；绝不按姓名、角色或目录搜索推断。 */
+export function developerWecomRecipientBinding() {
   const username = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME || '').trim()
   const userId = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID || '').trim()
   if (username !== CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT || userId !== CUSTOMER_REQUEST_WECOM_USER_ID) return null
   return { username, userId }
+}
+
+/** CustomerRequest 保持使用同一条已验证的精确账号绑定。 */
+export function customerRequestWecomRecipientBinding() {
+  return developerWecomRecipientBinding()
 }
 
 export function customerRequestWecomRecipientUserId() {

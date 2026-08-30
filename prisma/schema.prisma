@@ -1509,7 +1509,7 @@ model Schedule {
   weekStart String   @map("week_start") // 周一起始日 YYYY-MM-DD
   storeKey  String   @map("store_key")
   date      String // YYYY-MM-DD（周内某天）
-  shifts    Json // [{ staff, time, note }]
+  shifts    Json // [{ employeeId, staff, time, note }]；staff 仅展示快照，routing 只认 employeeId
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 

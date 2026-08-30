@@ -3,6 +3,7 @@ import { prisma, dbReady } from './pg.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { broadcast, notify } from './notification-center.js'
 import { listUsers } from './user-store.js'
+import { deliverTransferRequestNotification } from './transfer-notification.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
 import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
@@ -168,22 +169,6 @@ function transferItemCreates(row, item) {
     row.boxQuantity > 0 && { ...transferItemBase(row, item), quantity: row.boxQuantity, quantityUnit: 'box', unitWeightGramsSnapshot: item.transferBoxWeightGrams },
     row.pieceQuantity > 0 && { ...transferItemBase(row, item), quantity: row.pieceQuantity, quantityUnit: 'piece', unitWeightGramsSnapshot: item.transferPieceWeightGrams },
   ].filter(Boolean)
-}
-
-async function transferStoreRecipients(storeKey) {
-  if (!storeKey) return []
-  const users = await listUsers()
-  return users.filter((user) =>
-    user.status !== 'disabled' &&
-    Array.isArray(user.storeKeys) &&
-    user.storeKeys.includes(storeKey) &&
-    canAccessTransferStore(user, storeKey),
-  )
-}
-
-async function notifyTransferStore(storeKey, options) {
-  const recipients = await transferStoreRecipients(storeKey)
-  await Promise.all(recipients.map((user) => notify({ ...options, username: user.username })))
 }
 
 function serializeTransferItems(items) {
@@ -941,18 +926,16 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
-  const logicalItemCount = serializeTransfer(created).items.length
-  await notifyTransferStore(fromStoreKey, {
-    templateKey: 'transfer_new',
-    data: { fromStore: resolveStoreName(fromStoreKey), toStore: resolveStoreName(toStoreKey), count: logicalItemCount, submitter: req.user.username },
-    title: `新调拨待备货：${resolveStoreName(fromStoreKey)} → ${resolveStoreName(toStoreKey)}`,
-    content: `调入门店 ${resolveStoreName(toStoreKey)} 发起 · ${logicalItemCount} 种货品 · 提交人 ${req.user.username}`,
-    target: 'inventory-transfer',
-    refType: 'transfer',
-    refId: created.id,
-    priority: 'high',
-  })
-  res.json({ ok: true, request: serializeTransfer(created) })
+  const serialized = serializeTransfer(created)
+  const notificationResult = await deliverTransferRequestNotification({ transfer: serialized }).catch((error) => ({
+    ok: false,
+    status: 'failed',
+    reason: String(error?.message || 'transfer notification failed').slice(0, 200),
+  }))
+  if (!notificationResult.ok) {
+    console.error('[transfer-notification]', created.id, notificationResult.status, notificationResult.reason || '')
+  }
+  res.json({ ok: true, request: serialized })
 }))
 
 v2Router.get('/transfer-requests', wrap(async (req, res) => {

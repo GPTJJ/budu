@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
-import { allStores, employeeList } from '../utils/selectors'
+import { allStores, currentEmployeeDirectory } from '../utils/selectors'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
@@ -28,7 +28,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const [version, setVersion] = useState(0)
   const [editingDate, setEditingDate] = useState(null)
   const [editingStore, setEditingStore] = useState('')
-  const [draft, setDraft] = useState({ staff: '', time: '', note: '' })
+  const [draft, setDraft] = useState({ employeeId: '', time: '', note: '' })
   const [errorTip, setErrorTip] = useState('')
   const [savedTip, setSavedTip] = useState('')
   const [exporting, setExporting] = useState(false)
@@ -41,8 +41,8 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const days = getWeekDays(weekStart)
   const today = todayStr()
   const storeInfo = stores.find((s) => s.key === storeKey)
-  const staffNames = [...new Set(employeeList('all').map((e) => e.name))].sort((a, b) =>
-    a.localeCompare(b, 'zh-CN'),
+  const staffOptions = currentEmployeeDirectory('all').sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN'),
   )
 
   // 从 PostgreSQL 加载当前周排班（唯一读权威）
@@ -67,8 +67,11 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   // 绑定员工（staffKey = storeKey::name）：本人当班名字高亮
   const myStaffKey = String((user && user.staffKey) || '')
   const myName = myStaffKey.includes('::') ? myStaffKey.split('::')[1] : ''
-  const isMyShift = (shiftStoreKey, staffName) =>
-    Boolean(myName) && myStaffKey === `${shiftStoreKey}::${staffName}`
+  const isMyShift = (shiftStoreKey, shift) => {
+    const myEmployeeId = String((user && user.employeeId) || '')
+    if (myEmployeeId && shift.employeeId) return myEmployeeId === shift.employeeId
+    return Boolean(myName) && myStaffKey === `${shiftStoreKey}::${shift.staff}`
+  }
 
   /** 保存某门店某周排班（PostgreSQL 权威；失败回滚本地视图并显式报错） */
   const commit = async (store, nextWeek, { feedback: withFeedback = false } = {}) => {
@@ -111,22 +114,23 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
   const openEditor = (date, store) => {
     setEditingDate(date)
     setEditingStore(store)
-    setDraft({ staff: '', time: '', note: '' })
+    setDraft({ employeeId: '', time: '', note: '' })
     setErrorTip('')
   }
 
   const confirmAdd = () => {
     if (saving) return
-    const staff = draft.staff.trim()
-    if (!staff) {
-      setErrorTip(t('请填写员工姓名'))
+    const employee = staffOptions.find((row) => row.id === draft.employeeId)
+    if (!employee) {
+      setErrorTip(t('请选择有效员工'))
       return
     }
     setSaving(true)
     const shifts = [
       ...((schedules[weekStart] || {})[editingStore] || {})[editingDate] || [],
       {
-        staff,
+        employeeId: employee.id,
+        staff: employee.name,
         time: draft.time.trim(),
         note: draft.note.trim(),
       },
@@ -230,7 +234,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                   </div>
                   <div className="flex flex-1 flex-col gap-2 p-2.5">
                     {shifts.map((s, i) => {
-                      const mine = isMyShift(store, s.staff)
+                      const mine = isMyShift(store, s)
                       return (
                         <div
                           key={i}
@@ -249,6 +253,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                                 )}
                               </p>
                               {s.time && <p className="mt-0.5 text-[11px] font-semibold text-budu-500">{s.time}</p>}
+                              {!s.employeeId && <p className="mt-0.5 text-[10px] font-semibold text-amber-600">{t('需重新选择员工')}</p>}
                             </div>
                             {canEdit && (
                               <button
@@ -464,20 +469,20 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
 
             <div className="space-y-3">
               <div>
-                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('员工姓名')}</span>
-                <input
-                  list={`budu-schedule-staff-${storeKey}`}
-                  value={draft.staff}
-                  onChange={(e) => setDraft((s) => ({ ...s, staff: e.target.value }))}
-                  placeholder={t('输入或选择员工姓名')}
+                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('员工')}</span>
+                <select
+                  value={draft.employeeId}
+                  onChange={(e) => setDraft((s) => ({ ...s, employeeId: e.target.value }))}
                   className={inputCls}
                   autoFocus
-                />
-                <datalist id={`budu-schedule-staff-${storeKey}`}>
-                  {staffNames.map((n) => (
-                    <option key={n} value={n} />
+                >
+                  <option value="">{t('请选择员工')}</option>
+                  {staffOptions.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} · {employee.employeeNo || employee.id} · {stores.find((store) => store.key === employee.storeKey)?.name || employee.storeKey}
+                    </option>
                   ))}
-                </datalist>
+                </select>
               </div>
 
               <div>

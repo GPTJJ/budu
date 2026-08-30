@@ -53,6 +53,16 @@ test('开发者可添加排班（全部门店视图下弹窗显示对应门店�
   await expect(page.getByText(/· 北京通盈中心店 ·/)).toBeVisible()
 })
 
+test('新增排班按 Employee.id 保存，不以姓名作为身份键', async ({ page }) => {
+  await page.getByRole('button', { name: '添加排班' }).first().click()
+  await page.getByRole('combobox').first().selectOption('emp-gong')
+  await page.getByRole('button', { name: '确认添加' }).click()
+  await expect.poll(() => page.evaluate(() => window.lastSchedulePutBody || null)).not.toBeNull()
+  const body = await page.evaluate(() => window.lastSchedulePutBody)
+  const shifts = Object.values(body.days).flat()
+  expect(shifts.some((row) => row.employeeId === 'emp-gong' && row.staff === '龚艺锦')).toBe(true)
+})
+
 test('经理保持可编辑权限', async ({ page }) => {
   await page.goto('/tests/schedule-harness.html?mode=manager')
   await expect(page.locator('body')).toContainText('门店排班')

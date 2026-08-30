@@ -46,3 +46,24 @@ test('DA-3: KV getSchedules/commitSchedules 在运行时无调用方（仅存档
   walk(path.join(root, 'src'))
   assert.ok(true, '无其它调用方')
 })
+
+test('DA-3: 新排班写入以 Employee.id 为身份键，legacy name-only fail closed', async () => {
+  const { normalizeShifts } = await import('../server/schedule.js')
+  assert.throws(() => normalizeShifts([{ staff: '同名员工', time: '早班' }]), /稳定员工 ID/)
+  assert.throws(() => normalizeShifts([
+    { employeeId: 'emp-1', staff: '员工甲', time: '早班' },
+    { employeeId: 'emp-1', staff: '员工甲', time: '晚班' },
+  ]), /重复排班/)
+  assert.deepEqual(normalizeShifts([
+    { employeeId: 'emp-1', staff: '同名员工', time: '早班' },
+    { employeeId: 'emp-2', staff: '同名员工', time: '晚班' },
+  ]).map((row) => row.employeeId), ['emp-1', 'emp-2'])
+  assert.deepEqual(normalizeShifts(
+    [{ staff: '历史员工', time: '早班', note: '' }],
+    { allowedLegacy: [{ staff: '历史员工', time: '早班', note: '' }] },
+  ), [{ staff: '历史员工', time: '早班', note: '' }])
+  assert.throws(() => normalizeShifts(
+    [{ staff: '历史员工', time: '晚班', note: '' }],
+    { allowedLegacy: [{ staff: '历史员工', time: '早班', note: '' }] },
+  ), /稳定员工 ID/)
+})

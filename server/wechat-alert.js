@@ -1,27 +1,34 @@
-/** 企业微信群机器人告警（Markdown） */
-
-// 私有仓库内置的企微群机器人 webhook（服务器 .env 未配置时兜底；该值仅能向群发消息，不能读取群内容）
-const FALLBACK_WEBHOOK_URL = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=91759b9b-d91c-4540-8648-70a78f139ee1'
+/** 企业微信群机器人告警（Markdown）。webhook 只认运行环境显式配置。 */
 
 export function wecomWebhookUrl() {
-  return process.env.WECHAT_WORK_WEBHOOK_URL || FALLBACK_WEBHOOK_URL
+  return String(process.env.WECHAT_WORK_WEBHOOK_URL || '').trim()
 }
 
-export async function sendWechatMarkdown(title, content) {
+export async function sendWechatMarkdownResult(title, content) {
   const url = wecomWebhookUrl()
-  if (!url) return false
+  if (!url) return { ok: false, errcode: 'CONFIG_MISSING', errmsg: 'WECHAT_WORK_WEBHOOK_URL 未配置' }
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify({
         msgtype: 'markdown',
         markdown: { content: `## ${title}\n${content}` },
       }),
     })
-    return res.ok
+    const body = await res.json().catch(() => ({}))
+    return {
+      ok: res.ok && body.errcode === 0,
+      errcode: body.errcode ?? `HTTP_${res.status}`,
+      errmsg: String(body.errmsg || '').slice(0, 200),
+    }
   } catch (e) {
     console.error('[wechat-alert]', e.message)
-    return false
+    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: 'local delivery error' }
   }
+}
+
+export async function sendWechatMarkdown(title, content) {
+  return (await sendWechatMarkdownResult(title, content)).ok
 }

@@ -27,11 +27,11 @@
     const schedules = {
       [weekStart]: {
         tongying: {
-          [dateOffset(1)]: [{ staff: '叶芷辰', time: '早班' }, { staff: '隋晓', time: '晚班' }],
-          [dateOffset(3)]: [{ staff: '叶芷辰', time: '通班', note: '主理' }],
+          [dateOffset(1)]: [{ employeeId: 'emp-ye', staff: '叶芷辰', time: '早班' }, { employeeId: 'emp-sui', staff: '隋晓', time: '晚班' }],
+          [dateOffset(3)]: [{ employeeId: 'emp-ye', staff: '叶芷辰', time: '通班', note: '主理' }],
         },
         guanshe: {
-          [dateOffset(2)]: [{ staff: '龚艺锦', time: '早班' }],
+          [dateOffset(2)]: [{ employeeId: 'emp-gong', staff: '龚艺锦', time: '早班' }],
         },
       },
     }
@@ -40,9 +40,9 @@
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
       entries: {},
       staff: [
-        { name: '叶芷辰', type: 'fulltime', storeKey: 'tongying' },
-        { name: '隋晓', type: 'fulltime', storeKey: 'tongying' },
-        { name: '龚艺锦', type: 'parttime', storeKey: 'guanshe' },
+        { id: 'emp-ye', employeeNo: 'BUDU-0001', name: '叶芷辰', type: 'fulltime', storeKey: 'tongying' },
+        { id: 'emp-sui', employeeNo: 'BUDU-0002', name: '隋晓', type: 'fulltime', storeKey: 'tongying' },
+        { id: 'emp-gong', employeeNo: 'BUDU-0003', name: '龚艺锦', type: 'parttime', storeKey: 'guanshe' },
       ],
       removedStaff: [],
       stores: [
@@ -66,7 +66,10 @@
     window.fetch = async (input, options = {}) => {
       const url = new URL(typeof input === 'string' ? input : input.url, location.origin)
       if (url.pathname === '/api/v2/schedules') {
-        if ((options.method || 'GET') === 'PUT') return json({ ok: true })
+        if ((options.method || 'GET') === 'PUT') {
+          window.lastSchedulePutBody = JSON.parse(options.body)
+          return json({ ok: true })
+        }
         const rows = []
         for (const [storeKey, days] of Object.entries(schedules[url.searchParams.get('weekStart')] || {})) {
           for (const [date, shifts] of Object.entries(days)) rows.push({ storeKey, date, shifts })
@@ -84,7 +87,7 @@
 
     const USER = {
       developer: { id: 'u-dev', username: 'budu', role: 'developer', staffKey: '' },
-      staff: { id: 'u-staff', username: 'ye', role: 'staff', staffKey: 'tongying::叶芷辰' },
+      staff: { id: 'u-staff', username: 'ye', role: 'staff', staffKey: 'tongying::叶芷辰', employeeId: 'emp-ye' },
       manager: { id: 'u-mgr', username: 'mgr', role: 'manager', staffKey: '' },
     }[MODE]
 
