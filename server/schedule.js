@@ -107,7 +107,11 @@ export async function replaceScheduleStoresAtomic(prismaClient, { weekStart, sto
   return prismaClient.$transaction(async (tx) => {
     const prepared = []
     for (const payload of [...payloads].sort((left, right) => left.storeKey.localeCompare(right.storeKey))) {
-      await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `schedule:${weekStart}:${payload.storeKey}`)
+      // Prisma 无法反序列化 PostgreSQL void；子查询仍执行事务级锁，外层只返回普通整数。
+      await tx.$queryRawUnsafe(
+        'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
+        `schedule:${weekStart}:${payload.storeKey}`,
+      )
       const existingRows = await tx.schedule.findMany({
         where: { weekStart, storeKey: payload.storeKey },
         orderBy: { date: 'asc' },
