@@ -33,6 +33,8 @@ test('all full-screen fixed overlays are covered by one stack manager', () => {
   assert.match(primitives, /MutationObserver/)
   assert.match(primitives, /body\.style\.position = 'fixed'/)
   assert.match(primitives, /window\.scrollTo\(previous\.scrollX, previous\.scrollY\)/)
+  const styles = fs.readFileSync(path.join(root, 'src/index.css'), 'utf8')
+  assert.match(styles, /\.budu-overlay-viewport\s*\{[\s\S]*?box-sizing:\s*border-box;/)
   assert.ok(inventory.length >= 35, `unexpectedly narrow overlay inventory: ${inventory.length}`)
 })
 
