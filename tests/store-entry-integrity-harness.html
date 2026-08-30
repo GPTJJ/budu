@@ -25,6 +25,7 @@
 
       window.__storeEntryTimeline = []
       window.__overviewPlans = new Map()
+      window.__participantPlans = new Map()
       window.__writes = []
       window.__confirmFailure = false
       window.__moduleLeft = false
@@ -37,6 +38,9 @@
       }
       window.__setOverviewPlan = (store, date, payloads) => {
         window.__overviewPlans.set(keyOf(store, date), payloads.map((item) => ({ ...item })))
+      }
+      window.__setParticipantPlan = (store, date, payloads) => {
+        window.__participantPlans.set(keyOf(store, date), payloads.map((item) => structuredClone(item)))
       }
 
       const historical = {
@@ -69,6 +73,7 @@
           { employeeId: 'emp-same-b', employeeNo: 'BUDU-1004', label: '同名员工', currentStoreKey: 'tongying', participantType: 'EMPLOYEE', priorityGroup: 3 },
         ],
         substitutes: [{ participantUserId: 'user-sub', label: '卡皮巴拉', participantType: 'NON_EMPLOYEE_SUBSTITUTE', priorityGroup: 4 }],
+        schedule: { scheduledEmployeeIds: [], unresolved: [], updatedAt: null },
       }
 
       const participantLabel = (body) => {
@@ -123,7 +128,12 @@
           window.__storeEntryTimeline.push({ event: 'response', key, entryId: payload.entry?.id || null, at: performance.now() })
           return json(payload)
         }
-        if (path.startsWith('/api/v2/daily-participants')) return json(participants)
+        if (path.startsWith('/api/v2/daily-participants')) {
+          const parsed = new URL(path, location.origin)
+          const key = keyOf(parsed.searchParams.get('store'), parsed.searchParams.get('date'))
+          const queue = window.__participantPlans.get(key)
+          return json(queue && queue.length ? queue.shift() : participants)
+        }
         if (path === '/api/v2/stores') return json({ rows: [
           { key: 'guanshe', name: '北京官舍店' },
           { key: 'xidan', name: '北京西单店' },

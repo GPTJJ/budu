@@ -56,6 +56,17 @@ const editableStaff = [{
   attendanceStatus: 'normal', scheduledStartTime: '', scheduledEndTime: '', actualStartTime: '', actualEndTime: '',
 }]
 
+const participantDirectory = (scheduledEmployeeIds = [], unresolved = []) => ({
+  employees: [
+    { employeeId: 'emp-home', employeeNo: 'BUDU-1001', label: '叶芷辰', currentStoreKey: 'xidan', participantType: 'EMPLOYEE', priorityGroup: scheduledEmployeeIds.includes('emp-home') ? 1 : 2 },
+    { employeeId: 'emp-chen', employeeNo: 'BUDU-1002', label: '陈文慧', currentStoreKey: 'chaowai', participantType: 'EMPLOYEE', priorityGroup: scheduledEmployeeIds.includes('emp-chen') ? 1 : 3 },
+    { employeeId: 'emp-same-a', employeeNo: 'BUDU-1003', label: '同名员工', currentStoreKey: 'xidan', participantType: 'EMPLOYEE', priorityGroup: 2 },
+    { employeeId: 'emp-same-b', employeeNo: 'BUDU-1004', label: '同名员工', currentStoreKey: 'tongying', participantType: 'EMPLOYEE', priorityGroup: 3 },
+  ],
+  substitutes: [{ participantUserId: 'user-sub', label: '卡皮巴拉', participantType: 'NON_EMPLOYEE_SUBSTITUTE', priorityGroup: 4 }],
+  schedule: { scheduledEmployeeIds, unresolved, updatedAt: '2026-08-31T00:00:00.000Z' },
+})
+
 async function openEditableHarness(width = 375, browserInstance = browser, height = 812, date = '2026-08-22') {
   const page = await browserInstance.newPage({ viewport: { width, height } })
   await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
@@ -250,12 +261,74 @@ test('failed atomic confirmation preserves the local draft and never shows succe
   }
 })
 
+test('Schedule Employee.id prefills only the local draft with blank actualHours and legacy stays unresolved', async () => {
+  const page = await browser.newPage({ viewport: { width: 375, height: 812 } })
+  try {
+    await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
+    await page.locator('select').selectOption('xidan')
+    const day = '2026-08-17'
+    await page.evaluate(([draft, directory]) => {
+      window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }])
+      window.__setParticipantPlan('xidan', draft.date, [directory])
+    }, [payload('xidan', day, 0, 0), participantDirectory(['emp-home', 'emp-chen'], [{ reason: 'MISSING_EMPLOYEE_ID', staffSnapshot: '同名员工' }])])
+    await page.locator('input[type=date]').fill(day)
+    await page.getByTestId('daily-entry-hours-employee:emp-home').waitFor()
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-home').inputValue(), '')
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-chen').inputValue(), '')
+    assert.equal(await page.getByText('排班预填', { exact: true }).count(), 2)
+    await page.getByText(/历史排班身份未解析 1 人/).waitFor()
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
+
+    await page.getByRole('button', { name: /已选 2 人/ }).click()
+    await page.getByRole('button', { name: /陈文慧 BUDU-1002/ }).click()
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-chen').count(), 0, '未实际上班的排班员工可从 draft 移除')
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('reopening a clean Daily Entry reads the latest schedule instead of stale prefill', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
+    await page.locator('select').selectOption('xidan')
+    const firstDay = '2026-08-16'
+    const otherDay = '2026-08-15'
+    await page.evaluate(([first, other, firstDirectory, updatedDirectory, otherDirectory]) => {
+      window.__setOverviewPlan('xidan', first.date, [{ payload: first }, { payload: first }])
+      window.__setOverviewPlan('xidan', other.date, [{ payload: other }])
+      window.__setParticipantPlan('xidan', first.date, [firstDirectory, updatedDirectory])
+      window.__setParticipantPlan('xidan', other.date, [otherDirectory])
+    }, [
+      payload('xidan', firstDay, 0, 0),
+      payload('xidan', otherDay, 0, 0),
+      participantDirectory(['emp-home', 'emp-chen']),
+      participantDirectory(['emp-home']),
+      participantDirectory([]),
+    ])
+    await page.locator('input[type=date]').fill(firstDay)
+    await page.getByTestId('daily-entry-hours-employee:emp-chen').waitFor()
+    await page.locator('input[type=date]').fill(otherDay)
+    await page.waitForFunction(() => !document.querySelector('[data-testid="daily-entry-hours-employee:emp-chen"]'))
+    await page.locator('input[type=date]').fill(firstDay)
+    await page.getByTestId('daily-entry-hours-employee:emp-home').waitFor()
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-chen').count(), 0)
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-home').inputValue(), '')
+  } finally {
+    await page.close()
+  }
+})
+
 test('POS sales stay read-only while staff facts use the atomic confirmation', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {
     await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
     await page.locator('select').selectOption('xidan')
-    await page.evaluate((draft) => window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }]), posPayload('xidan', '2026-08-19', editableStaff))
+    await page.evaluate(([draft, directory]) => {
+      window.__setOverviewPlan('xidan', draft.date, [{ payload: draft }])
+      window.__setParticipantPlan('xidan', draft.date, [directory])
+    }, [posPayload('xidan', '2026-08-19', []), participantDirectory(['emp-home'])])
     await page.locator('input[type=date]').fill('2026-08-19')
     await page.getByText('POS 自动同步', { exact: true }).waitFor()
     assert.equal(await page.getByText('营业收入（元）').count(), 0)

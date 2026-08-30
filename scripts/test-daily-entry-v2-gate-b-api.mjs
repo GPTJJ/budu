@@ -61,6 +61,28 @@ try {
   assert.equal(createStaff.status, 200, await createStaff.text())
   const staffCookie = await login(base, 'gate-b-staff', '123456')
 
+  // Gate C: schedule prefill reads stable employeeId only; legacy staff snapshots remain unresolved.
+  await prisma.schedule.create({ data: {
+    id: 'sc-gate-c', weekStart: '2026-08-31', storeKey: 'tongying', date: '2026-08-31',
+    shifts: [
+      { employeeId: 'emp-gb-a', staff: '员工A', time: '10:00-18:00' },
+      { staff: '员工B', time: '13:00-21:00' },
+    ],
+  } })
+  const schedulePrefill = await request(base, '/v2/daily-participants?store=tongying&date=2026-08-31', { cookie: devCookie })
+  if (schedulePrefill.status !== 200) assert.fail(`schedule prefill failed: ${schedulePrefill.status} ${await schedulePrefill.text()}`)
+  const schedulePrefillJson = await schedulePrefill.json()
+  assert.deepEqual(schedulePrefillJson.schedule.scheduledEmployeeIds, ['emp-gb-a'])
+  assert.equal(schedulePrefillJson.schedule.unresolved[0].reason, 'MISSING_EMPLOYEE_ID')
+  assert.equal(schedulePrefillJson.employees.find((row) => row.employeeId === 'emp-gb-a').scheduled, true)
+  assert.equal(schedulePrefillJson.employees.find((row) => row.employeeId === 'emp-gb-b').scheduled, false, 'legacy staff name must not guess emp-gb-b')
+  await prisma.schedule.update({ where: { id: 'sc-gate-c' }, data: {
+    shifts: [{ employeeId: 'emp-gb-b', staff: '员工B', time: '13:00-21:00' }],
+  } })
+  const refreshedSchedule = await request(base, '/v2/daily-participants?store=tongying&date=2026-08-31', { cookie: devCookie })
+  const refreshedScheduleJson = await refreshedSchedule.json()
+  assert.deepEqual(refreshedScheduleJson.schedule.scheduledEmployeeIds, ['emp-gb-b'])
+
   // Manual: one command persists sales + stable identities + actual hours + confirmation + audit.
   const confirmed = await request(base, '/v2/daily-entry/confirm', {
     cookie: devCookie, method: 'POST', body: manualConfirm('2026-09-01', 0, [staffItem('emp-gb-a', 8), staffItem('emp-gb-b', 6.5)]),

@@ -192,6 +192,41 @@ function serializeStaff(row) {
 }
 
 /**
+ * Schedule is only a draft prefill authority. Stable Employee.id is required;
+ * staff snapshots are never used to resolve or guess an employee.
+ */
+export function buildDailySchedulePrefill(shifts, employees) {
+  const activeById = new Map((Array.isArray(employees) ? employees : []).map((employee) => [employee.id, employee]))
+  const scheduledEmployeeIds = []
+  const seen = new Set()
+  const unresolved = []
+  for (const shift of Array.isArray(shifts) ? shifts : []) {
+    const employeeId = String(shift?.employeeId || '').trim()
+    if (!employeeId) {
+      unresolved.push({
+        reason: 'MISSING_EMPLOYEE_ID',
+        staffSnapshot: String(shift?.staff || '').trim().slice(0, 30),
+        timeSnapshot: String(shift?.time || '').trim().slice(0, 20),
+      })
+      continue
+    }
+    if (!activeById.has(employeeId)) {
+      unresolved.push({
+        reason: 'EMPLOYEE_UNAVAILABLE',
+        employeeId,
+        staffSnapshot: String(shift?.staff || '').trim().slice(0, 30),
+        timeSnapshot: String(shift?.time || '').trim().slice(0, 20),
+      })
+      continue
+    }
+    if (seen.has(employeeId)) continue
+    seen.add(employeeId)
+    scheduledEmployeeIds.push(employeeId)
+  }
+  return { scheduledEmployeeIds, unresolved }
+}
+
+/**
  * Gate 12：按月批量读取 DailyStoreStaff（只读数据基础，供未来 payroll 计算）。
  * - month=YYYY-MM 必填（有界窗口，禁止全量下载历史）
  * - store 可选（与现有 canStore 授权一致）
@@ -267,14 +302,12 @@ dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
     }),
     dateStr ? prisma.schedule.findFirst({
       where: { storeKey, date: dateStr },
-      select: { shifts: true },
+      orderBy: { updatedAt: 'desc' },
+      select: { shifts: true, updatedAt: true },
     }) : null,
   ])
-  const scheduledNames = new Set(
-    (Array.isArray(schedule?.shifts) ? schedule.shifts : [])
-      .map((shift) => String(shift?.staff || '').trim())
-      .filter(Boolean),
-  )
+  const schedulePrefill = buildDailySchedulePrefill(schedule?.shifts, employees)
+  const scheduledEmployeeIds = new Set(schedulePrefill.scheduledEmployeeIds)
   const employeeDirectory = employees
     .map((employee) => ({
       employeeId: employee.id,
@@ -282,8 +315,8 @@ dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
       label: employee.name,
       status: employee.status,
       currentStoreKey: employee.currentStoreKey,
-      scheduled: scheduledNames.has(employee.name),
-      priorityGroup: scheduledNames.has(employee.name) ? 1 : employee.currentStoreKey === storeKey ? 2 : 3,
+      scheduled: scheduledEmployeeIds.has(employee.id),
+      priorityGroup: scheduledEmployeeIds.has(employee.id) ? 1 : employee.currentStoreKey === storeKey ? 2 : 3,
       participantType: PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
     }))
     .sort((a, b) => a.priorityGroup - b.priorityGroup
@@ -302,6 +335,11 @@ dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
     ok: true,
     employees: employeeDirectory,
     substitutes,
+    schedule: {
+      scheduledEmployeeIds: schedulePrefill.scheduledEmployeeIds,
+      unresolved: schedulePrefill.unresolved,
+      updatedAt: schedule?.updatedAt || null,
+    },
   })
 }))
 

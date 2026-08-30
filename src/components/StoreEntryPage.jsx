@@ -47,7 +47,41 @@ function serializeStaffRows(rows) {
     historicalPayrollHours: s.historicalPayrollHours,
     payableHoursSource: s.payableHoursSource || 'ACTUAL_HOURS',
     attendanceStatus: s.attendanceStatus,
+    prefillSource: '',
   }))
+}
+
+export function buildScheduleDraftRows(directory, existingRows, confirmed) {
+  const persisted = serializeStaffRows(existingRows)
+  if (confirmed || persisted.length > 0) return persisted
+  const employeeById = new Map((Array.isArray(directory?.employees) ? directory.employees : [])
+    .map((employee) => [employee.employeeId, employee]))
+  const seen = new Set()
+  const rows = []
+  for (const employeeId of Array.isArray(directory?.schedule?.scheduledEmployeeIds)
+    ? directory.schedule.scheduledEmployeeIds : []) {
+    const employee = employeeById.get(employeeId)
+    if (!employee || seen.has(employeeId)) continue
+    seen.add(employeeId)
+    rows.push({
+      employeeId,
+      participantUserId: '',
+      participantType: 'EMPLOYEE',
+      staffId: `employee:${employeeId}`,
+      staffName: employee.label,
+      scheduledStartTime: '',
+      scheduledEndTime: '',
+      actualStartTime: '',
+      actualEndTime: '',
+      breakMinutes: 0,
+      actualHours: '',
+      historicalPayrollHours: null,
+      payableHoursSource: 'ACTUAL_HOURS',
+      attendanceStatus: 'normal',
+      prefillSource: 'schedule',
+    })
+  }
+  return rows
 }
 
 const inputCls = 'input'
@@ -158,6 +192,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [ord, setOrd] = useState('')
   const [staffRows, setStaffRows] = useState([])
   const [participants, setParticipants] = useState([])
+  const [scheduleIssues, setScheduleIssues] = useState([])
   const [saving, setSaving] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
   const [feedback, setFeedback] = useState(null)
@@ -228,7 +263,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       if (data?.storeKey !== authority.store || data?.date !== authority.date) {
         throw new Error('门店业绩响应权威与当前门店/日期不一致，请重试')
       }
-      setParticipants([
+      const nextParticipants = [
         ...(directory.employees || []).map((row) => ({
           ...row,
           label: row.label,
@@ -237,7 +272,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
             : '',
         })),
         ...(directory.substitutes || []).map((row) => ({ ...row, label: row.label })),
-      ])
+      ]
+      setParticipants(nextParticipants)
       if (options.mode === 'background' && dirtyRef.current) {
         setRefreshNotice('服务器有新数据可刷新；当前未保存编辑已保留。')
         return { preservedDirty: true }
@@ -246,7 +282,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       overviewRef.current = data
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord ?? '') : '')
-      setStaffRows(serializeStaffRows(data.staff))
+      setStaffRows(buildScheduleDraftRows({ ...directory, employees: nextParticipants.filter((row) => row.employeeId) }, data.staff, data.entry?.status === 'confirmed'))
+      setScheduleIssues(Array.isArray(directory?.schedule?.unresolved) ? directory.schedule.unresolved : [])
       dirtyRef.current = false
       setDirty(false)
       setAuthorityStatus('loaded')
@@ -284,6 +321,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     setInc('')
     setOrd('')
     setStaffRows([])
+    setScheduleIssues([])
     setRefreshNotice('')
     loadOverviewFor(authority)
   }, [currentAuthorityKey, loadOverviewFor])
@@ -370,6 +408,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     setInc('')
     setOrd('')
     setStaffRows([])
+    setScheduleIssues([])
     setRefreshNotice('')
     reloadCurrentAuthority()
   }
@@ -403,6 +442,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         breakMinutes: 0,
         actualHours: '',
         attendanceStatus: 'normal',
+        prefillSource: '',
       }]
     setStaffRows(nextRows)
     markDirty()
@@ -623,6 +663,11 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
               历史计薪工时（无考勤事实）为只读权威记录，不能在日常值班录入中覆盖或删除。
             </p>
           )}
+          {!confirmed && scheduleIssues.length > 0 && (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+              历史排班身份未解析 {scheduleIssues.length} 人，未自动预填；请通过员工选择器按真实 Employee 重新选择。
+            </p>
+          )}
           {staffRows.length > 0 && (
             <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {staffRows.map((row) => (
@@ -630,6 +675,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-xs font-bold text-budu-700">{row.staffName}</span>
                     {row.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && <span className="shrink-0 text-[10px] text-amber-600">不计工资</span>}
+                    {row.prefillSource === 'schedule' && <span className="shrink-0 text-[10px] font-semibold text-budu-500">排班预填</span>}
                     {row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' && <span className="shrink-0 text-[10px] text-amber-600">历史只读</span>}
                   </div>
                   <label className="mt-2 block text-[11px] font-semibold text-slate-500">
