@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import HomeWorkspace from './HomeWorkspace'
@@ -96,6 +96,18 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [pendingPosOrder, setPendingPosOrder] = useState(null)
   // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
   const viewStackRef = useRef([])
+  // 排班页在本地有未保存 draft 时，用自定义确认框统一拦截侧栏、底栏、返回与刷新。
+  const scheduleNavigationGuardRef = useRef(null)
+  const registerScheduleNavigationGuard = useCallback((guard) => {
+    scheduleNavigationGuardRef.current = guard
+  }, [])
+
+  const runNavigationGuard = (action) => {
+    if (view === 'store-schedule' && scheduleNavigationGuardRef.current) {
+      return scheduleNavigationGuardRef.current(action)
+    }
+    return action()
+  }
 
   const openEmployeeProfile = (name, id) => {
     setProfileTarget(name || '')
@@ -143,7 +155,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isApprovalView = view === 'approval'
   const isAssetCenterView = view === 'asset-center'
 
-  const returnToOverview = () => {
+  const performReturnToOverview = () => {
     viewStackRef.current = []
     setView(hasModuleAccess(user, 'overview') ? 'overview' : firstAccessibleModule(user))
     if (typeof window !== 'undefined' && window.location.hash === '#pos') {
@@ -152,15 +164,19 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     window.scrollTo?.({ top: 0, behavior: 'smooth' })
   }
 
+  const returnToOverview = () => runNavigationGuard(performReturnToOverview)
+
   // 右滑返回：优先回到进入当前页之前的“上一页”（与动画快照一致），栈空则回首页
   const handleSwipeBack = () => {
-    const prev = viewStackRef.current.pop()
-    if (prev && hasPageAccess(user, prev)) {
-      setView(prev)
-      window.scrollTo?.({ top: 0, behavior: 'smooth' })
-    } else {
-      returnToOverview()
-    }
+    runNavigationGuard(() => {
+      const prev = viewStackRef.current.pop()
+      if (prev && hasPageAccess(user, prev)) {
+        setView(prev)
+        window.scrollTo?.({ top: 0, behavior: 'smooth' })
+      } else {
+        performReturnToOverview()
+      }
+    })
   }
 
   const swipeBack = useSwipeBack({
@@ -212,15 +228,17 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const handleNavigate = (nextView) => {
     if (!hasPageAccess(user, nextView)) return
-    if (nextView !== view) {
-      // 记录来源页并捕获其快照（右滑返回时作为“上一页”真实参与过渡）
-      viewStackRef.current.push(view)
-      swipeBack.capture()
-    }
-    setView(nextView)
-    if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
-    else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    runNavigationGuard(() => {
+      if (nextView !== view) {
+        // 记录来源页并捕获其快照（右滑返回时作为“上一页”真实参与过渡）
+        viewStackRef.current.push(view)
+        swipeBack.capture()
+      }
+      setView(nextView)
+      if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
+      else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    })
   }
 
   const exitPos = () => {
@@ -229,14 +247,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   /** 局部刷新：先拉取最新共享数据，再重挂载当前页面组件（Header/Sidebar 保持不动） */
-  const handleRefresh = async () => {
+  const handleRefresh = async () => runNavigationGuard(async () => {
     try {
       await loadUserData()
     } catch {
       /* 网络异常时仍重挂载当前页，页面会读取本地缓存 */
     }
     setPageKey((v) => v + 1)
-  }
+  })
 
   if (isPosView && hasModuleAccess(user, 'store-pos')) {
     return (
@@ -341,7 +359,12 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
                 <StoreEntryPage user={user} onBack={returnToOverview} />
               ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (
-                <SchedulePage user={user} onBack={returnToOverview} canEdit={user?.role !== 'public' && user?.role !== 'staff'} />
+                <SchedulePage
+                  user={user}
+                  onBack={returnToOverview}
+                  canEdit={user?.role !== 'public' && user?.role !== 'staff'}
+                  registerNavigationGuard={registerScheduleNavigationGuard}
+                />
               ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
                 <StoreMailingPage currentUser={user} onBack={returnToOverview} />
               ) : isOrdersView && hasModuleAccess(user, 'store-pos') ? (

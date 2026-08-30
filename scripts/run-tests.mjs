@@ -153,6 +153,7 @@ const CRITICAL_DIRECT = [
   'test-partner-supply-workflow.mjs',
   'test-unified-product-center-workflow.mjs',
   'test-transfer-box-piece-workflow.mjs',
+  'test-schedule-batch-workflow.mjs', // 排班 draft 最终单次原子保存、并发保护、legacy 与调拨 resolver
   'test-payroll.mjs',
   'test-approval-engine.mjs',
   'test-payroll-integration.mjs',

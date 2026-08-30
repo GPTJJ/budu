@@ -8,7 +8,9 @@
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
-    const MODE = new URLSearchParams(location.search).get('mode') || 'developer'
+    const PARAMS = new URLSearchParams(location.search)
+    const MODE = PARAMS.get('mode') || 'developer'
+    const FAIL_SAVE = PARAMS.get('failSave') === '1'
 
     // 排班数据：本周（与 getWeekStart 同周）两个门店各两天班次
     const weekStart = (() => {
@@ -35,6 +37,10 @@
         },
       },
     }
+    let serverSchedules = JSON.parse(sessionStorage.getItem('schedule-test-server') || 'null') || structuredClone(schedules)
+    let versionCounter = 1
+    window.schedulePutCount = 0
+    window.backCount = 0
 
     // 共享数据镜像（userData 读取来源）
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({
@@ -65,16 +71,32 @@
     const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
     window.fetch = async (input, options = {}) => {
       const url = new URL(typeof input === 'string' ? input : input.url, location.origin)
-      if (url.pathname === '/api/v2/schedules') {
-        if ((options.method || 'GET') === 'PUT') {
-          window.lastSchedulePutBody = JSON.parse(options.body)
-          return json({ ok: true })
-        }
+      if (url.pathname === '/api/v2/schedules/batch' && (options.method || 'GET') === 'PUT') {
+        window.schedulePutCount += 1
+        window.lastSchedulePutBody = JSON.parse(options.body)
+        if (FAIL_SAVE) return json({ error: '测试保存失败' }, 500)
+        const body = window.lastSchedulePutBody
+        serverSchedules[body.weekStart] = serverSchedules[body.weekStart] || {}
         const rows = []
-        for (const [storeKey, days] of Object.entries(schedules[url.searchParams.get('weekStart')] || {})) {
-          for (const [date, shifts] of Object.entries(days)) rows.push({ storeKey, date, shifts })
+        const versions = {}
+        for (const store of body.stores) {
+          serverSchedules[body.weekStart][store.storeKey] = structuredClone(store.days)
+          versions[store.storeKey] = `version-${++versionCounter}`
+          for (const [date, shifts] of Object.entries(store.days)) {
+            if (shifts.length > 0) rows.push({ id: `${store.storeKey}-${date}`, weekStart: body.weekStart, storeKey: store.storeKey, date, shifts, updatedAt: new Date().toISOString() })
+          }
         }
-        return json({ rows })
+        sessionStorage.setItem('schedule-test-server', JSON.stringify(serverSchedules))
+        return json({ ok: true, rows, versions, emptyVersion: 'empty-version' })
+      }
+      if (url.pathname === '/api/v2/schedules') {
+        const rows = []
+        const versions = {}
+        for (const [storeKey, days] of Object.entries(serverSchedules[url.searchParams.get('weekStart')] || {})) {
+          for (const [date, shifts] of Object.entries(days)) rows.push({ storeKey, date, shifts })
+          versions[storeKey] = `version-${versionCounter}`
+        }
+        return json({ rows, versions, emptyVersion: 'empty-version' })
       }
       if (url.pathname === '/api/v2/staff-list') {
         return json({ rows: JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')).staff })
@@ -93,6 +115,13 @@
 
     const canEdit = USER.role !== 'public' && USER.role !== 'staff'
 
-    createRoot(document.getElementById('root')).render(React.createElement(SchedulePage, { user: USER, canEdit, onBack: () => {} }))
+    const registerNavigationGuard = (guard) => { window.scheduleNavigationGuard = guard }
+    window.triggerExternalNavigation = () => window.scheduleNavigationGuard?.(() => { window.externalNavigationCount = (window.externalNavigationCount || 0) + 1 })
+    createRoot(document.getElementById('root')).render(React.createElement(SchedulePage, {
+      user: USER,
+      canEdit,
+      onBack: () => { window.backCount += 1 },
+      registerNavigationGuard,
+    }))
   </script></body>
 </html>
