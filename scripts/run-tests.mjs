@@ -113,6 +113,7 @@ const DIRECT_SUITE = [
   'test-payroll-card-ui.mjs', // Gate 29J：员工工资月卡/日解释卡只读权威元数据 → critical
   'test-payroll-self-scope.mjs', // Gate 29L：员工本人范围只认 User.employeeId → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
+  'test-purchase-receiving-workflow.mjs', // 采购收货事务、StockLedger、幂等与安全错误 → critical
   'test-partner-supply-workflow.mjs', // 合作商供货价格快照/发货/多笔收款/通知/零库存副作用 → critical
   'test-unified-product-center-workflow.mjs', // 单一 InventoryItem、独立业务开关、批量管理与稳定身份 → critical
   'test-transfer-box-piece-workflow.mjs', // 箱/颗独立持久化、混合调拨、普通 quantity 兼容 → critical
@@ -151,6 +152,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-card-ui.mjs',
   'test-payroll-self-scope.mjs',
   'test-inventory-workflow.mjs',
+  'test-purchase-receiving-workflow.mjs',
   'test-partner-supply-workflow.mjs',
   'test-unified-product-center-workflow.mjs',
   'test-transfer-box-piece-workflow.mjs',

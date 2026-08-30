@@ -40,6 +40,13 @@ const bad = (msg, status = 400) => {
   return e
 }
 
+const internalFailure = (publicMessage, cause) => {
+  const error = new Error(publicMessage, { cause })
+  error.status = 500
+  error.publicMessage = publicMessage
+  return error
+}
+
 function canStore(user, storeKey) {
   if (!user || user.role === 'public') return false
   if (isSuperUser(user)) return true
@@ -317,7 +324,7 @@ function serializePurchase(r) {
     storeKey: r.storeKey,
     storeName: r.store ? resolveStoreName(r.store.key, r.store.name) : '',
     status: r.status,
-    supplier: r.supplier,
+    supplier: r.supplierRef?.name || r.supplier,
     expectedAt: r.expectedAt,
     note: r.note,
     createdBy: r.createdBy,
@@ -328,6 +335,7 @@ function serializePurchase(r) {
       itemId: it.itemId,
       category: normalizeItemCategory(it.item.name, it.item.category),
       productName: it.itemNameSnapshot || it.item.name,
+      unit: it.item.unit || '',
       quantity: it.orderedQty,
       receivedQty: it.receivedQty,
       note: it.note,
@@ -1064,17 +1072,17 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
       items: {
         create: await Promise.all(
           rows.map(async (row) => {
-            const item = await upsertItem(row.name)
+            const item = await upsertItem(row.name, row.category)
             return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note, itemNameSnapshot: item.name }
           }),
         ),
       },
     },
-    include: { items: { include: { item: true } }, store: true },
+    include: { items: { include: { item: true } }, store: true, supplierRef: true },
   })
   broadcast(
     '新采购申请',
-    `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplier ? ` · 供应商 **${created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
+    `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplierRef?.name || created.supplier ? ` · 供应商 **${created.supplierRef?.name || created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
   ).catch(() => {})
   res.json({ ok: true, request: serializePurchase(created) })
 }))
@@ -1086,7 +1094,7 @@ v2Router.get('/purchase-requests', wrap(async (req, res) => {
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.purchaseRequest.findMany({
     where,
-    include: { items: { include: { item: true } }, store: true },
+    include: { items: { include: { item: true } }, store: true, supplierRef: true },
     orderBy: { createdAt: 'desc' },
     take: 500,
   })
@@ -1103,26 +1111,49 @@ v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
   if (!p) throw bad('申请不存在', 404)
   if (p.deletedAt) throw bad('已删除采购申请不可继续操作', 409)
   if (!isManager(req.user) || !canStore(req.user, p.storeKey)) throw bad('无权限', 403)
-  if (p.status !== 'pending') throw bad('当前状态不可收货')
+  if (p.status === 'received') throw bad('该采购单已入库', 409)
+  if (p.status !== 'pending') throw bad('采购单状态异常，无法收货', 409)
   const received = (req.body && req.body.items) || []
   const receivedMap = new Map(received.map((r) => [String(r.itemId || r.id || ''), Number(r.receivedQty)]))
   const operator = req.user.username
-  await prisma.$transaction(async (tx) => {
-    for (const row of p.items) {
-      const qty = Number.isInteger(receivedMap.get(row.itemId)) ? receivedMap.get(row.itemId) : row.orderedQty
-      if (qty < 0 || qty > 999999) throw bad('实收数量不正确')
-      const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } } })
-      const cur = bal ? bal.quantity : 0
-      await tx.stockBalance.upsert({
-        where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } },
-        update: { quantity: cur + qty, updatedAt: new Date() },
-        create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: p.storeKey, itemId: row.itemId, quantity: qty },
+  try {
+    await prisma.$transaction(async (tx) => {
+      // The conditional state transition is the idempotency claim. It is part
+      // of the same transaction, so a later stock or ledger failure restores
+      // the purchase to pending and permits an intentional retry.
+      const claimed = await tx.purchaseRequest.updateMany({
+        where: { id: p.id, status: 'pending', deletedAt: null },
+        data: { status: 'received', updatedAt: new Date() },
       })
-      await tx.stockLedger.create({ id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: p.storeKey, itemId: row.itemId, change: qty, balance: cur + qty, type: 'purchase_in', refId: p.id, operator })
-      await tx.purchaseItem.update({ where: { id: row.id }, data: { receivedQty: qty } })
-    }
-    await tx.purchaseRequest.update({ where: { id: p.id }, data: { status: 'received', updatedAt: new Date() } })
-  })
+      if (claimed.count !== 1) throw bad('该采购单已入库或状态已变化', 409)
+
+      for (const row of p.items) {
+        const qty = Number.isInteger(receivedMap.get(row.itemId)) ? receivedMap.get(row.itemId) : row.orderedQty
+        if (qty < 0 || qty > 999999) throw bad('实收数量不正确')
+        const balance = await tx.stockBalance.upsert({
+          where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } },
+          update: { quantity: { increment: qty }, updatedAt: new Date() },
+          create: { id: uid('sb'), storeKey: p.storeKey, itemId: row.itemId, quantity: qty },
+        })
+        await tx.stockLedger.create({
+          data: {
+            id: uid('sl'),
+            storeKey: p.storeKey,
+            itemId: row.itemId,
+            change: qty,
+            balance: balance.quantity,
+            type: 'purchase_in',
+            refId: p.id,
+            operator,
+          },
+        })
+        await tx.purchaseItem.update({ where: { id: row.id }, data: { receivedQty: qty } })
+      }
+    })
+  } catch (error) {
+    if (error?.status && error.status < 500) throw error
+    throw internalFailure('收货入库失败，库存未发生变化，请稍后重试。', error)
+  }
   maybeAlertLowStock(p.storeKey).catch(() => {})
   broadcast(
     '采购已入库',

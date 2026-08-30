@@ -28,6 +28,13 @@ import { t } from '../utils/text'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 import StoreTransferPage from './StoreTransferPage'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
+import {
+  OverlayFooter,
+  OverlayHeader,
+  OverlayPanel,
+  OverlayScrollRegion,
+  OverlayViewport,
+} from './overlay/OverlayPrimitives'
 
 const inputCls = 'input'
 const TEMP_LOCATION_PREFIX = 'temporary:'
@@ -107,7 +114,11 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   const [dateTo, setDateTo] = useState('')
   const [previewList, setPreviewList] = useState(null)
   const [expandedIds, setExpandedIds] = useState(new Set())
-  const [error, setError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [supplierError, setSupplierError] = useState('')
+  const [optionError, setOptionError] = useState('')
+  const [receiveErrors, setReceiveErrors] = useState({})
+  const [receivingIds, setReceivingIds] = useState(() => new Set())
   const [savedTip, setSavedTip] = useState('')
   const [feedback, setFeedback] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -169,31 +180,31 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   const submit = async () => {
     if (submitting) return
     setSubmitting(true)
-    setError('')
+    setFormError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
-      setError(t('调出门店和调入门店不能相同'))
+      setFormError(t('调出门店和调入门店不能相同'))
       setSubmitting(false)
       return
     }
     const fromTemporary = temporaryLocations.find((location) => location.key === form.fromStoreKey)
     const toTemporary = temporaryLocations.find((location) => location.key === form.storeKey)
     if (isTransfer && (form.fromStoreKey === '__temporary__' || form.storeKey === '__temporary__')) {
-      setError(t('请先完成临时地点添加'))
+      setFormError(t('请先完成临时地点添加'))
       setSubmitting(false)
       return
     }
     if (isTransfer && (isTemporaryLocationKey(form.fromStoreKey) && !fromTemporary)) {
-      setError(t('调出临时地点已失效，请重新添加'))
+      setFormError(t('调出临时地点已失效，请重新添加'))
       setSubmitting(false)
       return
     }
     if (isTransfer && (isTemporaryLocationKey(form.storeKey) && !toTemporary)) {
-      setError(t('调入临时地点已失效，请重新添加'))
+      setFormError(t('调入临时地点已失效，请重新添加'))
       setSubmitting(false)
       return
     }
     if (picked.length === 0) {
-      setError(t('请先添加货品'))
+      setFormError(t('请先添加货品'))
       setSubmitting(false)
       return
     }
@@ -244,7 +255,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
           : { title: t('采购申请已提交'), description: t('申请已进入处理流程') },
       )
     } catch (err) {
-      setError(t(err.message))
+      setFormError(t(err.message))
     } finally {
       setSubmitting(false)
     }
@@ -252,13 +263,13 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
 
   const remove = async (r) => {
     if (!window.confirm(t('确定删除该申请吗？'))) return
-    setError('')
+    setFormError('')
     try {
       await api(`/v2/${isTransfer ? 'transfer-requests' : 'purchase-requests'}/${r.id}`, { method: 'DELETE' })
       await loadUserData()
       setVersion((v) => v + 1)
     } catch (err) {
-      setError(t(err.message))
+      setFormError(t(err.message))
     }
   }
 
@@ -277,7 +288,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
         : '确定驳回该申请吗？'
     if (!window.confirm(t(confirmText))) return
     const note = action === 'reject' ? window.prompt(t('请输入驳回原因（选填）')) || '' : ''
-    setError('')
+    setFormError('')
     try {
       const path = action === 'ship' ? 'ship' : action === 'receive' ? 'receive' : 'reject'
       await api(`/v2/transfer-requests/${request.id}/${path}`, {
@@ -289,7 +300,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       setSavedTip(t(action === 'ship' ? '已确认发货，申请已完成' : action === 'receive' ? '已确认收货，申请已完成' : '申请已驳回'))
       setTimeout(() => setSavedTip(''), 2400)
     } catch (err) {
-      setError(t(err.message))
+      setFormError(t(err.message))
     }
   }
 
@@ -309,15 +320,15 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   const addTemporaryLocation = (side) => {
     const name = customName.trim()
     if (!name) {
-      setError(t('请输入临时地点名称'))
+      setFormError(t('请输入临时地点名称'))
       return
     }
     if (name.length > 50) {
-      setError(t('临时地点名称不能超过 50 个字符'))
+      setFormError(t('临时地点名称不能超过 50 个字符'))
       return
     }
     if ([...stores, ...temporaryLocations].some((location) => location.name === name)) {
-      setError(t('该地点已存在'))
+      setFormError(t('该地点已存在'))
       return
     }
     const location = {
@@ -332,7 +343,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
     }))
     setCustomSide(null)
     setCustomName('')
-    setError('')
+    setFormError('')
     setSavedTip(t('已添加临时地点：{name}', { name }))
     setTimeout(() => setSavedTip(''), 1800)
   }
@@ -365,8 +376,10 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
     (currentUser?.role === 'manager' && (currentUser.storeKeys || []).includes(r.storeKey))
 
   const receivePurchase = async (r) => {
+    if (receivingIds.has(r.id)) return
     if (!window.confirm(t('确认货品已到货并入库吗？'))) return
-    setError('')
+    setReceiveErrors((current) => ({ ...current, [r.id]: '' }))
+    setReceivingIds((current) => new Set(current).add(r.id))
     try {
       await api(`/v2/purchase-requests/${r.id}/receive`, {
         method: 'POST',
@@ -376,15 +389,20 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       })
       await loadUserData()
       setVersion((v) => v + 1)
-      setSavedTip(t('已收货入库 ✓'))
-      setTimeout(() => setSavedTip(''), 2400)
+      setFeedback({ title: t('已收货入库'), description: t('库存余额与入库流水已同步更新') })
     } catch (err) {
-      setError(t(err.message))
+      setReceiveErrors((current) => ({ ...current, [r.id]: t(err.message) }))
+    } finally {
+      setReceivingIds((current) => {
+        const next = new Set(current)
+        next.delete(r.id)
+        return next
+      })
     }
   }
 
   const addSupplier = async () => {
-    setError('')
+    setSupplierError('')
     try {
       const res = await api('/v2/suppliers', { method: 'POST', body: JSON.stringify(supplierForm) })
       setSuppliers((list) => [...list, res.supplier])
@@ -394,21 +412,21 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       setSavedTip(t('供应商已添加'))
       setTimeout(() => setSavedTip(''), 1800)
     } catch (err) {
-      setError(t(err.message))
+      setSupplierError(t(err.message))
     }
   }
 
   const addItem = () => {
-    setError('')
+    setFormError('')
     const qty = Number(picker.quantity)
     if (!qty || qty < 1 || !Number.isFinite(qty)) {
-      setError(t('请填写有效数量'))
+      setFormError(t('请填写有效数量'))
       return
     }
     if (picker.category === 'other') {
       const name = picker.productName.trim()
       if (!name) {
-        setError(t('请选择产品'))
+        setFormError(t('请选择产品'))
         return
       }
       setPicked((list) => [
@@ -417,6 +435,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
           category: 'other',
           productName: name,
           quantity: Math.floor(qty),
+          unit: '',
           note: picker.note.trim(),
         },
       ])
@@ -426,7 +445,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       return
     }
     if (selectedNames.length === 0) {
-      setError(t('请选择产品'))
+      setFormError(t('请选择产品'))
       return
     }
     const rows = selectedNames.map((name) => ({
@@ -434,6 +453,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       category: resolveItemCategory(name, itemsMap[name]?.category),
       productName: name,
       quantity: Math.floor(qty),
+      unit: itemsMap[name]?.unit || '',
       note: picker.note.trim(),
     }))
     setPicked((list) => [...list, ...rows])
@@ -453,7 +473,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   }
 
   const saveOption = async () => {
-    setError('')
+    setOptionError('')
     try {
       let item = itemsMap[optionEdit.name]
       if (!item) {
@@ -477,7 +497,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       await loadItems()
       setVersion((v) => v + 1)
     } catch (err) {
-      setError(t(err.message))
+      setOptionError(t(err.message))
     }
   }
 
@@ -558,9 +578,14 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
         )}
       </div>
 
-      {/* 申请表单 */}
-      <div className="card p-5">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {/* 申请表单：采购信息与货品编辑保持独立视觉层级 */}
+      <div className="space-y-4">
+        <section data-testid="purchase-information" className="card p-4 sm:p-5">
+          <div className="mb-4">
+            <h3 className="text-[15px] font-bold text-slate-800">{t('采购信息')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('确认门店、供应商与预计到货日期')}</p>
+          </div>
+          <div className={`grid grid-cols-1 gap-4 ${isTransfer ? 'sm:grid-cols-2' : 'lg:grid-cols-3'}`}>
           {isTransfer && (
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('调出门店')}</span>
@@ -591,6 +616,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               {t(isTransfer ? '调入门店' : '采购门店')}
             </span>
             <select
+              aria-label={t(isTransfer ? '调入门店' : '采购门店')}
               value={form.storeKey}
               onChange={(e) => selectStore('storeKey', e.target.value)}
               className={inputCls}
@@ -611,60 +637,73 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               </div>
             )}
           </div>
-        </div>
-
-        {!isTransfer && (
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {!isTransfer && (
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('供应商')}</span>
-              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
-                <option value="">{t('未指定')}</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setSupplierModal(true)}
-                className="mt-1 text-xs font-semibold text-budu-500 transition hover:text-budu-600"
-              >
-                ＋ {t('新增供应商')}
-              </button>
+              <div className="flex gap-2">
+                <select aria-label={t('供应商')} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={`${inputCls} min-w-0 flex-1`}>
+                  <option value="">{t('未指定')}</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSupplierError('')
+                    setSupplierModal(true)
+                  }}
+                  className="shrink-0 rounded-xl bg-budu-50 px-3 text-xs font-bold text-budu-600 transition hover:bg-budu-100"
+                >
+                  ＋ {t('新增')}
+                </button>
+              </div>
             </div>
+          )}
+          {!isTransfer && (
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('预计到货日期')}</span>
-              <input type="date" value={expectedAt} onChange={(e) => setExpectedAt(e.target.value)} className={inputCls} />
+              <input aria-label={t('预计到货日期')} type="date" value={expectedAt} onChange={(e) => setExpectedAt(e.target.value)} className={inputCls} />
             </div>
+          )}
           </div>
-        )}
+        </section>
 
         {!isTransfer && supplierModal && (
-          <div className="fixed inset-0 z-[85] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSupplierModal(false)} />
-            <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
-              <h3 className="text-lg font-bold text-slate-800">{t('新增供应商')}</h3>
-              <div className="mt-4 space-y-2">
+          <OverlayViewport className="fixed inset-0 z-[85] flex items-end justify-center sm:items-center sm:p-4">
+            <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSupplierModal(false)} />
+            <OverlayPanel role="dialog" aria-modal="true" aria-label={t('新增供应商')} className="relative flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-[28px]">
+              <OverlayHeader className="border-b border-slate-100 px-5 py-4">
+                <h3 className="text-lg font-bold text-slate-800">{t('新增供应商')}</h3>
+                <p className="mt-0.5 text-xs text-slate-400">{t('保存后将自动选中该供应商')}</p>
+              </OverlayHeader>
+              <OverlayScrollRegion className="space-y-3 p-5">
                 <input value={supplierForm.name} onChange={(e) => setSupplierForm((s) => ({ ...s, name: e.target.value }))} placeholder={t('供应商名称')} className={inputCls} />
                 <input value={supplierForm.phone} onChange={(e) => setSupplierForm((s) => ({ ...s, phone: e.target.value }))} placeholder={t('电话')} className={inputCls} />
                 <input value={supplierForm.contact} onChange={(e) => setSupplierForm((s) => ({ ...s, contact: e.target.value }))} placeholder={t('联系人')} className={inputCls} />
                 <input value={supplierForm.note} onChange={(e) => setSupplierForm((s) => ({ ...s, note: e.target.value }))} placeholder={t('备注')} className={inputCls} />
-              </div>
-              <div className="mt-4 flex gap-2">
+                {supplierError && <p role="alert" className="text-sm font-semibold text-rose-600">{supplierError}</p>}
+              </OverlayScrollRegion>
+              <OverlayFooter className="grid grid-cols-2 gap-3 border-t border-slate-100 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
                 <button onClick={() => setSupplierModal(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
                   {t('取消')}
                 </button>
                 <button onClick={addSupplier} className="flex-1 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
                   {t('保存')}
                 </button>
-              </div>
-            </div>
-          </div>
+              </OverlayFooter>
+            </OverlayPanel>
+          </OverlayViewport>
         )}
 
         {/* 挑选货品：选一个 → 添加到本次申请列表 → 再选下一个 */}
-        <div className="mt-5 rounded-2xl bg-slate-50/70 p-4">
-          <p className="mb-2 text-xs font-semibold text-slate-500">{t('挑选货品')}</p>
+        <section data-testid="purchase-item-builder" className="card p-4 sm:p-5">
+          <div className="mb-4">
+            <h3 className="text-[15px] font-bold text-slate-800">{t('添加货品')}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">{t('从现有产品与物料权威中选择，或录入其他货品')}</p>
+          </div>
           <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
             {['product', 'material', 'other'].map((c) => (
               <button
@@ -707,7 +746,10 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                 {productMenuOpen && (
                   <>
                     <div data-budu-overlay-ignore className="fixed inset-0 z-30" onClick={() => setProductMenuOpen(false)} />
-                    <div className="absolute left-0 top-full z-40 mt-1 w-[340px] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-lg sm:w-[440px]">
+                    <div
+                      data-testid="purchase-product-menu"
+                      className="absolute left-0 top-full z-40 mt-1 w-[min(440px,calc(100vw-3rem))] rounded-2xl border border-slate-100 bg-white p-2.5 shadow-lg"
+                    >
                       {/* 二级菜单：产品分类 */}
                       <div className="flex flex-wrap gap-1.5">
                         {PRODUCT_CATEGORIES.map((c) => (
@@ -840,88 +882,119 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               )
             )}
             <input
+              aria-label={t('采购数量')}
               type="number"
               min="1"
               step="1"
               value={picker.quantity}
               onChange={(e) => setPicker((s) => ({ ...s, quantity: e.target.value }))}
               placeholder={t('数量')}
-              className={`${inputCls} w-24`}
+              className={`${inputCls} w-full sm:w-24`}
             />
             <input
+              aria-label={t('货品备注')}
               value={picker.note}
               onChange={(e) => setPicker((s) => ({ ...s, note: e.target.value }))}
               placeholder={t('备注')}
-              className={`${inputCls} min-w-[100px] flex-1`}
+              className={`${inputCls} min-w-0 flex-1`}
             />
             <button
+              type="button"
               onClick={addItem}
-              className="flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm/60 transition hover:bg-budu-600"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm/60 transition hover:bg-budu-600 sm:w-auto"
             >
               <PackagePlus className="h-4 w-4" />
-              {t('添加到申请列表')}
+              {t('添加')}
             </button>
           </div>
 
           {/* 本次申请已选货品 */}
-          <div className="mt-3">
-            <p className="mb-1.5 text-[11px] font-semibold text-slate-400">
-              {t('本次申请货品 {count} 种', { count: picked.length })}
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-sm font-bold text-slate-700">
+                {t('已选申请货品')} <span className="text-budu-500">{picked.length}</span>
+              </p>
               {picked.length > 0 && (
                 <button
                   onClick={() => setPreviewList(buildCurrentList())}
-                  className="ml-2 inline-flex items-center gap-1 rounded-lg bg-budu-50 px-2 py-0.5 text-[11px] font-semibold text-budu-600 transition hover:bg-budu-100"
+                  className="inline-flex items-center gap-1 rounded-lg bg-budu-50 px-2.5 py-1 text-[11px] font-semibold text-budu-600 transition hover:bg-budu-100"
                 >
                   <FileDown className="h-3 w-3" />
                   {t('下载清单')}
                 </button>
               )}
-            </p>
+            </div>
             {picked.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {picked.map((it, idx) => (
-                  <span
-                    key={idx}
-                    className="group inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
-                  >
-                    <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[resolveItemCategory(it.productName, it.category)] || CATEGORY_STYLE.product}`}>
-                      {t(CATEGORY_LABEL[resolveItemCategory(it.productName, it.category)])}
-                    </span>
-                    {it.productName} × {it.quantity}
-                    {it.note ? `（${it.note}）` : ''}
-                    <button
-                      onClick={() => setPicked((list) => list.filter((_, i) => i !== idx))}
-                      className="text-slate-300 transition hover:text-rose-500"
-                      aria-label={t('删除')}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="hidden overflow-hidden rounded-2xl border border-slate-100 sm:block">
+                  <div className="grid grid-cols-[minmax(0,1fr)_5rem_5rem_minmax(7rem,0.7fr)_3rem] gap-3 bg-slate-50 px-4 py-2 text-[11px] font-bold text-slate-400">
+                    <span>{t('商品')}</span><span>{t('数量')}</span><span>{t('单位')}</span><span>{t('备注')}</span><span />
+                  </div>
+                  {picked.map((it, idx) => (
+                    <div key={`${it.productName}-${idx}`} className="grid grid-cols-[minmax(0,1fr)_5rem_5rem_minmax(7rem,0.7fr)_3rem] items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-700">{it.productName}</p>
+                        <span className={`mt-1 inline-flex rounded px-1.5 py-0.5 text-[9px] font-bold ${CATEGORY_STYLE[resolveItemCategory(it.productName, it.category)] || CATEGORY_STYLE.product}`}>
+                          {t(CATEGORY_LABEL[resolveItemCategory(it.productName, it.category)])}
+                        </span>
+                      </div>
+                      <span className="font-semibold text-slate-700">{it.quantity}</span>
+                      <span className="text-slate-500">{it.unit || '—'}</span>
+                      <span className="truncate text-slate-400">{it.note || '—'}</span>
+                      <button type="button" onClick={() => setPicked((list) => list.filter((_, i) => i !== idx))} className="grid h-9 w-9 place-items-center rounded-xl text-slate-300 transition hover:bg-rose-50 hover:text-rose-500" aria-label={t('删除 {name}', { name: it.productName })}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-2 sm:hidden">
+                  {picked.map((it, idx) => (
+                    <div key={`${it.productName}-${idx}`} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-bold text-slate-700">{it.productName}</p>
+                          <p className="mt-1 text-xs font-semibold text-slate-500">{it.quantity} {it.unit || '—'}{it.note ? ` · ${it.note}` : ''}</p>
+                        </div>
+                        <button type="button" onClick={() => setPicked((list) => list.filter((_, i) => i !== idx))} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-slate-300 shadow-sm transition hover:text-rose-500" aria-label={t('删除 {name}', { name: it.productName })}>
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             ) : (
-              <p className="text-[11px] text-slate-300">{t('尚未添加货品，选好产品后点“添加到申请列表”')}</p>
+              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center">
+                <p className="text-sm font-semibold text-slate-400">{t('尚未添加货品')}</p>
+                <p className="mt-1 text-xs text-slate-300">{t('选择货品并填写数量后，加入本次申请')}</p>
+              </div>
             )}
           </div>
-        </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <label className="block text-xs font-semibold text-slate-500">
+            {t('整单备注')}
           <input
             value={form.note}
             onChange={(e) => setForm((s) => ({ ...s, note: e.target.value }))}
             placeholder={t('整单备注（选填）')}
-            className={`${inputCls} max-w-md flex-1`}
+            className={`${inputCls} mt-1.5 w-full`}
           />
+          </label>
+          <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {picked.length === 0 && <span className="text-xs font-medium text-slate-400">{t('添加至少一种货品后即可提交')}</span>}
           <button
             onClick={submit}
-            disabled={submitting}
-            className="flex items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+            disabled={submitting || picked.length === 0}
+            className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-7 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-budu-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
           >
             <PackagePlus className="h-4 w-4" />
-            {submitting ? t('提交中…') : t('提交申请')}
+            {submitting ? t('提交中…') : t('提交采购申请')}
           </button>
+          </div>
         </div>
-        {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
+        {formError && <p role="alert" className="mt-3 text-sm font-semibold text-rose-600">{formError}</p>}
+        </section>
       </div>
 
       {isTransfer && SHOW_STOCK_PANEL && (
@@ -969,20 +1042,22 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
           </div>
 
           {/* 日期查询 */}
-          <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-medium text-slate-400">{t('按提交日期查询')}</span>
+          <div className="grid w-full grid-cols-[1fr_auto_1fr] items-center gap-1.5 sm:ml-auto sm:flex sm:w-auto">
+            <span className="col-span-3 text-[11px] font-medium text-slate-400 sm:col-span-1">{t('按提交日期查询')}</span>
             <input
+              aria-label={t('提交开始日期')}
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-budu-400"
+              className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs text-slate-600 outline-none focus:border-budu-400"
             />
             <span className="text-[11px] text-slate-300">~</span>
             <input
+              aria-label={t('提交结束日期')}
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-budu-400"
+              className="min-w-0 rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs text-slate-600 outline-none focus:border-budu-400"
             />
             {(dateFrom || dateTo) && (
               <button
@@ -990,18 +1065,19 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                   setDateFrom('')
                   setDateTo('')
                 }}
-                className="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+                className="col-span-3 justify-self-end rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-600 sm:col-span-1"
               >
                 {t('清空日期')}
               </button>
             )}
           </div>
         </div>
-        <div className="divide-y divide-slate-50">
+        <div className="space-y-3 p-3 sm:p-4">
           {requests.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
-              <span
-                className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+            <article data-purchase-request-id={!isTransfer ? r.id : undefined} key={r.id} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm/40">
+              <div className="flex items-start gap-3">
+                <span
+                className={`mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                   isTransfer
                     ? (r.status === 'done' ? TRANSFER_STATUS_STYLE.completed : TRANSFER_STATUS_STYLE[r.status]) || TRANSFER_STATUS_STYLE.pending
                     : r.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
@@ -1009,10 +1085,20 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               >
                 {t(isTransfer ? (r.status === 'done' ? '已完成' : TRANSFER_STATUS_LABEL[r.status]) || '待审核' : r.status === 'done' ? '已处理' : '待处理')}
               </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-slate-700">
-                  {t('{count} 种货品', { count: r.items ? r.items.length : 1 })}
-                </p>
+                <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <p className="min-w-0 break-words text-sm font-bold text-slate-800">
+                    {isTransfer ? t('{count} 种货品', { count: r.items ? r.items.length : 1 }) : r.supplier || t('未指定供应商')}
+                  </p>
+                  {!isTransfer && <span className="text-xs font-semibold text-slate-400">{t('{count} 种货品', { count: r.items ? r.items.length : 1 })}</span>}
+                </div>
+                {!isTransfer && (
+                  <div className="mt-2 grid gap-1 text-xs text-slate-500 sm:grid-cols-3">
+                    <p><span className="text-slate-400">{t('采购门店')}：</span>{storeDisplay(r.storeKey, r.storeName)}</p>
+                    <p><span className="text-slate-400">{t('预计到货')}：</span>{r.expectedAt ? new Date(r.expectedAt).toLocaleDateString() : '—'}</p>
+                    <p><span className="text-slate-400">{t('提交人')}：</span>{r.createdBy || '—'}</p>
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap gap-1">
                   {(() => {
                     const itemList = r.items || [{ productName: r.productName, quantity: r.quantity }]
@@ -1029,7 +1115,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                               {t(CATEGORY_LABEL[resolveItemCategory(it.productName, it.category)])}
                             </span>
                             <span className="min-w-0 truncate">{it.productName}</span>
-                            <span className="shrink-0">× {it.quantity}</span>
+                            <span className="shrink-0">× {it.quantity}{it.unit || ''}</span>
                             {it.note && <span className="shrink-0 text-[10px] text-slate-400">（{it.note}）</span>}
                           </span>
                         ))}
@@ -1052,7 +1138,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                     )
                   })()}
                 </div>
-                <p className="mt-0.5 text-[11px] text-slate-400">
+                <p className="mt-1.5 text-[11px] text-slate-400">
                   {isTransfer
                     ? t('从 {from} 调往 {to}', {
                         from: storeDisplay(r.fromStoreKey, r.fromStoreName),
@@ -1064,18 +1150,19 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                   {r.note ? ` · ${r.note}` : ''}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-300">
-                  {t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
+                  {!isTransfer ? t('提交时间') : t('由 {name} 提交', { name: r.createdBy })} · {new Date(r.createdAt).toLocaleString()}
                 </p>
                 {isTransfer && Array.isArray(r.history) && r.history.length > 1 && (
                   <p className="mt-1 text-[10px] text-slate-400">
                     {r.history.slice(1).map((event) => `${event.action} · ${event.operator || '—'} · ${new Date(event.at).toLocaleString()}${event.note ? `（${event.note}）` : ''}`).join(' ｜ ')}
                   </p>
                 )}
+                </div>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
                 <button
                   onClick={() => setPreviewList(r)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-50 hover:text-budu-600"
+                  className="inline-flex min-h-9 items-center gap-1 rounded-xl border border-slate-100 px-3 text-xs font-semibold text-slate-500 transition hover:border-budu-100 hover:bg-budu-50 hover:text-budu-600"
                 >
                   <FileDown className="h-3.5 w-3.5" />
                   {t('导出表格')}
@@ -1110,10 +1197,12 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                 {!isTransfer && r.status === 'pending' && canReceivePurchase(r) && (
                   <button
                     onClick={() => receivePurchase(r)}
-                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-emerald-500 transition hover:bg-emerald-50"
+                    disabled={receivingIds.has(r.id)}
+                    aria-busy={receivingIds.has(r.id)}
+                    className="inline-flex min-h-9 items-center gap-1 rounded-xl bg-budu-500 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-budu-600 disabled:cursor-wait disabled:bg-budu-300"
                   >
                     <Check className="h-3.5 w-3.5" />
-                    {t('收货入库')}
+                    {receivingIds.has(r.id) ? t('正在入库…') : t('收货入库')}
                   </button>
                 )}
                 {isTransfer && canDelete(r) && (
@@ -1125,9 +1214,10 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
-                <DeveloperSafeDeleteButton user={currentUser} type={isTransfer ? 'transfer' : 'purchase'} record={{ ...r, title: isTransfer ? `${storeDisplay(r.fromStoreKey, r.fromStoreName)} → ${storeDisplay(r.storeKey, r.storeName)}` : `${storeDisplay(r.storeKey, r.storeName)} · ${r.supplier || '采购申请'}`, subtitle: `${r.items?.length || 0} 项 · ${r.createdBy}` }} onDeleted={async () => { await loadUserData(); setVersion((value) => value + 1) }} />
+                <DeveloperSafeDeleteButton className={!isTransfer ? '!min-h-9 !bg-transparent !px-2 !font-semibold !text-rose-400 hover:!bg-rose-50' : ''} user={currentUser} type={isTransfer ? 'transfer' : 'purchase'} record={{ ...r, title: isTransfer ? `${storeDisplay(r.fromStoreKey, r.fromStoreName)} → ${storeDisplay(r.storeKey, r.storeName)}` : `${storeDisplay(r.storeKey, r.storeName)} · ${r.supplier || '采购申请'}`, subtitle: `${r.items?.length || 0} 项 · ${r.createdBy}` }} onDeleted={async () => { await loadUserData(); setVersion((value) => value + 1) }} />
               </div>
-            </div>
+              {!isTransfer && receiveErrors[r.id] && <p role="alert" className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600">{receiveErrors[r.id]}</p>}
+            </article>
           ))}
           {requests.length === 0 && (
             <p className="grid place-items-center py-14 text-sm text-slate-300">
@@ -1138,11 +1228,13 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       </div>
 
       {optionEdit && canManageOptions && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setOptionEdit(null)} />
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
-            <h3 className="text-lg font-bold text-slate-800">{t('选项设置：{name}', { name: optionEdit.name })}</h3>
-            <div className="mt-4 space-y-3">
+        <OverlayViewport className="fixed inset-0 z-[95] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setOptionEdit(null)} />
+          <OverlayPanel role="dialog" aria-modal="true" aria-label={t('选项设置：{name}', { name: optionEdit.name })} className="relative flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-[28px]">
+            <OverlayHeader className="border-b border-slate-100 px-5 py-4">
+              <h3 className="text-lg font-bold text-slate-800">{t('选项设置：{name}', { name: optionEdit.name })}</h3>
+            </OverlayHeader>
+            <OverlayScrollRegion className="space-y-3 p-5">
               <div className="flex items-center gap-3">
                 <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl bg-budu-50 text-xl font-bold text-budu-600">
                   {optionForm.image ? (
@@ -1186,9 +1278,9 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
                   className={inputCls}
                 />
               </div>
-            </div>
-            {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
-            <div className="mt-5 flex gap-2">
+              {optionError && <p role="alert" className="text-xs font-medium text-rose-500">{optionError}</p>}
+            </OverlayScrollRegion>
+            <OverlayFooter className="grid grid-cols-2 gap-3 border-t border-slate-100 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
               <button
                 onClick={() => setOptionEdit(null)}
                 className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
@@ -1201,9 +1293,9 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               >
                 {t('保存')}
               </button>
-            </div>
-          </div>
-        </div>
+            </OverlayFooter>
+          </OverlayPanel>
+        </OverlayViewport>
       )}
 
       {shipEdit && (
@@ -1224,7 +1316,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
               setTimeout(() => setSavedTip(''), 2400)
               setShipEdit(null)
             } catch (err) {
-              setError(t(err.message))
+              setFormError(t(err.message))
               throw err
             }
           }}
