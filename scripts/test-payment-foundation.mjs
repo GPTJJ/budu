@@ -202,6 +202,7 @@ function refundDb() {
     id: 'refund-order', orderNo: 'POS-R1', storeId: 'store-1', cashierId: 'user-1', cashierNameSnapshot: '员工1',
     subtotal: 18200n, discountAmount: 0n, payableAmount: 18200n, status: 'completed', paymentStatus: 'paid',
     paymentMethod: 'cash', paymentMode: 'cash', checkoutKey: 'ck-r1', cartHash: 'h', version: 1,
+    orderSource: 'STORE_POS', entryMode: 'POS_CHECKOUT', settlementAuthority: 'PAYMENT', sourceOrderRef: null,
     createdAt: new Date(), updatedAt: new Date(), completedAt: new Date(),
     items: [
       { id: 'oi-1', orderId: 'refund-order', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'SKU-1', unitPrice: 7200n, costPriceSnapshot: 2350n, quantity: 2, lineAmount: 14400n },

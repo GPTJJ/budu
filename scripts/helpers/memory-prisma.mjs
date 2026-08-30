@@ -30,6 +30,7 @@ export class MemoryPrisma {
       id: 'order-1', orderNo: 'POS-1', storeId: 'store-1', cashierId: 'user-1', cashierNameSnapshot: '员工1',
       subtotal: 7200n, discountAmount: 0n, payableAmount: 7200n, status: 'pending_payment', paymentStatus: 'unpaid',
       paymentMethod: null, paymentMode: 'mock', checkoutKey: 'checkout-1', cartHash: 'hash', version: 1,
+      orderSource: 'STORE_POS', entryMode: 'POS_CHECKOUT', settlementAuthority: 'PAYMENT', sourceOrderRef: null,
       createdAt: new Date(), updatedAt: new Date(), completedAt: null,
     }]
     this.payments = []
@@ -49,6 +50,7 @@ export class MemoryPrisma {
         if (take) rows = rows.slice(0, take)
         return rows
       },
+      count: async ({ where } = {}) => this.payments.filter((item) => matches(item, where)).length,
       create: async ({ data }) => {
         const duplicate = this.payments.some((item) => item.requestKey === data.requestKey || item.paymentNo === data.paymentNo || item.merchantTradeNo === data.merchantTradeNo)
         const active = this.payments.some((item) => item.orderId === data.orderId && ['created', 'pending', 'success'].includes(item.status))
@@ -75,6 +77,15 @@ export class MemoryPrisma {
       create: async ({ data }) => {
         this.paymentLogs.push(data)
         return data
+      },
+    }
+    this.externalSettlements = []
+    this.externalSettlement = {
+      count: async ({ where } = {}) => this.externalSettlements.filter((item) => matches(item, where)).length,
+      findUnique: async ({ where, include }) => {
+        const row = this.externalSettlements.find((item) => matches(item, where))
+        if (!row) return null
+        return include?.order ? { ...row, order: this.orders.find((order) => order.id === row.orderId) } : row
       },
     }
     this.refund = {
@@ -132,6 +143,7 @@ export class MemoryPrisma {
           store: { key: row.storeId, name: '测试门店' },
           items: row.items || [],
           payments: [...this.payments].filter((payment) => payment.orderId === row.id).reverse(),
+          externalSettlement: this.externalSettlements.find((settlement) => settlement.orderId === row.id) || null,
           refunds: this.refunds.filter((refund) => refund.orderId === row.id).map((refund) => ({
             ...refund,
             items: this.refundItems.filter((item) => item.refundId === refund.id),

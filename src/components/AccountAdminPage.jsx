@@ -429,6 +429,8 @@ function PermissionModal({ user, onClose, onSaved }) {
   const [modules, setModules] = useState(initialModules)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
   const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
+  const [externalOrderCreate, setExternalOrderCreate] = useState(user.permissions?.externalOrderCreate === true)
+  const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -445,6 +447,8 @@ function PermissionModal({ user, onClose, onSaved }) {
     const nextModules = Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)]))
     setModules(nextModules)
     setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
+    setExternalOrderCreate(false)
+    setExternalSettlementConfirm(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -452,7 +456,13 @@ function PermissionModal({ user, onClose, onSaved }) {
     try {
       await api(`/admin/users/${user.id}/permissions`, {
         method: 'PUT',
-        body: JSON.stringify({ modules, inventoryTransferAll: transferAll, dailyEntry }),
+        body: JSON.stringify({
+          modules,
+          inventoryTransferAll: transferAll,
+          dailyEntry,
+          externalOrderCreate,
+          externalSettlementConfirm,
+        }),
       })
       await onSaved()
       try {
@@ -526,6 +536,19 @@ function PermissionModal({ user, onClose, onSaved }) {
             {dailyEntry[DAILY_ENTRY_CAPABILITIES.REVISE] && (
               <p className="mt-2 text-[11px] font-semibold text-amber-700">{t('历史修正必须经受控流程并写入审计日志。')}</p>
             )}
+          </section>
+        )}
+        {modules['store-pos'] === true && (
+          <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-bold text-slate-700">{t('外部平台订单权限（功能尚未在 POS 开放）')}</p>
+            <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalOrderCreate} onChange={(e) => setExternalOrderCreate(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许创建外部平台订单')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalSettlementConfirm} onChange={(e) => setExternalSettlementConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许确认外部平台结算')}
+            </label>
           </section>
         )}
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
@@ -605,6 +628,16 @@ function AccountCard({ u, isSelf, currentUser, onChangeRole, onPermission, onBin
             {u.permissions?.inventoryTransferAll && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-[#ecfaf1] px-2 py-1 text-xs font-medium text-[#24a65a]">
                 ✓ {t('库存调拨全权限')}
+              </span>
+            )}
+            {u.permissions?.externalOrderCreate && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
+                ✓ {t('外部订单创建')}
+              </span>
+            )}
+            {u.permissions?.externalSettlementConfirm && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700">
+                ✓ {t('外部结算确认')}
               </span>
             )}
           </div>

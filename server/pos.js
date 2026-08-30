@@ -11,7 +11,16 @@ import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
 import { sendStoredImage } from './product-images.js'
-import { MODULE_KEYS, canManageAccounts, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
+import {
+  MODULE_KEYS,
+  canManageAccounts,
+  hasExternalOrderCreate,
+  hasExternalSettlementConfirm,
+  hasModuleAccess,
+  isSuperUser,
+} from '../shared/accountPermissions.js'
+import { externalSettlementService } from './settlements/index.js'
+import { assertNoClientSettlementState, serializeExternalSettlement } from './settlements/settlement-contract.js'
 
 export const posRouter = Router()
 
@@ -58,6 +67,7 @@ const orderInclude = () => ({
   store: true,
   items: { orderBy: { id: 'asc' } },
   payments: { orderBy: { createdAt: 'desc' } },
+  externalSettlement: true,
   refunds: { orderBy: { createdAt: 'desc' }, include: { items: { include: { orderItem: true } } } },
 })
 
@@ -103,6 +113,10 @@ function serializeOrder(order) {
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
     paymentMode: order.paymentMode,
+    orderSource: order.orderSource,
+    entryMode: order.entryMode,
+    settlementAuthority: order.settlementAuthority,
+    sourceOrderRef: order.sourceOrderRef,
     checkoutKey: order.checkoutKey,
     version: order.version,
     createdAt: order.createdAt,
@@ -112,6 +126,7 @@ function serializeOrder(order) {
     cancelledBy: order.cancelledBy || '',
     cancelReason: order.cancelReason || '',
     payments: (order.payments || []).map(serializePayment),
+    externalSettlement: serializeExternalSettlement(order.externalSettlement),
     refunds: (order.refunds || []).map(serializeRefund),
     items: order.items.map((item) => ({
       id: item.id,
@@ -388,6 +403,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
         businessDate,
         discountPercent: snapshot.discountPercent, remark: snapshot.remark,
+        orderSource: 'STORE_POS', entryMode: 'POS_CHECKOUT', settlementAuthority: 'PAYMENT', sourceOrderRef: null,
         checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
         items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },
@@ -400,6 +416,55 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
     if (!existing) throw httpError('订单号冲突，请重新结算', 409)
     return res.json({ ok: true, reused: true, order: serializeOrder(replayOrder(existing, req.user, storeId, cartHash)) })
   }
+}))
+
+// RC-2A internal API only: no production POS control invokes this route.
+// Source, entry mode, settlement authority, amount, and order state are all derived server-side.
+posRouter.post('/pos/external-orders', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasExternalOrderCreate(req.user)) throw httpError('无外部订单创建权限', 403)
+  const storeId = String(req.body?.storeId || '').trim()
+  if (!canStore(req.user, storeId)) throw httpError('无权在该门店录入外部订单', 403)
+  const confirm = req.body?.confirm === true
+  if (confirm && !hasExternalSettlementConfirm(req.user)) throw httpError('无外部结算确认权限', 403)
+  const result = await externalSettlementService.createExternalOrder({
+    ...req.body,
+    storeId,
+    confirm,
+    actorId: req.user.id,
+    actorName: req.user.username,
+  })
+  const [order, settlement] = await Promise.all([
+    prisma.order.findUnique({ where: { id: result.orderId }, include: orderInclude() }),
+    prisma.externalSettlement.findUnique({ where: { id: result.settlementId } }),
+  ])
+  res.status(result.reused ? 200 : 201).json({
+    ok: true,
+    reused: result.reused,
+    order: serializeOrder(order),
+    externalSettlement: serializeExternalSettlement(settlement),
+  })
+}))
+
+posRouter.post('/pos/external-settlements/:id/confirm', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasExternalSettlementConfirm(req.user)) throw httpError('无外部结算确认权限', 403)
+  assertNoClientSettlementState(req.body || {})
+  const current = await prisma.externalSettlement.findUnique({ where: { id: req.params.id }, include: { order: true } })
+  if (!current) throw httpError('外部结算不存在', 404)
+  if (!canStore(req.user, current.order.storeId)) throw httpError('无权确认该门店外部结算', 403)
+  await externalSettlementService.confirmSettlement({
+    settlementId: current.id,
+    amountCents: req.body?.amountCents,
+    actorId: req.user.id,
+  })
+  const [order, settlement] = await Promise.all([
+    prisma.order.findUnique({ where: { id: current.orderId }, include: orderInclude() }),
+    prisma.externalSettlement.findUnique({ where: { id: current.id } }),
+  ])
+  res.json({ ok: true, order: serializeOrder(order), externalSettlement: serializeExternalSettlement(settlement) })
 }))
 
 posRouter.get('/pos/orders/:id', wrap(async (req, res) => {

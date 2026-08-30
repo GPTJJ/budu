@@ -82,6 +82,8 @@ const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MO
 
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
+  EXTERNAL_ORDER_CREATE: 'externalOrderCreate',
+  EXTERNAL_SETTLEMENT_CONFIRM: 'externalSettlementConfirm',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
   DAILY_ENTRY: 'dailyEntry',
 })
@@ -155,6 +157,10 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
     modules,
     [ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]:
       source[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL] === true,
+    [ACCOUNT_PERMISSION_KEYS.EXTERNAL_ORDER_CREATE]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.EXTERNAL_ORDER_CREATE] === true),
+    [ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM] === true),
     [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
     [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY]: normalizeDailyEntryCapabilities(
       source[ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY],
@@ -202,6 +208,24 @@ export function hasInventoryTransferAll(user) {
       user.role !== 'public' &&
       (isSuperUser(user) ||
         normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]),
+  )
+}
+
+export function hasExternalOrderCreate(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.EXTERNAL_ORDER_CREATE],
+  )
+}
+
+export function hasExternalSettlementConfirm(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM],
   )
 }
 

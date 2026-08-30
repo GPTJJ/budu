@@ -6,6 +6,7 @@ import { CashPaymentProvider } from './providers/cash.js'
 import { WechatPayProvider } from './providers/wechat-pay.js'
 import { AlipayProvider } from './providers/alipay.js'
 import { wechatPayConfig, wechatPayStoreAllowed } from './wechat-config.js'
+import { settlementCoordinator } from '../settlements/settlement-coordinator.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
@@ -42,8 +43,9 @@ export function sanitizePayload(value) {
 }
 
 export class PaymentService {
-  constructor(prismaClient, providers) {
+  constructor(prismaClient, providers, coordinator = settlementCoordinator) {
     this.prisma = prismaClient
+    this.settlementCoordinator = coordinator
     this.providers = providers || new Map([
       ['mock', new MockPaymentProvider()],
       ['cash', new CashPaymentProvider()],
@@ -75,6 +77,7 @@ export class PaymentService {
         store: true,
         items: { orderBy: { id: 'asc' } },
         payments: { orderBy: { createdAt: 'desc' } },
+        externalSettlement: true,
         refunds: { orderBy: { createdAt: 'desc' } },
       },
     })
@@ -167,7 +170,6 @@ export class PaymentService {
     const orderId = String(input.orderId || '').trim()
     const channel = String(input.channel || '')
     const requestKey = String(input.requestKey || '').trim()
-    const providerName = this.resolveProvider(channel)
     if (!orderId) throw httpError('订单 ID 不正确')
     if (!CHANNELS.includes(channel)) throw httpError('支付渠道不正确')
     if (requestKey.length < 8 || requestKey.length > 160) throw httpError('支付请求幂等键不正确')
@@ -180,6 +182,8 @@ export class PaymentService {
 
     const order = await this.prisma.order.findUnique({ where: { id: orderId } })
     if (!order) throw httpError('订单不存在', 404)
+    if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算订单不能创建 Payment', 409)
+    const providerName = this.resolveProvider(channel)
     const active = await this.activePayment(order.id)
     if (active) {
       if (active.status === 'success') return { ...(await this.result(active.id)), reused: true }
@@ -463,6 +467,7 @@ export class PaymentService {
       },
     })
     if (!order) throw httpError('订单不存在', 404)
+    if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算退款尚未开放', 409)
     if (!['paid', 'completed', 'partially_refunded'].includes(order.status)) throw httpError('当前订单状态不可退款', 409)
     const payment = order.payments.find((item) => ['success', 'partially_refunded'].includes(item.status))
     if (!payment) throw httpError('订单没有成功支付的支付单，无法退款', 409)
@@ -661,36 +666,10 @@ export class PaymentService {
           },
         })
         if (won.count !== 1) return
-        if (current.amount !== current.order.payableAmount) throw httpError('支付金额与订单应付金额不一致', 409)
-        if (current.order.status === 'pending_payment') {
-          assertOrderTransition('pending_payment', 'paid')
-          assertOrderPaymentTransition(current.order.paymentStatus, 'paid')
-          const paid = await tx.order.updateMany({
-            where: { id: current.order.id, status: 'pending_payment', paymentStatus: current.order.paymentStatus },
-            data: {
-              status: 'paid',
-              paymentStatus: 'paid',
-              paymentMethod: current.channel,
-              paymentMode: current.provider,
-              version: { increment: 1 },
-            },
-          })
-          if (paid.count === 1) {
-            assertOrderTransition('paid', 'completed')
-            await tx.order.updateMany({
-              where: { id: current.order.id, status: 'paid' },
-              data: { status: 'completed', completedAt: new Date(), version: { increment: 1 } },
-            })
-          }
-        } else if (current.order.status === 'paid') {
-          assertOrderTransition('paid', 'completed')
-          await tx.order.updateMany({
-            where: { id: current.order.id, status: 'paid' },
-            data: { status: 'completed', completedAt: new Date(), version: { increment: 1 } },
-          })
-        } else if (current.order.status !== 'completed') {
-          throw httpError(`订单 ${current.order.status} 状态收到成功支付，需要人工核对`, 409)
-        }
+        await this.settlementCoordinator.settlePayment(tx, {
+          paymentId: current.id,
+          completedAt: verified.occurredAt ? new Date(verified.occurredAt) : new Date(),
+        })
         await this.logEvent(current, current.order, 'payment.success', {
           status: 'success',
           providerTradeNo: verified.providerTradeNo || current.providerTradeNo,
