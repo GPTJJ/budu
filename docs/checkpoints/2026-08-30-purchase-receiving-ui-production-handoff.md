@@ -76,9 +76,10 @@ Remote recovery refs:
 
 - current purchase work and this checkpoint: `origin/codex/purchase-receiving-ui`;
 - paused Report Center RC-2B: `origin/codex/report-center-rc2b` at source commit `8198d7a6acd2c521ab10b34a77159980560ee933`;
-- historical Beijing migration checkpoint: complete Git bundle on `origin/safety/cross-device-handoff-purchase-20260830` at archive commit `960b89d`; bundle path `handoff/bundles/budu-beijing-migration-a54283d.bundle`, original ref `codex/beijing-migration` at `a54283d9067e017183e423d6fa4a1be354afe4c7`, SHA-256 `87c5ec5dad05959b7061d6c2ff50b0a041454bdefd4000c980ec1d96600e7c40`.
+- historical Beijing migration checkpoint: complete Git bundle on `origin/safety/cross-device-handoff-purchase-20260830` at archive head `7bc8383`; bundle path `handoff/bundles/budu-beijing-migration-a54283d.bundle`, original ref `codex/beijing-migration` at `a54283d9067e017183e423d6fa4a1be354afe4c7`, SHA-256 `87c5ec5dad05959b7061d6c2ff50b0a041454bdefd4000c980ec1d96600e7c40`;
+- historical inventory workflow: complete Git bundle on the same safety branch; bundle path `handoff/bundles/budu-inventory-workflow-1b1a67a.bundle`, original ref `codex/inventory-workflow` at `1b1a67abced69ea68f586c31be14950a581ab028`, SHA-256 `51ff3db8ba6a363457cad1e3602acc36bd0d148ba027847815921c09b5e46c6d`.
 
-At handoff audit time, every extant BUDU worktree was clean. Unknown working-tree changes were neither discarded nor stashed; none were found. The three commit heads above were the only extant worktree heads not already reachable from a remote ref. Purchase and Report Center were published as independent branches. Direct publication of the historical Beijing branch was rejected because the current OAuth credential lacks workflow scope; its complete verified Git bundle was therefore published on the independent safety branch without merging or rewriting it.
+At handoff audit time, every extant BUDU worktree was clean. Unknown working-tree changes were neither discarded nor stashed; none were found. Purchase and Report Center were published as independent branches. A full local-branch audit then found two historical heads not reachable from any remote ref: Beijing migration and inventory workflow. Direct publication of the Beijing history was rejected because the current OAuth credential lacks workflow scope, so complete verified bundles for both historical refs were published on the independent safety branch without merging or rewriting them.
 
 On the new device:
 
@@ -87,7 +88,7 @@ git fetch --all --prune
 git switch --track origin/codex/purchase-receiving-ui
 ```
 
-If the historical Beijing migration worktree is needed, first check out the safety branch, verify the bundle checksum and `git bundle verify`, then fetch its original ref as documented in `handoff/README.md` on that branch.
+If either historical branch is needed, first check out the safety branch, verify the bundle checksum and `git bundle verify`, then fetch its original ref as documented in `handoff/README.md` on that branch.
 
 Then read `AGENTS.md`, `docs/BUDU_STATUS.md`, and this checkpoint, and directly reverify production before any new action. Committed but unpushed work is unavailable remotely, and uncommitted work cannot be recovered through Git; this handoff is complete only after the remote refs above are verified.
 
