@@ -78,6 +78,7 @@ test('0箱0颗不可加入清单', async ({ page }) => {
 test('确认发货有二次确认并记录发货人；旧 completed 可靠展示为已发货', async ({ page }) => {
   await page.goto('/tests/transfer-harness.html?records=1')
   await page.locator('[data-transfer-record-id="tr-pending"]').click()
+  await expect(page.getByRole('dialog', { name: '调拨详情' })).toContainText('1箱 + 166颗')
   await page.getByRole('button', { name: '确认发货', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '确认已发货' })
   await expect(dialog).toContainText('不会修改任何库存')

@@ -6,6 +6,7 @@ import {
   loadUserData,
   resetUserData,
 } from '../src/utils/userData.js'
+import { transferQuantityLabel } from '../src/utils/storeTransfer.js'
 
 const originalFetch = globalThis.fetch
 
@@ -165,4 +166,45 @@ test('Gate 1 Scenario D: PG daily entries 的空数组覆盖 legacy entries', as
 
   await loadUserData({ userId: 'scenario-d' })
   assert.deepEqual(getUserData().entries, {})
+})
+
+test('Gate 1 Scenario E: 调拨箱/颗字段从 PG API 完整进入前端缓存', async () => {
+  installFetch({
+    legacy: {},
+    pg: pgResponses({
+      '/api/v2/transfer-requests': {
+        rows: [{
+          id: 'tr-piece-166',
+          storeKey: 'chaowai',
+          fromStoreKey: 'guanshe',
+          status: 'pending',
+          createdAt: '2026-08-30T05:47:27.595Z',
+          updatedAt: '2026-08-30T05:47:27.595Z',
+          items: [{
+            itemId: 'product-no2',
+            category: 'product',
+            productName: 'NO.2 柠檬',
+            itemCode: 'NO.2',
+            productCategory: '糖果',
+            quantity: null,
+            boxQuantity: 0,
+            pieceQuantity: 166,
+            boxWeightGrams: null,
+            pieceWeightGrams: 6,
+            estimatedWeightGrams: 996,
+          }],
+        }],
+      },
+    }),
+  })
+
+  await loadUserData({ userId: 'scenario-e' })
+  const item = getUserData().inventoryRequests[0].items[0]
+  assert.equal(item.quantity, null)
+  assert.equal(item.boxQuantity, 0)
+  assert.equal(item.pieceQuantity, 166)
+  assert.equal(item.pieceWeightGrams, 6)
+  assert.equal(item.estimatedWeightGrams, 996)
+  assert.equal(item.productCategory, '糖果')
+  assert.equal(transferQuantityLabel(item), '166颗')
 })
