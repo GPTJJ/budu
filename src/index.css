@@ -72,6 +72,7 @@
   /* ===== Global overlay scroll contract ===== */
   .budu-overlay-viewport {
     box-sizing: border-box;
+    margin: 0 !important;
     height: 100vh;
     height: 100dvh;
     max-height: 100dvh;
