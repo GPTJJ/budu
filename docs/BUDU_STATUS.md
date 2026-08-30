@@ -20,12 +20,12 @@ Last reviewed: 2026-08-30
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `afc9df1baf038161743ec43f93ed6ac796d02393` — VERIFIED on 2026-08-30; revalidate before use.
+- Runtime SHA: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` — VERIFIED on 2026-08-30; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-08-30; revalidate before use.
-- Migration ledger: 57 — VERIFIED on 2026-08-30; revalidate before use.
+- Migration ledger: 58, failed migration count 0 — VERIFIED on 2026-08-30; revalidate before use.
 - Runtime health and single writer: PASS / 1 — VERIFIED on 2026-08-30; revalidate before use.
-- Production Alipay provider: disabled at that verification.
-- Latest checkpoint: `docs/checkpoints/2026-08-30-transfer-box-piece-production.md`.
+- Purchase receiving/UI release is physically live, but its acceptance gate is **AUTHORITY CONFLICT / HOLD** because three real production receive requests occurred after cutover without confirmation in the deployment conversation. Do not alter or reverse those inventory facts without a separate authorized correction gate.
+- Latest checkpoint: `docs/checkpoints/2026-08-30-purchase-receiving-ui-production-handoff.md`.
 
 ## Architecture Contracts
 
@@ -37,7 +37,8 @@ Last reviewed: 2026-08-30
 ## Current Engineering Work
 
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
-- No business module, database migration, or production release is part of the skills-foundation change.
+- Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
+- Report Center remains paused on its independent `codex/report-center-rc2b` branch. Do not merge it into purchase work or production without a new gate.
 
 ## Rollback Notes
 
