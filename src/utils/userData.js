@@ -234,6 +234,11 @@ export async function loadUserData(options = {}) {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         shipmentRecorded: r.shipmentRecorded === true,
+        deliveryRecipients: {
+          source: r.deliveryRecipients?.source === 'notification_delivery' ? 'notification_delivery' : '',
+          successful: Array.isArray(r.deliveryRecipients?.successful) ? r.deliveryRecipients.successful : [],
+          undelivered: Array.isArray(r.deliveryRecipients?.undelivered) ? r.deliveryRecipients.undelivered : [],
+        },
         history: [],
         items: (r.items || []).map((it) => ({
           category: it.category,

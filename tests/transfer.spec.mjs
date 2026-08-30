@@ -130,13 +130,43 @@ test('调拨详情生成正式 Canvas 图片，历史缺失编码显示横线而
   await expect.poll(() => page.evaluate(() => window.__transferTest.imageExports)).toBeGreaterThan(0)
 })
 
+test('卡片与详情只显示真实投递对象、fallback 和未投递原因', async ({ page }) => {
+  await page.goto('/tests/transfer-harness.html?records=1')
+  await expect(page.locator('[data-transfer-record-id="tr-single"]')).toContainText('推送对象：陈文慧')
+  await expect(page.locator('[data-transfer-record-id="tr-pending"]')).toContainText('推送对象：陈文慧、隋晓 等3人')
+  await expect(page.locator('[data-transfer-record-id="tr-partial"]')).toContainText('推送对象：陈文慧、隋晓')
+  await expect(page.locator('[data-transfer-record-id="tr-partial"]')).toContainText('1人未投递')
+  await page.locator('[data-transfer-record-id="tr-partial"]').click()
+  const partialDetail = page.getByRole('dialog', { name: '调拨详情' })
+  await expect(partialDetail.getByTestId('transfer-delivery-detail')).toContainText('舒敏')
+  await expect(partialDetail.getByTestId('transfer-delivery-detail')).toContainText('未投递 · 未绑定企业微信')
+  await partialDetail.getByRole('button', { name: '关闭' }).click()
+
+  await expect(page.locator('[data-transfer-record-id="tr-failed"]')).toContainText('推送对象：暂无成功投递')
+  await expect(page.locator('[data-transfer-record-id="tr-failed"]')).toContainText('1人未投递')
+  await page.locator('[data-transfer-record-id="tr-failed"]').click()
+  await expect(page.getByTestId('transfer-delivery-detail')).toContainText('未投递 · 发送失败')
+  await page.getByRole('dialog', { name: '调拨详情' }).getByRole('button', { name: '关闭' }).click()
+
+  await page.getByRole('tab', { name: /已发货/ }).click()
+  await expect(page.locator('[data-transfer-record-id="tr-legacy"]')).toContainText('推送记录：暂无')
+  await page.locator('[data-transfer-record-id="tr-legacy"]').click()
+  await expect(page.getByTestId('transfer-delivery-detail')).toContainText('推送记录：暂无')
+  await page.getByRole('dialog', { name: '调拨详情' }).getByRole('button', { name: '关闭' }).click()
+
+  await page.getByRole('button', { name: /已取消\/\u9a73回/ }).click()
+  await expect(page.locator('[data-transfer-record-id="tr-rejected"]')).toContainText('推送对象：企业微信群机器人、开发者')
+})
+
 for (const width of [320, 340, 375, 390, 430]) {
   test(`${width}px 创建与记录页面无横向溢出`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/tests/transfer-harness.html?records=1')
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    await expect(page.locator('[data-transfer-record-id="tr-pending"]').getByTestId('transfer-delivery-summary')).toContainText('等3人')
     await page.locator('[data-transfer-record-id="tr-pending"]').click()
     const detail = page.getByRole('dialog', { name: '调拨详情' })
+    await expect(detail.getByTestId('transfer-delivery-detail')).toContainText('陈文慧')
     await detail.getByRole('button', { name: '核对并发货' }).click()
     const shipment = page.getByRole('dialog', { name: '核对并发货' })
     await expect(shipment.getByRole('button', { name: '确认实发' })).toBeVisible()

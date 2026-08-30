@@ -59,6 +59,7 @@ const NODE_TEST_SUITE = [
   'test-transfer-box-piece-migration-rehearsal.mjs', // 56→57 additive 箱/颗真实单位与历史 quantity 保护
   'test-transfer-actual-shipment-migration-rehearsal.mjs', // 57→58 additive 实发数量权威与历史 NULL 保护
   'test-transfer-notification-routing.mjs', // 调拨按发货门店业务日排班 employeeId 路由、fallback、幂等
+  'test-transfer-delivery-recipients.mjs', // 调拨卡片只读真实 NotificationDelivery 收件人事实
   'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
   'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
   'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
@@ -181,6 +182,7 @@ const CRITICAL_NODE_TEST = [
   'test-transfer-box-piece-migration-rehearsal.mjs',
   'test-transfer-actual-shipment-migration-rehearsal.mjs',
   'test-transfer-notification-routing.mjs',
+  'test-transfer-delivery-recipients.mjs',
   'test-product-material-migration-rehearsal.mjs',
   'test-product-material-contract.mjs',
   'test-product-category-migration-rehearsal.mjs',

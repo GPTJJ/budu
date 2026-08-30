@@ -130,6 +130,12 @@ try {
   const persisted = transferData.rows?.find((row) => row.id === created.id)
   if (!persisted || persisted.fromStoreKey !== 'guanshe' || persisted.storeKey !== 'tongying') throw new Error('调拨未从 PostgreSQL 永久读取')
   if (persisted.items.find((item) => item.itemId === productOne.id)?.productCategory !== '糖果新版') throw new Error('新调拨未冻结产品分类快照')
+  if (persisted.deliveryRecipients?.source !== 'notification_delivery') throw new Error('调拨未返回 NotificationDelivery 投递权威')
+  if (persisted.deliveryRecipients.successful.length !== 0) throw new Error('测试环境禁用外部通道时不得伪造成功投递')
+  if (!persisted.deliveryRecipients.undelivered.some((row) => row.type === 'group')
+    || !persisted.deliveryRecipients.undelivered.some((row) => row.type === 'developer')) {
+    throw new Error('fallback 失败/跳过对象未从真实 delivery 事实返回')
+  }
 
   const disableCategory = await fetch(`${base}/v2/product-categories/${productCategory.id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },

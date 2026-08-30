@@ -4,6 +4,7 @@ import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { broadcast, notify } from './notification-center.js'
 import { listUsers } from './user-store.js'
 import { deliverTransferRequestNotification } from './transfer-notification.js'
+import { EMPTY_TRANSFER_DELIVERY_SUMMARY, loadTransferDeliverySummaries } from './transfer-delivery-recipients.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
 import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
@@ -950,7 +951,13 @@ v2Router.get('/transfer-requests', wrap(async (req, res) => {
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
     orderBy: { createdAt: 'desc' },
   })
-  res.json({ rows: rows.map(serializeTransfer) })
+  const deliveryByTransfer = await loadTransferDeliverySummaries(prisma, rows.map((row) => row.id))
+  res.json({
+    rows: rows.map((row) => ({
+      ...serializeTransfer(row),
+      deliveryRecipients: deliveryByTransfer.get(row.id) || EMPTY_TRANSFER_DELIVERY_SUMMARY,
+    })),
+  })
 }))
 
 v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {

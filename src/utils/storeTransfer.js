@@ -229,3 +229,26 @@ export function itemCountLabel(items) {
   }).filter(Boolean)
   return groups.join(' / ') || '0种'
 }
+
+export function transferDeliveryCardSummary(value) {
+  const successful = Array.isArray(value?.successful) ? value.successful : []
+  const undelivered = Array.isArray(value?.undelivered) ? value.undelivered : []
+  if (successful.length === 0 && undelivered.length === 0) {
+    return { empty: true, recipientText: '', undeliveredText: '' }
+  }
+  const first = successful.slice(0, 2).map((row) => row.label).filter(Boolean)
+  const recipientText = successful.length > 2 ? `${first.join('、')} 等${successful.length}人` : first.join('、')
+  const allPeople = undelivered.every((row) => ['individual', 'developer'].includes(row.type))
+  return {
+    empty: false,
+    recipientText,
+    undeliveredText: undelivered.length > 0 ? `${undelivered.length}${allPeople ? '人' : '项'}未投递` : '',
+  }
+}
+
+export function transferDeliveryReasonLabel(reason) {
+  if (reason === 'NO_WECOM_BINDING') return '未绑定企业微信'
+  if (reason === 'CHANNEL_NOT_CONFIGURED') return '通知通道未配置'
+  if (reason === 'NOT_DELIVERED') return '未投递'
+  return '发送失败'
+}
