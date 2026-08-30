@@ -20,11 +20,12 @@ Last reviewed: 2026-08-30
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `35951cfdc8b24f0291b157a25ccf097f6e7c4522` — VERIFIED on 2026-08-29; revalidate before use.
-- Database authority: `budu_bj006` — VERIFIED on 2026-08-29; revalidate before use.
-- Migration ledger: 56 — VERIFIED on 2026-08-29; revalidate before use.
-- Runtime health and single writer: PASS / 1 — VERIFIED on 2026-08-29; revalidate before use.
+- Runtime SHA: `afc9df1baf038161743ec43f93ed6ac796d02393` — VERIFIED on 2026-08-30; revalidate before use.
+- Database authority: `budu_bj006` — VERIFIED on 2026-08-30; revalidate before use.
+- Migration ledger: 57 — VERIFIED on 2026-08-30; revalidate before use.
+- Runtime health and single writer: PASS / 1 — VERIFIED on 2026-08-30; revalidate before use.
 - Production Alipay provider: disabled at that verification.
+- Latest checkpoint: `docs/checkpoints/2026-08-30-transfer-box-piece-production.md`.
 
 ## Architecture Contracts
 
