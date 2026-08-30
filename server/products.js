@@ -48,6 +48,13 @@ function optionalCents(value, label) {
   return parseCents(value, label)
 }
 
+function optionalPositiveGrams(value, label) {
+  if (value === '' || value === null || value === undefined) return null
+  const grams = Number(value)
+  if (!Number.isInteger(grams) || grams < 1 || grams > 9999999) throw httpError(`${label}必须是 1-9999999 的整数克数`)
+  return grams
+}
+
 function productData(body, existingImage = '') {
   const sku = normalizeSku(body.sku)
   if (sku.length > 64) throw httpError('SKU 不能超过 64 个字符')
@@ -60,6 +67,10 @@ function productData(body, existingImage = '') {
   const costPriceCents = optionalCents(body.costPriceCents, '成本价')
   const unit = text(body.unit || '份', 20, '单位', isActive)
   const transferEnabled = body.transferEnabled === true
+  const transferBoxEnabled = body.transferBoxEnabled === true
+  const transferBoxWeightGrams = optionalPositiveGrams(body.transferBoxWeightGrams, '整箱净重')
+  const transferPieceEnabled = body.transferPieceEnabled === true
+  const transferPieceWeightGrams = optionalPositiveGrams(body.transferPieceWeightGrams, '标准单颗重量')
   const partnerSupplyEnabled = body.partnerSupplyEnabled === true
   const productGroupId = text(body.productGroupId, 120, '商品组') || null
   const variantName = productGroupId ? text(body.variantName, 30, '款式名称', true) : ''
@@ -67,6 +78,8 @@ function productData(body, existingImage = '') {
   const transferCode = transferCodeInput || (transferEnabled ? sku || null : null)
   if (isActive && (!sku || salePriceCents === null || costPriceCents === null)) throw httpError('启用 POS 前请填写 SKU、售价和成本价')
   if (transferEnabled && !transferCode) throw httpError('启用门店调拨前请填写 SKU 或商品编号')
+  if (transferBoxEnabled && transferBoxWeightGrams === null) throw httpError('允许整箱调拨时请填写整箱净重')
+  if (transferPieceEnabled && transferPieceWeightGrams === null) throw httpError('允许散颗调拨时请填写标准单颗重量')
   if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
   return {
     name: text(body.name, 50, '商品名称', true),
@@ -83,6 +96,10 @@ function productData(body, existingImage = '') {
     transferCode,
     transferEnabled,
     transferSortOrder: sortOrder,
+    transferBoxEnabled,
+    transferBoxWeightGrams,
+    transferPieceEnabled,
+    transferPieceWeightGrams,
     partnerSupplyEnabled,
     productCategoryId: text(body.productCategoryId, 120, '商品分类') || null,
     productGroupId,
@@ -118,6 +135,10 @@ export const productListSelect = {
   barcode: true,
   isActive: true,
   transferEnabled: true,
+  transferBoxEnabled: true,
+  transferBoxWeightGrams: true,
+  transferPieceEnabled: true,
+  transferPieceWeightGrams: true,
   partnerSupplyEnabled: true,
   productCategoryId: true,
   productGroupId: true,
@@ -146,6 +167,10 @@ export function serializeProduct(product) {
     barcode: product.barcode || '',
     isActive: product.isActive,
     transferEnabled: product.transferEnabled,
+    transferBoxEnabled: product.transferBoxEnabled,
+    transferBoxWeightGrams: product.transferBoxWeightGrams,
+    transferPieceEnabled: product.transferPieceEnabled,
+    transferPieceWeightGrams: product.transferPieceWeightGrams,
     partnerSupplyEnabled: product.partnerSupplyEnabled,
     productCategoryId: product.productCategoryId || '',
     productCategory: product.productCategory ? {
@@ -327,6 +352,10 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         transferCode: existing.transferCode,
         transferEnabled: existing.transferEnabled,
         transferSortOrder: existing.transferSortOrder,
+        transferBoxEnabled: existing.transferBoxEnabled,
+        transferBoxWeightGrams: existing.transferBoxWeightGrams,
+        transferPieceEnabled: existing.transferPieceEnabled,
+        transferPieceWeightGrams: existing.transferPieceWeightGrams,
         partnerSupplyEnabled: existing.partnerSupplyEnabled,
         productCategoryId: existing.productCategoryId,
         productGroupId: existing.productGroupId,

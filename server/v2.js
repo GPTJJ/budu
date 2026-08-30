@@ -101,20 +101,37 @@ export async function upsertItem(name, category = 'product') {
 
 export function itemRows(items) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('请至少添加一种货品（最多 50 种）')
-  return items.map((it) => {
+  const rows = items.map((it) => {
+    const itemId = String(it.itemId || '').trim()
     const name = String(it.name || it.productName || '').trim()
-    const quantity = Number(it.quantity)
     const note = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
     const category = normalizeItemCategory(name, it.category)
     if (!name || name.length > 50) throw bad('货品名称不正确')
+    const usesUnitQuantities = Object.prototype.hasOwnProperty.call(it, 'boxQuantity') || Object.prototype.hasOwnProperty.call(it, 'pieceQuantity')
+    if (usesUnitQuantities) {
+      const boxQuantity = Number(it.boxQuantity || 0)
+      const pieceQuantity = Number(it.pieceQuantity || 0)
+      if (!Number.isInteger(boxQuantity) || boxQuantity < 0 || boxQuantity > 999999) throw bad('箱数应为 0-999999 的整数')
+      if (!Number.isInteger(pieceQuantity) || pieceQuantity < 0 || pieceQuantity > 999999) throw bad('散颗数应为 0-999999 的整数')
+      if (boxQuantity === 0 && pieceQuantity === 0) throw bad('箱数和散颗数不能同时为 0')
+      return { itemId, name, quantity: null, boxQuantity, pieceQuantity, usesUnitQuantities, note, category }
+    }
+    const quantity = Number(it.quantity)
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('数量应为 1-999999 的整数')
-    return { name, quantity, note, category }
+    return { itemId, name, quantity, boxQuantity: 0, pieceQuantity: 0, usesUnitQuantities, note, category }
   })
+  const seen = new Set()
+  for (const row of rows) {
+    const identity = row.itemId || `${row.category}:${row.name}`
+    if (seen.has(identity)) throw bad('同一货品只能填写一次')
+    seen.add(identity)
+  }
+  return rows
 }
 
 async function findActiveTransferItem(row) {
   const existing = await prisma.inventoryItem.findUnique({
-    where: { name: row.name },
+    where: row.itemId ? { id: row.itemId } : { name: row.name },
     include: { productCategory: true },
   })
   if (!existing || !existing.transferEnabled || existing.category !== row.category) {
@@ -125,6 +142,32 @@ async function findActiveTransferItem(row) {
 
 function inventoryItemCode(item) {
   return String(item?.transferCode || item?.sku || item?.barcode || item?.id || '')
+}
+
+function transferItemBase(row, item) {
+  return {
+    itemId: item.id,
+    note: row.note,
+    itemNameSnapshot: item.name,
+    itemCodeSnapshot: inventoryItemCode(item),
+    categorySnapshot: row.category,
+    productCategoryNameSnapshot: row.category === 'product' ? item.productCategory?.name || '' : '',
+  }
+}
+
+function transferItemCreates(row, item) {
+  const packagingConfigured = item.transferBoxEnabled || item.transferPieceEnabled
+  if (!row.usesUnitQuantities) {
+    if (packagingConfigured) throw bad(`「${item.name}」请按箱/颗填写调拨数量`, 409)
+    return [{ ...transferItemBase(row, item), quantity: row.quantity, quantityUnit: 'legacy', unitWeightGramsSnapshot: null }]
+  }
+  if (!packagingConfigured) throw bad(`「${item.name}」未配置箱/颗调拨规格`, 409)
+  if (row.boxQuantity > 0 && (!item.transferBoxEnabled || !item.transferBoxWeightGrams)) throw bad(`「${item.name}」不允许整箱调拨`, 409)
+  if (row.pieceQuantity > 0 && (!item.transferPieceEnabled || !item.transferPieceWeightGrams)) throw bad(`「${item.name}」不允许散颗调拨`, 409)
+  return [
+    row.boxQuantity > 0 && { ...transferItemBase(row, item), quantity: row.boxQuantity, quantityUnit: 'box', unitWeightGramsSnapshot: item.transferBoxWeightGrams },
+    row.pieceQuantity > 0 && { ...transferItemBase(row, item), quantity: row.pieceQuantity, quantityUnit: 'piece', unitWeightGramsSnapshot: item.transferPieceWeightGrams },
+  ].filter(Boolean)
 }
 
 async function transferStoreRecipients(storeKey) {
@@ -141,6 +184,42 @@ async function transferStoreRecipients(storeKey) {
 async function notifyTransferStore(storeKey, options) {
   const recipients = await transferStoreRecipients(storeKey)
   await Promise.all(recipients.map((user) => notify({ ...options, username: user.username })))
+}
+
+function serializeTransferItems(items) {
+  const result = []
+  const packaged = new Map()
+  for (const it of items) {
+    const category = it.categorySnapshot || normalizeItemCategory(it.item.name, it.item.category)
+    const base = {
+      id: it.id,
+      itemId: it.itemId,
+      category,
+      productName: it.itemNameSnapshot || it.item.name,
+      itemCode: it.itemCodeSnapshot || '',
+      productCategory: it.productCategoryNameSnapshot || '',
+      note: it.note,
+    }
+    if (!['box', 'piece'].includes(it.quantityUnit)) {
+      result.push({ ...base, quantity: it.quantity })
+      continue
+    }
+    let row = packaged.get(it.itemId)
+    if (!row) {
+      row = { ...base, quantity: null, boxQuantity: 0, pieceQuantity: 0, boxWeightGrams: null, pieceWeightGrams: null, estimatedWeightGrams: 0 }
+      packaged.set(it.itemId, row)
+      result.push(row)
+    }
+    if (it.quantityUnit === 'box') {
+      row.boxQuantity += it.quantity
+      row.boxWeightGrams = it.unitWeightGramsSnapshot
+    } else {
+      row.pieceQuantity += it.quantity
+      row.pieceWeightGrams = it.unitWeightGramsSnapshot
+    }
+    row.estimatedWeightGrams += it.quantity * Number(it.unitWeightGramsSnapshot || 0)
+  }
+  return result
 }
 
 function serializeTransfer(r) {
@@ -160,16 +239,7 @@ function serializeTransfer(r) {
     withdrawnAt: r.withdrawnAt || null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    items: r.items.map((it) => ({
-      id: it.id,
-      itemId: it.itemId,
-      category: it.categorySnapshot || normalizeItemCategory(it.item.name, it.item.category),
-      productName: it.itemNameSnapshot || it.item.name,
-      itemCode: it.itemCodeSnapshot || '',
-      productCategory: it.productCategoryNameSnapshot || '',
-      quantity: it.quantity,
-      note: it.note,
-    })),
+    items: serializeTransferItems(r.items),
   }
 }
 
@@ -545,6 +615,10 @@ function serializeTransferMasterItem(item) {
     code: item.transferCode || '',
     enabled: item.transferEnabled,
     sortOrder: item.transferSortOrder,
+    transferBoxEnabled: item.transferBoxEnabled,
+    transferBoxWeightGrams: item.transferBoxWeightGrams,
+    transferPieceEnabled: item.transferPieceEnabled,
+    transferPieceWeightGrams: item.transferPieceWeightGrams,
     productCategoryId: item.productCategoryId || '',
     productCategory: item.productCategory ? {
       id: item.productCategory.id,
@@ -763,6 +837,13 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
   const rows = itemRows(items)
   await ensureStore(fromStoreKey)
   await ensureStore(toStoreKey)
+  const createItems = []
+  for (const row of rows) {
+    const item = await findActiveTransferItem(row)
+    for (const data of transferItemCreates(row, item)) {
+      createItems.push({ id: uid('ti'), ...data })
+    }
+  }
   const created = await prisma.transferRequest.create({
     data: {
       id: `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -773,30 +854,17 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
       note: String(note || '').trim().slice(0, 200),
       createdBy: req.user.username,
       items: {
-        create: await Promise.all(
-          rows.map(async (row) => {
-            const item = await findActiveTransferItem(row)
-            return {
-              id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-              itemId: item.id,
-              quantity: row.quantity,
-              note: row.note,
-              itemNameSnapshot: row.name,
-              itemCodeSnapshot: inventoryItemCode(item),
-              categorySnapshot: row.category,
-              productCategoryNameSnapshot: row.category === 'product' ? item.productCategory?.name || '' : '',
-            }
-          }),
-        ),
+        create: createItems,
       },
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
+  const logicalItemCount = serializeTransfer(created).items.length
   await notifyTransferStore(fromStoreKey, {
     templateKey: 'transfer_new',
-    data: { fromStore: resolveStoreName(fromStoreKey), toStore: resolveStoreName(toStoreKey), count: created.items.length, submitter: req.user.username },
+    data: { fromStore: resolveStoreName(fromStoreKey), toStore: resolveStoreName(toStoreKey), count: logicalItemCount, submitter: req.user.username },
     title: `新调拨待备货：${resolveStoreName(fromStoreKey)} → ${resolveStoreName(toStoreKey)}`,
-    content: `调入门店 ${resolveStoreName(toStoreKey)} 发起 · ${created.items.length} 种货品 · 提交人 ${req.user.username}`,
+    content: `调入门店 ${resolveStoreName(toStoreKey)} 发起 · ${logicalItemCount} 种货品 · 提交人 ${req.user.username}`,
     target: 'inventory-transfer',
     refType: 'transfer',
     refId: created.id,

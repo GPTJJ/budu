@@ -32,49 +32,117 @@ export function validTransferQuantity(value) {
 
 export function initialTransferDraft() {
   return {
-    product: { selectedNames: [], batchQuantity: '' },
+    product: { selectedIds: [], batchQuantity: '', unitQuantities: {} },
     material: { quantities: {} },
   }
 }
 
-export function toggleDraftProduct(draft, name) {
-  const selected = draft.product.selectedNames.includes(name)
-    ? draft.product.selectedNames.filter((item) => item !== name)
-    : [...draft.product.selectedNames, name]
-  return { ...draft, product: { ...draft.product, selectedNames: selected } }
+export function isPackagedTransferItem(item) {
+  return Boolean(item?.transferBoxEnabled || item?.transferPieceEnabled)
+}
+
+export function toggleDraftProduct(draft, itemId) {
+  const selected = draft.product.selectedIds.includes(itemId)
+    ? draft.product.selectedIds.filter((id) => id !== itemId)
+    : [...draft.product.selectedIds, itemId]
+  return { ...draft, product: { ...draft.product, selectedIds: selected } }
 }
 
 export function setDraftProductQuantity(draft, value) {
   return { ...draft, product: { ...draft.product, batchQuantity: value } }
 }
 
-export function setDraftMaterialQuantity(draft, name, value) {
+export function setDraftProductUnitQuantity(draft, itemId, unit, value) {
+  const current = draft.product.unitQuantities[itemId] || { boxQuantity: '', pieceQuantity: '' }
   return {
     ...draft,
-    material: { ...draft.material, quantities: { ...draft.material.quantities, [name]: value } },
+    product: {
+      ...draft.product,
+      unitQuantities: {
+        ...draft.product.unitQuantities,
+        [itemId]: { ...current, [unit === 'box' ? 'boxQuantity' : 'pieceQuantity']: value },
+      },
+    },
   }
 }
 
-export function materialDraftItems(draft) {
-  return Object.entries(draft.material.quantities)
-    .filter(([, quantity]) => validTransferQuantity(quantity))
-    .map(([productName, quantity]) => ({ category: 'material', productName, quantity: Number(quantity), note: '' }))
+export function setDraftMaterialQuantity(draft, itemId, value) {
+  return {
+    ...draft,
+    material: { ...draft.material, quantities: { ...draft.material.quantities, [itemId]: value } },
+  }
 }
 
-export function productDraftRows(draft) {
-  if (!validTransferQuantity(draft.product.batchQuantity)) return []
-  return draft.product.selectedNames.map((productName) => ({
-    category: 'product',
-    productName,
-    quantity: Number(draft.product.batchQuantity),
-    note: '',
-  }))
+export function materialDraftItems(draft, masterItems = []) {
+  const byId = new Map(masterItems.map((item) => [item.id, item]))
+  return Object.entries(draft.material.quantities)
+    .filter(([, quantity]) => validTransferQuantity(quantity))
+    .flatMap(([itemId, quantity]) => {
+      const item = byId.get(itemId)
+      return item ? [{ itemId, category: 'material', productName: item.name, quantity: Number(quantity), note: '' }] : []
+    })
+}
+
+export function productDraftRows(draft, masterItems) {
+  const byId = new Map((masterItems || []).map((item) => [item.id, item]))
+  return draft.product.selectedIds.flatMap((itemId) => {
+    const item = byId.get(itemId)
+    if (!item) return []
+    if (!isPackagedTransferItem(item)) {
+      if (!validTransferQuantity(draft.product.batchQuantity)) return []
+      return [{ itemId, category: 'product', productName: item.name, quantity: Number(draft.product.batchQuantity), note: '' }]
+    }
+    const values = draft.product.unitQuantities[itemId] || {}
+    const boxQuantity = Number(values.boxQuantity || 0)
+    const pieceQuantity = Number(values.pieceQuantity || 0)
+    if ((!Number.isInteger(boxQuantity) || boxQuantity < 0 || boxQuantity > 999999)
+      || (!Number.isInteger(pieceQuantity) || pieceQuantity < 0 || pieceQuantity > 999999)
+      || (boxQuantity === 0 && pieceQuantity === 0)) return []
+    return [{
+      itemId,
+      category: 'product',
+      productName: item.name,
+      quantity: null,
+      boxQuantity,
+      pieceQuantity,
+      boxWeightGrams: item.transferBoxWeightGrams || null,
+      pieceWeightGrams: item.transferPieceWeightGrams || null,
+      note: '',
+    }]
+  })
+}
+
+export function validTransferItemQuantity(item) {
+  if (!isPackagedTransferItem(item) && item?.quantity !== null) return validTransferQuantity(item?.quantity)
+  const boxQuantity = Number(item?.boxQuantity || 0)
+  const pieceQuantity = Number(item?.pieceQuantity || 0)
+  return Number.isInteger(boxQuantity) && boxQuantity >= 0 && boxQuantity <= 999999
+    && Number.isInteger(pieceQuantity) && pieceQuantity >= 0 && pieceQuantity <= 999999
+    && (boxQuantity > 0 || pieceQuantity > 0)
+}
+
+export function transferQuantityLabel(item) {
+  if (isPackagedTransferItem(item) || item?.quantity === null) {
+    return [Number(item?.boxQuantity || 0) > 0 ? `${Number(item.boxQuantity)}箱` : '', Number(item?.pieceQuantity || 0) > 0 ? `${Number(item.pieceQuantity)}颗` : ''].filter(Boolean).join(' + ') || '0'
+  }
+  return `${Number(item?.quantity || 0)}件`
+}
+
+export function transferEstimatedWeightGrams(item) {
+  if (Number.isFinite(Number(item?.estimatedWeightGrams))) return Number(item.estimatedWeightGrams)
+  return Number(item?.boxQuantity || 0) * Number(item?.boxWeightGrams || 0)
+    + Number(item?.pieceQuantity || 0) * Number(item?.pieceWeightGrams || 0)
+}
+
+export function transferEstimatedWeightLabel(item) {
+  const grams = transferEstimatedWeightGrams(item)
+  return grams > 0 ? `约${(grams / 1000).toFixed(2)}kg` : ''
 }
 
 export function mergeTransferItems(current, incoming) {
   const rows = [...current]
   for (const item of incoming) {
-    const index = rows.findIndex((row) => row.category === item.category && row.productName === item.productName)
+    const index = rows.findIndex((row) => row.category === item.category && (item.itemId ? row.itemId === item.itemId : row.productName === item.productName))
     if (index >= 0) rows[index] = { ...rows[index], ...item }
     else rows.push(item)
   }
@@ -83,5 +151,14 @@ export function mergeTransferItems(current, incoming) {
 
 export function itemCountLabel(items) {
   const rows = Array.isArray(items) ? items : []
-  return `${rows.length} 种 / ${rows.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} 件`
+  const groups = ['product', 'material'].map((category) => {
+    const categoryRows = rows.filter((item) => item.category === category)
+    if (!categoryRows.length) return ''
+    const boxes = categoryRows.reduce((sum, item) => sum + Number(item.boxQuantity || 0), 0)
+    const pieces = categoryRows.reduce((sum, item) => sum + Number(item.pieceQuantity || 0), 0)
+    const legacy = categoryRows.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    const quantities = [boxes > 0 ? `${boxes}箱` : '', pieces > 0 ? `${pieces}颗` : '', legacy > 0 ? `${legacy}件` : ''].filter(Boolean).join(' + ')
+    return `${categoryRows.length}种${category === 'product' ? '产品' : '物料'}${quantities ? ` · ${quantities}` : ''}`
+  }).filter(Boolean)
+  return groups.join(' / ') || '0种'
 }

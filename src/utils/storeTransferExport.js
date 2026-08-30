@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx'
 import { downloadFile } from './downloadFile.js'
-import { transferStatusLabel, transferViewStatus } from './storeTransfer.js'
+import { transferEstimatedWeightGrams, transferEstimatedWeightLabel, transferQuantityLabel, transferStatusLabel, transferViewStatus } from './storeTransfer.js'
 
 const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 
@@ -36,6 +36,9 @@ export function buildTransferExportData(records, options = {}) {
       const code = item.itemCode || '—'
       const name = item.productName || '—'
       const quantity = Number(item.quantity) || 0
+      const boxQuantity = Number(item.boxQuantity) || 0
+      const pieceQuantity = Number(item.pieceQuantity) || 0
+      const estimatedWeightGrams = transferEstimatedWeightGrams(item)
       details.push({
         调拨单号: record.id,
         发货时间: formatTime(record.shippedAt),
@@ -45,20 +48,33 @@ export function buildTransferExportData(records, options = {}) {
         产品分类: category,
         编号: code,
         名称: name,
-        数量: quantity,
+        '历史数量（件）': quantity || '',
+        箱数: boxQuantity || '',
+        散颗数: pieceQuantity || '',
+        '估算重量（约kg）': estimatedWeightGrams > 0 ? Number((estimatedWeightGrams / 1000).toFixed(3)) : '',
         申请人: record.createdBy || '—',
         发货确认人: record.shippedBy || '—',
         备注: record.note || '',
       })
       for (const direction of [
-        fromSelected && { key: record.fromStoreKey, name: storeLabel(record.fromStoreKey, record.fromStoreName), inbound: 0, outbound: quantity },
-        toSelected && { key: record.storeKey, name: storeLabel(record.storeKey, record.storeName), inbound: quantity, outbound: 0 },
+        fromSelected && { key: record.fromStoreKey, name: storeLabel(record.fromStoreKey, record.fromStoreName), sign: -1 },
+        toSelected && { key: record.storeKey, name: storeLabel(record.storeKey, record.storeName), sign: 1 },
       ].filter(Boolean)) {
         const key = [direction.key, item.category, category, code, name].join('\u0000')
-        const current = summary.get(key) || { 门店: direction.name, 类型: type, 分类: category, 编号: code, 名称: name, 调入数量: 0, 调出数量: 0, 净调拨: 0, _storeKey: direction.key }
-        current.调入数量 += direction.inbound
-        current.调出数量 += direction.outbound
+        const current = summary.get(key) || { 门店: direction.name, 类型: type, 分类: category, 编号: code, 名称: name, 调入数量: 0, 调出数量: 0, 净调拨: 0, 调入箱数: 0, 调出箱数: 0, 净箱数: 0, 调入散颗数: 0, 调出散颗数: 0, 净散颗数: 0, '净估算重量（约kg）': 0, _storeKey: direction.key }
+        if (direction.sign > 0) {
+          current.调入数量 += quantity
+          current.调入箱数 += boxQuantity
+          current.调入散颗数 += pieceQuantity
+        } else {
+          current.调出数量 += quantity
+          current.调出箱数 += boxQuantity
+          current.调出散颗数 += pieceQuantity
+        }
         current.净调拨 = current.调入数量 - current.调出数量
+        current.净箱数 = current.调入箱数 - current.调出箱数
+        current.净散颗数 = current.调入散颗数 - current.调出散颗数
+        current['净估算重量（约kg）'] = Number((current['净估算重量（约kg）'] + direction.sign * estimatedWeightGrams / 1000).toFixed(3))
         summary.set(key, current)
       }
     }
@@ -72,8 +88,8 @@ export function createTransferExportWorkbook(records, options = {}) {
   const { summaryRows, detailRows } = buildTransferExportData(records, options)
   const summarySheet = XLSX.utils.json_to_sheet(summaryRows.length ? summaryRows : [{ 提示: '当前筛选条件下暂无已发货调拨汇总' }])
   const detailSheet = XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ 提示: '当前筛选条件下暂无已发货调拨明细' }])
-  summarySheet['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]
-  detailSheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
+  summarySheet['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, ...Array.from({ length: 10 }, () => ({ wch: 14 }))]
+  detailSheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, summarySheet, '调拨汇总')
   XLSX.utils.book_append_sheet(workbook, detailSheet, '调拨明细')
@@ -112,7 +128,8 @@ export async function exportTransferImage(record, storeLabel) {
   measure.font = `26px ${font}`
   const items = record.items || []
   const itemLayouts = items.map((item, index) => {
-    const label = `${index + 1}. ${item.category === 'material' ? '物料' : '产品'} · ${item.productName || '—'}  × ${item.quantity}`
+    const estimate = transferEstimatedWeightLabel(item)
+    const label = `${index + 1}. ${item.category === 'material' ? '物料' : '产品'} · ${item.productName || '—'}  ${transferQuantityLabel(item)}${estimate ? ` · ${estimate}` : ''}`
     const lines = wrapCanvasText(measure, label, contentWidth - 32)
     return { item, lines, height: Math.max(58, lines.length * 34 + (item.note ? 30 : 12)) }
   })

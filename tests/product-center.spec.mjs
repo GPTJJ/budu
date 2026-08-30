@@ -31,6 +31,19 @@ test('编辑商品可独立控制三个业务开关并复用正式分类', async
   expect(request.body).not.toHaveProperty('image')
 })
 
+test('商品编辑可人工配置箱颗调拨规格', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByLabel('门店调拨').check()
+  await page.getByLabel('允许整箱调拨').check()
+  await page.getByLabel('整箱净重').fill('2500')
+  await page.getByLabel('允许散颗调拨').check()
+  await page.getByLabel('标准单颗重量').fill('6')
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ transferBoxEnabled: true, transferBoxWeightGrams: '2500', transferPieceEnabled: true, transferPieceWeightGrams: '6' })
+})
+
 test('商品中心列表只使用版本化 WebP 缩略图并延迟加载', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
   const row = page.locator('[data-product-id="p-pos"]')

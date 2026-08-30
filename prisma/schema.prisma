@@ -156,39 +156,43 @@ model DailyEntryAuditLog {
 }
 
 model InventoryItem {
-  id                   String              @id
-  name                 String              @unique
-  unit                 String              @default("")
-  spec                 String              @default("")
-  barcode              String              @default("")
-  category             String              @default("product")
-  image                String              @default("")
-  sku                  String?             @unique
-  posCategory          String              @default("")
-  salePriceCents       BigInt?
-  costPriceCents       BigInt?
-  isActive             Boolean             @default(false)
-  trackInventory       Boolean             @default(false)
-  sortOrder            Int                 @default(0)
-  transferCode         String?             @unique
-  transferEnabled      Boolean             @default(false)
-  transferSortOrder    Int                 @default(0)
-  partnerSupplyEnabled Boolean             @default(false)
-  productCategoryId    String?
-  productGroupId       String?
-  variantName          String              @default("")
-  version              Int                 @default(1)
-  updatedAt            DateTime            @default(now()) @updatedAt
-  createdAt            DateTime            @default(now())
-  balances             StockBalance[]
-  ledger               StockLedger[]
-  transferItems        TransferItem[]
-  purchaseItems        PurchaseItem[]
-  waste                WasteRecord[]
-  orderItems           OrderItem[]
-  partnerSupplyItems   PartnerSupplyItem[]
-  productCategory      ProductCategory?    @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
-  productGroup         ProductGroup?       @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
+  id                       String              @id
+  name                     String              @unique
+  unit                     String              @default("")
+  spec                     String              @default("")
+  barcode                  String              @default("")
+  category                 String              @default("product")
+  image                    String              @default("")
+  sku                      String?             @unique
+  posCategory              String              @default("")
+  salePriceCents           BigInt?
+  costPriceCents           BigInt?
+  isActive                 Boolean             @default(false)
+  trackInventory           Boolean             @default(false)
+  sortOrder                Int                 @default(0)
+  transferCode             String?             @unique
+  transferEnabled          Boolean             @default(false)
+  transferSortOrder        Int                 @default(0)
+  transferBoxEnabled       Boolean             @default(false)
+  transferBoxWeightGrams   Int?
+  transferPieceEnabled     Boolean             @default(false)
+  transferPieceWeightGrams Int?
+  partnerSupplyEnabled     Boolean             @default(false)
+  productCategoryId        String?
+  productGroupId           String?
+  variantName              String              @default("")
+  version                  Int                 @default(1)
+  updatedAt                DateTime            @default(now()) @updatedAt
+  createdAt                DateTime            @default(now())
+  balances                 StockBalance[]
+  ledger                   StockLedger[]
+  transferItems            TransferItem[]
+  purchaseItems            PurchaseItem[]
+  waste                    WasteRecord[]
+  orderItems               OrderItem[]
+  partnerSupplyItems       PartnerSupplyItem[]
+  productCategory          ProductCategory?    @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+  productGroup             ProductGroup?       @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
 
   @@index([productCategoryId])
   @@index([productGroupId])
@@ -553,6 +557,8 @@ model TransferItem {
   requestId                   String
   itemId                      String
   quantity                    Int
+  quantityUnit                String          @default("legacy")
+  unitWeightGramsSnapshot     Int?
   note                        String          @default("")
   itemNameSnapshot            String          @default("")
   itemCodeSnapshot            String          @default("")

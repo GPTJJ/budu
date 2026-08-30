@@ -22,6 +22,10 @@ const emptyForm = {
   barcode: '',
   isActive: true,
   transferEnabled: false,
+  transferBoxEnabled: false,
+  transferBoxWeightGrams: '',
+  transferPieceEnabled: false,
+  transferPieceWeightGrams: '',
   partnerSupplyEnabled: false,
   productGroupId: '',
   variantName: '',
@@ -333,6 +337,10 @@ export default function ProductCenterPage({ onBack, user }) {
         barcode: form.barcode,
         isActive: form.isActive,
         transferEnabled: form.transferEnabled,
+        transferBoxEnabled: form.transferBoxEnabled,
+        transferBoxWeightGrams: form.transferBoxEnabled ? form.transferBoxWeightGrams : '',
+        transferPieceEnabled: form.transferPieceEnabled,
+        transferPieceWeightGrams: form.transferPieceEnabled ? form.transferPieceWeightGrams : '',
         partnerSupplyEnabled: form.partnerSupplyEnabled,
         trackInventory: form.trackInventory,
         sortOrder: Number(form.sortOrder),
@@ -537,6 +545,7 @@ export default function ProductCenterPage({ onBack, user }) {
                 <label className="text-xs font-semibold text-slate-500">商品条码（可空）<input value={form.barcode} onChange={(e) => update('barcode', e.target.value)} className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">排序<input type="number" value={form.sortOrder} onChange={(e) => update('sortOrder', e.target.value)} className={inputClass} /></label>
                 <div className="space-y-2 rounded-2xl bg-budu-50 p-3 sm:col-span-2"><p className="text-xs font-black text-budu-800">业务用途（相互独立）</p><div className="grid gap-2 sm:grid-cols-3"><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="POS 销售" type="checkbox" checked={form.isActive} onChange={(e) => update('isActive', e.target.checked)} className="h-4 w-4 accent-budu-500" />POS 销售</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="门店调拨" type="checkbox" checked={form.transferEnabled} onChange={(e) => update('transferEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />门店调拨</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="合作商供货" type="checkbox" checked={form.partnerSupplyEnabled} onChange={(e) => update('partnerSupplyEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />合作商供货</label></div></div>
+                {form.transferEnabled && <div className="space-y-3 rounded-2xl border border-budu-100 bg-white p-4 sm:col-span-2"><div><p className="text-sm font-black text-slate-800">调拨规格</p><p className="mt-0.5 text-xs text-slate-400">箱和颗分别保存；重量只用于“约”估算</p></div><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm font-bold text-slate-700"><input aria-label="允许整箱调拨" type="checkbox" checked={form.transferBoxEnabled} onChange={(e) => update('transferBoxEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />允许整箱调拨</label>{form.transferBoxEnabled && <label className="mt-3 block text-xs font-semibold text-slate-500">整箱净重（g）<input required aria-label="整箱净重" type="number" min="1" max="9999999" inputMode="numeric" value={form.transferBoxWeightGrams ?? ''} onChange={(e) => update('transferBoxWeightGrams', e.target.value)} placeholder="2500" className={inputClass} /></label>}</div><div className="rounded-xl bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm font-bold text-slate-700"><input aria-label="允许散颗调拨" type="checkbox" checked={form.transferPieceEnabled} onChange={(e) => update('transferPieceEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />允许散颗调拨</label>{form.transferPieceEnabled && <label className="mt-3 block text-xs font-semibold text-slate-500">标准单颗重量（g）<input required aria-label="标准单颗重量" type="number" min="1" max="9999999" inputMode="numeric" value={form.transferPieceWeightGrams ?? ''} onChange={(e) => update('transferPieceWeightGrams', e.target.value)} placeholder="6" className={inputClass} /></label>}</div></div></div>}
                 <label className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm font-medium text-slate-600 sm:col-span-2"><input type="checkbox" checked={form.trackInventory} onChange={(e) => update('trackInventory', e.target.checked)} className="h-4 w-4 accent-budu-500" />参与库存（本阶段不扣减）</label>
               </div>
             </div>

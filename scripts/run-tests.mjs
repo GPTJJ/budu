@@ -56,6 +56,7 @@ const NODE_TEST_SUITE = [
   'test-mailing-qr-migration-rehearsal.mjs', // 48→49 additive migration 与旧应用读取回滚合同 → critical
   'test-store-transfer-draft.mjs', // 门店调拨 2.0 产品/物料草稿隔离、数量、历史状态展示
   'test-store-transfer-migration-rehearsal.mjs', // 49→50 additive migration 与历史调拨摘要/旧应用读取
+  'test-transfer-box-piece-migration-rehearsal.mjs', // 56→57 additive 箱/颗真实单位与历史 quantity 保护
   'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
   'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
   'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
@@ -110,6 +111,7 @@ const DIRECT_SUITE = [
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-partner-supply-workflow.mjs', // 合作商供货价格快照/发货/多笔收款/通知/零库存副作用 → critical
   'test-unified-product-center-workflow.mjs', // 单一 InventoryItem、独立业务开关、批量管理与稳定身份 → critical
+  'test-transfer-box-piece-workflow.mjs', // 箱/颗独立持久化、混合调拨、普通 quantity 兼容 → critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
   'test-payroll-integration.mjs',   // Payroll 集成（Vite 内存服务）→ critical
@@ -147,6 +149,7 @@ const CRITICAL_DIRECT = [
   'test-inventory-workflow.mjs',
   'test-partner-supply-workflow.mjs',
   'test-unified-product-center-workflow.mjs',
+  'test-transfer-box-piece-workflow.mjs',
   'test-payroll.mjs',
   'test-approval-engine.mjs',
   'test-payroll-integration.mjs',
@@ -173,6 +176,7 @@ const CRITICAL_NODE_TEST = [
   'test-mailing-qr-migration-rehearsal.mjs',
   'test-store-transfer-draft.mjs',
   'test-store-transfer-migration-rehearsal.mjs',
+  'test-transfer-box-piece-migration-rehearsal.mjs',
   'test-product-material-migration-rehearsal.mjs',
   'test-product-material-contract.mjs',
   'test-product-category-migration-rehearsal.mjs',
