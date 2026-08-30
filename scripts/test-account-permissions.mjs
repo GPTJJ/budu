@@ -6,6 +6,8 @@ import {
   canAccessTransferStore,
   canManageAccounts,
   canManageTransferStore,
+  DAILY_ENTRY_CAPABILITIES,
+  hasDailyEntryCapability,
   hasInventoryTransferAll,
   hasPageAccess,
   normalizeAccountPermissions,
@@ -91,4 +93,29 @@ test('Developer 保留操作不向管理员或财务开放', () => {
   assert.equal(canManageAccounts({ role: 'admin' }), false)
   assert.equal(canManageAccounts({ role: 'finance' }), false)
   assert.equal(canManageAccounts({ role: 'developer', status: 'disabled' }), false)
+})
+
+test('每日录入 view/edit/confirm/revise 能力在现有 JSON 权限中独立表达', () => {
+  const staff = { role: 'staff', storeKeys: ['guanshe'] }
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.VIEW), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.EDIT), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.CONFIRM), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.REVISE), false)
+
+  const manager = { role: 'manager', storeKeys: ['guanshe'] }
+  assert.equal(hasDailyEntryCapability(manager, DAILY_ENTRY_CAPABILITIES.REVISE), true)
+
+  const limited = {
+    role: 'manager',
+    storeKeys: ['guanshe'],
+    permissions: {
+      modules: { 'store-entry': true },
+      dailyEntry: { view: true, edit: false, confirm: true, revise: false },
+    },
+  }
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.VIEW), true)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.EDIT), false)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.CONFIRM), true)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.REVISE), false)
+  assert.equal(hasDailyEntryCapability({ role: 'cashier', permissions: { dailyEntry: { confirm: true } } }, DAILY_ENTRY_CAPABILITIES.CONFIRM), false)
 })

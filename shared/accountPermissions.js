@@ -83,7 +83,48 @@ const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MO
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
+  DAILY_ENTRY: 'dailyEntry',
 })
+
+export const DAILY_ENTRY_CAPABILITIES = Object.freeze({
+  VIEW: 'view',
+  EDIT: 'edit',
+  CONFIRM: 'confirm',
+  REVISE: 'revise',
+})
+
+export const DAILY_ENTRY_CAPABILITY_OPTIONS = Object.freeze([
+  { key: DAILY_ENTRY_CAPABILITIES.VIEW, label: '查看每日录入' },
+  { key: DAILY_ENTRY_CAPABILITIES.EDIT, label: '编辑未确认录入' },
+  { key: DAILY_ENTRY_CAPABILITIES.CONFIRM, label: '确认当日录入' },
+  { key: DAILY_ENTRY_CAPABILITIES.REVISE, label: '修正已确认历史' },
+])
+
+function defaultDailyEntryCapabilities(role, modules) {
+  const moduleEnabled = modules[MODULE_KEYS.STORE_ENTRY] === true
+  const elevated = ['developer', 'admin', 'finance', 'manager'].includes(role)
+  return {
+    [DAILY_ENTRY_CAPABILITIES.VIEW]: moduleEnabled,
+    [DAILY_ENTRY_CAPABILITIES.EDIT]: moduleEnabled,
+    [DAILY_ENTRY_CAPABILITIES.CONFIRM]: moduleEnabled,
+    [DAILY_ENTRY_CAPABILITIES.REVISE]: moduleEnabled && elevated,
+  }
+}
+
+function normalizeDailyEntryCapabilities(value, role, modules) {
+  if (role === 'developer') {
+    return Object.fromEntries(Object.values(DAILY_ENTRY_CAPABILITIES).map((key) => [key, true]))
+  }
+  if (role === 'cashier' || role === 'public') {
+    return Object.fromEntries(Object.values(DAILY_ENTRY_CAPABILITIES).map((key) => [key, false]))
+  }
+  const defaults = defaultDailyEntryCapabilities(role, modules)
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null
+  return Object.fromEntries(Object.values(DAILY_ENTRY_CAPABILITIES).map((key) => [
+    key,
+    source && Object.prototype.hasOwnProperty.call(source, key) ? source[key] === true : defaults[key],
+  ]))
+}
 
 export function defaultModuleKeys(role, legacyAssetCenter = false) {
   if (role === 'developer' || role === 'admin' || role === 'finance') return [...ALL_MODULE_KEYS]
@@ -109,11 +150,17 @@ function normalizeModules(value, role, legacyAssetCenter) {
 
 export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCenter = false) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const modules = normalizeModules(source.modules, role, legacyAssetCenter)
   return {
-    modules: normalizeModules(source.modules, role, legacyAssetCenter),
+    modules,
     [ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]:
       source[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL] === true,
     [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
+    [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY]: normalizeDailyEntryCapabilities(
+      source[ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY],
+      role,
+      modules,
+    ),
   }
 }
 
@@ -134,12 +181,18 @@ export function hasModuleAccess(user, moduleKey) {
   return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).modules[moduleKey] === true
 }
 
+export function hasDailyEntryCapability(user, capability) {
+  if (!user || user.status === 'disabled' || !Object.values(DAILY_ENTRY_CAPABILITIES).includes(capability)) return false
+  return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
+    [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY][capability] === true
+}
+
 export function hasAnyModuleAccess(user, moduleKeys) {
   return Array.isArray(moduleKeys) && moduleKeys.some((key) => hasModuleAccess(user, key))
 }
 
 export function firstAccessibleModule(user) {
-  return ALL_MODULE_KEYS.find((key) => hasModuleAccess(user, key)) || ''
+  return ALL_MODULE_KEYS.find((key) => hasPageAccess(user, key)) || ''
 }
 
 export function hasInventoryTransferAll(user) {
@@ -164,6 +217,9 @@ export function canManageAccounts(user) {
 /** 页面访问判定：账号治理是开发者保留能力，不属于可授权业务版块。 */
 export function hasPageAccess(user, pageKey) {
   if (pageKey === 'account-admin') return canManageAccounts(user)
+  if (pageKey === MODULE_KEYS.STORE_ENTRY) {
+    return hasModuleAccess(user, pageKey) && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.VIEW)
+  }
   return hasModuleAccess(user, pageKey)
 }
 

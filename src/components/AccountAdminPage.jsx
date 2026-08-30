@@ -4,7 +4,15 @@ import { api } from '../utils/api'
 import { allStores, currentEmployeeDirectory, storeName } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { t } from '../utils/text'
-import { ACTIVE_ROLES, MODULE_GROUPS, ROLE_LABELS, defaultModuleKeys } from '../../shared/accountPermissions'
+import {
+  ACTIVE_ROLES,
+  DAILY_ENTRY_CAPABILITIES,
+  DAILY_ENTRY_CAPABILITY_OPTIONS,
+  MODULE_GROUPS,
+  ROLE_LABELS,
+  defaultModuleKeys,
+  normalizeAccountPermissions,
+} from '../../shared/accountPermissions'
 
 const inputCls = 'input'
 
@@ -420,6 +428,7 @@ function PermissionModal({ user, onClose, onSaved }) {
   const initialModules = user.permissions?.modules || {}
   const [modules, setModules] = useState(initialModules)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
+  const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -433,7 +442,9 @@ function PermissionModal({ user, onClose, onSaved }) {
   }
   const resetDefaults = () => {
     const defaults = new Set(defaultModuleKeys(user.role, user.assetCenter === true))
-    setModules(Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)])))
+    const nextModules = Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)]))
+    setModules(nextModules)
+    setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
   }
   const submit = async () => {
     setBusy(true)
@@ -441,7 +452,7 @@ function PermissionModal({ user, onClose, onSaved }) {
     try {
       await api(`/admin/users/${user.id}/permissions`, {
         method: 'PUT',
-        body: JSON.stringify({ modules, inventoryTransferAll: transferAll }),
+        body: JSON.stringify({ modules, inventoryTransferAll: transferAll, dailyEntry }),
       })
       await onSaved()
       try {
@@ -494,6 +505,28 @@ function PermissionModal({ user, onClose, onSaved }) {
             <input type="checkbox" checked={transferAll} onChange={(e) => setTransferAll(e.target.checked)} className="h-4 w-4 accent-amber-500" />
             {t('允许管理全部门店的库存调拨（不受账号门店绑定限制）')}
           </label>
+        )}
+        {modules['store-entry'] === true && (
+          <section className="mt-3 rounded-2xl border border-budu-100 bg-budu-50/60 p-3">
+            <p className="text-sm font-bold text-slate-700">{t('每日录入操作权限')}</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('编辑、确认与历史修正分开授权；门店范围仍受账号绑定限制。')}</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {DAILY_ENTRY_CAPABILITY_OPTIONS.map((item) => (
+                <label key={item.key} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={dailyEntry[item.key] === true}
+                    onChange={(event) => setDailyEntry((current) => ({ ...current, [item.key]: event.target.checked }))}
+                    className="h-4 w-4 accent-budu-500"
+                  />
+                  {t(item.label)}
+                </label>
+              ))}
+            </div>
+            {dailyEntry[DAILY_ENTRY_CAPABILITIES.REVISE] && (
+              <p className="mt-2 text-[11px] font-semibold text-amber-700">{t('历史修正必须经受控流程并写入审计日志。')}</p>
+            )}
+          </section>
         )}
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}

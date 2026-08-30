@@ -13,9 +13,11 @@ import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
 import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
+  DAILY_ENTRY_CAPABILITIES,
   canAccessTransferStore,
   canManageAccounts,
   canManageTransferStore,
+  hasDailyEntryCapability,
   hasModuleAccess,
   hasInventoryTransferAll,
   isSuperUser,
@@ -583,7 +585,7 @@ v2Router.get('/daily-entries', wrap(async (req, res) => {
 v2Router.put('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date, incCents, ord, staffNames, version } = req.body || {}
-  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw bad('无权限', 403)
   const store = await prisma.store.findUnique({ where: { key: storeKey } })
   const effDate = store?.salesDataSourceEffectiveDate ? store.salesDataSourceEffectiveDate.toISOString().slice(0, 10) : ''
   const source = store?.salesDataSource === 'manual' || (effDate && date && String(date).slice(0, 10) < effDate)
@@ -602,10 +604,10 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const composite = { storeKey, date: d }
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: composite } })
-  if (existing?.status === 'confirmed' && !isSuperUser(req.user) && req.user.role !== 'manager') {
-    throw bad('日报已确认，普通员工不可修改', 409)
+  if (existing?.status === 'confirmed' && !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) {
+    throw bad('日报已确认，当前账号无历史修正权限', 409)
   }
-  if (existing && ((existing.active && version == null) || (version != null && existing.version !== Number(version)))) {
+  if (existing && (version == null || existing.version !== Number(version))) {
     return res.status(409).json({
       error: '数据已被他人修改，已加载最新数据',
       latest: {
@@ -663,10 +665,11 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
 v2Router.delete('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date } = req.body || {}
-  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
-  if (req.user.role === 'public') throw bad('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw bad('无权限', 403)
   const d = dateOnly(date)
-  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d } })
+  const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+  if (existing?.status === 'confirmed') throw bad('已确认每日录入是工资与经营历史事实，禁止硬删除', 409)
+  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d, status: 'draft' } })
   res.json({ ok: true, deleted: result.count })
 }))
 

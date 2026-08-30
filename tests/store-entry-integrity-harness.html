@@ -26,6 +26,10 @@
       window.__storeEntryTimeline = []
       window.__overviewPlans = new Map()
       window.__writes = []
+      window.__confirmFailure = false
+      window.__moduleLeft = false
+      let navigationGuard = null
+      window.__requestModuleLeave = () => navigationGuard?.(() => { window.__moduleLeft = true })
       window.__releaseSharedRefresh = () => releaseLegacy(json({ analysis: {}, productImages: {} }))
       window.__triggerSharedRefresh = () => loadUserData({ userId: 'dev-store-integrity' })
       window.__resetSharedRefresh = () => {
@@ -67,6 +71,11 @@
         substitutes: [{ participantUserId: 'user-sub', label: '卡皮巴拉', participantType: 'NON_EMPLOYEE_SUBSTITUTE', priorityGroup: 4 }],
       }
 
+      const participantLabel = (body) => {
+        if (body.employeeId) return participants.employees.find((row) => row.employeeId === body.employeeId)?.label || body.employeeId
+        return participants.substitutes.find((row) => row.participantUserId === body.participantUserId)?.label || body.participantUserId
+      }
+
       resetUserData()
       prepareUserDataForUser('dev-store-integrity')
       window.fetch = async (url, options = {}) => {
@@ -74,7 +83,30 @@
         const method = options.method || 'GET'
         window.__storeEntryTimeline.push({ event: 'request', path, method, at: performance.now() })
         if (method !== 'GET') {
-          window.__writes.push({ path, method, body: options.body ? JSON.parse(options.body) : null })
+          const body = options.body ? JSON.parse(options.body) : null
+          window.__writes.push({ path, method, body })
+          if (path === '/api/v2/daily-entry/confirm') {
+            if (window.__confirmFailure) return json({ error: '数据已被其他用户更新，请刷新后重新核对' }, 409)
+            const staff = (body.items || []).map((item, index) => ({
+              id: `saved-${index}`,
+              employeeId: item.employeeId || '', participantUserId: item.participantUserId || '',
+              participantType: item.employeeId ? 'EMPLOYEE' : 'NON_EMPLOYEE_SUBSTITUTE',
+              staffId: item.employeeId ? `employee:${item.employeeId}` : `user:${item.participantUserId}`,
+              staffName: participantLabel(item), actualHours: Number(item.actualHours), historicalPayrollHours: null,
+              payableHoursSource: 'ACTUAL_HOURS', breakMinutes: Number(item.breakMinutes || 0), attendanceStatus: 'normal',
+              scheduledStartTime: '', scheduledEndTime: '', actualStartTime: '', actualEndTime: '',
+            }))
+            return json({
+              ok: true, salesDataSource: 'manual', staff,
+              entry: {
+                id: `de-${body.storeKey}-${body.date}`, storeKey: body.storeKey, date: body.date,
+                status: 'confirmed', version: Number(body.version || 0) + 1,
+                incCents: String(body.manualSales?.incCents || 0), ord: Number(body.manualSales?.ord || 0),
+                staffNames: staff.map((row) => row.staffName), hybridAdjustmentCents: '0', hybridAdjustmentNote: '',
+                confirmedAt: new Date().toISOString(), confirmedBy: 'developer',
+              },
+            })
+          }
           return json({ ok: true })
         }
         if (path === '/api/userdata') return legacyPromise
@@ -106,6 +138,7 @@
       createRoot(document.getElementById('root')).render(React.createElement(StoreEntryPage, {
         user: { id: 'dev-store-integrity', username: 'developer', role: 'developer', storeKeys: [] },
         onBack: () => {},
+        registerNavigationGuard: (guard) => { navigationGuard = guard },
       }))
     </script>
   </body>

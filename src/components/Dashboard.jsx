@@ -96,16 +96,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const [pendingPosOrder, setPendingPosOrder] = useState(null)
   // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
   const viewStackRef = useRef([])
-  // 排班页在本地有未保存 draft 时，用自定义确认框统一拦截侧栏、底栏、返回与刷新。
-  const scheduleNavigationGuardRef = useRef(null)
-  const registerScheduleNavigationGuard = useCallback((guard) => {
-    scheduleNavigationGuardRef.current = guard
+  // 页面本地 draft 未保存时，统一拦截侧栏、底栏、返回与刷新。
+  const pageNavigationGuardRef = useRef(null)
+  const registerPageNavigationGuard = useCallback((guard) => {
+    pageNavigationGuardRef.current = guard
   }, [])
 
   const runNavigationGuard = (action) => {
-    if (view === 'store-schedule' && scheduleNavigationGuardRef.current) {
-      return scheduleNavigationGuardRef.current(action)
-    }
+    if (pageNavigationGuardRef.current) return pageNavigationGuardRef.current(action)
     return action()
   }
 
@@ -357,13 +355,13 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               ) : isPayrollView && hasModuleAccess(user, 'staff-payroll') ? (
                 <PayrollPage user={user} onBack={returnToOverview} onOpenProfile={openEmployeeProfile} />
               ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
-                <StoreEntryPage user={user} onBack={returnToOverview} />
+                <StoreEntryPage user={user} onBack={returnToOverview} registerNavigationGuard={registerPageNavigationGuard} />
               ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (
                 <SchedulePage
                   user={user}
                   onBack={returnToOverview}
                   canEdit={user?.role !== 'public' && user?.role !== 'staff'}
-                  registerNavigationGuard={registerScheduleNavigationGuard}
+                  registerNavigationGuard={registerPageNavigationGuard}
                 />
               ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
                 <StoreMailingPage currentUser={user} onBack={returnToOverview} />

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, Save, ShieldAlert, Trash2, Users, WalletCards,
+  ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, ShieldAlert, Trash2, Users, WalletCards,
 } from 'lucide-react'
 import {
-  allStores, currentEmployeeDirectory, dailyRows, dailyStoreStaffRows, monthLabel, localEntries, deleteLocalEntry,
+  allStores, currentEmployeeDirectory, dailyRows, dailyStoreStaffRows, monthLabel, localEntries,
 } from '../utils/selectors'
 import { formatMoney } from '../utils/format'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
@@ -12,10 +12,11 @@ import {
   getDailyStoreStaffMonthState, loadDailyStoreStaffMonth, loadUserData, onUserDataUpdated,
 } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
-import { dutyHours } from '../utils/payroll'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
 import { resolvePerformanceDutyStaff } from '../utils/storeEntryParticipantDisplay'
+import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability } from '../../shared/accountPermissions'
+import { OverlayPanel, OverlayViewport } from './overlay/OverlayPrimitives'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -140,8 +141,7 @@ function StaffMultiSelect({ participants, selectedRows, onToggle, disabled }) {
   )
 }
 
-export default function StoreEntryPage({ user, onBack }) {
-  const isManager = ['developer', 'admin', 'finance', 'manager'].includes(user?.role)
+export default function StoreEntryPage({ user, onBack, registerNavigationGuard }) {
   // 门店范围：与全局 Header 同口径——超管/财务/管理员全量，其余角色仅限账号绑定门店
   const visibleStores = useMemo(() => {
     if (user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin') return allStores()
@@ -162,8 +162,8 @@ export default function StoreEntryPage({ user, onBack }) {
   const [exportOpen, setExportOpen] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [, setVersion] = useState(0)
-  const [adjustCents, setAdjustCents] = useState('')
-  const [adjustNote, setAdjustNote] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [discardOpen, setDiscardOpen] = useState(false)
   const [authorityStatus, setAuthorityStatus] = useState('loading')
   const [loadedAuthorityKey, setLoadedAuthorityKey] = useState('')
   const [refreshNotice, setRefreshNotice] = useState('')
@@ -172,8 +172,8 @@ export default function StoreEntryPage({ user, onBack }) {
   const loadedAuthorityRef = useRef('')
   const requestSequenceRef = useRef(0)
   const latestRequestRef = useRef(0)
-  const manualDirtyRef = useRef(false)
-  const staffMutationRef = useRef(false)
+  const dirtyRef = useRef(false)
+  const pendingTransitionRef = useRef(null)
   const loadOverviewRef = useRef(null)
 
   const currentAuthorityKey = authorityKey(user?.id, store, date)
@@ -199,9 +199,12 @@ export default function StoreEntryPage({ user, onBack }) {
   const salesDataStatus = overview?.salesDataStatus || 'waiting_input'
   const pos = overview?.pos || null
   const adjustmentCents = overview?.entry ? BigInt(overview.entry.hybridAdjustmentCents) : 0n
-  const canEditSales = source === 'manual' || (source === 'hybrid' && isManager)
+  const canEdit = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
+  const canConfirm = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
+  const canRevise = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE)
+  const canEditSales = source === 'manual' && canEdit && !confirmed
   const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
-  const canEditStaff = (!confirmed || isManager) && !hasHistoricalStaff
+  const canEditStaff = canEdit && !confirmed && !hasHistoricalStaff
   const authorityReady = authorityStatus === 'loaded' && loadedAuthorityKey === currentAuthorityKey
 
   const loadOverviewFor = useCallback(async (authority, options = {}) => {
@@ -235,7 +238,7 @@ export default function StoreEntryPage({ user, onBack }) {
         })),
         ...(directory.substitutes || []).map((row) => ({ ...row, label: row.label })),
       ])
-      if (options.mode === 'background' && (manualDirtyRef.current || staffMutationRef.current)) {
+      if (options.mode === 'background' && dirtyRef.current) {
         setRefreshNotice('服务器有新数据可刷新；当前未保存编辑已保留。')
         return { preservedDirty: true }
       }
@@ -244,6 +247,8 @@ export default function StoreEntryPage({ user, onBack }) {
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord ?? '') : '')
       setStaffRows(serializeStaffRows(data.staff))
+      dirtyRef.current = false
+      setDirty(false)
       setAuthorityStatus('loaded')
       loadedAuthorityRef.current = authority.key
       setLoadedAuthorityKey(authority.key)
@@ -268,8 +273,8 @@ export default function StoreEntryPage({ user, onBack }) {
     const authority = { ...selectedAuthorityRef.current }
     latestRequestRef.current = requestSequenceRef.current + 1
     requestSequenceRef.current = latestRequestRef.current
-    manualDirtyRef.current = false
-    staffMutationRef.current = false
+    dirtyRef.current = false
+    setDirty(false)
     loadedAuthorityRef.current = ''
     setLoadedAuthorityKey('')
     setAuthorityStatus('loading')
@@ -301,6 +306,16 @@ export default function StoreEntryPage({ user, onBack }) {
     loadDailyStoreStaffMonth(month).catch(() => {})
   }, [month, user?.id])
 
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!dirtyRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
   const refreshAll = async () => {
     await loadUserData().catch(() => {})
   }
@@ -316,14 +331,36 @@ export default function StoreEntryPage({ user, onBack }) {
     return authority
   }
 
-  const markManualDirty = () => {
-    manualDirtyRef.current = true
+  const markDirty = () => {
+    dirtyRef.current = true
+    setDirty(true)
     setRefreshNotice('')
   }
 
+  const requestTransition = useCallback((action) => {
+    if (!dirtyRef.current) return action?.()
+    pendingTransitionRef.current = action
+    setDiscardOpen(true)
+    return undefined
+  }, [])
+
+  useEffect(() => {
+    registerNavigationGuard?.(requestTransition)
+    return () => registerNavigationGuard?.(null)
+  }, [registerNavigationGuard, requestTransition])
+
+  const continueAfterDiscard = () => {
+    const action = pendingTransitionRef.current
+    pendingTransitionRef.current = null
+    dirtyRef.current = false
+    setDirty(false)
+    setDiscardOpen(false)
+    action?.()
+  }
+
   const retryCurrentAuthority = () => {
-    manualDirtyRef.current = false
-    staffMutationRef.current = false
+    dirtyRef.current = false
+    setDirty(false)
     loadedAuthorityRef.current = ''
     setLoadedAuthorityKey('')
     setAuthorityStatus('loading')
@@ -340,85 +377,6 @@ export default function StoreEntryPage({ user, onBack }) {
   const tip = (message, ok = true) => {
     setSavedTip(message)
     setTimeout(() => setSavedTip(''), 2500)
-  }
-
-  const saveManual = async () => {
-    const authority = requireLoadedAuthority()
-    if (!authority) return
-    if (!authority.date || (inc === '' && ord === '')) {
-      tip(t('请至少填写营业收入或订单数'), false)
-      return
-    }
-    setSaving('manual')
-    setError('')
-    try {
-      await api('/v2/daily-entries', {
-        method: 'PUT',
-        body: JSON.stringify({
-          storeKey: authority.store,
-          date: authority.date,
-          incCents: Number(yuanToCents(inc)),
-          ord: Number(ord) || 0,
-          staffNames: staffRows.map((row) => row.staffName),
-          version: overview?.entry?.version,
-        }),
-      })
-      manualDirtyRef.current = false
-      await refreshAll()
-      await reloadCurrentAuthority()
-      setFeedback({ title: t('提交成功'), description: t('今日数据已保存') })
-    } catch (e) {
-      setError(e.message)
-      if (e.data?.latest) {
-        setOverview((current) => ({ ...current, entry: { ...(current?.entry || {}), ...e.data.latest, hybridAdjustmentCents: '0', hybridAdjustmentNote: '' } }))
-      }
-    } finally {
-      setSaving('')
-    }
-  }
-
-  const persistStaff = async (nextRows) => {
-    const authority = requireLoadedAuthority()
-    if (!authority) return
-    if (hasHistoricalStaff) {
-      setError('历史计薪工时为只读记录，不能在每日门店录入中修改')
-      return
-    }
-    setSaving('staff')
-    setError('')
-    try {
-      await api('/v2/daily-staff', {
-        method: 'PUT',
-        body: JSON.stringify({
-          storeKey: authority.store,
-          date: authority.date,
-          items: nextRows.filter((row) => row.employeeId || row.participantUserId).map((row) => ({
-            employeeId: row.employeeId || undefined,
-            participantUserId: row.participantUserId || undefined,
-            scheduledStartTime: row.scheduledStartTime,
-            scheduledEndTime: row.scheduledEndTime,
-            actualStartTime: '',
-            actualEndTime: '',
-            breakMinutes: 0,
-            actualHours: row.actualHours,
-            attendanceStatus: 'normal',
-          })),
-          reason: '值班人员选择',
-        }),
-      })
-      if (selectedAuthorityRef.current?.key === authority.key) staffMutationRef.current = false
-      // 值班人员本地已乐观更新，不再全量刷新（避免连续点选卡顿、界面闪断与请求竞态）
-      tip(t('值班人员已保存 ✓'))
-    } catch (e) {
-      setError(e.message)
-      tip(t('值班人员保存失败，已恢复'), false)
-      if (selectedAuthorityRef.current?.key === authority.key) {
-        staffMutationRef.current = false
-        await reloadCurrentAuthority()
-      }
-    } finally {
-      setSaving('')
-    }
   }
 
   const toggleStaff = (participant) => {
@@ -443,16 +401,16 @@ export default function StoreEntryPage({ user, onBack }) {
         actualStartTime: '',
         actualEndTime: '',
         breakMinutes: 0,
-        actualHours: 0,
+        actualHours: '',
         attendanceStatus: 'normal',
       }]
-    const hours = dutyHours(store, nextRows.length, storeInfo?.name)
-    const withHours = nextRows.map((row) => ({ ...row, actualHours: hours }))
-    latestRequestRef.current = requestSequenceRef.current + 1
-    requestSequenceRef.current = latestRequestRef.current
-    staffMutationRef.current = true
-    setStaffRows(withHours)
-    persistStaff(withHours)
+    setStaffRows(nextRows)
+    markDirty()
+  }
+
+  const updateActualHours = (staffId, value) => {
+    setStaffRows((current) => current.map((row) => row.staffId === staffId ? { ...row, actualHours: value } : row))
+    markDirty()
   }
 
   const confirmEntry = async () => {
@@ -461,56 +419,33 @@ export default function StoreEntryPage({ user, onBack }) {
     setSaving('confirm')
     setError('')
     try {
-      await api('/v2/daily-entry/confirm', { method: 'POST', body: JSON.stringify({ storeKey: authority.store, date: authority.date, reason: '闭店确认' }) })
-      await refreshAll()
-      await reloadCurrentAuthority()
-      tip(t('今日营业数据已确认 ✓'))
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSaving('')
-    }
-  }
-
-  const unconfirmEntry = async () => {
-    const authority = requireLoadedAuthority()
-    if (!authority) return
-    setSaving('confirm')
-    setError('')
-    try {
-      await api('/v2/daily-entry/unconfirm', { method: 'POST', body: JSON.stringify({ storeKey: authority.store, date: authority.date, reason: '管理员取消确认' }) })
-      await refreshAll()
-      await reloadCurrentAuthority()
-      tip(t('已取消确认，可继续修改'))
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSaving('')
-    }
-  }
-
-  const saveAdjust = async () => {
-    const authority = requireLoadedAuthority()
-    if (!authority) return
-    setSaving('adjust')
-    setError('')
-    try {
-      await api('/v2/daily-entry/adjust', {
+      const result = await api('/v2/daily-entry/confirm', {
         method: 'POST',
         body: JSON.stringify({
           storeKey: authority.store,
           date: authority.date,
-          adjustmentCents: Number(yuanToCents(adjustCents || '0')),
-          note: adjustNote,
-          reason: '营业数据调整',
+          version: overview?.entry?.version || 0,
+          ...(source === 'manual' ? { manualSales: { incCents: Number(yuanToCents(inc)), ord: Number(ord) } } : {}),
+          items: staffRows.map((row) => ({
+            employeeId: row.employeeId || undefined,
+            participantUserId: row.participantUserId || undefined,
+            actualStartTime: row.actualStartTime || '',
+            actualEndTime: row.actualEndTime || '',
+            breakMinutes: Number(row.breakMinutes || 0),
+            actualHours: row.actualHours,
+            attendanceStatus: row.attendanceStatus || 'normal',
+          })),
+          reason: '确认今日录入',
         }),
       })
-      setAdjustCents('')
-      setAdjustNote('')
-      manualDirtyRef.current = false
+      dirtyRef.current = false
+      setDirty(false)
+      setOverview((current) => ({ ...current, entry: result.entry, staff: result.staff, salesDataSource: result.salesDataSource, ...(result.pos ? { pos: result.pos } : {}) }))
+      overviewRef.current = { ...(overviewRef.current || {}), entry: result.entry, staff: result.staff }
+      setStaffRows(serializeStaffRows(result.staff))
       await refreshAll()
       await reloadCurrentAuthority()
-      tip(t('营业数据调整已保存 ✓'))
+      setFeedback({ title: t('确认成功'), description: t('今日营业与实际值班事实已一次确认') })
     } catch (e) {
       setError(e.message)
     } finally {
@@ -519,16 +454,16 @@ export default function StoreEntryPage({ user, onBack }) {
   }
 
   const handleEdit = (r) => {
-    setDate(`${month}-${r.d}`)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    requestTransition(() => {
+      setDate(`${month}-${r.d}`)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    })
   }
 
   const handleDelete = async (d) => {
     if (!window.confirm(t('确定删除该日业绩吗？删除后不可恢复'))) return
     setError('')
     try {
-      // PG 权威删除（KV 不再先写；失败显式提示）
-      await deleteLocalEntry(month, store, d)
       await api('/v2/daily-entries', {
         method: 'DELETE',
         body: JSON.stringify({ storeKey: store, date: `${month}-${d.slice(3)}` }),
@@ -580,6 +515,7 @@ export default function StoreEntryPage({ user, onBack }) {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {statusBadge()}
+          {dirty && <span data-testid="daily-entry-dirty" className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">有未确认修改</span>}
           {confirmed && <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">已确认{overview?.entry?.confirmedBy ? ` · ${overview.entry.confirmedBy}` : ''}</span>}
           <button onClick={() => setExportOpen(true)} className="btn-secondary px-3 py-2"><FileSpreadsheet className="h-4 w-4 text-budu-600" />{t('表格导出')}</button>
         </div>
@@ -589,7 +525,7 @@ export default function StoreEntryPage({ user, onBack }) {
       {refreshNotice && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           <span>{refreshNotice}</span>
-          <button type="button" onClick={retryCurrentAuthority} className="whitespace-nowrap rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold">重新加载</button>
+          <button type="button" onClick={() => requestTransition(retryCurrentAuthority)} className="whitespace-nowrap rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold">重新加载</button>
         </div>
       )}
       {savedTip && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-600">{savedTip}</div>}
@@ -607,12 +543,12 @@ export default function StoreEntryPage({ user, onBack }) {
       <div className="card p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={t('门店')} icon={Building2}>
-            <select value={store} onChange={(e) => setStore(e.target.value)} className={inputCls}>
+            <select value={store} onChange={(e) => { const next = e.target.value; requestTransition(() => setStore(next)) }} className={inputCls}>
               {visibleStores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
             </select>
           </Field>
           <Field label={t('日期')} icon={CalendarDays}>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+            <input type="date" value={date} onChange={(e) => { const next = e.target.value; requestTransition(() => setDate(next)) }} className={inputCls} />
           </Field>
           <div className="flex items-end">
             <p className="text-xs text-slate-400">
@@ -629,7 +565,7 @@ export default function StoreEntryPage({ user, onBack }) {
         ) : authorityStatus === 'error' || !authorityReady ? (
           <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3">
             <p className="text-sm font-semibold text-rose-600">当前门店/日期的数据未完整加载，页面不会以 0 或空值代替。</p>
-            <button type="button" onClick={retryCurrentAuthority} className="mt-3 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm">重试加载</button>
+            <button type="button" onClick={() => requestTransition(retryCurrentAuthority)} className="mt-3 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm">重试加载</button>
           </div>
         ) : source === 'pos' || source === 'hybrid' ? (
           <>
@@ -656,21 +592,15 @@ export default function StoreEntryPage({ user, onBack }) {
             ) : (
               <p className="mt-3 text-sm text-slate-400">POS 数据同步中…</p>
             )}
-            {source === 'hybrid' && isManager && (
-              <div className="mt-4 grid grid-cols-1 gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 md:grid-cols-3">
-                <label className="text-xs font-semibold text-slate-500">调整金额（元，可正可负）<input inputMode="decimal" value={adjustCents} onChange={(e) => { markManualDirty(); setAdjustCents(e.target.value) }} placeholder="0.00" className={`mt-1 ${inputCls}`} /></label>
-                <label className="text-xs font-semibold text-slate-500">调整说明<input value={adjustNote} onChange={(e) => { markManualDirty(); setAdjustNote(e.target.value) }} placeholder="例如：POS 缺单补录" className={`mt-1 ${inputCls}`} /></label>
-                <div className="flex items-end"><button onClick={saveAdjust} disabled={saving === 'adjust' || !authorityReady} className="w-full rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving === 'adjust' ? '保存中…' : '保存调整'}</button></div>
-              </div>
-            )}
+            {source === 'hybrid' && canRevise && <p className="mt-3 text-xs text-slate-400">POS 调整属于受控历史修正，不在本次当日原子确认中修改。</p>}
           </>
         ) : (
           <>
             <p className="mt-2 text-xs text-slate-400">{salesDataStatus === 'waiting_input' ? '等待门店录入' : '营业数据已录入'}</p>
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={t('营业收入（元）')}><input type="number" step="0.01" min="0" value={inc} onChange={(e) => { markManualDirty(); setInc(e.target.value) }} placeholder="0.00" disabled={!authorityReady || !canEditSales || (confirmed && !isManager)} className={inputCls} /></Field>
-              <Field label={t('订单数（单）')}><input type="number" step="1" min="0" value={ord} onChange={(e) => { markManualDirty(); setOrd(e.target.value) }} placeholder="0" disabled={!authorityReady || !canEditSales || (confirmed && !isManager)} className={inputCls} /></Field>
-              <div className="flex items-end"><button onClick={saveManual} disabled={saving === 'manual' || !authorityReady || !canEditSales || (confirmed && !isManager)} className="w-full rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="mr-1 inline h-4 w-4" />{saving === 'manual' ? '保存中…' : '保存营业数据'}</button></div>
+              <Field label={t('营业收入（元）')}><input type="number" step="0.01" min="0" value={inc} onChange={(e) => { markDirty(); setInc(e.target.value) }} placeholder="0.00" disabled={!authorityReady || !canEditSales} className={inputCls} /></Field>
+              <Field label={t('订单数（单）')}><input type="number" step="1" min="0" value={ord} onChange={(e) => { markDirty(); setOrd(e.target.value) }} placeholder="0" disabled={!authorityReady || !canEditSales} className={inputCls} /></Field>
+              <div className="flex items-end"><p className="rounded-xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">本地修改不会自动保存，最终确认时与实际值班事实一次提交。</p></div>
             </div>
           </>
         )}
@@ -679,7 +609,7 @@ export default function StoreEntryPage({ user, onBack }) {
       <section className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-[15px] font-bold text-slate-800">今日值班</h3>
-          {saving === 'staff' && <span className="text-xs text-slate-400">保存中…</span>}
+          {dirty && <span className="text-xs font-semibold text-amber-600">仅保存在本地 draft</span>}
         </div>
         <div className="mt-4">
           <StaffMultiSelect
@@ -694,14 +624,31 @@ export default function StoreEntryPage({ user, onBack }) {
             </p>
           )}
           {staffRows.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {staffRows.map((row) => (
-                <span key={row.staffId} className="inline-flex items-center gap-1.5 rounded-full bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-700">
-                  {row.staffName}
-                  {row.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && <span className="text-[10px] text-amber-600">不计工资</span>}
-                  {row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' && <span className="text-[10px] text-amber-600">历史只读</span>}
-                  <b className="tabular-nums text-budu-600">{Number(row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' ? row.historicalPayrollHours : row.actualHours).toFixed(1)}h</b>
-                </span>
+                <div key={row.staffId} className="min-w-0 rounded-2xl border border-budu-100 bg-budu-50/60 p-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-xs font-bold text-budu-700">{row.staffName}</span>
+                    {row.participantType === 'NON_EMPLOYEE_SUBSTITUTE' && <span className="shrink-0 text-[10px] text-amber-600">不计工资</span>}
+                    {row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' && <span className="shrink-0 text-[10px] text-amber-600">历史只读</span>}
+                  </div>
+                  <label className="mt-2 block text-[11px] font-semibold text-slate-500">
+                    实际工时（小时）
+                    <input
+                      data-testid={`daily-entry-hours-${row.staffId}`}
+                      type="number"
+                      min="0"
+                      max="24"
+                      step="0.25"
+                      inputMode="decimal"
+                      value={row.payableHoursSource === 'LEGACY_PAYROLL_HOURS' ? row.historicalPayrollHours ?? '' : row.actualHours ?? ''}
+                      onChange={(event) => updateActualHours(row.staffId, event.target.value)}
+                      disabled={!canEditStaff || row.payableHoursSource === 'LEGACY_PAYROLL_HOURS'}
+                      placeholder="待填写"
+                      className={`${inputCls} mt-1 h-10 min-w-0`}
+                    />
+                  </label>
+                </div>
               ))}
             </div>
           )}
@@ -713,9 +660,9 @@ export default function StoreEntryPage({ user, onBack }) {
         <p className="mt-2 text-xs text-slate-400">提交前请确认：营业数据完整、值班人员与实际工时已确认。确认后普通员工不可修改，店长/管理员可取消确认。</p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {confirmed ? (
-            isManager && <button onClick={unconfirmEntry} disabled={saving === 'confirm' || !authorityReady} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-500 disabled:opacity-50">{saving === 'confirm' ? '处理中…' : '取消确认'}</button>
+            <span className="rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-500">已确认记录在普通每日录入中只读</span>
           ) : (
-            <button onClick={confirmEntry} disabled={saving === 'confirm' || !authorityReady} className="flex items-center gap-2 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50"><CheckCircle2 className="h-4 w-4" />{saving === 'confirm' ? '确认中…' : '确认今日营业数据'}</button>
+            <button data-testid="daily-entry-confirm" onClick={confirmEntry} disabled={saving === 'confirm' || !authorityReady || !canConfirm} className="flex min-h-11 items-center gap-2 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50"><CheckCircle2 className="h-4 w-4" />{saving === 'confirm' ? '确认中…' : '确认今日录入'}</button>
           )}
           {confirmed && overview?.entry?.confirmedAt && <span className="text-xs text-slate-400">确认时间：{new Date(overview.entry.confirmedAt).toLocaleString('zh-CN', { hour12: false })}</span>}
         </div>
@@ -776,7 +723,12 @@ export default function StoreEntryPage({ user, onBack }) {
                     <td className="px-4 py-3 tabular-nums text-slate-600">{r.ord.toLocaleString('zh-CN')}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">¥{r.ord > 0 ? (r.inc / r.ord).toFixed(2) : '0.00'}</td>
                     <td className="px-4 py-3">{r.local ? <span className="rounded-md bg-budu-50 px-1.5 py-0.5 text-[10px] font-bold text-budu-600">{t('本地录入')}</span> : <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">{t('报表')}</span>}</td>
-                    <td className="px-4 py-3 text-right">{r.local && (user?.role === 'developer' || user?.role === 'finance' || user?.role === 'admin') && <div className="inline-flex items-center gap-1"><button onClick={() => handleEdit(r)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50"><Pencil className="h-3.5 w-3.5" />{t('修改')}</button><button onClick={() => handleDelete(r.d)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" />{t('删除')}</button></div>}</td>
+                    <td className="px-4 py-3 text-right">
+                      {r.local && entry?.status !== 'confirmed' && canEdit && (
+                        <div className="inline-flex items-center gap-1"><button onClick={() => handleEdit(r)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50"><Pencil className="h-3.5 w-3.5" />{t('修改')}</button><button onClick={() => handleDelete(r.d)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-400 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" />{t('删除')}</button></div>
+                      )}
+                      {r.local && entry?.status === 'confirmed' && <span className="text-xs font-semibold text-slate-400">已确认·只读</span>}
+                    </td>
                   </tr>
                 )
               })}
@@ -792,6 +744,25 @@ export default function StoreEntryPage({ user, onBack }) {
       </>)}
 
       {exportOpen && <StoreEntryExportModal storeKey={store} storeName={storeInfo ? storeInfo.name : ''} onClose={() => setExportOpen(false)} />}
+
+      {discardOpen && (
+        <OverlayViewport data-testid="daily-entry-unsaved-dialog" className="fixed inset-0 z-[110] grid place-items-center p-4">
+          <button
+            type="button"
+            aria-label="关闭未保存提示"
+            className="budu-overlay-backdrop absolute inset-0 bg-slate-900/45 backdrop-blur-sm"
+            onClick={() => { pendingTransitionRef.current = null; setDiscardOpen(false) }}
+          />
+          <OverlayPanel role="dialog" aria-modal="true" aria-labelledby="daily-entry-unsaved-title" className="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+            <h3 id="daily-entry-unsaved-title" className="text-base font-bold text-slate-800">当前修改尚未确认</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">离开后，本次营业数据、值班人员与实际工时修改都不会保存。</p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => { pendingTransitionRef.current = null; setDiscardOpen(false) }} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-600">继续编辑</button>
+              <button type="button" onClick={continueAfterDiscard} className="rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white">放弃修改</button>
+            </div>
+          </OverlayPanel>
+        </OverlayViewport>
+      )}
 
       {/* 卡皮巴拉提交成功动画 */}
       {feedback && (

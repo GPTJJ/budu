@@ -3,11 +3,16 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { buildRecognizedRevenueWhere, httpError } from './pos-core.js'
 import { resolveStoreName } from './store-names.js'
-import { isSuperUser } from '../shared/accountPermissions.js'
+import {
+  DAILY_ENTRY_CAPABILITIES,
+  hasDailyEntryCapability,
+  isSuperUser,
+} from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
   HISTORICAL_ATTENDANCE_STATUS,
   PAYABLE_HOURS_SOURCES,
+  normalizePayableHours,
 } from '../shared/payableHoursAuthority.js'
 import {
   classifyDailyStaffTargets,
@@ -27,7 +32,7 @@ const wrap = (handler) => async (req, res) => {
   } catch (error) {
     const status = error.status || 500
     if (status >= 500) console.error('[daily-entry-upgrade]', error)
-    res.status(status).json({ error: error.message || '服务器错误' })
+    res.status(status).json({ error: status >= 500 ? '每日录入处理失败，请稍后重试' : (error.message || '请求处理失败') })
   }
 }
 
@@ -92,14 +97,14 @@ async function writeAudit(tx, input) {
   })
 }
 
-async function aggregatePosDay(storeId, dateStr) {
+async function aggregatePosDay(storeId, dateStr, prismaClient = prisma) {
   const businessDate = dateOnly(dateStr)
   const [orders, refunds] = await Promise.all([
-    prisma.order.findMany({
+    prismaClient.order.findMany({
       where: buildRecognizedRevenueWhere({ storeId, businessDate }),
       include: { payments: true },
     }),
-    prisma.refund.findMany({
+    prismaClient.refund.findMany({
       where: { status: 'completed', order: { is: { storeId, businessDate } } },
       select: { refundAmount: true },
     }),
@@ -245,7 +250,7 @@ dailyEntryUpgradeRouter.get('/daily-participants', wrap(async (req, res) => {
   const dateStr = String(req.query.date || '').trim()
   if (!storeKey) throw httpError('门店不能为空')
   if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('日期格式应为 YYYY-MM-DD')
-  if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
   await ensureStore(storeKey)
   const [employees, users, schedule] = await Promise.all([
     prisma.employee.findMany({
@@ -305,7 +310,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
   const storeKey = String(req.query.store || '').trim()
   const dateStr = String(req.query.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
-  if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
   const store = await ensureStore(storeKey)
   const source = effectiveSource(store, dateStr)
   const d = dateOnly(dateStr)
@@ -538,259 +543,308 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   })
 }))
 
-dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
-  if (!dbReady()) throw httpError('数据库未配置', 503)
-  const storeKey = String(req.body?.storeKey || '').trim()
-  const dateStr = String(req.body?.date || '').trim()
-  const items = Array.isArray(req.body?.items) ? req.body.items : []
-  if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
-  if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
-  if (items.length > 100) throw httpError('值班人员不能超过 100 人')
-  const d = dateOnly(dateStr)
-  const existingEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-  if (existingEntry?.status === 'confirmed' && !isSuperUser(req.user) && req.user.role !== 'manager') {
-    throw httpError('日报已确认，普通员工不可修改值班人员', 409)
-  }
-  await ensureStore(storeKey)
-
-  const normalizedInput = items.map((item) => {
+function normalizeDailyStaffSubmission(items) {
+  if (!Array.isArray(items) || items.length > 100) throw httpError('值班人员数量不正确')
+  return items.map((item) => {
     if (
       Object.prototype.hasOwnProperty.call(item || {}, 'historicalPayrollHours')
       || Object.prototype.hasOwnProperty.call(item || {}, 'payableHoursSource')
       || item?.attendanceStatus === HISTORICAL_ATTENDANCE_STATUS
-    ) {
-      throw httpError('历史计薪工时只能通过受控修复流程写入', 400)
-    }
-    const employeeId = item.employeeId == null ? null : String(item.employeeId).trim()
-    const participantUserId = item.participantUserId == null ? null : String(item.participantUserId).trim()
-    if (employeeId && employeeId.length > 100) throw httpError('员工 ID 不正确')
-    if (participantUserId && participantUserId.length > 100) throw httpError('运营参与者 ID 不正确')
-    const attendanceStatus = String(item.attendanceStatus || 'normal')
+    ) throw httpError('历史计薪工时只能通过受控修复流程写入')
+    const employeeId = item?.employeeId == null ? '' : String(item.employeeId).trim()
+    const participantUserId = item?.participantUserId == null ? '' : String(item.participantUserId).trim()
+    if (employeeId.length > 100 || participantUserId.length > 100) throw httpError('参与者 ID 不正确')
+    const attendanceStatus = String(item?.attendanceStatus || 'normal')
     if (!ATTENDANCE_STATUSES.includes(attendanceStatus)) throw httpError('出勤状态不正确')
-    const breakMinutes = Number(item.breakMinutes)
+    const breakMinutes = Number(item?.breakMinutes ?? 0)
     if (!Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 600) throw httpError('休息分钟数不正确')
-    const actualStartTime = String(item.actualStartTime || '').slice(0, 5)
-    const actualEndTime = String(item.actualEndTime || '').slice(0, 5)
-    const scheduledStartTime = String(item.scheduledStartTime || '').slice(0, 5)
-    const scheduledEndTime = String(item.scheduledEndTime || '').slice(0, 5)
-    const providedHours = item.actualHours != null && item.actualHours !== '' && Number.isFinite(Number(item.actualHours))
-    if (!providedHours || Number(item.actualHours) < 0 || Number(item.actualHours) > 24) {
-      throw httpError('实际工时必须是 0 到 24 之间的有限数字', 400)
+    const actualHours = item?.actualHours === '' || item?.actualHours == null ? null : Number(item.actualHours)
+    if (!Number.isFinite(actualHours) || actualHours < 0 || actualHours > 24) {
+      throw httpError('请为每位实际值班人员填写 0 到 24 小时的实际工时')
     }
-    const actualHours = Math.round(Number(item.actualHours) * 100) / 100
     return {
       ...(Object.prototype.hasOwnProperty.call(item || {}, 'participantType') ? { participantType: item.participantType } : {}),
       employeeId: employeeId || null,
       participantUserId: participantUserId || null,
-      attendanceStatus, breakMinutes,
-      actualStartTime, actualEndTime, scheduledStartTime, scheduledEndTime,
-      actualHours, scheduledHours: Math.max(0, Number(item.scheduledHours) || 0),
+      actualStartTime: String(item?.actualStartTime || '').slice(0, 5),
+      actualEndTime: String(item?.actualEndTime || '').slice(0, 5),
+      breakMinutes,
+      actualHours: Math.round(actualHours * 100) / 100,
+      attendanceStatus,
     }
   })
-  const submittedEmployeeIds = [...new Set(normalizedInput.map((item) => item.employeeId).filter(Boolean))]
-  const submittedUserIds = [...new Set(normalizedInput.map((item) => item.participantUserId).filter(Boolean))]
+}
+
+async function resolveDailyStaffSubmission(prismaClient, normalizedInput, storeKey) {
+  const employeeIds = [...new Set(normalizedInput.map((item) => item.employeeId).filter(Boolean))]
+  const userIds = [...new Set(normalizedInput.map((item) => item.participantUserId).filter(Boolean))]
   const [employees, participantUsers] = await Promise.all([
-    submittedEmployeeIds.length ? prisma.employee.findMany({
-      where: { id: { in: submittedEmployeeIds } },
+    employeeIds.length ? prismaClient.employee.findMany({
+      where: { id: { in: employeeIds }, status: { in: ['ACTIVE', 'PROBATION'] } },
       select: { id: true, name: true, status: true },
     }) : [],
-    submittedUserIds.length ? prisma.user.findMany({
-      where: { id: { in: submittedUserIds } },
+    userIds.length ? prismaClient.user.findMany({
+      where: { id: { in: userIds } },
       select: { id: true, username: true, displayName: true, status: true, operationalIdentityType: true, storeKeys: true },
     }) : [],
   ])
-  let parsed
   try {
-    parsed = classifyDailyStaffTargets(normalizedInput, employees, participantUsers, { storeKey })
-  } catch (error) {
-    const status = /重复提交/.test(error.message || '') ? 409 : 400
-    throw httpError(error.message || '值班参与者无效', status)
-  }
-
-  const rows = await prisma.$transaction(async (tx) => {
-    const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
-    if (existing.some((row) => row.payableHoursSource === PAYABLE_HOURS_SOURCES.LEGACY_PAYROLL_HOURS)) {
-      throw httpError('历史计薪工时为只读权威记录，不能由日常值班录入覆盖或删除', 409)
-    }
-    const authorityConflict = parsed.find((item) => existing.some((row) => (
-      ![PAYROLL_PARTICIPANT_TYPES.EMPLOYEE, PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE].includes(row.participantType)
-      && ((item.employeeId && row.employeeId === item.employeeId)
-        || (item.participantUserId && row.participantUserId === item.participantUserId)
-        || row.staffId === item.staffId)
-    )))
-    if (authorityConflict) throw httpError('该日存在未完成身份复核的历史值班记录，请先完成精确修复', 409)
-    const byEmployeeId = new Map(existing.filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId).map((row) => [row.employeeId, row]))
-    const byParticipantUserId = new Map(existing.filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE && row.participantUserId).map((row) => [row.participantUserId, row]))
-    const results = []
-    const keptRowIds = new Set()
+    const parsed = classifyDailyStaffTargets(normalizedInput, employees, participantUsers, { storeKey })
     for (const item of parsed) {
-      // Gate 16：稳定行（employeeId 非空）以 (storeId, date, employeeId) 为变更身份，
-      // 绝不按 staffId 选中/改写 legacy NULL 行（同店同名时无法判定归属，不做启发式升级）。
-      const before = item.employeeId
-        ? byEmployeeId.get(item.employeeId)
-        : byParticipantUserId.get(item.participantUserId)
-      const data = {
-        employeeId: item.employeeId,
-        participantUserId: item.participantUserId,
-        participantType: item.participantType,
-        // 已有行的姓名是历史快照；重新保存不得用员工当前姓名覆盖。
-        staffNameSnapshot: before?.staffNameSnapshot || item.staffName,
-        shiftId: String(before?.shiftId || ''),
-        scheduledStartTime: item.scheduledStartTime || before?.scheduledStartTime || '',
-        scheduledEndTime: item.scheduledEndTime || before?.scheduledEndTime || '',
-        actualStartTime: item.actualStartTime,
-        actualEndTime: item.actualEndTime,
-        breakMinutes: item.breakMinutes,
-        scheduledHours: item.scheduledHours,
+      normalizePayableHours({
         actualHours: item.actualHours,
         historicalPayrollHours: null,
         payableHoursSource: PAYABLE_HOURS_SOURCES.ACTUAL_HOURS,
         attendanceStatus: item.attendanceStatus,
-        source: before?.source || 'manual',
-        updatedBy: req.user.username,
-        updatedAt: new Date(),
-      }
-      const saved = before
-        ? await tx.dailyStoreStaff.update({ where: { id: before.id }, data })
-        : await tx.dailyStoreStaff.create({
-          data: {
-            id: `dss-${crypto.randomUUID()}`,
-            storeId: storeKey,
-            date: d,
-            employeeId: item.employeeId,
-            participantUserId: item.participantUserId,
-            participantType: item.participantType,
-            staffId: item.staffId,
-            createdBy: req.user.username,
-            ...data,
-          },
-        })
-      keptRowIds.add(saved.id)
-      if (!before || JSON.stringify(before) !== JSON.stringify(saved)) {
-        await writeAudit(tx, {
-          storeId: storeKey,
-          date: dateStr,
-          module: 'daily_staff',
-          fieldName: 'staff_record',
-          beforeValue: before ? serializeStaff(before) : null,
-          afterValue: serializeStaff(saved),
-          reason: String(req.body?.reason || '值班人员确认').slice(0, 300),
-          operatorId: req.user.id,
-          operatorName: req.user.username,
-        })
-      }
-      results.push(saved)
-    }
-    // Gate 16：替换语义保护——legacy NULL 行（无法归属当前员工）绝不因稳定名单提交被删除。
-    // 只有"由本批次识别并可安全移除"的行才进入删除：稳定行（employeeId 非空）不在新名单 → 删除；
-    // legacy NULL 行一律保留（其归属解析属于未来 reconciliation，不做历史清理）。
-    const removed = existing.filter((row) => !keptRowIds.has(row.id) && (
-      row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE
-      || row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE
-    ))
-    for (const row of removed) {
-      await writeAudit(tx, {
-        storeId: storeKey,
-        date: dateStr,
-        module: 'daily_staff',
-        fieldName: 'staff_record',
-        beforeValue: serializeStaff(row),
-        afterValue: null,
-        reason: '删除值班人员',
-        operatorId: req.user.id,
-        operatorName: req.user.username,
       })
-      await tx.dailyStoreStaff.delete({ where: { id: row.id } })
     }
-    // 兼容旧字段：同步 staffNames 镜像（不覆盖 confirmed 状态）
-    if (results.length > 0 || removed.length > 0) {
-      const staffNames = results.map((row) => row.staffNameSnapshot)
-      const entry = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-      if (entry) {
-        await tx.dailyEntry.update({
-          where: { id: entry.id },
-          data: { staffNames: staffNames, updatedBy: req.user.username, version: { increment: 1 } },
-        })
-      } else {
-        await tx.dailyEntry.create({
-          data: {
-            id: `de-${crypto.randomUUID()}`,
-            storeKey,
-            date: d,
-            staffNames: staffNames,
-            updatedBy: req.user.username,
-            status: 'draft',
-            salesDataStatus: 'not_applicable',
-          },
-        })
-      }
-    }
-    return results
-  })
-  res.json({ ok: true, rows: rows.map(serializeStaff) })
-}))
+    return parsed
+  } catch (error) {
+    throw httpError(error.message || '值班参与者或实际工时无效', /重复提交/.test(error.message || '') ? 409 : 400)
+  }
+}
 
-dailyEntryUpgradeRouter.post('/daily-entry/confirm', wrap(async (req, res) => {
+async function replaceDailyStaff(tx, {
+  storeKey,
+  dateStr,
+  parsed,
+  actor,
+  reason,
+  auditWriter = writeAudit,
+  strictAuthority = true,
+}) {
+  const d = dateOnly(dateStr)
+  const existing = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
+  if (existing.some((row) => row.payableHoursSource === PAYABLE_HOURS_SOURCES.LEGACY_PAYROLL_HOURS)) {
+    throw httpError('历史计薪工时为只读权威记录，不能由日常录入覆盖或删除', 409)
+  }
+  const unresolvedAuthorityRows = existing.filter((row) => ![
+    PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+    PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
+  ].includes(row.participantType))
+  if (strictAuthority && unresolvedAuthorityRows.length > 0) {
+    throw httpError('该日存在未完成身份复核的历史值班记录，请先完成精确修复', 409)
+  }
+  if (!strictAuthority) {
+    const authorityConflict = parsed.find((item) => unresolvedAuthorityRows.some((row) => (
+      (item.employeeId && row.employeeId === item.employeeId)
+      || (item.participantUserId && row.participantUserId === item.participantUserId)
+      || row.staffId === item.staffId
+    )))
+    if (authorityConflict) {
+      throw httpError('该日存在未完成身份复核的历史值班记录，请先完成精确修复', 409)
+    }
+  }
+  const byEmployeeId = new Map(existing.filter((row) => (
+    row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId
+  )).map((row) => [row.employeeId, row]))
+  const byUserId = new Map(existing.filter((row) => (
+    row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE && row.participantUserId
+  )).map((row) => [row.participantUserId, row]))
+  const kept = new Set()
+  const results = []
+  for (const item of parsed) {
+    const before = item.employeeId ? byEmployeeId.get(item.employeeId) : byUserId.get(item.participantUserId)
+    const data = {
+      employeeId: item.employeeId,
+      participantUserId: item.participantUserId,
+      participantType: item.participantType,
+      staffNameSnapshot: before?.staffNameSnapshot || item.staffName,
+      shiftId: before?.shiftId || '',
+      scheduledStartTime: before?.scheduledStartTime || '',
+      scheduledEndTime: before?.scheduledEndTime || '',
+      scheduledHours: before?.scheduledHours || 0,
+      actualStartTime: item.actualStartTime,
+      actualEndTime: item.actualEndTime,
+      breakMinutes: item.breakMinutes,
+      actualHours: item.actualHours,
+      historicalPayrollHours: null,
+      payableHoursSource: PAYABLE_HOURS_SOURCES.ACTUAL_HOURS,
+      attendanceStatus: item.attendanceStatus,
+      source: before?.source || 'manual',
+      updatedBy: actor.username,
+      updatedAt: new Date(),
+    }
+    const saved = before
+      ? await tx.dailyStoreStaff.update({ where: { id: before.id }, data })
+      : await tx.dailyStoreStaff.create({ data: {
+        id: `dss-${crypto.randomUUID()}`,
+        storeId: storeKey,
+        date: d,
+        staffId: item.staffId,
+        createdBy: actor.username,
+        ...data,
+      } })
+    kept.add(saved.id)
+    results.push(saved)
+    if (!before || JSON.stringify(serializeStaff(before)) !== JSON.stringify(serializeStaff(saved))) {
+      await auditWriter(tx, {
+        storeId: storeKey, date: dateStr, module: 'daily_staff', fieldName: 'staff_record',
+        beforeValue: before ? serializeStaff(before) : null,
+        afterValue: serializeStaff(saved), reason,
+        operatorId: actor.id, operatorName: actor.username,
+      })
+    }
+  }
+  const removed = existing.filter((candidate) => !kept.has(candidate.id) && [
+    PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+    PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
+  ].includes(candidate.participantType))
+  for (const row of removed) {
+    await auditWriter(tx, {
+      storeId: storeKey, date: dateStr, module: 'daily_staff', fieldName: 'staff_record',
+      beforeValue: serializeStaff(row), afterValue: null, reason: '原子确认移除值班人员',
+      operatorId: actor.id, operatorName: actor.username,
+    })
+    await tx.dailyStoreStaff.delete({ where: { id: row.id } })
+  }
+  return results
+}
+
+dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
-  if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
-  const store = await ensureStore(storeKey)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw httpError('无权限', 403)
+  await ensureStore(storeKey)
   const d = dateOnly(dateStr)
-  const source = effectiveSource(store, dateStr)
-  const entry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-  const staffCount = await prisma.dailyStoreStaff.count({ where: { storeId: storeKey, date: d } })
-  if (staffCount === 0) throw httpError('请先填写并保存实际值班人员', 400)
-  if (source === 'manual' && (!entry || (entry.incCents <= 0n && entry.ord <= 0))) {
-    throw httpError('请先录入当日营业数据', 400)
+  const existingEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+  if (existingEntry?.status === 'confirmed' && !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) {
+    throw httpError('日报已确认，当前账号无历史修正权限', 409)
   }
-  const salesDataStatus = source === 'manual' ? (entry ? 'synced' : 'waiting_input') : 'synced'
-  const saved = await prisma.$transaction(async (tx) => {
-    const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-    const row = await tx.dailyEntry.upsert({
+  const normalized = normalizeDailyStaffSubmission(req.body?.items)
+  const parsed = await resolveDailyStaffSubmission(prisma, normalized, storeKey)
+  const rows = await prisma.$transaction(async (tx) => {
+    const saved = await replaceDailyStaff(tx, {
+      storeKey, dateStr, parsed,
+      actor: req.user,
+      reason: String(req.body?.reason || '值班人员确认').slice(0, 300),
+      strictAuthority: false,
+    })
+    const staffNames = saved.map((row) => row.staffNameSnapshot)
+    await tx.dailyEntry.upsert({
       where: { storeKey_date: { storeKey, date: d } },
-      update: {
-        status: 'confirmed',
-        confirmedAt: new Date(),
-        confirmedBy: req.user.username,
-        salesDataStatus,
-        posSyncAt: source === 'manual' ? undefined : new Date(),
-        version: { increment: 1 },
-        updatedBy: req.user.username,
-      },
-      create: {
+      update: { staffNames, updatedBy: req.user.username, version: { increment: 1 } },
+      create: { id: `de-${crypto.randomUUID()}`, storeKey, date: d, staffNames, updatedBy: req.user.username },
+    })
+    return saved
+  })
+  res.json({ ok: true, rows: rows.map(serializeStaff) })
+}))
+
+function parseManualSales(manualSales) {
+  if (!manualSales || typeof manualSales !== 'object' || Array.isArray(manualSales)) throw httpError('请填写当日营业数据')
+  const cents = Number(manualSales.incCents)
+  const ord = Number(manualSales.ord)
+  if (!Number.isSafeInteger(cents) || cents < 0 || cents > 999999999999) throw httpError('营业收入不正确（单位：分）')
+  if (!Number.isInteger(ord) || ord < 0 || ord > 999999) throw httpError('订单数不正确')
+  if (cents <= 0 && ord <= 0) throw httpError('请完整核对当日营业数据')
+  return { incCents: BigInt(cents), ord }
+}
+
+export async function confirmDailyEntryAtomic(prismaClient, input, options = {}) {
+  const storeKey = String(input?.storeKey || '').trim()
+  const dateStr = String(input?.date || '').trim()
+  if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
+  const expectedVersion = Number(input?.version)
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) throw httpError('数据版本缺失，请刷新后重新核对', 409)
+  const normalized = normalizeDailyStaffSubmission(input?.items)
+  if (normalized.length === 0) throw httpError('请至少选择一位实际值班人员')
+  const actor = input.actor || { id: '', username: '' }
+  const auditWriter = options.auditWriter || writeAudit
+
+  return prismaClient.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe(
+      'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
+      `daily-entry:${storeKey}:${dateStr}`,
+    )
+    const store = await tx.store.findUnique({ where: { key: storeKey } })
+    if (!store) throw httpError('门店不存在或已停用', 400)
+    const d = dateOnly(dateStr)
+    const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+    const currentVersion = before?.version || 0
+    if (currentVersion !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
+    if (before?.status === 'confirmed') throw httpError('该日录入已确认，请通过受控历史修正流程处理', 409)
+
+    const source = effectiveSource(store, dateStr)
+    let manualSales = null
+    let posSnapshot = null
+    if (source === 'manual') {
+      manualSales = parseManualSales(input.manualSales)
+    } else {
+      if (Object.prototype.hasOwnProperty.call(input || {}, 'manualSales')) {
+        throw httpError('POS 门店营业数据由订单权威生成，客户端不可提交金额', 403)
+      }
+      posSnapshot = await aggregatePosDay(storeKey, dateStr, tx)
+    }
+
+    const parsed = await resolveDailyStaffSubmission(tx, normalized, storeKey)
+    const staff = await replaceDailyStaff(tx, {
+      storeKey,
+      dateStr,
+      parsed,
+      actor,
+      reason: String(input.reason || '确认今日录入').slice(0, 300),
+      auditWriter,
+    })
+    const staffNames = staff.map((row) => row.staffNameSnapshot)
+    const now = new Date()
+    const entryData = {
+      ...(manualSales ? manualSales : {}),
+      staffNames,
+      status: 'confirmed',
+      confirmedAt: now,
+      confirmedBy: actor.username,
+      salesDataStatus: 'synced',
+      posSyncAt: source === 'manual' ? null : now,
+      updatedBy: actor.username,
+    }
+    const row = before
+      ? await tx.dailyEntry.update({ where: { id: before.id }, data: { ...entryData, version: { increment: 1 } } })
+      : await tx.dailyEntry.create({ data: {
         id: `de-${crypto.randomUUID()}`,
         storeKey,
         date: d,
-        staffNames: [],
-        status: 'confirmed',
-        confirmedAt: new Date(),
-        confirmedBy: req.user.username,
-        salesDataStatus,
-        posSyncAt: source === 'manual' ? null : new Date(),
-        updatedBy: req.user.username,
-      },
-    })
-    await writeAudit(tx, {
+        ...entryData,
+        version: 1,
+      } })
+    await auditWriter(tx, {
       storeId: storeKey,
       date: dateStr,
-      module: 'daily_status',
-      fieldName: 'status',
+      module: 'daily_confirmation',
+      fieldName: 'atomic_confirm',
       beforeValue: before ? serializeEntry(before) : null,
-      afterValue: serializeEntry(row),
-      reason: String(req.body?.reason || '确认今日营业数据').slice(0, 300),
-      operatorId: req.user.id,
-      operatorName: req.user.username,
+      afterValue: {
+        entry: serializeEntry(row),
+        participants: staff.map(serializeStaff),
+        salesAuthority: source,
+      },
+      reason: String(input.reason || '确认今日录入').slice(0, 300),
+      operatorId: actor.id,
+      operatorName: actor.username,
     })
-    return row
+    return { entry: row, staff, source, posSnapshot }
   })
-  res.json({ ok: true, entry: serializeEntry(saved) })
+}
+
+dailyEntryUpgradeRouter.post('/daily-entry/confirm', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const storeKey = String(req.body?.storeKey || '').trim()
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.CONFIRM)) throw httpError('无权限', 403)
+  const result = await confirmDailyEntryAtomic(prisma, { ...req.body, actor: req.user })
+  res.json({
+    ok: true,
+    salesDataSource: result.source,
+    entry: serializeEntry(result.entry),
+    staff: result.staff.map(serializeStaff),
+    pos: result.posSnapshot,
+  })
 }))
 
 dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!isSuperUser(req.user) && req.user?.role !== 'manager') throw httpError('无权限', 403)
+  if (!hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
@@ -834,7 +888,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => 
 
 dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!isSuperUser(req.user) && req.user?.role !== 'manager') throw httpError('无权限', 403)
+  if (!hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
