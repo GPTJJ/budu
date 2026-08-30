@@ -93,7 +93,7 @@ try {
   let productCategory = (await categoryResponse.json()).category
   const productOne = await createMaster({ category: 'product', code: 'NO.1', name: 'NO.1树莓', productCategoryId: productCategory.id, sortOrder: 1, enabled: true })
   const productTwo = await createMaster({ category: 'product', code: 'NO.2', name: 'NO.2柠檬', sortOrder: 2, enabled: true })
-  await createMaster({ category: 'material', name: '冰袋', sortOrder: 1, enabled: true })
+  const material = await createMaster({ category: 'material', name: '冰袋', sortOrder: 1, enabled: true })
   const bulkCategory = await fetch(`${base}/v2/transfer-master-items/bulk-category`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ ids: [productTwo.id], productCategoryId: productCategory.id }),
@@ -158,16 +158,32 @@ try {
 
   const editedShip = await fetch(`${base}/v2/transfer-requests/${created.id}/ship`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ items: [{ name: 'NO.1树莓', quantity: 999 }] }),
+    body: JSON.stringify({ items: [{ itemId: productOne.id, shippedQuantity: 2 }, { itemId: 'not-requested', shippedQuantity: 1 }] }),
   })
-  if (editedShip.status !== 400 || !(await editedShip.text()).includes('发货不允许修改调拨明细')) throw new Error('发货修改明细未被拒绝')
+  if (editedShip.status !== 400 || !(await editedShip.text()).includes('未申请货品')) throw new Error('发货新增未申请货品未被拒绝')
+
+  const excessiveShip = await fetch(`${base}/v2/transfer-requests/${created.id}/ship`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ items: [{ itemId: productOne.id, shippedQuantity: 3 }, { itemId: material.id, shippedQuantity: 3 }] }),
+  })
+  if (excessiveShip.status !== 400 || !(await excessiveShip.text()).includes('0-2')) throw new Error('实发超过申请未被拒绝')
+
+  const emptyShip = await fetch(`${base}/v2/transfer-requests/${created.id}/ship`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ items: [{ itemId: productOne.id, shippedQuantity: 0 }, { itemId: material.id, shippedQuantity: 0 }] }),
+  })
+  if (emptyShip.status !== 400 || !(await emptyShip.text()).includes('没有实际发货商品')) throw new Error('全零实发未被拒绝')
 
   const shipResponse = await fetch(`${base}/v2/transfer-requests/${created.id}/ship`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: '{}',
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ items: [{ itemId: productOne.id, shippedQuantity: 1 }, { itemId: material.id, shippedQuantity: 2 }] }),
   })
   if (!shipResponse.ok) throw new Error(`确认发货失败：${shipResponse.status} ${await shipResponse.text()}`)
   const shipped = (await shipResponse.json()).request
-  if (shipped.status !== 'shipped' || shipped.shippedBy !== 'tester' || !shipped.shippedAt || shipped.items.length !== 2) throw new Error('发货留痕或明细保护失败')
+  if (shipped.status !== 'shipped' || shipped.shippedBy !== 'tester' || !shipped.shippedAt || shipped.items.length !== 2 || !shipped.shipmentRecorded) throw new Error('发货留痕或实发事实缺失')
+  const shippedProduct = shipped.items.find((item) => item.itemId === productOne.id)
+  const shippedMaterial = shipped.items.find((item) => item.itemId === material.id)
+  if (shippedProduct.quantity !== 2 || shippedProduct.shippedQuantity !== 1 || shippedMaterial.quantity !== 3 || shippedMaterial.shippedQuantity !== 2) throw new Error('申请数量被覆盖或实发数量未保存')
 
   const shippedDelete = await fetch(`${base}/v2/transfer-requests/${created.id}`, { method: 'DELETE', headers: { Cookie: cookie } })
   if (shippedDelete.status !== 400) throw new Error('已发货调拨不应允许撤回')

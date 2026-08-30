@@ -201,20 +201,39 @@ function serializeTransferItems(items) {
       note: it.note,
     }
     if (!['box', 'piece'].includes(it.quantityUnit)) {
-      result.push({ ...base, quantity: it.quantity })
+      result.push({
+        ...base,
+        quantity: it.quantity,
+        shippedQuantity: it.shippedQuantity,
+        shipmentRecorded: it.shippedQuantity !== null,
+      })
       continue
     }
     let row = packaged.get(it.itemId)
     if (!row) {
-      row = { ...base, quantity: null, boxQuantity: 0, pieceQuantity: 0, boxWeightGrams: null, pieceWeightGrams: null, estimatedWeightGrams: 0 }
+      row = {
+        ...base,
+        quantity: null,
+        boxQuantity: 0,
+        pieceQuantity: 0,
+        shippedBoxQuantity: 0,
+        shippedPieceQuantity: 0,
+        shipmentRecorded: true,
+        boxWeightGrams: null,
+        pieceWeightGrams: null,
+        estimatedWeightGrams: 0,
+      }
       packaged.set(it.itemId, row)
       result.push(row)
     }
+    row.shipmentRecorded = row.shipmentRecorded && it.shippedQuantity !== null
     if (it.quantityUnit === 'box') {
       row.boxQuantity += it.quantity
+      if (it.shippedQuantity !== null) row.shippedBoxQuantity += it.shippedQuantity
       row.boxWeightGrams = it.unitWeightGramsSnapshot
     } else {
       row.pieceQuantity += it.quantity
+      if (it.shippedQuantity !== null) row.shippedPieceQuantity += it.shippedQuantity
       row.pieceWeightGrams = it.unitWeightGramsSnapshot
     }
     row.estimatedWeightGrams += it.quantity * Number(it.unitWeightGramsSnapshot || 0)
@@ -223,6 +242,7 @@ function serializeTransferItems(items) {
 }
 
 function serializeTransfer(r) {
+  const items = serializeTransferItems(r.items)
   return {
     id: r.id,
     type: 'transfer',
@@ -239,8 +259,69 @@ function serializeTransfer(r) {
     withdrawnAt: r.withdrawnAt || null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    items: serializeTransferItems(r.items),
+    shipmentRecorded: items.length > 0 && items.every((item) => item.shipmentRecorded),
+    items,
   }
+}
+
+function parseShippedQuantity(value, label, requested) {
+  if (value === undefined || value === null || value === '') throw bad(`${label}不能为空`)
+  const quantity = Number(value)
+  if (!Number.isInteger(quantity) || quantity < 0 || quantity > requested) {
+    throw bad(`${label}应为 0-${requested} 的整数`)
+  }
+  return quantity
+}
+
+function transferShipmentUpdates(inputItems, storedItems) {
+  if (!Array.isArray(inputItems) || inputItems.length === 0) throw bad('请逐项核对实际发货数量')
+  const storedByItem = new Map()
+  for (const row of storedItems) {
+    const group = storedByItem.get(row.itemId) || []
+    group.push(row)
+    storedByItem.set(row.itemId, group)
+  }
+  if (inputItems.length !== storedByItem.size) throw bad('实际发货明细必须与原申请完全一致')
+
+  const inputByItem = new Map()
+  for (const input of inputItems) {
+    const itemId = String(input?.itemId || '').trim()
+    if (!itemId || !storedByItem.has(itemId)) throw bad('实际发货明细包含未申请货品')
+    if (inputByItem.has(itemId)) throw bad('同一货品只能核对一次')
+    inputByItem.set(itemId, input)
+  }
+
+  const updates = []
+  let totalShipped = 0
+  for (const [itemId, rows] of storedByItem) {
+    const input = inputByItem.get(itemId)
+    if (!input) throw bad('实际发货明细缺少原申请货品')
+    const packaged = rows.some((row) => ['box', 'piece'].includes(row.quantityUnit))
+    if (packaged && rows.some((row) => !['box', 'piece'].includes(row.quantityUnit))) throw bad('调拨单位事实冲突', 409)
+    if (!packaged) {
+      if (Object.prototype.hasOwnProperty.call(input, 'shippedBoxQuantity') || Object.prototype.hasOwnProperty.call(input, 'shippedPieceQuantity')) {
+        throw bad('普通件数货品不得提交箱/颗实发数量')
+      }
+      const requested = rows.reduce((sum, row) => sum + row.quantity, 0)
+      const shipped = parseShippedQuantity(input.shippedQuantity, '实发数量', requested)
+      if (rows.length !== 1) throw bad('历史调拨单位事实不唯一', 409)
+      updates.push({ id: rows[0].id, shippedQuantity: shipped })
+      totalShipped += shipped
+      continue
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'shippedQuantity')) throw bad('箱/颗货品不得提交普通件数')
+    const requestedBox = rows.filter((row) => row.quantityUnit === 'box').reduce((sum, row) => sum + row.quantity, 0)
+    const requestedPiece = rows.filter((row) => row.quantityUnit === 'piece').reduce((sum, row) => sum + row.quantity, 0)
+    const shippedBox = parseShippedQuantity(input.shippedBoxQuantity, '实发箱数', requestedBox)
+    const shippedPiece = parseShippedQuantity(input.shippedPieceQuantity, '实发颗数', requestedPiece)
+    for (const row of rows) {
+      updates.push({ id: row.id, shippedQuantity: row.quantityUnit === 'box' ? shippedBox : shippedPiece })
+    }
+    totalShipped += shippedBox + shippedPiece
+  }
+  if (totalShipped <= 0) throw bad('没有实际发货商品')
+  return updates
 }
 
 function serializePurchase(r) {
@@ -918,24 +999,38 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!t) throw bad('调拨不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可发货')
-  if (Array.isArray(req.body?.items)) throw bad('发货不允许修改调拨明细')
+  const shipmentUpdates = transferShipmentUpdates(req.body?.items, t.items)
   const shippedAt = new Date()
-  await prisma.transferRequest.update({
-    where: { id: t.id },
-    data: { status: 'shipped', shippedBy: req.user.username, shippedAt, updatedAt: shippedAt },
+  const final = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.transferRequest.updateMany({
+      where: { id: t.id, status: 'pending', deletedAt: null },
+      data: { status: 'shipped', shippedBy: req.user.username, shippedAt, updatedAt: shippedAt },
+    })
+    if (claimed.count !== 1) throw bad('当前状态不可发货', 409)
+    for (const update of shipmentUpdates) {
+      const saved = await tx.transferItem.updateMany({
+        where: { id: update.id, requestId: t.id, shippedQuantity: null },
+        data: { shippedQuantity: update.shippedQuantity },
+      })
+      if (saved.count !== 1) throw bad('实际发货数量已被记录，请刷新后重试', 409)
+    }
+    return tx.transferRequest.findUnique({
+      where: { id: t.id },
+      include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+    })
   })
-  const final = await getTransfer(t.id)
+  const serialized = serializeTransfer(final)
   await notify({
     username: t.createdBy,
     templateKey: 'transfer_shipped',
-    data: { fromStore: resolveStoreName(t.fromStoreKey), toStore: resolveStoreName(t.toStoreKey), count: final.items.length, operator: req.user.username },
+    data: { fromStore: resolveStoreName(t.fromStoreKey), toStore: resolveStoreName(t.toStoreKey), count: serialized.items.length, operator: req.user.username },
     title: `调拨已发货：${resolveStoreName(t.fromStoreKey)} → ${resolveStoreName(t.toStoreKey)}`,
-    content: `${final.items.length} 种货品 · 发货人 ${req.user.username}`,
+    content: `${serialized.items.length} 种货品 · 发货人 ${req.user.username}`,
     target: 'inventory-transfer',
     refType: 'transfer',
     refId: t.id,
   })
-  res.json({ ok: true, request: serializeTransfer(final) })
+  res.json({ ok: true, request: serialized })
 }))
 
 v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {

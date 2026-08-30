@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  initialTransferDraft, materialDraftItems, mergeTransferItems, productDraftRows,
+  buildTransferShipmentDraft, initialTransferDraft, materialDraftItems, mergeTransferItems, productDraftRows,
   setDraftMaterialQuantity, setDraftProductQuantity, setDraftProductUnitQuantity, toggleDraftProduct,
-  transferEstimatedWeightLabel, transferQuantityLabel, transferStatusLabel, transferViewStatus,
-  validTransferItemQuantity, validTransferQuantity,
+  transferEstimatedWeightLabel, transferQuantityLabel, transferShipmentDiffers,
+  transferShippedQuantityLabel, transferStatusLabel, transferViewStatus,
+  validateTransferShipmentDraft, validTransferItemQuantity, validTransferQuantity,
 } from '../src/utils/storeTransfer.js'
 import { buildTransferExportData } from '../src/utils/storeTransferExport.js'
 
@@ -66,16 +67,57 @@ test('可靠历史状态只在展示层映射', () => {
   assert.equal(transferStatusLabel('rejected'), '已驳回')
 })
 
+test('发货草稿默认等于申请，允许减量但拒绝超量、缺项和全零', () => {
+  const request = {
+    items: [
+      { itemId: 'mixed', productName: 'NO.2 柠檬', quantity: null, boxQuantity: 1, pieceQuantity: 166 },
+      { itemId: 'material', productName: '冰袋', quantity: 100 },
+    ],
+  }
+  const defaults = buildTransferShipmentDraft(request)
+  assert.deepEqual(defaults, [
+    { itemId: 'mixed', shippedBoxQuantity: 1, shippedPieceQuantity: 166 },
+    { itemId: 'material', shippedQuantity: 100 },
+  ])
+  assert.equal(validateTransferShipmentDraft(request, defaults), '')
+  assert.equal(validateTransferShipmentDraft(request, [
+    { itemId: 'mixed', shippedBoxQuantity: 1, shippedPieceQuantity: 100 },
+    { itemId: 'material', shippedQuantity: 80 },
+  ]), '')
+  assert.match(validateTransferShipmentDraft(request, [
+    { itemId: 'mixed', shippedBoxQuantity: 2, shippedPieceQuantity: 100 },
+    { itemId: 'material', shippedQuantity: 80 },
+  ]), /不能超过申请/)
+  assert.match(validateTransferShipmentDraft(request, [{ itemId: 'mixed', shippedBoxQuantity: 1, shippedPieceQuantity: 100 }]), /完全一致/)
+  assert.equal(validateTransferShipmentDraft(request, [
+    { itemId: 'mixed', shippedBoxQuantity: 0, shippedPieceQuantity: 0 },
+    { itemId: 'material', shippedQuantity: 0 },
+  ]), '没有实际发货商品')
+})
+
+test('实发展示保留申请事实并区分按申请、减量与历史兼容', () => {
+  const exact = { quantity: null, boxQuantity: 1, pieceQuantity: 166, shippedBoxQuantity: 1, shippedPieceQuantity: 166, shipmentRecorded: true }
+  const reduced = { ...exact, shippedPieceQuantity: 100 }
+  const legacy = { quantity: 100, shippedQuantity: 80, shipmentRecorded: true }
+  assert.equal(transferShippedQuantityLabel(exact), '1箱 + 166颗')
+  assert.equal(transferShipmentDiffers(exact), false)
+  assert.equal(transferShippedQuantityLabel(reduced), '1箱 + 100颗')
+  assert.equal(transferShipmentDiffers(reduced), true)
+  assert.equal(transferQuantityLabel(legacy), '100件')
+  assert.equal(transferShippedQuantityLabel(legacy), '80件')
+  assert.equal(transferShippedQuantityLabel({ quantity: 3, shipmentRecorded: false }), '3件')
+})
+
 test('Excel 明细保留旧数量及箱颗真实单位', () => {
   const { detailRows: rows } = buildTransferExportData([{
     id: 'tr-1', status: 'shipped', fromStoreKey: 'from', storeKey: 'to', createdAt: '2026-08-29T00:00:00.000Z',
     createdBy: '申请人', shippedBy: '发货人', shippedAt: '2026-08-29T01:00:00.000Z', note: '整单备注',
     items: [
-      { category: 'product', productName: 'NO.2 柠檬', itemCode: 'NO.2', quantity: null, boxQuantity: 1, pieceQuantity: 166, boxWeightGrams: 2500, pieceWeightGrams: 6 },
-      { category: 'material', productName: '冰袋', itemCode: 'MAT-ICE', quantity: 3 },
+      { category: 'product', productName: 'NO.2 柠檬', itemCode: 'NO.2', quantity: null, boxQuantity: 1, pieceQuantity: 166, shippedBoxQuantity: 1, shippedPieceQuantity: 100, shipmentRecorded: true, boxWeightGrams: 2500, pieceWeightGrams: 6 },
+      { category: 'material', productName: '冰袋', itemCode: 'MAT-ICE', quantity: 3, shippedQuantity: 2, shipmentRecorded: true },
     ],
   }], { storeKeys: ['from', 'to'], storeLabel: (key) => key === 'from' ? '调出门店' : '调入门店' })
   assert.equal(rows.length, 2)
-  assert.deepEqual([rows[0].箱数, rows[0].散颗数, rows[0]['估算重量（约kg）']], [1, 166, 3.496])
-  assert.equal(rows[1]['历史数量（件）'], 3)
+  assert.deepEqual([rows[0].申请箱数, rows[0].实发箱数, rows[0].申请散颗数, rows[0].实发散颗数, rows[0]['实发估算重量（约kg）']], [1, 1, 166, 100, 3.1])
+  assert.deepEqual([rows[1]['申请数量（件）'], rows[1]['实发数量（件）']], [3, 2])
 })

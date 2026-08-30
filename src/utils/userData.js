@@ -233,6 +233,7 @@ export async function loadUserData(options = {}) {
         withdrawnAt: r.withdrawnAt || null,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
+        shipmentRecorded: r.shipmentRecorded === true,
         history: [],
         items: (r.items || []).map((it) => ({
           category: it.category,
@@ -240,6 +241,10 @@ export async function loadUserData(options = {}) {
           quantity: it.quantity,
           boxQuantity: it.boxQuantity,
           pieceQuantity: it.pieceQuantity,
+          shippedQuantity: it.shippedQuantity,
+          shippedBoxQuantity: it.shippedBoxQuantity,
+          shippedPieceQuantity: it.shippedPieceQuantity,
+          shipmentRecorded: it.shipmentRecorded === true,
           boxWeightGrams: it.boxWeightGrams,
           pieceWeightGrams: it.pieceWeightGrams,
           estimatedWeightGrams: it.estimatedWeightGrams,

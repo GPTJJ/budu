@@ -57,6 +57,7 @@ const NODE_TEST_SUITE = [
   'test-store-transfer-draft.mjs', // 门店调拨 2.0 产品/物料草稿隔离、数量、历史状态展示
   'test-store-transfer-migration-rehearsal.mjs', // 49→50 additive migration 与历史调拨摘要/旧应用读取
   'test-transfer-box-piece-migration-rehearsal.mjs', // 56→57 additive 箱/颗真实单位与历史 quantity 保护
+  'test-transfer-actual-shipment-migration-rehearsal.mjs', // 57→58 additive 实发数量权威与历史 NULL 保护
   'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
   'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
   'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
@@ -177,6 +178,7 @@ const CRITICAL_NODE_TEST = [
   'test-store-transfer-draft.mjs',
   'test-store-transfer-migration-rehearsal.mjs',
   'test-transfer-box-piece-migration-rehearsal.mjs',
+  'test-transfer-actual-shipment-migration-rehearsal.mjs',
   'test-product-material-migration-rehearsal.mjs',
   'test-product-material-contract.mjs',
   'test-product-category-migration-rehearsal.mjs',

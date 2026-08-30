@@ -1,6 +1,10 @@
 import * as XLSX from 'xlsx'
 import { downloadFile } from './downloadFile.js'
-import { transferEstimatedWeightGrams, transferEstimatedWeightLabel, transferQuantityLabel, transferStatusLabel, transferViewStatus } from './storeTransfer.js'
+import {
+  transferEstimatedWeightGrams, transferQuantityLabel,
+  transferShipmentRecorded, transferShippedEstimatedWeightGrams, transferShippedQuantityLabel,
+  transferStatusLabel, transferViewStatus,
+} from './storeTransfer.js'
 
 const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 
@@ -39,6 +43,11 @@ export function buildTransferExportData(records, options = {}) {
       const boxQuantity = Number(item.boxQuantity) || 0
       const pieceQuantity = Number(item.pieceQuantity) || 0
       const estimatedWeightGrams = transferEstimatedWeightGrams(item)
+      const shipmentRecorded = transferShipmentRecorded(item)
+      const shippedQuantity = shipmentRecorded ? Number(item.shippedQuantity) || 0 : quantity
+      const shippedBoxQuantity = shipmentRecorded ? Number(item.shippedBoxQuantity) || 0 : boxQuantity
+      const shippedPieceQuantity = shipmentRecorded ? Number(item.shippedPieceQuantity) || 0 : pieceQuantity
+      const shippedEstimatedWeightGrams = transferShippedEstimatedWeightGrams(item)
       details.push({
         调拨单号: record.id,
         发货时间: formatTime(record.shippedAt),
@@ -48,10 +57,15 @@ export function buildTransferExportData(records, options = {}) {
         产品分类: category,
         编号: code,
         名称: name,
-        '历史数量（件）': quantity || '',
-        箱数: boxQuantity || '',
-        散颗数: pieceQuantity || '',
-        '估算重量（约kg）': estimatedWeightGrams > 0 ? Number((estimatedWeightGrams / 1000).toFixed(3)) : '',
+        '申请数量（件）': quantity || '',
+        '实发数量（件）': shipmentRecorded && item.quantity !== null ? shippedQuantity : '',
+        申请箱数: boxQuantity || '',
+        实发箱数: shipmentRecorded && boxQuantity > 0 ? shippedBoxQuantity : '',
+        申请散颗数: pieceQuantity || '',
+        实发散颗数: shipmentRecorded && pieceQuantity > 0 ? shippedPieceQuantity : '',
+        '申请估算重量（约kg）': estimatedWeightGrams > 0 ? Number((estimatedWeightGrams / 1000).toFixed(3)) : '',
+        '实发估算重量（约kg）': shipmentRecorded && shippedEstimatedWeightGrams > 0 ? Number((shippedEstimatedWeightGrams / 1000).toFixed(3)) : '',
+        实发数据状态: shipmentRecorded ? '已记录' : '历史兼容',
         申请人: record.createdBy || '—',
         发货确认人: record.shippedBy || '—',
         备注: record.note || '',
@@ -63,18 +77,18 @@ export function buildTransferExportData(records, options = {}) {
         const key = [direction.key, item.category, category, code, name].join('\u0000')
         const current = summary.get(key) || { 门店: direction.name, 类型: type, 分类: category, 编号: code, 名称: name, 调入数量: 0, 调出数量: 0, 净调拨: 0, 调入箱数: 0, 调出箱数: 0, 净箱数: 0, 调入散颗数: 0, 调出散颗数: 0, 净散颗数: 0, '净估算重量（约kg）': 0, _storeKey: direction.key }
         if (direction.sign > 0) {
-          current.调入数量 += quantity
-          current.调入箱数 += boxQuantity
-          current.调入散颗数 += pieceQuantity
+          current.调入数量 += shippedQuantity
+          current.调入箱数 += shippedBoxQuantity
+          current.调入散颗数 += shippedPieceQuantity
         } else {
-          current.调出数量 += quantity
-          current.调出箱数 += boxQuantity
-          current.调出散颗数 += pieceQuantity
+          current.调出数量 += shippedQuantity
+          current.调出箱数 += shippedBoxQuantity
+          current.调出散颗数 += shippedPieceQuantity
         }
         current.净调拨 = current.调入数量 - current.调出数量
         current.净箱数 = current.调入箱数 - current.调出箱数
         current.净散颗数 = current.调入散颗数 - current.调出散颗数
-        current['净估算重量（约kg）'] = Number((current['净估算重量（约kg）'] + direction.sign * estimatedWeightGrams / 1000).toFixed(3))
+        current['净估算重量（约kg）'] = Number((current['净估算重量（约kg）'] + direction.sign * shippedEstimatedWeightGrams / 1000).toFixed(3))
         summary.set(key, current)
       }
     }
@@ -89,7 +103,7 @@ export function createTransferExportWorkbook(records, options = {}) {
   const summarySheet = XLSX.utils.json_to_sheet(summaryRows.length ? summaryRows : [{ 提示: '当前筛选条件下暂无已发货调拨汇总' }])
   const detailSheet = XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ 提示: '当前筛选条件下暂无已发货调拨明细' }])
   summarySheet['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, ...Array.from({ length: 10 }, () => ({ wch: 14 }))]
-  detailSheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
+  detailSheet['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 9 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, ...Array.from({ length: 9 }, () => ({ wch: 14 })), { wch: 14 }, { wch: 14 }, { wch: 30 }]
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, summarySheet, '调拨汇总')
   XLSX.utils.book_append_sheet(workbook, detailSheet, '调拨明细')
@@ -128,8 +142,14 @@ export async function exportTransferImage(record, storeLabel) {
   measure.font = `26px ${font}`
   const items = record.items || []
   const itemLayouts = items.map((item, index) => {
-    const estimate = transferEstimatedWeightLabel(item)
-    const label = `${index + 1}. ${item.category === 'material' ? '物料' : '产品'} · ${item.productName || '—'}  ${transferQuantityLabel(item)}${estimate ? ` · ${estimate}` : ''}`
+    const shippedWeight = transferShippedEstimatedWeightGrams(item)
+    const estimate = shippedWeight > 0 ? `约${(shippedWeight / 1000).toFixed(2)}kg` : ''
+    const requested = transferQuantityLabel(item)
+    const shipped = transferShippedQuantityLabel(item)
+    const shipmentText = transferShipmentRecorded(item)
+      ? requested === shipped ? `${shipped} · 按申请发货` : `申请 ${requested} · 实发 ${shipped}`
+      : `${requested} · 历史发货记录`
+    const label = `${index + 1}. ${item.category === 'material' ? '物料' : '产品'} · ${item.productName || '—'}  ${shipmentText}${estimate ? ` · ${estimate}` : ''}`
     const lines = wrapCanvasText(measure, label, contentWidth - 32)
     return { item, lines, height: Math.max(58, lines.length * 34 + (item.note ? 30 : 12)) }
   })

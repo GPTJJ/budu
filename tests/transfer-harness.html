@@ -10,7 +10,7 @@
     import '/src/index.css'
 
     const records = new URLSearchParams(location.search).has('records') ? [
-      { id: 'tr-pending', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'tongying', fromStoreName: '官舍店', storeName: '通盈店', status: 'pending', note: '优先备货', createdBy: 'requester', createdAt: '2026-08-28T06:00:00.000Z', items: [{ id: 'ti-1', itemId: 'it-1', itemCode: 'NO.2', category: 'product', productName: 'NO.2柠檬', quantity: null, boxQuantity: 1, pieceQuantity: 166, boxWeightGrams: 2500, pieceWeightGrams: 6, estimatedWeightGrams: 3496, note: '' }] },
+      { id: 'tr-pending', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'tongying', fromStoreName: '官舍店', storeName: '通盈店', status: 'pending', note: '优先备货', createdBy: 'requester', createdAt: '2026-08-28T06:00:00.000Z', items: [{ id: 'ti-1', itemId: 'it-1', itemCode: 'NO.2', category: 'product', productName: 'NO.2柠檬', quantity: null, boxQuantity: 1, pieceQuantity: 166, boxWeightGrams: 2500, pieceWeightGrams: 6, estimatedWeightGrams: 3496, note: '' }, { id: 'ti-1b', itemId: 'master-m1', itemCode: '', category: 'material', productName: '冰袋', quantity: 100, note: '' }] },
       { id: 'tr-legacy', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'xidan', fromStoreName: '官舍店', storeName: '西单店', status: 'completed', note: '', createdBy: 'legacy', createdAt: '2026-08-08T06:00:00.000Z', shippedBy: 'legacy-shipper', shippedAt: '2026-08-09T01:00:00.000Z', items: [{ id: 'ti-2', itemId: 'it-2', itemCode: '', category: 'material', productName: '冰袋', productCategory: '', quantity: 3, note: '' }] },
       { id: 'tr-rejected', type: 'transfer', fromStoreKey: 'chaowai', storeKey: 'guanshe', fromStoreName: '朝外店', storeName: '官舍店', status: 'rejected', note: '', createdBy: 'legacy', createdAt: '2026-08-09T06:00:00.000Z', items: [{ id: 'ti-3', itemId: 'it-3', itemCode: '', category: 'product', productName: 'NO.2柠檬', quantity: 1, note: '' }] },
     ] : []
@@ -35,7 +35,8 @@
       return nativeCanvasToDataUrl.apply(this, args)
     }
     window.open = () => { imageExports += 1; return null }
-    window.__transferTest = { records, requests, get imageExports() { return imageExports } }
+    const shipments = []
+    window.__transferTest = { records, requests, shipments, get imageExports() { return imageExports } }
     window.fetch = async (url, options = {}) => {
       const requestUrl = new URL(url, location.origin)
       const path = requestUrl.pathname
@@ -55,6 +56,17 @@
       const ship = path.match(/^\/api\/v2\/transfer-requests\/([^/]+)\/ship$/)
       if (ship && method === 'POST') {
         const row = records.find((item) => item.id === ship[1])
+        const body = JSON.parse(options.body)
+        shipments.push(body)
+        for (const actual of body.items || []) {
+          const item = row.items.find((candidate) => candidate.itemId === actual.itemId)
+          if (!item) continue
+          item.shippedQuantity = actual.shippedQuantity
+          item.shippedBoxQuantity = actual.shippedBoxQuantity
+          item.shippedPieceQuantity = actual.shippedPieceQuantity
+          item.shipmentRecorded = true
+        }
+        row.shipmentRecorded = row.items.every((item) => item.shipmentRecorded)
         row.status = 'shipped'; row.shippedBy = 'manager-test'; row.shippedAt = new Date().toISOString()
         return json({ ok: true, request: row })
       }

@@ -9,10 +9,12 @@ import { api } from '../utils/api'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 import {
-  initialTransferDraft, itemCountLabel, materialDraftItems, mergeTransferItems,
+  buildTransferShipmentDraft, initialTransferDraft, itemCountLabel, materialDraftItems, mergeTransferItems,
   isPackagedTransferItem, productDraftRows, setDraftMaterialQuantity, setDraftProductQuantity,
   setDraftProductUnitQuantity, toggleDraftProduct, transferEstimatedWeightLabel,
-  transferQuantityLabel, transferStatusLabel, transferViewStatus, validTransferItemQuantity,
+  transferQuantityLabel, transferShipmentDiffers, transferShipmentRecorded,
+  transferShippedQuantityLabel, transferStatusLabel, transferViewStatus,
+  validateTransferShipmentDraft, validTransferItemQuantity,
 } from '../utils/storeTransfer'
 import { exportTransferExcel, exportTransferImage } from '../utils/storeTransferExport'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
@@ -41,15 +43,28 @@ function Sheet({ title, children, onClose, labelledBy = 'transfer-sheet-title' }
   )
 }
 
-function QuantityControl({ value, onChange, ariaLabel }) {
+function QuantityControl({ value, onChange, ariaLabel, max = 999999 }) {
   const number = Number(value) || 0
   return (
     <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
       <button type="button" onClick={() => onChange(number > 1 ? String(number - 1) : '')} className="grid h-9 w-9 place-items-center rounded-lg bg-white text-slate-500" aria-label={`${ariaLabel}减一`}><Minus className="h-4 w-4" /></button>
       <input aria-label={ariaLabel} inputMode="numeric" pattern="[0-9]*" value={value} onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, 6))} className="h-9 w-16 bg-transparent text-center text-sm font-bold tabular-nums text-slate-800 outline-none" placeholder="0" />
-      <button type="button" onClick={() => onChange(String(Math.min(999999, number + 1)))} className="grid h-9 w-9 place-items-center rounded-lg bg-white text-budu-600" aria-label={`${ariaLabel}加一`}><Plus className="h-4 w-4" /></button>
+      <button type="button" onClick={() => onChange(String(Math.min(max, number + 1)))} className="grid h-9 w-9 place-items-center rounded-lg bg-white text-budu-600" aria-label={`${ariaLabel}加一`}><Plus className="h-4 w-4" /></button>
     </div>
   )
+}
+
+function TransferQuantityFacts({ item, shipped }) {
+  const requestedLabel = transferQuantityLabel(item)
+  if (!shipped) return <span className="font-black tabular-nums text-slate-800">{requestedLabel}</span>
+  if (!transferShipmentRecorded(item)) {
+    return <div className="text-right"><p className="font-black tabular-nums text-slate-800">{requestedLabel}</p><p className="mt-1 text-[10px] font-semibold text-slate-400">历史发货记录</p></div>
+  }
+  const actualLabel = transferShippedQuantityLabel(item)
+  if (!transferShipmentDiffers(item)) {
+    return <div className="text-right"><p className="font-black tabular-nums text-slate-800">{actualLabel}</p><p className="mt-1 text-[10px] font-bold text-emerald-600">按申请发货</p></div>
+  }
+  return <div className="space-y-1 text-right text-xs"><p className="text-slate-400">申请：<span className="font-bold tabular-nums text-slate-600">{requestedLabel}</span></p><p className="text-budu-500">实发：<span className="font-black tabular-nums text-budu-700">{actualLabel}</span></p></div>
 }
 
 export default function StoreTransferPage({ currentUser, onBack }) {
@@ -249,17 +264,37 @@ export default function StoreTransferPage({ currentUser, onBack }) {
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
 
-  const ship = async (request) => {
+  const openShipmentReview = (request) => {
+    setError('')
+    setShipConfirm({ request, items: buildTransferShipmentDraft(request) })
+  }
+
+  const updateShipmentQuantity = (itemId, field, value) => {
+    setShipConfirm((current) => current ? {
+      ...current,
+      items: current.items.map((item) => item.itemId === itemId ? { ...item, [field]: Number(value || 0) } : item),
+    } : current)
+    setError('')
+  }
+
+  const ship = async () => {
+    const request = shipConfirm?.request
+    if (!request) return
+    const validationError = validateTransferShipmentDraft(request, shipConfirm.items)
+    if (validationError) return setError(validationError)
     setBusy(true)
     try {
-      await api(`/v2/transfer-requests/${request.id}/ship`, { method: 'POST', body: JSON.stringify({}) })
+      await api(`/v2/transfer-requests/${request.id}/ship`, {
+        method: 'POST',
+        body: JSON.stringify({ items: shipConfirm.items }),
+      })
       await loadUserData()
       setVersion((value) => value + 1)
       setShipConfirm(null)
       setDetail(null)
       setListTab('shipped')
       setHistoryScope('normal')
-      setNotice('已确认发货')
+      setNotice('实际发货数量已确认')
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
 
@@ -380,9 +415,9 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         {!filtered.length && <div className="rounded-[24px] border border-dashed border-slate-200 py-16 text-center"><Truck className="mx-auto h-8 w-8 text-slate-200" /><p className="mt-3 text-sm text-slate-300">当前条件下暂无调拨记录</p></div>}
       </div>
 
-      {detail && <Sheet title="调拨详情" onClose={() => setDetail(null)}><div className="space-y-4 p-5"><div className="rounded-2xl bg-budu-50 p-4"><div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-budu-500">{detail.id}</p><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[transferViewStatus(detail.status)]}`}>{transferStatusLabel(detail.status)}</span></div><p className="mt-2 text-xl font-black text-budu-800">{storeLabel(detail.fromStoreKey, detail.fromStoreName)} → {storeLabel(detail.storeKey, detail.storeName)}</p></div><div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">申请人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.createdBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.createdAt)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">发货人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.shippedBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.shippedAt)}</p></div></div>{['product', 'material'].map((category) => { const rows = (detail.items || []).filter((item) => item.category === category); return rows.length ? <div key={category}><h4 className="mb-2 text-xs font-bold text-slate-500">{category === 'product' ? '产品' : '物料'} · {rows.length} 种</h4><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{rows.map((item) => <div key={item.id || item.itemId || item.productName} className="flex items-start justify-between gap-3 px-4 py-3"><div><p className="text-sm font-semibold text-slate-700">{item.productName || '—'}</p><p className="mt-1 text-[11px] text-slate-400">编码 {item.itemCode || '—'}{item.productCategory ? ` · ${item.productCategory}` : ''}{item.note ? ` · ${item.note}` : ''}</p>{transferEstimatedWeightLabel(item) && <p className="mt-1 text-[11px] font-bold text-budu-500">{transferEstimatedWeightLabel(item)}</p>}</div><span className="font-black tabular-nums text-slate-800">{transferQuantityLabel(item)}</span></div>)}</div></div> : null })}<div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><span className="font-bold">备注：</span>{detail.note || '—'}</div>{transferViewStatus(detail.status) === 'canceled' && <div className="rounded-2xl bg-slate-100 p-3 text-xs text-slate-500">撤回人 {detail.withdrawnBy || '—'} · {formatTime(detail.withdrawnAt)}</div>}<button onClick={() => exportTransferImage(detail, storeLabel)} className="btn-secondary min-h-11 w-full"><Download className="h-4 w-4" />调拨单图片</button><DeveloperSafeDeleteButton user={currentUser} type="transfer" record={{ ...detail, title: `${storeLabel(detail.fromStoreKey, detail.fromStoreName)} → ${storeLabel(detail.storeKey, detail.storeName)}`, subtitle: `${detail.items?.length || 0} 项 · ${detail.createdBy}` }} onDeleted={async () => { await loadUserData(); setVersion((value) => value + 1); setDetail(null) }} className="w-full" />{transferViewStatus(detail.status) === 'pending' && <div className="space-y-2 border-t border-slate-100 pt-4">{canManageTransferStore(currentUser, detail.fromStoreKey) && <button onClick={() => setShipConfirm(detail)} className="btn-primary min-h-12 w-full"><Truck className="h-4 w-4" />确认发货</button>}{(detail.createdBy === currentUser?.username || transferAll) && <button onClick={() => withdraw(detail)} disabled={busy} className="min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-500">撤回调拨</button>}</div>}</div></Sheet>}
+      {detail && <Sheet title="调拨详情" onClose={() => setDetail(null)}><div className="space-y-4 p-5"><div className="rounded-2xl bg-budu-50 p-4"><div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-budu-500">{detail.id}</p><span className={`rounded-full px-2 py-1 text-[11px] font-bold ${statusStyle[transferViewStatus(detail.status)]}`}>{transferStatusLabel(detail.status)}</span></div><p className="mt-2 text-xl font-black text-budu-800">{storeLabel(detail.fromStoreKey, detail.fromStoreName)} → {storeLabel(detail.storeKey, detail.storeName)}</p></div><div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">申请人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.createdBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.createdAt)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">发货人 / 时间</p><p className="mt-1 font-bold text-slate-700">{detail.shippedBy || '—'}</p><p className="mt-1 text-slate-500">{formatTime(detail.shippedAt)}</p></div></div>{['product', 'material'].map((category) => { const rows = (detail.items || []).filter((item) => item.category === category); return rows.length ? <div key={category}><h4 className="mb-2 text-xs font-bold text-slate-500">{category === 'product' ? '产品' : '物料'} · {rows.length} 种</h4><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{rows.map((item) => <div key={item.id || item.itemId || item.productName} className="flex items-start justify-between gap-3 px-4 py-3"><div><p className="text-sm font-semibold text-slate-700">{item.productName || '—'}</p><p className="mt-1 text-[11px] text-slate-400">编码 {item.itemCode || '—'}{item.productCategory ? ` · ${item.productCategory}` : ''}{item.note ? ` · ${item.note}` : ''}</p>{transferEstimatedWeightLabel(item) && <p className="mt-1 text-[11px] font-bold text-budu-500">{transferEstimatedWeightLabel(item)}</p>}</div><TransferQuantityFacts item={item} shipped={transferViewStatus(detail.status) === 'shipped'} /></div>)}</div></div> : null })}<div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><span className="font-bold">备注：</span>{detail.note || '—'}</div>{transferViewStatus(detail.status) === 'canceled' && <div className="rounded-2xl bg-slate-100 p-3 text-xs text-slate-500">撤回人 {detail.withdrawnBy || '—'} · {formatTime(detail.withdrawnAt)}</div>}<button onClick={() => exportTransferImage(detail, storeLabel)} className="btn-secondary min-h-11 w-full"><Download className="h-4 w-4" />调拨单图片</button><DeveloperSafeDeleteButton user={currentUser} type="transfer" record={{ ...detail, title: `${storeLabel(detail.fromStoreKey, detail.fromStoreName)} → ${storeLabel(detail.storeKey, detail.storeName)}`, subtitle: `${detail.items?.length || 0} 项 · ${detail.createdBy}` }} onDeleted={async () => { await loadUserData(); setVersion((value) => value + 1); setDetail(null) }} className="w-full" />{transferViewStatus(detail.status) === 'pending' && <div className="space-y-2 border-t border-slate-100 pt-4">{canManageTransferStore(currentUser, detail.fromStoreKey) && <button onClick={() => openShipmentReview(detail)} className="btn-primary min-h-12 w-full"><Truck className="h-4 w-4" />核对并发货</button>}{(detail.createdBy === currentUser?.username || transferAll) && <button onClick={() => withdraw(detail)} disabled={busy} className="min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-500">撤回调拨</button>}</div>}</div></Sheet>}
       {exportOpen && <Sheet title="导出门店物资调拨" onClose={() => setExportOpen(false)} labelledBy="transfer-export-title"><div className="space-y-4 p-5"><p className="rounded-2xl bg-emerald-50 p-3 text-xs text-emerald-700">只统计已发货，以发货确认时间为准；不代表当前库存。</p><div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2"><label className="text-xs font-bold text-slate-500">开始日期<input aria-label="导出开始日期" type="date" value={exportFilters.dateFrom} onChange={(event) => setExportFilters((current) => ({ ...current, dateFrom: event.target.value }))} className="input mt-1.5" /></label><span className="mb-3 text-slate-300">—</span><label className="text-xs font-bold text-slate-500">结束日期<input aria-label="导出结束日期" type="date" value={exportFilters.dateTo} onChange={(event) => setExportFilters((current) => ({ ...current, dateTo: event.target.value }))} className="input mt-1.5" /></label></div><fieldset><legend className="mb-2 text-xs font-bold text-slate-500">门店（可多选）</legend><div className="grid grid-cols-2 gap-2">{stores.map((store) => <label key={store.key} className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-50 px-3 text-sm font-semibold text-slate-600"><input aria-label={`导出门店${store.name}`} type="checkbox" checked={exportFilters.storeKeys.includes(store.key)} onChange={() => toggleExportStore(store.key)} className="h-4 w-4 accent-budu-500" />{store.name}</label>)}</div></fieldset><fieldset><legend className="mb-2 text-xs font-bold text-slate-500">货品类型</legend><div className="grid grid-cols-3 rounded-2xl bg-slate-100 p-1">{[['all', '全部'], ['product', '产品'], ['material', '物料']].map(([key, label]) => <button key={key} type="button" onClick={() => setExportFilters((current) => ({ ...current, itemType: key }))} className={`min-h-10 rounded-xl text-sm font-bold ${exportFilters.itemType === key ? 'bg-white text-budu-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</div></fieldset>{exportError && <p role="alert" className="text-sm font-semibold text-rose-500">{exportError}</p>}<button onClick={runExport} className="btn-primary min-h-12 w-full"><FileSpreadsheet className="h-4 w-4" />导出汇总 Excel</button></div></Sheet>}
-      {shipConfirm && <Sheet title="确认已发货" onClose={() => setShipConfirm(null)} labelledBy="ship-confirm-title"><div className="space-y-4 p-5"><div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800"><p className="font-bold">请确认货品已经从调出门店发出。</p><p className="mt-1 text-xs">确认后状态变为“已发货”，并记录发货人与时间；不会修改任何库存，也不能普通撤回。</p></div><p className="text-center text-base font-black text-slate-800">{storeLabel(shipConfirm.fromStoreKey, shipConfirm.fromStoreName)} → {storeLabel(shipConfirm.storeKey, shipConfirm.storeName)}</p><div className="grid grid-cols-2 gap-3"><button onClick={() => setShipConfirm(null)} className="btn-secondary min-h-12">取消</button><button onClick={() => ship(shipConfirm)} disabled={busy} className="btn-primary min-h-12"><Check className="h-4 w-4" />{busy ? '处理中…' : '确认已发货'}</button></div></div></Sheet>}
+      {shipConfirm && <Sheet title="核对并发货" onClose={() => { setShipConfirm(null); setError('') }} labelledBy="ship-confirm-title"><div className="space-y-4 p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]"><div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800"><p className="font-bold">请按实际备货数量逐项核对。</p><p className="mt-1 text-xs">实发只能等于或少于申请；确认后保留申请与实发两份事实，不修改库存。</p></div><p className="text-center text-base font-black text-slate-800">{storeLabel(shipConfirm.request.fromStoreKey, shipConfirm.request.fromStoreName)} → {storeLabel(shipConfirm.request.storeKey, shipConfirm.request.storeName)}</p><div className="space-y-3">{(shipConfirm.request.items || []).map((item) => { const actual = shipConfirm.items.find((row) => row.itemId === item.itemId) || {}; const packaged = isPackagedTransferItem(item) || item.quantity === null; return <div key={item.itemId} className="rounded-2xl border border-slate-100 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-bold text-slate-800">{item.productName}</p><p className="mt-1 text-xs text-slate-400">申请：<span className="font-bold text-slate-600">{transferQuantityLabel(item)}</span></p></div><span className="rounded-full bg-budu-50 px-2 py-1 text-[10px] font-bold text-budu-600">实发</span></div>{packaged ? <div className="mt-3 flex flex-wrap gap-3">{Number(item.boxQuantity || 0) > 0 && <div><p className="mb-1 text-[11px] font-bold text-slate-400">箱</p><QuantityControl value={String(actual.shippedBoxQuantity ?? 0)} onChange={(value) => updateShipmentQuantity(item.itemId, 'shippedBoxQuantity', value)} ariaLabel={`${item.productName}实发箱数`} max={Number(item.boxQuantity || 0)} /></div>}{Number(item.pieceQuantity || 0) > 0 && <div><p className="mb-1 text-[11px] font-bold text-slate-400">颗</p><QuantityControl value={String(actual.shippedPieceQuantity ?? 0)} onChange={(value) => updateShipmentQuantity(item.itemId, 'shippedPieceQuantity', value)} ariaLabel={`${item.productName}实发颗数`} max={Number(item.pieceQuantity || 0)} /></div>}</div> : <div className="mt-3"><p className="mb-1 text-[11px] font-bold text-slate-400">件</p><QuantityControl value={String(actual.shippedQuantity ?? 0)} onChange={(value) => updateShipmentQuantity(item.itemId, 'shippedQuantity', value)} ariaLabel={`${item.productName}实发数量`} max={Number(item.quantity || 0)} /></div>}</div> })}</div>{error && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-600">{error}</p>}<div className="grid grid-cols-2 gap-3"><button onClick={() => { setShipConfirm(null); setError('') }} className="btn-secondary min-h-12">取消</button><button onClick={ship} disabled={busy} className="btn-primary min-h-12"><Check className="h-4 w-4" />{busy ? '处理中…' : '确认实发'}</button></div></div></Sheet>}
     </div>
   )
 }

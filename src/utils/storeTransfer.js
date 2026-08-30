@@ -128,6 +128,67 @@ export function transferQuantityLabel(item) {
   return `${Number(item?.quantity || 0)}件`
 }
 
+export function transferShipmentRecorded(item) {
+  return item?.shipmentRecorded === true
+}
+
+export function transferShippedQuantityLabel(item) {
+  if (!transferShipmentRecorded(item)) return transferQuantityLabel(item)
+  if (isPackagedTransferItem(item) || item?.quantity === null) {
+    return [Number(item?.shippedBoxQuantity || 0) > 0 ? `${Number(item.shippedBoxQuantity)}箱` : '', Number(item?.shippedPieceQuantity || 0) > 0 ? `${Number(item.shippedPieceQuantity)}颗` : ''].filter(Boolean).join(' + ') || '0'
+  }
+  return `${Number(item?.shippedQuantity || 0)}件`
+}
+
+export function transferShipmentDiffers(item) {
+  if (!transferShipmentRecorded(item)) return false
+  if (isPackagedTransferItem(item) || item?.quantity === null) {
+    return Number(item?.boxQuantity || 0) !== Number(item?.shippedBoxQuantity || 0)
+      || Number(item?.pieceQuantity || 0) !== Number(item?.shippedPieceQuantity || 0)
+  }
+  return Number(item?.quantity || 0) !== Number(item?.shippedQuantity || 0)
+}
+
+export function buildTransferShipmentDraft(request) {
+  return (request?.items || []).map((item) => (
+    isPackagedTransferItem(item) || item?.quantity === null
+      ? {
+          itemId: item.itemId,
+          shippedBoxQuantity: Number(item.boxQuantity || 0),
+          shippedPieceQuantity: Number(item.pieceQuantity || 0),
+        }
+      : { itemId: item.itemId, shippedQuantity: Number(item.quantity || 0) }
+  ))
+}
+
+export function validateTransferShipmentDraft(request, shipmentItems) {
+  const requested = Array.isArray(request?.items) ? request.items : []
+  const shipped = Array.isArray(shipmentItems) ? shipmentItems : []
+  if (!requested.length || shipped.length !== requested.length) return '实际发货明细必须与原申请完全一致'
+  const byId = new Map()
+  for (const item of shipped) {
+    if (!item?.itemId || byId.has(item.itemId)) return '实际发货明细必须与原申请完全一致'
+    byId.set(item.itemId, item)
+  }
+  let total = 0
+  for (const item of requested) {
+    const actual = byId.get(item.itemId)
+    if (!actual) return '实际发货明细必须与原申请完全一致'
+    if (isPackagedTransferItem(item) || item?.quantity === null) {
+      const box = Number(actual.shippedBoxQuantity)
+      const piece = Number(actual.shippedPieceQuantity)
+      if (!Number.isInteger(box) || box < 0 || box > Number(item.boxQuantity || 0)) return `「${item.productName}」实发箱数不能超过申请`
+      if (!Number.isInteger(piece) || piece < 0 || piece > Number(item.pieceQuantity || 0)) return `「${item.productName}」实发颗数不能超过申请`
+      total += box + piece
+    } else {
+      const quantity = Number(actual.shippedQuantity)
+      if (!Number.isInteger(quantity) || quantity < 0 || quantity > Number(item.quantity || 0)) return `「${item.productName}」实发数量不能超过申请`
+      total += quantity
+    }
+  }
+  return total > 0 ? '' : '没有实际发货商品'
+}
+
 export function transferEstimatedWeightGrams(item) {
   if (Number.isFinite(Number(item?.estimatedWeightGrams))) return Number(item.estimatedWeightGrams)
   return Number(item?.boxQuantity || 0) * Number(item?.boxWeightGrams || 0)
@@ -137,6 +198,12 @@ export function transferEstimatedWeightGrams(item) {
 export function transferEstimatedWeightLabel(item) {
   const grams = transferEstimatedWeightGrams(item)
   return grams > 0 ? `约${(grams / 1000).toFixed(2)}kg` : ''
+}
+
+export function transferShippedEstimatedWeightGrams(item) {
+  if (!transferShipmentRecorded(item)) return transferEstimatedWeightGrams(item)
+  return Number(item?.shippedBoxQuantity || 0) * Number(item?.boxWeightGrams || 0)
+    + Number(item?.shippedPieceQuantity || 0) * Number(item?.pieceWeightGrams || 0)
 }
 
 export function mergeTransferItems(current, incoming) {

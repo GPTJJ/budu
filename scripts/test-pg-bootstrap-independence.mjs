@@ -189,6 +189,9 @@ test('Gate 1 Scenario E: 调拨箱/颗字段从 PG API 完整进入前端缓存'
             quantity: null,
             boxQuantity: 0,
             pieceQuantity: 166,
+            shippedBoxQuantity: 0,
+            shippedPieceQuantity: 120,
+            shipmentRecorded: true,
             boxWeightGrams: null,
             pieceWeightGrams: 6,
             estimatedWeightGrams: 996,
@@ -203,6 +206,9 @@ test('Gate 1 Scenario E: 调拨箱/颗字段从 PG API 完整进入前端缓存'
   assert.equal(item.quantity, null)
   assert.equal(item.boxQuantity, 0)
   assert.equal(item.pieceQuantity, 166)
+  assert.equal(item.shippedBoxQuantity, 0)
+  assert.equal(item.shippedPieceQuantity, 120)
+  assert.equal(item.shipmentRecorded, true)
   assert.equal(item.pieceWeightGrams, 6)
   assert.equal(item.estimatedWeightGrams, 996)
   assert.equal(item.productCategory, '糖果')
