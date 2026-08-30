@@ -8,6 +8,8 @@ import {
   canManageTransferStore,
   hasExternalOrderCreate,
   hasExternalSettlementConfirm,
+  hasManualExternalRefundConfirm,
+  hasManualExternalRefundRecord,
   hasInventoryTransferAll,
   hasPageAccess,
   normalizeAccountPermissions,
@@ -38,6 +40,17 @@ test('外部订单创建与结算确认是独立、默认关闭的显式能力',
   assert.equal(hasExternalSettlementConfirm({ role: 'manager', permissions: { externalSettlementConfirm: true } }), true)
   assert.equal(hasExternalOrderCreate({ role: 'cashier', permissions: { externalOrderCreate: true } }), false)
   assert.equal(hasExternalSettlementConfirm({ role: 'public', permissions: { externalSettlementConfirm: true } }), false)
+})
+
+test('人工外部退款记录与确认是独立、默认关闭且收银不可获得的显式能力', () => {
+  assert.equal(hasManualExternalRefundRecord({ role: 'developer' }), true)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'developer' }), true)
+  assert.equal(hasManualExternalRefundRecord({ role: 'staff', permissions: {} }), false)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'manager', permissions: {} }), false)
+  assert.equal(hasManualExternalRefundRecord({ role: 'finance', permissions: { manualExternalRefundRecord: true } }), true)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'admin', permissions: { manualExternalRefundConfirm: true } }), true)
+  assert.equal(hasManualExternalRefundRecord({ role: 'cashier', permissions: { manualExternalRefundRecord: true } }), false)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'public', permissions: { manualExternalRefundConfirm: true } }), false)
 })
 
 test('调拨全权限不依赖角色和绑定门店', () => {
@@ -71,6 +84,8 @@ test('权限规范化保留已知模块并过滤未知字段', () => {
   assert.equal(normalized.inventoryTransferAll, true)
   assert.equal(normalized.externalOrderCreate, false)
   assert.equal(normalized.externalSettlementConfirm, false)
+  assert.equal(normalized.manualExternalRefundRecord, false)
+  assert.equal(normalized.manualExternalRefundConfirm, false)
   assert.equal(normalized.modules.overview, false)
   assert.equal(normalized.modules.finance, true)
   assert.equal(Object.hasOwn(normalized.modules, 'unknown'), false)

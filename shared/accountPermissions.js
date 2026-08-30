@@ -84,6 +84,8 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
   EXTERNAL_ORDER_CREATE: 'externalOrderCreate',
   EXTERNAL_SETTLEMENT_CONFIRM: 'externalSettlementConfirm',
+  MANUAL_EXTERNAL_REFUND_RECORD: 'manualExternalRefundRecord',
+  MANUAL_EXTERNAL_REFUND_CONFIRM: 'manualExternalRefundConfirm',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
 })
 
@@ -119,6 +121,10 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.EXTERNAL_ORDER_CREATE] === true),
     [ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM]:
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM] === true),
+    [ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_RECORD]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_RECORD] === true),
+    [ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM] === true),
     [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
   }
 }
@@ -173,6 +179,24 @@ export function hasExternalSettlementConfirm(user) {
       user.status !== 'disabled' &&
       user.role !== 'public' &&
       normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.EXTERNAL_SETTLEMENT_CONFIRM],
+  )
+}
+
+export function hasManualExternalRefundRecord(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_RECORD],
+  )
+}
+
+export function hasManualExternalRefundConfirm(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM],
   )
 }
 

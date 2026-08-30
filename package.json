@@ -40,7 +40,10 @@
     "test:ocr-integrity": "node --test scripts/test-ocr-input-integrity.mjs",
     "test:wechat-e2e": "node --test scripts/test-wechat-pay-e2e.mjs",
     "test:report-center:rc2a": "node scripts/test-report-center-rc2a.mjs",
-    "test:report-center:rc2a-migration": "node --test scripts/test-report-center-rc2a-migration-rehearsal.mjs"
+    "test:report-center:rc2a-migration": "node --test scripts/test-report-center-rc2a-migration-rehearsal.mjs",
+    "test:report-center:rc2b:allocation": "node --test scripts/test-report-center-rc2b-allocation.mjs"
+    ,"test:report-center:rc2b": "node scripts/test-report-center-rc2b.mjs",
+    "test:report-center:rc2b-migration": "node --test scripts/test-report-center-rc2b-migration-rehearsal.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

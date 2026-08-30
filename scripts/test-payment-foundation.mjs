@@ -382,7 +382,7 @@ test('微信退款核对器只扫描 pending 微信退款，并限制轮询间�
   }
   const reconciler = new RefundReconciler({ service, intervalMs: 5000 })
   await reconciler.tick()
-  assert.deepEqual(whereSeen[0], { status: 'pending', payment: { provider: 'wechat_pay' } })
+  assert.deepEqual(whereSeen[0], { refundMode: 'PAYMENT', status: 'pending', payment: { provider: 'wechat_pay' } })
   assert.deepEqual(queried, ['refund-pending-1'])
   assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '1000' }).intervalMs, 30000)
   assert.equal(refundReconcilerEnvConfig({ WECHAT_REFUND_QUERY_INTERVAL_MS: '45000' }).intervalMs, 45000)

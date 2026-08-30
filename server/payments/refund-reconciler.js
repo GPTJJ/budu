@@ -41,7 +41,7 @@ export class RefundReconciler {
 
   async tick() {
     const refunds = await this.service.prisma.refund.findMany({
-      where: { status: 'pending', payment: { provider: 'wechat_pay' } },
+      where: { refundMode: 'PAYMENT', status: 'pending', payment: { provider: 'wechat_pay' } },
       orderBy: { createdAt: 'asc' },
       take: this.batchSize,
     })

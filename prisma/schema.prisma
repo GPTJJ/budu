@@ -33,7 +33,14 @@ enum ExternalSettlementType {
 enum ExternalSettlementStatus {
   PENDING
   CONFIRMED
+  PARTIALLY_REFUNDED
+  REFUNDED
   VOIDED
+}
+
+enum RefundMode {
+  PAYMENT
+  MANUAL_EXTERNAL
 }
 
 model Store {
@@ -419,6 +426,7 @@ model ExternalSettlement {
   createdAt      DateTime                 @default(now()) @map("created_at")
   updatedAt      DateTime                 @default(now()) @updatedAt @map("updated_at")
   order          Order                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds        Refund[]
 
   @@index([status, recordedAt])
   @@map("external_settlements")
@@ -472,25 +480,32 @@ model Payment {
 }
 
 model Refund {
-  id               String       @id
-  refundNo         String       @unique @map("refund_no")
-  orderId          String       @map("order_id")
-  paymentId        String       @map("payment_id")
-  refundAmount     BigInt       @map("refund_amount")
-  reason           String       @default("")
-  status           String       @default("pending")
-  providerRefundNo String?      @unique @map("provider_refund_no")
-  requestKey       String       @unique @map("request_key")
-  requestedBy      String       @default("") @map("requested_by")
-  approvedBy       String       @default("") @map("approved_by")
-  createdAt        DateTime     @default(now()) @map("created_at")
-  completedAt      DateTime?    @map("completed_at")
-  order            Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  payment          Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  items            RefundItem[]
+  id                      String              @id
+  refundNo                String              @unique @map("refund_no")
+  orderId                 String              @map("order_id")
+  paymentId               String?             @map("payment_id")
+  externalSettlementId    String?             @map("external_settlement_id")
+  refundMode              RefundMode          @default(PAYMENT) @map("refund_mode")
+  refundAmount            BigInt              @map("refund_amount")
+  reason                  String              @default("")
+  status                  String              @default("pending")
+  providerRefundNo        String?             @unique @map("provider_refund_no")
+  externalCompletedAt     DateTime?           @map("external_completed_at")
+  externalRefundReference String?             @map("external_refund_reference")
+  requestKey              String              @unique @map("request_key")
+  requestedBy             String              @default("") @map("requested_by")
+  approvedBy              String              @default("") @map("approved_by")
+  createdAt               DateTime            @default(now()) @map("created_at")
+  completedAt             DateTime?           @map("completed_at")
+  order                   Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment                 Payment?            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  externalSettlement      ExternalSettlement? @relation(fields: [externalSettlementId], references: [id], onDelete: Restrict)
+  items                   RefundItem[]
 
   @@index([orderId, createdAt])
   @@index([paymentId, createdAt])
+  @@index([externalSettlementId, createdAt])
+  @@index([refundMode, status, createdAt])
   @@map("refunds")
 }
 
@@ -504,6 +519,7 @@ model RefundItem {
   refund      Refund    @relation(fields: [refundId], references: [id], onDelete: Cascade)
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
 
+  @@unique([refundId, orderItemId])
   @@index([refundId])
   @@index([orderItemId])
   @@map("refund_items")
