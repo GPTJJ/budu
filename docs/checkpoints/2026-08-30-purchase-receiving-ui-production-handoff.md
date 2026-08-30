@@ -76,9 +76,9 @@ Remote recovery refs:
 
 - current purchase work and this checkpoint: `origin/codex/purchase-receiving-ui`;
 - paused Report Center RC-2B: `origin/codex/report-center-rc2b` at source commit `8198d7a6acd2c521ab10b34a77159980560ee933`;
-- historical Beijing migration checkpoint: `origin/codex/beijing-migration` at `a54283d9067e017183e423d6fa4a1be354afe4c7`.
+- historical Beijing migration checkpoint: complete Git bundle on `origin/safety/cross-device-handoff-purchase-20260830` at archive commit `960b89d`; bundle path `handoff/bundles/budu-beijing-migration-a54283d.bundle`, original ref `codex/beijing-migration` at `a54283d9067e017183e423d6fa4a1be354afe4c7`, SHA-256 `87c5ec5dad05959b7061d6c2ff50b0a041454bdefd4000c980ec1d96600e7c40`.
 
-At handoff audit time, every extant BUDU worktree was clean. Unknown working-tree changes were neither discarded nor stashed; none were found. The three commit heads above were the only extant worktree heads not already reachable from a remote ref, and are intentionally preserved as independent branches without merging.
+At handoff audit time, every extant BUDU worktree was clean. Unknown working-tree changes were neither discarded nor stashed; none were found. The three commit heads above were the only extant worktree heads not already reachable from a remote ref. Purchase and Report Center were published as independent branches. Direct publication of the historical Beijing branch was rejected because the current OAuth credential lacks workflow scope; its complete verified Git bundle was therefore published on the independent safety branch without merging or rewriting it.
 
 On the new device:
 
@@ -86,6 +86,8 @@ On the new device:
 git fetch --all --prune
 git switch --track origin/codex/purchase-receiving-ui
 ```
+
+If the historical Beijing migration worktree is needed, first check out the safety branch, verify the bundle checksum and `git bundle verify`, then fetch its original ref as documented in `handoff/README.md` on that branch.
 
 Then read `AGENTS.md`, `docs/BUDU_STATUS.md`, and this checkpoint, and directly reverify production before any new action. Committed but unpushed work is unavailable remotely, and uncommitted work cannot be recovered through Git; this handoff is complete only after the remote refs above are verified.
 
