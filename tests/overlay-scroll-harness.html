@@ -18,6 +18,7 @@
         OverlayStackManager,
         OverlayViewport,
       } from '/src/components/overlay/OverlayPrimitives.jsx'
+      import PullToRefresh from '/src/components/PullToRefresh.jsx'
       import '/src/index.css'
 
       const rows = Array.from({ length: 70 }, (_, index) => `弹层长内容 ${index + 1}`)
@@ -52,7 +53,8 @@
 
       function Harness() {
         const [overlay, setOverlay] = useState('')
-        return React.createElement(React.Fragment, null,
+        const [refreshCount, setRefreshCount] = useState(0)
+        return React.createElement(PullToRefresh, { onRefresh: async () => setRefreshCount((value) => value + 1) },
           React.createElement(OverlayStackManager),
           React.createElement('div', { className: 'fixed left-3 top-3 z-10 flex gap-2' },
             React.createElement('button', { onClick: () => setOverlay('long'), className: 'btn-primary p-3' }, '打开长弹层'),
@@ -60,6 +62,7 @@
             React.createElement('button', { onClick: () => setOverlay('legacy'), className: 'btn-secondary p-3' }, '打开旧弹层'),
           ),
           React.createElement('main', { 'data-testid': 'background', className: 'bg-slate-50 p-6 pt-24', style: { minHeight: '2600px' } }, '背景页面滚动位置必须恢复'),
+          React.createElement('output', { 'data-testid': 'page-refresh-count', className: 'fixed bottom-3 left-3 z-[200]' }, String(refreshCount)),
           (overlay === 'long' || overlay === 'short') && React.createElement(ContractOverlay, { short: overlay === 'short', onClose: () => setOverlay('') }),
           overlay === 'legacy' && React.createElement('div', { className: 'fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4', 'data-testid': 'legacy-root' },
             React.createElement('div', { className: 'max-h-[70dvh] overflow-y-auto rounded-2xl bg-white p-5' },

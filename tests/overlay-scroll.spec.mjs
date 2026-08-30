@@ -1,5 +1,33 @@
 import { expect, test } from '@playwright/test'
 
+async function pullDown(page, testId, { startY = 160, endY = 340 } = {}) {
+  await page.getByTestId(testId).evaluate((target, { startY: fromY, endY: toY }) => {
+    const touch = (clientY) => ({
+      identifier: 1,
+      target,
+      clientX: 180,
+      clientY,
+      pageX: 180,
+      pageY: clientY,
+      screenX: 180,
+      screenY: clientY,
+    })
+    const dispatch = (type, touches, changedTouches) => {
+      const event = new TouchEvent(type, { bubbles: true, cancelable: true })
+      Object.defineProperties(event, {
+        touches: { value: touches },
+        changedTouches: { value: changedTouches },
+      })
+      target.dispatchEvent(event)
+    }
+    const start = touch(fromY)
+    const end = touch(toY)
+    dispatch('touchstart', [start], [start])
+    dispatch('touchmove', [end], [end])
+    dispatch('touchend', [], [end])
+  }, { startY, endY })
+}
+
 async function openAtScrollPosition(page, name = '打开长弹层') {
   await page.goto('/tests/overlay-scroll-harness.html')
   await page.evaluate(() => window.scrollTo(0, 640))
@@ -21,6 +49,10 @@ for (const width of [320, 340, 375, 390, 430]) {
 
     await scroll.evaluate((element) => { element.scrollTop = 0 })
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(0)
+    await pullDown(page, 'overlay-scroll')
+    await expect(page.getByTestId('page-refresh-count')).toHaveText('0')
+    await expect(page.getByText('下拉刷新')).toHaveCount(0)
+    await expect(page.getByText('刷新中…')).toHaveCount(0)
     await scroll.hover()
     await page.mouse.wheel(0, -1800)
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(0)
@@ -48,9 +80,24 @@ test('嵌套 Dialog 关闭子层后父层继续锁定并保留内部位置', asy
   await page.getByRole('button', { name: '关闭子确认' }).click()
   await expect(page.getByRole('dialog', { name: '子确认' })).toHaveCount(0)
   expect(await page.evaluate(() => document.body.style.position)).toBe('fixed')
+  expect(await page.evaluate(() => document.documentElement.classList.contains('budu-overlay-open'))).toBe(true)
+  await pullDown(page, 'overlay-scroll')
+  await expect(page.getByTestId('page-refresh-count')).toHaveText('0')
   expect(await scroll.evaluate((element) => element.scrollTop)).toBe(420)
   await page.getByRole('button', { name: '完成' }).click()
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640)
+})
+
+test('最后一个 Overlay 关闭后恢复普通页面下拉刷新', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 720 })
+  await page.goto('/tests/overlay-scroll-harness.html')
+  await page.getByRole('button', { name: '打开长弹层' }).click()
+  await expect(page.locator('html')).toHaveClass(/budu-overlay-open/)
+  await page.getByRole('button', { name: '关闭父弹层' }).click()
+  await expect(page.locator('html')).not.toHaveClass(/budu-overlay-open/)
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await pullDown(page, 'background')
+  await expect(page.getByTestId('page-refresh-count')).toHaveText('1')
 })
 
 test('输入聚焦与 viewport 收缩后 header/footer/close 仍可用', async ({ page }) => {

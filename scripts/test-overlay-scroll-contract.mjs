@@ -40,6 +40,13 @@ test('all full-screen fixed overlays are covered by one stack manager', () => {
   assert.ok(inventory.length >= 35, `unexpectedly narrow overlay inventory: ${inventory.length}`)
 })
 
+test('page pull-to-refresh is disabled by the shared overlay stack', () => {
+  const pullToRefresh = fs.readFileSync(path.join(root, 'src/components/PullToRefresh.jsx'), 'utf8')
+  assert.match(pullToRefresh, /classList\.contains\('budu-overlay-open'\)/)
+  assert.match(pullToRefresh, /MutationObserver/)
+  assert.match(pullToRefresh, /overlayStackOpen\(\)/)
+})
+
 test('page-level body scroll locks have been removed', () => {
   const offenders = sourceFiles(componentRoot)
     .filter((file) => !file.endsWith('overlay/OverlayPrimitives.jsx'))

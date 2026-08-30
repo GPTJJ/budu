@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDown } from 'lucide-react'
 
 const THRESHOLD = 64
+const overlayStackOpen = () => document.documentElement.classList.contains('budu-overlay-open')
 
 /** 移动端下拉刷新：页面顶部下拉超过阈值后触发 onRefresh（仅触屏设备） */
 export default function PullToRefresh({ onRefresh, children }) {
@@ -20,8 +21,15 @@ export default function PullToRefresh({ onRefresh, children }) {
   useEffect(() => {
     if (!('ontouchstart' in window)) return undefined
 
+    const cancelPull = () => {
+      pulling.current = false
+      startY.current = null
+      startX.current = null
+      updatePull(0)
+    }
+
     const onTouchStart = (e) => {
-      if (refreshing || window.scrollY > 0) return
+      if (refreshing || overlayStackOpen() || window.scrollY > 0) return
       const t = e.touches && e.touches[0]
       if (!t) return
       startY.current = t.clientY
@@ -31,6 +39,10 @@ export default function PullToRefresh({ onRefresh, children }) {
 
     const onTouchMove = (e) => {
       if (!pulling.current || refreshing) return
+      if (overlayStackOpen()) {
+        cancelPull()
+        return
+      }
       const t = e.touches && e.touches[0]
       if (!t || startY.current == null) return
       if (window.scrollY > 0) return
@@ -53,6 +65,10 @@ export default function PullToRefresh({ onRefresh, children }) {
 
     const onTouchEnd = async () => {
       if (!pulling.current) return
+      if (overlayStackOpen()) {
+        cancelPull()
+        return
+      }
       pulling.current = false
       startY.current = null
       startX.current = null
@@ -73,7 +89,12 @@ export default function PullToRefresh({ onRefresh, children }) {
     window.addEventListener('touchstart', onTouchStart, { passive: true })
     window.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('touchend', onTouchEnd, { passive: true })
+    const overlayObserver = new MutationObserver(() => {
+      if (overlayStackOpen()) cancelPull()
+    })
+    overlayObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
     return () => {
+      overlayObserver.disconnect()
       window.removeEventListener('touchstart', onTouchStart)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', onTouchEnd)
