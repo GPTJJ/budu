@@ -26,6 +26,9 @@ try {
   if (productResult.status !== 201) throw new Error(`创建规格商品失败：${productResult.status} ${JSON.stringify(productResult.body)}`)
   const product = productResult.body.product
   if (!product.transferBoxEnabled || product.transferPieceWeightGrams !== 6) throw new Error('商品中心未返回正式包装规格')
+  const masterResult = await json(await fetch(`${origin}/api/v2/transfer-master-items?active=true`, { headers }))
+  const masterProduct = masterResult.body.rows?.find((row) => row.id === product.productId)
+  if (masterResult.status !== 200 || masterProduct?.sku !== 'BUDU-LEMON') throw new Error('调拨主数据未保留 SKU 搜索字段')
 
   const createTransfer = (items) => fetch(`${origin}/api/v2/transfer-requests`, { method: 'POST', headers, body: JSON.stringify({ fromStoreKey: 'guanshe', toStoreKey: 'tongying', items }) }).then(json)
   const box = await createTransfer([{ itemId: product.productId, name: product.name, category: 'product', boxQuantity: 1, pieceQuantity: 0 }])

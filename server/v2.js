@@ -612,6 +612,7 @@ function serializeTransferMasterItem(item) {
     id: item.id,
     category: item.category,
     name: item.name,
+    sku: item.sku || '',
     code: item.transferCode || '',
     enabled: item.transferEnabled,
     sortOrder: item.transferSortOrder,

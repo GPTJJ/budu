@@ -108,7 +108,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   const allActiveProducts = masterItems.filter((item) => item.category === 'product' && item.enabled)
   const activeProducts = allActiveProducts.filter((item) => {
     const keyword = productSearch.trim().toLocaleLowerCase('zh-CN')
-    if (keyword && !`${item.name} ${item.code}`.toLocaleLowerCase('zh-CN').includes(keyword)) return false
+    if (keyword && !`${item.name} ${item.code || ''} ${item.sku || ''}`.toLocaleLowerCase('zh-CN').includes(keyword)) return false
     if (productCategoryFilter === 'uncategorized') return !item.productCategoryId
     if (productCategoryFilter !== 'all') return item.productCategoryId === productCategoryFilter
     return true
@@ -304,13 +304,13 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         </div>
         {pickerTab === 'product' ? (
           <div className="mt-4" data-testid="transfer-product-draft">
-            <label className="relative block"><Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-300" /><input aria-label="搜索调拨产品" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="搜索产品名称 / 编号" className="input pl-9" /></label>
+            <label className="relative block"><Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-300" /><input aria-label="搜索调拨产品" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="搜索产品名称 / 编号 / SKU" className="input pl-9" /></label>
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="调拨产品分类筛选"><button onClick={() => setProductCategoryFilter('all')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === 'all' ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button><button onClick={() => setProductCategoryFilter('uncategorized')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === 'uncategorized' ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>未分类</button>{productCategories.map((category) => <button key={category.id} onClick={() => setProductCategoryFilter(category.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${productCategoryFilter === category.id ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{category.name}</button>)}</div>
             <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
               {activeProducts.map((item) => {
                 const selected = draft.product.selectedIds.includes(item.id)
                 const displayName = item.code && item.name.startsWith(item.code) ? item.name.slice(item.code.length).trim() || item.name : item.name
-                return <button key={item.id} type="button" aria-pressed={selected} aria-label={`${item.code ? `${item.code} ` : ''}${displayName}`} onClick={() => setDraft((current) => toggleDraftProduct(current, item.id))} className={`min-h-24 min-w-0 overflow-hidden rounded-2xl border p-2.5 text-left transition ${selected ? 'border-budu-400 bg-budu-50 text-budu-700 ring-1 ring-budu-200' : 'border-slate-100 bg-white text-slate-600'}`}>{item.code && <span data-testid="transfer-product-code" className="block truncate text-lg font-black leading-6 text-slate-700">{item.code}</span>}<span data-testid="transfer-product-name" className={`${item.code ? 'mt-1' : ''} line-clamp-2 break-words text-sm font-bold leading-5`}>{displayName}</span>{isPackagedTransferItem(item) && <span className="mt-2 block truncate text-[10px] font-semibold text-budu-500">{item.transferBoxEnabled ? '整箱' : ''}{item.transferBoxEnabled && item.transferPieceEnabled ? ' + ' : ''}{item.transferPieceEnabled ? '散颗' : ''}</span>}</button>
+                return <button key={item.id} type="button" aria-pressed={selected} aria-label={`${item.code ? `${item.code} ` : ''}${displayName}`} onClick={() => setDraft((current) => toggleDraftProduct(current, item.id))} className={`min-h-20 min-w-0 overflow-hidden rounded-2xl border p-2 text-left transition ${selected ? 'border-budu-400 bg-budu-50 text-budu-700 ring-1 ring-budu-200' : 'border-slate-100 bg-white text-slate-600'}`}><span data-testid="transfer-product-name" className="line-clamp-2 break-words text-sm font-black leading-5">{displayName}</span>{isPackagedTransferItem(item) && <span className="mt-2 block truncate text-[10px] font-semibold text-budu-500">{item.transferBoxEnabled ? '整箱' : ''}{item.transferBoxEnabled && item.transferPieceEnabled ? ' + ' : ''}{item.transferPieceEnabled ? '散颗' : ''}</span>}</button>
               })}
             </div>
             {!masterLoading && !activeProducts.length && <p className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-300">当前搜索或分类下暂无已启用产品</p>}

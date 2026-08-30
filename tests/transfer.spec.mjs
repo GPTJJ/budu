@@ -105,8 +105,8 @@ for (const width of [320, 340, 375, 390, 430]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
     await page.getByRole('button', { name: '创建调拨' }).click()
     const productButton = page.getByRole('button', { name: 'NO.1 树莓', exact: true })
-    await expect(productButton.getByTestId('transfer-product-code')).toHaveText('NO.1')
     await expect(productButton.getByTestId('transfer-product-name')).toHaveText('树莓')
+    await expect(productButton).not.toContainText('NO.1')
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
     const submitBar = await page.getByTestId('transfer-submit-bar').boundingBox()
     const bottomNav = await page.getByTestId('mobile-bottom-nav').boundingBox()
@@ -129,7 +129,7 @@ test('调拨选择器只读取启用的 PostgreSQL 主数据', async ({ page }) 
   await expect(page.getByText('停用纸袋', { exact: true })).toHaveCount(0)
 })
 
-test('调拨产品复用分类主数据并支持分类与名称编号搜索', async ({ page }) => {
+test('调拨产品复用分类主数据并支持分类、名称、编号与 SKU 搜索', async ({ page }) => {
   await page.goto('/tests/transfer-harness.html')
   await page.getByRole('button', { name: '创建调拨' }).click()
   await page.getByRole('button', { name: '糖果' }).click()
@@ -142,6 +142,11 @@ test('调拨产品复用分类主数据并支持分类与名称编号搜索', as
   await expect(page.getByRole('button', { name: 'NO.2 柠檬', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '未分类' }).click()
   await expect(page.getByRole('button', { name: 'NO.2 柠檬', exact: true })).toBeVisible()
+  await page.getByTestId('transfer-product-draft').getByRole('button', { name: '全部', exact: true }).click()
+  await page.getByLabel('搜索调拨产品').fill('BUDU-CHOC-WA-03')
+  const skuMatch = page.getByRole('button', { name: 'GIFT-1 礼盒产品', exact: true })
+  await expect(skuMatch).toBeVisible()
+  await expect(skuMatch).not.toContainText('BUDU-CHOC-WA-03')
 })
 
 test('Excel 导出提供日期、门店多选及产品物料筛选', async ({ page }) => {
