@@ -44,6 +44,21 @@
     ]
 
     const testParams = new URLSearchParams(location.search)
+    if (testParams.get('external') === '1') {
+      orders.push({
+        id: 'order-ext', orderNo: 'POS-TEST-MEITUAN-001', storeId: 'store-1', storeName: '测试门店',
+        cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '20000', discountAmount: '0', payableAmount: '20000',
+        status: 'completed', paymentStatus: 'paid', paymentMethod: 'platform', paymentMode: 'external',
+        orderSource: 'MEITUAN', entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL', sourceOrderRef: null,
+        createdAt: '2026-08-11T06:00:00.000Z', updatedAt: '2026-08-11T06:00:00.000Z', completedAt: '2026-08-11T06:00:05.000Z',
+        payments: [], refunds: [],
+        externalSettlement: { id: 'ext-1', settlementNo: 'EXT-TEST-1', settlementType: 'PLATFORM', amountCents: '20000', status: 'CONFIRMED', confirmedAt: '2026-08-11T06:00:05.000Z' },
+        items: [
+          { id: 'oi-ext-1', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitPrice: '10000', actualAmount: '20000', quantity: 2, lineAmount: '20000', isGift: false },
+          { id: 'oi-ext-gift', productId: 'p-gift', productNameSnapshot: '赠品卡片', skuSnapshot: 'GIFT-001', unitPrice: '5000', actualAmount: '0', quantity: 1, lineAmount: '0', isGift: true },
+        ],
+      })
+    }
     if (testParams.get('deletable') === '1') {
       orders[1].status = 'failed'
       orders[1].paymentStatus = 'failed'
@@ -130,6 +145,31 @@
         order.refunds = [...(order.refunds || []), refund]
         order.status = fully ? 'refunded' : 'partially_refunded'
         order.paymentStatus = fully ? 'refunded' : 'partially_refunded'
+        return json({ ok: true, refund, order }, 201)
+      }
+      const manualRefundMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)\/manual-external-refunds$/)
+      if (manualRefundMatch && options.method === 'POST') {
+        const id = decodeURIComponent(manualRefundMatch[1])
+        const order = orders.find((item) => item.id === id)
+        if (!order) return json({ error: '订单不存在' }, 404)
+        const body = JSON.parse(options.body)
+        window.__manualExternalRefundBodies = [...(window.__manualExternalRefundBodies || []), body]
+        const items = body.items.map((row) => {
+          const orderItem = order.items.find((item) => item.id === row.orderItemId)
+          return { id: `ri-ext-${row.orderItemId}`, orderItemId: row.orderItemId, productName: orderItem.productNameSnapshot, quantity: row.quantity, amountCents: body.refundAmount }
+        })
+        const refund = {
+          id: `ref-ext-${Date.now()}`, refundNo: `RF-EXT-${Date.now()}`, orderId: order.id, paymentId: null,
+          externalSettlementId: order.externalSettlement.id, refundMode: 'MANUAL_EXTERNAL', amount: body.refundAmount,
+          reason: body.reason || '', status: 'completed', externalCompletedAt: body.externalCompletedAt,
+          requestedBy: 'dev', approvedBy: 'dev', createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), items,
+        }
+        order.refunds = [...order.refunds, refund]
+        const total = order.refunds.reduce((sum, row) => sum + Number(row.amount), 0)
+        const full = total === Number(order.payableAmount)
+        order.status = full ? 'refunded' : 'partially_refunded'
+        order.paymentStatus = order.status
+        order.externalSettlement.status = full ? 'REFUNDED' : 'PARTIALLY_REFUNDED'
         return json({ ok: true, refund, order }, 201)
       }
       return json({ error: `未模拟接口 ${path}` }, 404)

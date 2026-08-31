@@ -3,7 +3,19 @@ import { AlertTriangle, ArrowLeft, BadgePercent, Ban, Banknote, Download, FileSp
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
-import { centsToYuan, formatCents } from '../utils/pos'
+import { centsToYuan, createCheckoutKey, formatCents } from '../utils/pos'
+import {
+  hasManualExternalRefundConfirm,
+  hasManualExternalRefundRecord,
+} from '../../shared/accountPermissions'
+import {
+  currentLocalDateTimeInputValue,
+  entryModeLabel,
+  isExternalOrder,
+  orderSourceLabel,
+  parseYuanToCents,
+  settlementLabel,
+} from '../utils/reportCenterPos'
 
 const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现金' }
 const statusLabels = {
@@ -75,6 +87,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
   const [refundMode, setRefundMode] = useState('full')
   const [refundQty, setRefundQty] = useState({})
   const [refundReason, setRefundReason] = useState('')
+  const [refundRequestKey, setRefundRequestKey] = useState('')
+  const [externalRefundAmount, setExternalRefundAmount] = useState('')
+  const [externalCompletedAt, setExternalCompletedAt] = useState('')
   const [refunding, setRefunding] = useState(false)
   const [deleteOrder, setDeleteOrder] = useState(null)
   const [deleteConfirmed, setDeleteConfirmed] = useState(false)
@@ -83,6 +98,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
   const [cancelReason, setCancelReason] = useState('')
   const [cancelNote, setCancelNote] = useState('')
   const [cancelling, setCancelling] = useState(false)
+  const canRecordManualExternalRefund = hasManualExternalRefundRecord(user)
+  const canConfirmManualExternalRefund = hasManualExternalRefundConfirm(user)
+  const canCompleteManualExternalRefund = canRecordManualExternalRefund && canConfirmManualExternalRefund
 
   const load = async () => {
     setLoading(true)
@@ -123,7 +141,8 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       order.items.reduce((sum, item) => sum + item.quantity, 0),
       order.items.map((item) => `${item.productNameSnapshot}×${item.quantity}`).join('、'),
       Number(centsToYuan(order.payableAmount)),
-      paymentLabels[order.paymentMethod] || order.paymentMethod || '—',
+      orderSourceLabel(order.orderSource),
+      isExternalOrder(order) ? '平台结算' : paymentLabels[order.paymentMethod] || order.paymentMethod || '—',
       statusLabels[order.status] || order.status,
     ])
     const itemRows = []
@@ -141,7 +160,7 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
     }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-      ['订单号', '下单时间', '门店', '收银员', '商品种类', '商品数量', '商品明细', '应付金额（元）', '支付方式', '状态'],
+      ['订单号', '下单时间', '门店', '收银员', '商品种类', '商品数量', '商品明细', '应付金额（元）', '订单来源', '结算方式', '状态'],
       ...orderRows,
     ]), '订单列表')
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
@@ -242,10 +261,21 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
 
   const openRefund = (order) => {
     setRefundOrder(order)
-    setRefundMode('full')
+    setRefundMode(isExternalOrder(order) ? 'partial' : 'full')
     setRefundQty({})
     setRefundReason('')
+    setRefundRequestKey(createCheckoutKey())
+    setExternalRefundAmount('')
+    setExternalCompletedAt(currentLocalDateTimeInputValue())
     setError('')
+  }
+
+  const closeRefund = () => {
+    if (refunding) return
+    setRefundOrder(null)
+    setRefundRequestKey('')
+    setExternalRefundAmount('')
+    setExternalCompletedAt('')
   }
 
   const partialTotal = refundOrder
@@ -265,9 +295,32 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
 
   const submitRefund = async () => {
     if (!refundOrder || refunding) return
+    const external = isExternalOrder(refundOrder)
+    if (external && !canCompleteManualExternalRefund) {
+      setError('无人工外部退款记录及确认权限')
+      return
+    }
     if (refundMode === 'partial' && partialTotal <= 0n) {
       setError('请选择至少一个商品并填写退款数量')
       return
+    }
+    const externalAmountCents = external ? parseYuanToCents(externalRefundAmount) : null
+    if (external && !externalAmountCents) {
+      setError('请输入正确的平台实际退款金额，最多保留两位小数')
+      return
+    }
+    if (external && BigInt(externalAmountCents) > orderRemainingCents(refundOrder)) {
+      setError('平台实际退款金额不能超过订单剩余可退金额')
+      return
+    }
+    let completedAt = ''
+    if (external) {
+      const parsed = new Date(externalCompletedAt)
+      if (!externalCompletedAt || Number.isNaN(parsed.getTime())) {
+        setError('请确认平台实际退款完成时间')
+        return
+      }
+      completedAt = parsed.toISOString()
     }
     setRefunding(true)
     setError('')
@@ -276,17 +329,24 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
         .map((item) => ({ orderItemId: item.id, quantity: Number(refundQty[item.id] || 0) }))
         .filter((row) => row.quantity > 0)
       : undefined
-    const key = globalThis.crypto?.randomUUID?.() || `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`
     try {
-      const data = await api(`/v2/pos/orders/${refundOrder.id}/refunds`, {
+      const endpoint = external
+        ? `/v2/pos/orders/${refundOrder.id}/manual-external-refunds`
+        : `/v2/pos/orders/${refundOrder.id}/refunds`
+      const data = await api(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ items, reason: refundReason, requestKey: key }),
+        body: JSON.stringify(external
+          ? { items, refundAmount: externalAmountCents, externalCompletedAt: completedAt, reason: refundReason, requestKey: refundRequestKey }
+          : { items, reason: refundReason, requestKey: refundRequestKey }),
       })
       setRefundOrder(null)
-      setNotice(data.refund?.status === 'pending' ? '微信退款申请已受理，系统正在查询最终退款结果' : '退款已完成')
+      setRefundRequestKey('')
+      setNotice(external ? '平台退款记录已保存' : data.refund?.status === 'pending' ? '微信退款申请已受理，系统正在查询最终退款结果' : '退款已完成')
       await load()
     } catch (e) {
-      setError(e.message)
+      setError(e.status >= 500
+        ? external ? '平台退款记录失败，未写入 BUDU，请重新确认。' : '退款处理失败，请稍后重试'
+        : e.message)
     } finally {
       setRefunding(false)
     }
@@ -316,8 +376,11 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       {order.status === 'pending_payment' && (
         <button onClick={() => openCancelConfirm(order)} className={`${actionButtonClass} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100`} aria-label={`作废 ${order.orderNo}`}><Ban className="h-4 w-4" />作废订单</button>
       )}
-      {user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
+      {!isExternalOrder(order) && user.role !== 'public' && ['paid', 'completed', 'partially_refunded'].includes(order.status) && !hasPendingRefund(order) && orderRemainingCents(order) > 0n && (
         <button onClick={() => openRefund(order)} className={`${actionButtonClass} border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100`} aria-label={`退款 ${order.orderNo}`}><Download className="h-4 w-4" />退款</button>
+      )}
+      {isExternalOrder(order) && canRecordManualExternalRefund && ['completed', 'partially_refunded'].includes(order.status) && orderRemainingCents(order) > 0n && (
+        <button disabled={!canConfirmManualExternalRefund} onClick={() => openRefund(order)} className={`${actionButtonClass} border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100`} aria-label={`记录平台退款 ${order.orderNo}`} title={canConfirmManualExternalRefund ? '记录已在外部平台完成的退款' : '需要人工外部退款确认权限'}><Download className="h-4 w-4" />记录平台退款</button>
       )}
       {hasPendingRefund(order) && <span className={`${actionButtonClass} bg-amber-50 text-amber-700`}>退款处理中</span>}
       {showDetail && <button onClick={() => setDetail(order)} className={`${actionButtonClass} ${compact && order.status === 'pending_payment' ? 'col-span-2' : ''} border border-budu-200 bg-budu-50 text-budu-700 hover:bg-budu-100`} aria-label={`查看明细 ${order.orderNo}`}><Package className="h-4 w-4" />订单明细</button>}
@@ -403,13 +466,13 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                 <tr className="block xl:table-row"><td colSpan="9" className="block px-5 py-14 text-center text-slate-400 xl:table-cell"><ReceiptText className="mx-auto mb-2 h-8 w-8 text-slate-300" />暂无符合条件的订单</td></tr>
               ) : rows.map((order) => (
                 <tr key={order.id} className="block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-budu-200 hover:shadow-md xl:table-row xl:rounded-none xl:border-0 xl:shadow-none xl:hover:bg-slate-50/70 xl:hover:shadow-none">
-                  <td className="block border-b border-slate-100 px-4 py-3.5 font-mono text-xs font-bold text-slate-700 xl:table-cell xl:border-0 xl:px-5"><span className="mb-1 block font-sans text-[10px] font-semibold text-slate-400 xl:hidden">订单号</span><span>{order.orderNo}</span></td>
+                  <td className="block border-b border-slate-100 px-4 py-3.5 font-mono text-xs font-bold text-slate-700 xl:table-cell xl:border-0 xl:px-5"><span className="mb-1 block font-sans text-[10px] font-semibold text-slate-400 xl:hidden">订单号</span><span>{order.orderNo}</span><span className={`ml-2 inline-flex rounded-full px-2 py-0.5 font-sans text-[10px] font-bold ${isExternalOrder(order) ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>{orderSourceLabel(order.orderSource)}</span></td>
                   <td className="block px-4 pt-3 text-xs text-slate-500 xl:table-cell xl:px-4 xl:py-3.5 xl:text-sm"><span className="mr-2 font-semibold text-slate-400 xl:hidden">下单</span>{localTime(order.createdAt)}</td>
                   <td className="block px-4 pt-2 text-sm font-semibold text-slate-700 xl:table-cell xl:px-4 xl:py-3.5 xl:font-normal"><span className="mr-2 text-xs font-semibold text-slate-400 xl:hidden">门店</span>{order.storeName}</td>
                   <td className="hidden px-4 py-3.5 text-slate-600 xl:table-cell">{order.cashierNameSnapshot}</td>
                   <td className="hidden px-4 py-3.5 text-right text-slate-600 xl:table-cell">{order.items.reduce((sum, item) => sum + item.quantity, 0)} 件</td>
                   <td className="block px-4 pt-3 text-2xl font-black tabular-nums text-slate-900 xl:table-cell xl:px-4 xl:py-3.5 xl:text-right xl:text-sm xl:font-semibold"><span className="mr-2 text-xs font-semibold text-slate-400 xl:hidden">应付</span>¥{Number(centsToYuan(order.payableAmount)).toFixed(2)}</td>
-                  <td className="inline-block px-4 pb-3 pt-2 xl:table-cell xl:px-4 xl:py-3.5">{order.paymentMethod ? <span className="rounded-full bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span> : <span className="text-xs text-slate-400">未支付</span>}</td>
+                  <td className="inline-block px-4 pb-3 pt-2 xl:table-cell xl:px-4 xl:py-3.5">{isExternalOrder(order) ? <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">平台结算</span> : order.paymentMethod ? <span className="rounded-full bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span> : <span className="text-xs text-slate-400">未支付</span>}</td>
                   <td className="inline-block px-0 pb-3 pt-2 xl:table-cell xl:px-4 xl:py-3.5"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : order.status === 'cancelled' || order.status === 'refunded' ? 'bg-slate-100 text-slate-500' : 'bg-amber-50 text-amber-600'}`}>{statusLabels[order.status] || order.status}</span></td>
                   <td className="block border-t border-slate-100 p-3 text-right xl:table-cell xl:border-0 xl:px-5 xl:py-3.5">{renderOrderActions(order, true)}</td>
                 </tr>
@@ -420,28 +483,46 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       </section>
 
       {refundOrder && (
-        <div className="budu-overlay-viewport fixed inset-0 z-[95] grid place-items-center bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单退款">
+        <div className="budu-overlay-viewport fixed inset-0 z-[95] grid place-items-center bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label={isExternalOrder(refundOrder) ? '记录平台退款' : '订单退款'}>
           <div className="budu-overlay-panel flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl sm:my-6 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
             <div className="budu-overlay-header flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">订单退款</h3>
+                <h3 className="text-lg font-bold text-slate-900">{isExternalOrder(refundOrder) ? '记录平台退款' : '订单退款'}</h3>
                 <p className="mt-0.5 font-mono text-xs text-slate-400">{refundOrder.orderNo}</p>
               </div>
-              <button onClick={() => setRefundOrder(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
+              <button onClick={closeRefund} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
             <div className="budu-overlay-scroll p-4 sm:p-6">
+              {isExternalOrder(refundOrder) && <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-800"><strong>请先确认退款已在{orderSourceLabel(refundOrder.orderSource)}完成。</strong><p className="mt-1 text-xs text-violet-700">BUDU 这里只记录实际已经发生的退款，不会向平台发起退款，也不会自动恢复库存。</p></div>}
               <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4 text-center text-sm">
                 <div><p className="text-xs text-slate-400">订单金额</p><p className="mt-1 font-bold tabular-nums text-slate-800">{formatCents(refundOrder.payableAmount)}</p></div>
                 <div><p className="text-xs text-slate-400">已退款</p><p className="mt-1 font-bold tabular-nums text-rose-600">{formatCents(orderRefundedCents(refundOrder))}</p></div>
                 <div><p className="text-xs text-slate-400">可退款</p><p className="mt-1 font-bold tabular-nums text-emerald-600">{formatCents(orderRemainingCents(refundOrder))}</p></div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-3">
+              {!isExternalOrder(refundOrder) && <div className="mt-5 grid grid-cols-2 gap-3">
                 <button onClick={() => setRefundMode('full')} className={`rounded-xl border px-4 py-3 text-sm font-bold ${refundMode === 'full' ? 'border-budu-400 bg-budu-50 text-budu-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>整单退款</button>
                 <button onClick={() => setRefundMode('partial')} className={`rounded-xl border px-4 py-3 text-sm font-bold ${refundMode === 'partial' ? 'border-budu-400 bg-budu-50 text-budu-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>部分退款</button>
-              </div>
+              </div>}
 
-              {refundMode === 'full' ? (
+              {isExternalOrder(refundOrder) ? (
+                <div className="mt-5 space-y-4">
+                  <fieldset>
+                    <legend className="text-xs font-bold text-slate-600">选择退款商品与数量</legend>
+                    <div className="mt-2 space-y-2">
+                      {refundOrder.items.filter((item) => !item.isGift).map((item) => {
+                        const remaining = item.quantity - itemRefundedQty(refundOrder, item.id)
+                        return <div key={item.id} className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                          <div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-700">{item.productNameSnapshot}</p><p className="mt-1 text-xs text-slate-400">可退 {remaining} · {formatCents(item.unitPrice)}/件</p></div>
+                          <label className="shrink-0 text-right text-[10px] font-semibold text-slate-400">本次数量<input type="number" min="0" max={remaining} inputMode="numeric" value={refundQty[item.id] || ''} onChange={(e) => setRefundQty((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(e.target.value) || 0)) }))} className="mt-1 block h-11 w-20 rounded-xl border border-slate-200 bg-white px-2 text-right text-sm font-bold text-slate-700 outline-none focus:border-violet-400" /></label>
+                        </div>
+                      })}
+                    </div>
+                  </fieldset>
+                  <label className="block text-xs font-semibold text-slate-500">平台实际退款金额（元）<div className="relative mt-1"><span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-400">¥</span><input value={externalRefundAmount} onChange={(e) => setExternalRefundAmount(e.target.value)} inputMode="decimal" placeholder="0.00" className="h-12 w-full rounded-xl border border-slate-200 pl-8 pr-3 text-lg font-black tabular-nums text-slate-900 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" /></div><span className="mt-1 block font-normal text-slate-400">商品金额由服务端按 BigInt 规则确定分摊</span></label>
+                  <label className="block text-xs font-semibold text-slate-500">平台实际退款完成时间<input type="datetime-local" value={externalCompletedAt} onChange={(e) => setExternalCompletedAt(e.target.value)} className="mt-1 h-12 w-full rounded-xl border border-slate-200 px-3.5 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" /></label>
+                </div>
+              ) : refundMode === 'full' ? (
                 <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                   将退回剩余可退金额 <strong className="tabular-nums text-slate-900">{formatCents(orderRemainingCents(refundOrder))}</strong>
                 </div>
@@ -478,8 +559,8 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
               {error && <div className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
 
               <div className="sticky bottom-0 -mx-4 mt-6 grid grid-cols-2 gap-3 border-t border-slate-100 bg-white/95 px-4 pb-[max(0px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-6 sm:flex sm:justify-end sm:px-6">
-                <button onClick={() => setRefundOrder(null)} disabled={refunding} className={`${actionButtonClass} border border-slate-200 text-slate-600`}>取消</button>
-                <button onClick={submitRefund} disabled={refunding || (refundMode === 'partial' && partialTotal <= 0n)} className={`${actionButtonClass} bg-budu-500 text-white shadow-sm shadow-budu-100`}>{refunding ? '退款中…' : '确认退款'}</button>
+                <button onClick={closeRefund} disabled={refunding} className={`${actionButtonClass} border border-slate-200 text-slate-600`}>取消</button>
+                <button onClick={submitRefund} disabled={refunding || (refundMode === 'partial' && partialTotal <= 0n)} className={`${actionButtonClass} ${isExternalOrder(refundOrder) ? 'bg-violet-600 shadow-violet-100' : 'bg-budu-500 shadow-budu-100'} text-white shadow-sm`}>{refunding ? (isExternalOrder(refundOrder) ? '记录中…' : '退款中…') : (isExternalOrder(refundOrder) ? '确认记录' : '确认退款')}</button>
               </div>
             </div>
           </div>
@@ -575,6 +656,12 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                 <div><p className="text-xs text-slate-400">下单时间</p><p className="mt-1 font-semibold text-slate-700">{localTime(detail.createdAt)}</p></div>
                 <div><p className="text-xs text-slate-400">状态</p><p className="mt-1 font-semibold text-slate-700">{statusLabels[detail.status] || detail.status}</p></div>
               </div>
+              <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 p-4 text-sm sm:grid-cols-3">
+                <div><p className="text-xs text-slate-400">订单来源</p><p className="mt-1 font-semibold text-slate-700">{orderSourceLabel(detail.orderSource)}</p></div>
+                <div><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-semibold text-slate-700">{isExternalOrder(detail) ? '平台结算' : paymentLabels[detail.paymentMethod] || settlementLabel(detail)}</p></div>
+                <div><p className="text-xs text-slate-400">录入</p><p className="mt-1 font-semibold text-slate-700">{entryModeLabel(detail.entryMode)}</p></div>
+              </div>
+              {isExternalOrder(detail) && detail.externalSettlement && <div className="rounded-2xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-sm text-violet-800"><div className="flex flex-wrap items-center gap-x-4 gap-y-1"><strong>平台结算</strong><span>{formatCents(detail.externalSettlement.amountCents)}</span><span className="text-xs">{detail.externalSettlement.status === 'CONFIRMED' ? '已确认' : detail.externalSettlement.status === 'PARTIALLY_REFUNDED' ? '部分退款' : detail.externalSettlement.status === 'REFUNDED' ? '已退款' : detail.externalSettlement.status}</span></div>{orderRefundedCents(detail) > 0n && <p className="mt-2 text-xs">已退款 {formatCents(orderRefundedCents(detail))} · 剩余有效收入 {formatCents(BigInt(detail.payableAmount) - orderRefundedCents(detail))}</p>}</div>}
               {BigInt(detail.discountAmount || 0) > 0n && <p className="text-xs text-slate-500">{(detail.discountPercent ?? 100) < 100 ? `折扣：${Number(detail.discountPercent) / 10} 折 · ` : ''}优惠（含赠送）{Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
               {detail.remark && <p className="text-xs text-slate-500">备注：{detail.remark}</p>}
               {detail.status === 'cancelled' && (
@@ -630,8 +717,9 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
                           <span className="font-semibold tabular-nums text-orange-700">-{Number(centsToYuan(refund.amount)).toFixed(2)} 元</span>
                           <span className="text-xs text-slate-500">{refund.status === 'completed' ? '已退款' : refund.status === 'pending' ? '退款处理中' : refund.status === 'failed' ? '退款异常' : refund.status}</span>
                           <span className="ml-auto text-xs text-slate-400">{localTime(refund.completedAt || refund.createdAt)}</span>
-                          {refund.status === 'pending' && <button onClick={() => queryRefund(refund)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">查询退款结果</button>}
+                          {refund.status === 'pending' && refund.refundMode === 'PAYMENT' && <button onClick={() => queryRefund(refund)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">查询退款结果</button>}
                         </div>
+                        <p className="mt-1 text-xs text-slate-500">{refund.refundMode === 'MANUAL_EXTERNAL' ? '平台已完成 · BUDU 人工记录' : '店内支付退款'}{refund.refundMode === 'MANUAL_EXTERNAL' && refund.externalCompletedAt ? ` · 平台完成时间 ${localTime(refund.externalCompletedAt)}` : ''}</p>
                         {refund.reason && <p className="mt-1 text-xs text-slate-500">原因：{refund.reason}</p>}
                         <p className="mt-1 text-xs text-slate-500">{(refund.items || []).map((item) => `${item.productName}×${item.quantity}`).join('、')}</p>
                       </div>

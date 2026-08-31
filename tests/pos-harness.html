@@ -16,6 +16,7 @@
     const scanDelay = Number(params.get('scanDelay') || 20)
     const duplicateScan = params.get('duplicate') === '1'
     const payMode = params.get('paymode') || 'success'
+    const externalCapabilities = params.get('external') === '1'
     // R2：双门店（验证 POS 配置按当前门店拉取）与过期配置响应（验证门店切换丢弃旧响应）
     const twoStores = params.get('stores') === '2'
     const configStale = params.get('configStale') === '1'
@@ -25,6 +26,7 @@
     window.__cameraTrackStops = 0
     window.__cameraStarts = 0
     window.__posConfigRequests = []
+    window.__externalOrderBodies = []
 
     Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { configurable: true, get() { return this.__srcObject || null }, set(value) { this.__srcObject = value } })
     HTMLMediaElement.prototype.play = async function () {}
@@ -104,6 +106,32 @@
           : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
       }
       if (path === '/api/v2/pos/products') return json({ rows: products })
+      if (path === '/api/v2/pos/external-orders' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        window.__externalOrderBodies.push(body)
+        if (params.get('externalFail') === '1') return json({ error: '平台订单记录失败，未写入 BUDU，请重新确认。' }, 500)
+        const sourceLabels = { MEITUAN: '美团外卖', TAOBAO_FLASH: '淘宝闪购', JD_INSTANT: '京东秒送', OTHER: '其他平台' }
+        const items = body.items.map((row) => {
+          const p = products.find((pp) => pp.productId === row.productId)
+          const gift = row.gift === true
+          return { id: `oi-${row.productId}`, productId: row.productId, productNameSnapshot: p.name, skuSnapshot: p.sku, unitPrice: p.salePriceCents, actualAmount: gift ? '0' : String(Number(p.salePriceCents) * row.quantity), quantity: row.quantity, lineAmount: gift ? '0' : String(Number(p.salePriceCents) * row.quantity), isGift: gift }
+        })
+        const subtotal = items.reduce((sum, item) => sum + Number(item.unitPrice) * item.quantity, 0)
+        const chargeable = items.reduce((sum, item) => sum + Number(item.lineAmount), 0)
+        const payable = Math.round((chargeable * Number(body.discountPercent ?? 100)) / 100)
+        order = {
+          id: `external-order-${userId}`, orderNo: `POS-EXT-${userId}`, storeId: body.storeId,
+          storeName: body.storeId === 'xidan' ? '北京西单店' : '北京通盈中心店', cashierId: userId,
+          cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable),
+          payableAmount: String(payable), discountPercent: body.discountPercent ?? 100, remark: body.remark || '',
+          status: 'completed', paymentStatus: 'paid', paymentMethod: body.orderSource === 'OTHER' ? 'custom' : 'platform',
+          paymentMode: 'external', orderSource: body.orderSource, entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL',
+          sourceOrderRef: null, completedAt: new Date().toISOString(), items, payments: [], refunds: [],
+          externalSettlement: { id: `ext-${userId}`, settlementType: body.orderSource === 'OTHER' ? 'CUSTOM' : 'PLATFORM', amountCents: String(payable), status: 'CONFIRMED' },
+          sourceLabel: sourceLabels[body.orderSource],
+        }
+        return json({ ok: true, order, externalSettlement: order.externalSettlement }, 201)
+      }
       if (path === '/api/v2/pos/orders' && options.method === 'POST') {
         const body = JSON.parse(options.body)
         window.__lastPosOrderBody = body
@@ -157,7 +185,7 @@
     window.__posExitCount = 0
     createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
       React.createElement(OverlayStackManager),
-      React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }),
+      React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys, permissions: externalCapabilities ? { externalOrderCreate: true, externalSettlementConfirm: true } : {} }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }),
     ))
   </script></body>
 </html>

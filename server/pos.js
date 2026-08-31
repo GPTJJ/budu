@@ -30,9 +30,21 @@ export const posRouter = Router()
 const wrap = (handler) => async (req, res) => {
   try { await handler(req, res) } catch (error) {
     const status = error.status || 500
-    if (status >= 500) console.error('[pos]', error)
-    res.status(status).json({ error: error.message || '服务器错误' })
+    if (status >= 500 && error.reported !== true) console.error('[pos]', error)
+    const message = status >= 500 && error.publicSafe !== true
+      ? '服务器暂时无法处理，请稍后重试'
+      : error.message || '服务器错误'
+    res.status(status).json({ error: message })
   }
+}
+
+function rethrowSafeCommandError(error, publicMessage, context) {
+  if ((error.status || 500) < 500) throw error
+  console.error(`[pos.${context}]`, error)
+  const safe = httpError(publicMessage, 500)
+  safe.reported = true
+  safe.publicSafe = true
+  throw safe
 }
 
 function requirePosUser(user) {
@@ -309,11 +321,16 @@ posRouter.post('/pos/orders/:id/manual-external-refunds', wrap(async (req, res) 
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canStore(req.user, current.storeId)) throw httpError('无权记录该门店外部退款', 403)
-  const result = await manualExternalRefundService.createCompletedRefund({
-    ...(req.body || {}),
-    orderId: current.id,
-    actor: req.user.username,
-  })
+  let result
+  try {
+    result = await manualExternalRefundService.createCompletedRefund({
+      ...(req.body || {}),
+      orderId: current.id,
+      actor: req.user.username,
+    })
+  } catch (error) {
+    rethrowSafeCommandError(error, '平台退款记录失败，未写入 BUDU，请重新确认。', 'manual-external-refund')
+  }
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
   const refund = order.refunds.find((item) => item.id === result.refundId)
   res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, refund: serializeRefund(refund), order: serializeOrder(order) })
@@ -456,13 +473,18 @@ posRouter.post('/pos/external-orders', wrap(async (req, res) => {
   if (!canStore(req.user, storeId)) throw httpError('无权在该门店录入外部订单', 403)
   const confirm = req.body?.confirm === true
   if (confirm && !hasExternalSettlementConfirm(req.user)) throw httpError('无外部结算确认权限', 403)
-  const result = await externalSettlementService.createExternalOrder({
-    ...req.body,
-    storeId,
-    confirm,
-    actorId: req.user.id,
-    actorName: req.user.username,
-  })
+  let result
+  try {
+    result = await externalSettlementService.createExternalOrder({
+      ...req.body,
+      storeId,
+      confirm,
+      actorId: req.user.id,
+      actorName: req.user.username,
+    })
+  } catch (error) {
+    rethrowSafeCommandError(error, '平台订单记录失败，未写入 BUDU，请重新确认。', 'external-order')
+  }
   const [order, settlement] = await Promise.all([
     prisma.order.findUnique({ where: { id: result.orderId }, include: orderInclude() }),
     prisma.externalSettlement.findUnique({ where: { id: result.settlementId } }),

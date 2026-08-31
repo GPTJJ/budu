@@ -43,7 +43,9 @@
     "test:report-center:rc2a-migration": "node --test scripts/test-report-center-rc2a-migration-rehearsal.mjs",
     "test:report-center:rc2b:allocation": "node --test scripts/test-report-center-rc2b-allocation.mjs"
     ,"test:report-center:rc2b": "node scripts/test-report-center-rc2b.mjs",
-    "test:report-center:rc2b-migration": "node --test scripts/test-report-center-rc2b-migration-rehearsal.mjs"
+    "test:report-center:rc2b-migration": "node --test scripts/test-report-center-rc2b-migration-rehearsal.mjs",
+    "test:report-center:rc2c": "node scripts/test-report-center-rc2c.mjs",
+    "test:report-center:rc2c:ui": "node --test scripts/test-report-center-rc2c-ui-utils.mjs && playwright test tests/report-center-rc2c-pos.spec.mjs tests/report-center-rc2c-refund.spec.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
