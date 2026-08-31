@@ -8,7 +8,8 @@ Status: **READY — team Skill candidate**
 
 - Base authoritative SHA: `ca8fa436ec6c7b7f2d8f627431b67cad8c1b53a8`
 - Candidate branch: `codex/budu-payroll-audit-skill`
-- Candidate SHA: recorded by the final commit and remote branch after push
+- Skill implementation commit: `6574a4087a85eedb0a35e373ea2aec59bded8b15`
+- Remote branch state: implementation commit pushed; the final documentation-only handoff commit is the branch HEAD reported at completion
 - Skill path: `.agents/skills/budu-payroll-audit/SKILL.md`
 
 ## Delivered contract
@@ -22,9 +23,11 @@ Status: **READY — team Skill candidate**
 
 ## Verification
 
-- Skill metadata validation: required before final push.
-- Routing contract: five payroll-audit prompts plus one settlement exclusion.
-- Business contract: A–H scenarios, including Schedule/actual separation, missing facts, identity ambiguity, one-cent mismatch, PREVIEW/FINAL, Cardbara and zero mutation.
+- Skill metadata validation: PASS (`quick_validate.py`).
+- Routing contract: PASS, 6/6 (five payroll-audit prompts plus one settlement exclusion).
+- Business contract: PASS, A–H scenarios, including Schedule/actual separation, missing facts, identity ambiguity, one-cent mismatch, PREVIEW/FINAL, Cardbara and zero mutation.
+- Skill contract suite: PASS, 10/10.
+- Referenced Payroll authority regression: resolver, readiness, payable-hours, employee-card projection and Cardbara isolation PASS.
 - Diff scope: Skill, router, Skill tests and stable documentation only.
 
 ## Safety and unchanged authorities
