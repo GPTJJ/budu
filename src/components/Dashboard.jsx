@@ -33,7 +33,7 @@ const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const ProductMaterialManagementPage = lazy(() => import('./ProductMaterialManagementPage'))
 const PartnerSupplyPage = lazy(() => import('./PartnerSupplyPage'))
-const FinancePage = lazy(() => import('./FinancePage'))
+const ReportCenterPage = lazy(() => import('./ReportCenterPage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
 const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
@@ -53,7 +53,7 @@ const pageTitles = {
   'inventory-purchase': '申请采购',
   'partner-supply': '合作商供货',
   'product-material-management': '物料管理',
-  finance: '财务利润',
+  finance: '报表中心',
   'finance-invoice': '发票开具',
   approval: '审批中心',
   'asset-center': 'budu档案馆',
@@ -397,7 +397,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
               ) : isProductMaterialManagementView && hasModuleAccess(user, 'product-material-management') ? (
                 <ProductMaterialManagementPage onBack={returnToOverview} />
               ) : isFinanceView && hasModuleAccess(user, 'finance') ? (
-                <FinancePage currentUser={user} onBack={returnToOverview} />
+                <ReportCenterPage currentUser={user} onBack={returnToOverview} onNavigate={handleNavigate} />
               ) : isInvoiceView && hasModuleAccess(user, 'finance-invoice') ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
               ) : isApprovalView && hasModuleAccess(user, 'approval') ? (

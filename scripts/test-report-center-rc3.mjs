@@ -15,6 +15,7 @@ const { prisma } = await import('../server/pg.js')
 const { hashPassword } = await import('../server/auth.js')
 const { paymentService } = await import('../server/payments/index.js')
 const { normalizeAccountPermissions } = await import('../shared/accountPermissions.js')
+const { ReportQueryService } = await import('../server/report-center-query.js')
 
 const server = createApp().listen(0)
 const json = async (response) => ({ status: response.status, body: await response.json() })
@@ -179,6 +180,8 @@ try {
   assert.equal(combined.body.metrics.revenue.coverage.state, 'COMPLETE')
   assert.equal(combined.body.metrics.grossSales.coverage.state, 'PARTIAL')
   assert.equal(combined.body.metrics.grossSales.valueCents, '40000')
+  assert.deepEqual(combined.body.storeComparison.map((row) => row.storeKey), ['pos-store', 'manual-store'])
+  assert.equal(combined.body.storeComparison.find((row) => row.storeKey === 'manual-store').aovCents, '3000')
 
   const allSummary = await json(await request(origin, pathFor('summary'), { cookie: allReportCookie }))
   assert.equal(allSummary.status, 200)
@@ -190,14 +193,22 @@ try {
   assert.equal(orders.status, 200, JSON.stringify(orders.body))
   assert.equal(orders.body.total, 3)
   assert.equal(orders.body.rows.length, 2)
+  assert.ok(orders.body.rows.every((row) => row.createdAt && row.settlementCents && row.settlementType))
   const allOrders = await json(await request(origin, `${pathFor('orders', 'pos-store')}&page=1&pageSize=10`, { cookie: allReportCookie }))
   assert.equal(allOrders.body.rows.find((row) => row.orderSource === 'OTHER').grossCents, '10000')
   assert.equal(allOrders.body.rows.find((row) => row.orderSource === 'OTHER').refundCents, '10000')
   assert.equal(allOrders.body.rows.find((row) => row.orderSource === 'OTHER').revenueCents, '0')
+  const filteredOrders = await json(await request(origin, `${pathFor('orders', 'pos-store')}&orderSource=MEITUAN&settlementType=PLATFORM`, { cookie: allReportCookie }))
+  assert.equal(filteredOrders.status, 200)
+  assert.equal(filteredOrders.body.total, 1)
+  assert.equal(filteredOrders.body.rows[0].orderSource, 'MEITUAN')
   const orderDetail = await json(await request(origin, `/api/v2/report-center/orders/${meituan.id}`, { cookie: allReportCookie }))
   assert.equal(orderDetail.status, 200)
   assert.equal(orderDetail.body.refundCents, '8000')
   assert.equal(orderDetail.body.items.find((item) => item.isGift).actualCents, '0')
+  assert.equal(orderDetail.body.settlementType, 'PLATFORM')
+  assert.equal(orderDetail.body.settlementCents, '16000')
+  assert.equal(orderDetail.body.refunds[0].items[0].productName, '报表商品 A')
   const stray = await prisma.order.findFirst({ where: { storeId: 'manual-store' }, select: { id: true } })
   assert.equal((await request(origin, `/api/v2/report-center/orders/${stray.id}`, { cookie: allReportCookie })).status, 409)
 
@@ -206,12 +217,17 @@ try {
   assert.equal(products.body.coverage.state, 'COMPLETE')
   const productA = products.body.rows.find((row) => row.productId === 'rc3-product-a')
   const productB = products.body.rows.find((row) => row.productId === 'rc3-product-b')
-  assert.deepEqual(productA, {
-    productId: 'rc3-product-a', productName: '报表商品 A', sku: 'RC3-A',
-    salesQuantity: '3', giftQuantity: '0', salesCents: '30000', giftCents: '0', discountCents: '4000',
-    refundQuantity: '1', refundCents: '8000', productRevenueCents: '18000',
-    orderRateNumerator: '2', orderRateDenominator: '2', orderRateBps: '10000',
-  })
+  assert.equal(productA.productName, '报表商品 A')
+  assert.equal(productA.salesQuantity, '3')
+  assert.equal(productA.salesCents, '30000')
+  assert.equal(productA.discountCents, '4000')
+  assert.equal(productA.refundQuantity, '1')
+  assert.equal(productA.refundCents, '8000')
+  assert.equal(productA.productRevenueCents, '18000')
+  assert.equal(productA.orderRateBps, '10000')
+  assert.equal(productA.salesQuantityShareBps, '5000')
+  assert.equal(productA.salesShareBps, '7500')
+  assert.equal(productA.giftShareBps, '0')
   assert.equal(productB.salesQuantity, '3')
   assert.equal(productB.giftQuantity, '1')
   assert.equal(productB.giftCents, '5000')
@@ -220,10 +236,54 @@ try {
   assert.equal(productB.refundCents, '10000')
   assert.equal(productB.productRevenueCents, '0')
   assert.equal(productB.orderRateBps, '5000')
+  assert.deepEqual(products.body.totals, {
+    salesQuantity: '6', salesCents: '40000', discountCents: '4000', productRevenueCents: '18000',
+    refundQuantity: '3', refundCents: '18000', giftQuantity: '1', giftCents: '5000',
+  })
+  assert.equal(products.body.rows[0].productId, 'rc3-product-a', '默认按产品收入排序')
+  const searchedProducts = await json(await request(origin, `${pathFor('products', 'pos-store')}&search=RC3-A&sort=salesQuantity`, { cookie: allReportCookie }))
+  assert.equal(searchedProducts.status, 200)
+  assert.equal(searchedProducts.body.total, 1)
+  assert.equal(searchedProducts.body.rows[0].productId, 'rc3-product-a')
+  assert.equal(searchedProducts.body.rows[0].giftShareBps, null, '占比分母为 0 时必须返回 unavailable 而不是 0%')
 
   const manualProducts = await json(await request(origin, pathFor('products', 'manual-store'), { cookie: storeReportCookie }))
   assert.equal(manualProducts.body.coverage.state, 'UNAVAILABLE')
   assert.equal(manualProducts.body.total, 0)
+
+  // The three core report queries must stay bounded by a fixed number of
+  // server-side queries. This guards against per-store, per-order and
+  // per-product N+1 regressions while the realistic fixture grows.
+  const queryCounts = { model: 0, raw: 0 }
+  const tracedModel = (model, methods) => Object.fromEntries(methods.map((method) => [method, (...args) => {
+    queryCounts.model += 1
+    return prisma[model][method](...args)
+  }]))
+  const tracedPrisma = {
+    store: tracedModel('store', ['findMany']),
+    dailyEntry: tracedModel('dailyEntry', ['findMany']),
+    dailyEntryAuditLog: tracedModel('dailyEntryAuditLog', ['findMany']),
+    order: tracedModel('order', ['findUnique']),
+    $queryRaw: (...args) => {
+      queryCounts.raw += 1
+      return prisma.$queryRaw(...args)
+    },
+  }
+  const measuredReports = new ReportQueryService(tracedPrisma)
+  const reportUser = await prisma.user.findUnique({ where: { id: 'rc3-all-report' } })
+  queryCounts.model = 0
+  queryCounts.raw = 0
+  await measuredReports.summary(reportUser, { from: '2026-08-31', to: '2026-08-31' })
+  assert.deepEqual(queryCounts, { model: 3, raw: 3 }, 'summary query count must remain constant')
+  queryCounts.model = 0
+  queryCounts.raw = 0
+  await measuredReports.orders(reportUser, { from: '2026-08-31', to: '2026-08-31', page: 1, pageSize: 1 })
+  assert.deepEqual(queryCounts, { model: 3, raw: 1 }, 'orders pagination must remain constant-query')
+  queryCounts.model = 0
+  queryCounts.raw = 0
+  await measuredReports.products(reportUser, { from: '2026-08-31', to: '2026-08-31', page: 1, pageSize: 1 })
+  assert.deepEqual(queryCounts, { model: 3, raw: 1 }, 'product aggregation must remain constant-query')
+
   const indexRows = await prisma.$queryRawUnsafe(`
     SELECT indexname FROM pg_indexes
     WHERE schemaname = current_schema()
@@ -264,6 +324,7 @@ try {
     orderCoverage: combined.body.coverage.orders.state,
     productCoverage: combined.body.coverage.productSales.state,
     providerInvocationCount,
+    queryCountsVerified: true,
     historicalDigest: canonicalAfter,
   }))
 } finally {

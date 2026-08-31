@@ -24,7 +24,7 @@ const menus = [
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
-  { key: 'finance', label: '财务利润', icon: Wallet },
+  { key: 'finance', label: '报表中心', icon: Wallet },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
   { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },

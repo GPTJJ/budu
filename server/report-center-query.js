@@ -16,6 +16,9 @@ export const DAILY_SALES_AUTHORITIES = Object.freeze({
 
 const SETTLED_ORDER_STATUSES = Object.freeze(['completed', 'partially_refunded', 'refunded'])
 const EFFECTIVE_ORDER_STATUSES = Object.freeze(['completed', 'partially_refunded'])
+const ORDER_SOURCES = new Set(['STORE_POS', 'MEITUAN', 'TAOBAO_FLASH', 'JD_INSTANT', 'OTHER'])
+const SETTLEMENT_TYPES = new Set(['WECHAT', 'ALIPAY', 'CASH', 'PLATFORM', 'CUSTOM'])
+const PRODUCT_SORTS = new Set(['productRevenue', 'salesQuantity', 'salesCents'])
 const MAX_RANGE_DAYS = 92
 const MAX_PAGE_SIZE = 100
 
@@ -110,6 +113,22 @@ function parsePage(query = {}) {
     throw httpError(`分页参数不正确，单页最多 ${MAX_PAGE_SIZE} 条`)
   }
   return { page, pageSize, offset: (page - 1) * pageSize }
+}
+
+function parseOrderFilters(query = {}) {
+  const orderSource = String(query.orderSource || '').trim().toUpperCase()
+  const settlementType = String(query.settlementType || '').trim().toUpperCase()
+  if (orderSource && !ORDER_SOURCES.has(orderSource)) throw httpError('订单来源筛选不正确')
+  if (settlementType && !SETTLEMENT_TYPES.has(settlementType)) throw httpError('结算方式筛选不正确')
+  return { orderSource: orderSource || null, settlementType: settlementType || null }
+}
+
+function parseProductFilters(query = {}) {
+  const search = String(query.search || '').trim()
+  const sort = String(query.sort || 'productRevenue').trim()
+  if (search.length > 80) throw httpError('商品搜索内容过长')
+  if (!PRODUCT_SORTS.has(sort)) throw httpError('商品排序不正确')
+  return { search, sort }
 }
 
 function storeDayKey(storeKey, date) {
@@ -219,11 +238,16 @@ function orderMetricsCtes() {
 }
 
 function amountMetric(value, coverage) {
-  return { valueCents: coverage.state === REPORT_COVERAGE_STATES.UNAVAILABLE ? null : BigInt(value).toString(), coverage }
+  return { valueCents: coverage.state === REPORT_COVERAGE_STATES.UNAVAILABLE || value === null ? null : BigInt(value).toString(), coverage }
 }
 
 function countMetric(value, coverage) {
   return { value: coverage.state === REPORT_COVERAGE_STATES.UNAVAILABLE ? null : Number(value), coverage }
+}
+
+function basisPoints(numerator, denominator) {
+  const total = BigInt(denominator || 0)
+  return total > 0n ? ((BigInt(numerator || 0) * 10_000n) / total).toString() : null
 }
 
 export class ReportQueryService {
@@ -342,6 +366,14 @@ export class ReportQueryService {
     let gross = 0n
     let discount = 0n
     let refund = 0n
+    const storeTotals = new Map(scope.stores.map((store) => [store.key, {
+      storeKey: store.key,
+      storeName: store.name,
+      revenueCents: 0n,
+      orderCount: 0n,
+      coveredDays: 0,
+      uncoveredDays: 0,
+    }]))
     const daily = []
     for (const day of scope.days) {
       const support = summarySupport(day)
@@ -361,6 +393,12 @@ export class ReportQueryService {
         if (row.grossCents !== null) gross += row.grossCents
         if (row.discountCents !== null) discount += row.discountCents
         if (row.refundCents !== null) refund += row.refundCents
+        const storeTotal = storeTotals.get(day.storeKey)
+        storeTotal.revenueCents += row.revenueCents
+        storeTotal.orderCount += row.orderCount
+        storeTotal.coveredDays += 1
+      } else {
+        storeTotals.get(day.storeKey).uncoveredDays += 1
       }
       daily.push({
         storeKey: day.storeKey, storeName: day.storeName, date: day.date,
@@ -369,7 +407,29 @@ export class ReportQueryService {
         orderCount: row ? Number(row.orderCount) : null,
       })
     }
-    const aov = orderCount > 0n ? revenue / orderCount : 0n
+    const aov = orderCount > 0n ? revenue / orderCount : null
+    const storeComparison = [...storeTotals.values()]
+      .map((row) => ({
+        storeKey: row.storeKey,
+        storeName: row.storeName,
+        revenueCents: row.coveredDays > 0 ? row.revenueCents.toString() : null,
+        orderCount: row.coveredDays > 0 ? Number(row.orderCount) : null,
+        aovCents: row.coveredDays > 0 && row.orderCount > 0n ? (row.revenueCents / row.orderCount).toString() : null,
+        coverageState: row.coveredDays === 0
+          ? REPORT_COVERAGE_STATES.UNAVAILABLE
+          : row.uncoveredDays === 0
+            ? REPORT_COVERAGE_STATES.COMPLETE
+            : REPORT_COVERAGE_STATES.PARTIAL,
+        coveredDays: row.coveredDays,
+        uncoveredDays: row.uncoveredDays,
+      }))
+      .sort((a, b) => {
+        if (a.revenueCents === null) return 1
+        if (b.revenueCents === null) return -1
+        const left = BigInt(a.revenueCents)
+        const right = BigInt(b.revenueCents)
+        return left === right ? a.storeName.localeCompare(b.storeName, 'zh-CN') : left > right ? -1 : 1
+      })
     return {
       range: { from: scope.range.from, to: scope.range.to },
       stores: scope.stores.map(({ key, name }) => ({ storeKey: key, storeName: name })),
@@ -389,6 +449,7 @@ export class ReportQueryService {
         coverage: coverage.orders,
         rows: pos.settlements.map((row) => ({ key: row.key, revenueCents: BigInt(row.revenueCents).toString(), settledOrders: Number(row.settledOrders) })),
       },
+      storeComparison,
       coverage,
       daily,
     }
@@ -399,16 +460,45 @@ export class ReportQueryService {
     const coverage = this.coverage(scope).orders
     const posDays = scope.days.filter((day) => orderSupport(day).ok)
     const paging = parsePage(query)
+    const filters = parseOrderFilters(query)
     if (!posDays.length) return { range: { from: scope.range.from, to: scope.range.to }, coverage, page: paging.page, pageSize: paging.pageSize, total: 0, rows: [] }
     const selected = selectedDaysCte(posDays)
     const rows = await this.prisma.$queryRaw(Prisma.sql`
-      WITH ${selected}, ${settledOrdersCte()}, ${orderMetricsCtes()}
+      WITH ${selected}, ${settledOrdersCte()}, ${orderMetricsCtes()},
+      report_orders AS (
+        SELECT om.*,
+          CASE
+            WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."settlement_type"::text
+            WHEN lower(p."channel") = 'wechat' THEN 'WECHAT'
+            WHEN lower(p."channel") = 'alipay' THEN 'ALIPAY'
+            WHEN lower(p."channel") = 'cash' THEN 'CASH'
+            ELSE NULL
+          END AS settlement_key,
+          CASE WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."amount_cents" ELSE p."amount" END AS settlement_amount_cents,
+          lr.last_refund_at
+        FROM order_metrics om
+        LEFT JOIN LATERAL (
+          SELECT "channel", "amount" FROM "payments"
+          WHERE "order_id" = om."id" AND "status" IN ('success', 'partially_refunded', 'refunded')
+          ORDER BY "paid_at" DESC NULLS LAST, "created_at" DESC LIMIT 1
+        ) p ON om."settlement_authority"::text = 'PAYMENT'
+        LEFT JOIN "external_settlements" es ON es."order_id" = om."id" AND om."settlement_authority"::text = 'EXTERNAL'
+        LEFT JOIN LATERAL (
+          SELECT MAX(COALESCE("external_completed_at", "completed_at")) AS last_refund_at
+          FROM "refunds" WHERE "order_id" = om."id" AND "status" = 'completed'
+        ) lr ON TRUE
+      )
       SELECT om."id", om."order_no" AS "orderNo", om."store_id" AS "storeKey", om."business_date" AS date,
         om."order_source"::text AS "orderSource", om."settlement_authority"::text AS "settlementAuthority",
-        om."status", om.gross_cents AS "grossCents", om.discount_cents AS "discountCents",
+        om."status", om."payment_status" AS "paymentStatus", om."created_at" AS "createdAt",
+        om."completed_at" AS "completedAt", om.last_refund_at AS "lastRefundAt",
+        om."payable_amount" AS "payableCents", om.settlement_amount_cents AS "settlementCents",
+        om.settlement_key AS "settlementType", om.gross_cents AS "grossCents", om.discount_cents AS "discountCents",
         om.refund_cents AS "refundCents", om.revenue_cents AS "revenueCents",
         COUNT(*) OVER()::bigint AS "totalCount"
-      FROM order_metrics om
+      FROM report_orders om
+      WHERE (${filters.orderSource}::text IS NULL OR om."order_source"::text = ${filters.orderSource})
+        AND (${filters.settlementType}::text IS NULL OR om.settlement_key = ${filters.settlementType})
       ORDER BY om."business_date" DESC, om."completed_at" DESC NULLS LAST, om."id"
       LIMIT ${paging.pageSize} OFFSET ${paging.offset}
     `)
@@ -418,6 +508,9 @@ export class ReportQueryService {
       rows: rows.map((row) => ({
         id: row.id, orderNo: row.orderNo, storeKey: row.storeKey, date: isoDate(row.date),
         orderSource: row.orderSource, settlementAuthority: row.settlementAuthority, status: row.status,
+        paymentStatus: row.paymentStatus, settlementType: row.settlementType,
+        createdAt: row.createdAt, completedAt: row.completedAt, lastRefundAt: row.lastRefundAt,
+        payableCents: BigInt(row.payableCents).toString(), settlementCents: BigInt(row.settlementCents).toString(),
         grossCents: BigInt(row.grossCents).toString(), discountCents: BigInt(row.discountCents).toString(),
         refundCents: BigInt(row.refundCents).toString(), revenueCents: BigInt(row.revenueCents).toString(),
       })),
@@ -434,7 +527,8 @@ export class ReportQueryService {
         items: { orderBy: { id: 'asc' } },
         payments: {
           where: { status: { in: ['success', 'partially_refunded', 'refunded'] } },
-          select: { id: true, channel: true, status: true, amount: true, paidAt: true },
+          orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+          select: { id: true, paymentNo: true, channel: true, status: true, amount: true, paidAt: true, createdAt: true },
         },
         externalSettlement: {
           select: { id: true, settlementType: true, status: true, amountCents: true, confirmedAt: true },
@@ -458,18 +552,33 @@ export class ReportQueryService {
     const completedRefund = order.refunds.reduce((sum, row) => sum + BigInt(row.refundAmount), 0n)
     const gross = order.items.reduce((sum, item) => sum + (item.isGift ? 0n : BigInt(item.unitPrice) * BigInt(item.quantity)), 0n)
     const discount = order.items.reduce((sum, item) => sum + (item.isGift ? 0n : BigInt(item.discountAmount)), 0n)
+    const itemNames = new Map(order.items.map((item) => [item.id, item.productNameSnapshot]))
+    const lastRefundAt = order.refunds.reduce((latest, refund) => {
+      const value = refund.externalCompletedAt || refund.completedAt
+      return value && (!latest || value > latest) ? value : latest
+    }, null)
     return {
       id: order.id,
       orderNo: order.orderNo,
       storeKey: order.storeId,
       storeName: order.store.name,
       date,
+      createdAt: order.createdAt,
+      completedAt: order.completedAt,
+      lastRefundAt,
+      cashierNameSnapshot: order.cashierNameSnapshot,
       orderSource: order.orderSource,
+      entryMode: order.entryMode,
       settlementAuthority: order.settlementAuthority,
       settlementType: order.settlementAuthority === 'EXTERNAL'
         ? order.externalSettlement?.settlementType || null
         : String(order.payments[0]?.channel || '').toUpperCase() || null,
       status: order.status,
+      paymentStatus: order.paymentStatus,
+      payableCents: BigInt(order.payableAmount).toString(),
+      settlementCents: BigInt(order.settlementAuthority === 'EXTERNAL'
+        ? order.externalSettlement.amountCents
+        : order.payments[0].amount).toString(),
       grossCents: gross.toString(),
       discountCents: discount.toString(),
       refundCents: completedRefund.toString(),
@@ -488,12 +597,14 @@ export class ReportQueryService {
       })),
       refunds: order.refunds.map((refund) => ({
         id: refund.id,
+        refundNo: refund.refundNo,
         refundMode: refund.refundMode,
         refundCents: BigInt(refund.refundAmount).toString(),
         completedAt: refund.completedAt,
         externalCompletedAt: refund.externalCompletedAt,
         items: refund.items.map((item) => ({
           orderItemId: item.orderItemId,
+          productName: itemNames.get(item.orderItemId) || '商品',
           quantity: item.quantity,
           amountCents: BigInt(item.amountCents).toString(),
         })),
@@ -506,8 +617,15 @@ export class ReportQueryService {
     const coverage = this.coverage(scope).productSales
     const posDays = scope.days.filter((day) => orderSupport(day).ok)
     const paging = parsePage(query)
+    const filters = parseProductFilters(query)
     if (!posDays.length) return { range: { from: scope.range.from, to: scope.range.to }, coverage, page: paging.page, pageSize: paging.pageSize, total: 0, rows: [] }
     const selected = selectedDaysCte(posDays)
+    const orderBy = filters.sort === 'salesQuantity'
+      ? Prisma.sql`sales_quantity DESC, product_revenue_cents DESC, "product_id"`
+      : filters.sort === 'salesCents'
+        ? Prisma.sql`sales_cents DESC, product_revenue_cents DESC, "product_id"`
+        : Prisma.sql`product_revenue_cents DESC, sales_cents DESC, "product_id"`
+    const searchPattern = `%${filters.search}%`
     const rows = await this.prisma.$queryRaw(Prisma.sql`
       WITH ${selected}, ${settledOrdersCte()},
       effective_total AS (
@@ -540,9 +658,24 @@ export class ReportQueryService {
           (s.sales_cents - s.discount_cents - COALESCE(r.refund_cents, 0))::bigint AS product_revenue_cents,
           (SELECT total FROM effective_total) AS effective_orders
         FROM sales s LEFT JOIN refunded r ON r."product_id" = s."product_id"
+      ),
+      filtered_metrics AS (
+        SELECT * FROM product_metrics
+        WHERE (${filters.search} = '' OR product_name ILIKE ${searchPattern} OR sku ILIKE ${searchPattern})
+      ),
+      product_totals AS (
+        SELECT COALESCE(SUM(sales_quantity), 0)::bigint AS total_sales_quantity,
+          COALESCE(SUM(sales_cents), 0)::bigint AS total_sales_cents,
+          COALESCE(SUM(discount_cents), 0)::bigint AS total_discount_cents,
+          COALESCE(SUM(product_revenue_cents), 0)::bigint AS total_product_revenue_cents,
+          COALESCE(SUM(refund_quantity), 0)::bigint AS total_refund_quantity,
+          COALESCE(SUM(refund_cents), 0)::bigint AS total_refund_cents,
+          COALESCE(SUM(gift_quantity), 0)::bigint AS total_gift_quantity,
+          COALESCE(SUM(gift_cents), 0)::bigint AS total_gift_cents
+        FROM filtered_metrics
       )
-      SELECT *, COUNT(*) OVER()::bigint AS total_count
-      FROM product_metrics ORDER BY sales_cents DESC, "product_id"
+      SELECT fm.*, pt.*, COUNT(*) OVER()::bigint AS total_count
+      FROM filtered_metrics fm CROSS JOIN product_totals pt ORDER BY ${orderBy}
       LIMIT ${paging.pageSize} OFFSET ${paging.offset}
     `)
     return {
@@ -557,10 +690,28 @@ export class ReportQueryService {
           salesCents: BigInt(row.sales_cents).toString(), giftCents: BigInt(row.gift_cents).toString(),
           discountCents: BigInt(row.discount_cents).toString(), refundQuantity: BigInt(row.refund_quantity).toString(),
           refundCents: BigInt(row.refund_cents).toString(), productRevenueCents: BigInt(row.product_revenue_cents).toString(),
+          salesQuantityShareBps: basisPoints(row.sales_quantity, row.total_sales_quantity),
+          salesShareBps: basisPoints(row.sales_cents, row.total_sales_cents),
+          discountShareBps: basisPoints(row.discount_cents, row.total_discount_cents),
+          productRevenueShareBps: basisPoints(row.product_revenue_cents, row.total_product_revenue_cents),
+          refundQuantityShareBps: basisPoints(row.refund_quantity, row.total_refund_quantity),
+          refundShareBps: basisPoints(row.refund_cents, row.total_refund_cents),
+          giftQuantityShareBps: basisPoints(row.gift_quantity, row.total_gift_quantity),
+          giftShareBps: basisPoints(row.gift_cents, row.total_gift_cents),
           orderRateNumerator: numerator.toString(), orderRateDenominator: denominator.toString(),
-          orderRateBps: denominator > 0n ? ((numerator * 10_000n) / denominator).toString() : '0',
+          orderRateBps: basisPoints(numerator, denominator),
         }
       }),
+      totals: rows.length ? {
+        salesQuantity: BigInt(rows[0].total_sales_quantity).toString(),
+        salesCents: BigInt(rows[0].total_sales_cents).toString(),
+        discountCents: BigInt(rows[0].total_discount_cents).toString(),
+        productRevenueCents: BigInt(rows[0].total_product_revenue_cents).toString(),
+        refundQuantity: BigInt(rows[0].total_refund_quantity).toString(),
+        refundCents: BigInt(rows[0].total_refund_cents).toString(),
+        giftQuantity: BigInt(rows[0].total_gift_quantity).toString(),
+        giftCents: BigInt(rows[0].total_gift_cents).toString(),
+      } : null,
     }
   }
 }

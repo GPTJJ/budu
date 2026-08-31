@@ -47,7 +47,8 @@
     "test:report-center:rc2c": "node scripts/test-report-center-rc2c.mjs",
     "test:report-center:rc2c:ui": "node --test scripts/test-report-center-rc2c-ui-utils.mjs && playwright test tests/report-center-rc2c-pos.spec.mjs tests/report-center-rc2c-refund.spec.mjs",
     "test:report-center:rc3:source": "node --test scripts/test-report-center-rc3-source.mjs",
-    "test:report-center:rc3": "node scripts/test-report-center-rc3.mjs"
+    "test:report-center:rc3": "node scripts/test-report-center-rc3.mjs",
+    "test:report-center:rc4": "node --test scripts/test-report-center-rc4-ui-utils.mjs && node scripts/test-report-center-rc3.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

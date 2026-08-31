@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowLeft, BadgePercent, Ban, Banknote, Download, FileSpreadsheet, Package, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, WalletCards, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
+import OrderDetailSheet from './OrderDetailSheet'
 import { allStores } from '../utils/selectors'
 import { centsToYuan, createCheckoutKey, formatCents } from '../utils/pos'
 import {
@@ -639,102 +640,12 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
         </div>
       )}
 
-      {detail && (
-        <div className="budu-overlay-viewport fixed inset-0 z-[90] grid place-items-center bg-slate-900/45 p-0 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label="订单明细">
-          <div className="budu-overlay-panel flex h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden bg-white shadow-2xl sm:my-6 sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:rounded-3xl">
-            <div className="budu-overlay-header flex items-center border-b border-slate-100 bg-white px-4 py-4 sm:px-6">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">订单明细</h3>
-                <p className="mt-0.5 font-mono text-xs text-slate-400">{detail.orderNo}</p>
-              </div>
-              <button onClick={() => setDetail(null)} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
-            </div>
-            <div className="budu-overlay-scroll grid gap-5 p-4 sm:p-6">
-              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm sm:grid-cols-4">
-                <div><p className="text-xs text-slate-400">门店</p><p className="mt-1 font-semibold text-slate-700">{detail.storeName}</p></div>
-                <div><p className="text-xs text-slate-400">收银员</p><p className="mt-1 font-semibold text-slate-700">{detail.cashierNameSnapshot}</p></div>
-                <div><p className="text-xs text-slate-400">下单时间</p><p className="mt-1 font-semibold text-slate-700">{localTime(detail.createdAt)}</p></div>
-                <div><p className="text-xs text-slate-400">状态</p><p className="mt-1 font-semibold text-slate-700">{statusLabels[detail.status] || detail.status}</p></div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 p-4 text-sm sm:grid-cols-3">
-                <div><p className="text-xs text-slate-400">订单来源</p><p className="mt-1 font-semibold text-slate-700">{orderSourceLabel(detail.orderSource)}</p></div>
-                <div><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-semibold text-slate-700">{isExternalOrder(detail) ? '平台结算' : paymentLabels[detail.paymentMethod] || settlementLabel(detail)}</p></div>
-                <div><p className="text-xs text-slate-400">录入</p><p className="mt-1 font-semibold text-slate-700">{entryModeLabel(detail.entryMode)}</p></div>
-              </div>
-              {isExternalOrder(detail) && detail.externalSettlement && <div className="rounded-2xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-sm text-violet-800"><div className="flex flex-wrap items-center gap-x-4 gap-y-1"><strong>平台结算</strong><span>{formatCents(detail.externalSettlement.amountCents)}</span><span className="text-xs">{detail.externalSettlement.status === 'CONFIRMED' ? '已确认' : detail.externalSettlement.status === 'PARTIALLY_REFUNDED' ? '部分退款' : detail.externalSettlement.status === 'REFUNDED' ? '已退款' : detail.externalSettlement.status}</span></div>{orderRefundedCents(detail) > 0n && <p className="mt-2 text-xs">已退款 {formatCents(orderRefundedCents(detail))} · 剩余有效收入 {formatCents(BigInt(detail.payableAmount) - orderRefundedCents(detail))}</p>}</div>}
-              {BigInt(detail.discountAmount || 0) > 0n && <p className="text-xs text-slate-500">{(detail.discountPercent ?? 100) < 100 ? `折扣：${Number(detail.discountPercent) / 10} 折 · ` : ''}优惠（含赠送）{Number(centsToYuan(detail.discountAmount)).toFixed(2)} 元</p>}
-              {detail.remark && <p className="text-xs text-slate-500">备注：{detail.remark}</p>}
-              {detail.status === 'cancelled' && (
-                <div className="rounded-2xl border border-rose-100 bg-rose-50/70 px-4 py-3 text-sm text-rose-800">
-                  <p className="font-bold">订单已作废</p>
-                  <p className="mt-1 text-xs leading-5">原因：{detail.cancelReason || '未记录'} · 操作人：{detail.cancelledBy || '—'} · 时间：{localTime(detail.cancelledAt)}</p>
-                </div>
-              )}
-              <div>
-                <h4 className="text-sm font-bold text-slate-800">商品明细</h4>
-                <div className="mt-2 overflow-hidden rounded-2xl border border-slate-100">
-                  <table className="block w-full text-left text-sm sm:table">
-                    <thead className="hidden bg-slate-50/80 text-xs font-semibold text-slate-400 sm:table-header-group"><tr><th className="px-4 py-2.5">商品</th><th className="px-4 py-2.5">SKU</th><th className="px-4 py-2.5 text-right">单价（元）</th><th className="px-4 py-2.5 text-right">数量</th><th className="px-4 py-2.5 text-right">小计（元）</th></tr></thead>
-                    <tbody className="block divide-y divide-slate-100 sm:table-row-group">
-                      {(detail.items || []).map((item) => (
-                        <tr key={item.id} className="grid grid-cols-[1fr_auto] gap-x-3 px-4 py-3 sm:table-row sm:p-0">
-                          <td className="font-semibold text-slate-700 sm:table-cell sm:px-4 sm:py-2.5">{item.productNameSnapshot}{item.isGift && <span className="ml-1.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">赠送</span>}</td>
-                          <td className="row-start-2 font-mono text-[11px] text-slate-400 sm:table-cell sm:px-4 sm:py-2.5 sm:text-xs sm:text-slate-500">{item.skuSnapshot}</td>
-                          <td className="hidden text-right tabular-nums text-slate-600 sm:table-cell sm:px-4 sm:py-2.5">{item.isGift ? '0.00' : Number(centsToYuan(item.unitPrice)).toFixed(2)}</td>
-                          <td className="row-start-2 text-right text-xs tabular-nums text-slate-500 sm:table-cell sm:px-4 sm:py-2.5 sm:text-sm">x {item.quantity}</td>
-                          <td className="col-start-2 row-start-1 text-right font-bold tabular-nums text-slate-800 sm:table-cell sm:px-4 sm:py-2.5 sm:font-semibold">{item.isGift ? '¥0.00' : formatCents(item.lineAmount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="block border-t border-slate-100 bg-slate-50/60 text-sm font-bold text-slate-800 sm:table-footer-group"><tr className="flex items-center justify-between sm:table-row"><td colSpan="4" className="px-4 py-3 text-right">合计</td><td className="px-4 py-3 text-right text-lg tabular-nums text-budu-700 sm:text-sm">{formatCents(detail.payableAmount)}</td></tr></tfoot>
-                  </table>
-                </div>
-              </div>
-              {(detail.payments || []).length > 0 && (
-                <div>
-                  <h4 className="text-sm font-bold text-slate-800">支付记录</h4>
-                  <div className="mt-2 space-y-2">
-                    {(detail.payments || []).map((payment) => (
-                      <div key={payment.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5 text-sm">
-                        <span className="font-mono text-xs font-semibold text-slate-600">{payment.paymentNo}</span>
-                        <span className="rounded-full bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">{paymentLabels[payment.channel] || payment.channel}</span>
-                        <span className="font-semibold tabular-nums text-slate-700">{Number(centsToYuan(payment.amount)).toFixed(2)} 元</span>
-                        <span className={`text-xs ${payment.status === 'success' ? 'text-emerald-600' : 'text-slate-400'}`}>{payment.status === 'success' ? '支付成功' : payment.status}</span>
-                        <span className="ml-auto text-xs text-slate-400">{localTime(payment.paidAt || payment.createdAt)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(detail.refunds || []).length > 0 && (
-                <div>
-                  <h4 className="text-sm font-bold text-slate-800">退款记录</h4>
-                  <div className="mt-2 space-y-2">
-                    {(detail.refunds || []).map((refund) => (
-                      <div key={refund.id} className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-2.5 text-sm">
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span className="font-mono text-xs font-semibold text-slate-600">{refund.refundNo}</span>
-                          <span className="font-semibold tabular-nums text-orange-700">-{Number(centsToYuan(refund.amount)).toFixed(2)} 元</span>
-                          <span className="text-xs text-slate-500">{refund.status === 'completed' ? '已退款' : refund.status === 'pending' ? '退款处理中' : refund.status === 'failed' ? '退款异常' : refund.status}</span>
-                          <span className="ml-auto text-xs text-slate-400">{localTime(refund.completedAt || refund.createdAt)}</span>
-                          {refund.status === 'pending' && refund.refundMode === 'PAYMENT' && <button onClick={() => queryRefund(refund)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">查询退款结果</button>}
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">{refund.refundMode === 'MANUAL_EXTERNAL' ? '平台已完成 · BUDU 人工记录' : '店内支付退款'}{refund.refundMode === 'MANUAL_EXTERNAL' && refund.externalCompletedAt ? ` · 平台完成时间 ${localTime(refund.externalCompletedAt)}` : ''}</p>
-                        {refund.reason && <p className="mt-1 text-xs text-slate-500">原因：{refund.reason}</p>}
-                        <p className="mt-1 text-xs text-slate-500">{(refund.items || []).map((item) => `${item.productName}×${item.quantity}`).join('、')}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="sticky bottom-0 -mx-4 space-y-2 border-t border-slate-100 bg-white/95 px-4 pb-[max(0px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-6 sm:flex sm:flex-row-reverse sm:flex-wrap sm:items-center sm:gap-2 sm:space-y-0 sm:px-6">
-                {renderOrderActions(detail, false, false)}
-                <button onClick={() => setDetail(null)} className={`${actionButtonClass} w-full border border-slate-200 bg-white text-slate-600 sm:w-auto`}><X className="h-4 w-4" />完成</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <OrderDetailSheet
+        order={detail}
+        onClose={() => setDetail(null)}
+        onQueryRefund={queryRefund}
+        actions={detail ? renderOrderActions(detail, false, false) : null}
+      />
     </div>
   )
 }

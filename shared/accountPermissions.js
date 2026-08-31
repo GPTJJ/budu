@@ -55,7 +55,7 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '物料管理' },
   ] },
   { key: 'finance', label: '财务管理', modules: [
-    { key: MODULE_KEYS.FINANCE, label: '财务利润' },
+    { key: MODULE_KEYS.FINANCE, label: '报表中心' },
     { key: MODULE_KEYS.FINANCE_INVOICE, label: '发票开具' },
   ] },
   { key: 'collaboration', label: '协同管理', modules: [

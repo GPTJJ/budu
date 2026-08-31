@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><title>BUDU RC-4</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React, { useState } from 'react'
+    import { createRoot } from 'react-dom/client'
+    import ReportCenterPage from '/src/components/ReportCenterPage.jsx'
+    import PullToRefresh from '/src/components/PullToRefresh.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const stores = [
+      { key: 'tongying', name: '北京通盈中心店' },
+      { key: 'guanshe', name: '北京官舍店' },
+      { key: 'chaowai', name: '北京朝外店' },
+      { key: 'xidan', name: '北京西单店' },
+    ]
+    seedCachedDataForTest({ entries: {}, staff: [], removedStaff: [], stores, schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] })
+    window.__reportRequests = []
+
+    const complete = { state: 'COMPLETE', coveredStores: stores.map((row) => row.key), partialStores: [], uncoveredStores: [], coveredStoreDays: 4, uncoveredStoreDays: 0, reasonCodes: [] }
+    const partial = { state: 'PARTIAL', coveredStores: ['tongying'], partialStores: [], uncoveredStores: ['guanshe', 'chaowai', 'xidan'], coveredStoreDays: 1, uncoveredStoreDays: 3, reasonCodes: ['MANUAL_DAILY_SUMMARY_ONLY'] }
+    const unavailable = { state: 'UNAVAILABLE', coveredStores: [], partialStores: [], uncoveredStores: ['guanshe'], coveredStoreDays: 0, uncoveredStoreDays: 1, reasonCodes: ['MANUAL_DAILY_SUMMARY_ONLY'] }
+
+    const summary = (manualOnly = false) => ({
+      stores,
+      metrics: {
+        revenue: { valueCents: '2863000', coverage: complete },
+        orderCount: { value: 227, coverage: complete },
+        aov: { valueCents: '12612', coverage: complete },
+        grossSales: { valueCents: manualOnly ? null : '865000', coverage: manualOnly ? unavailable : partial },
+        discount: { valueCents: manualOnly ? null : '35000', coverage: manualOnly ? unavailable : partial },
+        refund: { valueCents: manualOnly ? null : '42000', coverage: manualOnly ? unavailable : partial },
+      },
+      channelComposition: { coverage: manualOnly ? unavailable : partial, rows: manualOnly ? [] : [{ key: 'STORE_POS', revenueCents: '420000', settledOrders: 35 }, { key: 'MEITUAN', revenueCents: '368000', settledOrders: 22 }, { key: 'OTHER', revenueCents: '35000', settledOrders: 3 }] },
+      settlementComposition: { coverage: manualOnly ? unavailable : partial, rows: manualOnly ? [] : [{ key: 'WECHAT', revenueCents: '350000', settledOrders: 29 }, { key: 'CASH', revenueCents: '70000', settledOrders: 6 }, { key: 'PLATFORM', revenueCents: '403000', settledOrders: 25 }] },
+      storeComparison: stores.map((row, index) => ({ storeKey: row.key, storeName: row.name, revenueCents: String(930000 - index * 145000), orderCount: 70 - index * 9, aovCents: String(13285 - index * 420), coverageState: 'COMPLETE', coveredDays: 1, uncoveredDays: 0 })),
+      coverage: { dailySummary: complete, orders: manualOnly ? unavailable : partial, productSales: manualOnly ? unavailable : partial },
+    })
+
+    const orderRows = [
+      { id: 'order-meituan', orderNo: 'BUDU-20260831-MT001', storeKey: 'tongying', date: '2026-08-31', orderSource: 'MEITUAN', settlementAuthority: 'EXTERNAL', settlementType: 'PLATFORM', status: 'partially_refunded', paymentStatus: 'paid', createdAt: '2026-08-31T06:36:00.000Z', completedAt: '2026-08-31T06:37:00.000Z', lastRefundAt: '2026-08-31T08:00:00.000Z', payableCents: '6800', settlementCents: '6800', grossCents: '8000', discountCents: '1200', refundCents: '1800', revenueCents: '5000' },
+      { id: 'order-cash', orderNo: 'BUDU-20260831-CASH02', storeKey: 'tongying', date: '2026-08-31', orderSource: 'STORE_POS', settlementAuthority: 'PAYMENT', settlementType: 'CASH', status: 'completed', paymentStatus: 'paid', createdAt: '2026-08-31T05:08:00.000Z', completedAt: '2026-08-31T05:09:00.000Z', lastRefundAt: null, payableCents: '5200', settlementCents: '5200', grossCents: '5200', discountCents: '0', refundCents: '0', revenueCents: '5200' },
+    ]
+
+    const products = [
+      { productId: 'p1', productName: '卡皮巴拉布丁', sku: 'BUDU-001', salesQuantity: '28', giftQuantity: '3', salesCents: '196000', giftCents: '21000', discountCents: '8000', refundQuantity: '2', refundCents: '14000', productRevenueCents: '174000', salesQuantityShareBps: '5600', salesShareBps: '6200', discountShareBps: '4000', productRevenueShareBps: '6500', refundQuantityShareBps: '6666', refundShareBps: '7000', giftQuantityShareBps: '7500', giftShareBps: '7777', orderRateNumerator: '24', orderRateDenominator: '40', orderRateBps: '6000' },
+      { productId: 'p2', productName: '海盐焦糖巧克力千层', sku: 'BUDU-VERY-LONG-002', salesQuantity: '22', giftQuantity: '1', salesCents: '120000', giftCents: '6000', discountCents: '12000', refundQuantity: '1', refundCents: '6000', productRevenueCents: '102000', salesQuantityShareBps: '4400', salesShareBps: '3800', discountShareBps: '6000', productRevenueShareBps: '3500', refundQuantityShareBps: '3333', refundShareBps: '3000', giftQuantityShareBps: '2500', giftShareBps: '2222', orderRateNumerator: '0', orderRateDenominator: '0', orderRateBps: null },
+    ]
+
+    const detail = {
+      id: 'order-meituan', orderNo: 'BUDU-20260831-MT001', storeKey: 'tongying', storeName: '北京通盈中心店', date: '2026-08-31', createdAt: '2026-08-31T06:36:00.000Z', completedAt: '2026-08-31T06:37:00.000Z', lastRefundAt: '2026-08-31T08:00:00.000Z', cashierNameSnapshot: '门店员工', orderSource: 'MEITUAN', entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL', settlementType: 'PLATFORM', status: 'partially_refunded', paymentStatus: 'paid', payableCents: '6800', settlementCents: '6800', grossCents: '8000', discountCents: '1200', refundCents: '1800', revenueCents: '5000', externalSettlement: { id: 'es1', settlementType: 'PLATFORM', status: 'PARTIALLY_REFUNDED', amountCents: '6800' }, payments: [], items: [{ id: 'oi1', productId: 'p1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitSnapshot: '份', unitPriceCents: '8000', quantity: 1, discountCents: '1200', actualCents: '6800', isGift: false }], refunds: [{ id: 'r1', refundNo: 'RF-MT001', refundMode: 'MANUAL_EXTERNAL', refundCents: '1800', status: 'completed', completedAt: '2026-08-31T08:00:00.000Z', externalCompletedAt: '2026-08-31T08:00:00.000Z', items: [{ orderItemId: 'oi1', productName: '卡皮巴拉布丁', quantity: 1, amountCents: '1800' }] }],
+    }
+
+    window.fetch = async (url) => {
+      const parsed = new URL(url, location.origin)
+      window.__reportRequests.push(parsed.pathname + parsed.search)
+      const json = (value, status = 200) => Promise.resolve(new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }))
+      const manualOnly = parsed.searchParams.get('store') === 'guanshe'
+      if (parsed.pathname === '/api/v2/report-center/summary') return json(summary(manualOnly))
+      if (parsed.pathname === '/api/v2/report-center/orders/order-meituan') return json(detail)
+      if (parsed.pathname === '/api/v2/report-center/orders') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, coverage: manualOnly ? unavailable : partial, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, total: manualOnly ? 0 : 42, rows: manualOnly ? [] : orderRows })
+      if (parsed.pathname === '/api/v2/report-center/products') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, coverage: manualOnly ? unavailable : partial, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, total: manualOnly ? 0 : 2, rows: manualOnly ? [] : products, totals: null })
+      if (parsed.pathname === '/api/v2/expenses') return json({ rows: [] })
+      if (parsed.pathname === '/api/v2/profit') return json({ rows: [], monthly: [] })
+      return json({ error: 'not found' }, 404)
+    }
+
+    const user = { id: 'dev-report', username: 'developer', role: 'developer', status: 'active', storeKeys: [], permissions: { modules: { finance: true }, reportSalesView: true, reportAllStores: true } }
+    function Harness() {
+      const [refreshes, setRefreshes] = useState(0)
+      return React.createElement(PullToRefresh, { onRefresh: async () => setRefreshes((value) => value + 1) },
+        React.createElement(OverlayStackManager),
+        React.createElement('div', { 'data-testid': 'page-refresh-count', className: 'sr-only' }, String(refreshes)),
+        React.createElement('main', { className: 'min-h-screen bg-canvas p-3 sm:p-6' }, React.createElement(ReportCenterPage, { currentUser: user, onBack: () => {}, onNavigate: (value) => { window.__reportNavigate = value } })),
+      )
+    }
+    createRoot(document.getElementById('root')).render(React.createElement(Harness))
+  </script></body>
+</html>

@@ -24,7 +24,7 @@ async function downloadCsv(url) {
   await downloadFile({ dataUrl, name, mimeType: 'text/csv' })
 }
 
-export default function FinancePage({ currentUser, onBack }) {
+export default function FinancePage({ currentUser, onBack, embedded = false }) {
   const canManage = ['developer', 'admin', 'finance', 'manager'].includes(currentUser?.role)
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)
   const [store, setStore] = useState('all')
@@ -94,14 +94,14 @@ export default function FinancePage({ currentUser, onBack }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-4">
-        <button onClick={onBack} className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600">
+        {!embedded && <button onClick={onBack} className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600">
           <ArrowLeft className="h-4 w-4" />
           {t('返回首页')}
-        </button>
+        </button>}
         <div>
           <h2 className="flex items-center gap-2 text-xl font-bold text-slate-800">
             <Wallet className="h-5 w-5 text-budu-500" />
-            {t('财务利润')}
+            {t(embedded ? '经营利润（历史能力）' : '财务利润')}
           </h2>
           <p className="mt-0.5 text-[13px] text-slate-400">{t('录入费用，按门店计算日/月利润并导出报表')}</p>
         </div>
