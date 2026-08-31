@@ -58,7 +58,9 @@ Evidence status: VERIFIED unless explicitly marked otherwise.
   projection all render from the new authority. Manual DailyEntry stores never receive fabricated Order/item/channel/settlement/COGS/profit facts.
 - Today coverage correctly reports 2/4 stores available and marks Beijing Tongying Center and Beijing Xidan as pending close rather than zero.
 - Chrome production checks at 320/340/375/390/430 showed no horizontal overflow. The 390px product-detail overlay locked page scrolling,
-  retained the report content, and restored page scrolling after the last overlay closed. Candidate WebKit suites remain PASS.
+  retained the report content, and restored page scrolling after the last overlay closed. The exact live runtime was also opened directly
+  in signed-in macOS Safari/WebKit and the Report Center Dashboard, coverage, comparison, channel/settlement and Product TOP projections
+  rendered correctly. Candidate WebKit suites at the five requested mobile widths remain PASS.
 
 ## Permissions
 
