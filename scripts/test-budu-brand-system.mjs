@@ -35,6 +35,18 @@ test('formal web brand positions use the canonical derivative', () => {
   }
 })
 
+test('POS header is lowercase and the release forces stale PWA sessions to refresh', () => {
+  const pos = read('src/components/PosPage.jsx')
+  const serviceWorker = read('public/sw.js')
+  const main = read('src/main.jsx')
+  assert.match(pos, />budu POS<\/strong>/)
+  assert.doesNotMatch(pos, />BUDU POS<\/strong>/)
+  assert.match(serviceWorker, /budu-shell-v18/)
+  assert.match(serviceWorker, /self\.skipWaiting\(\)/)
+  assert.match(main, /controllerchange/)
+  assert.match(main, /window\.location\.reload\(\)/)
+})
+
 test('payroll report user-facing outputs use lowercase budu and canonical wordmark', () => {
   const source = read('server/payroll-audit-report.js')
   const store = read('server/payroll-audit-run-store.js')

@@ -56,6 +56,17 @@ async function enterPayment(page, url) {
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
 }
 
+for (const width of [320, 340, 375, 390, 430, 1024]) {
+  test(`${width}px POS header 使用 lowercase budu`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width >= 768 ? 768 : 820 })
+    await page.goto(`/tests/pos-harness.html?user=brand-header-${width}`)
+    await expect(page.getByText('budu POS', { exact: true })).toHaveCount(1)
+    if (width >= 768) await expect(page.getByText('budu POS', { exact: true })).toBeVisible()
+    await expect(page.getByText('BUDU POS', { exact: true })).toHaveCount(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
 test('iPad 横屏商品分类固定五列并按正式顺序换成两行', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=category-layout')
   const categoryRegion = page.getByLabel('商品分类')
