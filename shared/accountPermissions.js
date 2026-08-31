@@ -88,6 +88,9 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   MANUAL_EXTERNAL_REFUND_CONFIRM: 'manualExternalRefundConfirm',
   REPORT_SALES_VIEW: 'reportSalesView',
   REPORT_ALL_STORES: 'reportAllStores',
+  REPORT_COST_VIEW: 'reportCostView',
+  REPORT_LABOR_VIEW: 'reportLaborView',
+  REPORT_COST_MANAGE: 'reportCostManage',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
   DAILY_ENTRY: 'dailyEntry',
 })
@@ -173,6 +176,12 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_SALES_VIEW] === true),
     [ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES]:
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES] === true),
+    [ACCOUNT_PERMISSION_KEYS.REPORT_COST_VIEW]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_COST_VIEW] === true),
+    [ACCOUNT_PERMISSION_KEYS.REPORT_LABOR_VIEW]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_LABOR_VIEW] === true),
+    [ACCOUNT_PERMISSION_KEYS.REPORT_COST_MANAGE]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_COST_MANAGE] === true),
     [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
     [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY]: normalizeDailyEntryCapabilities(
       source[ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY],
@@ -274,6 +283,27 @@ export function hasReportAllStores(user) {
       user.status !== 'disabled' &&
       user.role !== 'public' &&
       normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES],
+  )
+}
+
+export function hasReportCostView(user) {
+  return Boolean(
+    user && user.status !== 'disabled' && user.role !== 'public'
+      && normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_COST_VIEW],
+  )
+}
+
+export function hasReportLaborView(user) {
+  return Boolean(
+    user && user.status !== 'disabled' && user.role !== 'public'
+      && normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_LABOR_VIEW],
+  )
+}
+
+export function hasReportCostManage(user) {
+  return Boolean(
+    user && user.status !== 'disabled' && user.role !== 'public'
+      && normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_COST_MANAGE],
   )
 }
 

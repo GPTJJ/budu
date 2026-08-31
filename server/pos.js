@@ -24,6 +24,8 @@ import {
 import { externalSettlementService } from './settlements/index.js'
 import { assertNoClientSettlementState, serializeExternalSettlement } from './settlements/settlement-contract.js'
 import { manualExternalRefundService } from './refunds/index.js'
+import { resolveEffectiveProductCosts } from './product-cost-authority.js'
+import { buduBusinessDate } from '../shared/businessDate.js'
 
 export const posRouter = Router()
 
@@ -434,10 +436,12 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   for (const item of normalizedItems) {
     if (Array.isArray(item.comboFlavorIds)) for (const id of item.comboFlavorIds) needIds.add(id)
   }
-  const products = await prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+  const businessDateText = buduBusinessDate()
+  const rawProducts = await prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+  const products = await resolveEffectiveProductCosts(prisma, rawProducts, businessDateText)
   const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
   const now = new Date()
-  const businessDate = new Date(`${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00.000Z`)
+  const businessDate = new Date(`${businessDateText}T00:00:00.000Z`)
   const id = `ord-${crypto.randomUUID()}`
   const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
 

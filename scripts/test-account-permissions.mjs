@@ -14,6 +14,9 @@ import {
   hasManualExternalRefundRecord,
   hasReportAllStores,
   hasReportSalesView,
+  hasReportCostView,
+  hasReportLaborView,
+  hasReportCostManage,
   hasInventoryTransferAll,
   hasPageAccess,
   normalizeAccountPermissions,
@@ -68,6 +71,16 @@ test('销售报表与跨店读取是独立、默认关闭且服务端可判定�
   assert.equal(hasReportAllStores({ role: 'public', permissions: { reportAllStores: true } }), false)
 })
 
+test('商品成本、人工成本和配置写入是三项独立且默认关闭的敏感能力', () => {
+  assert.equal(hasReportCostView({ role: 'staff', permissions: { reportSalesView: true } }), false)
+  assert.equal(hasReportLaborView({ role: 'staff', permissions: { reportCostView: true } }), false)
+  assert.equal(hasReportCostManage({ role: 'staff', permissions: { reportCostView: true, reportLaborView: true } }), false)
+  assert.equal(hasReportCostView({ role: 'finance', permissions: { reportCostView: true } }), true)
+  assert.equal(hasReportLaborView({ role: 'finance', permissions: { reportLaborView: true } }), true)
+  assert.equal(hasReportCostManage({ role: 'finance', permissions: { reportCostManage: true } }), true)
+  assert.equal(hasReportCostManage({ role: 'cashier', permissions: { reportCostManage: true } }), false)
+})
+
 test('调拨全权限不依赖角色和绑定门店', () => {
   const user = { role: 'staff', storeKeys: ['guanshe'], permissions: { inventoryTransferAll: true } }
   assert.equal(hasInventoryTransferAll(user), true)
@@ -103,6 +116,9 @@ test('权限规范化保留已知模块并过滤未知字段', () => {
   assert.equal(normalized.manualExternalRefundConfirm, false)
   assert.equal(normalized.reportSalesView, false)
   assert.equal(normalized.reportAllStores, false)
+  assert.equal(normalized.reportCostView, false)
+  assert.equal(normalized.reportLaborView, false)
+  assert.equal(normalized.reportCostManage, false)
   assert.equal(normalized.modules.overview, false)
   assert.equal(normalized.modules.finance, true)
   assert.equal(Object.hasOwn(normalized.modules, 'unknown'), false)

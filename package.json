@@ -49,7 +49,9 @@
     "test:report-center:rc3:source": "node --test scripts/test-report-center-rc3-source.mjs",
     "test:report-center:rc3": "node scripts/test-report-center-rc3.mjs",
     "test:report-center:rc4": "node --test scripts/test-report-center-rc4-ui-utils.mjs && node scripts/test-report-center-rc3.mjs",
-    "test:report-center:rc5": "node --test scripts/test-report-center-rc3-source.mjs scripts/test-report-center-rc4-ui-utils.mjs && playwright test --project=ipad-webkit --workers=1 tests/report-center-rc5.spec.mjs tests/report-center-rc4.spec.mjs"
+    "test:report-center:rc5": "node --test scripts/test-report-center-rc3-source.mjs scripts/test-report-center-rc4-ui-utils.mjs && playwright test --project=ipad-webkit --workers=1 tests/report-center-rc5.spec.mjs tests/report-center-rc4.spec.mjs",
+    "test:report-center:rc6a": "node --test scripts/test-report-center-rc6a.mjs && playwright test --config=playwright.rc6a.config.mjs --project=ipad-webkit --workers=1",
+    "test:report-center:rc6a-migration": "node --test scripts/test-report-center-rc6a-migration-rehearsal.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

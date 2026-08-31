@@ -435,6 +435,9 @@ function PermissionModal({ user, onClose, onSaved }) {
   const [manualExternalRefundConfirm, setManualExternalRefundConfirm] = useState(user.permissions?.manualExternalRefundConfirm === true)
   const [reportSalesView, setReportSalesView] = useState(user.permissions?.reportSalesView === true)
   const [reportAllStores, setReportAllStores] = useState(user.permissions?.reportAllStores === true)
+  const [reportCostView, setReportCostView] = useState(user.permissions?.reportCostView === true)
+  const [reportLaborView, setReportLaborView] = useState(user.permissions?.reportLaborView === true)
+  const [reportCostManage, setReportCostManage] = useState(user.permissions?.reportCostManage === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -457,6 +460,9 @@ function PermissionModal({ user, onClose, onSaved }) {
     setManualExternalRefundConfirm(false)
     setReportSalesView(false)
     setReportAllStores(false)
+    setReportCostView(false)
+    setReportLaborView(false)
+    setReportCostManage(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -474,6 +480,9 @@ function PermissionModal({ user, onClose, onSaved }) {
           manualExternalRefundConfirm,
           reportSalesView,
           reportAllStores: reportSalesView && reportAllStores,
+          reportCostView,
+          reportLaborView,
+          reportCostManage: reportCostView && reportLaborView && reportCostManage,
         }),
       })
       await onSaved()
@@ -596,6 +605,13 @@ function PermissionModal({ user, onClose, onSaved }) {
             />
             {t('允许查看全部门店（否则仅限账号绑定门店）')}
           </label>
+        </section>
+        <section className="mt-3 rounded-xl border border-rose-100 bg-rose-50/50 p-3">
+          <p className="text-xs font-bold text-slate-700">{t('经营成本敏感数据权限')}</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('商品成本与人工工资分开授权；销售报表权限不会自动获得成本数据。')}</p>
+          <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600"><input type="checkbox" checked={reportCostView} onChange={(event) => { setReportCostView(event.target.checked); if (!event.target.checked) setReportCostManage(false) }} className="h-4 w-4 accent-budu-500" />{t('允许查看商品、租金、水电及其他成本')}</label>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600"><input type="checkbox" checked={reportLaborView} onChange={(event) => { setReportLaborView(event.target.checked); if (!event.target.checked) setReportCostManage(false) }} className="h-4 w-4 accent-budu-500" />{t('允许查看工资及人工附加成本')}</label>
+          <label className={`flex min-h-10 items-center gap-2 text-xs font-medium ${reportCostView && reportLaborView ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-300'}`}><input type="checkbox" checked={reportCostManage} disabled={!reportCostView || !reportLaborView} onChange={(event) => setReportCostManage(event.target.checked)} className="h-4 w-4 accent-budu-500 disabled:opacity-40" />{t('允许维护成本配置（独立高风险能力）')}</label>
         </section>
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}

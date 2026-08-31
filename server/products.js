@@ -4,7 +4,8 @@ import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, normalizeSku, parseCents } from './pos-core.js'
 import { sendStoredImage } from './product-images.js'
-import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
+import { hasModuleAccess, hasReportCostManage, hasReportCostView, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
+import { appendProductCostVersion, listProductCostHistory } from './product-cost-authority.js'
 
 export const productsRouter = Router()
 
@@ -152,7 +153,7 @@ export const productListSelect = {
   productGroup: { select: { id: true, name: true, sortOrder: true, isActive: true, updatedAt: true } },
 }
 
-export function serializeProduct(product) {
+export function serializeProduct(product, { includeCost = false } = {}) {
   return {
     productId: product.id,
     name: product.name,
@@ -160,7 +161,8 @@ export function serializeProduct(product) {
     posCategory: product.posCategory,
     transferCode: product.transferCode || '',
     salePriceCents: product.salePriceCents == null ? null : product.salePriceCents.toString(),
-    costPriceCents: product.costPriceCents == null ? null : product.costPriceCents.toString(),
+    costPriceCents: includeCost && product.costPriceCents != null ? product.costPriceCents.toString() : null,
+    costVisible: includeCost,
     unit: product.unit,
     image: '',
     hasImage: product.hasImage === true || Boolean(product.image),
@@ -230,11 +232,12 @@ productsRouter.get('/products', wrap(async (req, res) => {
   })])
   const imageIds = new Set(imageRows.map((row) => row.id))
   const groupCoverIds = new Set(groupCoverRows.map((row) => row.id))
+  const includeCost = hasReportCostView(req.user)
   res.json({ rows: rows.map((product) => serializeProduct({
     ...product,
     hasImage: imageIds.has(product.id),
     productGroup: product.productGroup ? { ...product.productGroup, hasCoverImage: groupCoverIds.has(product.productGroup.id) } : null,
-  })) })
+  }, { includeCost })) })
 }))
 
 async function productImage(req) {
@@ -270,7 +273,7 @@ productsRouter.post('/products', wrap(async (req, res) => {
     data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
     include: { productCategory: true, productGroup: true },
   })
-  res.status(201).json({ ok: true, product: serializeProduct(row) })
+  res.status(201).json({ ok: true, product: serializeProduct(row, { includeCost: hasReportCostView(req.user) }) })
 }))
 
 productsRouter.post('/products/import', wrap(async (req, res) => {
@@ -361,6 +364,9 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         productGroupId: existing.productGroupId,
         variantName: existing.variantName,
       }
+      if (BigInt(existing.costPriceCents ?? -1) !== BigInt(data.costPriceCents ?? -1)) {
+        throw httpError(`「${existing.name}」成本已纳入历史权威；请在商品中心使用“更新成本”`, 409)
+      }
       const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } }, include: { productCategory: true, productGroup: true } })
       if (existing.sku) bySku.delete(existing.sku)
       byName.delete(existing.name)
@@ -376,7 +382,7 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
     ok: true,
     created: result.created,
     updated: result.updated,
-    rows: result.saved.map(serializeProduct),
+    rows: result.saved.map((row) => serializeProduct(row, { includeCost: hasReportCostView(req.user) })),
   })
 }))
 
@@ -427,7 +433,7 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
     include: { productCategory: true, productGroup: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   })
-  res.json({ ok: true, updated: saved.length, rows: saved.map(serializeProduct) })
+  res.json({ ok: true, updated: saved.length, rows: saved.map((row) => serializeProduct(row, { includeCost: hasReportCostView(req.user) })) })
 }))
 
 productsRouter.put('/products/:productId', wrap(async (req, res) => {
@@ -437,7 +443,10 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (!Number.isInteger(version) || version < 1) throw httpError('商品版本不正确，请刷新后重试')
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
   if (!existing || existing.category !== 'product') throw httpError('商品不存在', 404)
-  const data = productData(req.body || {}, existing.image || '')
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'costPriceCents') && BigInt(existing.costPriceCents ?? -1) !== BigInt(optionalCents(req.body.costPriceCents, '成本价') ?? -1)) {
+    throw httpError('商品成本已纳入历史权威，请使用“更新成本”并填写生效日期与原因', 409)
+  }
+  const data = productData({ ...(req.body || {}), costPriceCents: existing.costPriceCents?.toString() ?? '' }, existing.image || '')
   await requireProductCategory(data.productCategoryId, existing.productCategoryId || '')
   await requireProductGroup(data.productGroupId, existing.productGroupId || '')
   const result = await prisma.inventoryItem.updateMany({
@@ -448,10 +457,32 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
     const latest = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
     if (!latest || latest.category !== 'product') throw httpError('商品不存在', 404)
     const latestWithRelations = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true, productGroup: true } })
-    return res.status(409).json({ error: '商品已被其他人修改，已返回最新数据', latest: serializeProduct(latestWithRelations) })
+    return res.status(409).json({ error: '商品已被其他人修改，已返回最新数据', latest: serializeProduct(latestWithRelations, { includeCost: hasReportCostView(req.user) }) })
   }
   const row = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, include: { productCategory: true, productGroup: true } })
-  res.json({ ok: true, product: serializeProduct(row) })
+  res.json({ ok: true, product: serializeProduct(row, { includeCost: hasReportCostView(req.user) }) })
+}))
+
+productsRouter.get('/products/:productId/cost-history', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!hasModuleAccess(req.user, MODULE_KEYS.PRODUCT_CENTER) || !hasReportCostView(req.user)) throw httpError('无商品成本查看权限', 403)
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, select: { id: true, name: true, category: true } })
+  if (!product || product.category !== 'product') throw httpError('商品不存在', 404)
+  res.json({ product, rows: await listProductCostHistory(prisma, product.id) })
+}))
+
+productsRouter.post('/products/:productId/cost-history', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireProductManager(req.user)
+  if (!hasReportCostManage(req.user)) throw httpError('无商品成本配置权限', 403)
+  const row = await appendProductCostVersion(prisma, {
+    inventoryItemId: req.params.productId,
+    costPriceCents: req.body?.costPriceCents,
+    effectiveFrom: req.body?.effectiveFrom,
+    reason: req.body?.reason,
+    createdBy: req.user.id,
+  })
+  res.status(201).json({ ok: true, row: { ...row, costPriceCents: row.costPriceCents.toString(), effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10), effectiveTo: null } })
 }))
 
 function productGroupData(body, existingCoverImage = '') {

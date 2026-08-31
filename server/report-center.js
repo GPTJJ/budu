@@ -2,9 +2,11 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { ReportQueryService } from './report-center-query.js'
+import { OperatingCostAuthority } from './operating-cost-authority.js'
 
 export const reportCenterRouter = Router()
 export const reportQueryService = new ReportQueryService(prisma)
+export const operatingCostAuthority = new OperatingCostAuthority(prisma, reportQueryService)
 
 const wrap = (handler) => async (req, res) => {
   try {
@@ -43,4 +45,29 @@ reportCenterRouter.get('/report-center/orders/:id', wrap(async (req, res) => {
 reportCenterRouter.get('/report-center/products', wrap(async (req, res) => {
   requireDatabase()
   res.json(await reportQueryService.products(req.user, req.query))
+}))
+
+reportCenterRouter.get('/report-center/operating-costs', wrap(async (req, res) => {
+  requireDatabase()
+  res.json(await operatingCostAuthority.report(req.user, req.query))
+}))
+
+reportCenterRouter.get('/report-center/cost-settings', wrap(async (req, res) => {
+  requireDatabase()
+  res.json(await operatingCostAuthority.settings(req.user, req.query))
+}))
+
+reportCenterRouter.post('/report-center/cost-settings/rent', wrap(async (req, res) => {
+  requireDatabase()
+  res.status(201).json(await operatingCostAuthority.addRent(req.user, req.body || {}))
+}))
+
+reportCenterRouter.put('/report-center/cost-settings/utility', wrap(async (req, res) => {
+  requireDatabase()
+  res.json(await operatingCostAuthority.setUtility(req.user, req.body || {}))
+}))
+
+reportCenterRouter.post('/report-center/cost-settings/labor-period', wrap(async (req, res) => {
+  requireDatabase()
+  res.status(201).json(await operatingCostAuthority.confirmLaborPeriod(req.user, req.body || {}))
 }))

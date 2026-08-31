@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, FolderTree, ImagePlus, Package, Pencil, Plus, Search, Upload, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, FolderTree, History, ImagePlus, Package, Pencil, Plus, Search, Upload, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
 import { analyzeProductMenuSheets, applyAutoSku } from '../utils/productExcel'
 import LazyImage from './LazyImage'
+import { hasReportCostManage, hasReportCostView } from '../../shared/accountPermissions'
 
 const emptyForm = {
   productId: '',
@@ -148,6 +149,8 @@ function ProductGroupManager({ groups, products, onClose, onSaved }) {
 
 export default function ProductCenterPage({ onBack, user }) {
   const canManage = Boolean(user && ['developer', 'admin', 'finance', 'manager'].includes(user.role))
+  const canViewCost = hasReportCostView(user)
+  const canManageCost = hasReportCostManage(user)
   const [products, setProducts] = useState([])
   const [productCategories, setProductCategories] = useState([])
   const [productGroups, setProductGroups] = useState([])
@@ -165,6 +168,7 @@ export default function ProductCenterPage({ onBack, user }) {
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [form, setForm] = useState(null)
+  const [costEditor, setCostEditor] = useState(null)
   const [importPreview, setImportPreview] = useState(null)
   const [importing, setImporting] = useState(false)
   const [autoSkuEnabled, setAutoSkuEnabled] = useState(false)
@@ -212,6 +216,22 @@ export default function ProductCenterPage({ onBack, user }) {
   }, [products, search, category, purpose, status])
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+
+  const openCostEditor = async (product) => {
+    setSaving(true); setError('')
+    try {
+      const data = await api(`/v2/products/${product.productId}/cost-history`)
+      setCostEditor({ product, rows: data.rows || [], costPriceCents: product.costPriceCents || '', effectiveFrom: new Date().toISOString().slice(0, 10), reason: '' })
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
+  }
+
+  const saveCost = async () => {
+    setSaving(true); setError('')
+    try {
+      await api(`/v2/products/${costEditor.product.productId}/cost-history`, { method: 'POST', body: JSON.stringify({ costPriceCents: costEditor.costPriceCents, effectiveFrom: costEditor.effectiveFrom, reason: costEditor.reason }) })
+      setCostEditor(null); await loadProducts(); setNotice('商品成本版本已追加')
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
+  }
 
   const handleImage = async (file) => {
     if (!file) return
@@ -332,7 +352,7 @@ export default function ProductCenterPage({ onBack, user }) {
         productGroupId: form.productGroupId,
         variantName: form.productGroupId ? form.variantName : '',
         salePriceCents: form.salePrice === '' ? '' : yuanToCents(form.salePrice),
-        costPriceCents: form.costPrice === '' ? '' : yuanToCents(form.costPrice),
+        ...(!form.productId ? { costPriceCents: form.costPrice === '' ? '' : yuanToCents(form.costPrice) } : {}),
         unit: form.unit,
         barcode: form.barcode,
         isActive: form.isActive,
@@ -462,7 +482,7 @@ export default function ProductCenterPage({ onBack, user }) {
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
                   <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>
-                {canManage ? <button onClick={() => setForm(toForm(item))} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑${item.name}`}><Pencil className="h-4 w-4" /></button> : <span className="text-xs text-slate-300">只读</span>}
+                <div className="flex shrink-0 flex-col gap-1">{canViewCost && <button onClick={() => openCostEditor(item)} className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-700" aria-label={`${item.name}成本历史`}><History className="h-4 w-4" /></button>}{canManage ? <button onClick={() => setForm(toForm(item))} className="grid h-10 w-10 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑${item.name}`}><Pencil className="h-4 w-4" /></button> : <span className="text-xs text-slate-300">只读</span>}</div>
               </article>
             ))}
           </div>
@@ -541,7 +561,7 @@ export default function ProductCenterPage({ onBack, user }) {
                 {form.productGroupId && <label className="text-xs font-semibold text-slate-500">款式名称<input required aria-label="款式名称" value={form.variantName || ''} onChange={(e) => update('variantName', e.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}
                 <label className="text-xs font-semibold text-slate-500">单位<input value={form.unit || ''} onChange={(e) => update('unit', e.target.value)} placeholder="份 / 杯 / 个" className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">零售价（元）<input inputMode="decimal" value={form.salePrice} onChange={(e) => update('salePrice', e.target.value)} placeholder="0.00" className={inputClass} /></label>
-                <label className="text-xs font-semibold text-slate-500">POS 成本价（元）<input inputMode="decimal" value={form.costPrice} onChange={(e) => update('costPrice', e.target.value)} placeholder="0.00" className={inputClass} /></label>
+                <label className="text-xs font-semibold text-slate-500">POS 成本价（元）<input inputMode="decimal" disabled={Boolean(form.productId)} value={form.costPrice} onChange={(e) => update('costPrice', e.target.value)} placeholder="0.00" className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`} />{form.productId && <span className="mt-1 block text-[10px] text-slate-400">已有商品请通过“成本历史”追加新版本</span>}</label>
                 <label className="text-xs font-semibold text-slate-500">商品条码（可空）<input value={form.barcode} onChange={(e) => update('barcode', e.target.value)} className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">排序<input type="number" value={form.sortOrder} onChange={(e) => update('sortOrder', e.target.value)} className={inputClass} /></label>
                 <div className="space-y-2 rounded-2xl bg-budu-50 p-3 sm:col-span-2"><p className="text-xs font-black text-budu-800">业务用途（相互独立）</p><div className="grid gap-2 sm:grid-cols-3"><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="POS 销售" type="checkbox" checked={form.isActive} onChange={(e) => update('isActive', e.target.checked)} className="h-4 w-4 accent-budu-500" />POS 销售</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="门店调拨" type="checkbox" checked={form.transferEnabled} onChange={(e) => update('transferEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />门店调拨</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="合作商供货" type="checkbox" checked={form.partnerSupplyEnabled} onChange={(e) => update('partnerSupplyEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />合作商供货</label></div></div>
@@ -555,6 +575,7 @@ export default function ProductCenterPage({ onBack, user }) {
       )}
       {categoryManagerOpen && <CategoryManager categories={productCategories} onClose={() => setCategoryManagerOpen(false)} onSaved={saveCategory} />}
       {groupManagerOpen && <ProductGroupManager groups={productGroups} products={products} onClose={() => setGroupManagerOpen(false)} onSaved={saveProductGroup} />}
+      {costEditor && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品成本历史"><div className="my-4 w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"><div className="flex items-start gap-3"><div><h3 className="font-black text-slate-900">{costEditor.product.name} · 成本历史</h3><p className="mt-1 text-xs text-slate-400">新版本只影响生效日后的新订单；历史订单成本快照不变。</p></div><button onClick={() => setCostEditor(null)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400"><X className="h-4 w-4" /></button></div><div className="mt-4 max-h-52 space-y-2 overflow-y-auto">{costEditor.rows.map((row) => <div key={row.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs"><span>{row.effectiveFrom}{row.effectiveTo ? ` → ${row.effectiveTo}` : ' 起'}</span><strong>{formatCents(row.costPriceCents)}</strong></div>)}</div>{canManageCost && <div className="mt-4 grid gap-2"><label className="text-xs font-bold text-slate-500">新成本（分）<input aria-label="新成本分" value={costEditor.costPriceCents} onChange={(e)=>setCostEditor((v)=>({...v,costPriceCents:e.target.value}))} className={inputClass} /></label><label className="text-xs font-bold text-slate-500">生效日期<input aria-label="成本生效日期" type="date" value={costEditor.effectiveFrom} onChange={(e)=>setCostEditor((v)=>({...v,effectiveFrom:e.target.value}))} className={inputClass} /></label><label className="text-xs font-bold text-slate-500">变更原因<input aria-label="成本变更原因" value={costEditor.reason} onChange={(e)=>setCostEditor((v)=>({...v,reason:e.target.value}))} className={inputClass} /></label><button onClick={saveCost} disabled={saving || !costEditor.reason.trim()} className="mt-2 min-h-11 rounded-xl bg-budu-600 text-sm font-bold text-white disabled:opacity-40">追加成本版本</button></div>}</div></div>}
     </div>
   )
 }

@@ -64,7 +64,7 @@ export function buildOrderSnapshot(products, items, options = {}) {
       throw httpError('订单中包含不存在、未上架或资料不完整的商品', 409)
     }
     const unitPrice = BigInt(product.salePriceCents)
-    const costPriceSnapshot = BigInt(product.costPriceCents)
+    const costPriceSnapshot = BigInt(product.effectiveCostPriceCents ?? product.costPriceCents)
     const isGift = gift === true
     const lineAmount = isGift ? 0n : unitPrice * BigInt(quantity)
     // Balls 礼盒搭配：口味明细拼进商品名快照（订单/小票可追溯）

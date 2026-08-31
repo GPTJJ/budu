@@ -43,6 +43,24 @@ enum RefundMode {
   MANUAL_EXTERNAL
 }
 
+enum StoreRentMode {
+  FIXED
+  PERCENT
+  FIXED_PLUS_PERCENT
+  MAX_FIXED_PERCENT
+}
+
+enum RentPercentageBasis {
+  GROSS_SALES
+  NET_REVENUE
+}
+
+enum LaborCostCategory {
+  SOCIAL_SECURITY
+  PROVIDENT_FUND
+  OTHER
+}
+
 model Store {
   key                          String                   @id
   name                         String                   @unique
@@ -68,6 +86,9 @@ model Store {
   customerServiceRequests      CustomerServiceRequest[]
   partnerDefaults              Partner[]                @relation("PartnerDefaultStore")
   partnerSupplyOrders          PartnerSupplyOrder[]     @relation("PartnerSupplyStore")
+  rentHistories                StoreRentHistory[]
+  utilityCosts                 StoreUtilityCost[]
+  laborCostPeriods             StoreLaborCostPeriod[]
 }
 
 /// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
@@ -227,12 +248,29 @@ model InventoryItem {
   waste                    WasteRecord[]
   orderItems               OrderItem[]
   partnerSupplyItems       PartnerSupplyItem[]
+  costHistories            InventoryItemCostHistory[]
   productCategory          ProductCategory?    @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
   productGroup             ProductGroup?       @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
 
   @@index([productCategoryId])
   @@index([productGroupId])
   @@index([category, partnerSupplyEnabled])
+}
+
+model InventoryItemCostHistory {
+  id              String        @id
+  inventoryItemId String        @map("inventory_item_id")
+  costPriceCents  BigInt        @map("cost_price_cents")
+  effectiveFrom   DateTime      @map("effective_from") @db.Date
+  effectiveTo     DateTime?     @map("effective_to") @db.Date
+  reason          String        @default("")
+  createdBy       String        @default("") @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  @@unique([inventoryItemId, effectiveFrom])
+  @@index([inventoryItemId, effectiveFrom, effectiveTo])
+  @@map("inventory_item_cost_histories")
 }
 
 model ProductCategory {
@@ -714,6 +752,77 @@ model Expense {
   store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@index([storeKey, date])
+}
+
+model StoreRentHistory {
+  id                 String              @id
+  storeKey           String              @map("store_key")
+  mode               StoreRentMode
+  fixedAmountCents   BigInt?             @map("fixed_amount_cents")
+  percentageBps      Int?                @map("percentage_bps")
+  percentageBasis    RentPercentageBasis? @map("percentage_basis")
+  effectiveFrom      DateTime            @map("effective_from") @db.Date
+  effectiveTo        DateTime?           @map("effective_to") @db.Date
+  reason             String              @default("")
+  createdBy          String              @default("") @map("created_by")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  store              Store               @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+
+  @@unique([storeKey, effectiveFrom])
+  @@index([storeKey, effectiveFrom, effectiveTo])
+  @@map("store_rent_histories")
+}
+
+model StoreUtilityCost {
+  id             String   @id
+  storeKey       String   @map("store_key")
+  period         DateTime @db.Date
+  estimatedCents BigInt   @map("estimated_cents")
+  actualCents    BigInt?  @map("actual_cents")
+  note           String   @default("")
+  createdBy      String   @default("") @map("created_by")
+  updatedBy      String   @default("") @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  store          Store    @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+
+  @@unique([storeKey, period])
+  @@index([period])
+  @@map("store_utility_costs")
+}
+
+model StoreLaborCostPeriod {
+  id          String                @id
+  storeKey    String                @map("store_key")
+  period      DateTime              @db.Date
+  note        String                @default("")
+  confirmedAt DateTime              @map("confirmed_at")
+  confirmedBy String                @default("") @map("confirmed_by")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @default(now()) @updatedAt @map("updated_at")
+  store       Store                 @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  entries     StoreLaborCostEntry[]
+
+  @@unique([storeKey, period])
+  @@index([period])
+  @@map("store_labor_cost_periods")
+}
+
+model StoreLaborCostEntry {
+  id         String               @id
+  periodId   String               @map("period_id")
+  category   LaborCostCategory
+  amountCents BigInt              @map("amount_cents")
+  employeeId String?              @map("employee_id")
+  note       String               @default("")
+  createdBy  String               @default("") @map("created_by")
+  createdAt  DateTime             @default(now()) @map("created_at")
+  period     StoreLaborCostPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee   Employee?            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([periodId, category])
+  @@index([employeeId])
+  @@map("store_labor_cost_entries")
 }
 
 model Member {
@@ -1377,6 +1486,7 @@ model Employee {
   dailyPayAdjustments DailyPayAdjustment[]
   bigOrderBonuses     BigOrderBonus[]
   payrollNotices      PayrollNotice[]
+  laborCostEntries    StoreLaborCostEntry[]
 
   @@index([status])
   @@index([currentStoreKey])

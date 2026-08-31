@@ -9,6 +9,9 @@ import { allStores } from '../utils/selectors'
 import {
   hasModuleAccess,
   hasReportAllStores,
+  hasReportCostManage,
+  hasReportCostView,
+  hasReportLaborView,
   hasReportSalesView,
 } from '../../shared/accountPermissions'
 import FinancePage from './FinancePage'
@@ -22,6 +25,69 @@ import {
 
 const inputClass = 'h-11 min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 const PAGE_SIZE = 20
+
+const profitStateText = { EXACT: '经营利润', ESTIMATED: '预估经营利润', INCOMPLETE: '经营成本待完善' }
+const completenessText = {
+  INCOMPLETE_COGS: '缺少商品级销售与成本事实', INCOMPLETE_LABOR: '工资或实际工时/人工附加成本未完整确认',
+  INCOMPLETE_RENT: '房租配置缺失', INCOMPLETE_RENT_BASIS: '抽成房租缺少对应营业额基数',
+  INCOMPLETE_UTILITY: '水电成本尚未录入', PARTIAL_SOURCE_COVERAGE: '营业收入数据部分覆盖',
+  ESTIMATED_UTILITY: '使用水电预估值', ESTIMATED_CURRENT_PERIOD: '当前或非完整月份按管理口径估算',
+  ESTIMATED_PARTIAL_MONTH_ALLOCATION: '非完整月份按自然日分摊',
+}
+
+function OperatingProfitPanel({ currentUser, range, store, allowedStores }) {
+  const canView = hasReportCostView(currentUser) && hasReportLaborView(currentUser)
+  const canManage = hasReportCostManage(currentUser)
+  const [data, setData] = useState(null)
+  const [settings, setSettings] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [reload, setReload] = useState(0)
+  const month = range.to.slice(0, 7)
+  const selectedStore = store === 'all' ? '' : store
+  const [rent, setRent] = useState({ mode: 'FIXED', fixedAmountCents: '', percentageBps: '', percentageBasis: 'NET_REVENUE', effectiveFrom: `${month}-01`, reason: '' })
+  const [utility, setUtility] = useState({ estimatedCents: '', actualCents: '', note: '' })
+  const [labor, setLabor] = useState({ social: '', provident: '', other: '', note: '' })
+  useEffect(() => {
+    if (!canView) return
+    const params = new URLSearchParams({ from: range.from, to: range.to }); if (selectedStore) params.set('store', selectedStore)
+    setBusy(true); setError('')
+    Promise.all([
+      api(`/v2/report-center/operating-costs?${params}`),
+      selectedStore ? api(`/v2/report-center/cost-settings?store=${encodeURIComponent(selectedStore)}&month=${month}`) : Promise.resolve(null),
+    ]).then(([report, config]) => { setData(report); setSettings(config) }).catch((err) => setError(err.message)).finally(() => setBusy(false))
+  }, [canView, range.from, range.to, selectedStore, month, reload])
+  const saveRent = async () => {
+    setBusy(true); setError('')
+    try { await api('/v2/report-center/cost-settings/rent', { method: 'POST', body: JSON.stringify({ ...rent, storeKey: selectedStore, fixedAmountCents: rent.fixedAmountCents || null, percentageBps: rent.percentageBps || null, percentageBasis: rent.mode === 'FIXED' ? null : rent.percentageBasis }) }); setReload((x) => x + 1) } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  const saveUtility = async () => {
+    setBusy(true); setError('')
+    try { await api('/v2/report-center/cost-settings/utility', { method: 'PUT', body: JSON.stringify({ storeKey: selectedStore, month, estimatedCents: utility.estimatedCents, actualCents: utility.actualCents || null, note: utility.note }) }); setReload((x) => x + 1) } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  const saveLabor = async () => {
+    const entries = [['SOCIAL_SECURITY', labor.social], ['PROVIDENT_FUND', labor.provident], ['OTHER', labor.other]].filter(([, value]) => value !== '').map(([category, amountCents]) => ({ category, amountCents }))
+    setBusy(true); setError('')
+    try { await api('/v2/report-center/cost-settings/labor-period', { method: 'POST', body: JSON.stringify({ storeKey: selectedStore, month, note: labor.note, entries }) }); setReload((x) => x + 1) } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  if (!canView) return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">经营利润包含商品成本与员工工资，需要同时获得成本查看和人工成本查看权限。</div>
+  const profit = data?.exactOperatingProfitCents ?? data?.estimatedOperatingProfitCents
+  return <div className="space-y-4" data-testid="operating-profit-panel">
+    <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm sm:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold text-slate-400">管理口径</p><h3 className="mt-1 text-lg font-black text-slate-900">{profitStateText[data?.state] || '经营利润'}</h3><p className="mt-2 text-3xl font-black text-slate-900">{profit == null ? '—' : formatReportCents(profit)}</p></div>{data?.state && <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${data.state === 'EXACT' ? 'bg-emerald-50 text-emerald-700' : data.state === 'ESTIMATED' ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>{data.state}</span>}</div>
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">{[['revenueCents','营业收入'],['cogsCents','商品成本'],['laborCents','人工成本'],['rentCents','房租'],['utilityCents','水电'],['otherCents','其他费用']].map(([key,label]) => <div key={key} className="rounded-xl bg-slate-50 p-3"><p className="text-[11px] font-bold text-slate-400">{label}</p><p className="mt-1 text-sm font-black text-slate-800">{data?.totals?.[key] == null ? '—' : formatReportCents(data.totals[key])}</p></div>)}</div>
+      {[...(data?.completenessCodes || []), ...(data?.estimateCodes || [])].length > 0 && <div className="mt-4 space-y-1 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800">{[...(data?.completenessCodes || []), ...(data?.estimateCodes || [])].map((code) => <p key={code}>• {completenessText[code] || code}</p>)}</div>}
+      {(data?.warningCodes || []).length > 0 && <p className="mt-3 text-xs text-rose-600">检测到 Expense 中可能存在房租/水电/人工类文本，请人工核对重复风险；系统不会自动删除或去重。</p>}
+    </section>
+    {selectedStore && canManage && <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm sm:p-5"><h3 className="text-base font-black text-slate-900">成本设置 · {allowedStores.find((item) => item.key === selectedStore)?.name}</h3><p className="mt-1 text-xs text-slate-400">按月份追加事实；历史配置不可无痕覆盖。金额均输入整数分。</p>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-sm font-black text-slate-700">房租版本</p><select value={rent.mode} onChange={(e) => setRent((v) => ({...v,mode:e.target.value}))} className={`${inputClass} mt-3 w-full`}><option value="FIXED">固定月租</option><option value="PERCENT">营业抽成</option><option value="FIXED_PLUS_PERCENT">固定 + 抽成</option><option value="MAX_FIXED_PERCENT">固定与抽成取高</option></select><input aria-label="固定租金分" placeholder="固定金额（分）" value={rent.fixedAmountCents} onChange={(e)=>setRent((v)=>({...v,fixedAmountCents:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><input aria-label="租金基点" placeholder="抽成基点，如1200=12%" value={rent.percentageBps} onChange={(e)=>setRent((v)=>({...v,percentageBps:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><select value={rent.percentageBasis} onChange={(e)=>setRent((v)=>({...v,percentageBasis:e.target.value}))} className={`${inputClass} mt-2 w-full`}><option value="NET_REVENUE">营业收入</option><option value="GROSS_SALES">营业额</option></select><input type="date" value={rent.effectiveFrom} onChange={(e)=>setRent((v)=>({...v,effectiveFrom:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><button type="button" disabled={busy} onClick={saveRent} className="mt-3 min-h-10 w-full rounded-xl bg-budu-600 text-xs font-bold text-white disabled:opacity-40">追加房租版本</button></div>
+      <div className="rounded-2xl bg-slate-50 p-3"><p className="text-sm font-black text-slate-700">{month} 水电</p><input aria-label="水电预估分" placeholder="预估（分）" value={utility.estimatedCents} onChange={(e)=>setUtility((v)=>({...v,estimatedCents:e.target.value}))} className={`${inputClass} mt-3 w-full`} /><input aria-label="水电实际分" placeholder="实际（分，可稍后补充）" value={utility.actualCents} onChange={(e)=>setUtility((v)=>({...v,actualCents:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><button type="button" disabled={busy || settings?.utility?.actualCents != null} onClick={saveUtility} className="mt-3 min-h-10 w-full rounded-xl bg-budu-600 text-xs font-bold text-white disabled:opacity-40">保存水电事实</button></div>
+      <div className="rounded-2xl bg-slate-50 p-3"><p className="text-sm font-black text-slate-700">{month} 人工附加成本</p><input aria-label="社保分" placeholder="公司社保（分；0=确认零）" value={labor.social} onChange={(e)=>setLabor((v)=>({...v,social:e.target.value}))} className={`${inputClass} mt-3 w-full`} /><input aria-label="公积金分" placeholder="公司公积金（分；0=确认零）" value={labor.provident} onChange={(e)=>setLabor((v)=>({...v,provident:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><input aria-label="其他人工成本分" placeholder="其他人工成本（分）" value={labor.other} onChange={(e)=>setLabor((v)=>({...v,other:e.target.value}))} className={`${inputClass} mt-2 w-full`} /><button type="button" disabled={busy || Boolean(settings?.labor)} onClick={saveLabor} className="mt-3 min-h-10 w-full rounded-xl bg-budu-600 text-xs font-bold text-white disabled:opacity-40">确认本月人工附加成本</button><p className="mt-2 text-[10px] text-slate-400">允许空明细确认本月为零；确认后不可覆盖。</p></div></div>
+    </section>}
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">旧 Expense 历史与录入能力继续保留，作为“其他费用”事实；不会按自由文本自动重分类。旧 DailyEntry 收入减 Expense 结果不是新经营利润权威。</div>
+    <FinancePage currentUser={currentUser} embedded />
+    {busy && <p className="text-xs font-bold text-slate-400">正在读取经营成本权威…</p>}{error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+  </div>
+}
 
 const metricDefinitions = [
   ['revenue', '营业收入', CircleDollarSign, true],
@@ -336,12 +402,12 @@ export default function ReportCenterPage({ currentUser, onBack, onNavigate }) {
     return stores.filter((item) => allowed.has(item.key))
   }, [currentUser])
   const storeMap = useMemo(() => new Map(allowedStores.map((item) => [item.key, item.name])), [allowedStores])
-  const coreTab = REPORT_TABS.some((item) => item.key === tab)
+  const coreTab = REPORT_TABS.some((item) => item.key === tab) || tab === 'profit'
 
   useEffect(() => { setPage(1) }, [tab, range.from, range.to, store, orderSource, settlementType, productSearch, productSort])
 
   useEffect(() => {
-    if (!canSales || !coreTab) return undefined
+    if (!canSales || !coreTab || tab === 'profit') return undefined
     const controller = new AbortController()
     const params = new URLSearchParams({ from: range.from, to: range.to })
     if (store !== 'all') params.set('store', store)
@@ -400,7 +466,7 @@ export default function ReportCenterPage({ currentUser, onBack, onNavigate }) {
       {tab === 'summary' && canSales && <SummaryReport data={data} loading={loading} error={error} reload={() => setReloadKey((value) => value + 1)} onCoverage={setCoverage} />}
       {tab === 'orders' && canSales && <OrdersReport data={data} loading={loading} error={error} reload={() => setReloadKey((value) => value + 1)} storeMap={storeMap} page={page} onPage={setPage} onCoverage={setCoverage} onDetail={openOrder} />}
       {tab === 'products' && canSales && <ProductsReport data={data} loading={loading} error={error} reload={() => setReloadKey((value) => value + 1)} storeMap={storeMap} page={page} onPage={setPage} onCoverage={setCoverage} onDetail={setProductDetail} />}
-      {tab === 'profit' && <div className="space-y-3"><div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">历史“财务利润”能力原样保留；其 DailyEntry 收入减 Expense 结果不是新经营利润权威。</div><FinancePage currentUser={currentUser} embedded /></div>}
+      {tab === 'profit' && <OperatingProfitPanel currentUser={currentUser} range={range} store={store} allowedStores={allowedStores} />}
       {detailLoading && <div className="fixed inset-0 z-[95] grid place-items-center bg-white/70 text-sm font-bold text-slate-500 backdrop-blur-sm">正在读取订单事实…</div>}
       <CoverageSheet coverage={coverage} storeMap={storeMap} onClose={() => setCoverage(null)} />
       <OrderDetailSheet order={orderDetail} onClose={() => setOrderDetail(null)} />

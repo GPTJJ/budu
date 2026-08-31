@@ -8,6 +8,8 @@ import {
   normalizeExternalRequestKey,
 } from './settlement-contract.js'
 import { settlementCoordinator } from './settlement-coordinator.js'
+import { resolveEffectiveProductCosts } from '../product-cost-authority.js'
+import { buduBusinessDate } from '../../shared/businessDate.js'
 
 export class ExternalSettlementService {
   constructor(prismaClient, coordinator = settlementCoordinator) {
@@ -37,12 +39,14 @@ export class ExternalSettlementService {
     for (const item of normalizedItems) {
       if (Array.isArray(item.comboFlavorIds)) for (const id of item.comboFlavorIds) needIds.add(id)
     }
-    const products = await this.prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+    const businessDateText = buduBusinessDate()
+    const rawProducts = await this.prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+    const products = await resolveEffectiveProductCosts(this.prisma, rawProducts, businessDateText)
     const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
     if (snapshot.payableAmount <= 0n) throw httpError('外部订单应付金额必须大于 0')
     const checkoutKey = externalCheckoutKey(requestKey)
     const now = new Date()
-    const businessDate = new Date(`${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00.000Z`)
+    const businessDate = new Date(`${businessDateText}T00:00:00.000Z`)
     const id = `ord-${crypto.randomUUID()}`
     const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
     const settlementId = `ext-${crypto.randomUUID()}`

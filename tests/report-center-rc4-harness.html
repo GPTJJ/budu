@@ -93,12 +93,14 @@
       if (parsed.pathname === '/api/v2/report-center/orders/order-meituan') return json(detail)
       if (parsed.pathname === '/api/v2/report-center/orders') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, coverage: manualOnly ? unavailable : partial, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, total: manualOnly ? 0 : 42, rows: manualOnly ? [] : orderRows })
       if (parsed.pathname === '/api/v2/report-center/products') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, coverage: manualOnly ? unavailable : partial, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, total: manualOnly ? 0 : 2, rows: manualOnly ? [] : products, totals: null })
+      if (parsed.pathname === '/api/v2/report-center/operating-costs') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, state: manualOnly ? 'INCOMPLETE' : 'ESTIMATED', completenessCodes: manualOnly ? ['INCOMPLETE_COGS'] : [], estimateCodes: manualOnly ? [] : ['ESTIMATED_UTILITY', 'ESTIMATED_CURRENT_PERIOD'], warningCodes: [], exactOperatingProfitCents: null, estimatedOperatingProfitCents: manualOnly ? null : '128000', totals: { revenueCents: '2863000', cogsCents: manualOnly ? null : '900000', laborCents: '700000', rentCents: '300000', utilityCents: '120000', otherCents: '715000' }, stores: [] })
+      if (parsed.pathname === '/api/v2/report-center/cost-settings') return json({ rent: [], utility: null, labor: null })
       if (parsed.pathname === '/api/v2/expenses') return json({ rows: [] })
       if (parsed.pathname === '/api/v2/profit') return json({ rows: [], monthly: [] })
       return json({ error: 'not found' }, 404)
     }
 
-    const user = { id: 'dev-report', username: 'developer', role: 'developer', status: 'active', storeKeys: [], permissions: { modules: { finance: true }, reportSalesView: true, reportAllStores: true } }
+    const user = { id: 'dev-report', username: 'developer', role: 'developer', status: 'active', storeKeys: [], permissions: { modules: { finance: true }, reportSalesView: true, reportAllStores: true, reportCostView: true, reportLaborView: true, reportCostManage: true } }
     function Harness() {
       const [refreshes, setRefreshes] = useState(0)
       return React.createElement(PullToRefresh, { onRefresh: async () => setRefreshes((value) => value + 1) },
