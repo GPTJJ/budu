@@ -314,6 +314,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
+            onBack={isSettingsView ? returnToOverview : undefined}
             onRefresh={handleRefresh}
           />
 

@@ -1496,6 +1496,13 @@ v2Router.put('/staff', wrap(async (req, res) => {
 }))
 
 // ---------- M3-2：企微告警测试 ----------
+v2Router.get('/alerts/status', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw bad('无权限', 403)
+  // 仅投影是否配置，绝不返回 webhook、环境变量名或任何凭据。
+  res.json({ ok: true, configured: Boolean(wecomWebhookUrl()) })
+}))
+
 v2Router.post('/alerts/test', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('无权限', 403)

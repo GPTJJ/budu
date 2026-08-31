@@ -1,22 +1,63 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, Bell, Database, Lock, MessageCircle, Server, Store } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowLeft,
+  Bell,
+  Bug,
+  Database,
+  Info,
+  Lock,
+  MessageCircle,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Store,
+} from 'lucide-react'
 import { t } from '../utils/text'
 import { APP_VERSION } from '../version'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { DeletedRecordsCenter } from './DeveloperSafeDelete'
+import {
+  SettingsConfirmDialog,
+  SettingsDetailPage,
+  SettingsRow,
+  SettingsSection,
+  SettingsStatus,
+} from './settings/SettingsPrimitives'
 
-const inputCls = 'input'
+const sourceLabels = { manual: '人工录入', pos: 'BUDU POS', hybrid: '混合模式' }
+
+function todayText() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function shortDate(value) {
+  if (!value) return '未设置'
+  const [year, month, day] = String(value).slice(0, 10).split('-')
+  return `${year}年${Number(month)}月${Number(day)}日`
+}
+
+function SettingBlock({ title, description, children, tone = 'plain' }) {
+  return (
+    <div className={`rounded-[18px] border p-4 sm:p-5 ${tone === 'soft' ? 'border-budu-100 bg-budu-50/35' : 'border-slate-200/75 bg-white'}`}>
+      <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+      {description && <p className="mt-1 text-xs leading-5 text-slate-400">{description}</p>}
+      <div className="mt-4">{children}</div>
+    </div>
+  )
+}
 
 export default function SettingsPage({ user, onBack }) {
+  const [activePanel, setActivePanel] = useState('')
+  const mainScrollRef = useRef(0)
+  const [alertStatus, setAlertStatus] = useState(null)
   const [alertTip, setAlertTip] = useState('')
+  const [alertBusy, setAlertBusy] = useState(false)
   const [sourceStores, setSourceStores] = useState([])
   const [sourceStore, setSourceStore] = useState('')
   const [sourceType, setSourceType] = useState('manual')
-  const [sourceDate, setSourceDate] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+  const [sourceDate, setSourceDate] = useState(todayText)
   const [sourceSaving, setSourceSaving] = useState(false)
   const [sourceTip, setSourceTip] = useState('')
   const [secOld, setSecOld] = useState('')
@@ -25,68 +66,138 @@ export default function SettingsPage({ user, onBack }) {
   const [secError, setSecError] = useState('')
   const [secTip, setSecTip] = useState('')
   const [secSaving, setSecSaving] = useState(false)
-  // 微信绑定状态
   const [wxBindings, setWxBindings] = useState(null)
   const [wxTip, setWxTip] = useState('')
   const [feedback, setFeedback] = useState(null)
   const [wxBusy, setWxBusy] = useState(false)
-  // 管理员手动绑定（企微 userid，跳过扫码）
+  const [revokeTarget, setRevokeTarget] = useState(null)
   const [manualUsername, setManualUsername] = useState('')
   const [manualUserid, setManualUserid] = useState('')
   const [manualBusy, setManualBusy] = useState(false)
   const [manualTip, setManualTip] = useState('')
-  const isDeveloper = ['developer', 'finance', 'admin'].includes(user?.role) // 最高业务权限角色一致
-  const canManageWechatBindings = user?.role === 'developer'
+  const [systemHealth, setSystemHealth] = useState(null)
+  const isElevated = ['developer', 'finance', 'admin'].includes(user?.role)
+  const isDeveloper = user?.role === 'developer'
 
-  const sendTestAlert = async () => {
-    setAlertTip('')
-    try {
-      const res = await api('/v2/alerts/test', { method: 'POST', body: JSON.stringify({}) })
-      setAlertTip(res.configured ? t('测试消息已发送 ✓') : t('未配置 Webhook，仅返回站内状态'))
-    } catch (err) {
-      setAlertTip(t(err.message))
-    }
-  }
+  const activeBindings = useMemo(
+    () => (wxBindings?.rows || []).filter((row) => row.status === 'active'),
+    [wxBindings],
+  )
+  const alertDisplay = alertStatus?.healthy === false
+    ? { label: '异常', tone: 'danger' }
+    : alertStatus?.configured
+      ? { label: '已连接', tone: 'success' }
+      : { label: '未配置', tone: 'warning' }
 
   const loadWxBindings = async () => {
     try {
-      const res = await api('/v2/wechat/bindings')
-      setWxBindings(res)
+      const result = await api('/v2/wechat/bindings')
+      setWxBindings(result)
     } catch {
       setWxBindings(null)
     }
   }
 
+  const loadSourceStores = async () => {
+    if (!isElevated) return
+    try {
+      const result = await api('/v2/store-sales-sources')
+      const rows = result.rows || []
+      setSourceStores(rows)
+      setSourceStore((current) => current || rows[0]?.storeKey || '')
+    } catch (error) {
+      setSourceTip(t(error.message))
+    }
+  }
+
+  const loadSettingsSummary = async () => {
+    const operations = [loadWxBindings(), api('/health').then(setSystemHealth).catch(() => setSystemHealth(null))]
+    if (isElevated) {
+      operations.push(api('/v2/alerts/status').then(setAlertStatus).catch(() => setAlertStatus(null)))
+      operations.push(loadSourceStores())
+    }
+    await Promise.allSettled(operations)
+  }
+
   useEffect(() => {
-    loadWxBindings()
-  }, [])
+    void loadSettingsSummary()
+  }, [user?.id, user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const row = sourceStores.find((store) => store.storeKey === sourceStore)
+    if (!row) return
+    setSourceType(row.salesDataSource || 'manual')
+    setSourceDate(row.salesDataSourceEffectiveDate || todayText())
+  }, [sourceStore, sourceStores])
+
+  const openPanel = (panel) => {
+    mainScrollRef.current = window.scrollY
+    setActivePanel(panel)
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
+  }
+
+  const closePanel = () => {
+    setActivePanel('')
+    window.requestAnimationFrame(() => window.scrollTo({ top: mainScrollRef.current, behavior: 'auto' }))
+  }
+
+  const sendTestAlert = async () => {
+    setAlertBusy(true)
+    setAlertTip('')
+    try {
+      const result = await api('/v2/alerts/test', { method: 'POST', body: JSON.stringify({}) })
+      setAlertStatus({ configured: result.configured, healthy: result.ok })
+      setAlertTip(result.configured ? t('测试消息已发送 ✓') : t('企业微信告警尚未配置'))
+    } catch (error) {
+      setAlertTip(t(error.message))
+    } finally {
+      setAlertBusy(false)
+    }
+  }
 
   const bindWechat = async () => {
     setWxBusy(true)
     setWxTip('')
     try {
-      const res = await api('/v2/wechat/bind-qrcode', { method: 'POST', body: JSON.stringify({}) })
-      window.open(res.url, '_blank', 'noopener,noreferrer')
-      setWxTip(t('请在打开的微信授权页扫码，授权成功后回到本页刷新查看绑定状态'))
-    } catch (err) {
-      setWxTip(t(err.message))
+      const result = await api('/v2/wechat/bind-qrcode', { method: 'POST', body: JSON.stringify({}) })
+      window.open(result.url, '_blank', 'noopener,noreferrer')
+      setWxTip(t('请在打开的授权页扫码，完成后刷新绑定状态'))
+    } catch (error) {
+      setWxTip(t(error.message))
     } finally {
       setWxBusy(false)
     }
   }
 
-  const revokeWechat = async (id) => {
-    if (!window.confirm(t('确定解绑该微信吗？解绑后将不再收到微信提醒'))) return
+  const revokeWechat = async () => {
+    if (!revokeTarget) return
+    setWxBusy(true)
+    setWxTip('')
     try {
-      await api(`/v2/wechat/bindings/${id}/revoke`, { method: 'POST', body: JSON.stringify({}) })
+      await api(`/v2/wechat/bindings/${revokeTarget.id}/revoke`, { method: 'POST', body: JSON.stringify({}) })
+      setRevokeTarget(null)
       setWxTip(t('已解绑'))
-      loadWxBindings()
-    } catch (err) {
-      setWxTip(t(err.message))
+      await loadWxBindings()
+    } catch (error) {
+      setWxTip(t(error.message))
+    } finally {
+      setWxBusy(false)
     }
   }
 
-  // 管理员手动绑定：绕过扫码，直接写企微 userid（域名主体校验未通过/员工不便扫码时使用）
+  const testWechat = async () => {
+    setWxBusy(true)
+    setWxTip('')
+    try {
+      const result = await api('/v2/wechat/test', { method: 'POST', body: JSON.stringify({}) })
+      setWxTip(result.ok ? t('测试微信已发送 ✓') : t('发送失败'))
+    } catch (error) {
+      setWxTip(t(error.message))
+    } finally {
+      setWxBusy(false)
+    }
+  }
+
   const bindWechatManual = async () => {
     if (!manualUsername.trim() || !manualUserid.trim()) {
       setManualTip('请填写系统账号和企微 userid')
@@ -95,16 +206,16 @@ export default function SettingsPage({ user, onBack }) {
     setManualBusy(true)
     setManualTip('')
     try {
-      const res = await api('/v2/wechat/bindings/manual', {
+      const result = await api('/v2/wechat/bindings/manual', {
         method: 'POST',
         body: JSON.stringify({ username: manualUsername.trim(), userid: manualUserid.trim() }),
       })
       setManualUserid('')
-      setManualTip(`已绑定 ${manualUsername.trim()} → ${res.identityHint}，推送立即生效`)
-      setFeedback({ title: t('绑定成功'), description: `已绑定 ${manualUsername.trim()} → ${res.identityHint}` })
-      loadWxBindings()
-    } catch (err) {
-      setManualTip(err.message)
+      setManualTip(`已绑定 ${manualUsername.trim()} → ${result.identityHint}`)
+      setFeedback({ title: t('绑定成功'), description: `已绑定 ${manualUsername.trim()} → ${result.identityHint}` })
+      await loadWxBindings()
+    } catch (error) {
+      setManualTip(error.message)
     } finally {
       setManualBusy(false)
     }
@@ -118,41 +229,20 @@ export default function SettingsPage({ user, onBack }) {
     setManualBusy(true)
     setManualTip('')
     try {
-      const res = await api(`/v2/wechat/bindings/lookup?username=${encodeURIComponent(manualUsername.trim())}`)
-      const active = (res.rows || []).filter((r) => r.status === 'active')
-      setManualTip(active.length
-        ? `${manualUsername.trim()} 已绑定企微：${active[0].identityHint}`
-        : `${manualUsername.trim()} 当前未绑定`)
-    } catch (err) {
-      setManualTip(err.message)
+      const result = await api(`/v2/wechat/bindings/lookup?username=${encodeURIComponent(manualUsername.trim())}`)
+      const active = (result.rows || []).filter((row) => row.status === 'active')
+      setManualTip(active.length ? `${manualUsername.trim()} 已绑定企微：${active[0].identityHint}` : `${manualUsername.trim()} 当前未绑定`)
+    } catch (error) {
+      setManualTip(error.message)
     } finally {
       setManualBusy(false)
     }
   }
 
-  const testWechat = async () => {
-    setWxTip('')
-    try {
-      const res = await api('/v2/wechat/test', { method: 'POST', body: JSON.stringify({}) })
-      setWxTip(res.ok ? t('测试微信已发送 ✓') : t('发送失败'))
-    } catch (err) {
-      setWxTip(t(err.message))
-    }
-  }
-
   const saveSecondPassword = async () => {
-    if (!secOld.trim()) {
-      setSecError('请输入当前登录密码')
-      return
-    }
-    if (secNew.length < 6) {
-      setSecError('二级密码至少 6 位')
-      return
-    }
-    if (secNew !== secConfirm) {
-      setSecError('两次输入的二级密码不一致')
-      return
-    }
+    if (!secOld.trim()) return setSecError('请输入当前登录密码')
+    if (secNew.length < 6) return setSecError('二级密码至少 6 位')
+    if (secNew !== secConfirm) return setSecError('两次输入的二级密码不一致')
     setSecSaving(true)
     setSecError('')
     setSecTip('')
@@ -165,46 +255,16 @@ export default function SettingsPage({ user, onBack }) {
       setSecNew('')
       setSecConfirm('')
       setSecTip('二级密码已保存')
-    } catch (err) {
-      setSecError(err.message)
+    } catch (error) {
+      setSecError(error.message)
     } finally {
       setSecSaving(false)
     }
   }
 
-  useEffect(() => {
-    if (!isDeveloper) return
-    api('/v2/store-sales-sources')
-      .then((data) => {
-        const list = data.rows || []
-        setSourceStores(list)
-        if (list.length > 0) {
-          setSourceStore((current) => current || list[0].storeKey)
-        }
-      })
-      .catch((err) => setSourceTip(t(err.message)))
-  }, [isDeveloper]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    const row = sourceStores.find((s) => s.storeKey === sourceStore)
-    if (row) {
-      setSourceType(row.salesDataSource || 'manual')
-      setSourceDate(row.salesDataSourceEffectiveDate || (() => {
-        const d = new Date()
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      })())
-    }
-  }, [sourceStore, sourceStores])
-
   const saveSalesSource = async () => {
-    if (!sourceStore) {
-      setSourceTip(t('请选择门店'))
-      return
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) {
-      setSourceTip(t('请选择生效日期'))
-      return
-    }
+    if (!sourceStore) return setSourceTip(t('请选择门店'))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) return setSourceTip(t('请选择生效日期'))
     setSourceSaving(true)
     setSourceTip('')
     try {
@@ -217,271 +277,207 @@ export default function SettingsPage({ user, onBack }) {
           reason: '设置页门店来源配置',
         }),
       })
-      const data = await api('/v2/store-sales-sources')
-      setSourceStores(data.rows || [])
+      await loadSourceStores()
       setSourceTip(t('门店销售数据来源已保存 ✓'))
-    } catch (err) {
-      setSourceTip(t(err.message))
+    } catch (error) {
+      setSourceTip(t(error.message))
     } finally {
       setSourceSaving(false)
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-4">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {t('返回首页')}
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">{t('系统设置')}</h2>
-          <p className="mt-0.5 text-[13px] text-slate-400">{t('管理门店、安全、提醒与营业数据配置')}</p>
-        </div>
-      </div>
+  const posSummary = useMemo(() => {
+    if (!sourceStores.length) return '加载中'
+    const posCount = sourceStores.filter((row) => ['pos', 'hybrid'].includes(row.salesDataSource)).length
+    return `${posCount} 家 POS · ${sourceStores.length - posCount} 家人工`
+  }, [sourceStores])
 
-      {isDeveloper && (
-        <div className="card p-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-500 text-white shadow-md">
-              <Bell className="h-5 w-5" />
+  if (activePanel === 'alert') {
+    return (
+      <SettingsDetailPage title="企业微信告警" subtitle="库存与系统异常的群机器人提醒" onBack={closePanel}>
+        <SettingBlock title="连接状态" description="仅显示通道是否已安全配置，不展示 webhook 或密钥。" tone="soft">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-600"><Bell className="h-5 w-5" /></span>
+              <div><p className="text-sm font-semibold text-slate-800">企业微信群机器人</p><p className="text-xs text-slate-400">异常通知推送通道</p></div>
             </div>
-            <div>
-              <h3 className="text-[15px] font-bold text-slate-800">{t('企业微信告警')}</h3>
-              <p className="mt-0.5 text-xs text-slate-400">{t('配置 WECHAT_WORK_WEBHOOK_URL 后，库存/备份异常会推送到群')}</p>
-            </div>
+            <SettingsStatus tone={alertDisplay.tone}>{alertDisplay.label}</SettingsStatus>
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              onClick={sendTestAlert}
-              className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-600"
-            >
-              {t('发送测试消息')}
-            </button>
-            {alertTip && <span className="text-xs font-medium text-slate-500">{alertTip}</span>}
-          </div>
-        </div>
-      )}
+        </SettingBlock>
+        <SettingBlock title="通道测试" description="仅在需要确认配置时发送一条测试消息。">
+          <button type="button" disabled={alertBusy} onClick={sendTestAlert} className="min-h-11 rounded-xl bg-budu-600 px-4 text-sm font-bold text-white disabled:opacity-40">{alertBusy ? '发送中…' : '发送测试消息'}</button>
+          {alertTip && <p className="mt-3 text-xs font-medium text-slate-500">{alertTip}</p>}
+        </SettingBlock>
+      </SettingsDetailPage>
+    )
+  }
 
-      {/* 微信提醒绑定（通知中心个人提醒） */}
-      <div className="card p-6">
-        <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
-            <MessageCircle className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="text-[15px] font-bold text-slate-800">{t('微信提醒')}</h3>
-            <p className="mt-0.5 text-xs text-slate-400">
-              {t('扫码授权一次绑定微信，工资条/审批/调拨/发票/邮寄等站内通知将同步推送微信提醒，点击消息直达对应页面；微信仅提醒，不承载业务操作')}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4">
+  if (activePanel === 'wechat') {
+    return (
+      <SettingsDetailPage title="微信提醒" subtitle="个人企业微信提醒与绑定" onBack={closePanel} actions={<button type="button" aria-label="刷新绑定状态" disabled={wxBusy} onClick={() => void loadWxBindings()} className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100"><RefreshCw className="h-4 w-4" /></button>}>
+        <SettingBlock title="当前状态" description="工单、审批、调拨等提醒可同步到个人企业微信。" tone="soft">
           {wxBindings === null ? (
-            <p className="text-xs text-slate-300">{t('加载中…')}</p>
+            <p className="text-sm text-slate-400">加载中…</p>
           ) : !wxBindings.configured ? (
-            <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs font-medium text-slate-400">
-              {t('微信提醒通道未开通（需要配置企业微信自建应用或公众号资质）；当前仅站内通知，不影响任何现有功能')}
-            </p>
+            <div className="flex items-center justify-between gap-3"><p className="text-sm text-slate-600">当前仅保留站内通知</p><SettingsStatus tone="warning">未配置</SettingsStatus></div>
+          ) : activeBindings.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">尚未绑定个人企业微信</p><SettingsStatus tone="neutral">未绑定</SettingsStatus></div>
           ) : (
-            <>
-              {wxBindings.rows.filter((r) => r.status === 'active').length === 0 ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={bindWechat}
-                    disabled={wxBusy}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    {wxBusy ? t('跳转中…') : t('扫码绑定微信')}
-                  </button>
-                  <span className="text-[11px] text-slate-400">{t('授权一次即可，随时可解绑')}</span>
+            <div className="space-y-3">
+              {activeBindings.map((binding) => (
+                <div key={binding.id} className="flex items-center gap-3 rounded-2xl bg-white px-3 py-3 ring-1 ring-slate-200/70">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-budu-50 text-sm font-bold text-budu-600">微</span>
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{binding.identityHint || '企业微信账号'}</p><p className="text-xs text-slate-400">{binding.channel === 'wecom' ? '企业微信' : '公众号'}</p></div>
+                  <SettingsStatus tone="success">已绑定</SettingsStatus>
+                  <button type="button" disabled={wxBusy} onClick={() => setRevokeTarget(binding)} className="min-h-11 rounded-xl px-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-40">解除绑定</button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  {wxBindings.rows.filter((r) => r.status === 'active').map((b) => (
-                    <div key={b.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50/80 px-4 py-2.5">
-                      <span className="grid h-8 w-8 place-items-center rounded-full bg-budu-500 text-xs font-bold text-white">微</span>
-                      <span className="text-sm font-semibold text-slate-700">
-                        {b.identityHint || t('微信')} · {b.channel === 'wecom' ? t('企业微信') : t('公众号')}
-                      </span>
-                      <span className="text-[11px] text-emerald-600">{t('已绑定')}</span>
-                      <span className="ml-auto flex items-center gap-2">
-                        <button
-                          onClick={testWechat}
-                          className="rounded-lg bg-budu-50 px-3 py-1.5 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
-                        >
-                          {t('发送测试')}
-                        </button>
-                        <button
-                          onClick={() => revokeWechat(b.id)}
-                          className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-500 transition hover:bg-rose-100"
-                        >
-                          {t('解绑')}
-                        </button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {wxTip && <p className="mt-3 text-xs font-medium text-slate-500">{wxTip}</p>}
-
-          {canManageWechatBindings && (
-            <div className="mt-4 rounded-xl border border-dashed border-budu-200 bg-budu-50/40 px-4 py-3">
-              <p className="text-xs font-bold text-slate-600">开发者手动绑定企微 userid（跳过扫码）</p>
-              <p className="mt-1 text-[11px] text-slate-400">
-                用于扫码绑定被域名校验拦截或员工不便扫码时：填系统账号 + 员工企业微信 userid（企微通讯录 → 成员资料可见），保存后推送立即生效
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <input
-                  value={manualUsername}
-                  onChange={(e) => setManualUsername(e.target.value)}
-                  placeholder="系统账号"
-                  className="input w-40"
-                />
-                <input
-                  value={manualUserid}
-                  onChange={(e) => setManualUserid(e.target.value)}
-                  placeholder="企微 userid"
-                  className="input w-40"
-                />
-                <button
-                  onClick={bindWechatManual}
-                  disabled={manualBusy}
-                  className="rounded-lg bg-budu-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {manualBusy ? '处理中…' : '保存绑定'}
-                </button>
-                <button
-                  onClick={lookupWechatManual}
-                  disabled={manualBusy}
-                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  查询
-                </button>
-              </div>
-              {manualTip && <p className="mt-2 text-[11px] font-medium text-slate-500">{manualTip}</p>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {isDeveloper && (
-        <div className="card p-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-500 text-white shadow-md">
-              <Lock className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-[15px] font-bold text-slate-800">二级密码</h3>
-              <p className="mt-0.5 text-xs text-slate-400">用于删除雇员等高风险操作，防止误删；忘记时可用当前登录密码重新设置</p>
-            </div>
-          </div>
-          <div className="mt-4 grid max-w-xl gap-3 sm:grid-cols-3">
-            <label className="block text-xs font-semibold text-slate-500">当前登录密码
-              <input type="password" value={secOld} onChange={(e) => setSecOld(e.target.value)} className="input mt-1 w-full" />
-            </label>
-            <label className="block text-xs font-semibold text-slate-500">新二级密码（至少 6 位）
-              <input type="password" value={secNew} onChange={(e) => setSecNew(e.target.value)} className="input mt-1 w-full" />
-            </label>
-            <label className="block text-xs font-semibold text-slate-500">确认新二级密码
-              <input type="password" value={secConfirm} onChange={(e) => setSecConfirm(e.target.value)} className="input mt-1 w-full" />
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button onClick={saveSecondPassword} disabled={secSaving} className="rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-50">
-              {secSaving ? '保存中…' : '保存二级密码'}
-            </button>
-            {secError && <span className="text-xs font-medium text-rose-500">{secError}</span>}
-            {secTip && <span className="text-xs font-medium text-emerald-600">{secTip}</span>}
-          </div>
-        </div>
-      )}
-
-      {isDeveloper && (
-        <div className="card p-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-500 text-white shadow-md">
-              <Store className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="text-[15px] font-bold text-slate-800">POS 试点门店配置</h3>
-              <p className="mt-0.5 text-xs text-slate-400">按门店设置营业数据来源：人工录入 / POS 自动同步 / 混合模式（生效日期起生效，历史日报不受影响）</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
-            <label className="block text-xs font-semibold text-slate-500">门店
-              <select value={sourceStore} onChange={(e) => setSourceStore(e.target.value)} className="input mt-1">
-                {sourceStores.map((s) => <option key={s.storeKey} value={s.storeKey}>{s.storeName}</option>)}
-              </select>
-            </label>
-            <label className="block text-xs font-semibold text-slate-500">销售数据来源
-              <select value={sourceType} onChange={(e) => setSourceType(e.target.value)} className="input mt-1">
-                <option value="manual">人工录入（暂未接入 POS）</option>
-                <option value="pos">POS 自动同步</option>
-                <option value="hybrid">混合模式（POS + 管理员调整）</option>
-              </select>
-            </label>
-            <label className="block text-xs font-semibold text-slate-500">生效日期
-              <input type="date" value={sourceDate} onChange={(e) => setSourceDate(e.target.value)} className="input mt-1" />
-            </label>
-            <div className="flex items-end">
-              <button onClick={saveSalesSource} disabled={sourceSaving || sourceStores.length === 0} className="w-full rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                {sourceSaving ? '保存中…' : '保存配置'}
-              </button>
-            </div>
-          </div>
-          {sourceTip && <p className="mt-3 text-xs font-medium text-slate-500">{sourceTip}</p>}
-          {sourceStores.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {sourceStores.map((s) => (
-                <span key={s.storeKey} className={`rounded-full px-3 py-1 text-xs font-semibold ${s.salesDataSource === 'pos' ? 'bg-emerald-50 text-emerald-600' : s.salesDataSource === 'hybrid' ? 'bg-violet-50 text-violet-600' : 'bg-slate-100 text-slate-500'}`}>
-                  {s.storeName} · {s.salesDataSource === 'pos' ? 'POS' : s.salesDataSource === 'hybrid' ? '混合' : '人工'}{s.salesDataSourceEffectiveDate ? `（${s.salesDataSourceEffectiveDate} 起）` : ''}
-                </span>
               ))}
             </div>
           )}
-        </div>
-      )}
+        </SettingBlock>
+        {wxBindings?.configured && activeBindings.length === 0 && (
+          <button type="button" disabled={wxBusy} onClick={bindWechat} className="min-h-12 w-full rounded-xl bg-budu-600 px-4 text-sm font-bold text-white disabled:opacity-40">{wxBusy ? '跳转中…' : '扫码绑定微信'}</button>
+        )}
+        {activeBindings.length > 0 && (
+          <SettingBlock title="绑定操作">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={wxBusy} onClick={testWechat} className="min-h-11 rounded-xl bg-budu-600 px-4 text-sm font-bold text-white disabled:opacity-40">发送测试</button>
+            </div>
+          </SettingBlock>
+        )}
+        {wxTip && <p className="rounded-xl bg-slate-100 px-4 py-3 text-xs font-medium text-slate-600">{wxTip}</p>}
+        <SettingsConfirmDialog open={Boolean(revokeTarget)} title="解除微信绑定" description="解绑后将不再收到个人企业微信提醒，站内通知不受影响。" busy={wxBusy} onCancel={() => setRevokeTarget(null)} onConfirm={revokeWechat} />
+      </SettingsDetailPage>
+    )
+  }
 
-      {user?.role === 'developer' && <DeletedRecordsCenter user={user} />}
+  if (activePanel === 'pos') {
+    const selected = sourceStores.find((row) => row.storeKey === sourceStore)
+    return (
+      <SettingsDetailPage title="门店与 POS" subtitle="管理门店销售数据来源" onBack={closePanel}>
+        <SettingBlock title="POS 点单 / 门店配置" description="配置只从生效日期起作用，历史日报的数据来源保持不变。" tone="soft">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="block text-xs font-semibold text-slate-500">门店<select value={sourceStore} onChange={(event) => setSourceStore(event.target.value)} className="input mt-1.5 w-full">{sourceStores.map((store) => <option key={store.storeKey} value={store.storeKey}>{store.storeName}</option>)}</select></label>
+            <label className="block text-xs font-semibold text-slate-500">销售数据来源<select aria-label="销售数据来源" value={sourceType} onChange={(event) => setSourceType(event.target.value)} className="input mt-1.5 w-full"><option value="manual">人工录入</option><option value="pos">BUDU POS</option><option value="hybrid">混合模式</option></select></label>
+            <label className="block text-xs font-semibold text-slate-500">生效日期<input type="date" value={sourceDate} onChange={(event) => setSourceDate(event.target.value)} className="input mt-1.5 w-full" /></label>
+          </div>
+          <button type="button" disabled={sourceSaving || !selected} onClick={saveSalesSource} className="mt-4 min-h-11 rounded-xl bg-budu-600 px-5 text-sm font-bold text-white disabled:opacity-40">{sourceSaving ? '保存中…' : '保存配置'}</button>
+          {sourceTip && <p className="mt-3 text-xs font-medium text-slate-500">{sourceTip}</p>}
+        </SettingBlock>
+        <SettingBlock title="已配置门店" description="状态来自当前门店销售数据来源 authority。">
+          <div className="divide-y divide-slate-100">
+            {sourceStores.map((store) => (
+              <div key={store.storeKey} className="flex min-h-14 items-center gap-3 py-3">
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{store.storeName}</p><p className="mt-0.5 text-xs text-slate-400">{store.salesDataSourceEffectiveDate ? `${shortDate(store.salesDataSourceEffectiveDate)} 起` : '未设置生效日期'}</p></div>
+                <SettingsStatus tone={store.salesDataSource === 'pos' ? 'success' : store.salesDataSource === 'hybrid' ? 'brand' : 'neutral'}>{sourceLabels[store.salesDataSource] || '人工录入'}</SettingsStatus>
+              </div>
+            ))}
+          </div>
+        </SettingBlock>
+      </SettingsDetailPage>
+    )
+  }
 
-      <div className="card p-6">
-        <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-budu-500 text-white shadow-md">
-            <Server className="h-5 w-5" />
+  if (activePanel === 'security') {
+    return (
+      <SettingsDetailPage title="账号与安全" subtitle="密码、二级密码与高风险操作保护" onBack={closePanel}>
+        <SettingBlock title="二级密码" description="用于删除雇员等高风险操作；必须使用当前登录密码验证后重新设置。" tone="soft">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block text-xs font-semibold text-slate-500">当前登录密码<input aria-label="当前登录密码" type="password" value={secOld} onChange={(event) => setSecOld(event.target.value)} className="input mt-1.5 w-full" /></label>
+            <label className="block text-xs font-semibold text-slate-500">新二级密码（至少 6 位）<input aria-label="新二级密码（至少 6 位）" type="password" value={secNew} onChange={(event) => setSecNew(event.target.value)} className="input mt-1.5 w-full" /></label>
+            <label className="block text-xs font-semibold text-slate-500">确认新二级密码<input aria-label="确认新二级密码" type="password" value={secConfirm} onChange={(event) => setSecConfirm(event.target.value)} className="input mt-1.5 w-full" /></label>
           </div>
-          <div>
-            <h3 className="text-[15px] font-bold text-slate-800">
-              {t('budu Operating System {version}', { version: APP_VERSION })}
-            </h3>
-            <p className="mt-0.5 text-xs text-slate-400">
-              {t('版本')} · {t('数据来源')}
-            </p>
+          <button type="button" disabled={secSaving} onClick={saveSecondPassword} className="mt-4 min-h-11 rounded-xl bg-budu-600 px-5 text-sm font-bold text-white disabled:opacity-40">{secSaving ? '保存中…' : '保存二级密码'}</button>
+          {secError && <p className="mt-3 text-xs font-medium text-rose-600">{secError}</p>}
+          {secTip && <p className="mt-3 text-xs font-medium text-emerald-600">{secTip}</p>}
+        </SettingBlock>
+        <div className="flex items-start gap-3 rounded-[18px] border border-slate-200/70 bg-slate-50 p-4 text-xs leading-5 text-slate-500"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-budu-600" /><p>密码只通过现有安全接口提交；页面不会读取或展示密码哈希、令牌或内部凭据。</p></div>
+      </SettingsDetailPage>
+    )
+  }
+
+  if (activePanel === 'developer') {
+    return (
+      <SettingsDetailPage title="开发者工具" subtitle="审计、已删除记录与系统诊断" onBack={closePanel}>
+        <SettingBlock title="企微绑定调试 / 高级绑定" description="仅用于扫码受限时，由开发者按系统账号绑定企业微信 userid。">
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <input aria-label="开发者绑定系统账号" value={manualUsername} onChange={(event) => setManualUsername(event.target.value)} placeholder="系统账号" className="input w-full" />
+            <input aria-label="开发者绑定企微 userid" value={manualUserid} onChange={(event) => setManualUserid(event.target.value)} placeholder="企微 userid" className="input w-full" />
+            <button type="button" disabled={manualBusy} onClick={bindWechatManual} className="min-h-11 rounded-xl bg-budu-600 px-4 text-sm font-bold text-white disabled:opacity-40">{manualBusy ? '处理中…' : '保存绑定'}</button>
           </div>
+          <button type="button" disabled={manualBusy} onClick={lookupWechatManual} className="mt-2 min-h-10 rounded-xl px-2 text-sm font-semibold text-budu-600 disabled:opacity-40">查询当前绑定</button>
+          {manualTip && <p className="mt-2 text-xs font-medium text-slate-500">{manualTip}</p>}
+        </SettingBlock>
+        <SettingBlock title="数据来源说明" description="业务数据以 PostgreSQL 为权威；浏览器缓存只用于界面体验，不能覆盖业务事实。">
+          <div className="flex items-center gap-3 text-sm text-slate-600"><Database className="h-5 w-5 text-slate-400" /><span>PostgreSQL · 云端共享数据 · POS 实时汇总</span></div>
+        </SettingBlock>
+        <DeletedRecordsCenter user={user} />
+      </SettingsDetailPage>
+    )
+  }
+
+  if (activePanel === 'system') {
+    return (
+      <SettingsDetailPage title="系统信息" subtitle="运行状态与版本信息" onBack={closePanel}>
+        <SettingBlock title={`budu Operating System ${APP_VERSION}`} description="当前运行版本" tone="soft">
+          <div className="divide-y divide-slate-100">
+            <div className="flex items-center justify-between gap-3 py-3 text-sm"><span className="text-slate-500">系统状态</span><SettingsStatus tone={systemHealth?.ok && systemHealth?.dbOk ? 'success' : 'warning'}>{systemHealth?.ok && systemHealth?.dbOk ? '运行中' : '检查中'}</SettingsStatus></div>
+            <div className="flex items-center justify-between gap-3 py-3 text-sm"><span className="text-slate-500">数据来源</span><span className="text-right font-semibold text-slate-700">PostgreSQL / 云端共享</span></div>
+            {isDeveloper && systemHealth?.gitSha && <div className="flex items-center justify-between gap-3 py-3 text-sm"><span className="text-slate-500">运行版本</span><code className="max-w-[65%] truncate text-xs text-slate-600">{systemHealth.gitSha}</code></div>}
+          </div>
+        </SettingBlock>
+        <div className="flex items-start gap-3 rounded-[18px] bg-slate-100 px-4 py-4 text-xs leading-5 text-slate-500"><Info className="mt-0.5 h-4 w-4 shrink-0" /><p>系统信息仅用于确认当前服务状态。敏感凭据与密码不会在此页面展示。</p></div>
+      </SettingsDetailPage>
+    )
+  }
+
+  const wxStatus = wxBindings === null
+    ? <SettingsStatus>加载中</SettingsStatus>
+    : !wxBindings.configured
+      ? <SettingsStatus tone="warning">未配置</SettingsStatus>
+      : activeBindings.length > 0
+        ? <SettingsStatus tone="success">已绑定</SettingsStatus>
+        : <SettingsStatus>未绑定</SettingsStatus>
+
+  return (
+    <div className="mx-auto min-w-0 w-full max-w-5xl">
+      <h2 className="sr-only">{t('系统设置')}</h2>
+      <div className="mb-5 flex items-center justify-between gap-4 px-1">
+        <p className="text-[13px] text-slate-400">{t('管理门店、提醒与营业配置')}</p>
+        <button type="button" onClick={onBack} className="hidden min-h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-slate-500 transition hover:bg-white hover:text-budu-600 lg:inline-flex"><ArrowLeft className="h-4 w-4" />返回首页</button>
+      </div>
+
+      <div className="grid min-w-0 grid-cols-1 items-start gap-6 lg:grid-cols-2">
+        <div className="min-w-0 space-y-6">
+          <SettingsSection title="提醒与通知">
+            {isElevated && <SettingsRow testId="settings-row-alert" icon={Bell} iconTone="green" title="企业微信告警" subtitle="异常通知将推送至企业微信群" status={<SettingsStatus tone={alertDisplay.tone}>{alertDisplay.label}</SettingsStatus>} onClick={() => openPanel('alert')} />}
+            <SettingsRow testId="settings-row-wechat" icon={MessageCircle} iconTone="brand" title="微信提醒" subtitle="工单、审批、调拨等个人提醒" status={wxStatus} onClick={() => openPanel('wechat')} last />
+          </SettingsSection>
+
+          {isElevated && (
+            <SettingsSection title="门店与 POS">
+              <SettingsRow testId="settings-row-pos" icon={Store} iconTone="blue" title="POS 点单 / 门店配置" subtitle="销售数据来源与生效日期" status={<SettingsStatus tone="brand">{posSummary}</SettingsStatus>} onClick={() => openPanel('pos')} last />
+            </SettingsSection>
+          )}
         </div>
-        <div className="mt-4 flex items-center gap-2 rounded-2xl bg-slate-50/80 px-4 py-3 text-xs text-slate-500">
-          <Database className="h-4 w-4 shrink-0 text-budu-600" />
-          {t('PostgreSQL / 云端共享数据 / POS 实时汇总')}
+
+        <div className="min-w-0 space-y-6">
+          {isElevated && (
+            <SettingsSection title="账号与安全">
+              <SettingsRow testId="settings-row-security" icon={Lock} iconTone="amber" title="安全设置" subtitle="密码、二级密码与账号安全" status={<SettingsStatus>可管理</SettingsStatus>} onClick={() => openPanel('security')} last />
+            </SettingsSection>
+          )}
+
+          <SettingsSection title="开发者与系统">
+            {isDeveloper && <SettingsRow testId="settings-row-developer" icon={Bug} iconTone="violet" title="开发者工具" subtitle="审计、已删除记录与系统诊断" status={<SettingsStatus tone="brand">开发者专用</SettingsStatus>} onClick={() => openPanel('developer')} />}
+            <SettingsRow testId="settings-row-system" icon={Server} iconTone="slate" title="系统信息" subtitle={`budu Operating System ${APP_VERSION}`} status={<SettingsStatus tone={systemHealth?.ok && systemHealth?.dbOk ? 'success' : 'neutral'}>{systemHealth?.ok && systemHealth?.dbOk ? '运行中' : '检查中'}</SettingsStatus>} onClick={() => openPanel('system')} last />
+          </SettingsSection>
         </div>
       </div>
 
-      {/* 卡皮巴拉提交成功动画 */}
-      {feedback && (
-        <BuduSuccessFeedback
-          open={!!feedback}
-          title={feedback.title}
-          description={feedback.description}
-          onClose={() => setFeedback(null)}
-        />
-      )}
+      <p className="mt-6 px-1 text-center text-[11px] leading-5 text-slate-400">设置项会根据当前账号权限显示；敏感凭据不会在页面中展示。</p>
+
+      {feedback && <BuduSuccessFeedback open title={feedback.title} description={feedback.description} onClose={() => setFeedback(null)} />}
     </div>
   )
 }
