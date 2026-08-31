@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Payroll Completeness UX</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const scenario = new URLSearchParams(location.search).get('scenario') || 'today-missing'
+    const businessDate = scenario === 'future' ? '2026-08-30' : '2026-08-31'
+    const employee = { id: 'emp-A', name: '测试员工', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'A001' }
+    const entries = {
+      '2026-08|guanshe|08-01': { inc: 2000, ord: 10, staff: ['测试员工'], status: 'confirmed' },
+    }
+    const rows = [
+      { id: 'base', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-01', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' },
+    ]
+    if (scenario === 'today-missing') {
+      rows.push({ id: 'today', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'today-draft') {
+      entries['2026-08|guanshe|08-31'] = { inc: 0, ord: 0, staff: ['测试员工'], status: 'draft' }
+      rows.push({ id: 'today', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'today-confirmed') {
+      entries['2026-08|guanshe|08-31'] = { inc: 3000, ord: 12, staff: ['测试员工'], status: 'confirmed' }
+      rows.push({ id: 'today', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'today-hours') {
+      entries['2026-08|guanshe|08-31'] = { inc: 3000, ord: 12, staff: ['测试员工'], status: 'confirmed' }
+      rows.push({ id: 'today', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: null, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'past-hours') {
+      entries['2026-08|guanshe|08-30'] = { inc: 3000, ord: 12, staff: ['测试员工'], status: 'confirmed' }
+      rows.push({ id: 'past', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-30', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: null, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'past-missing') {
+      rows.push({ id: 'past', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-30', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' })
+    } else if (scenario === 'future') {
+      rows.push({ id: 'future', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-A', participantType: 'EMPLOYEE', staffNameSnapshot: '测试员工', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' })
+    }
+
+    const originalFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const value = String(url)
+      const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (value.includes('/api/v2/daily-store-staff')) {
+        if (scenario === 'technical-error') return json({ error: 'unavailable' }, 500)
+        return json({ ok: true, month: '2026-08', businessDate, rows })
+      }
+      if (value.includes('/api/v2/staff-list')) return json({ ok: true, rows: [employee] })
+      return originalFetch(url, opts)
+    }
+    seedCachedDataForTest({
+      entries, staff: [employee], removedStaff: [], stores: [{ key: 'guanshe', name: '北京官舍店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
+      bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [],
+    })
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true, canManage: true, onBack: () => {}, onOpenProfile: () => {},
+        }),
+      ),
+    )
+  </script></body>
+</html>

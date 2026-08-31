@@ -61,7 +61,7 @@
         if (path === '/api/v2/daily-entries') return json({ ok: true, rows: dailyEntries })
         if (path.startsWith('/api/v2/daily-store-staff')) {
           await wait(25)
-          return json({ ok: true, month: '2026-08', rows: dailyStoreStaff })
+          return json({ ok: true, month: '2026-08', businessDate: '2026-08-31', rows: dailyStoreStaff })
         }
         if (path === '/api/v2/pos/daily-summary') return json({ ok: true, rows: [{ storeKey: 'chaowai', date: '2026-08-24', incCents: '22300', ord: 2, discountCents: '0', refundCents: '0', originalSalesCents: '22300' }] })
         if (path === '/api/v2/staff-list') return json({ ok: true, rows: [

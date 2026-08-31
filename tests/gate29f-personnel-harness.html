@@ -38,7 +38,7 @@
       if (value.includes('/api/v2/daily-store-staff')) {
         const month = new URL(value, location.origin).searchParams.get('month')
         window.__attendanceCalls.push(month)
-        return json({ ok: true, month, rows: window.__attendanceByMonth[month] || [] })
+        return json({ ok: true, month, businessDate: '2026-08-31', rows: window.__attendanceByMonth[month] || [] })
       }
       if (value.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') return json({ ok: true, rows: staff })
       if (value.includes('/api/v2/employees/backfill') || value.includes('/api/v2/staff') || value.includes('/api/v2/daily-entries')) return json({ ok: true })

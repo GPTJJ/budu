@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ rows: [{
+      body: JSON.stringify({ businessDate: '2026-08-31', rows: [{
         id: 'dss-ye-20260809', employeeId: 'emp-ye', employeeName: '叶芷辰',
         storeKey: 'tongying', date: '2026-08-09', actualHours: 12,
       }] }),

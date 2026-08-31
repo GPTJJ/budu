@@ -132,6 +132,21 @@ export function evaluatePayrollReadiness(input) {
     })
     bump(u.reason)
   }
+  // Draft facts are deliberately excluded from payroll math, but they remain
+  // explicit readiness blockers so UI can distinguish today's normal pending
+  // close from a historical incompleteness. No scheduled/assumed hours enter.
+  const rangeDrafts = dayInput.excludedDraftDays.filter(inRequestedRange)
+  for (const draft of rangeDrafts) {
+    calculationBlockers.push({
+      type: CALC,
+      reason: draft.reason,
+      detail: `${draft.storeId || ''} ${draft.date || ''}`,
+      ...(Array.isArray(draft.employeeIds) && draft.employeeIds.length > 0 ? { employeeIds: draft.employeeIds } : {}),
+      ...(draft.storeId ? { storeId: draft.storeId } : {}),
+      ...(draft.date ? { date: draft.date } : {}),
+    })
+    bump(draft.reason)
+  }
 
   // ---- 2) 考勤身份统计 ----
   const stableAttendanceRows = stable.filter((d) => ![...legacyByStoreDate.keys()].includes(`${d.storeId}|${d.date}`)).length
@@ -301,7 +316,7 @@ export function evaluatePayrollReadiness(input) {
       substituteAttendanceRows: substitutes.length,
       legacyCompatibleAttendanceRows: legacyCompatible.length,
       legacyUnknownAttendanceRows: legacy.length,
-      excludedDraftDays: dayInput.excludedDraftDays.filter(inRequestedRange).length,
+      excludedDraftDays: rangeDrafts.length,
       stableAdjustmentRows,
       legacyAdjustmentRows,
       stableBonusRows,

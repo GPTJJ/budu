@@ -369,6 +369,7 @@ export async function loadDailyStoreStaffMonth(month, opts = {}) {
     try {
       const res = await api(`/v2/daily-store-staff?month=${key}`)
       const rows = Array.isArray(res && res.rows) ? res.rows : []
+      const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(res?.businessDate || '')) ? res.businessDate : ''
       if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
       if (!cached) cached = normalizeCachedData(null)
       const nextByMonth = { ...(cached.dailyStoreStaffByMonth || {}) }
@@ -383,7 +384,7 @@ export async function loadDailyStoreStaffMonth(month, opts = {}) {
         error: null,
       })
       notifyUserDataUpdated()
-      return { month: key, status: STAFF_MONTH_LOAD_STATE.LOADED, rows }
+      return { month: key, status: STAFF_MONTH_LOAD_STATE.LOADED, rows, businessDate }
     } catch (e) {
       if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
       const nextByMonth = { ...(cached?.dailyStoreStaffByMonth || {}) }

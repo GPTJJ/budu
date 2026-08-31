@@ -9,6 +9,7 @@ import {
   isSuperUser,
 } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
+import { buduBusinessDate } from '../shared/businessDate.js'
 import {
   HISTORICAL_ATTENDANCE_STATUS,
   PAYABLE_HOURS_SOURCES,
@@ -294,7 +295,7 @@ dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
   if (storeParam) where.storeId = storeParam
   if (!isSuperUser(req.user)) {
     const allowed = new Set(Array.isArray(req.user.storeKeys) ? req.user.storeKeys : [])
-    if (allowed.size === 0) return res.json({ ok: true, rows: [] })
+    if (allowed.size === 0) return res.json({ ok: true, month, businessDate: buduBusinessDate(), rows: [] })
     where.storeId = { in: [...allowed] }
   }
   // 单次有界查询 + Store 关系（无 N+1 Employee/Store 查找）
@@ -307,6 +308,7 @@ dailyEntryUpgradeRouter.get('/daily-store-staff', wrap(async (req, res) => {
   res.json({
     ok: true,
     month,
+    businessDate: buduBusinessDate(),
     rows: rows.map((row) => ({
       id: row.id,
       storeId: row.storeId,

@@ -68,7 +68,7 @@ test('Daily Entry V2 regression: business incomplete is employee-scoped, not a t
   const incompleteCard = page.locator('.card').filter({ hasText: 'B001' })
   await expect(readyCard.getByText('最终工资', { exact: true })).toBeVisible()
   await expect(incompleteCard.getByText('工资数据待完善', { exact: true })).toBeVisible()
-  await expect(incompleteCard.getByText(/2026-08-02.*北京官舍店.*缺少每日记录/)).toBeVisible()
+  await expect(incompleteCard.getByText(/8月2日.*北京官舍店.*缺少每日记录/)).toBeVisible()
   await expect(page.getByText('工资数据暂不可用', { exact: true })).toHaveCount(0)
   await expect(incompleteCard.getByRole('button', { name: '重新加载' })).toHaveCount(0)
 })

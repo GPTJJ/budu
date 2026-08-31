@@ -33,6 +33,10 @@ import {
 } from '../utils/userData'
 import { resolvePayrollCalculation } from '../utils/payrollResolver'
 import { resolvePayrollPeriod } from '../utils/payrollPeriod'
+import {
+  PAYROLL_COMPLETENESS_UI,
+  projectPayrollCompleteness,
+} from '../utils/payrollCompletenessPresentation'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { t } from '../utils/text'
@@ -79,22 +83,6 @@ function resolverPeriodStatus(record) {
     workedDays: record.days || 0,
     adjustmentOnly: (record.days || 0) === 0 && (record.adjustmentCount || 0) > 0,
   }
-}
-
-function payrollBlockerText(blocker) {
-  if (!blocker) return t('缺少工资计算所需事实')
-  const place = blocker.storeId ? storeName(blocker.storeId) : ''
-  const date = blocker.date || ''
-  if (blocker.reason === 'MISSING_DAILY_ENTRY') {
-    return t('{date} {store}缺少每日记录', { date, store: place || blocker.storeId || '' }).trim()
-  }
-  if (blocker.reason === 'MISSING_ACTUAL_HOURS') {
-    return t('{date} {store}缺少实际工时', { date, store: place || blocker.storeId || '' }).trim()
-  }
-  if (blocker.reason === 'DRAFT_DAILY_ENTRY') {
-    return t('{date} {store}每日记录尚未确认', { date, store: place || blocker.storeId || '' }).trim()
-  }
-  return blocker.detail || blocker.reason || t('缺少工资计算所需事实')
 }
 
 function Stat({ label, value, accent, className = '' }) {
@@ -634,13 +622,21 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     requestedMonthRef.current = m
     setPayrollDisplay((prev) => ({ ...prev, status: 'loading', month: m }))
     let cancelled = false
-    loadDailyStoreStaffMonth(m).then(() => {
+    // Completeness classification must use a fresh server business date rather
+    // than a browser clock or a possibly stale month-cache value.
+    loadDailyStoreStaffMonth(m, { force: true }).then((staffLoad) => {
       if (cancelled || requestedMonthRef.current !== m) return // 竞态：已切换月份则丢弃
       const monthState = getDailyStoreStaffMonthState(m)
       if (monthState.status !== 'loaded' || !monthState.hasPayload) {
         setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
         return
       }
+      const businessDate = staffLoad?.businessDate || ''
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+        setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+        return
+      }
+      const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
       const res = resolvePayrollCalculation({
         month: m,
         dailyEntries: getEntries(),
@@ -649,7 +645,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         bigOrderBonuses: getBigBonuses(),
         employees: directory,
         users: [],
-        storeNames: Object.fromEntries(allStores().map((store) => [store.key, store.name])),
+        storeNames,
       })
       if (cancelled || requestedMonthRef.current !== m) return
       if (res.mode === 'EMPLOYEE_ID') {
@@ -663,26 +659,57 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           && !blocker.employeeId
           && !(Array.isArray(blocker.employeeIds) && blocker.employeeIds.length > 0)
         ))
-        let readyCount = 0
-        let incompleteCount = 0
         const byId = new Map(res.payroll.employees.map((row) => {
           const readiness = readinessById.get(row.employeeId)
           const blockers = [
             ...(readiness?.blockers || []).filter((blocker) => blocker.type === 'CALCULATION_BLOCKER'),
             ...globalCalculationBlockers,
           ]
-          const employeeCalculationReady = Boolean(readiness?.calculationReady) && blockers.length === 0
-          if (employeeCalculationReady) readyCount += 1
-          else incompleteCount += 1
+          const completeness = projectPayrollCompleteness(blockers, businessDate, storeNames)
+          const employeeCalculationReady = completeness.state === PAYROLL_COMPLETENESS_UI.READY
           return [row.employeeId, {
             ...row,
             payrollComputed: employeeCalculationReady,
             payrollIncomplete: !employeeCalculationReady,
             payrollBlockers: blockers,
+            payrollCompleteness: completeness,
           }]
         }))
-        const status = incompleteCount === 0 ? 'ready' : readyCount > 0 ? 'partial' : 'incomplete'
-        setPayrollDisplay({ status, month: m, mode: 'EMPLOYEE_ID', byEmployeeId: byId, legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+        // An employee whose authoritative attendance row is incomplete may be
+        // intentionally absent from payroll output. Preserve that fail-closed
+        // business state on the employee card without synthesizing a zero row.
+        for (const employee of directory) {
+          if (!employee?.id || byId.has(employee.id)) continue
+          const scopedBlockers = (res.readiness?.calculationBlockers || []).filter((blocker) => (
+            blocker?.type === 'CALCULATION_BLOCKER'
+            && (blocker.employeeId === employee.id || blocker.employeeIds?.includes(employee.id))
+          ))
+          const blockers = [...scopedBlockers, ...globalCalculationBlockers]
+          if (blockers.length === 0) continue
+          const completeness = projectPayrollCompleteness(blockers, businessDate, storeNames)
+          if (completeness.state === PAYROLL_COMPLETENESS_UI.READY) continue
+          byId.set(employee.id, {
+            employeeId: employee.id,
+            payrollComputed: false,
+            payrollIncomplete: true,
+            payrollBlockers: blockers,
+            payrollCompleteness: completeness,
+          })
+        }
+        const rows = [...byId.values()]
+        const readyCount = rows.filter((row) => !row.payrollIncomplete).length
+        const incompleteCount = rows.filter((row) => row.payrollIncomplete).length
+        const incompleteStates = [...byId.values()]
+          .filter((row) => row.payrollIncomplete)
+          .map((row) => row.payrollCompleteness?.state)
+        const onlyTodayPending = incompleteStates.length > 0
+          && incompleteStates.every((state) => state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING)
+        const status = incompleteCount === 0
+          ? 'ready'
+          : onlyTodayPending
+            ? (readyCount > 0 ? 'partial_today' : 'today_pending')
+            : (readyCount > 0 ? 'partial' : 'incomplete')
+        setPayrollDisplay({ status, month: m, businessDate, mode: 'EMPLOYEE_ID', byEmployeeId: byId, legacyByName: new Map(), legacyAmbiguousNames: new Set() })
       } else {
         const calculationBlockers = res.readiness?.calculationBlockers || []
         if (calculationBlockers.length > 0 && calculationBlockers.every((item) => item.reason === 'NO_PAYROLL_SUBJECTS')) {
@@ -749,6 +776,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         payrollUnavailable: false,
         payrollIncomplete: true,
         payrollBlockers: p.payrollBlockers || [],
+        payrollCompleteness: p.payrollCompleteness || null,
       }
     }
     const monthlyComponents = personnelMonthlyComponents(p)
@@ -875,6 +903,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               {(payrollDisplay.status === 'partial' || payrollDisplay.status === 'incomplete') && (
                 <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
                   {t(payrollDisplay.status === 'partial' ? '部分工资待完善' : '工资事实待完善')}
+                </span>
+              )}
+              {(payrollDisplay.status === 'partial_today' || payrollDisplay.status === 'today_pending') && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                  {t('今日数据待确认')}
                 </span>
               )}
             </p>
@@ -1106,25 +1139,40 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       ambiguous={emp.legacyAmbiguous}
                     />
                   ) : !day && !weekStart ? (
-                    <div className={`mt-4 rounded-xl border px-3 py-4 text-center ${
+                    <div
+                      data-payroll-completeness-state={emp.payrollCompleteness?.state || ''}
+                      className={`mt-4 rounded-xl border px-3 py-4 text-center ${
                       emp.payrollUnavailable
                         ? 'border-rose-100 bg-rose-50/70'
-                        : emp.payrollIncomplete
-                          ? 'border-amber-100 bg-amber-50/70'
+                        : emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                          ? 'border-slate-200 bg-slate-50/80'
+                          : emp.payrollIncomplete
+                            ? 'border-amber-100 bg-amber-50/70'
                           : 'border-slate-100 bg-slate-50/70'
-                    }`}>
+                    }`}
+                    >
                       <p className={`text-sm font-bold ${
                         emp.payrollUnavailable
                           ? 'text-rose-600'
-                          : emp.payrollIncomplete
-                            ? 'text-amber-600'
+                          : emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                            ? 'text-slate-600'
+                            : emp.payrollIncomplete
+                              ? 'text-amber-600'
                             : 'text-slate-500'
                       }`}>
-                        {t(emp.payrollUnavailable ? '工资数据暂不可用' : emp.payrollIncomplete ? '工资数据待完善' : '暂无工资数据')}
+                        {t(emp.payrollUnavailable
+                          ? '工资数据暂不可用'
+                          : emp.payrollIncomplete
+                            ? (emp.payrollCompleteness?.title || '工资数据待完善')
+                            : '暂无工资数据')}
                       </p>
                       {emp.payrollIncomplete && (
-                        <p className="mt-1 text-xs leading-5 text-amber-600">
-                          {payrollBlockerText(emp.payrollBlockers?.[0])}
+                        <p className={`mt-1 text-xs leading-5 ${
+                          emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                            ? 'text-slate-500'
+                            : 'text-amber-600'
+                        }`}>
+                          {emp.payrollCompleteness?.description || t('缺少工资计算所需事实')}
                         </p>
                       )}
                       {emp.payrollUnavailable && (

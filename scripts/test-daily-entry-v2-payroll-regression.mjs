@@ -55,13 +55,17 @@ assert.equal(before.payroll.employees.find((row) => row.employeeId === 'emp-full
 assert.equal(before.payroll.employees.find((row) => row.employeeId === 'emp-part').payableHours, 6)
 assert.equal(before.payroll.employees.find((row) => row.employeeId === 'emp-relief').payableHours, 5)
 
-// Missing actualHours is never replaced by Schedule/dutyHours and fails closed.
-assert.throws(() => resolvePayrollCalculation({
+// Missing actualHours is never replaced by Schedule/dutyHours. It remains an
+// explicit fail-closed business blocker rather than a technical exception.
+const missingHours = resolvePayrollCalculation({
   month: '2026-09',
   dailyEntries: entry('tongying', '2026-09-10', 2000, 20),
   dailyStoreStaffRows: [attendance({ id: 'missing-hours', employeeId: 'emp-full', name: '同名员工', store: 'tongying', date: '2026-09-10', hours: null })],
   employees, users,
-}), /actualHours/)
+})
+assert.equal(missingHours.calculationReady, false)
+assert.equal(missingHours.payroll.employees.length, 0)
+assert.ok(missingHours.blockers.some((row) => row.reason === 'MISSING_ACTUAL_HOURS'))
 
 // Draft days never become payroll facts.
 const draft = resolvePayrollCalculation({

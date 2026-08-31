@@ -53,7 +53,7 @@
       if (u.includes('/api/v2/daily-store-staff')) {
         const month = new URL(u, location.origin).searchParams.get('month')
         if (race && month === '2026-08') await new Promise((r) => setTimeout(r, 400))
-        return json({ ok: true, month, rows: (window.__attendanceByMonth || {})[month] || [] })
+        return json({ ok: true, month, businessDate: '2026-08-31', rows: (window.__attendanceByMonth || {})[month] || [] })
       }
       if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
         return json({ ok: true, rows: window.__staff || [] })

@@ -1,5 +1,8 @@
 import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
-import { normalizePayableHours } from '../../shared/payableHoursAuthority.js'
+import {
+  PAYABLE_HOURS_SOURCES,
+  normalizePayableHours,
+} from '../../shared/payableHoursAuthority.js'
 
 const participantTypeOf = (row) => {
   if (Object.values(PAYROLL_PARTICIPANT_TYPES).includes(row?.participantType)) return row.participantType
@@ -55,7 +58,14 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
     const [storeId, date] = key.split('|')
     const entry = entryByStoreDate.get(key)
     if (entry?.status === 'draft') {
-      excludedDraftDays.push({ storeId, date, reason: 'DRAFT_DAILY_ENTRY' })
+      excludedDraftDays.push({
+        storeId,
+        date,
+        reason: 'DRAFT_DAILY_ENTRY',
+        employeeIds: [...new Set(group
+          .filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId)
+          .map((row) => row.employeeId))],
+      })
       continue
     }
     if (entry && entry.status !== 'confirmed') {
@@ -70,7 +80,21 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
     ].includes(row.participantType)).length
 
     for (const row of group) {
-      const normalizedHours = normalizePayableHours(row)
+      let normalizedHours
+      try {
+        normalizedHours = normalizePayableHours(row)
+      } catch {
+        const source = String(row.payableHoursSource || '')
+        const missingActualHours = source === PAYABLE_HOURS_SOURCES.ACTUAL_HOURS
+          && (row.actualHours === null || row.actualHours === undefined || row.actualHours === '')
+        unresolvedDays.push({
+          storeId,
+          date,
+          reason: missingActualHours ? 'MISSING_ACTUAL_HOURS' : 'INVALID_ATTENDANCE_AUTHORITY',
+          ...(row.employeeId ? { employeeIds: [row.employeeId] } : {}),
+        })
+        continue
+      }
       const base = {
         employeeId: row.employeeId || null,
         participantUserId: row.participantUserId || null,

@@ -15,7 +15,7 @@
       const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       if (u.includes('/api/v2/daily-store-staff')) {
         const month = new URL(u, location.origin).searchParams.get('month')
-        return json({ ok: true, month, rows: [] }) // 8 月无任何考勤
+        return json({ ok: true, month, businessDate: '2026-08-31', rows: [] }) // 8 月无任何考勤
       }
       if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
         return json({ ok: true, rows: window.__staff || [] })

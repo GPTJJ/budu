@@ -39,11 +39,15 @@ function evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, p
   const substituteRows = input.substituteRows.filter(inRange)
   const stableAdjustmentRows = contributionRowsForRange(adjustments, period)
   const stableBonusRows = contributionRowsForRange(bonuses, period)
+  const employeeScopedUnresolvedDays = input.unresolvedDays.filter((row) => (
+    inRange(row) && Array.isArray(row?.employeeIds) && row.employeeIds.length > 0
+  ))
 
   let mode = 'NONE'
   if (stableRows.length > 0 && legacyCompatibleRows.length > 0) mode = 'MIXED_ATTENDANCE_AUTHORITY'
   else if (legacyUnknownRows.length > 0) mode = 'LEGACY_UNKNOWN'
   else if (stableRows.length > 0) mode = 'EMPLOYEE_ID'
+  else if (employeeScopedUnresolvedDays.length > 0) mode = 'EMPLOYEE_ID'
   else if (legacyCompatibleRows.length > 0) mode = 'LEGACY_COMPATIBLE'
   else if (stableAdjustmentRows.length > 0) mode = 'ADJUSTMENT_ONLY'
   else if (stableBonusRows.length > 0) mode = 'BONUS_ONLY'
@@ -56,6 +60,7 @@ function evaluateAttendanceAuthority(entries, staffRows, adjustments, bonuses, p
     substituteRows,
     stableAdjustmentRows,
     stableBonusRows,
+    employeeScopedUnresolvedDays,
   }
 }
 
