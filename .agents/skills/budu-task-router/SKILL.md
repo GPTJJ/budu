@@ -1,6 +1,6 @@
 ---
 name: budu-task-router
-description: Use automatically for any task involving the BUDU repository, BUDU OS, POS, payroll, transfers, customer requests, product center, approvals, payments, deployment, database, or production changes. Classify the task as FAST, STANDARD, or STRICT before choosing the engineering workflow.
+description: Use automatically for any task involving the BUDU repository, BUDU OS, POS, payroll, transfers, customer requests, product center, approvals, payments, deployment, database, or production changes. Classify the task as FAST, STANDARD, or STRICT before choosing the engineering workflow, and route payroll-correctness audits to budu-payroll-audit.
 ---
 
 # BUDU Task Router
@@ -35,6 +35,8 @@ Default flow: strict audit → backup and rollback consideration → isolated ca
 - Code changes: `budu-regression`.
 - Candidate, deployment, cutover, or production verification: `budu-production-deploy`.
 - Payment/refund work: always `budu-payment-safety` and STRICT.
+- Payroll correctness audit for one or more employees over a day or period: always `budu-payroll-audit` and STRICT, even when phrased briefly (for example, “看看这个人工资算对了吗”).
+- Payroll settlement questions such as “已经发了多少” or “还欠多少” are payment/settlement reconciliation, not `budu-payroll-audit`; do not mix paid cash facts with calculated payroll.
 - Device or conversation handoff: `budu-handoff`.
 
 Do not load every BUDU skill for every task. The classification does not grant deployment, database-write, notification, or other external authority.

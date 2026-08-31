@@ -38,6 +38,7 @@
     "test:payment-reconciler": "node --test scripts/test-payment-reconciliation.mjs",
     "test:wechat-config": "node --test scripts/test-wechat-config.mjs",
     "test:notification-unread": "node scripts/test-notification-read-authority.mjs && playwright test --project=ipad-webkit --workers=1 tests/notification-unread.spec.mjs",
+    "test:skill:payroll-audit": "node --test scripts/test-budu-payroll-audit-skill.mjs",
     "test:ocr-integrity": "node --test scripts/test-ocr-input-integrity.mjs",
     "test:wechat-e2e": "node --test scripts/test-wechat-pay-e2e.mjs",
     "test:report-center:rc2a": "node scripts/test-report-center-rc2a.mjs",

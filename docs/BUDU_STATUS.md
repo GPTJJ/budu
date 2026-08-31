@@ -36,6 +36,7 @@ Last reviewed: 2026-09-01
 ## Current Engineering Work
 
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
+- `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
 - System Settings UI 2.0 is live at runtime SHA `3c7f56c6cc77573e252023b59e2dcdfd1522678d`; it is an application-only release with no migration or business-authority change.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
 - Report Center migrations 59–62 are deployed in the canonical production ledger. Future work must treat 62 as the current migration baseline and revalidate before assigning the next number.

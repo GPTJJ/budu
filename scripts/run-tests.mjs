@@ -20,6 +20,7 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-budu-payroll-audit-skill.mjs', // Team Skill：STRICT 只读工资审计路由与领域合同
   'test-overlay-scroll-contract.mjs', // 全站弹层 inventory、共享锁与单滚动容器静态契约 → critical
   'test-config.mjs',                // 生产环境配置与数据存储 fail-closed
   'test-account-permissions.mjs',   // Auth / Permission（单元）→ critical
@@ -163,6 +164,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-budu-payroll-audit-skill.mjs',
   'test-overlay-scroll-contract.mjs',
   'test-account-permissions.mjs',
   'test-daily-entry-upgrade.mjs',
