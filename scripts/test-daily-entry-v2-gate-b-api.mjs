@@ -13,6 +13,7 @@ const { PrismaClient } = await import('@prisma/client')
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } })
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } })
 const { createApp } = await import('../server/app.js')
+const { loadAuthoritativePayrollRange } = await import('../server/payroll-authority.js')
 const server = createApp().listen(0)
 
 const date = (value) => new Date(`${value}T00:00:00.000Z`)
@@ -47,6 +48,7 @@ try {
   await prisma.employee.createMany({ data: [
     { id: 'emp-gb-a', employeeNo: 'GB-A', name: '员工A', currentStoreKey: 'tongying', status: 'ACTIVE' },
     { id: 'emp-gb-b', employeeNo: 'GB-B', name: '员工B', currentStoreKey: 'tongying', status: 'PROBATION' },
+    { id: 'emp-gb-c', employeeNo: 'GB-C', name: '员工C', currentStoreKey: 'tongying', status: 'ACTIVE', employmentType: 'parttime' },
     { id: 'emp-gb-resigned', employeeNo: 'GB-R', name: '离职员工', currentStoreKey: 'tongying', status: 'RESIGNED' },
   ] })
   const register = await request(base, '/auth/register', { method: 'POST', body: { username: 'gate-b-dev', password: '123456' } })
@@ -442,7 +444,79 @@ try {
   })
   assert.equal((await prisma.dailyStoreStaff.findMany({ where: { storeId: 'tongying', date: date('2026-09-01') }, orderBy: { employeeId: 'asc' } })).length, beforeRevisionStaff.length)
 
-  console.log('DAILY ENTRY V2 GATE B-E API TEST OK')
+  // Gate F: Schedule is a prefill hint only. Confirmed actual attendance A+C is
+  // the sole payroll authority even though the saved schedule contains A+B.
+  const payrollDay = '2026-09-17'
+  await prisma.schedule.create({ data: {
+    id: 'sc-gate-f', weekStart: '2026-09-14', storeKey: 'tongying', date: payrollDay,
+    shifts: [
+      { employeeId: 'emp-gb-a', staff: '员工A', time: '10:00-18:00' },
+      { employeeId: 'emp-gb-b', staff: '员工B', time: '13:00-21:00' },
+    ],
+  } })
+  await prisma.payrollNotice.create({ data: {
+    id: 'pn-gate-f-control', employeeId: 'emp-gb-a', periodType: 'custom', periodKey: '2026-08-01~2026-08-01',
+    periodStart: date('2026-08-01'), periodEnd: date('2026-08-01'), employeeName: '员工A', storeKey: 'tongying',
+    targetUsername: 'gate-b-staff', snapshot: { fixture: 'immutable-control' }, totalCents: 12345n, createdBy: 'gate-f',
+  } })
+  const stableRows = (rows) => JSON.stringify(rows, (_key, value) => {
+    if (typeof value === 'bigint') return value.toString()
+    if (value instanceof Date) return value.toISOString()
+    return value
+  })
+  const historicalBefore = stableRows({
+    entries: await prisma.dailyEntry.findMany({ where: { date: { lt: date(payrollDay) } }, orderBy: { id: 'asc' } }),
+    staff: await prisma.dailyStoreStaff.findMany({ where: { date: { lt: date(payrollDay) } }, orderBy: { id: 'asc' } }),
+    notices: await prisma.payrollNotice.findMany({ orderBy: { id: 'asc' } }),
+  })
+
+  const payrollConfirm = await request(base, '/v2/daily-entry/confirm', {
+    cookie: devCookie, method: 'POST', body: manualConfirm(payrollDay, 0, [staffItem('emp-gb-a', 8), staffItem('emp-gb-c', 5)], 170000, 17),
+  })
+  assert.equal(payrollConfirm.status, 200, await payrollConfirm.text())
+  const payrollBeforeRevision = await loadAuthoritativePayrollRange(prisma, {
+    periodType: 'custom', periodStart: payrollDay, periodEnd: payrollDay,
+  })
+  const beforePayrollById = new Map(payrollBeforeRevision.result.payroll.employees.map((row) => [row.employeeId, row]))
+  assert.deepEqual([...beforePayrollById.keys()].sort(), ['emp-gb-a', 'emp-gb-c'])
+  assert.equal(beforePayrollById.has('emp-gb-b'), false)
+  assert.equal(beforePayrollById.get('emp-gb-a').payableHours, 8)
+  assert.equal(beforePayrollById.get('emp-gb-c').payableHours, 5)
+
+  const payrollEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey: 'tongying', date: date(payrollDay) } } })
+  const payrollRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: {
+      storeKey: 'tongying', date: payrollDay, version: payrollEntry.version,
+      manualSales: { incCents: 170000, ord: 17 },
+      items: [staffItem('emp-gb-a', 6), staffItem('emp-gb-c', 5)],
+      reason: 'Gate F actual hours correction 8 to 6',
+    },
+  })
+  assert.equal(payrollRevision.status, 200, await payrollRevision.text())
+  const payrollAfterRevision = await loadAuthoritativePayrollRange(prisma, {
+    periodType: 'custom', periodStart: payrollDay, periodEnd: payrollDay,
+  })
+  const afterPayrollById = new Map(payrollAfterRevision.result.payroll.employees.map((row) => [row.employeeId, row]))
+  assert.deepEqual([...afterPayrollById.keys()].sort(), ['emp-gb-a', 'emp-gb-c'])
+  assert.equal(afterPayrollById.get('emp-gb-a').payableHours, 6)
+  assert.equal(afterPayrollById.get('emp-gb-c').payableHours, 5)
+  assert.notEqual(afterPayrollById.get('emp-gb-a').salary, beforePayrollById.get('emp-gb-a').salary)
+  const payrollRevisionAudit = await prisma.dailyEntryAuditLog.findFirst({
+    where: { storeId: 'tongying', date: date(payrollDay), module: 'daily_revision', reason: 'Gate F actual hours correction 8 to 6' },
+  })
+  assert.ok(payrollRevisionAudit)
+  assert.equal(payrollRevisionAudit.beforeValue.participants.find((row) => row.employeeId === 'emp-gb-a').actualHours, 8)
+  assert.equal(payrollRevisionAudit.afterValue.participants.find((row) => row.employeeId === 'emp-gb-a').actualHours, 6)
+  assert.equal((await prisma.schedule.findUnique({ where: { id: 'sc-gate-f' } })).shifts[1].employeeId, 'emp-gb-b')
+
+  const historicalAfter = stableRows({
+    entries: await prisma.dailyEntry.findMany({ where: { date: { lt: date(payrollDay) } }, orderBy: { id: 'asc' } }),
+    staff: await prisma.dailyStoreStaff.findMany({ where: { date: { lt: date(payrollDay) } }, orderBy: { id: 'asc' } }),
+    notices: await prisma.payrollNotice.findMany({ orderBy: { id: 'asc' } }),
+  })
+  assert.equal(historicalAfter, historicalBefore)
+
+  console.log('DAILY ENTRY V2 GATE B-F API TEST OK')
 } finally {
   await new Promise((resolve) => server.close(resolve))
   await prisma.$disconnect().catch(() => {})
