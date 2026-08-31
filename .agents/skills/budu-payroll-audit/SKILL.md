@@ -75,6 +75,8 @@ For a formal audit, read [references/audit-procedure.md](references/audit-proced
 
 For a two-layer Markdown/PDF/email audit or a scheduled monthly audit, also read [references/report-2.0.md](references/report-2.0.md). Build one canonical report model from one read-only Payroll authority snapshot; render every format from that model and never let a renderer query or calculate payroll. Monthly automation audits the previous complete calendar month in `FINAL` mode, reuses the same run and artifacts for delivery retries, and sends only to the configured single recipient.
 
+Compose formal Markdown/PDF/email output with `budu-brand-system`: use lowercase `budu` in user-visible names and the canonical wordmark asset in formal report brand positions.
+
 Persist formal reports under the repository's current audit convention, preferring `docs/audits/payroll/`. Use stable, non-secret filename identifiers; do not invent a permanent name-to-pinyin mapping. Multi-employee audits must continue auditing other employees when one is blocked.
 
 Every issue includes evidence, root cause or clearly marked unknown, payroll and amount impact, safe options, recommendation when justified, risk, and required confirmation. End with `NO ACTION EXECUTED` and `No production changes were performed.`

@@ -27,7 +27,7 @@ export function cameraErrorMessage(error) {
   if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
     return '当前摄像头不支持所需模式，请重新扫码或检查设备设置。'
   }
-  if (name === 'SecurityError') return '当前页面不能使用摄像头，请确认通过 HTTPS 打开 BUDU。'
+  if (name === 'SecurityError') return '当前页面不能使用摄像头，请确认通过 HTTPS 打开 budu。'
   return '摄像头启动失败，请检查权限和设备后重新扫码。'
 }
 

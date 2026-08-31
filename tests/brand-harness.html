@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>budu Brand Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import LoginPage from '/src/components/LoginPage.jsx'
+    import Sidebar from '/src/components/Sidebar.jsx'
+    import '/src/index.css'
+
+    const surface = new URLSearchParams(location.search).get('surface') || 'login'
+    const component = surface === 'sidebar'
+      ? React.createElement(Sidebar, {
+        open: true,
+        onClose: () => {},
+        view: 'overview',
+        onNavigate: () => {},
+        user: { id: 'developer-1', username: 'developer', role: 'developer', permissions: [] },
+        onUserChange: () => {},
+        onLogout: () => {},
+      })
+      : React.createElement(LoginPage, { onLogin: () => {} })
+    createRoot(document.getElementById('root')).render(component)
+  </script></body>
+</html>

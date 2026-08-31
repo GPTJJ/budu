@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "BUDU 甜品门店管理系统 Dashboard",
+  "description": "budu 甜品门店管理系统 Dashboard",
   "scripts": {
     "test": "node scripts/run-tests.mjs",
     "test:critical": "node scripts/run-tests.mjs critical",
@@ -40,6 +40,9 @@
     "test:notification-unread": "node scripts/test-notification-read-authority.mjs && playwright test --project=ipad-webkit --workers=1 tests/notification-unread.spec.mjs",
     "test:skill:payroll-audit": "node --test scripts/test-budu-payroll-audit-skill.mjs",
     "test:payroll-audit-report": "node --test scripts/test-payroll-audit-report-v2.mjs",
+    "test:skill:brand": "node --test scripts/test-budu-brand-system.mjs",
+    "brand:assets": "node scripts/generate-budu-brand-assets.mjs",
+    "test:brand:browser": "playwright test --config=playwright.brand.config.mjs --workers=1",
     "payroll:audit": "node scripts/payroll-audit-runner.mjs",
     "payroll:audit:remote": "node scripts/payroll-audit-remote.mjs",
     "payroll:audit:delivery-state": "node scripts/payroll-audit-delivery-state.mjs",

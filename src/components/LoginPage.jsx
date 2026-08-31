@@ -4,6 +4,7 @@ import { api } from '../utils/api'
 import { t } from '../utils/text'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import ComplianceFooter from './ComplianceFooter'
+import wordmarkUrl from '../../brand/web/budu-wordmark.svg'
 
 /** 登录页（自助注册已关闭，新账号由开发者创建） */
 export default function LoginPage({ onLogin }) {
@@ -40,10 +41,8 @@ export default function LoginPage({ onLogin }) {
       <div className="w-full max-w-sm">
         <div className="card p-6 sm:p-8">
           <div className="flex flex-col items-center text-center">
-            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-budu-500 text-xl font-bold text-white shadow-sm">
-              B
-            </div>
-            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('budu Operating System运营系统')}</h1>
+            <img src={wordmarkUrl} alt="budu" className="h-auto w-28" />
+            <h1 className="mt-4 text-xl font-bold text-slate-800">{t('Operating System 运营系统')}</h1>
             <p className="mt-1 text-xs text-slate-400">{t('登录后查看门店经营数据（多设备共享）')}</p>
           </div>
 

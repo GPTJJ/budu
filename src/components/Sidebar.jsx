@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
-import logoUrl from '../assets/logo.jpg'
+import wordmarkUrl from '../../brand/web/budu-wordmark.svg'
 import { APP_VERSION } from '../version'
 import { MODULE_KEYS, hasModuleAccess } from '../../shared/accountPermissions'
 
@@ -82,12 +82,9 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-        <img src={logoUrl} alt="budu" className="h-11 w-11 rounded-2xl object-cover shadow-sm" />
+      <div className="flex items-center px-6 pb-6 pt-7">
         <div>
-          <p className="text-xl font-bold tracking-wide text-slate-900">
-            budu
-          </p>
+          <img src={wordmarkUrl} alt="budu" className="h-auto w-24" />
           <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
         </div>
       </div>

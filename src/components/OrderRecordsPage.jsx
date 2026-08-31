@@ -346,7 +346,7 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
       await load()
     } catch (e) {
       setError(e.status >= 500
-        ? external ? '平台退款记录失败，未写入 BUDU，请重新确认。' : '退款处理失败，请稍后重试'
+        ? external ? '平台退款记录失败，未写入 budu，请重新确认。' : '退款处理失败，请稍后重试'
         : e.message)
     } finally {
       setRefunding(false)
@@ -494,7 +494,7 @@ export default function OrderRecordsPage({ user, onBack, onPay }) {
               <button onClick={closeRefund} className="ml-auto grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 active:scale-95" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
             <div className="budu-overlay-scroll p-4 sm:p-6">
-              {isExternalOrder(refundOrder) && <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-800"><strong>请先确认退款已在{orderSourceLabel(refundOrder.orderSource)}完成。</strong><p className="mt-1 text-xs text-violet-700">BUDU 这里只记录实际已经发生的退款，不会向平台发起退款，也不会自动恢复库存。</p></div>}
+              {isExternalOrder(refundOrder) && <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-800"><strong>请先确认退款已在{orderSourceLabel(refundOrder.orderSource)}完成。</strong><p className="mt-1 text-xs text-violet-700">budu 这里只记录实际已经发生的退款，不会向平台发起退款，也不会自动恢复库存。</p></div>}
               <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4 text-center text-sm">
                 <div><p className="text-xs text-slate-400">订单金额</p><p className="mt-1 font-bold tabular-nums text-slate-800">{formatCents(refundOrder.payableAmount)}</p></div>
                 <div><p className="text-xs text-slate-400">已退款</p><p className="mt-1 font-bold tabular-nums text-rose-600">{formatCents(orderRefundedCents(refundOrder))}</p></div>

@@ -20,6 +20,7 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
   'test-budu-payroll-audit-skill.mjs', // Team Skill：STRICT 只读工资审计路由与领域合同
   'test-payroll-audit-report-v2.mjs', // Payroll Audit 2.0：canonical model、MD/PDF/email、幂等与零写入
   'test-overlay-scroll-contract.mjs', // 全站弹层 inventory、共享锁与单滚动容器静态契约 → critical
@@ -165,6 +166,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-budu-brand-system.mjs',
   'test-budu-payroll-audit-skill.mjs',
   'test-payroll-audit-report-v2.mjs',
   'test-overlay-scroll-contract.mjs',

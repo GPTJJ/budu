@@ -32,6 +32,7 @@ Default flow: strict audit → backup and rollback consideration → isolated ca
 - New or recovered context: `budu-context`.
 - Business identity or source-of-truth work: `budu-data-authority`.
 - Frontend/mobile work: `budu-mobile-ui`.
+- User-visible UI, PDF, email, report, export, document, POS display, mini-program, print, or sharing output: also `budu-brand-system`.
 - Code changes: `budu-regression`.
 - Candidate, deployment, cutover, or production verification: `budu-production-deploy`.
 - Payment/refund work: always `budu-payment-safety` and STRICT.

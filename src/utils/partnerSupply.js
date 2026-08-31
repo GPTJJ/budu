@@ -61,7 +61,7 @@ export function createPartnerSupplyWorkbook(report) {
 export function exportPartnerSupplyExcel(report, options = {}) {
   const result = createPartnerSupplyWorkbook(report)
   const range = options.start || options.end ? `_${options.start || '最早'}_${options.end || '最新'}` : ''
-  XLSX.writeFile(result.workbook, `BUDU合作商供货对账${range}.xlsx`)
+  XLSX.writeFile(result.workbook, `budu合作商供货对账${range}.xlsx`)
   return result
 }
 
@@ -172,6 +172,6 @@ export async function exportPartnerSupplyImage(order) {
   noteLines.forEach((line, index) => ctx.fillText(line, margin, y + index * 28))
   ctx.fillStyle = '#a3999e'
   ctx.font = `17px ${font}`
-  ctx.fillText('BUDU Operating System · 合作商供货 1.0', margin, height - 38)
-  await downloadFile({ dataUrl: canvas.toDataURL('image/png'), name: `BUDU合作商供货_${order.orderNo || order.id}.png`, mimeType: 'image/png' })
+  ctx.fillText('budu Operating System · 合作商供货 1.0', margin, height - 38)
+  await downloadFile({ dataUrl: canvas.toDataURL('image/png'), name: `budu合作商供货_${order.orderNo || order.id}.png`, mimeType: 'image/png' })
 }

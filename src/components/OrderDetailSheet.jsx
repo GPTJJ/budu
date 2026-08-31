@@ -119,7 +119,7 @@ export default function OrderDetailSheet({ order, onClose, actions = null, onQue
                       <span className="ml-auto text-xs text-slate-400">{localReportTime(refund.externalCompletedAt || refund.completedAt || refund.createdAt)}</span>
                       {refund.status === 'pending' && typeof onQueryRefund === 'function' && <button type="button" onClick={() => onQueryRefund(refund)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">查询退款结果</button>}
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{refund.refundMode === 'MANUAL_EXTERNAL' ? '平台已完成 · BUDU 人工记录' : '店内支付退款'}</p>
+                    <p className="mt-1 text-xs text-slate-500">{refund.refundMode === 'MANUAL_EXTERNAL' ? '平台已完成 · budu 人工记录' : '店内支付退款'}</p>
                     {refund.reason && <p className="mt-1 text-xs text-slate-500">原因：{refund.reason}</p>}
                     {(refund.items || []).length > 0 && <p className="mt-1 text-xs text-slate-500">{refund.items.map((item) => `${item.productName || '商品'}×${item.quantity}`).join('、')}</p>}
                   </div>

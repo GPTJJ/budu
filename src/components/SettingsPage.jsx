@@ -25,7 +25,7 @@ import {
   SettingsStatus,
 } from './settings/SettingsPrimitives'
 
-const sourceLabels = { manual: '人工录入', pos: 'BUDU POS', hybrid: '混合模式' }
+const sourceLabels = { manual: '人工录入', pos: 'budu POS', hybrid: '混合模式' }
 
 function todayText() {
   const d = new Date()
@@ -358,7 +358,7 @@ export default function SettingsPage({ user, onBack }) {
         <SettingBlock title="POS 点单 / 门店配置" description="配置只从生效日期起作用，历史日报的数据来源保持不变。" tone="soft">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <label className="block text-xs font-semibold text-slate-500">门店<select value={sourceStore} onChange={(event) => setSourceStore(event.target.value)} className="input mt-1.5 w-full">{sourceStores.map((store) => <option key={store.storeKey} value={store.storeKey}>{store.storeName}</option>)}</select></label>
-            <label className="block text-xs font-semibold text-slate-500">销售数据来源<select aria-label="销售数据来源" value={sourceType} onChange={(event) => setSourceType(event.target.value)} className="input mt-1.5 w-full"><option value="manual">人工录入</option><option value="pos">BUDU POS</option><option value="hybrid">混合模式</option></select></label>
+            <label className="block text-xs font-semibold text-slate-500">销售数据来源<select aria-label="销售数据来源" value={sourceType} onChange={(event) => setSourceType(event.target.value)} className="input mt-1.5 w-full"><option value="manual">人工录入</option><option value="pos">budu POS</option><option value="hybrid">混合模式</option></select></label>
             <label className="block text-xs font-semibold text-slate-500">生效日期<input type="date" value={sourceDate} onChange={(event) => setSourceDate(event.target.value)} className="input mt-1.5 w-full" /></label>
           </div>
           <button type="button" disabled={sourceSaving || !selected} onClick={saveSalesSource} className="mt-4 min-h-11 rounded-xl bg-budu-600 px-5 text-sm font-bold text-white disabled:opacity-40">{sourceSaving ? '保存中…' : '保存配置'}</button>

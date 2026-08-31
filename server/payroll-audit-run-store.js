@@ -8,7 +8,7 @@ function hashFile(filePath) {
 
 export function auditArtifactPaths(root, model) {
   const month = model.metadata.requestedPeriod.start.slice(0, 7)
-  const base = `BUDU_${month}_薪酬审查报告`
+  const base = `budu_${month}_薪酬审查报告`
   const directory = path.join(root, model.runId)
   return {
     directory,

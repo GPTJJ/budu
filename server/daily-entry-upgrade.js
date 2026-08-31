@@ -526,7 +526,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
       ord,
       avgCents: (ord > 0 ? incCents / BigInt(ord) : 0n).toString(),
       salesDataSource: source,
-      salesSourceLabel: source === 'manual' ? '美团收银 · 人工录入' : 'BUDU POS',
+      salesSourceLabel: source === 'manual' ? '美团收银 · 人工录入' : 'budu POS',
       confirmedBy: entry.confirmedBy,
       confirmedAt: entry.confirmedAt,
       version: entry.version,

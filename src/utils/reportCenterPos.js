@@ -27,7 +27,7 @@ export function settlementLabel(order) {
 }
 
 export function entryModeLabel(entryMode) {
-  return entryMode === 'MANUAL_POS' ? 'BUDU POS 人工记录' : 'BUDU POS'
+  return entryMode === 'MANUAL_POS' ? 'budu POS 人工记录' : 'budu POS'
 }
 
 /**

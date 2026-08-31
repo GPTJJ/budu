@@ -331,7 +331,7 @@ posRouter.post('/pos/orders/:id/manual-external-refunds', wrap(async (req, res) 
       actor: req.user.username,
     })
   } catch (error) {
-    rethrowSafeCommandError(error, '平台退款记录失败，未写入 BUDU，请重新确认。', 'manual-external-refund')
+    rethrowSafeCommandError(error, '平台退款记录失败，未写入 budu，请重新确认。', 'manual-external-refund')
   }
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
   const refund = order.refunds.find((item) => item.id === result.refundId)
@@ -487,7 +487,7 @@ posRouter.post('/pos/external-orders', wrap(async (req, res) => {
       actorName: req.user.username,
     })
   } catch (error) {
-    rethrowSafeCommandError(error, '平台订单记录失败，未写入 BUDU，请重新确认。', 'external-order')
+    rethrowSafeCommandError(error, '平台订单记录失败，未写入 budu，请重新确认。', 'external-order')
   }
   const [order, settlement] = await Promise.all([
     prisma.order.findUnique({ where: { id: result.orderId }, include: orderInclude() }),

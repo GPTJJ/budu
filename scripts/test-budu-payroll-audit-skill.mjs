@@ -99,7 +99,7 @@ test('H: audit findings produce options without mutations', () => {
 
 test('formal report contract is persistent, dynamic, and non-secret', () => {
   assert.match(skill, /preferring `docs\/audits\/payroll\/`/)
-  assert.match(report, /# BUDU PAYROLL AUDIT REPORT/)
+  assert.match(report, /# budu 薪酬审查报告/)
   assert.match(report, /Render every component returned by the current Payroll authority/)
   assert.match(report, /Missing values are `—`, never zero/)
   assert.match(report, /Do not include passwords, tokens, webhook URLs, credentials/)

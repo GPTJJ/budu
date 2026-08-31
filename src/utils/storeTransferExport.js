@@ -113,7 +113,7 @@ export function createTransferExportWorkbook(records, options = {}) {
 export function exportTransferExcel(records, options = {}) {
   const result = createTransferExportWorkbook(records, options)
   const range = options.dateFrom || options.dateTo ? `_${options.dateFrom || '最早'}_${options.dateTo || '最新'}` : ''
-  XLSX.writeFile(result.workbook, `BUDU门店物资调拨汇总${range}.xlsx`)
+  XLSX.writeFile(result.workbook, `budu门店物资调拨汇总${range}.xlsx`)
   return result
 }
 
@@ -166,7 +166,7 @@ export async function exportTransferImage(record, storeLabel) {
   ctx.fillRect(0, 0, width, 142)
   ctx.fillStyle = '#ffffff'
   ctx.font = `700 38px ${font}`
-  ctx.fillText('BUDU 门店调拨单', 48, 64)
+  ctx.fillText('budu 门店调拨单', 48, 64)
   ctx.font = `20px ${font}`
   ctx.fillText(`单号 ${record.id}`, 48, 104)
 
@@ -216,7 +216,7 @@ export async function exportTransferImage(record, storeLabel) {
   noteLines.forEach((line, index) => ctx.fillText(line, 48, y + index * 32))
   ctx.fillStyle = '#a3999e'
   ctx.font = `17px ${font}`
-  ctx.fillText('BUDU Operating System · 门店调拨 2.0', 48, height - 40)
+  ctx.fillText('budu Operating System · 门店调拨 2.0', 48, height - 40)
 
-  await downloadFile({ dataUrl: canvas.toDataURL('image/png'), name: `BUDU门店调拨_${record.id}.png`, mimeType: 'image/png' })
+  await downloadFile({ dataUrl: canvas.toDataURL('image/png'), name: `budu门店调拨_${record.id}.png`, mimeType: 'image/png' })
 }

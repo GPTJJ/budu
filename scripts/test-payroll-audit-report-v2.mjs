@@ -116,7 +116,9 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   assert.match(markdown, new RegExp(model.canonicalHash))
   assert.equal(email.canonicalHash, model.canonicalHash)
   assert.equal(email.recipient, 'yuegu1995@gmail.com')
-  assert.equal(email.subject, 'BUDU｜2026年08月薪酬审查报告｜BLOCKED')
+  assert.equal(email.subject, 'budu｜2026年08月薪酬审查报告｜BLOCKED')
+  assert.equal(model.schemaVersion, 3)
+  assert.equal(model.metadata.brand.name, 'budu')
   assert.doesNotMatch(`${markdown}\n${html}\n${email.body}`, /password|webhook|token|credential/i)
 })
 
@@ -146,7 +148,8 @@ test('headless run writes protected MD/PDF/email artifacts and duplicate trigger
     const pages = Number((info.stdout.match(/^Pages:\s+(\d+)/m) || [])[1])
     assert.ok(pages >= 4, `expected multi-page PDF, got ${pages}`)
     const html = renderPayrollAuditHtml(first.model)
-    assert.match(html, /BUDU 薪酬审查报告/)
+    assert.match(html, /brand-wordmark/)
+    assert.doesNotMatch(html, />BUDU 薪酬审查报告</)
     assert.match(html, /卡皮巴拉/)
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true })

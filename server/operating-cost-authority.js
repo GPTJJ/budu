@@ -342,7 +342,7 @@ export class OperatingCostAuthority {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows.length ? summaryRows : [{ 提示: '当前筛选范围没有可导出的门店事实' }]), '经营利润汇总')
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ 提示: '当前筛选范围没有成本明细' }]), '成本与完整性明细')
-    return { fileName: `BUDU经营利润_${report.range.from}_${report.range.to}.xlsx`, buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), report }
+    return { fileName: `budu经营利润_${report.range.from}_${report.range.to}.xlsx`, buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), report }
   }
 
   async settings(user, { store, month }) {

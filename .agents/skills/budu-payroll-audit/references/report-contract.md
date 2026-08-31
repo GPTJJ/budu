@@ -5,7 +5,7 @@ Read this reference only when writing a formal persisted payroll audit.
 Use this header for a single employee. For multi-employee scope, put scope/count in the header and repeat Payroll Summary and Daily Reconciliation per employee.
 
 ```markdown
-# BUDU PAYROLL AUDIT REPORT
+# budu 薪酬审查报告
 
 Employee: ...
 Employee ID: ...

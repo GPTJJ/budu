@@ -507,7 +507,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       setPlatformCheckout(null)
       setStage('success')
     } catch (e) {
-      setError(e.status >= 500 ? '平台订单记录失败，未写入 BUDU，请重新确认。' : e.message)
+      setError(e.status >= 500 ? '平台订单记录失败，未写入 budu，请重新确认。' : e.message)
     } finally {
       setSubmitting(false)
     }
@@ -836,7 +836,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     const external = isExternalOrder(order)
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-emerald-50 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-        <div className="w-full max-w-lg rounded-[32px] bg-white p-6 text-center shadow-2xl sm:p-9"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">{external ? '订单已记录' : '支付成功'}</h2><p className="mt-2 text-sm text-slate-400">{external ? `${orderSourceLabel(order.orderSource)}订单已作为销售事实记录到 BUDU` : order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-4xl font-black text-emerald-600 sm:text-5xl">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between gap-4"><span className="text-slate-400">订单号</span><span className="truncate font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between gap-4"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p>{external ? <><p className="flex justify-between gap-4"><span className="text-slate-400">订单来源</span><span className="font-semibold text-slate-700">{orderSourceLabel(order.orderSource)}</span></p><p className="flex justify-between gap-4"><span className="text-slate-400">结算</span><span className="font-semibold text-slate-700">平台结算</span></p></> : <p className="flex justify-between gap-4"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p>}</div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={startNext} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">返回 POS</button></div>
+        <div className="w-full max-w-lg rounded-[32px] bg-white p-6 text-center shadow-2xl sm:p-9"><div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-emerald-100"><Check className="h-10 w-10 text-emerald-600" strokeWidth={3} /></div><h2 className="mt-5 text-3xl font-black text-slate-900">{external ? '订单已记录' : '支付成功'}</h2><p className="mt-2 text-sm text-slate-400">{external ? `${orderSourceLabel(order.orderSource)}订单已作为销售事实记录到 budu` : order.paymentMethod === 'cash' ? '现金已收款，订单已完成' : (mockMode ? '本次为模拟支付，订单已保存为 completed' : '支付已确认，订单已完成')}</p><p className="mt-6 text-4xl font-black text-emerald-600 sm:text-5xl">{formatCents(order.payableAmount)}</p><div className="mt-7 space-y-2 rounded-2xl bg-slate-50 p-5 text-left text-sm"><p className="flex justify-between gap-4"><span className="text-slate-400">订单号</span><span className="truncate font-semibold text-slate-700">{order.orderNo}</span></p><p className="flex justify-between gap-4"><span className="text-slate-400">门店</span><span className="font-semibold text-slate-700">{order.storeName}</span></p>{external ? <><p className="flex justify-between gap-4"><span className="text-slate-400">订单来源</span><span className="font-semibold text-slate-700">{orderSourceLabel(order.orderSource)}</span></p><p className="flex justify-between gap-4"><span className="text-slate-400">结算</span><span className="font-semibold text-slate-700">平台结算</span></p></> : <p className="flex justify-between gap-4"><span className="text-slate-400">支付方式</span><span className="font-semibold text-slate-700">{paymentLabels[order.paymentMethod] || order.paymentMethod}</span></p>}</div><button onClick={startNext} className="mt-7 w-full rounded-2xl bg-budu-500 py-4 text-base font-bold text-white shadow-lg shadow-budu-200">开始下一笔订单</button><button onClick={startNext} className="mt-3 px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-700">返回 POS</button></div>
       </div>
     )
   }
@@ -846,7 +846,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       <header className={`flex shrink-0 items-center gap-2 px-3 ${isDesktop ? 'h-14 bg-slate-900 text-white shadow-sm' : 'h-[60px] border-b border-slate-200 bg-white'}`}>
         <button onClick={confirmExit} className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${isDesktop ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-slate-100 text-slate-500'}`} aria-label="退出 POS"><X className="h-5 w-5" /></button>
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
-          <strong className={isDesktop ? 'text-white' : 'text-budu-600'}>BUDU POS</strong>
+          <strong className={isDesktop ? 'text-white' : 'text-budu-600'}>budu POS</strong>
           {isDesktop && <span className="rounded-md bg-budu-500/20 px-2 py-1 text-[10px] font-bold text-budu-200">点单</span>}
         </div>
         <label className="relative min-w-0 flex-1">
@@ -1026,7 +1026,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <div className="budu-overlay-scroll p-5">
               {!platformCheckout.source ? (
                 <>
-                  <p className="text-sm leading-6 text-slate-500">请选择顾客实际下单并付款的平台。BUDU 不会向平台发起收款。</p>
+                  <p className="text-sm leading-6 text-slate-500">请选择顾客实际下单并付款的平台。budu 不会向平台发起收款。</p>
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     {platformOrderOptions.map((option) => (
                       <button key={option.source} onClick={() => selectPlatformSource(option.source)} className="min-h-16 rounded-2xl border border-violet-200 bg-violet-50 px-3 text-sm font-black text-violet-700 transition hover:bg-violet-100 active:scale-[0.98]" aria-label={`记录${option.label}订单`}>{option.label}</button>
@@ -1041,7 +1041,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                     <p className="mt-2 text-xs text-slate-500">{cartCount} 件商品 · {cartDiscountAmount > 0n ? `已优惠 ${formatCents(cartDiscountAmount)}` : '无订单优惠'}</p>
                   </div>
                   <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-                    确认该订单已在{orderSourceLabel(platformCheckout.source)}完成付款，并记录到 BUDU？
+                    确认该订单已在{orderSourceLabel(platformCheckout.source)}完成付款，并记录到 budu？
                     <p className="mt-1 text-xs text-amber-700">此操作只记录销售事实，不调用微信、支付宝或任何平台支付接口。</p>
                   </div>
                   {error && <div className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
