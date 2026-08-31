@@ -20,11 +20,11 @@ Last reviewed: 2026-09-01
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `3c7f56c6cc77573e252023b59e2dcdfd1522678d` — VERIFIED on 2026-09-01; revalidate before use.
+- Runtime SHA: `2a23f0b0c7d2a8069302ee524103d4e5e4a27d73` — VERIFIED on 2026-09-01; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-09-01; revalidate before use.
 - Migration ledger: 62, failed migration count 0 — VERIFIED on 2026-09-01; revalidate before use.
 - Public/internal health and canonical-DB-connected runtime count: PASS / 1 — VERIFIED on 2026-09-01; revalidate before use.
-- Latest Production checkpoint: `docs/checkpoints/2026-09-01-system-settings-ui2-production.md`.
+- Latest Production checkpoint: `docs/checkpoints/2026-09-01-budu-brand-payroll-report.md`.
 
 ## Architecture Contracts
 
@@ -36,12 +36,13 @@ Last reviewed: 2026-09-01
 ## Current Engineering Work
 
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
+- `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
 - Payroll Audit Report 2.0 renders one canonical audit model into a management email summary, complete Markdown and portrait PDF. Monthly execution is active for the first day of each month (Asia/Shanghai), audits the preceding full calendar month, and reuses immutable artifacts for email-only retries. See `docs/checkpoints/2026-09-01-payroll-audit-report-2.md`.
-- System Settings UI 2.0 is live at runtime SHA `3c7f56c6cc77573e252023b59e2dcdfd1522678d`; it is an application-only release with no migration or business-authority change.
+- System Settings UI 2.0 remains live within runtime SHA `2a23f0b0c7d2a8069302ee524103d4e5e4a27d73`; the later brand/payroll report release is application-only with no migration or business-authority change.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
 - Report Center migrations 59–62 are deployed in the canonical production ledger. Future work must treat 62 as the current migration baseline and revalidate before assigning the next number.
-- Production rollback runtime `budu-prod-d46d1ae-notification-unread` and settings release rollback assets are retained. See `docs/checkpoints/2026-09-01-system-settings-ui2-production.md`.
+- Production rollback runtime `budu-prod-3c7f56c-settings-ui2` and protected brand-release rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-payroll-report.md`.
 
 ## Rollback Notes
 

@@ -73,6 +73,12 @@ Date: 2026-09-01
 ## Release and handoff
 
 - Candidate branch: `codex/budu-brand-payroll-report`.
-- Candidate SHA: pending final commit.
-- Production runtime after release: pending deployment verification.
-- Authoritative mainline after release: pending deployment acceptance.
+- Candidate and deployed runtime SHA: `2a23f0b0c7d2a8069302ee524103d4e5e4a27d73`.
+- Production container: `budu-prod-2a23f0b-brand-payroll`.
+- Production runtime after release: `2a23f0b0c7d2a8069302ee524103d4e5e4a27d73`; public/internal health PASS.
+- Database after release: `budu_bj006`; migration 62; failed migration 0; canonical writer count 1.
+- Production 390px and desktop WebKit checks: canonical logo visible, ratio 3.11246:1, no exact uppercase `BUDU`, and no horizontal overflow.
+- Post-deploy FINAL audit: PASS, 11 employees, `noDrift=true`; normalized business report digest matches the delivered pre-deploy report exactly.
+- Previous runtime `budu-prod-3c7f56c-settings-ui2` remains stopped and recoverable.
+- Protected nginx/runtime rollback evidence: `/opt/budu/.rollback-assets/brand-payroll-2a23f0b-20260831T192715Z`.
+- Authoritative mainline after release: pending documentation-only handoff commit.
