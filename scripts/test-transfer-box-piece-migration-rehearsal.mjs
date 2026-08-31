@@ -12,6 +12,11 @@ const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_
 const schemaName = `transfer_units_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
 const migrationName = '20260830090000_transfer_box_piece_units'
+const laterMigrations = new Set([
+  '20260830130000_transfer_actual_shipment',
+  '20260831190000_report_center_order_source_external_settlement',
+  '20260831193000_report_center_unified_refund_authority',
+])
 
 function migrate(schemaPath) {
   execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', schemaPath], { cwd: root, env: { ...process.env, DATABASE_URL: testUrl }, stdio: 'pipe', timeout: 180000 })
@@ -28,7 +33,7 @@ test('56→57 additive migration preserves historical transfer facts and default
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName || entry === 'migration_lock.toml') continue
+      if (entry === migrationName || laterMigrations.has(entry) || entry === 'migration_lock.toml') continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
     }
     fs.copyFileSync(path.join(root, 'prisma', 'migrations', 'migration_lock.toml'), path.join(temp, 'migrations', 'migration_lock.toml'))
@@ -40,13 +45,14 @@ test('56→57 additive migration preserves historical transfer facts and default
     const projection = `SELECT t.id, t."requestId", t."itemId", t.quantity, t."itemNameSnapshot", t."itemCodeSnapshot", t."categorySnapshot" FROM "TransferItem" t ORDER BY t.id`
     const before = crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex')
 
-    migrate(path.join(root, 'prisma', 'schema.prisma'))
+    fs.cpSync(path.join(root, 'prisma', 'migrations', migrationName), path.join(temp, 'migrations', migrationName), { recursive: true })
+    migrate(path.join(temp, 'schema.prisma'))
     const after = crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex')
     assert.equal(after, before)
-    const legacy = await client.transferItem.findUnique({ where: { id: 'legacy-item' } })
-    assert.deepEqual({ quantity: legacy.quantity, unit: legacy.quantityUnit, weight: legacy.unitWeightGramsSnapshot }, { quantity: 417, unit: 'legacy', weight: null })
-    const product = await client.inventoryItem.findUnique({ where: { id: 'legacy-product' } })
-    assert.deepEqual({ box: product.transferBoxEnabled, boxWeight: product.transferBoxWeightGrams, piece: product.transferPieceEnabled, pieceWeight: product.transferPieceWeightGrams }, { box: false, boxWeight: null, piece: false, pieceWeight: null })
+    const [legacy] = await client.$queryRawUnsafe(`SELECT quantity, "quantityUnit" AS unit, "unitWeightGramsSnapshot" AS weight FROM "TransferItem" WHERE id = 'legacy-item'`)
+    assert.deepEqual(legacy, { quantity: 417, unit: 'legacy', weight: null })
+    const [product] = await client.$queryRawUnsafe(`SELECT "transferBoxEnabled" AS box, "transferBoxWeightGrams" AS "boxWeight", "transferPieceEnabled" AS piece, "transferPieceWeightGrams" AS "pieceWeight" FROM "InventoryItem" WHERE id = 'legacy-product'`)
+    assert.deepEqual(product, { box: false, boxWeight: null, piece: false, pieceWeight: null })
     const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
     assert.equal(Number(migrations[0].count), 57)
   } finally {

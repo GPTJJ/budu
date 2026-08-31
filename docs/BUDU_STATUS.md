@@ -20,7 +20,7 @@ Last reviewed: 2026-08-31
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `87e3326dc6ad6c4402759faaa58409d70e484061` — VERIFIED on 2026-08-31; revalidate before use.
+- Runtime SHA: `4a25cd49d373c442543af5063928daf73715bb55` — VERIFIED on 2026-08-31; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-08-31; revalidate before use.
 - Migration ledger: 58, failed migration count 0 — VERIFIED on 2026-08-31; revalidate before use.
 - Public/internal health and canonical-DB-connected runtime count: PASS / 1 — VERIFIED on 2026-08-31; revalidate before use.
@@ -39,7 +39,10 @@ Last reviewed: 2026-08-31
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
 - Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
-- Report Center remains paused on its independent `codex/report-center-rc2b` branch. Do not merge it into purchase work or production without a new gate.
+- Report Center recovery is isolated on `codex/report-center-recovery`, based on authoritative
+  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A is recovered; the RC-2B WIP checkpoint is
+  preserved as PARTIAL. Recovery migrations are 59/60 and are not deployed. Do not start RC-2B or
+  merge this candidate into production without its next explicit reviewer gate.
 
 ## Rollback Notes
 

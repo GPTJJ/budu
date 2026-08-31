@@ -86,7 +86,7 @@ try {
     cookie, method: 'POST', body,
   }))
 
-  // Existing PAYMENT authority remains operational on migration 59.
+  // Existing PAYMENT authority remains operational on recovery migration 60.
   const posOrder = await json(await request(origin, '/api/v2/pos/orders', {
     cookie: developerCookie, method: 'POST',
     body: { storeId: 'store-a', checkoutKey: 'rc2b-payment-order', items: [{ productId: 'product-rc2b', quantity: 2 }], discountPercent: 100 },

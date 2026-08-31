@@ -11,8 +11,8 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_dev@localhost:5432/budu'
 const schemaName = `report_center_rc2b_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
-const migration58 = '20260830130000_report_center_order_source_external_settlement'
-const migration59 = '20260830170000_report_center_unified_refund_authority'
+const migration59 = '20260831190000_report_center_order_source_external_settlement'
+const migration60 = '20260831193000_report_center_unified_refund_authority'
 const sha = (rows) => crypto.createHash('sha256').update(JSON.stringify(rows, (_, value) => typeof value === 'bigint' ? value.toString() : value)).digest('hex')
 
 function migrate(schemaPath) {
@@ -24,7 +24,7 @@ function migrate(schemaPath) {
   })
 }
 
-test('RC-2B migration rehearsal preserves legacy facts across 57→58→59', async () => {
+test('RC-2B migration rehearsal preserves legacy facts across production 58 → RC-2A 59 → RC-2B 60', async () => {
   const { PrismaClient } = await import('@prisma/client')
   const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } })
   const client = new PrismaClient({ datasources: { db: { url: testUrl } } })
@@ -36,11 +36,11 @@ test('RC-2B migration rehearsal preserves legacy facts across 57→58→59', asy
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(tempMigrations)
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if ([migration58, migration59].includes(entry)) continue
+      if ([migration59, migration60].includes(entry)) continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(tempMigrations, entry), { recursive: true })
     }
     migrate(path.join(temp, 'schema.prisma'))
-    assert.equal(Number((await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].count), 57)
+    assert.equal(Number((await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].count), 58)
 
     await client.$executeRawUnsafe(`INSERT INTO "Store" ("key", "name") VALUES ('legacy-store', '历史门店')`)
     await client.$executeRawUnsafe(`
@@ -100,14 +100,14 @@ test('RC-2B migration rehearsal preserves legacy facts across 57→58→59', asy
     ) duplicate`)
     assert.equal(Number(duplicates[0].count), 0)
 
-    fs.cpSync(path.join(root, 'prisma', 'migrations', migration58), path.join(tempMigrations, migration58), { recursive: true })
-    migrate(path.join(temp, 'schema.prisma'))
-    assert.equal(Number((await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].count), 58)
-    assert.deepEqual(await digest(), before)
-
     fs.cpSync(path.join(root, 'prisma', 'migrations', migration59), path.join(tempMigrations, migration59), { recursive: true })
     migrate(path.join(temp, 'schema.prisma'))
     assert.equal(Number((await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].count), 59)
+    assert.deepEqual(await digest(), before)
+
+    fs.cpSync(path.join(root, 'prisma', 'migrations', migration60), path.join(tempMigrations, migration60), { recursive: true })
+    migrate(path.join(temp, 'schema.prisma'))
+    assert.equal(Number((await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].count), 60)
     assert.deepEqual(await digest(), before)
 
     const backfill = await client.$queryRawUnsafe(`

@@ -12,6 +12,10 @@ const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_
 const schemaName = `transfer_actual_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
 const migrationName = '20260830130000_transfer_actual_shipment'
+const laterMigrations = new Set([
+  '20260831190000_report_center_order_source_external_settlement',
+  '20260831193000_report_center_unified_refund_authority',
+])
 
 function migrate(schemaPath) {
   execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', schemaPath], {
@@ -33,7 +37,7 @@ test('57→58 additive migration preserves every requested transfer fact and lea
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName || entry === 'migration_lock.toml') continue
+      if (entry === migrationName || laterMigrations.has(entry) || entry === 'migration_lock.toml') continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
     }
     fs.copyFileSync(path.join(root, 'prisma', 'migrations', 'migration_lock.toml'), path.join(temp, 'migrations', 'migration_lock.toml'))
@@ -48,7 +52,8 @@ test('57→58 additive migration preserves every requested transfer fact and lea
     const beforeRows = await client.$queryRawUnsafe(projection)
     const before = crypto.createHash('sha256').update(JSON.stringify(beforeRows)).digest('hex')
 
-    migrate(path.join(root, 'prisma', 'schema.prisma'))
+    fs.cpSync(path.join(root, 'prisma', 'migrations', migrationName), path.join(temp, 'migrations', migrationName), { recursive: true })
+    migrate(path.join(temp, 'schema.prisma'))
 
     const afterRows = await client.$queryRawUnsafe(projection)
     const after = crypto.createHash('sha256').update(JSON.stringify(afterRows)).digest('hex')

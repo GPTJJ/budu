@@ -2,6 +2,13 @@
 
 Evidence status: VERIFIED unless explicitly stated otherwise.
 
+> Recovery note (2026-08-31): this document records the historical RC-2A gate. Its never-deployed
+> Migration 58 has been renumbered to Recovery Migration 59
+> (`20260831190000_report_center_order_source_external_settlement`) because Production Migration 58
+> is now `20260830130000_transfer_actual_shipment`. The historical rehearsal counts below remain
+> historical evidence; current recovery evidence lives in
+> `2026-08-31-report-center-recovery.md`.
+
 ## Scope and authority
 
 - Base: `codex/budu-authoritative-mainline` at `3c4b4baab7226764ec44d7c9769882368001981f`.
@@ -12,7 +19,7 @@ Evidence status: VERIFIED unless explicitly stated otherwise.
 
 ## Candidate contract
 
-- Migration 58 adds `OrderSource`, `EntryMode`, `SettlementAuthority`, nullable `sourceOrderRef`, and the one-to-one `ExternalSettlement` authority.
+- Historical Candidate Migration 58, now Recovery Migration 59, adds `OrderSource`, `EntryMode`, `SettlementAuthority`, nullable `sourceOrderRef`, and the one-to-one `ExternalSettlement` authority.
 - Existing orders backfill to `STORE_POS / POS_CHECKOUT / PAYMENT`, independent of row count.
 - `MEITUAN`, `TAOBAO_FLASH`, and `JD_INSTANT` map to `MANUAL_POS / EXTERNAL / PLATFORM`; `OTHER` maps to `MANUAL_POS / EXTERNAL / CUSTOM`.
 - Payment and ExternalSettlement are mutually exclusive at service and database boundaries. Settled orders require exactly one authority-matching, amount-matching proof.
@@ -34,7 +41,7 @@ Evidence status: VERIFIED unless explicitly stated otherwise.
 ## Verification
 
 - RC-2A external workflow: PASS (all four sources, confirm, idempotency, concurrency, BigInt, permissions, store scope, DB guards, provider call count zero, cash regression, UI non-exposure).
-- Migration 58 isolated suites: PASS.
+- The historical Migration 58 isolated suites passed; the renumbered Migration 59 is re-verified by the recovery gate.
 - Payment foundation: 20/20 PASS.
 - WeChat provider: 23/23 PASS.
 - WeChat reconciliation: 17/17 PASS.
@@ -46,5 +53,5 @@ Evidence status: VERIFIED unless explicitly stated otherwise.
 ## Rollback and remaining boundary
 
 - Before any future production application, take a new protected `budu_bj006` backup and repeat current-state reconciliation.
-- Pre-deployment rollback is branch abandonment. If Migration 58 is ever applied but no ExternalSettlement business rows exist, rollback is the reviewed reverse DDL for the new triggers/functions/table/indexes/columns/enums plus restore-on-mismatch. Once external facts exist, schema rollback is forbidden; roll forward or restore the protected pre-migration database.
+- Pre-deployment rollback is branch abandonment. If Recovery Migration 59 is ever applied but no ExternalSettlement business rows exist, rollback is the reviewed reverse DDL for the new triggers/functions/table/indexes/columns/enums plus restore-on-mismatch. Once external facts exist, schema rollback is forbidden; roll forward or restore the protected pre-migration database.
 - Unified Refund / Manual External Refund is the next required gate before platform POS UI can be enabled. Dashboard and operating-profit work have not started.

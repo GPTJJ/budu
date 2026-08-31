@@ -11,7 +11,8 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_dev@localhost:5432/budu'
 const schemaName = `report_center_rc2a_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
-const migrationName = '20260830130000_report_center_order_source_external_settlement'
+const migration59 = '20260831190000_report_center_order_source_external_settlement'
+const migration60 = '20260831193000_report_center_unified_refund_authority'
 
 function migrate(schemaPath) {
   execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', schemaPath], {
@@ -24,7 +25,7 @@ function migrate(schemaPath) {
 
 const sha = (rows) => crypto.createHash('sha256').update(JSON.stringify(rows, (_, value) => typeof value === 'bigint' ? value.toString() : value)).digest('hex')
 
-test('RC-2A migration 57→58 backfills all live-count-independent legacy orders without rewriting financial facts', async () => {
+test('RC-2A migration 58→59 backfills all live-count-independent legacy orders without rewriting financial facts', async () => {
   const { PrismaClient } = await import('@prisma/client')
   const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } })
   const client = new PrismaClient({ datasources: { db: { url: testUrl } } })
@@ -35,12 +36,12 @@ test('RC-2A migration 57→58 backfills all live-count-independent legacy orders
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
+      if ([migration59, migration60].includes(entry)) continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
     }
     migrate(path.join(temp, 'schema.prisma'))
     const beforeLedger = await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL')
-    assert.equal(Number(beforeLedger[0].count), 57)
+    assert.equal(Number(beforeLedger[0].count), 58)
 
     await client.$executeRawUnsafe(`INSERT INTO "Store" ("key", "name") VALUES ('legacy-store', '历史门店')`)
     await client.$executeRawUnsafe(`
@@ -108,9 +109,10 @@ test('RC-2A migration 57→58 backfills all live-count-independent legacy orders
       refundItems: sha(await client.$queryRawUnsafe('SELECT * FROM "refund_items" ORDER BY "id"')),
     }
 
-    migrate(path.join(root, 'prisma', 'schema.prisma'))
+    fs.cpSync(path.join(root, 'prisma', 'migrations', migration59), path.join(temp, 'migrations', migration59), { recursive: true })
+    migrate(path.join(temp, 'schema.prisma'))
     const afterLedger = await client.$queryRawUnsafe('SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL')
-    assert.equal(Number(afterLedger[0].count), 58)
+    assert.equal(Number(afterLedger[0].count), 59)
     const dimensions = await client.$queryRawUnsafe(`
       SELECT "id", "order_source", "entry_mode", "settlement_authority", "source_order_ref"
       FROM "orders" ORDER BY "id"
@@ -139,7 +141,7 @@ test('RC-2A migration 57→58 backfills all live-count-independent legacy orders
           OR (table_name = 'TransferItem' AND column_name IN ('quantityUnit','unitWeightGramsSnapshot')))
       ORDER BY table_name, column_name
     `, schemaName)
-    assert.equal(transferColumns.length, 6, 'Migration 57 transfer columns must remain intact')
+    assert.equal(transferColumns.length, 6, 'Production Transfer migration 58 columns must remain intact')
   } finally {
     await client.$disconnect()
     await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)
