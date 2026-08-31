@@ -20,12 +20,13 @@ Last reviewed: 2026-08-31
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `4a25cd49d373c442543af5063928daf73715bb55` — VERIFIED on 2026-08-31; revalidate before use.
+- Runtime SHA: `0cd28684e6da8327ca37bd13d3b9ee05236bccaa` — VERIFIED on 2026-08-31; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-08-31; revalidate before use.
-- Migration ledger: 58, failed migration count 0 — VERIFIED on 2026-08-31; revalidate before use.
+- Migration ledger: 62, failed migration count 0 — VERIFIED on 2026-08-31; revalidate before use.
 - Public/internal health and canonical-DB-connected runtime count: PASS / 1 — VERIFIED on 2026-08-31; revalidate before use.
+- Authoritative mainline: `codex/budu-authoritative-mainline` at the exact Production SHA above, ahead/behind `0/0` — VERIFIED on 2026-08-31.
 - Purchase receiving/UI release is physically live, but its acceptance gate is **AUTHORITY CONFLICT / HOLD** because three real production receive requests occurred after cutover without confirmation in the deployment conversation. Do not alter or reverse those inventory facts without a separate authorized correction gate.
-- Latest Production checkpoint: `docs/checkpoints/2026-08-30-purchase-receiving-ui-production-handoff.md`.
+- Latest Production checkpoint: `docs/checkpoints/2026-08-31-report-center-v1-production.md`.
 
 ## Architecture Contracts
 
@@ -39,15 +40,12 @@ Last reviewed: 2026-08-31
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
 - Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
-- Report Center V1 final candidate is isolated on `codex/report-center-rc6b-final-candidate`, based on RC-6A
-  SHA `768a9df8c304d0fd8a8bd610ffbcc9cc2b2bab58` and authoritative
-  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A through RC-6B candidate gates are PASS;
-  migrations 59–62 remain undeployed. The single operating-profit authority projects EXACT, ESTIMATED and
-  INCOMPLETE states across Profit UI, Dashboard and complete Excel export; Manual stores never receive guessed
-  COGS/profit, comparisons are exact/same-coverage only, and legacy Finance math is excluded. Final isolated
-  migration, historical reconciliation and cross-domain regression are PASS. Do not merge or deploy without an
-  explicit reviewer/Production Deployment Gate. Checkpoint:
-  `docs/checkpoints/2026-08-31-report-center-v1-final-candidate.md`.
+- Report Center V1 is Production LIVE at `0cd28684e6da8327ca37bd13d3b9ee05236bccaa`; migrations 59–62 are applied.
+  Dashboard, comprehensive sales, real Order/OrderItem reports, coverage-aware projections and the unified operating-profit
+  authority are live. Manual stores never receive guessed Order, item, COGS or profit facts; current Production cost configuration
+  remains incomplete and is displayed as such. Sensitive report, cost, labor, external-order and manual-external-refund capabilities
+  remain restricted to the existing minimal developer/admin boundary. Production checkpoint:
+  `docs/checkpoints/2026-08-31-report-center-v1-production.md`.
 
 ## Rollback Notes
 
