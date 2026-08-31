@@ -340,6 +340,34 @@ test('微信退款先 pending，查询 SUCCESS 后才更新订单状态', async 
   assert.equal(calls[1].type, 'query')
 })
 
+test('微信部分退款查询完成后只推进为 partially_refunded', async () => {
+  const db = refundDb()
+  db.payments[0].provider = 'wechat_pay'
+  const wechat = {
+    async refundPayment() {
+      return { status: 'pending', providerRefundNo: 'WXRF-PARTIAL' }
+    },
+    async queryRefund() {
+      return { status: 'completed', providerRefundNo: 'WXRF-PARTIAL' }
+    },
+  }
+  const service = new PaymentService(db, new Map([['wechat_pay', wechat]]))
+  const requested = await service.createRefund({
+    orderId: 'refund-order',
+    requestKey: 'refund-wechat-partial-1',
+    items: [{ orderItemId: 'oi-1', quantity: 1 }],
+    operator: 'tester',
+  })
+  assert.equal(requested.refund.status, 'pending')
+  assert.equal(db.orders[0].status, 'completed')
+  const completed = await service.reconcileRefund(requested.refund.id)
+  assert.equal(completed.refund.refundAmount, 7_200n)
+  assert.equal(completed.refund.status, 'completed')
+  assert.equal(db.orders[0].status, 'partially_refunded')
+  assert.equal(db.orders[0].paymentStatus, 'partially_refunded')
+  assert.equal(db.payments[0].status, 'partially_refunded')
+})
+
 test('同一真实微信订单的多次退款强制间隔一分钟', async () => {
   const db = refundDb()
   db.payments[0].provider = 'wechat_pay'

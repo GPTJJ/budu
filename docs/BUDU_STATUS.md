@@ -39,10 +39,11 @@ Last reviewed: 2026-08-31
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
 - Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
-- Report Center recovery is isolated on `codex/report-center-recovery`, based on authoritative
-  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A is recovered; the RC-2B WIP checkpoint is
-  preserved as PARTIAL. Recovery migrations are 59/60 and are not deployed. Do not start RC-2B or
-  merge this candidate into production without its next explicit reviewer gate.
+- Report Center RC-2B candidate is isolated on `codex/report-center-rc2b-candidate`, based on Recovery
+  SHA `62632729df2214005ca4853cc9d5a620f1ab2688` and authoritative
+  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A and RC-2B candidate gates are PASS;
+  migrations 59/60 remain undeployed. Do not start RC-2C or merge/deploy this candidate without an
+  explicit reviewer gate. Checkpoint: `docs/checkpoints/2026-08-31-report-center-rc2b-candidate.md`.
 
 ## Rollback Notes
 

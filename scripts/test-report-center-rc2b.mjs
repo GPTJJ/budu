@@ -49,6 +49,9 @@ try {
   })
   await createUser('staff-none', 'staff-none', ['store-a'], {})
   await createUser('staff-record-only', 'staff-record-only', ['store-a'], { manualExternalRefundRecord: true })
+  await createUser('staff-both', 'staff-both', ['store-a'], {
+    manualExternalRefundRecord: true, manualExternalRefundConfirm: true,
+  })
   await createUser('staff-other-store', 'staff-other-store', ['store-b'], {
     manualExternalRefundRecord: true, manualExternalRefundConfirm: true,
   })
@@ -59,6 +62,7 @@ try {
   }
   const noCapCookie = await login('staff-none')
   const oneCapCookie = await login('staff-record-only')
+  const bothCapCookie = await login('staff-both')
   const otherStoreCookie = await login('staff-other-store')
 
   const createExternal = async (source, key, quantity = 1, businessDate = '2026-08-20') => {
@@ -121,7 +125,13 @@ try {
   const meituan = await createExternal('MEITUAN', 'rc2b-meituan-order', 2)
   const meituanItem = meituan.order.items[0]
   const inventoryBefore = await prisma.inventoryItem.findUnique({ where: { id: 'product-rc2b' } })
-  const stockBefore = await prisma.stockBalance.count()
+  const stockBalanceBefore = await prisma.stockBalance.findMany({ orderBy: { id: 'asc' } })
+  const stockLedgerBefore = await prisma.stockLedger.findMany({ orderBy: { id: 'asc' } })
+  const cogsSnapshotsBefore = await prisma.orderItem.findMany({
+    where: { orderId: meituan.order.id },
+    orderBy: { id: 'asc' },
+    select: { id: true, costPriceSnapshot: true },
+  })
   const partial = await manualRefund(meituan.order.id, refundBody('rc2b-meituan-partial', meituanItem.id, 1, 10_000, {
     externalRefundReference: 'MT-RF-1',
   }))
@@ -152,6 +162,10 @@ try {
   assert.equal(full.body.order.externalSettlement.status, 'REFUNDED')
   assert.equal(full.body.order.businessDate, meituan.order.businessDate)
   assert.equal(new Date(full.body.refund.externalCompletedAt).toISOString(), '2026-08-25T03:04:05.000Z')
+  const manualQuery = await json(await request(origin, `/api/v2/pos/refunds/${full.body.refund.id}/query`, {
+    cookie: developerCookie, method: 'POST', body: {},
+  }))
+  assert.equal(manualQuery.status, 409)
 
   for (const source of ['TAOBAO_FLASH', 'JD_INSTANT', 'OTHER']) {
     const external = await createExternal(source, `rc2b-${source.toLowerCase()}-order`)
@@ -169,6 +183,15 @@ try {
   assert.equal((await manualRefund(permissionOrder.order.id, permissionBody, noCapCookie)).status, 403)
   assert.equal((await manualRefund(permissionOrder.order.id, permissionBody, oneCapCookie)).status, 403)
   assert.equal((await manualRefund(permissionOrder.order.id, permissionBody, otherStoreCookie)).status, 403)
+
+  const bothCapOrder = await createExternal('OTHER', 'rc2b-both-cap-order')
+  const bothCapResult = await manualRefund(
+    bothCapOrder.order.id,
+    refundBody('rc2b-both-cap-refund', bothCapOrder.order.items[0].id, 1, 10_000),
+    bothCapCookie,
+  )
+  assert.equal(bothCapResult.status, 201)
+  assert.equal(bothCapResult.body.order.externalSettlement.status, 'REFUNDED')
 
   for (const controlled of ['status', 'refundMode', 'paymentId', 'externalSettlementId', 'completedAt', 'providerRefundNo']) {
     const result = await manualRefund(permissionOrder.order.id, refundBody(`rc2b-controlled-${controlled}`, permissionOrder.order.items[0].id, 1, 10_000, {
@@ -231,9 +254,15 @@ try {
   const inventoryAfter = await prisma.inventoryItem.findUnique({ where: { id: 'product-rc2b' } })
   assert.equal(inventoryAfter.costPriceCents, inventoryBefore.costPriceCents)
   assert.equal(inventoryAfter.salePriceCents, inventoryBefore.salePriceCents)
-  assert.equal(await prisma.stockBalance.count(), stockBefore)
-  const cogsSnapshots = await prisma.orderItem.findMany({ where: { orderId: meituan.order.id }, select: { costPriceSnapshot: true } })
-  assert.equal(cogsSnapshots.every((row) => row.costPriceSnapshot === 4_321n), true)
+  assert.deepEqual(await prisma.stockBalance.findMany({ orderBy: { id: 'asc' } }), stockBalanceBefore)
+  assert.deepEqual(await prisma.stockLedger.findMany({ orderBy: { id: 'asc' } }), stockLedgerBefore)
+  const cogsSnapshotsAfter = await prisma.orderItem.findMany({
+    where: { orderId: meituan.order.id },
+    orderBy: { id: 'asc' },
+    select: { id: true, costPriceSnapshot: true },
+  })
+  assert.deepEqual(cogsSnapshotsAfter, cogsSnapshotsBefore)
+  assert.equal(cogsSnapshotsAfter.every((row) => row.costPriceSnapshot === 4_321n), true)
   assert.equal(await prisma.refund.count({ where: { refundMode: 'MANUAL_EXTERNAL', status: { not: 'completed' } } }), 0)
   assert.equal(await prisma.refund.count({ where: { refundMode: 'MANUAL_EXTERNAL', paymentId: { not: null } } }), 0)
 
