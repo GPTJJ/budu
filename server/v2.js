@@ -604,9 +604,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const composite = { storeKey, date: d }
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: composite } })
-  if (existing?.status === 'confirmed' && !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) {
-    throw bad('日报已确认，当前账号无历史修正权限', 409)
-  }
+  if (existing?.status === 'confirmed') throw bad('日报已确认，请通过受控历史修正流程处理', 409)
   if (existing && (version == null || existing.version !== Number(version))) {
     return res.status(409).json({
       error: '数据已被他人修改，已加载最新数据',

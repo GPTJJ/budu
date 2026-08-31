@@ -291,7 +291,158 @@ try {
   const crossStoreLedger = await request(base, '/v2/daily-entry/ledger?month=2026-09&store=xidan&status=all', { cookie: staffCookie })
   assert.equal(crossStoreLedger.status, 403)
 
-  console.log('DAILY ENTRY V2 GATE B-D API TEST OK')
+  // Gate E read-only completeness projection returns explicit authority codes.
+  const completenessCode = async (day, cookie = devCookie, store = 'tongying') => {
+    const response = await request(base, `/v2/daily-entry/completeness?store=${store}&date=${day}`, { cookie })
+    if (response.status !== 200) return { status: response.status, body: await response.json() }
+    return (await response.json()).completeness
+  }
+  assert.equal((await completenessCode('2026-09-01')).code, 'COMPLETE')
+  assert.equal((await completenessCode('2026-09-15')).code, 'MISSING_DAILY_ENTRY')
+  assert.equal((await completenessCode('2026-09-12')).code, 'DRAFT_ENTRY')
+  assert.equal((await completenessCode('2026-09-13')).code, 'UNRESOLVED_EMPLOYEE')
+  assert.equal((await completenessCode('2026-09-01', staffCookie, 'xidan')).status, 403)
+
+  // Confirmed revisions are one atomic, versioned and reasoned authority command.
+  const beforeRevision = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey: 'tongying', date: date('2026-09-01') } } })
+  const beforeRevisionStaff = await prisma.dailyStoreStaff.findMany({ where: { storeId: 'tongying', date: date('2026-09-01') }, orderBy: { employeeId: 'asc' } })
+  const revisionPayload = {
+    storeKey: 'tongying', date: '2026-09-01', version: beforeRevision.version,
+    manualSales: { incCents: 129000, ord: 18 },
+    items: [staffItem('emp-gb-a', 8), staffItem('emp-gb-b', 7)],
+    reason: 'Gate E verified historical correction',
+  }
+  const noReasonRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: { ...revisionPayload, reason: '' },
+  })
+  assert.equal(noReasonRevision.status, 400)
+  const unauthorizedRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: staffCookie, method: 'POST', body: revisionPayload,
+  })
+  assert.equal(unauthorizedRevision.status, 403)
+  assert.equal((await prisma.dailyEntry.findUnique({ where: { id: beforeRevision.id } })).version, beforeRevision.version)
+
+  const authorizedRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: revisionPayload,
+  })
+  if (authorizedRevision.status !== 200) assert.fail(`authorized revision failed: ${authorizedRevision.status} ${await authorizedRevision.text()}`)
+  const authorizedRevisionJson = await authorizedRevision.json()
+  assert.equal(authorizedRevisionJson.entry.status, 'confirmed')
+  assert.equal(authorizedRevisionJson.entry.version, beforeRevision.version + 1)
+  assert.equal(authorizedRevisionJson.entry.incCents, '129000')
+  assert.equal(authorizedRevisionJson.entry.confirmedAt, beforeRevision.confirmedAt.toISOString())
+  assert.equal(authorizedRevisionJson.entry.confirmedBy, beforeRevision.confirmedBy)
+  assert.equal(authorizedRevisionJson.staff.find((row) => row.employeeId === 'emp-gb-b').actualHours, 7)
+  const revisionAudit = await prisma.dailyEntryAuditLog.findFirst({
+    where: { storeId: 'tongying', date: date('2026-09-01'), module: 'daily_revision', reason: revisionPayload.reason },
+    orderBy: { createdAt: 'desc' },
+  })
+  assert.equal(revisionAudit.reason, revisionPayload.reason)
+  assert.equal(revisionAudit.operatorName, 'gate-b-dev')
+  assert.equal(revisionAudit.beforeValue.entry.incCents, '128800')
+  assert.equal(revisionAudit.afterValue.entry.incCents, '129000')
+  assert.equal(revisionAudit.beforeValue.participants.find((row) => row.employeeId === 'emp-gb-b').actualHours, 6.5)
+  assert.equal(revisionAudit.afterValue.participants.find((row) => row.employeeId === 'emp-gb-b').actualHours, 7)
+
+  const revisionAuditCount = await prisma.dailyEntryAuditLog.count({ where: { storeId: 'tongying', date: date('2026-09-01'), module: 'daily_revision' } })
+  const staleRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: revisionPayload,
+  })
+  assert.equal(staleRevision.status, 409)
+  const noOpRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: { ...revisionPayload, version: beforeRevision.version + 1 },
+  })
+  assert.equal(noOpRevision.status, 409)
+  assert.equal(await prisma.dailyEntryAuditLog.count({ where: { storeId: 'tongying', date: date('2026-09-01'), module: 'daily_revision' } }), revisionAuditCount)
+
+  const concurrentRevisionVersion = beforeRevision.version + 1
+  const concurrentRevisions = await Promise.all([
+    request(base, '/v2/daily-entry/revise', {
+      cookie: devCookie, method: 'POST', body: {
+        ...revisionPayload, version: concurrentRevisionVersion, manualSales: { incCents: 129100, ord: 18 },
+        items: [staffItem('emp-gb-a', 8), staffItem('emp-gb-b', 7.25)], reason: 'Concurrent revision A',
+      },
+    }),
+    request(base, '/v2/daily-entry/revise', {
+      cookie: devCookie, method: 'POST', body: {
+        ...revisionPayload, version: concurrentRevisionVersion, manualSales: { incCents: 129200, ord: 18 },
+        items: [staffItem('emp-gb-a', 8), staffItem('emp-gb-b', 7.5)], reason: 'Concurrent revision B',
+      },
+    }),
+  ])
+  assert.deepEqual(concurrentRevisions.map((response) => response.status).sort(), [200, 409])
+  assert.equal((await prisma.dailyEntry.findUnique({ where: { id: beforeRevision.id } })).version, concurrentRevisionVersion + 1)
+
+  // A final revision-audit failure rolls back entry and staff changes together.
+  const failureSeed = await request(base, '/v2/daily-entry/confirm', {
+    cookie: devCookie, method: 'POST', body: manualConfirm('2026-09-16', 0, [staffItem('emp-gb-a', 8)], 160000, 16),
+  })
+  assert.equal(failureSeed.status, 200)
+  await prisma.$executeRawUnsafe(`CREATE FUNCTION "${schema}".gate_e_fail_revision_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW."date" = DATE '2026-09-16' AND NEW."module" = 'daily_revision' THEN RAISE EXCEPTION 'gate e private revision audit failure'; END IF;
+      RETURN NEW;
+    END $$`)
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER gate_e_fail_revision_audit BEFORE INSERT ON "${schema}"."daily_entry_audit_logs" FOR EACH ROW EXECUTE FUNCTION "${schema}".gate_e_fail_revision_audit()`)
+  const failureBefore = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey: 'tongying', date: date('2026-09-16') } } })
+  const failureStaffBefore = await prisma.dailyStoreStaff.findFirst({ where: { storeId: 'tongying', date: date('2026-09-16'), employeeId: 'emp-gb-a' } })
+  const revisionFailure = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: {
+      storeKey: 'tongying', date: '2026-09-16', version: failureBefore.version,
+      manualSales: { incCents: 161000, ord: 16 }, items: [staffItem('emp-gb-a', 7)], reason: 'Audit rollback fixture',
+    },
+  })
+  assert.equal(revisionFailure.status, 500)
+  assert.doesNotMatch((await revisionFailure.json()).error, /Prisma|SQL|gate e private|\/work\//)
+  const failureAfter = await prisma.dailyEntry.findUnique({ where: { id: failureBefore.id } })
+  const failureStaffAfter = await prisma.dailyStoreStaff.findUnique({ where: { id: failureStaffBefore.id } })
+  assert.equal(failureAfter.incCents, failureBefore.incCents)
+  assert.equal(failureAfter.version, failureBefore.version)
+  assert.equal(failureStaffAfter.actualHours, failureStaffBefore.actualHours)
+  assert.equal(await prisma.dailyEntryAuditLog.count({ where: { storeId: 'tongying', date: date('2026-09-16'), module: 'daily_revision' } }), 0)
+  await prisma.$executeRawUnsafe(`DROP TRIGGER gate_e_fail_revision_audit ON "${schema}"."daily_entry_audit_logs"`)
+  await prisma.$executeRawUnsafe(`DROP FUNCTION "${schema}".gate_e_fail_revision_audit()`)
+
+  // Legacy write/unconfirm routes cannot bypass the formal confirmed revision command.
+  const legacyStaffOverwrite = await request(base, '/v2/daily-staff', {
+    cookie: devCookie, method: 'PUT', body: { storeKey: 'tongying', date: '2026-09-01', items: [staffItem('emp-gb-a', 1)], reason: 'legacy bypass' },
+  })
+  assert.equal(legacyStaffOverwrite.status, 409)
+  const legacySalesOverwrite = await request(base, '/v2/daily-entries', {
+    cookie: devCookie, method: 'PUT', body: { storeKey: 'tongying', date: '2026-09-01', incCents: 1, ord: 1, staffNames: [], version: beforeRevision.version + 1 },
+  })
+  assert.equal(legacySalesOverwrite.status, 409)
+  const authorizedUnconfirm = await request(base, '/v2/daily-entry/unconfirm', {
+    cookie: devCookie, method: 'POST', body: { storeKey: 'tongying', date: '2026-09-01', reason: 'legacy bypass' },
+  })
+  assert.equal(authorizedUnconfirm.status, 409)
+
+  // Historical legacy payroll facts are fail-closed and unchanged by revision attempts.
+  const legacyBefore = await prisma.dailyStoreStaff.findUnique({ where: { id: 'dss-gd-legacy' } })
+  const legacyRevision = await request(base, '/v2/daily-entry/revise', {
+    cookie: devCookie, method: 'POST', body: {
+      storeKey: 'tongying', date: '2026-09-13', version: 3,
+      manualSales: { incCents: 44400, ord: 4 }, items: [staffItem('emp-gb-a', 7)], reason: 'attempt legacy overwrite',
+    },
+  })
+  assert.equal(legacyRevision.status, 409)
+  const legacyAfter = await prisma.dailyStoreStaff.findUnique({ where: { id: 'dss-gd-legacy' } })
+  assert.deepEqual({
+    participantType: legacyAfter.participantType,
+    staffId: legacyAfter.staffId,
+    actualHours: legacyAfter.actualHours,
+    historicalPayrollHours: legacyAfter.historicalPayrollHours,
+    payableHoursSource: legacyAfter.payableHoursSource,
+  }, {
+    participantType: legacyBefore.participantType,
+    staffId: legacyBefore.staffId,
+    actualHours: legacyBefore.actualHours,
+    historicalPayrollHours: legacyBefore.historicalPayrollHours,
+    payableHoursSource: legacyBefore.payableHoursSource,
+  })
+  assert.equal((await prisma.dailyStoreStaff.findMany({ where: { storeId: 'tongying', date: date('2026-09-01') }, orderBy: { employeeId: 'asc' } })).length, beforeRevisionStaff.length)
+
+  console.log('DAILY ENTRY V2 GATE B-E API TEST OK')
 } finally {
   await new Promise((resolve) => server.close(resolve))
   await prisma.$disconnect().catch(() => {})

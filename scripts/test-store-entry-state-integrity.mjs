@@ -445,6 +445,38 @@ test('confirmed historical facts are read-only in ordinary daily entry', async (
   }
 })
 
+test('authorized confirmed revision requires reason and submits one audited command', async () => {
+  const page = await openHarness()
+  try {
+    await page.getByTestId('daily-entry-start-revision').click()
+    await page.getByTestId('daily-entry-revision-panel').waitFor()
+    const revenue = page.locator('input[type=number]').nth(0)
+    const actualHours = page.getByTestId('daily-entry-hours-employee:emp-chen')
+    assert.equal(await revenue.isEnabled(), true)
+    assert.equal(await actualHours.isEnabled(), true)
+    await revenue.fill('12346.00')
+    await actualHours.fill('11.5')
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
+    await page.getByTestId('daily-entry-submit-revision').click()
+    await page.getByText(/请填写至少 2 个字符/).waitFor()
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
+    await page.getByTestId('daily-entry-revision-reason').fill('核对闭店记录后修正实际工时')
+    await page.evaluate(() => window.__releaseSharedRefresh())
+    await page.getByTestId('daily-entry-submit-revision').click()
+    await page.getByText('修正已保存', { exact: true }).waitFor()
+    const writes = await page.evaluate(() => window.__writes)
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0].path, '/api/v2/daily-entry/revise')
+    assert.equal(writes[0].body.version, 7)
+    assert.equal(writes[0].body.reason, '核对闭店记录后修正实际工时')
+    assert.equal(writes[0].body.manualSales.incCents, 1234600)
+    assert.equal(writes[0].body.items[0].employeeId, 'emp-chen')
+    assert.equal(writes[0].body.items[0].actualHours, '11.5')
+  } finally {
+    await page.close()
+  }
+})
+
 test('Daily Fact Ledger renders saved manual/POS facts, completeness and real revision audit', async () => {
   const page = await openLedgerHarness()
   try {
@@ -453,7 +485,7 @@ test('Daily Fact Ledger renders saved manual/POS facts, completeness and real re
     await page.getByText('来源：BUDU POS', { exact: true }).waitFor()
     await page.getByText('已修正', { exact: true }).waitFor()
     assert.equal(await page.getByText('已修正', { exact: true }).count(), 1, 'only a real post-confirm audit may derive revised')
-    assert.ok(await page.getByText('待完善', { exact: true }).count() >= 2)
+    assert.ok(await page.getByText('工资数据：待完善', { exact: true }).count() >= 2)
     await page.getByTestId('ledger-card-2026-08-27').getByRole('button', { name: '查看详情' }).click()
     const detail = page.getByTestId('daily-ledger-detail')
     await detail.waitFor()
@@ -464,6 +496,7 @@ test('Daily Fact Ledger renders saved manual/POS facts, completeness and real re
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
 
     await page.getByTestId('ledger-status-filter').selectOption('draft')
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid^="ledger-card-"]').length === 1)
     await page.getByTestId('ledger-card-2026-08-26').waitFor()
     assert.equal(await page.locator('[data-testid^="ledger-card-"]').count(), 1)
     await page.getByTestId('ledger-card-2026-08-26').getByRole('button', { name: '查看详情' }).click()

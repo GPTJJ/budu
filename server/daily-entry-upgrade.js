@@ -220,6 +220,25 @@ function serializeStaff(row) {
   }
 }
 
+function dailyStaffFactSnapshot(row) {
+  return {
+    employeeId: row?.employeeId || '',
+    participantUserId: row?.participantUserId || '',
+    participantType: row?.participantType || '',
+    actualStartTime: row?.actualStartTime || '',
+    actualEndTime: row?.actualEndTime || '',
+    breakMinutes: Number(row?.breakMinutes || 0),
+    actualHours: row?.actualHours === null || row?.actualHours === undefined ? null : Number(row.actualHours),
+    historicalPayrollHours: row?.historicalPayrollHours === null || row?.historicalPayrollHours === undefined ? null : Number(row.historicalPayrollHours),
+    payableHoursSource: row?.payableHoursSource || PAYABLE_HOURS_SOURCES.ACTUAL_HOURS,
+    attendanceStatus: row?.attendanceStatus || 'normal',
+  }
+}
+
+function dailyStaffFactsEqual(left, right) {
+  return JSON.stringify(dailyStaffFactSnapshot(left)) === JSON.stringify(dailyStaffFactSnapshot(right))
+}
+
 /**
  * Schedule is only a draft prefill authority. Stable Employee.id is required;
  * staff snapshots are never used to resolve or guess an employee.
@@ -413,11 +432,38 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
   })
 }))
 
+dailyEntryUpgradeRouter.get('/daily-entry/completeness', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const storeKey = String(req.query.store || '').trim()
+  const dateStr = String(req.query.date || '').trim()
+  if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
+  const d = dateOnly(dateStr)
+  const [entry, staffRows] = await Promise.all([
+    prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } }),
+    prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } }),
+  ])
+  const employeeIds = [...new Set(staffRows.map((row) => row.employeeId).filter(Boolean))]
+  const employees = employeeIds.length > 0
+    ? await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true } })
+    : []
+  res.json({
+    ok: true,
+    storeKey,
+    date: dateStr,
+    completeness: resolveDailyEntryCompleteness({
+      entry,
+      staffRows,
+      knownEmployeeIds: new Set(employees.map((employee) => employee.id)),
+    }),
+  })
+}))
+
 function isConfirmedRevisionAudit(entry, audit) {
   if (!entry?.confirmedAt || !audit?.createdAt || new Date(audit.createdAt) <= new Date(entry.confirmedAt)) return false
   if (audit.module === 'daily_confirmation') return false
-  if (audit.module === 'daily_status' && audit.afterValue?.status === 'confirmed') return false
-  return ['daily_revision', 'daily_staff', 'sales_manual', 'daily_status'].includes(audit.module)
+  if (!String(audit.reason || '').trim() || audit.beforeValue === undefined || audit.afterValue === undefined) return false
+  return ['daily_revision', 'daily_staff', 'sales_manual', 'sales_hybrid_adjustment'].includes(audit.module)
 }
 
 dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
@@ -823,8 +869,11 @@ async function replaceDailyStaff(tx, {
       updatedBy: actor.username,
       updatedAt: new Date(),
     }
+    const intended = { ...data, staffNameSnapshot: data.staffNameSnapshot }
     const saved = before
-      ? await tx.dailyStoreStaff.update({ where: { id: before.id }, data })
+      ? (dailyStaffFactsEqual(before, intended)
+          ? before
+          : await tx.dailyStoreStaff.update({ where: { id: before.id }, data }))
       : await tx.dailyStoreStaff.create({ data: {
         id: `dss-${crypto.randomUUID()}`,
         storeId: storeKey,
@@ -835,7 +884,7 @@ async function replaceDailyStaff(tx, {
       } })
     kept.add(saved.id)
     results.push(saved)
-    if (!before || JSON.stringify(serializeStaff(before)) !== JSON.stringify(serializeStaff(saved))) {
+    if (!before || !dailyStaffFactsEqual(before, saved)) {
       await auditWriter(tx, {
         storeId: storeKey, date: dateStr, module: 'daily_staff', fieldName: 'staff_record',
         beforeValue: before ? serializeStaff(before) : null,
@@ -851,7 +900,7 @@ async function replaceDailyStaff(tx, {
   for (const row of removed) {
     await auditWriter(tx, {
       storeId: storeKey, date: dateStr, module: 'daily_staff', fieldName: 'staff_record',
-      beforeValue: serializeStaff(row), afterValue: null, reason: '原子确认移除值班人员',
+      beforeValue: serializeStaff(row), afterValue: null, reason,
       operatorId: actor.id, operatorName: actor.username,
     })
     await tx.dailyStoreStaff.delete({ where: { id: row.id } })
@@ -868,9 +917,7 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const d = dateOnly(dateStr)
   const existingEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-  if (existingEntry?.status === 'confirmed' && !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) {
-    throw httpError('日报已确认，当前账号无历史修正权限', 409)
-  }
+  if (existingEntry?.status === 'confirmed') throw httpError('日报已确认，请通过受控历史修正流程处理', 409)
   const normalized = normalizeDailyStaffSubmission(req.body?.items)
   const parsed = await resolveDailyStaffSubmission(prisma, normalized, storeKey)
   const rows = await prisma.$transaction(async (tx) => {
@@ -1000,6 +1047,113 @@ dailyEntryUpgradeRouter.post('/daily-entry/confirm', wrap(async (req, res) => {
   })
 }))
 
+function parseRevisionReason(value) {
+  const reason = String(value || '').trim()
+  if (reason.length < 2) throw httpError('历史修正原因必填，且至少 2 个字符')
+  return reason.slice(0, 300)
+}
+
+function comparableStaffList(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map(dailyStaffFactSnapshot)
+    .sort((left, right) => `${left.employeeId}|${left.participantUserId}`.localeCompare(`${right.employeeId}|${right.participantUserId}`))
+}
+
+export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, options = {}) {
+  const storeKey = String(input?.storeKey || '').trim()
+  const dateStr = String(input?.date || '').trim()
+  if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
+  const expectedVersion = Number(input?.version)
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw httpError('数据版本缺失，请刷新后重新核对', 409)
+  const reason = parseRevisionReason(input?.reason)
+  const normalized = normalizeDailyStaffSubmission(input?.items)
+  if (normalized.length === 0) throw httpError('请至少保留一位实际值班人员')
+  const actor = input.actor || { id: '', username: '' }
+  const auditWriter = options.auditWriter || writeAudit
+
+  return prismaClient.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe(
+      'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
+      `daily-entry:${storeKey}:${dateStr}`,
+    )
+    const store = await tx.store.findUnique({ where: { key: storeKey } })
+    if (!store) throw httpError('门店不存在或已停用', 400)
+    const d = dateOnly(dateStr)
+    const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+    if (!before || before.status !== 'confirmed') throw httpError('只有已确认每日记录可以进入受控修正', 409)
+    if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
+
+    const source = effectiveSource(store, dateStr)
+    let manualSales = null
+    let posSnapshot = null
+    if (source === 'manual') {
+      manualSales = parseManualSales(input.manualSales)
+    } else {
+      if (Object.prototype.hasOwnProperty.call(input || {}, 'manualSales')) {
+        throw httpError('POS 门店营业数据由订单权威生成，客户端不可提交金额', 403)
+      }
+      posSnapshot = await aggregatePosDay(storeKey, dateStr, tx)
+    }
+
+    const parsed = await resolveDailyStaffSubmission(tx, normalized, storeKey)
+    const beforeStaff = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
+    const desiredStaff = parsed.map((item) => ({
+      ...item,
+      staffNameSnapshot: item.staffName,
+      historicalPayrollHours: null,
+      payableHoursSource: PAYABLE_HOURS_SOURCES.ACTUAL_HOURS,
+    }))
+    const salesChanged = Boolean(manualSales && (before.incCents !== manualSales.incCents || before.ord !== manualSales.ord))
+    const staffChanged = JSON.stringify(comparableStaffList(beforeStaff)) !== JSON.stringify(comparableStaffList(desiredStaff))
+    if (!salesChanged && !staffChanged) throw httpError('修正内容与当前确认事实一致，无需提交', 409)
+
+    const staff = await replaceDailyStaff(tx, {
+      storeKey,
+      dateStr,
+      parsed,
+      actor,
+      reason,
+      auditWriter,
+    })
+    const row = await tx.dailyEntry.update({
+      where: { id: before.id },
+      data: {
+        ...(manualSales || {}),
+        staffNames: staff.map((staffRow) => staffRow.staffNameSnapshot),
+        version: { increment: 1 },
+        updatedBy: actor.username,
+        updatedAt: new Date(),
+      },
+    })
+    await auditWriter(tx, {
+      storeId: storeKey,
+      date: dateStr,
+      module: 'daily_revision',
+      fieldName: 'confirmed_facts',
+      beforeValue: { entry: serializeEntry(before), participants: beforeStaff.map(serializeStaff) },
+      afterValue: { entry: serializeEntry(row), participants: staff.map(serializeStaff) },
+      reason,
+      operatorId: actor.id,
+      operatorName: actor.username,
+    })
+    return { entry: row, staff, source, posSnapshot }
+  })
+}
+
+dailyEntryUpgradeRouter.post('/daily-entry/revise', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  const storeKey = String(req.body?.storeKey || '').trim()
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
+  const result = await reviseConfirmedDailyEntryAtomic(prisma, { ...req.body, actor: req.user })
+  res.json({
+    ok: true,
+    salesDataSource: result.source,
+    entry: serializeEntry(result.entry),
+    staff: result.staff.map(serializeStaff),
+    pos: result.posSnapshot,
+  })
+}))
+
 dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   if (!hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
@@ -1007,41 +1161,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => 
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
-  const d = dateOnly(dateStr)
-  const saved = await prisma.$transaction(async (tx) => {
-    const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-    const row = await tx.dailyEntry.upsert({
-      where: { storeKey_date: { storeKey, date: d } },
-      update: {
-        status: 'draft',
-        confirmedAt: null,
-        confirmedBy: '',
-        version: { increment: 1 },
-        updatedBy: req.user.username,
-      },
-      create: {
-        id: `de-${crypto.randomUUID()}`,
-        storeKey,
-        date: d,
-        staffNames: [],
-        status: 'draft',
-        updatedBy: req.user.username,
-      },
-    })
-    await writeAudit(tx, {
-      storeId: storeKey,
-      date: dateStr,
-      module: 'daily_status',
-      fieldName: 'status',
-      beforeValue: before ? serializeEntry(before) : null,
-      afterValue: serializeEntry(row),
-      reason: String(req.body?.reason || '取消确认').slice(0, 300),
-      operatorId: req.user.id,
-      operatorName: req.user.username,
-    })
-    return row
-  })
-  res.json({ ok: true, entry: serializeEntry(saved) })
+  throw httpError('已确认每日记录不能退回普通草稿，请使用受控历史修正', 409)
 }))
 
 dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
@@ -1053,28 +1173,32 @@ dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
   const store = await ensureStore(storeKey)
   if (effectiveSource(store, dateStr) !== 'hybrid') throw httpError('仅混合模式门店可调整营业数据', 409)
+  const expectedVersion = Number(req.body?.version)
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw httpError('数据版本缺失，请刷新后重新核对', 409)
+  const reason = parseRevisionReason(req.body?.reason)
   const adjustmentCents = Number(req.body?.adjustmentCents)
   if (!Number.isInteger(adjustmentCents) || adjustmentCents < -999999999999 || adjustmentCents > 999999999999) {
     throw httpError('调整金额不正确（单位：分）')
   }
   const d = dateOnly(dateStr)
   const saved = await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe(
+      'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
+      `daily-entry:${storeKey}:${dateStr}`,
+    )
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
-    const row = await tx.dailyEntry.upsert({
-      where: { storeKey_date: { storeKey, date: d } },
-      update: {
+    if (!before) throw httpError('每日记录不存在，请先完成当日确认', 409)
+    if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
+    const note = String(req.body?.note || '').slice(0, 300)
+    if (before.hybridAdjustmentCents === BigInt(adjustmentCents) && before.hybridAdjustmentNote === note) {
+      throw httpError('修正内容与当前事实一致，无需提交', 409)
+    }
+    const row = await tx.dailyEntry.update({
+      where: { id: before.id },
+      data: {
         hybridAdjustmentCents: BigInt(adjustmentCents),
-        hybridAdjustmentNote: String(req.body?.note || '').slice(0, 300),
+        hybridAdjustmentNote: note,
         version: { increment: 1 },
-        updatedBy: req.user.username,
-      },
-      create: {
-        id: `de-${crypto.randomUUID()}`,
-        storeKey,
-        date: d,
-        staffNames: [],
-        hybridAdjustmentCents: BigInt(adjustmentCents),
-        hybridAdjustmentNote: String(req.body?.note || '').slice(0, 300),
         updatedBy: req.user.username,
       },
     })
@@ -1085,7 +1209,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
       fieldName: 'hybrid_adjustment_cents',
       beforeValue: before ? serializeEntry(before) : null,
       afterValue: serializeEntry(row),
-      reason: String(req.body?.reason || '营业数据调整').slice(0, 300),
+      reason,
       operatorId: req.user.id,
       operatorName: req.user.username,
     })

@@ -116,6 +116,27 @@
               },
             })
           }
+          if (path === '/api/v2/daily-entry/revise') {
+            const staff = (body.items || []).map((item, index) => ({
+              id: `revised-${index}`,
+              employeeId: item.employeeId || '', participantUserId: item.participantUserId || '',
+              participantType: item.employeeId ? 'EMPLOYEE' : 'NON_EMPLOYEE_SUBSTITUTE',
+              staffId: item.employeeId ? `employee:${item.employeeId}` : `user:${item.participantUserId}`,
+              staffName: participantLabel(item), actualHours: Number(item.actualHours), historicalPayrollHours: null,
+              payableHoursSource: 'ACTUAL_HOURS', breakMinutes: Number(item.breakMinutes || 0), attendanceStatus: 'normal',
+              scheduledStartTime: '', scheduledEndTime: '', actualStartTime: '', actualEndTime: '',
+            }))
+            return json({
+              ok: true, salesDataSource: 'manual', staff,
+              entry: {
+                id: `de-${body.storeKey}-${body.date}`, storeKey: body.storeKey, date: body.date,
+                status: 'confirmed', version: Number(body.version || 0) + 1,
+                incCents: String(body.manualSales?.incCents || 0), ord: Number(body.manualSales?.ord || 0),
+                staffNames: staff.map((row) => row.staffName), hybridAdjustmentCents: '0', hybridAdjustmentNote: '',
+                confirmedAt: historical.entry.confirmedAt || '2026-08-24T14:00:00.000Z', confirmedBy: 'developer',
+              },
+            })
+          }
           return json({ ok: true })
         }
         if (path === '/api/userdata') return legacyPromise

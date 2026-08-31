@@ -231,6 +231,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [ledgerError, setLedgerError] = useState('')
   const [ledgerDetail, setLedgerDetail] = useState(null)
   const [ledgerRefresh, setLedgerRefresh] = useState(0)
+  const [revisionMode, setRevisionMode] = useState(false)
+  const [revisionReason, setRevisionReason] = useState('')
   const authorityGenerationRef = useRef(0)
   const selectedAuthorityRef = useRef(null)
   const loadedAuthorityRef = useRef('')
@@ -262,9 +264,9 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const canEdit = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
   const canConfirm = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
   const canRevise = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE)
-  const canEditSales = source === 'manual' && canEdit && !confirmed
+  const canEditSales = source === 'manual' && ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode))
   const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
-  const canEditStaff = canEdit && !confirmed && !hasHistoricalStaff
+  const canEditStaff = ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode)) && !hasHistoricalStaff
   const authorityReady = authorityStatus === 'loaded' && loadedAuthorityKey === currentAuthorityKey
 
   const loadOverviewFor = useCallback(async (authority, options = {}) => {
@@ -315,6 +317,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       loadedAuthorityRef.current = authority.key
       setLoadedAuthorityKey(authority.key)
       setRefreshNotice('')
+      setRevisionMode(false)
+      setRevisionReason('')
       return { loaded: true }
     } catch (e) {
       if (!isCurrent()) return { discarded: true }
@@ -348,6 +352,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     setStaffRows([])
     setScheduleIssues([])
     setRefreshNotice('')
+    setRevisionMode(false)
+    setRevisionReason('')
     loadOverviewFor(authority)
   }, [currentAuthorityKey, loadOverviewFor])
 
@@ -462,6 +468,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     setStaffRows([])
     setScheduleIssues([])
     setRefreshNotice('')
+    setRevisionMode(false)
+    setRevisionReason('')
     reloadCurrentAuthority()
   }
 
@@ -536,6 +544,54 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       setFeedback({ title: t('确认成功'), description: t('今日营业与实际值班事实已一次确认') })
     } catch (e) {
       setError(e.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
+  const reviseEntry = async () => {
+    const authority = requireLoadedAuthority()
+    if (!authority || !confirmed || !canRevise) return
+    const reason = revisionReason.trim()
+    if (reason.length < 2) {
+      setError('请填写至少 2 个字符的历史修正原因。')
+      return
+    }
+    setSaving('revise')
+    setError('')
+    try {
+      const result = await api('/v2/daily-entry/revise', {
+        method: 'POST',
+        body: JSON.stringify({
+          storeKey: authority.store,
+          date: authority.date,
+          version: overview?.entry?.version,
+          reason,
+          ...(source === 'manual' ? { manualSales: { incCents: Number(yuanToCents(inc)), ord: Number(ord) } } : {}),
+          items: staffRows.map((row) => ({
+            employeeId: row.employeeId || undefined,
+            participantUserId: row.participantUserId || undefined,
+            actualStartTime: row.actualStartTime || '',
+            actualEndTime: row.actualEndTime || '',
+            breakMinutes: Number(row.breakMinutes || 0),
+            actualHours: row.actualHours,
+            attendanceStatus: row.attendanceStatus || 'normal',
+          })),
+        }),
+      })
+      dirtyRef.current = false
+      setDirty(false)
+      setRevisionMode(false)
+      setRevisionReason('')
+      setOverview((current) => ({ ...current, entry: result.entry, staff: result.staff, salesDataSource: result.salesDataSource, ...(result.pos ? { pos: result.pos } : {}) }))
+      overviewRef.current = { ...(overviewRef.current || {}), entry: result.entry, staff: result.staff }
+      setStaffRows(serializeStaffRows(result.staff))
+      await refreshAll()
+      await reloadCurrentAuthority()
+      setLedgerRefresh((current) => current + 1)
+      setFeedback({ title: '修正已保存', description: '已保留修正原因、修改前后事实与操作人审计' })
+    } catch (revisionError) {
+      setError(revisionError.message)
     } finally {
       setSaving('')
     }
@@ -735,15 +791,37 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
 
       <section className="card p-5">
         <h3 className="text-[15px] font-bold text-slate-800">闭店确认</h3>
-        <p className="mt-2 text-xs text-slate-400">提交前请确认：营业数据完整、值班人员与实际工时已确认。确认后普通员工不可修改，店长/管理员可取消确认。</p>
+        <p className="mt-2 text-xs text-slate-400">提交前请确认：营业数据完整、值班人员与实际工时已确认。确认后只能由具备 REVISE 权限的账号通过留痕修正。</p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {confirmed ? (
-            <span className="rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-500">已确认记录在普通每日录入中只读</span>
+            <>
+              <span className="rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-500">已确认记录在普通每日录入中只读</span>
+              {canRevise && !revisionMode && !hasHistoricalStaff && (
+                <button data-testid="daily-entry-start-revision" type="button" onClick={() => { setRevisionMode(true); setRevisionReason('') }} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700">启动受控修正</button>
+              )}
+            </>
           ) : (
             <button data-testid="daily-entry-confirm" onClick={confirmEntry} disabled={saving === 'confirm' || !authorityReady || !canConfirm} className="flex min-h-11 items-center gap-2 rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-50"><CheckCircle2 className="h-4 w-4" />{saving === 'confirm' ? '确认中…' : '确认今日录入'}</button>
           )}
           {confirmed && overview?.entry?.confirmedAt && <span className="text-xs text-slate-400">确认时间：{new Date(overview.entry.confirmedAt).toLocaleString('zh-CN', { hour12: false })}</span>}
         </div>
+        {confirmed && hasHistoricalStaff && canRevise && (
+          <p className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">该日包含历史计薪工时权威，不能从日常修正流程覆盖；需遵循既有精确历史修复权限与审计流程。</p>
+        )}
+        {confirmed && revisionMode && (
+          <div data-testid="daily-entry-revision-panel" className="mt-4 rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
+            <p className="text-xs font-bold text-violet-800">受控历史修正</p>
+            <p className="mt-1 text-xs leading-5 text-violet-600">请在上方修改营业事实或实际值班/工时。提交将原子保留修改前后事实、原因、操作人和版本。</p>
+            <label className="mt-3 block text-xs font-semibold text-slate-600">
+              修正原因（必填）
+              <textarea data-testid="daily-entry-revision-reason" value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} maxLength={300} rows={3} placeholder="说明为什么需要修正历史事实" className={`${inputCls} mt-1 min-h-20 resize-y text-sm`} />
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button data-testid="daily-entry-submit-revision" type="button" onClick={reviseEntry} disabled={saving === 'revise' || !authorityReady} className="min-h-11 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving === 'revise' ? '保存修正中…' : '保存受控修正'}</button>
+              <button type="button" onClick={() => requestTransition(retryCurrentAuthority)} className="min-h-11 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-500">取消</button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card p-4 sm:p-5" data-testid="daily-fact-ledger">
@@ -803,7 +881,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                     <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
                       <span className={`rounded-lg px-2 py-1 text-[10px] font-bold ${status.className}`}>{status.label}</span>
                       <span className={`rounded-lg px-2 py-1 text-[10px] font-bold ${complete ? 'bg-slate-100 text-slate-500' : 'bg-rose-50 text-rose-600'}`}>
-                        {complete ? '事实完整' : '待完善'}
+                        {complete ? '工资数据：完整' : '工资数据：待完善'}
                       </span>
                     </div>
                   </div>
@@ -864,7 +942,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
               </div>
 
               <section className="mt-5">
-                <h4 className="text-xs font-black text-slate-700">完整性</h4>
+                <h4 className="text-xs font-black text-slate-700">工资数据完整性</h4>
                 <div className={`mt-2 rounded-2xl px-3 py-3 text-sm ${ledgerDetail.completeness?.status === 'COMPLETE' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                   <p className="font-bold">{COMPLETENESS_LABELS[ledgerDetail.completeness?.code] || ledgerDetail.completeness?.code || '未知'}</p>
                   {ledgerDetail.completeness?.issues?.length > 1 && <p className="mt-1 text-xs opacity-75">共 {ledgerDetail.completeness.issues.length} 项待完善</p>}

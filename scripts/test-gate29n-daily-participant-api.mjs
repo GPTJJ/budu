@@ -40,7 +40,7 @@ try {
   await prisma.schedule.create({
     data: {
       id: 'schedule-29n', weekStart: '2026-08-24', storeKey: 'tongying', date: '2026-08-24',
-      shifts: [{ staff: '陈文慧', time: '09:00-21:00', note: '跨店顶班' }],
+      shifts: [{ employeeId: 'emp-chen', staff: '陈文慧', time: '09:00-21:00', note: '跨店顶班' }],
     },
   })
   await prisma.dailyEntry.create({
