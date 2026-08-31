@@ -805,16 +805,20 @@ approvalRouter.post('/approvals/notifications/read', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const body = req.body || {}
   const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : []
+  let result = { count: 0 }
   if (body.all === true) {
-    await prisma.approvalNotification.updateMany({
-      where: { username: req.user.username, readAt: null },
+    const through = body.through ? new Date(String(body.through)) : null
+    if (through && Number.isNaN(through.getTime())) throw httpError('已读截止时间无效', 400)
+    result = await prisma.approvalNotification.updateMany({
+      where: { username: req.user.username, readAt: null, ...(through ? { createdAt: { lte: through } } : {}) },
       data: { readAt: new Date() },
     })
   } else if (ids.length) {
-    await prisma.approvalNotification.updateMany({
+    result = await prisma.approvalNotification.updateMany({
       where: { id: { in: ids }, username: req.user.username },
       data: { readAt: new Date() },
     })
   }
-  res.json({ ok: true })
+  const unreadCount = await prisma.approvalNotification.count({ where: { username: req.user.username, readAt: null } })
+  res.json({ ok: true, updatedCount: result.count, unreadCount })
 }))

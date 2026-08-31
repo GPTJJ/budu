@@ -40,6 +40,24 @@ function allowedTargets(user) {
   return ['', ...ALL_MODULE_KEYS.filter((key) => hasModuleAccess(user, key))]
 }
 
+async function notificationCounts(user) {
+  const rows = await prisma.notification.groupBy({
+    by: ['status'],
+    where: await excludeDeletedBusinessRecords({
+      username: user.username,
+      status: { not: 'deleted' },
+      target: { in: allowedTargets(user) },
+    }),
+    _count: { _all: true },
+  })
+  return rows.reduce((counts, row) => {
+    const count = Number(row._count?._all || 0)
+    counts.totalCount += count
+    if (row.status === 'unread') counts.unreadCount += count
+    return counts
+  }, { totalCount: 0, unreadCount: 0 })
+}
+
 async function excludeDeletedBusinessRecords(where) {
   const [mailing, invoices, transfers, purchases, partnerOrders] = await Promise.all([
     prisma.mailingRecord.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
@@ -72,7 +90,13 @@ notificationRouter.get('/notifications', wrap(async (req, res) => {
     orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
     take: Math.min(Number(limit) || 50, 200),
   })
-  res.json({ ok: true, rows: rows.map(serialize), nextCursor: rows.length >= Number(limit) ? rows[rows.length - 1].createdAt.toISOString() : null })
+  const counts = await notificationCounts(user)
+  res.json({
+    ok: true,
+    rows: rows.map(serialize),
+    nextCursor: rows.length >= Number(limit) ? rows[rows.length - 1].createdAt.toISOString() : null,
+    ...counts,
+  })
 }))
 
 /** 未读数 */
@@ -81,10 +105,8 @@ notificationRouter.get('/notifications/unread-count', wrap(async (req, res) => {
   if (req.user.role === 'public' || req.user.role === 'cashier') {
     return res.json({ ok: true, count: 0 })
   }
-  const count = await prisma.notification.count({
-    where: await excludeDeletedBusinessRecords({ username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } }),
-  })
-  res.json({ ok: true, count })
+  const { unreadCount } = await notificationCounts(req.user)
+  res.json({ ok: true, count: unreadCount, unreadCount })
 }))
 
 /** 标记已读（单条 / 全部） */
@@ -92,18 +114,27 @@ notificationRouter.post('/notifications/read', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const body = req.body || {}
   const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : []
+  let result = { count: 0 }
   if (body.all === true) {
-    await prisma.notification.updateMany({
-      where: { username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } },
+    const through = body.through ? new Date(String(body.through)) : null
+    if (through && Number.isNaN(through.getTime())) throw httpError('已读截止时间无效', 400)
+    result = await prisma.notification.updateMany({
+      where: {
+        username: req.user.username,
+        status: 'unread',
+        target: { in: allowedTargets(req.user) },
+        ...(through ? { createdAt: { lte: through } } : {}),
+      },
       data: { status: 'read', readAt: new Date() },
     })
   } else if (ids.length) {
-    await prisma.notification.updateMany({
-      where: { id: { in: ids }, username: req.user.username, target: { in: allowedTargets(req.user) } },
+    result = await prisma.notification.updateMany({
+      where: { id: { in: ids }, username: req.user.username, status: 'unread', target: { in: allowedTargets(req.user) } },
       data: { status: 'read', readAt: new Date() },
     })
   }
-  res.json({ ok: true })
+  const counts = await notificationCounts(req.user)
+  res.json({ ok: true, updatedCount: result.count, ...counts })
 }))
 
 /** 删除（软删） */

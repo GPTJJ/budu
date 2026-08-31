@@ -7,7 +7,7 @@ import { hasInventoryTransferAll } from '../../shared/accountPermissions'
 const SEEN_KEY = 'budu-inventory-seen-at'
 const MUTED_KEY = 'budu-alert-muted'
 const POLL_MS = 8000
-let state = { unread: 0, items: [], stock: [] }
+let state = { unread: 0, total: 0, items: [], stock: [] }
 let listeners = []
 let timer = null
 let currentUserKey = null
@@ -28,6 +28,8 @@ let currentAssetReminders = []
 let currentPayrolls = []
 let currentApprovalNotes = []
 let currentCenterNotes = []
+let currentCenterUnreadCount = 0
+let currentCenterTotalCount = 0
 let lastCapsKey = ''
 
 function capsKey(user) {
@@ -144,10 +146,18 @@ function compute() {
   const centerItems = currentCanSeeApprovals
     ? currentCenterNotes.filter((r) => r.status === 'unread').map((r) => ({ ...r, type: 'center' }))
     : []
-  const items = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems, ...centerItems].sort((a, b) =>
+  const nonCenterItems = [...reqItems, ...invItems, ...mailItems, ...assetItems, ...payrollItems, ...approvalItems]
+  const items = [...nonCenterItems, ...centerItems].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   )
-  state = { ...state, unread: items.length, items }
+  const centerUnread = Number.isFinite(currentCenterUnreadCount) ? currentCenterUnreadCount : centerItems.length
+  const centerTotal = Number.isFinite(currentCenterTotalCount) ? currentCenterTotalCount : centerItems.length
+  state = {
+    ...state,
+    unread: nonCenterItems.length + centerUnread,
+    total: nonCenterItems.length + centerTotal,
+    items,
+  }
   notify()
 
   // 新申请到达时播放提示音（首次加载不响，避免旧申请轰炸）
@@ -219,6 +229,8 @@ async function refresh() {
     try {
       const res = await api('/v2/notifications?unread=1')
       currentCenterNotes = Array.isArray(res.rows) ? res.rows : []
+      currentCenterUnreadCount = Number.isFinite(Number(res.unreadCount)) ? Number(res.unreadCount) : currentCenterNotes.length
+      currentCenterTotalCount = Number.isFinite(Number(res.totalCount)) ? Number(res.totalCount) : currentCenterNotes.length
     } catch {
       /* 通知中心不可用时忽略 */
     }
@@ -257,6 +269,10 @@ export function ensurePolling(user) {
   currentMailings = []
   currentAssetReminders = []
   currentPayrolls = []
+  currentApprovalNotes = []
+  currentCenterNotes = []
+  currentCenterUnreadCount = 0
+  currentCenterTotalCount = 0
   initialized = false
   lastNotifiedId = null
   if (timer) {
@@ -265,11 +281,17 @@ export function ensurePolling(user) {
   }
   if (!key) return
   compute()
+  void refresh()
   timer = setInterval(refresh, POLL_MS)
 }
 
 export function markSeen() {
-  const latest = state.items[0] && state.items[0].createdAt
+  const latest = state.items
+    .filter((item) => item.type !== 'center' && item.type !== 'approval' && item.type !== 'payroll')
+    .map((item) => item.createdAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1)
   if (latest) {
     try {
       localStorage.setItem(SEEN_KEY, latest)
@@ -277,8 +299,7 @@ export function markSeen() {
       /* 忽略 */
     }
   }
-  state = { ...state, unread: 0 }
-  notify()
+  compute()
 }
 
 export function subscribe(fn) {
@@ -294,25 +315,77 @@ export function getAlerts() {
 
 /** 手动触发一次全量刷新（如工资条签收后移除未签收项） */
 export function refreshAlerts() {
-  refresh()
+  return refresh()
 }
 
-/** 审批通知：单条标记已读（点击铃铛条目后调用） */
+/** 通知中心：单条标记已读；成功响应立即更新共享 unread projection，再安全刷新。 */
+export async function markNotificationRead(ids) {
+  const normalized = [...new Set((ids || []).filter(Boolean))]
+  if (normalized.length === 0) return state
+  const response = await api('/v2/notifications/read', { method: 'POST', body: JSON.stringify({ ids: normalized }) })
+  const readIds = new Set(normalized)
+  currentCenterNotes = currentCenterNotes.filter((row) => !readIds.has(row.id))
+  currentCenterUnreadCount = Number.isFinite(Number(response.unreadCount))
+    ? Number(response.unreadCount)
+    : currentCenterNotes.length
+  compute()
+  await refresh()
+  return state
+}
+
+/** 审批通知：单条标记已读（点击铃铛条目后调用）。 */
 export async function markApprovalRead(ids) {
-  try {
-    await api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ ids }) })
-  } catch {
-    /* 忽略 */
-  }
-  refresh()
+  const normalized = [...new Set((ids || []).filter(Boolean))]
+  if (normalized.length === 0) return state
+  const response = await api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ ids: normalized }) })
+  const readIds = new Set(normalized)
+  currentApprovalNotes = currentApprovalNotes.filter((row) => !readIds.has(row.id))
+  compute()
+  await refresh()
+  return { ...state, approvalUnreadCount: response.unreadCount }
 }
 
-/** 审批通知：全部标记已读（铃铛「全部已读」时同步调用） */
-export async function markApprovalAllRead() {
-  try {
-    await api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ all: true }) })
-  } catch {
-    /* 忽略 */
+/**
+ * 当前通知快照全部已读：服务端按点击时刻截止，避免并发新通知被吞掉。
+ * 任一持久化失败时不执行 legacy 本地 seen 清零，并以安全刷新恢复真实状态。
+ */
+export async function markAllAlertsRead() {
+  const through = new Date().toISOString()
+  const operations = []
+  if (currentCenterUnreadCount > 0 || currentCenterNotes.length > 0) {
+    operations.push({
+      type: 'center',
+      promise: api('/v2/notifications/read', { method: 'POST', body: JSON.stringify({ all: true, through }) }),
+    })
   }
-  refresh()
+  if (currentApprovalNotes.length > 0) {
+    operations.push({
+      type: 'approval',
+      promise: api('/v2/approvals/notifications/read', { method: 'POST', body: JSON.stringify({ all: true, through }) }),
+    })
+  }
+
+  const results = await Promise.allSettled(operations.map((operation) => operation.promise))
+  let failure = null
+  results.forEach((result, index) => {
+    const operation = operations[index]
+    if (result.status === 'rejected') {
+      failure ||= result.reason
+      return
+    }
+    if (operation.type === 'center') {
+      currentCenterNotes = currentCenterNotes.filter((row) => String(row.createdAt) > through)
+      currentCenterUnreadCount = Number.isFinite(Number(result.value.unreadCount))
+        ? Number(result.value.unreadCount)
+        : currentCenterNotes.length
+    } else {
+      currentApprovalNotes = currentApprovalNotes.filter((row) => String(row.createdAt) > through)
+    }
+  })
+
+  if (!failure) markSeen()
+  else compute()
+  await refresh()
+  if (failure) throw failure
+  return state
 }

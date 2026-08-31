@@ -9,12 +9,12 @@ import {
   unlockAudio,
   isAlertMuted,
   setAlertMuted,
+  markNotificationRead,
   markApprovalRead,
-  markApprovalAllRead,
+  markAllAlertsRead,
 } from '../utils/inventoryAlerts'
 import { storeName } from '../utils/selectors'
 import { periodLabel } from '../utils/payrollSlip'
-import { api } from '../utils/api'
 import { t } from '../utils/text'
 import { notificationTargetView, prepareNotificationRecordFocus } from '../utils/notificationNavigation'
 
@@ -24,6 +24,8 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
   const [alerts, setAlerts] = useState(getAlerts())
   const [open, setOpen] = useState(false)
   const [muted, setMuted] = useState(isAlertMuted())
+  const [readBusy, setReadBusy] = useState(false)
+  const [readError, setReadError] = useState('')
 
   useEffect(() => {
     ensurePolling(user)
@@ -37,49 +39,74 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
 
   const isDesktop = variant === 'desktop'
   const unread = alerts.unread
+  const total = alerts.total ?? alerts.items.length
 
-  const openItem = (item) => {
-    markSeen()
-    setOpen(false)
-    // 通知中心消息：标记已读 + 按 target 跳转对应页面
-    if (item.type === 'center') {
-      api(`/v2/notifications/read`, { method: 'POST', body: JSON.stringify({ ids: [item.id] }) }).catch(() => {})
+  const openItem = async (item) => {
+    setReadError('')
+    setReadBusy(true)
+    try {
+      // 通知中心消息：以服务端 read fact 更新共享 unread projection 后再跳转。
+      if (item.type === 'center') {
+        await markNotificationRead([item.id])
+        if (onNavigate) {
+          prepareNotificationRecordFocus(item)
+          onNavigate(notificationTargetView(item.target))
+        }
+        setOpen(false)
+        return
+      }
+      // 工资条：铃铛只负责提醒，点击跳转到「人员管理 → 工资条」板块查看/签收
+      if (item.type === 'payroll') {
+        if (onNavigate) onNavigate('staff-payroll')
+        setOpen(false)
+        return
+      }
+      // 审批中心：标记已读并跳转（按通知类型打开对应列表页）
+      if (item.type === 'approval') {
+        await markApprovalRead([item.id])
+        try {
+          // 待审批 → 待我审批；抄送 → 抄送我的；结果 → 我发起的
+          const target = item.noticeType === 'todo' ? 'todo' : item.noticeType === 'cc' ? 'cc' : 'my'
+          sessionStorage.setItem('budu-approval-scope', target)
+        } catch {
+          /* 忽略 */
+        }
+        if (onNavigate) onNavigate('approval')
+        setOpen(false)
+        return
+      }
+
+      markSeen()
       if (onNavigate) {
-        prepareNotificationRecordFocus(item)
-        onNavigate(notificationTargetView(item.target))
+        onNavigate(
+          item.type === 'mailing'
+            ? 'store-mailing'
+            : item.type === 'invoice'
+              ? 'finance-invoice'
+              : item.type === 'asset'
+                ? 'asset-center'
+              : item.type === 'transfer'
+                ? 'inventory-transfer'
+                : 'inventory-purchase',
+        )
       }
-      return
+      setOpen(false)
+    } catch (error) {
+      setReadError(error?.message || t('标记已读失败，请重试'))
+    } finally {
+      setReadBusy(false)
     }
-    // 工资条：铃铛只负责提醒，点击跳转到「人员管理 → 工资条」板块查看/签收
-    if (item.type === 'payroll') {
-      if (onNavigate) onNavigate('staff-payroll')
-      return
-    }
-    // 审批中心：标记已读并跳转（按通知类型打开对应列表页）
-    if (item.type === 'approval') {
-      markApprovalRead([item.id])
-      try {
-        // 待审批 → 待我审批；抄送 → 抄送我的；结果 → 我发起的
-        const target = item.noticeType === 'todo' ? 'todo' : item.noticeType === 'cc' ? 'cc' : 'my'
-        sessionStorage.setItem('budu-approval-scope', target)
-      } catch {
-        /* 忽略 */
-      }
-      if (onNavigate) onNavigate('approval')
-      return
-    }
-    if (onNavigate) {
-      onNavigate(
-        item.type === 'mailing'
-          ? 'store-mailing'
-          : item.type === 'invoice'
-            ? 'finance-invoice'
-            : item.type === 'asset'
-              ? 'asset-center'
-            : item.type === 'transfer'
-              ? 'inventory-transfer'
-              : 'inventory-purchase',
-      )
+  }
+
+  const markAllRead = async () => {
+    setReadError('')
+    setReadBusy(true)
+    try {
+      await markAllAlertsRead()
+    } catch (error) {
+      setReadError(error?.message || t('全部已读失败，请重试'))
+    } finally {
+      setReadBusy(false)
     }
   }
 
@@ -119,32 +146,37 @@ export default function NotificationBell({ variant = 'desktop', user, onNavigate
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <p className="text-sm font-bold text-slate-800">
                 {t('通知')}
-                {unread > 0 && (
-                  <span className="ml-2 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">
-                    {unread}
+                {total > 0 && (
+                  <span className="ml-2 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
+                    {total}
                   </span>
                 )}
               </p>
               {unread > 0 && (
                 <button
-                  onClick={() => {
-                    markSeen()
-                    markApprovalAllRead()
-                  }}
+                  onClick={markAllRead}
+                  disabled={readBusy}
                   className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-budu-500 transition hover:bg-budu-50"
                 >
-                  <RefreshCw className="h-3 w-3" />
-                  {t('全部已读')}
+                  <RefreshCw className={`h-3 w-3 ${readBusy ? 'animate-spin' : ''}`} />
+                  {t(readBusy ? '处理中…' : '全部已读')}
                 </button>
               )}
             </div>
+
+            {readError && (
+              <p role="alert" className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-600">
+                {readError}
+              </p>
+            )}
 
             <div className="max-h-80 overflow-y-auto">
               {alerts.items.length > 0 &&
                 alerts.items.map((r) => (
                   <button
                     key={r.id}
-                    onClick={() => openItem(r)}
+                    onClick={() => void openItem(r)}
+                    disabled={readBusy}
                     className="block w-full border-b border-slate-50 px-4 py-3 text-left transition hover:bg-budu-50/50"
                   >
                     <p className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
