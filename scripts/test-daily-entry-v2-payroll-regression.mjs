@@ -77,14 +77,17 @@ const draft = resolvePayrollCalculation({
 assert.equal(draft.calculationReady, false)
 assert.equal(draft.payroll.employees.length, 0)
 
-// A saved attendance row without DailyEntry is explicit incomplete input, never guessed income/pay.
+// A standalone historical DailyStoreStaff without current DailyEntry is an
+// orphan diagnostic, not current participation or completeness authority.
 const missingEntry = resolvePayrollCalculation({
   month: '2026-09', dailyEntries: {},
   dailyStoreStaffRows: [attendance({ id: 'missing-entry', employeeId: 'emp-full', name: '同名员工', store: 'tongying', date: '2026-09-12', hours: 8 })],
   employees, users,
 })
 assert.equal(missingEntry.calculationReady, false)
-assert.ok(missingEntry.blockers.some((row) => row.reason === 'MISSING_DAILY_ENTRY'))
+assert.ok(missingEntry.blockers.some((row) => row.reason === 'NO_PAYROLL_SUBJECTS'))
+assert.equal(missingEntry.blockers.some((row) => row.reason === 'MISSING_DAILY_ENTRY'), false)
+assert.equal(missingEntry.readiness.coverage.orphanAttendanceRows, 1)
 
 // Reviewed legacy payable hours stay read-only compatible input, never actualHours.
 const legacy = resolvePayrollCalculation({

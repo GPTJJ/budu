@@ -53,10 +53,28 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
   const legacyUnknownRows = []
   const unresolvedDays = []
   const excludedDraftDays = []
+  const orphanRows = []
 
   for (const [key, group] of rowsByStoreDate) {
     const [storeId, date] = key.split('|')
     const entry = entryByStoreDate.get(key)
+    // DailyStoreStaff has no database FK to DailyEntry, so historical cleanup or
+    // rollback can leave standalone rows behind. A row without the current
+    // canonical (store,date) DailyEntry is not an active payroll participant
+    // dependency. Preserve it as diagnostic history, but never turn it into an
+    // employee completeness blocker or a payable-hours input.
+    if (!entry) {
+      orphanRows.push(...group.map((row) => ({
+        id: row.id || '',
+        storeId,
+        date,
+        employeeId: row.employeeId || null,
+        participantUserId: row.participantUserId || null,
+        participantType: row.participantType,
+        reason: 'ORPHAN_DAILY_STORE_STAFF',
+      })))
+      continue
+    }
     if (entry?.status === 'draft') {
       excludedDraftDays.push({
         storeId,
@@ -111,25 +129,14 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
         attendanceStatus: row.attendanceStatus,
         staffCountForShare: participantCount,
         participantCount,
-        dailyRevenueCents: entry ? Math.round(entry.inc * 100) : null,
-        orderCount: entry ? entry.ord : null,
-        entryStatus: entry ? 'JOINED' : 'MISSING_DAILY_ENTRY',
+        dailyRevenueCents: Math.round(entry.inc * 100),
+        orderCount: entry.ord,
+        entryStatus: 'JOINED',
       }
       if (row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId) stableRows.push(base)
       else if (row.participantType === PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE && row.participantUserId) substituteRows.push(base)
       else if (row.participantType === PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE) legacyCompatibleRows.push({ ...base, legacy: 'REVIEWED_COMPATIBLE' })
       else legacyUnknownRows.push({ ...base, participantType: PAYROLL_PARTICIPANT_TYPES.LEGACY_UNKNOWN, legacy: 'UNRESOLVED' })
-    }
-    if (!entry) {
-      unresolvedDays.push({
-        storeId,
-        date,
-        participantCount,
-        reason: 'MISSING_DAILY_ENTRY',
-        employeeIds: [...new Set(group
-          .filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId)
-          .map((row) => row.employeeId))],
-      })
     }
   }
 
@@ -156,5 +163,6 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
     legacyRows: [...legacyCompatibleRows, ...legacyUnknownRows],
     unresolvedDays,
     excludedDraftDays,
+    orphanRows,
   }
 }

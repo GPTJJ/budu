@@ -317,6 +317,7 @@ export function evaluatePayrollReadiness(input) {
       legacyCompatibleAttendanceRows: legacyCompatible.length,
       legacyUnknownAttendanceRows: legacy.length,
       excludedDraftDays: rangeDrafts.length,
+      orphanAttendanceRows: dayInput.orphanRows.filter(inRequestedRange).length,
       stableAdjustmentRows,
       legacyAdjustmentRows,
       stableBonusRows,

@@ -113,13 +113,15 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [G] 同店同名全就绪 PASS')
 }
 
-// H: 缺业务
+// H: 孤立 DSS 不构成工资主体或 completeness dependency
 {
   const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
   const out = evaluatePayrollReadiness({ month: '2026-09', dailyEntries: {}, dailyStoreStaffRows: staff, employees: baseEmployees, users: baseUsers })
   assert.equal(out.calculationReady, false, 'H calc not ready')
-  assert.equal(out.calculationBlockers.some((b) => b.reason === 'MISSING_DAILY_ENTRY'), true, 'H reason')
-  console.log('  [H] 缺业务 PASS')
+  assert.equal(out.calculationBlockers.some((b) => b.reason === 'MISSING_DAILY_ENTRY'), false, 'H no false dependency')
+  assert.equal(out.calculationBlockers.some((b) => b.reason === 'NO_PAYROLL_SUBJECTS'), true, 'H empty authoritative subject set')
+  assert.equal(out.coverage.orphanAttendanceRows, 1, 'H orphan remains observable')
+  console.log('  [H] orphan dependency isolation PASS')
 }
 
 // I: 月隔离
@@ -168,7 +170,7 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [K] coverage 指标 PASS')
 }
 
-// L: 员工级完整性——一个员工缺 DailyEntry 不得伪装成全员技术加载失败
+// L: 孤立 DSS 不得使任何员工进入 incomplete
 {
   const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '李四'] } }
   const staff = [
@@ -177,14 +179,15 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
     staffRow('b-orphan', '2026-09-02', 'emp-B', '李四'),
   ]
   const out = evaluatePayrollReadiness({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees: baseEmployees, users: baseUsers })
-  assert.equal(out.calculationReady, false, 'L period remains fail closed')
-  assert.equal(out.issueReady, false, 'L issuance remains fail closed')
+  assert.equal(out.calculationReady, true, 'L valid period remains ready')
+  assert.equal(out.issueReady, true, 'L valid issuance remains ready')
   const empA = out.employees.find((row) => row.employeeId === 'emp-A')
   const empB = out.employees.find((row) => row.employeeId === 'emp-B')
   assert.equal(empA.calculationReady, true, 'L unaffected employee remains display-calculable')
-  assert.equal(empB.calculationReady, false, 'L affected employee remains incomplete')
-  assert.equal(empB.blockers.some((blocker) => blocker.reason === 'MISSING_DAILY_ENTRY' && blocker.date === '2026-09-02'), true)
-  console.log('  [L] 员工级完整性 PASS')
+  assert.equal(empB.calculationReady, true, 'L orphan does not affect employee')
+  assert.equal(empB.blockers.some((blocker) => blocker.reason === 'MISSING_DAILY_ENTRY'), false)
+  assert.equal(out.coverage.orphanAttendanceRows, 1)
+  console.log('  [L] orphan 不污染员工完整性 PASS')
 }
 
 console.log('GATE 22 PAYROLL READINESS TEST OK')

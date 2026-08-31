@@ -100,6 +100,7 @@ const DIRECT_SUITE = [
   'test-payroll-cache-lifecycle.mjs', // P0：reset/账号切换/迟到响应/月状态缓存生命周期 → critical
   'test-payroll-readiness.mjs', // Gate 22：payroll 月就绪度评估（纯函数，零 live 消费）→ critical
   'test-payroll-resolver.mjs', // Gate 23：统一 payroll 计算 resolver（纯函数，零 live 消费）→ critical
+  'test-payroll-orphan-dependency.mjs', // Hotfix：无 DailyEntry 的 orphan DSS 不形成工资完整性依赖 → critical
   'test-export-salary-identity.mjs', // Gate 25：ExportSalaryModal Employee.id 导出身份（纯逻辑）→ critical
   'test-export-detail-identity.mjs', // Gate 25 澄清：明细行调整/奖金按 employeeId 精确隔离（同店同名）→ critical
   'test-payroll-adjustment-only.mjs', // Gate 26：稳定调整仅日 Employee.id 月度贡献（无考勤也可进入 payroll）→ critical

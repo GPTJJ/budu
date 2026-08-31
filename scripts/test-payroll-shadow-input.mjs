@@ -104,15 +104,17 @@ const { buildEmployeePayrollDayInputs } = await import(path.join(root, 'src/util
   console.log('  [G] 仅姓名 unresolved PASS')
 }
 
-// H: 稳定考勤无 DailyEntry → 不虚构业务数据
+// H: 孤立 DailyStoreStaff 无 DailyEntry → 保留诊断，但不形成 payroll dependency
 {
   const staff = [{ id: 'r1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-07', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张三', actualHours: 8 }]
   const out = buildEmployeePayrollDayInputs({}, staff)
-  assert.equal(out.stableRows.length, 1, 'H 稳定行存在')
-  assert.equal(out.stableRows[0].entryStatus, 'MISSING_DAILY_ENTRY', 'H 显式标记')
-  assert.equal(out.stableRows[0].dailyRevenueCents, null, 'H 不虚构收入')
-  assert.equal(out.unresolvedDays.some((d) => d.reason === 'MISSING_DAILY_ENTRY'), true)
-  console.log('  [H] 无业务记录不虚构 PASS')
+  assert.equal(out.stableRows.length, 0, 'H 孤立行不进入稳定 payroll input')
+  assert.equal(out.unresolvedDays.length, 0, 'H 孤立行不形成 completeness dependency')
+  assert.deepEqual(out.orphanRows, [{
+    id: 'r1', storeId: 'guanshe', date: '2026-09-07', employeeId: 'emp-A',
+    participantUserId: null, participantType: 'EMPLOYEE', reason: 'ORPHAN_DAILY_STORE_STAFF',
+  }])
+  console.log('  [H] orphan DSS 隔离 PASS')
 }
 
 // Parity: 非重名 fixture——shadow 识别同一批参与者（张三/李四），按 Employee.id

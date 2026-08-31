@@ -19,6 +19,9 @@ const attendance = (employeeId, name, storeId, date, actualHours) => ({
   staffId: `staff-${employeeId}`,
   staffNameSnapshot: name,
   actualHours,
+  historicalPayrollHours: null,
+  payableHoursSource: 'ACTUAL_HOURS',
+  attendanceStatus: 'normal',
 })
 
 // 1. 用户场景：通盈工作日，2050 元，单人实际 8h => 280（旧稳定结果 420 不得保留）。
@@ -66,10 +69,15 @@ const attendance = (employeeId, name, storeId, date, actualHours) => ({
   }
   assert.equal(calcDailyPay({ storeKey: 'tongying', revenue: 2050, date: '2026-08-10', staffCount: 1 }).total, 420, 'legacy 仍使用 12h dutyHours')
   const entries = { '2026-08|tongying|08-10': { inc: 2050, ord: 20, staff: ['叶芷辰'] } }
-  assert.throws(
-    () => calculateEmployeeIdShadowPayroll(entries, [attendance('emp-ye', '叶芷辰', 'tongying', '2026-08-10', undefined)], [], [], '2026-08'),
-    /payableHours/,
+  const invalidAttendance = calculateEmployeeIdShadowPayroll(
+    entries,
+    [attendance('emp-ye', '叶芷辰', 'tongying', '2026-08-10', undefined)],
+    [],
+    [],
+    '2026-08',
   )
+  assert.equal(invalidAttendance.employees.length, 0)
+  assert.equal(invalidAttendance.unresolvedDays.some((row) => row.reason === 'MISSING_ACTUAL_HOURS'), true)
   console.log('  [校验] 0h 保留 / 非法稳定工时拒绝 / legacy 兼容 PASS')
 }
 

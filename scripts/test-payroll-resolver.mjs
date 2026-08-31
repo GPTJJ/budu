@@ -125,13 +125,15 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [H] 月隔离 PASS')
 }
 
-// J: 缺业务日保持 EMPLOYEE_ID 权威且不虚构金额
+// J: 孤立 DSS 不进入 payroll participant authority
 {
   const staff = [staffRow('a', '2026-09-01', 'emp-A', '张伟')]
   const out = resolvePayrollCalculation({ month: '2026-09', dailyEntries: {}, dailyStoreStaffRows: staff, employees: [{ id: 'emp-A' }], users: baseUsers })
-  assert.equal(out.mode, 'EMPLOYEE_ID', 'J 缺业务保持稳定身份')
+  assert.equal(out.mode, 'LEGACY', 'J orphan 不构成稳定工资主体')
   assert.equal(out.calculationReady, false, 'J not ready')
-  console.log('  [J] 零部分稳定 PASS')
+  assert.equal(out.blockers.some((row) => row.reason === 'MISSING_DAILY_ENTRY'), false)
+  assert.equal(out.readiness.coverage.orphanAttendanceRows, 1)
+  console.log('  [J] orphan 隔离 PASS')
 }
 
 // K: 空月确定性——无 DailyEntry → 确定 LEGACY + 空 payroll
@@ -144,7 +146,7 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [K] 空月确定性 PASS')
 }
 
-// L: 部分员工缺业务事实时，已存在事实的工资数学不变，整期发放继续 fail closed
+// L: orphan DSS 不改变已存在事实的工资数学或完整性
 {
   const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '李四'] } }
   const cleanStaff = [staffRow('a', '2026-09-01', 'emp-A', '张伟'), staffRow('b', '2026-09-01', 'emp-B', '李四')]
@@ -153,14 +155,15 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   const clean = resolvePayrollCalculation({ ...base, dailyStoreStaffRows: cleanStaff })
   const partial = resolvePayrollCalculation({ ...base, dailyStoreStaffRows: partialStaff })
   assert.equal(partial.mode, 'EMPLOYEE_ID')
-  assert.equal(partial.calculationReady, false)
-  assert.equal(partial.issueReady, false)
+  assert.equal(partial.calculationReady, true)
+  assert.equal(partial.issueReady, true)
   const salary = (out, employeeId) => out.payroll.employees.find((row) => row.employeeId === employeeId)?.salary
   assert.equal(salary(partial, 'emp-A'), salary(clean, 'emp-A'), 'L unaffected salary unchanged')
   assert.equal(salary(partial, 'emp-B'), salary(clean, 'emp-B'), 'L known-fact salary math unchanged')
   assert.equal(partial.readiness.employees.find((row) => row.employeeId === 'emp-A').calculationReady, true)
-  assert.equal(partial.readiness.employees.find((row) => row.employeeId === 'emp-B').calculationReady, false)
-  console.log('  [L] 员工级 incomplete + 数学不变 PASS')
+  assert.equal(partial.readiness.employees.find((row) => row.employeeId === 'emp-B').calculationReady, true)
+  assert.equal(partial.readiness.coverage.orphanAttendanceRows, 1)
+  console.log('  [L] orphan 不影响数学与完整性 PASS')
 }
 
 console.log('GATE 23 UNIFIED PAYROLL RESOLVER TEST OK')
