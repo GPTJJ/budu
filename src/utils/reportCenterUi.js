@@ -1,4 +1,5 @@
 export const REPORT_TABS = Object.freeze([
+  { key: 'dashboard', label: '经营看板' },
   { key: 'summary', label: '综合营业' },
   { key: 'orders', label: '订单明细' },
   { key: 'products', label: '商品销售' },
@@ -80,9 +81,17 @@ export function formatReportInteger(value, { suffix = '', empty = '—' } = {}) 
 export function formatReportBps(value) {
   if (value === null || value === undefined || value === '') return '—'
   const bps = BigInt(value)
-  const integer = bps / 100n
-  const fraction = (bps % 100n).toString().padStart(2, '0')
-  return `${integer}.${fraction}%`
+  const negative = bps < 0n
+  const absolute = negative ? -bps : bps
+  const integer = absolute / 100n
+  const fraction = (absolute % 100n).toString().padStart(2, '0')
+  return `${negative ? '-' : ''}${integer}.${fraction}%`
+}
+
+export function formatComparisonBps(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const bps = BigInt(value)
+  return `${bps > 0n ? '+' : ''}${formatReportBps(bps)}`
 }
 
 export function shareWidth(value) {

@@ -61,6 +61,21 @@ try {
       id: 'rc3-draft-entry', storeKey: 'draft-store', date: new Date('2026-08-31T00:00:00.000Z'),
       incCents: 888_888n, ord: 88, status: 'draft', salesDataStatus: 'not_applicable',
     },
+    {
+      id: 'rc5-manual-previous', storeKey: 'manual-store', date: new Date('2026-08-30T00:00:00.000Z'),
+      incCents: 8_000n, ord: 4, status: 'confirmed', salesDataStatus: 'synced',
+      confirmedAt: new Date('2026-08-30T15:00:00.000Z'), confirmedBy: 'manager',
+    },
+    {
+      id: 'rc5-draft-previous', storeKey: 'draft-store', date: new Date('2026-08-30T00:00:00.000Z'),
+      incCents: 7_000n, ord: 2, status: 'confirmed', salesDataStatus: 'synced',
+      confirmedAt: new Date('2026-08-30T15:00:00.000Z'), confirmedBy: 'manager',
+    },
+    {
+      id: 'rc5-manual-year', storeKey: 'manual-store', date: new Date('2025-08-31T00:00:00.000Z'),
+      incCents: 6_000n, ord: 3, status: 'confirmed', salesDataStatus: 'synced',
+      confirmedAt: new Date('2025-08-31T15:00:00.000Z'), confirmedBy: 'manager',
+    },
   ] })
 
   const createUser = (id, username, storeKeys, permissions) => prisma.user.create({ data: {
@@ -143,6 +158,8 @@ try {
   const pathFor = (endpoint, stores = '') => `/api/v2/report-center/${endpoint}?from=2026-08-31&to=2026-08-31${stores ? `&store=${stores}` : ''}`
   assert.equal((await request(origin, pathFor('summary', 'manual-store'), { cookie: noReportCookie })).status, 403)
   assert.equal((await request(origin, pathFor('summary', 'pos-store'), { cookie: storeReportCookie })).status, 403)
+  assert.equal((await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31', { cookie: noReportCookie })).status, 403)
+  assert.equal((await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&store=pos-store', { cookie: storeReportCookie })).status, 403)
 
   const manualSummary = await json(await request(origin, pathFor('summary', 'manual-store'), { cookie: storeReportCookie }))
   assert.equal(manualSummary.status, 200, JSON.stringify(manualSummary.body))
@@ -188,6 +205,51 @@ try {
   assert.equal(allSummary.body.metrics.revenue.coverage.state, 'PARTIAL')
   assert.equal(allSummary.body.metrics.revenue.valueCents, '27000')
   assert.deepEqual(allSummary.body.metrics.revenue.coverage.uncoveredStores, ['draft-store'])
+
+  const dashboard = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&compare=previous&period=today', { cookie: allReportCookie }))
+  assert.equal(dashboard.status, 200, JSON.stringify(dashboard.body))
+  assert.equal(dashboard.body.metrics.revenue.valueCents, '27000')
+  assert.equal(dashboard.body.freshness.state, 'TODAY_PARTIAL')
+  assert.deepEqual(dashboard.body.freshness.pendingCloseStores, ['draft-store'])
+  assert.equal(dashboard.body.comparisons.revenue.coverage.state, 'PARTIAL')
+  assert.deepEqual(dashboard.body.comparisons.revenue.coverage.comparableStores, ['manual-store'])
+  assert.equal(dashboard.body.comparisons.revenue.currentValue, '9000')
+  assert.equal(dashboard.body.comparisons.revenue.comparisonValue, '8000')
+  assert.equal(dashboard.body.comparisons.revenue.changeBps, '1250')
+  assert.equal(dashboard.body.comparisons.aov.changeBps, '5000')
+  assert.equal(dashboard.body.comparisons.grossSales.coverage.state, 'NO_PRIOR_DATA')
+  assert.equal(dashboard.body.trend.granularity, 'DAY')
+  assert.equal(dashboard.body.trend.points.length, 1, 'mixed-source today must not manufacture hourly points')
+  assert.equal(dashboard.body.trend.points[0].coverage.state, 'PARTIAL')
+  assert.equal(dashboard.body.topProducts.coverage.state, 'PARTIAL')
+  assert.equal(dashboard.body.topProducts.rows[0].productId, 'rc3-product-a')
+  assert.equal(dashboard.body.profit.available, false)
+
+  const dashboardComplete = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&store=manual-store&compare=previous&period=today', { cookie: allReportCookie }))
+  assert.equal(dashboardComplete.body.comparisons.revenue.coverage.state, 'COMPLETE')
+  assert.equal(dashboardComplete.body.comparisons.orderCount.changeBps, '-2500')
+  assert.equal(dashboardComplete.body.comparisons.aov.currentValue, '3000')
+  assert.equal(dashboardComplete.body.comparisons.aov.comparisonValue, '2000')
+
+  const dashboardYear = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&store=manual-store&compare=year&period=today', { cookie: allReportCookie }))
+  assert.equal(dashboardYear.body.comparison.range.from, '2025-08-31')
+  assert.equal(dashboardYear.body.comparisons.revenue.coverage.state, 'COMPLETE')
+  assert.equal(dashboardYear.body.comparisons.revenue.changeBps, '5000')
+
+  const incomparable = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&store=pos-store&compare=previous&period=today', { cookie: allReportCookie }))
+  assert.equal(incomparable.body.comparisons.revenue.coverage.state, 'NO_PRIOR_DATA')
+  assert.equal(incomparable.body.comparisons.revenue.changeBps, null)
+
+  const disjointCoverage = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-31&to=2026-08-31&store=pos-store,draft-store&compare=previous&period=today', { cookie: allReportCookie }))
+  assert.equal(disjointCoverage.body.comparisons.revenue.coverage.state, 'INCOMPARABLE')
+  assert.deepEqual(disjointCoverage.body.comparisons.revenue.coverage.currentCoveredStores, ['pos-store'])
+  assert.deepEqual(disjointCoverage.body.comparisons.revenue.coverage.comparisonCoveredStores, ['draft-store'])
+  assert.equal(disjointCoverage.body.comparisons.revenue.changeBps, null)
+
+  const historicalGap = await json(await request(origin, '/api/v2/report-center/dashboard?from=2026-08-29&to=2026-08-29&store=manual-store&compare=previous&period=custom', { cookie: allReportCookie }))
+  assert.equal(historicalGap.body.freshness.state, 'HISTORICAL_INCOMPLETE')
+  assert.deepEqual(historicalGap.body.freshness.historicalIncompleteStores, ['manual-store'])
+  assert.equal(historicalGap.body.metrics.revenue.valueCents, null)
 
   const orders = await json(await request(origin, `${pathFor('orders', 'pos-store')}&page=1&pageSize=2`, { cookie: allReportCookie }))
   assert.equal(orders.status, 200, JSON.stringify(orders.body))
@@ -283,6 +345,10 @@ try {
   queryCounts.raw = 0
   await measuredReports.products(reportUser, { from: '2026-08-31', to: '2026-08-31', page: 1, pageSize: 1 })
   assert.deepEqual(queryCounts, { model: 3, raw: 1 }, 'product aggregation must remain constant-query')
+  queryCounts.model = 0
+  queryCounts.raw = 0
+  await measuredReports.dashboard(reportUser, { from: '2026-08-31', to: '2026-08-31', compare: 'previous', period: 'today' })
+  assert.deepEqual(queryCounts, { model: 6, raw: 4 }, 'dashboard must remain one bounded projection without N+1')
 
   const indexRows = await prisma.$queryRawUnsafe(`
     SELECT indexname FROM pg_indexes
@@ -325,6 +391,7 @@ try {
     productCoverage: combined.body.coverage.productSales.state,
     providerInvocationCount,
     queryCountsVerified: true,
+    dashboardComparisonCoverage: dashboard.body.comparisons.revenue.coverage.state,
     historicalDigest: canonicalAfter,
   }))
 } finally {

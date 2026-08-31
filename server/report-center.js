@@ -25,6 +25,11 @@ reportCenterRouter.get('/report-center/summary', wrap(async (req, res) => {
   res.json(await reportQueryService.summary(req.user, req.query))
 }))
 
+reportCenterRouter.get('/report-center/dashboard', wrap(async (req, res) => {
+  requireDatabase()
+  res.json(await reportQueryService.dashboard(req.user, req.query))
+}))
+
 reportCenterRouter.get('/report-center/orders', wrap(async (req, res) => {
   requireDatabase()
   res.json(await reportQueryService.orders(req.user, req.query))

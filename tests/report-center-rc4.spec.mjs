@@ -18,6 +18,7 @@ for (const width of [320, 340, 375, 390, 430]) {
     await page.setViewportSize({ width, height: 760 })
     await page.goto('/tests/report-center-rc4-harness.html')
     await expect(page.getByRole('heading', { name: '报表中心' })).toBeVisible()
+    await page.getByRole('button', { name: '综合营业', exact: true }).click()
     await expect(page.getByTestId('report-metric-revenue')).toContainText('¥28,630.00')
     await expect(page.getByTestId('report-metric-grossSales')).toContainText('部分覆盖')
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
@@ -56,6 +57,7 @@ for (const width of [320, 340, 375, 390, 430]) {
 test('RC-4 unavailable is rendered as missing rather than zero', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 760 })
   await page.goto('/tests/report-center-rc4-harness.html')
+  await page.getByRole('button', { name: '综合营业', exact: true }).click()
   await page.getByLabel('报表门店').selectOption('guanshe')
   await expect(page.getByTestId('report-metric-grossSales')).toContainText('暂无订单级数据')
   await expect(page.getByTestId('report-metric-grossSales')).toContainText('—')

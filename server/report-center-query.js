@@ -1,11 +1,19 @@
 import { Prisma } from '@prisma/client'
 import { hasReportAllStores, hasReportSalesView } from '../shared/accountPermissions.js'
+import { buduBusinessDate } from '../shared/businessDate.js'
 import { httpError } from './pos-core.js'
 
 export const REPORT_COVERAGE_STATES = Object.freeze({
   COMPLETE: 'COMPLETE',
   PARTIAL: 'PARTIAL',
   UNAVAILABLE: 'UNAVAILABLE',
+})
+
+export const REPORT_COMPARISON_STATES = Object.freeze({
+  COMPLETE: 'COMPLETE',
+  PARTIAL: 'PARTIAL',
+  INCOMPARABLE: 'INCOMPARABLE',
+  NO_PRIOR_DATA: 'NO_PRIOR_DATA',
 })
 
 export const DAILY_SALES_AUTHORITIES = Object.freeze({
@@ -19,6 +27,7 @@ const EFFECTIVE_ORDER_STATUSES = Object.freeze(['completed', 'partially_refunded
 const ORDER_SOURCES = new Set(['STORE_POS', 'MEITUAN', 'TAOBAO_FLASH', 'JD_INSTANT', 'OTHER'])
 const SETTLEMENT_TYPES = new Set(['WECHAT', 'ALIPAY', 'CASH', 'PLATFORM', 'CUSTOM'])
 const PRODUCT_SORTS = new Set(['productRevenue', 'salesQuantity', 'salesCents'])
+const COMPARISON_MODES = new Set(['previous', 'year'])
 const MAX_RANGE_DAYS = 92
 const MAX_PAGE_SIZE = 100
 
@@ -34,6 +43,43 @@ function addDays(value, amount) {
   const date = dateOnly(value)
   date.setUTCDate(date.getUTCDate() + amount)
   return isoDate(date)
+}
+
+function daysInUtcMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function shiftMonthClamped(value, amount) {
+  const date = dateOnly(value)
+  const originalDay = date.getUTCDate()
+  const monthIndex = date.getUTCFullYear() * 12 + date.getUTCMonth() + amount
+  const year = Math.floor(monthIndex / 12)
+  const month = ((monthIndex % 12) + 12) % 12
+  const day = Math.min(originalDay, daysInUtcMonth(year, month + 1))
+  return `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function shiftYearClamped(value, amount) {
+  const date = dateOnly(value)
+  const year = date.getUTCFullYear() + amount
+  const month = date.getUTCMonth() + 1
+  const day = Math.min(date.getUTCDate(), daysInUtcMonth(year, month))
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+export function resolveComparisonRange(range, mode = 'previous', period = '') {
+  if (!COMPARISON_MODES.has(mode)) throw httpError('报表对比方式不正确')
+  if (mode === 'year') return {
+    mode,
+    from: shiftYearClamped(range.from, -1),
+    to: shiftYearClamped(range.to, -1),
+  }
+  if (period === 'month' && range.from.endsWith('-01') && range.from.slice(0, 7) === range.to.slice(0, 7)) {
+    return { mode, from: shiftMonthClamped(range.from, -1), to: shiftMonthClamped(range.to, -1) }
+  }
+  const length = range.days.length
+  const to = addDays(range.from, -1)
+  return { mode, from: addDays(to, 1 - length), to }
 }
 
 function validDate(value) {
@@ -167,11 +213,18 @@ function summarizeCoverage(metric, allDays, supported) {
   }
 }
 
-function summarySupport(day) {
+function summarySupport(day, businessDate) {
   if (day.authority === DAILY_SALES_AUTHORITIES.CONFLICT) return { ok: false, reasonCode: day.reasonCode || 'AUTHORITY_CONFLICT' }
+  if (day.date > businessDate) return { ok: false, reasonCode: 'FUTURE_NOT_OCCURRED' }
   if (day.authority === DAILY_SALES_AUTHORITIES.POS) return { ok: true }
-  if (!day.entry) return { ok: false, reasonCode: 'MISSING_CONFIRMED_DAILY_ENTRY' }
-  if (day.entry.status !== 'confirmed') return { ok: false, reasonCode: 'DRAFT_DAILY_ENTRY' }
+  if (!day.entry) return {
+    ok: false,
+    reasonCode: day.date === businessDate ? 'TODAY_PENDING_CLOSE' : 'HISTORICAL_DATA_INCOMPLETE',
+  }
+  if (day.entry.status !== 'confirmed') return {
+    ok: false,
+    reasonCode: day.date === businessDate ? 'TODAY_PENDING_CLOSE' : 'HISTORICAL_DRAFT_ENTRY',
+  }
   return { ok: true }
 }
 
@@ -250,9 +303,170 @@ function basisPoints(numerator, denominator) {
   return total > 0n ? ((BigInt(numerator || 0) * 10_000n) / total).toString() : null
 }
 
+function sumDaily(daily, storeKeys, field) {
+  const allowed = new Set(storeKeys)
+  return daily.reduce((sum, row) => {
+    if (!allowed.has(row.storeKey) || row[field] === null || row[field] === undefined) return sum
+    return sum + BigInt(row[field])
+  }, 0n)
+}
+
+function levelCoverage(summary, level) {
+  return level === 'ORDER_LEVEL' ? summary.coverage.orders : summary.coverage.dailySummary
+}
+
+function comparisonCoverage(current, comparison, level, mode) {
+  const currentCoverage = levelCoverage(current, level)
+  const priorCoverage = levelCoverage(comparison, level)
+  const currentComplete = new Set(currentCoverage.coveredStores || [])
+  const priorComplete = new Set(priorCoverage.coveredStores || [])
+  const comparableStores = current.stores.map((row) => row.storeKey).filter((key) => currentComplete.has(key) && priorComplete.has(key))
+  const allStores = current.stores.map((row) => row.storeKey)
+  const noPriorData = priorCoverage.coveredStoreDays === 0
+  const state = noPriorData
+    ? REPORT_COMPARISON_STATES.NO_PRIOR_DATA
+    : comparableStores.length === 0
+      ? REPORT_COMPARISON_STATES.INCOMPARABLE
+      : comparableStores.length === allStores.length
+        ? REPORT_COMPARISON_STATES.COMPLETE
+        : REPORT_COMPARISON_STATES.PARTIAL
+  return {
+    state,
+    mode,
+    currentRange: current.range,
+    comparisonRange: comparison.range,
+    totalStores: allStores.length,
+    currentCoveredStores: allStores.filter((key) => currentComplete.has(key)),
+    comparisonCoveredStores: allStores.filter((key) => priorComplete.has(key)),
+    comparableStores,
+    excludedStores: allStores.filter((key) => !comparableStores.includes(key)),
+    reasonCodes: state === REPORT_COMPARISON_STATES.NO_PRIOR_DATA
+      ? ['NO_COMPARISON_DATA']
+      : state === REPORT_COMPARISON_STATES.INCOMPARABLE
+        ? ['DATA_COVERAGE_INCOMPARABLE']
+        : state === REPORT_COMPARISON_STATES.PARTIAL
+          ? ['PARTIAL_SAME_STORE_COVERAGE']
+          : [],
+  }
+}
+
+function comparisonMetric(current, comparison, field, unit, coverage) {
+  if (![REPORT_COMPARISON_STATES.COMPLETE, REPORT_COMPARISON_STATES.PARTIAL].includes(coverage.state)) {
+    return { unit, currentValue: null, comparisonValue: null, changeBps: null, coverage }
+  }
+  const stores = coverage.comparableStores
+  let currentValue
+  let priorValue
+  if (field === 'aovCents') {
+    const currentOrders = sumDaily(current.daily, stores, 'orderCount')
+    const priorOrders = sumDaily(comparison.daily, stores, 'orderCount')
+    currentValue = currentOrders > 0n ? sumDaily(current.daily, stores, 'revenueCents') / currentOrders : null
+    priorValue = priorOrders > 0n ? sumDaily(comparison.daily, stores, 'revenueCents') / priorOrders : null
+  } else {
+    currentValue = sumDaily(current.daily, stores, field)
+    priorValue = sumDaily(comparison.daily, stores, field)
+  }
+  const changeBps = currentValue !== null && priorValue !== null && priorValue !== 0n
+    ? ((currentValue - priorValue) * 10_000n / priorValue).toString()
+    : null
+  return {
+    unit,
+    currentValue: currentValue === null ? null : currentValue.toString(),
+    comparisonValue: priorValue === null ? null : priorValue.toString(),
+    changeBps,
+    coverage: {
+      ...coverage,
+      reasonCodes: changeBps === null && priorValue === 0n
+        ? [...coverage.reasonCodes, 'ZERO_COMPARISON_BASE']
+        : coverage.reasonCodes,
+    },
+  }
+}
+
+function buildComparisons(current, comparison, mode) {
+  const dailyCoverage = comparisonCoverage(current, comparison, 'STORE_DAILY_SUMMARY', mode)
+  const orderCoverage = comparisonCoverage(current, comparison, 'ORDER_LEVEL', mode)
+  return {
+    revenue: comparisonMetric(current, comparison, 'revenueCents', 'CENTS', dailyCoverage),
+    orderCount: comparisonMetric(current, comparison, 'orderCount', 'COUNT', dailyCoverage),
+    aov: comparisonMetric(current, comparison, 'aovCents', 'CENTS', dailyCoverage),
+    grossSales: comparisonMetric(current, comparison, 'grossCents', 'CENTS', orderCoverage),
+    refund: comparisonMetric(current, comparison, 'refundCents', 'CENTS', orderCoverage),
+  }
+}
+
+function mondayOf(value) {
+  const weekday = dateOnly(value).getUTCDay() || 7
+  return addDays(value, 1 - weekday)
+}
+
+function trendGranularity(dayCount) {
+  if (dayCount <= 31) return 'DAY'
+  if (dayCount <= 62) return 'WEEK'
+  return 'MONTH'
+}
+
+export function buildReportTrend(summary) {
+  const granularity = trendGranularity(summary.range.from === summary.range.to ? 1 : normalizeReportRange(summary.range).days.length)
+  const groups = new Map()
+  for (const row of summary.daily) {
+    const key = granularity === 'DAY' ? row.date : granularity === 'WEEK' ? mondayOf(row.date) : row.date.slice(0, 7)
+    const group = groups.get(key) || { key, from: row.date, to: row.date, rows: [] }
+    if (row.date < group.from) group.from = row.date
+    if (row.date > group.to) group.to = row.date
+    group.rows.push(row)
+    groups.set(key, group)
+  }
+  return {
+    granularity,
+    points: [...groups.values()].sort((a, b) => a.from.localeCompare(b.from)).map((group) => {
+      const covered = group.rows.filter((row) => row.revenueCents !== null)
+      const reasonCodes = [...new Set(group.rows.map((row) => row.reasonCode).filter(Boolean))].sort()
+      const state = covered.length === 0
+        ? REPORT_COVERAGE_STATES.UNAVAILABLE
+        : covered.length === group.rows.length
+          ? REPORT_COVERAGE_STATES.COMPLETE
+          : REPORT_COVERAGE_STATES.PARTIAL
+      const revenue = covered.reduce((sum, row) => sum + BigInt(row.revenueCents), 0n)
+      const orders = covered.reduce((sum, row) => sum + BigInt(row.orderCount), 0n)
+      return {
+        key: group.key,
+        from: group.from,
+        to: group.to,
+        revenueCents: state === REPORT_COVERAGE_STATES.UNAVAILABLE ? null : revenue.toString(),
+        orderCount: state === REPORT_COVERAGE_STATES.UNAVAILABLE ? null : orders.toString(),
+        aovCents: state === REPORT_COVERAGE_STATES.UNAVAILABLE || orders === 0n ? null : (revenue / orders).toString(),
+        coverage: {
+          state,
+          coveredStoreDays: covered.length,
+          uncoveredStoreDays: group.rows.length - covered.length,
+          reasonCodes,
+        },
+      }
+    }),
+  }
+}
+
+function dashboardFreshness(summary) {
+  const storesFor = (codes) => [...new Set(summary.daily.filter((row) => codes.includes(row.reasonCode)).map((row) => row.storeKey))]
+  const pendingCloseStores = storesFor(['TODAY_PENDING_CLOSE'])
+  const historicalIncompleteStores = storesFor(['HISTORICAL_DATA_INCOMPLETE', 'HISTORICAL_DRAFT_ENTRY'])
+  return {
+    businessDate: summary.businessDate,
+    state: historicalIncompleteStores.length > 0
+      ? 'HISTORICAL_INCOMPLETE'
+      : pendingCloseStores.length > 0
+        ? 'TODAY_PARTIAL'
+        : 'COMPLETE',
+    pendingCloseStores,
+    historicalIncompleteStores,
+  }
+}
+
 export class ReportQueryService {
-  constructor(prismaClient) {
+  constructor(prismaClient, { now = () => new Date() } = {}) {
     this.prisma = prismaClient
+    this.now = now
   }
 
   async resolveScope(user, query = {}) {
@@ -294,18 +508,18 @@ export class ReportQueryService {
         days.push({ storeKey: store.key, storeName: store.name, date, entry, ...resolved })
       }
     }
-    return { range, stores: selected, days }
+    return { range, stores: selected, days, businessDate: buduBusinessDate(this.now()) }
   }
 
   coverage(scope) {
     return {
-      dailySummary: summarizeCoverage('STORE_DAILY_SUMMARY', scope.days, summarySupport),
+      dailySummary: summarizeCoverage('STORE_DAILY_SUMMARY', scope.days, (day) => summarySupport(day, scope.businessDate)),
       orders: summarizeCoverage('ORDER_LEVEL', scope.days, orderSupport),
       productSales: summarizeCoverage('ITEM_LEVEL', scope.days, orderSupport),
     }
   }
 
-  async queryPosSummary(posDays) {
+  async queryPosSummary(posDays, { includeCompositions = true } = {}) {
     if (!posDays.length) return { totals: [], channels: [], settlements: [] }
     const selected = selectedDaysCte(posDays)
     const settled = settledOrdersCte()
@@ -320,6 +534,7 @@ export class ReportQueryService {
         COALESCE(SUM(effective_order), 0)::bigint AS "effectiveOrders"
       FROM order_metrics GROUP BY "store_id", "business_date" ORDER BY "store_id", "business_date"
     `)
+    if (!includeCompositions) return { totals, channels: [], settlements: [] }
     const channels = await this.prisma.$queryRaw(Prisma.sql`
       WITH ${selected}, ${settled}, ${metrics}
       SELECT "order_source"::text AS key,
@@ -355,11 +570,11 @@ export class ReportQueryService {
     return { totals, channels, settlements }
   }
 
-  async summary(user, query = {}) {
-    const scope = await this.resolveScope(user, query)
+  async summary(user, query = {}, resolvedScope = null, options = {}) {
+    const scope = resolvedScope || await this.resolveScope(user, query)
     const coverage = this.coverage(scope)
     const posDays = scope.days.filter((day) => orderSupport(day).ok)
-    const pos = await this.queryPosSummary(posDays)
+    const pos = await this.queryPosSummary(posDays, options)
     const posMap = new Map(pos.totals.map((row) => [storeDayKey(row.storeKey, isoDate(row.date)), row]))
     let revenue = 0n
     let orderCount = 0n
@@ -376,7 +591,7 @@ export class ReportQueryService {
     }]))
     const daily = []
     for (const day of scope.days) {
-      const support = summarySupport(day)
+      const support = summarySupport(day, scope.businessDate)
       let row = null
       if (support.ok && day.authority === DAILY_SALES_AUTHORITIES.MANUAL) {
         row = { revenueCents: BigInt(day.entry.incCents), orderCount: BigInt(day.entry.ord), grossCents: null, discountCents: null, refundCents: null }
@@ -404,7 +619,10 @@ export class ReportQueryService {
         storeKey: day.storeKey, storeName: day.storeName, date: day.date,
         authority: day.authority, evidence: day.evidence, reasonCode: support.ok ? null : support.reasonCode,
         revenueCents: row ? row.revenueCents.toString() : null,
-        orderCount: row ? Number(row.orderCount) : null,
+        orderCount: row ? row.orderCount.toString() : null,
+        grossCents: row?.grossCents === null || !row ? null : row.grossCents.toString(),
+        discountCents: row?.discountCents === null || !row ? null : row.discountCents.toString(),
+        refundCents: row?.refundCents === null || !row ? null : row.refundCents.toString(),
       })
     }
     const aov = orderCount > 0n ? revenue / orderCount : null
@@ -432,6 +650,7 @@ export class ReportQueryService {
       })
     return {
       range: { from: scope.range.from, to: scope.range.to },
+      businessDate: scope.businessDate,
       stores: scope.stores.map(({ key, name }) => ({ storeKey: key, storeName: name })),
       metrics: {
         revenue: amountMetric(revenue, coverage.dailySummary),
@@ -452,6 +671,45 @@ export class ReportQueryService {
       storeComparison,
       coverage,
       daily,
+    }
+  }
+
+  async dashboard(user, query = {}) {
+    const comparisonMode = String(query.compare || 'previous').trim()
+    const period = String(query.period || '').trim()
+    if (!['', 'today', 'yesterday', 'week', 'month', 'custom'].includes(period)) throw httpError('报表周期类型不正确')
+    const currentScope = await this.resolveScope(user, query)
+    const comparisonRange = resolveComparisonRange(currentScope.range, comparisonMode, period)
+    const comparisonScope = await this.resolveScope(user, {
+      from: comparisonRange.from,
+      to: comparisonRange.to,
+      store: currentScope.stores.map((row) => row.key).join(','),
+    })
+    const topSort = String(query.topSort || 'productRevenue').trim()
+    if (!['productRevenue', 'salesQuantity'].includes(topSort)) throw httpError('商品排行方式不正确')
+    const [current, comparison, products] = await Promise.all([
+      this.summary(user, query, currentScope),
+      this.summary(user, comparisonRange, comparisonScope, { includeCompositions: false }),
+      this.products(user, { ...query, page: 1, pageSize: 5, sort: topSort, search: '' }, currentScope),
+    ])
+    return {
+      range: current.range,
+      businessDate: current.businessDate,
+      comparison: { mode: comparisonMode, range: comparison.range },
+      freshness: dashboardFreshness(current),
+      metrics: current.metrics,
+      comparisons: buildComparisons(current, comparison, comparisonMode),
+      trend: buildReportTrend(current),
+      storeComparison: current.storeComparison,
+      channelComposition: current.channelComposition,
+      settlementComposition: current.settlementComposition,
+      topProducts: {
+        sort: topSort,
+        coverage: products.coverage,
+        rows: products.rows,
+      },
+      profit: { available: false, reasonCode: 'PROFIT_MODEL_NOT_CONFIGURED' },
+      coverage: current.coverage,
     }
   }
 
@@ -612,8 +870,8 @@ export class ReportQueryService {
     }
   }
 
-  async products(user, query = {}) {
-    const scope = await this.resolveScope(user, query)
+  async products(user, query = {}, resolvedScope = null) {
+    const scope = resolvedScope || await this.resolveScope(user, query)
     const coverage = this.coverage(scope).productSales
     const posDays = scope.days.filter((day) => orderSupport(day).ok)
     const paging = parsePage(query)

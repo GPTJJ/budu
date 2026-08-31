@@ -18,6 +18,7 @@
     ]
     seedCachedDataForTest({ entries: {}, staff: [], removedStaff: [], stores, schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {}, bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [] })
     window.__reportRequests = []
+    const scenario = new URLSearchParams(location.search).get('scenario') || 'today'
 
     const complete = { state: 'COMPLETE', coveredStores: stores.map((row) => row.key), partialStores: [], uncoveredStores: [], coveredStoreDays: 4, uncoveredStoreDays: 0, reasonCodes: [] }
     const partial = { state: 'PARTIAL', coveredStores: ['tongying'], partialStores: [], uncoveredStores: ['guanshe', 'chaowai', 'xidan'], coveredStoreDays: 1, uncoveredStoreDays: 3, reasonCodes: ['MANUAL_DAILY_SUMMARY_ONLY'] }
@@ -49,6 +50,35 @@
       { productId: 'p2', productName: '海盐焦糖巧克力千层', sku: 'BUDU-VERY-LONG-002', salesQuantity: '22', giftQuantity: '1', salesCents: '120000', giftCents: '6000', discountCents: '12000', refundQuantity: '1', refundCents: '6000', productRevenueCents: '102000', salesQuantityShareBps: '4400', salesShareBps: '3800', discountShareBps: '6000', productRevenueShareBps: '3500', refundQuantityShareBps: '3333', refundShareBps: '3000', giftQuantityShareBps: '2500', giftShareBps: '2222', orderRateNumerator: '0', orderRateDenominator: '0', orderRateBps: null },
     ]
 
+    const comparison = (state = 'PARTIAL', changeBps = '1240') => ({
+      unit: 'CENTS', currentValue: '930000', comparisonValue: '827000', changeBps,
+      coverage: { state, mode: 'previous', currentRange: { from: '2026-08-31', to: '2026-08-31' }, comparisonRange: { from: '2026-08-30', to: '2026-08-30' }, totalStores: 4, comparableStores: state === 'COMPLETE' ? stores.map((row) => row.key) : state === 'PARTIAL' ? ['tongying', 'guanshe', 'chaowai'] : [], excludedStores: state === 'PARTIAL' ? ['xidan'] : stores.map((row) => row.key), reasonCodes: state === 'NO_PRIOR_DATA' ? ['NO_COMPARISON_DATA'] : state === 'INCOMPARABLE' ? ['DATA_COVERAGE_INCOMPARABLE'] : [] },
+    })
+    const dashboard = (manualOnly = false) => {
+      const base = summary(manualOnly)
+      const comparisonState = scenario === 'incomparable' ? 'INCOMPARABLE' : scenario === 'no-prior' ? 'NO_PRIOR_DATA' : 'PARTIAL'
+      const dashboardCoverage = scenario === 'historical'
+        ? { ...partial, reasonCodes: ['HISTORICAL_DATA_INCOMPLETE'] }
+        : { ...partial, reasonCodes: ['TODAY_PENDING_CLOSE'] }
+      return {
+        ...base,
+        comparison: { mode: 'previous', range: { from: '2026-08-30', to: '2026-08-30' } },
+        freshness: scenario === 'historical'
+          ? { businessDate: '2026-08-31', state: 'HISTORICAL_INCOMPLETE', pendingCloseStores: [], historicalIncompleteStores: ['guanshe'] }
+          : scenario === 'complete'
+            ? { businessDate: '2026-08-31', state: 'COMPLETE', pendingCloseStores: [], historicalIncompleteStores: [] }
+            : { businessDate: '2026-08-31', state: 'TODAY_PARTIAL', pendingCloseStores: ['guanshe', 'chaowai', 'xidan'], historicalIncompleteStores: [] },
+        comparisons: {
+          revenue: comparison(comparisonState), orderCount: { ...comparison(comparisonState, '-350'), unit: 'COUNT' },
+          aov: comparison(comparisonState, '1610'), grossSales: comparison('NO_PRIOR_DATA', null), refund: comparison('NO_PRIOR_DATA', null),
+        },
+        trend: { granularity: 'DAY', points: [{ key: '2026-08-31', from: '2026-08-31', to: '2026-08-31', revenueCents: '2863000', orderCount: '227', aovCents: '12612', coverage: { state: 'PARTIAL', coveredStoreDays: 1, uncoveredStoreDays: 3, reasonCodes: ['TODAY_PENDING_CLOSE'] } }] },
+        topProducts: { sort: 'productRevenue', coverage: manualOnly ? unavailable : partial, rows: manualOnly ? [] : products },
+        profit: { available: false, reasonCode: 'PROFIT_MODEL_NOT_CONFIGURED' },
+        coverage: { ...base.coverage, dailySummary: dashboardCoverage },
+      }
+    }
+
     const detail = {
       id: 'order-meituan', orderNo: 'BUDU-20260831-MT001', storeKey: 'tongying', storeName: '北京通盈中心店', date: '2026-08-31', createdAt: '2026-08-31T06:36:00.000Z', completedAt: '2026-08-31T06:37:00.000Z', lastRefundAt: '2026-08-31T08:00:00.000Z', cashierNameSnapshot: '门店员工', orderSource: 'MEITUAN', entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL', settlementType: 'PLATFORM', status: 'partially_refunded', paymentStatus: 'paid', payableCents: '6800', settlementCents: '6800', grossCents: '8000', discountCents: '1200', refundCents: '1800', revenueCents: '5000', externalSettlement: { id: 'es1', settlementType: 'PLATFORM', status: 'PARTIALLY_REFUNDED', amountCents: '6800' }, payments: [], items: [{ id: 'oi1', productId: 'p1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitSnapshot: '份', unitPriceCents: '8000', quantity: 1, discountCents: '1200', actualCents: '6800', isGift: false }], refunds: [{ id: 'r1', refundNo: 'RF-MT001', refundMode: 'MANUAL_EXTERNAL', refundCents: '1800', status: 'completed', completedAt: '2026-08-31T08:00:00.000Z', externalCompletedAt: '2026-08-31T08:00:00.000Z', items: [{ orderItemId: 'oi1', productName: '卡皮巴拉布丁', quantity: 1, amountCents: '1800' }] }],
     }
@@ -58,6 +88,7 @@
       window.__reportRequests.push(parsed.pathname + parsed.search)
       const json = (value, status = 200) => Promise.resolve(new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }))
       const manualOnly = parsed.searchParams.get('store') === 'guanshe'
+      if (parsed.pathname === '/api/v2/report-center/dashboard') return json(dashboard(manualOnly))
       if (parsed.pathname === '/api/v2/report-center/summary') return json(summary(manualOnly))
       if (parsed.pathname === '/api/v2/report-center/orders/order-meituan') return json(detail)
       if (parsed.pathname === '/api/v2/report-center/orders') return json({ range: { from: '2026-08-31', to: '2026-08-31' }, coverage: manualOnly ? unavailable : partial, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, total: manualOnly ? 0 : 42, rows: manualOnly ? [] : orderRows })
