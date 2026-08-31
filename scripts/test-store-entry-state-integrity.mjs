@@ -135,6 +135,17 @@ async function openEditableHarness(width = 375, browserInstance = browser, heigh
   return page
 }
 
+test('final Daily Entry V2 information architecture is concise and ordered', async () => {
+  const page = await openEditableHarness(1440, browser, 900)
+  try {
+    const headings = await page.locator('h3').evaluateAll((nodes) => nodes.map((node) => node.textContent.trim()))
+    assert.deepEqual(headings.slice(0, 4), ['今日经营', '今日实际值班', '闭店确认', '每日事实账本'])
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('historical authority survives the late shared-data refresh', async () => {
   const page = await openHarness()
   try {
@@ -282,6 +293,26 @@ test('sales, participant and actual-hours edits stay local until one atomic conf
     await hours.fill('7.5')
     await page.locator('[data-budu-overlay-ignore]').click({ position: { x: 2, y: 2 } })
     assert.equal(await page.evaluate(() => window.__writes.length), 0, 'draft edits must not write PostgreSQL')
+    const savedStaff = [ledgerStaff('emp-chen', '陈文慧', 7.5)]
+    const confirmedOverview = payload('xidan', '2026-08-22', 99950, 12, savedStaff)
+    confirmedOverview.entry = {
+      ...confirmedOverview.entry, status: 'confirmed', version: 2,
+      confirmedAt: '2026-08-22T14:00:00.000Z', confirmedBy: 'developer',
+    }
+    const confirmedLedger = ledgerRow('2026-08-22', {
+      incCents: '99950', ord: 12, avgCents: '8329', staff: savedStaff,
+      confirmedAt: '2026-08-22T14:00:00.000Z', confirmedBy: 'developer',
+    })
+    await page.evaluate(([overview, ledger]) => {
+      window.__setOverviewPlan('xidan', '2026-08-22', [
+        { payload: overview }, { payload: overview }, { payload: overview }, { payload: overview },
+      ])
+      window.__setLedgerPlan('2026-08', 'xidan', 'all', [
+        { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [] } },
+        { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [ledger] } },
+      ])
+    }, [confirmedOverview, confirmedLedger])
+    await page.getByTestId('ledger-store-filter').selectOption('xidan')
     await page.evaluate(() => window.__releaseSharedRefresh())
     await page.getByTestId('daily-entry-confirm').click()
     await page.getByText('确认成功', { exact: true }).waitFor()
@@ -295,6 +326,10 @@ test('sales, participant and actual-hours edits stay local until one atomic conf
     assert.equal(writes[0].body.items[0].actualHours, '7.5')
     assert.equal(await page.locator('.budu-feedback-overlay').count(), 1, 'success feedback must render exactly once')
     assert.equal(await page.getByTestId('daily-entry-dirty').count(), 0)
+    await page.getByTestId('ledger-card-2026-08-22').waitFor()
+    assert.equal(await page.locator('input[type=number]').nth(0).inputValue(), '999.50')
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-chen').inputValue(), '7.5')
+    assert.equal(await page.getByTestId('daily-entry-confirm').count(), 0, 'confirmed facts become read-only after refresh')
   } finally {
     await page.close()
   }
@@ -389,6 +424,26 @@ test('POS sales stay read-only while staff facts use the atomic confirmation', a
     assert.equal(await page.getByText('营业收入（元）').count(), 0)
     assert.equal(await page.locator('input[type=number]').count(), 1, 'POS page only exposes actualHours as editable numeric fact')
     await page.getByTestId('daily-entry-hours-employee:emp-home').fill('7.25')
+    const savedStaff = [ledgerStaff('emp-home', '叶芷辰', 7.25)]
+    const confirmedOverview = posPayload('xidan', '2026-08-19', savedStaff)
+    confirmedOverview.entry = {
+      ...confirmedOverview.entry, status: 'confirmed', version: 3,
+      confirmedAt: '2026-08-19T14:00:00.000Z', confirmedBy: 'developer',
+    }
+    const confirmedLedger = ledgerRow('2026-08-19', {
+      salesDataSource: 'pos', salesSourceLabel: 'BUDU POS', incCents: '88000', ord: 8, avgCents: '11000',
+      staff: savedStaff, confirmedAt: '2026-08-19T14:00:00.000Z', confirmedBy: 'developer',
+    })
+    await page.evaluate(([overview, ledger]) => {
+      window.__setOverviewPlan('xidan', '2026-08-19', [
+        { payload: overview }, { payload: overview }, { payload: overview }, { payload: overview },
+      ])
+      window.__setLedgerPlan('2026-08', 'xidan', 'all', [
+        { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [] } },
+        { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [ledger] } },
+      ])
+    }, [confirmedOverview, confirmedLedger])
+    await page.getByTestId('ledger-store-filter').selectOption('xidan')
     await page.evaluate(() => window.__releaseSharedRefresh())
     await page.getByTestId('daily-entry-confirm').click()
     await page.getByText('确认成功', { exact: true }).waitFor()
@@ -396,6 +451,9 @@ test('POS sales stay read-only while staff facts use the atomic confirmation', a
     assert.equal(writes.length, 1)
     assert.equal(Object.prototype.hasOwnProperty.call(writes[0].body, 'manualSales'), false)
     assert.equal(writes[0].body.items[0].actualHours, '7.25')
+    await page.getByTestId('ledger-card-2026-08-19').waitFor()
+    assert.equal(await page.getByText('POS 自动同步', { exact: true }).count(), 1)
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-home').inputValue(), '7.25')
   } finally {
     await page.close()
   }
@@ -595,6 +653,7 @@ for (const width of [320, 340, 375, 390, 430]) {
       assert.equal(badgeStyle, 'nowrap')
       const hourInput = page.getByTestId('daily-entry-hours-employee:emp-home')
       await hourInput.scrollIntoViewIfNeeded()
+      assert.equal(await hourInput.getAttribute('inputmode'), 'decimal')
       const hourRect = await hourInput.boundingBox()
       assert.ok(hourRect && hourRect.x >= 0 && hourRect.x + hourRect.width <= width)
     } finally {

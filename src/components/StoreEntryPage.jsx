@@ -687,7 +687,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       </div>
 
       <section className="card p-5">
-        <h3 className="text-[15px] font-bold text-slate-800">今日经营概览</h3>
+        <h3 className="text-[15px] font-bold text-slate-800">今日经营</h3>
         {authorityStatus === 'loading' || (loadingOverview && !authorityReady) ? (
           <p className="mt-3 text-sm text-slate-400">正在加载…</p>
         ) : authorityStatus === 'error' || !authorityReady ? (
@@ -736,7 +736,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
 
       <section className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <h3 className="text-[15px] font-bold text-slate-800">今日值班</h3>
+          <h3 className="text-[15px] font-bold text-slate-800">今日实际值班</h3>
           {dirty && <span className="text-xs font-semibold text-amber-600">仅保存在本地 draft</span>}
         </div>
         <div className="mt-4">
