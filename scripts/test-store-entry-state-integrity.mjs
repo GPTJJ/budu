@@ -378,6 +378,36 @@ test('Schedule Employee.id prefills only the local draft with blank actualHours 
   }
 })
 
+test('orphan DailyStoreStaff never overrides the latest Schedule draft', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(`${baseUrl}tests/store-entry-integrity-harness.html`)
+    await page.getByTestId('daily-entry-store').selectOption('xidan')
+    const day = '2026-08-31'
+    const orphanOverview = {
+      ...payload('xidan', day, 0, 0, [
+        ledgerStaff('emp-chen', '陈文慧', 8),
+        ledgerStaff('emp-same-a', '同名员工', 8),
+      ]),
+      entry: null,
+    }
+    await page.evaluate(([overview, directory]) => {
+      window.__setOverviewPlan('xidan', overview.date, [{ payload: overview }])
+      window.__setParticipantPlan('xidan', overview.date, [directory])
+    }, [orphanOverview, participantDirectory(['emp-home'])])
+    await page.locator('input[type=date]').fill('2026-08-30')
+    await page.locator('input[type=date]').fill(day)
+    await page.getByTestId('daily-entry-hours-employee:emp-home').waitFor()
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-home').inputValue(), '')
+    assert.equal(await page.getByText('排班预填', { exact: true }).count(), 1)
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-chen').count(), 0)
+    assert.equal(await page.getByTestId('daily-entry-hours-employee:emp-same-a').count(), 0)
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('reopening a clean Daily Entry reads the latest schedule instead of stale prefill', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   try {

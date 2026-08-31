@@ -59,3 +59,16 @@ test('Gate 24 F/G/H: 月份切换与缓存回访', async ({ page }) => {
   await expect(page.getByText('稳定计算', { exact: true })).toBeVisible()
   await expect(page.getByText('人员管理', { exact: true }).first()).toBeVisible()
 })
+
+test('Daily Entry V2 regression: business incomplete is employee-scoped, not a technical load error', async ({ page }) => {
+  await page.goto('/tests/gate24-payroll-display-harness.html?partial=1')
+  await expect(page.getByText('稳定计算', { exact: true })).toBeVisible()
+  await expect(page.getByText('部分工资待完善', { exact: true })).toBeVisible()
+  const readyCard = page.locator('.card').filter({ hasText: 'A001' })
+  const incompleteCard = page.locator('.card').filter({ hasText: 'B001' })
+  await expect(readyCard.getByText('最终工资', { exact: true })).toBeVisible()
+  await expect(incompleteCard.getByText('工资数据待完善', { exact: true })).toBeVisible()
+  await expect(incompleteCard.getByText(/2026-08-02.*北京官舍店.*缺少每日记录/)).toBeVisible()
+  await expect(page.getByText('工资数据暂不可用', { exact: true })).toHaveCount(0)
+  await expect(incompleteCard.getByRole('button', { name: '重新加载' })).toHaveCount(0)
+})

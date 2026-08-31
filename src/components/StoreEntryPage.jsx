@@ -45,9 +45,12 @@ function serializeStaffRows(rows) {
   }))
 }
 
-export function buildScheduleDraftRows(directory, existingRows, confirmed) {
+export function buildScheduleDraftRows(directory, existingRows, entry) {
   const persisted = serializeStaffRows(existingRows)
-  if (confirmed || persisted.length > 0) return persisted
+  // DailyStoreStaff is an actual-attendance fact only when the same store/date
+  // still has its owning DailyEntry. Historical orphan rows remain visible to
+  // completeness/payroll auditing, but must never override a new Schedule draft.
+  if (entry && (entry.status === 'confirmed' || persisted.length > 0)) return persisted
   const employeeById = new Map((Array.isArray(directory?.employees) ? directory.employees : [])
     .map((employee) => [employee.employeeId, employee]))
   const seen = new Set()
@@ -309,7 +312,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       overviewRef.current = data
       setInc(data.entry ? centsToYuan(data.entry.incCents) : '')
       setOrd(data.entry ? String(data.entry.ord ?? '') : '')
-      setStaffRows(buildScheduleDraftRows({ ...directory, employees: nextParticipants.filter((row) => row.employeeId) }, data.staff, data.entry?.status === 'confirmed'))
+      setStaffRows(buildScheduleDraftRows({ ...directory, employees: nextParticipants.filter((row) => row.employeeId) }, data.staff, data.entry))
       setScheduleIssues(Array.isArray(directory?.schedule?.unresolved) ? directory.schedule.unresolved : [])
       dirtyRef.current = false
       setDirty(false)

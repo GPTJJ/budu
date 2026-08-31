@@ -144,4 +144,23 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [K] 空月确定性 PASS')
 }
 
+// L: 部分员工缺业务事实时，已存在事实的工资数学不变，整期发放继续 fail closed
+{
+  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '李四'] } }
+  const cleanStaff = [staffRow('a', '2026-09-01', 'emp-A', '张伟'), staffRow('b', '2026-09-01', 'emp-B', '李四')]
+  const partialStaff = [...cleanStaff, staffRow('b-orphan', '2026-09-02', 'emp-B', '李四')]
+  const base = { month: '2026-09', dailyEntries: entries, employees: [{ id: 'emp-A' }, { id: 'emp-B' }], users: baseUsers }
+  const clean = resolvePayrollCalculation({ ...base, dailyStoreStaffRows: cleanStaff })
+  const partial = resolvePayrollCalculation({ ...base, dailyStoreStaffRows: partialStaff })
+  assert.equal(partial.mode, 'EMPLOYEE_ID')
+  assert.equal(partial.calculationReady, false)
+  assert.equal(partial.issueReady, false)
+  const salary = (out, employeeId) => out.payroll.employees.find((row) => row.employeeId === employeeId)?.salary
+  assert.equal(salary(partial, 'emp-A'), salary(clean, 'emp-A'), 'L unaffected salary unchanged')
+  assert.equal(salary(partial, 'emp-B'), salary(clean, 'emp-B'), 'L known-fact salary math unchanged')
+  assert.equal(partial.readiness.employees.find((row) => row.employeeId === 'emp-A').calculationReady, true)
+  assert.equal(partial.readiness.employees.find((row) => row.employeeId === 'emp-B').calculationReady, false)
+  console.log('  [L] 员工级 incomplete + 数学不变 PASS')
+}
+
 console.log('GATE 23 UNIFIED PAYROLL RESOLVER TEST OK')

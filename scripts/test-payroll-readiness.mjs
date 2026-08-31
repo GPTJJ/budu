@@ -168,4 +168,23 @@ const staffRow = (id, date, employeeId, name) => ({ id, storeId: 'guanshe', stor
   console.log('  [K] coverage 指标 PASS')
 }
 
+// L: 员工级完整性——一个员工缺 DailyEntry 不得伪装成全员技术加载失败
+{
+  const entries = { '2026-09|guanshe|09-01': { inc: 6000, ord: 60, staff: ['张伟', '李四'] } }
+  const staff = [
+    staffRow('a', '2026-09-01', 'emp-A', '张伟'),
+    staffRow('b', '2026-09-01', 'emp-B', '李四'),
+    staffRow('b-orphan', '2026-09-02', 'emp-B', '李四'),
+  ]
+  const out = evaluatePayrollReadiness({ month: '2026-09', dailyEntries: entries, dailyStoreStaffRows: staff, employees: baseEmployees, users: baseUsers })
+  assert.equal(out.calculationReady, false, 'L period remains fail closed')
+  assert.equal(out.issueReady, false, 'L issuance remains fail closed')
+  const empA = out.employees.find((row) => row.employeeId === 'emp-A')
+  const empB = out.employees.find((row) => row.employeeId === 'emp-B')
+  assert.equal(empA.calculationReady, true, 'L unaffected employee remains display-calculable')
+  assert.equal(empB.calculationReady, false, 'L affected employee remains incomplete')
+  assert.equal(empB.blockers.some((blocker) => blocker.reason === 'MISSING_DAILY_ENTRY' && blocker.date === '2026-09-02'), true)
+  console.log('  [L] 员工级完整性 PASS')
+}
+
 console.log('GATE 22 PAYROLL READINESS TEST OK')

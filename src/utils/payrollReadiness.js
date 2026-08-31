@@ -72,7 +72,14 @@ export function evaluatePayrollReadiness(input) {
   const eligibleDays = new Set()
   for (const day of stable) {
     if (day.entryStatus !== 'JOINED') {
-      calculationBlockers.push({ type: CALC, reason: 'MISSING_DAILY_ENTRY', detail: `${day.storeId} ${day.date} 无营业记录` })
+      calculationBlockers.push({
+        type: CALC,
+        reason: 'MISSING_DAILY_ENTRY',
+        detail: `${day.storeId} ${day.date} 无营业记录`,
+        employeeId: day.employeeId,
+        storeId: day.storeId,
+        date: day.date,
+      })
       bump('MISSING_DAILY_ENTRY')
       continue
     }
@@ -115,7 +122,14 @@ export function evaluatePayrollReadiness(input) {
   // 请求范围之外的 unresolved 日不得污染当前周期就绪度。
   const rangeUnresolved = unresolved.filter(inRequestedRange)
   for (const u of rangeUnresolved) {
-    calculationBlockers.push({ type: CALC, reason: u.reason, detail: `${u.storeId || ''} ${u.date || ''}` })
+    calculationBlockers.push({
+      type: CALC,
+      reason: u.reason,
+      detail: `${u.storeId || ''} ${u.date || ''}`,
+      ...(Array.isArray(u.employeeIds) && u.employeeIds.length > 0 ? { employeeIds: u.employeeIds } : {}),
+      ...(u.storeId ? { storeId: u.storeId } : {}),
+      ...(u.date ? { date: u.date } : {}),
+    })
     bump(u.reason)
   }
 
@@ -226,12 +240,16 @@ export function evaluatePayrollReadiness(input) {
   const employees = payrollEmployees
     .sort((a, b) => String(a.employeeId).localeCompare(String(b.employeeId)))
     .map((rec) => {
-      const blockers = []
-      if (!calculationReady) blockers.push({ type: CALC, reason: 'PERIOD_CALCULATION_NOT_READY' })
+      const blockers = calculationBlockers.filter((blocker) => {
+        if (blocker.employeeId) return blocker.employeeId === rec.employeeId
+        if (Array.isArray(blocker.employeeIds) && blocker.employeeIds.length > 0) return blocker.employeeIds.includes(rec.employeeId)
+        return true
+      })
+      const employeeCalculationReady = blockers.length === 0
       // 收件人：Gate 18 语义——User.employeeId 精确匹配；status 规则沿用 Gate 18（active 才 eligible）
       const matches = users.filter((u) => u.employeeId === rec.employeeId && u.status === 'active')
-      let issueReady = calculationReady
-      if (calculationReady) {
+      let issueReady = calculationReady && employeeCalculationReady
+      if (issueReady) {
         if (matches.length === 0) {
           issueReady = false
           blockers.push({ type: ISSUE, reason: 'UNBOUND_PAYROLL_RECIPIENT', detail: `${rec.employeeId} 无绑定账号` })
@@ -240,7 +258,7 @@ export function evaluatePayrollReadiness(input) {
           blockers.push({ type: ISSUE, reason: 'DUPLICATE_PAYROLL_RECIPIENT', detail: `${rec.employeeId} 存在 ${matches.length} 个绑定账号` })
         }
       }
-      return { employeeId: rec.employeeId, days: rec.days, calculationReady, issueReady, blockers }
+      return { employeeId: rec.employeeId, days: rec.days, calculationReady: employeeCalculationReady, issueReady, blockers }
     })
 
   const issueReadyEmployeeCount = employees.filter((e) => e.issueReady).length

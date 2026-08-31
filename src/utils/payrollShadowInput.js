@@ -96,7 +96,17 @@ export function buildEmployeePayrollDayInputs(dailyEntries, dailyStoreStaffRows)
       else if (row.participantType === PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE) legacyCompatibleRows.push({ ...base, legacy: 'REVIEWED_COMPATIBLE' })
       else legacyUnknownRows.push({ ...base, participantType: PAYROLL_PARTICIPANT_TYPES.LEGACY_UNKNOWN, legacy: 'UNRESOLVED' })
     }
-    if (!entry) unresolvedDays.push({ storeId, date, participantCount, reason: 'MISSING_DAILY_ENTRY' })
+    if (!entry) {
+      unresolvedDays.push({
+        storeId,
+        date,
+        participantCount,
+        reason: 'MISSING_DAILY_ENTRY',
+        employeeIds: [...new Set(group
+          .filter((row) => row.participantType === PAYROLL_PARTICIPANT_TYPES.EMPLOYEE && row.employeeId)
+          .map((row) => row.employeeId))],
+      })
+    }
   }
 
   for (const entry of entryByStoreDate.values()) {
