@@ -12,6 +12,8 @@ import {
   hasExternalSettlementConfirm,
   hasManualExternalRefundConfirm,
   hasManualExternalRefundRecord,
+  hasReportAllStores,
+  hasReportSalesView,
   hasInventoryTransferAll,
   hasPageAccess,
   normalizeAccountPermissions,
@@ -55,6 +57,17 @@ test('人工外部退款记录与确认是独立、默认关闭且收银不可�
   assert.equal(hasManualExternalRefundConfirm({ role: 'public', permissions: { manualExternalRefundConfirm: true } }), false)
 })
 
+test('销售报表与跨店读取是独立、默认关闭且服务端可判定的显式能力', () => {
+  assert.equal(hasReportSalesView({ role: 'developer' }), true)
+  assert.equal(hasReportAllStores({ role: 'developer' }), true)
+  assert.equal(hasReportSalesView({ role: 'finance', permissions: {} }), false)
+  assert.equal(hasReportAllStores({ role: 'admin', permissions: {} }), false)
+  assert.equal(hasReportSalesView({ role: 'staff', permissions: { reportSalesView: true } }), true)
+  assert.equal(hasReportAllStores({ role: 'manager', permissions: { reportAllStores: true } }), true)
+  assert.equal(hasReportSalesView({ role: 'cashier', permissions: { reportSalesView: true } }), false)
+  assert.equal(hasReportAllStores({ role: 'public', permissions: { reportAllStores: true } }), false)
+})
+
 test('调拨全权限不依赖角色和绑定门店', () => {
   const user = { role: 'staff', storeKeys: ['guanshe'], permissions: { inventoryTransferAll: true } }
   assert.equal(hasInventoryTransferAll(user), true)
@@ -88,6 +101,8 @@ test('权限规范化保留已知模块并过滤未知字段', () => {
   assert.equal(normalized.externalSettlementConfirm, false)
   assert.equal(normalized.manualExternalRefundRecord, false)
   assert.equal(normalized.manualExternalRefundConfirm, false)
+  assert.equal(normalized.reportSalesView, false)
+  assert.equal(normalized.reportAllStores, false)
   assert.equal(normalized.modules.overview, false)
   assert.equal(normalized.modules.finance, true)
   assert.equal(Object.hasOwn(normalized.modules, 'unknown'), false)

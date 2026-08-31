@@ -86,6 +86,8 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   EXTERNAL_SETTLEMENT_CONFIRM: 'externalSettlementConfirm',
   MANUAL_EXTERNAL_REFUND_RECORD: 'manualExternalRefundRecord',
   MANUAL_EXTERNAL_REFUND_CONFIRM: 'manualExternalRefundConfirm',
+  REPORT_SALES_VIEW: 'reportSalesView',
+  REPORT_ALL_STORES: 'reportAllStores',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
   DAILY_ENTRY: 'dailyEntry',
 })
@@ -167,6 +169,10 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_RECORD] === true),
     [ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM]:
       role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM] === true),
+    [ACCOUNT_PERMISSION_KEYS.REPORT_SALES_VIEW]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_SALES_VIEW] === true),
+    [ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES]:
+      role === 'developer' || (role !== 'cashier' && source[ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES] === true),
     [ACCOUNT_PERMISSION_KEYS.DEVELOPER_SENSITIVE_RECORD_DELETE]: role === 'developer',
     [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY]: normalizeDailyEntryCapabilities(
       source[ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY],
@@ -250,6 +256,24 @@ export function hasManualExternalRefundConfirm(user) {
       user.status !== 'disabled' &&
       user.role !== 'public' &&
       normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.MANUAL_EXTERNAL_REFUND_CONFIRM],
+  )
+}
+
+export function hasReportSalesView(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_SALES_VIEW],
+  )
+}
+
+export function hasReportAllStores(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.REPORT_ALL_STORES],
   )
 }
 

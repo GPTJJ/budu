@@ -433,6 +433,8 @@ function PermissionModal({ user, onClose, onSaved }) {
   const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
   const [manualExternalRefundRecord, setManualExternalRefundRecord] = useState(user.permissions?.manualExternalRefundRecord === true)
   const [manualExternalRefundConfirm, setManualExternalRefundConfirm] = useState(user.permissions?.manualExternalRefundConfirm === true)
+  const [reportSalesView, setReportSalesView] = useState(user.permissions?.reportSalesView === true)
+  const [reportAllStores, setReportAllStores] = useState(user.permissions?.reportAllStores === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -453,6 +455,8 @@ function PermissionModal({ user, onClose, onSaved }) {
     setExternalSettlementConfirm(false)
     setManualExternalRefundRecord(false)
     setManualExternalRefundConfirm(false)
+    setReportSalesView(false)
+    setReportAllStores(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -468,6 +472,8 @@ function PermissionModal({ user, onClose, onSaved }) {
           externalSettlementConfirm,
           manualExternalRefundRecord,
           manualExternalRefundConfirm,
+          reportSalesView,
+          reportAllStores: reportSalesView && reportAllStores,
         }),
       })
       await onSaved()
@@ -565,6 +571,32 @@ function PermissionModal({ user, onClose, onSaved }) {
             </label>
           </section>
         )}
+        <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-bold text-slate-700">{t('Report Center 销售数据权限（候选功能）')}</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('仅授权服务端销售查询；成本、工资和经营利润不在本权限范围内。')}</p>
+          <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={reportSalesView}
+              onChange={(event) => {
+                setReportSalesView(event.target.checked)
+                if (!event.target.checked) setReportAllStores(false)
+              }}
+              className="h-4 w-4 accent-budu-500"
+            />
+            {t('允许查看销售报表')}
+          </label>
+          <label className={`flex min-h-10 items-center gap-2 text-xs font-medium ${reportSalesView ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-300'}`}>
+            <input
+              type="checkbox"
+              checked={reportAllStores}
+              disabled={!reportSalesView}
+              onChange={(event) => setReportAllStores(event.target.checked)}
+              className="h-4 w-4 accent-budu-500 disabled:opacity-40"
+            />
+            {t('允许查看全部门店（否则仅限账号绑定门店）')}
+          </label>
+        </section>
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
         <div className="mt-5 flex flex-wrap gap-2">

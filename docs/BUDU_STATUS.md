@@ -39,12 +39,14 @@ Last reviewed: 2026-08-31
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
 - Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
-- Report Center RC-2C candidate is isolated on `codex/report-center-rc2c-candidate`, based on RC-2B
-  SHA `c511322496e6e1c46f09a2aa63c11e3a181e8c09` and authoritative
-  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A, RC-2B and RC-2C candidate gates are PASS;
-  migrations 59/60 remain undeployed and RC-2C adds no migration. Do not merge/deploy this candidate
-  or start a Report Dashboard gate without an explicit reviewer gate. Checkpoint:
-  `docs/checkpoints/2026-08-31-report-center-rc2c-candidate.md`.
+- Report Center RC-3 candidate is isolated on `codex/report-center-rc3-candidate`, based on RC-2C
+  SHA `6e32eab77de958c3c5f618b4ad9fbfab84bb2bd8` and authoritative
+  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A, RC-2B, RC-2C and RC-3 candidate gates are PASS;
+  migrations 59/60 remain undeployed and RC-3 adds no migration. Report query authority now exposes
+  explicit COMPLETE/PARTIAL/UNAVAILABLE coverage and never manufactures order/item facts for manual
+  DailyEntry stores. Do not merge/deploy this candidate or start a Report Dashboard gate without an
+  explicit reviewer gate. Checkpoint:
+  `docs/checkpoints/2026-08-31-report-center-rc3-candidate.md`.
 
 ## Rollback Notes
 

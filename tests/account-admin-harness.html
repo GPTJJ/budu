@@ -23,6 +23,12 @@
     }))
     seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
 
+    const reportUser = {
+      id: 'u-report', username: 'report-user', displayName: '报表测试账号', role: 'staff',
+      storeKeys: ['chaowai'], staffKey: 'chaowai::马婧欣', employeeId: 'emp-report',
+      assetCenter: false, status: 'active', permissions: { modules: {}, reportSalesView: false, reportAllStores: false },
+    }
+
     window.fetch = async (url, options = {}) => {
       const path = new URL(url, location.origin).pathname
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
@@ -34,7 +40,8 @@
       if (path === '/api/v2/employees') return json({ rows: [] })
       if (path.startsWith('/api/admin/users')) {
         if (options.method === 'POST') return json({ ok: true, user: JSON.parse(options.body) }, 201)
-        return json({ rows: [] })
+        if (options.method === 'PUT') return json({ user: { ...reportUser, permissions: JSON.parse(options.body) } })
+        return json({ users: [reportUser] })
       }
       return json({ ok: true })
     }
