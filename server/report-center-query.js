@@ -674,7 +674,7 @@ export class ReportQueryService {
     }
   }
 
-  async dashboard(user, query = {}) {
+  async dashboard(user, query = {}, options = {}) {
     const comparisonMode = String(query.compare || 'previous').trim()
     const period = String(query.period || '').trim()
     if (!['', 'today', 'yesterday', 'week', 'month', 'custom'].includes(period)) throw httpError('报表周期类型不正确')
@@ -692,6 +692,9 @@ export class ReportQueryService {
       this.summary(user, comparisonRange, comparisonScope, { includeCompositions: false }),
       this.products(user, { ...query, page: 1, pageSize: 5, sort: topSort, search: '' }, currentScope),
     ])
+    const profit = typeof options.profitProjector === 'function'
+      ? await options.profitProjector({ currentScope, comparisonScope, current, comparison, comparisonMode })
+      : { available: false, reasonCode: 'PROFIT_PERMISSION_REQUIRED' }
     return {
       range: current.range,
       businessDate: current.businessDate,
@@ -708,7 +711,7 @@ export class ReportQueryService {
         coverage: products.coverage,
         rows: products.rows,
       },
-      profit: { available: false, reasonCode: 'PROFIT_MODEL_NOT_CONFIGURED' },
+      profit,
       coverage: current.coverage,
     }
   }

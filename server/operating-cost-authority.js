@@ -1,11 +1,14 @@
 import crypto from 'node:crypto'
 import { Prisma } from '@prisma/client'
+import * as XLSX from 'xlsx'
 import { hasReportAllStores, hasReportCostManage, hasReportCostView, hasReportLaborView } from '../shared/accountPermissions.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
 import { loadAuthoritativePayrollRange } from './payroll-authority.js'
 import { httpError } from './pos-core.js'
+import { resolveComparisonRange } from './report-center-query.js'
 
 export const OPERATING_PROFIT_STATES = Object.freeze({ EXACT: 'EXACT', ESTIMATED: 'ESTIMATED', INCOMPLETE: 'INCOMPLETE' })
+export const OPERATING_PROFIT_COMPARISON_STATES = Object.freeze({ COMPARABLE: 'COMPARABLE', INCOMPARABLE: 'INCOMPARABLE' })
 
 const dateText = (value) => new Date(value).toISOString().slice(0, 10)
 const dbDate = (value) => new Date(`${value}T00:00:00.000Z`)
@@ -16,6 +19,8 @@ const minDate = (a, b) => a < b ? a : b
 const maxDate = (a, b) => a > b ? a : b
 const dayCount = (from, to) => Math.round((dbDate(to) - dbDate(from)) / 86_400_000) + 1
 const prorate = (cents, selectedDays, totalDays) => (BigInt(cents) * BigInt(selectedDays)) / BigInt(totalDays)
+const sumBigInt = (rows, selector) => rows.reduce((sum, row) => sum + BigInt(selector(row) || 0), 0n)
+const bps = (numerator, denominator) => denominator === 0n ? null : ((numerator * 10_000n) / denominator).toString()
 const cents = (value, label = '金额') => {
   const text = String(value ?? '').trim()
   if (!/^\d+$/.test(text)) throw httpError(`${label}必须为非负整数分`)
@@ -146,11 +151,9 @@ export class OperatingCostAuthority {
     this.payrollLoader = payrollLoader
   }
 
-  async report(user, query) {
-    assertCostRead(user)
-    assertLaborRead(user)
-    const scope = await this.reportQueryService.resolveScope(user, query)
-    const summary = await this.reportQueryService.summary(user, query, scope, { includeCompositions: false })
+  async _build(user, query, prepared = {}) {
+    const scope = prepared.scope || await this.reportQueryService.resolveScope(user, query)
+    const summary = prepared.summary || await this.reportQueryService.summary(user, query, scope, { includeCompositions: false })
     const segments = monthSegments(scope.range.from, scope.range.to)
     const stores = scope.stores.map((row) => row.key)
     const periods = segments.map((row) => dbDate(row.period))
@@ -163,67 +166,183 @@ export class OperatingCostAuthority {
     ])
     const payroll = new Map()
     for (const segment of segments) payroll.set(segment.month, payrollMonth(await this.payrollLoader(this.prisma, { month: segment.month }), stores))
-    const codes = new Set()
-    const estimates = new Set()
-    const warnings = new Set()
     const byStore = []
     const summaryDayMap = new Map(summary.daily.map((row) => [`${row.storeKey}|${row.date}`, row]))
     const today = buduBusinessDate(this.now())
     for (const store of scope.stores) {
+      const storeCodes = new Set()
+      const storeEstimates = new Set()
+      const storeWarnings = new Set()
       const values = { revenue: 0n, cogs: 0n, labor: 0n, rent: 0n, utility: 0n, other: 0n }
-      let storeIncomplete = false
+      const laborBreakdown = { wages: 0n, socialSecurity: 0n, providentFund: 0n, other: 0n }
+      const rentBreakdown = []
+      const utilityBreakdown = []
       for (const day of scope.days.filter((row) => row.storeKey === store.key)) {
         const summaryDay = summaryDayMap.get(`${day.storeKey}|${day.date}`)
         if (summaryDay?.revenueCents != null) values.revenue += BigInt(summaryDay.revenueCents)
-        else { codes.add('PARTIAL_SOURCE_COVERAGE'); storeIncomplete = true }
-        if (day.authority !== 'POS') { codes.add('INCOMPLETE_COGS'); storeIncomplete = true }
+        else storeCodes.add('PARTIAL_SOURCE_COVERAGE')
+        if (day.authority !== 'POS') storeCodes.add('INCOMPLETE_COGS')
         else values.cogs += cogs.get(`${store.key}|${day.date}`) || 0n
       }
       for (const segment of segments) {
         const rent = rentRows.find((row) => row.storeKey === store.key && dateText(row.effectiveFrom) <= segment.from && (!row.effectiveTo || dateText(row.effectiveTo) > segment.from))
-        if (!rent) { codes.add('INCOMPLETE_RENT'); storeIncomplete = true }
+        if (!rent) {
+          storeCodes.add('INCOMPLETE_RENT')
+          rentBreakdown.push({ month: segment.month, status: 'INCOMPLETE', reasonCode: 'INCOMPLETE_RENT', amountCents: null })
+        }
         else {
+          const grossCents = sumDaily(summary, store.key, segment.from, segment.to, 'grossCents')
+          const netRevenueCents = sumDaily(summary, store.key, segment.from, segment.to, 'revenueCents')
           const result = calculateRentCents(rent, {
-            grossCents: sumDaily(summary, store.key, segment.from, segment.to, 'grossCents'),
-            netRevenueCents: sumDaily(summary, store.key, segment.from, segment.to, 'revenueCents'),
+            grossCents,
+            netRevenueCents,
             selectedDays: segment.selectedDays, totalDays: segment.totalDays,
           })
-          if (result.amountCents == null) { codes.add(result.reasonCode); storeIncomplete = true } else values.rent += result.amountCents
-          if (segment.selectedDays !== segment.totalDays || segment.to >= today) estimates.add('ESTIMATED_CURRENT_PERIOD')
+          if (result.amountCents == null) storeCodes.add(result.reasonCode)
+          else values.rent += result.amountCents
+          rentBreakdown.push({
+            month: segment.month, status: result.amountCents == null ? 'INCOMPLETE' : 'AVAILABLE',
+            reasonCode: result.reasonCode, amountCents: result.amountCents?.toString() ?? null,
+            mode: rent.mode, fixedAmountCents: rent.fixedAmountCents?.toString() ?? null,
+            percentageBps: rent.percentageBps, percentageBasis: rent.percentageBasis,
+            basisCents: rent.percentageBasis === 'GROSS_SALES' ? grossCents?.toString() ?? null : netRevenueCents?.toString() ?? null,
+            selectedDays: segment.selectedDays, totalDays: segment.totalDays,
+          })
+          if (segment.selectedDays !== segment.totalDays || segment.to >= today) storeEstimates.add('ESTIMATED_CURRENT_PERIOD')
         }
         const utility = utilities.find((row) => row.storeKey === store.key && dateText(row.period) === segment.period)
-        if (!utility) { codes.add('INCOMPLETE_UTILITY'); storeIncomplete = true }
+        if (!utility) {
+          storeCodes.add('INCOMPLETE_UTILITY')
+          utilityBreakdown.push({ month: segment.month, status: 'INCOMPLETE', amountCents: null, source: null })
+        }
         else {
-          values.utility += prorate(utility.actualCents ?? utility.estimatedCents, segment.selectedDays, segment.totalDays)
-          if (utility.actualCents == null) estimates.add('ESTIMATED_UTILITY')
-          if (segment.selectedDays !== segment.totalDays) estimates.add('ESTIMATED_PARTIAL_MONTH_ALLOCATION')
+          const amount = prorate(utility.actualCents ?? utility.estimatedCents, segment.selectedDays, segment.totalDays)
+          values.utility += amount
+          utilityBreakdown.push({
+            month: segment.month, status: utility.actualCents == null ? 'ESTIMATED' : 'ACTUAL',
+            source: utility.actualCents == null ? 'ESTIMATE' : 'ACTUAL', amountCents: amount.toString(),
+            estimatedCents: utility.estimatedCents.toString(), actualCents: utility.actualCents?.toString() ?? null,
+            differenceCents: utility.actualCents == null ? null : (BigInt(utility.actualCents) - BigInt(utility.estimatedCents)).toString(),
+            selectedDays: segment.selectedDays, totalDays: segment.totalDays,
+          })
+          if (utility.actualCents == null) storeEstimates.add('ESTIMATED_UTILITY')
+          if (segment.selectedDays !== segment.totalDays) storeEstimates.add('ESTIMATED_PARTIAL_MONTH_ALLOCATION')
         }
         const pay = payroll.get(segment.month)
         const laborPeriod = laborPeriods.find((row) => row.storeKey === store.key && dateText(row.period) === segment.period)
-        if (pay?.incomplete || !laborPeriod) { codes.add('INCOMPLETE_LABOR'); storeIncomplete = true }
+        if (pay?.incomplete || !laborPeriod) storeCodes.add('INCOMPLETE_LABOR')
         else {
-          values.labor += prorate(pay.totals.get(store.key) || 0n, segment.selectedDays, segment.totalDays)
-          values.labor += prorate(laborPeriod.entries.reduce((sum, row) => sum + BigInt(row.amountCents), 0n), segment.selectedDays, segment.totalDays)
-          if (segment.selectedDays !== segment.totalDays || segment.to >= today) estimates.add('ESTIMATED_CURRENT_PERIOD')
+          const wage = prorate(pay.totals.get(store.key) || 0n, segment.selectedDays, segment.totalDays)
+          const addOn = (category) => prorate(sumBigInt(laborPeriod.entries.filter((row) => row.category === category), (row) => row.amountCents), segment.selectedDays, segment.totalDays)
+          const social = addOn('SOCIAL_SECURITY')
+          const provident = addOn('PROVIDENT_FUND')
+          const other = addOn('OTHER')
+          laborBreakdown.wages += wage; laborBreakdown.socialSecurity += social; laborBreakdown.providentFund += provident; laborBreakdown.other += other
+          values.labor += wage + social + provident + other
+          if (segment.selectedDays !== segment.totalDays || segment.to >= today) storeEstimates.add('ESTIMATED_CURRENT_PERIOD')
         }
       }
       const storeExpenses = expenses.filter((row) => row.storeKey === store.key)
       values.other = storeExpenses.reduce((sum, row) => sum + BigInt(row.amountCents), 0n)
-      if (storeExpenses.some((row) => /房租|租金|水费|电费|水电|社保|公积金/.test(`${row.category} ${row.note}`))) warnings.add('POSSIBLE_DUPLICATE_STRUCTURED_COST')
-      byStore.push({ storeKey: store.key, storeName: store.name, incomplete: storeIncomplete, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}Cents`, value.toString()])) })
+      if (storeExpenses.some((row) => /房租|租金|水费|电费|水电|社保|公积金/.test(`${row.category} ${row.note}`))) storeWarnings.add('POSSIBLE_DUPLICATE_STRUCTURED_COST')
+      const state = storeCodes.size ? OPERATING_PROFIT_STATES.INCOMPLETE : storeEstimates.size ? OPERATING_PROFIT_STATES.ESTIMATED : OPERATING_PROFIT_STATES.EXACT
+      const profit = values.revenue - values.cogs - values.labor - values.rent - values.utility - values.other
+      byStore.push({
+        storeKey: store.key, storeName: store.name, state,
+        completenessCodes: [...storeCodes].sort(), estimateCodes: [...storeEstimates].sort(), warningCodes: [...storeWarnings].sort(),
+        exactOperatingProfitCents: state === OPERATING_PROFIT_STATES.EXACT ? profit.toString() : null,
+        estimatedOperatingProfitCents: state === OPERATING_PROFIT_STATES.ESTIMATED ? profit.toString() : null,
+        profitMarginBps: state === OPERATING_PROFIT_STATES.EXACT ? bps(profit, values.revenue) : null,
+        estimatedProfitMarginBps: state === OPERATING_PROFIT_STATES.ESTIMATED ? bps(profit, values.revenue) : null,
+        revenueCents: values.revenue.toString(), cogsCents: storeCodes.has('INCOMPLETE_COGS') ? null : values.cogs.toString(),
+        laborCents: storeCodes.has('INCOMPLETE_LABOR') ? null : values.labor.toString(),
+        rentCents: [...storeCodes].some((code) => code.startsWith('INCOMPLETE_RENT')) ? null : values.rent.toString(),
+        utilityCents: storeCodes.has('INCOMPLETE_UTILITY') ? null : values.utility.toString(), otherCents: values.other.toString(),
+        components: {
+          revenue: { amountCents: values.revenue.toString(), status: storeCodes.has('PARTIAL_SOURCE_COVERAGE') ? 'INCOMPLETE' : 'AVAILABLE', source: 'REPORT_QUERY_AUTHORITY' },
+          cogs: { amountCents: storeCodes.has('INCOMPLETE_COGS') ? null : values.cogs.toString(), status: storeCodes.has('INCOMPLETE_COGS') ? 'INCOMPLETE' : 'AVAILABLE', source: 'ORDER_ITEM_COST_PRICE_SNAPSHOT' },
+          labor: { amountCents: storeCodes.has('INCOMPLETE_LABOR') ? null : values.labor.toString(), status: storeCodes.has('INCOMPLETE_LABOR') ? 'INCOMPLETE' : 'AVAILABLE', source: 'PAYROLL_ACTUAL_HOURS_ALLOCATION', confirmedZero: segments.every((segment) => laborPeriods.some((row) => row.storeKey === store.key && dateText(row.period) === segment.period)) && values.labor === 0n, breakdown: Object.fromEntries(Object.entries(laborBreakdown).map(([key, value]) => [`${key}Cents`, value.toString()])) },
+          rent: { amountCents: [...storeCodes].some((code) => code.startsWith('INCOMPLETE_RENT')) ? null : values.rent.toString(), status: [...storeCodes].some((code) => code.startsWith('INCOMPLETE_RENT')) ? 'INCOMPLETE' : (storeEstimates.has('ESTIMATED_CURRENT_PERIOD') ? 'ESTIMATED' : 'AVAILABLE'), source: 'STORE_RENT_HISTORY', months: rentBreakdown },
+          utility: { amountCents: storeCodes.has('INCOMPLETE_UTILITY') ? null : values.utility.toString(), status: storeCodes.has('INCOMPLETE_UTILITY') ? 'INCOMPLETE' : (storeEstimates.has('ESTIMATED_UTILITY') ? 'ESTIMATED' : 'ACTUAL'), source: 'STORE_UTILITY_COST', months: utilityBreakdown },
+          other: { amountCents: values.other.toString(), status: 'AVAILABLE', source: 'EXPENSE', expenseCount: storeExpenses.length },
+        },
+      })
     }
-    const total = (field) => byStore.reduce((sum, row) => sum + BigInt(row[field]), 0n)
+    const total = (field) => byStore.reduce((sum, row) => sum + BigInt(row[field] ?? 0), 0n)
+    const codes = new Set(byStore.flatMap((row) => row.completenessCodes))
+    const estimates = new Set(byStore.flatMap((row) => row.estimateCodes))
+    const warnings = new Set(byStore.flatMap((row) => row.warningCodes))
     const missing = codes.size > 0
     const state = missing ? OPERATING_PROFIT_STATES.INCOMPLETE : estimates.size ? OPERATING_PROFIT_STATES.ESTIMATED : OPERATING_PROFIT_STATES.EXACT
     const profit = total('revenueCents') - total('cogsCents') - total('laborCents') - total('rentCents') - total('utilityCents') - total('otherCents')
+    const exactStores = byStore.filter((row) => row.state === OPERATING_PROFIT_STATES.EXACT).sort((a, b) => BigInt(a.exactOperatingProfitCents) === BigInt(b.exactOperatingProfitCents) ? a.storeName.localeCompare(b.storeName, 'zh-CN') : BigInt(a.exactOperatingProfitCents) > BigInt(b.exactOperatingProfitCents) ? -1 : 1)
     return {
       range: { from: scope.range.from, to: scope.range.to }, state,
       completenessCodes: [...codes].sort(), estimateCodes: [...estimates].sort(), warningCodes: [...warnings].sort(),
       exactOperatingProfitCents: state === OPERATING_PROFIT_STATES.EXACT ? profit.toString() : null,
       estimatedOperatingProfitCents: state === OPERATING_PROFIT_STATES.ESTIMATED ? profit.toString() : null,
+      profitMarginBps: state === OPERATING_PROFIT_STATES.EXACT ? bps(profit, total('revenueCents')) : null,
+      estimatedProfitMarginBps: state === OPERATING_PROFIT_STATES.ESTIMATED ? bps(profit, total('revenueCents')) : null,
       totals: { revenueCents: total('revenueCents').toString(), cogsCents: missing && codes.has('INCOMPLETE_COGS') ? null : total('cogsCents').toString(), laborCents: codes.has('INCOMPLETE_LABOR') ? null : total('laborCents').toString(), rentCents: [...codes].some((code) => code.startsWith('INCOMPLETE_RENT')) ? null : total('rentCents').toString(), utilityCents: codes.has('INCOMPLETE_UTILITY') ? null : total('utilityCents').toString(), otherCents: total('otherCents').toString() },
       stores: byStore,
+      storeGroups: { exact: exactStores, estimated: byStore.filter((row) => row.state === OPERATING_PROFIT_STATES.ESTIMATED), incomplete: byStore.filter((row) => row.state === OPERATING_PROFIT_STATES.INCOMPLETE) },
+      queryEvidence: { boundedBy: ['STORE', 'MONTH', 'DATE_RANGE'], perOrderCostLookup: false, perEmployeePayrollQuery: false, perDayRentQuery: false },
     }
+  }
+
+  _comparison(current, previous, mode) {
+    const currentStores = current.stores.map((row) => row.storeKey).sort()
+    const previousStores = previous?.stores?.map((row) => row.storeKey).sort() || []
+    const sameCoverage = currentStores.length === previousStores.length && currentStores.every((key, index) => key === previousStores[index])
+    if (current.state !== OPERATING_PROFIT_STATES.EXACT || previous?.state !== OPERATING_PROFIT_STATES.EXACT || !sameCoverage) {
+      return { state: OPERATING_PROFIT_COMPARISON_STATES.INCOMPARABLE, mode, changeBps: null, currentRange: current.range, comparisonRange: previous?.range || null, reasonCodes: ['PROFIT_PERIODS_NOT_EXACT_OR_COMPARABLE'] }
+    }
+    const currentValue = BigInt(current.exactOperatingProfitCents)
+    const previousValue = BigInt(previous.exactOperatingProfitCents)
+    return { state: OPERATING_PROFIT_COMPARISON_STATES.COMPARABLE, mode, currentValueCents: currentValue.toString(), comparisonValueCents: previousValue.toString(), changeBps: previousValue === 0n ? null : (((currentValue - previousValue) * 10_000n) / (previousValue < 0n ? -previousValue : previousValue)).toString(), currentRange: current.range, comparisonRange: previous.range, reasonCodes: previousValue === 0n ? ['ZERO_COMPARISON_BASE'] : [] }
+  }
+
+  async report(user, query = {}, prepared = {}) {
+    assertCostRead(user)
+    assertLaborRead(user)
+    const current = await this._build(user, query, prepared)
+    const mode = String(query.compare || '').trim()
+    if (!mode) return current
+    const range = resolveComparisonRange({ ...current.range, days: Array.from({ length: dayCount(current.range.from, current.range.to) }) }, mode, String(query.period || '').trim())
+    if (current.state !== OPERATING_PROFIT_STATES.EXACT) return { ...current, comparison: this._comparison(current, null, mode) }
+    const previousPrepared = prepared.comparisonScope && prepared.comparisonSummary ? { scope: prepared.comparisonScope, summary: prepared.comparisonSummary } : {}
+    const previous = await this._build(user, range, previousPrepared)
+    return { ...current, comparison: this._comparison(current, previous, mode) }
+  }
+
+  async dashboardProjection(user, query, prepared = {}) {
+    const report = await this.report(user, query, prepared)
+    return {
+      available: true, state: report.state,
+      valueCents: report.exactOperatingProfitCents ?? report.estimatedOperatingProfitCents,
+      label: report.state === OPERATING_PROFIT_STATES.EXACT ? '经营利润' : report.state === OPERATING_PROFIT_STATES.ESTIMATED ? '预估经营利润' : '经营利润',
+      reasonCode: report.state === OPERATING_PROFIT_STATES.INCOMPLETE ? report.completenessCodes[0] || 'INCOMPLETE_OTHER' : null,
+      profitMarginBps: report.profitMarginBps, estimatedProfitMarginBps: report.estimatedProfitMarginBps,
+      comparison: report.comparison || null,
+    }
+  }
+
+  async exportWorkbook(user, query) {
+    const report = await this.report(user, query)
+    const summaryRows = report.stores.map((store) => ({
+      门店: store.storeName, 营业收入: store.revenueCents, 商品销售成本: store.cogsCents ?? '', 人工成本: store.laborCents ?? '',
+      房租: store.rentCents ?? '', 水电: store.utilityCents ?? '', 其他经营费用: store.otherCents,
+      利润状态: store.state, '经营利润/预估利润': store.exactOperatingProfitCents ?? store.estimatedOperatingProfitCents ?? '',
+      利润率基点: store.profitMarginBps ?? store.estimatedProfitMarginBps ?? '', 完整性代码: store.completenessCodes.join(','), 估算代码: store.estimateCodes.join(','),
+    }))
+    const detailRows = report.stores.flatMap((store) => [
+      ['营业收入', store.components.revenue], ['商品销售成本', store.components.cogs], ['人工成本', store.components.labor],
+      ['房租', store.components.rent], ['水电', store.components.utility], ['其他经营费用', store.components.other],
+    ].map(([name, component]) => ({ 门店: store.storeName, 成本项目: name, 金额: component.amountCents ?? '', 状态: component.status, 数据来源: component.source, 完整性代码: store.completenessCodes.join(','), 说明: store.warningCodes.join(',') })))
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows.length ? summaryRows : [{ 提示: '当前筛选范围没有可导出的门店事实' }]), '经营利润汇总')
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ 提示: '当前筛选范围没有成本明细' }]), '成本与完整性明细')
+    return { fileName: `BUDU经营利润_${report.range.from}_${report.range.to}.xlsx`, buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), report }
   }
 
   async settings(user, { store, month }) {

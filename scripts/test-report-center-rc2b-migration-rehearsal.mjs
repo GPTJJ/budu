@@ -13,6 +13,8 @@ const schemaName = `report_center_rc2b_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
 const migration59 = '20260831190000_report_center_order_source_external_settlement'
 const migration60 = '20260831193000_report_center_unified_refund_authority'
+const migration61 = '20260831200000_report_center_product_cost_history'
+const migration62 = '20260831203000_report_center_operating_cost_authority'
 const sha = (rows) => crypto.createHash('sha256').update(JSON.stringify(rows, (_, value) => typeof value === 'bigint' ? value.toString() : value)).digest('hex')
 
 function migrate(schemaPath) {
@@ -36,7 +38,7 @@ test('RC-2B migration rehearsal preserves legacy facts across production 58 → 
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(tempMigrations)
     for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if ([migration59, migration60].includes(entry)) continue
+      if ([migration59, migration60, migration61, migration62].includes(entry)) continue
       fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(tempMigrations, entry), { recursive: true })
     }
     migrate(path.join(temp, 'schema.prisma'))

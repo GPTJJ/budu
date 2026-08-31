@@ -39,15 +39,15 @@ Last reviewed: 2026-08-31
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
 - Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
-- Report Center RC-5 candidate is isolated on `codex/report-center-rc5-candidate`, based on RC-4
-  SHA `2bc9e4bcf8cedd074bcb38489f2f93794b49d287` and authoritative
-  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A through RC-5 candidate gates are PASS;
-  migrations 59/60 remain undeployed and RC-5 adds no migration. The Dashboard reuses the RC-3/RC-4
-  query authority, classifies today pending-close separately from historical gaps, provides coverage-aware
-  daily/weekly/monthly trends and same-store previous/year comparisons, and never projects the legacy Finance
-  calculation as operating profit. Existing core/legacy report entry points remain preserved. Do not merge or
-  deploy this candidate without an explicit reviewer gate. Checkpoint:
-  `docs/checkpoints/2026-08-31-report-center-rc5-candidate.md`.
+- Report Center V1 final candidate is isolated on `codex/report-center-rc6b-final-candidate`, based on RC-6A
+  SHA `768a9df8c304d0fd8a8bd610ffbcc9cc2b2bab58` and authoritative
+  `4a25cd49d373c442543af5063928daf73715bb55`. RC-2A through RC-6B candidate gates are PASS;
+  migrations 59–62 remain undeployed. The single operating-profit authority projects EXACT, ESTIMATED and
+  INCOMPLETE states across Profit UI, Dashboard and complete Excel export; Manual stores never receive guessed
+  COGS/profit, comparisons are exact/same-coverage only, and legacy Finance math is excluded. Final isolated
+  migration, historical reconciliation and cross-domain regression are PASS. Do not merge or deploy without an
+  explicit reviewer/Production Deployment Gate. Checkpoint:
+  `docs/checkpoints/2026-08-31-report-center-v1-final-candidate.md`.
 
 ## Rollback Notes
 

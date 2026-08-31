@@ -86,7 +86,7 @@ test('RC-4 preserved operational report entries navigate without rebuilding them
   await page.goto('/tests/report-center-rc4-harness.html')
   await page.getByRole('button', { name: '调拨报表' }).click()
   expect(await page.evaluate(() => window.__reportNavigate)).toBe('inventory-transfer')
-  await page.getByRole('button', { name: '经营利润' }).click()
+  await page.getByRole('button', { name: '经营利润', exact: true }).click()
   await expect(page.getByRole('heading', { name: '经营利润（历史能力）' })).toBeVisible()
   await expect(page.getByText(/不是新经营利润权威/)).toBeVisible()
 })

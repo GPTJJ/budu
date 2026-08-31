@@ -3,6 +3,7 @@ import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { ReportQueryService } from './report-center-query.js'
 import { OperatingCostAuthority } from './operating-cost-authority.js'
+import { hasReportCostView, hasReportLaborView } from '../shared/accountPermissions.js'
 
 export const reportCenterRouter = Router()
 export const reportQueryService = new ReportQueryService(prisma)
@@ -29,7 +30,12 @@ reportCenterRouter.get('/report-center/summary', wrap(async (req, res) => {
 
 reportCenterRouter.get('/report-center/dashboard', wrap(async (req, res) => {
   requireDatabase()
-  res.json(await reportQueryService.dashboard(req.user, req.query))
+  const canViewProfit = hasReportCostView(req.user) && hasReportLaborView(req.user)
+  res.json(await reportQueryService.dashboard(req.user, req.query, canViewProfit ? {
+    profitProjector: ({ currentScope, comparisonScope, current, comparison }) => operatingCostAuthority.dashboardProjection(req.user, req.query, {
+      scope: currentScope, summary: current, comparisonScope, comparisonSummary: comparison,
+    }),
+  } : {}))
 }))
 
 reportCenterRouter.get('/report-center/orders', wrap(async (req, res) => {
@@ -50,6 +56,14 @@ reportCenterRouter.get('/report-center/products', wrap(async (req, res) => {
 reportCenterRouter.get('/report-center/operating-costs', wrap(async (req, res) => {
   requireDatabase()
   res.json(await operatingCostAuthority.report(req.user, req.query))
+}))
+
+reportCenterRouter.get('/report-center/operating-costs/export', wrap(async (req, res) => {
+  requireDatabase()
+  const result = await operatingCostAuthority.exportWorkbook(req.user, req.query)
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.fileName)}`)
+  res.send(result.buffer)
 }))
 
 reportCenterRouter.get('/report-center/cost-settings', wrap(async (req, res) => {
