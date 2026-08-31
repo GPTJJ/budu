@@ -20,12 +20,14 @@ Last reviewed: 2026-08-31
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `87e3326dc6ad6c4402759faaa58409d70e484061` — VERIFIED on 2026-08-31; revalidate before use.
+- Runtime SHA: `1199f9bb1214bf13d9a93f304b9982df79d73a02` — VERIFIED on 2026-08-31; revalidate before use.
+- Authoritative mainline: `codex/budu-authoritative-mainline` at `1199f9bb1214bf13d9a93f304b9982df79d73a02` — VERIFIED after fast-forward on 2026-08-31.
 - Database authority: `budu_bj006` — VERIFIED on 2026-08-31; revalidate before use.
 - Migration ledger: 58, failed migration count 0 — VERIFIED on 2026-08-31; revalidate before use.
 - Public/internal health and canonical-DB-connected runtime count: PASS / 1 — VERIFIED on 2026-08-31; revalidate before use.
+- Daily Entry V2 is LIVE with read-only Production acceptance PASS. Final real write acceptance is `PENDING USER NORMAL USE`; do not manufacture DailyEntry or payroll facts for testing.
 - Purchase receiving/UI release is physically live, but its acceptance gate is **AUTHORITY CONFLICT / HOLD** because three real production receive requests occurred after cutover without confirmation in the deployment conversation. Do not alter or reverse those inventory facts without a separate authorized correction gate.
-- Latest Production checkpoint: `docs/checkpoints/2026-08-30-purchase-receiving-ui-production-handoff.md`.
+- Latest Production checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-production-acceptance.md`.
 
 ## Architecture Contracts
 
@@ -38,7 +40,7 @@ Last reviewed: 2026-08-31
 
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - Purchase receiving/UI source candidate: `d695bde5c2ecadfc1a3c2d41cae3f27c69f47060` on `codex/purchase-receiving-ui`; no schema or migration change.
-- Daily Entry V2 final implementation candidate: `cf60bc161b97c23e2a86314e958ef6abce46e800` on `codex/daily-entry-v2`; Gate C–G PASS, no schema/migration change, Production not deployed. Recovery checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-autonomous-final-handoff.md`.
+- Daily Entry V2 deployed source: `1199f9bb1214bf13d9a93f304b9982df79d73a02`; Gate C–G and Production read-only acceptance PASS, no schema/migration change. Final real write acceptance remains `PENDING USER NORMAL USE`. Production checkpoint: `docs/checkpoints/2026-08-31-daily-entry-v2-production-acceptance.md`.
 - Report Center remains paused on its independent `codex/report-center-rc2b` branch. Do not merge it into purchase work or production without a new gate.
 
 ## Rollback Notes
