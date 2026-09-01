@@ -26,13 +26,30 @@ for (const surface of ['login', 'sidebar']) {
       if (surface === 'sidebar') {
         const slot = page.getByTestId('brand-slot')
         const icon = page.getByTestId('brand-slot-icon')
+        const wordmark = page.getByTestId('brand-slot-wordmark')
         await expect(slot).toBeVisible()
         await expect(icon).toBeVisible()
+        await expect(wordmark).toBeVisible()
         await expect(page.getByText('甜蜜治愈日常', { exact: true })).toHaveCount(0)
         const [slotBox, iconBox] = await Promise.all([slot.boundingBox(), icon.boundingBox()])
         expect(slotBox.width).toBeLessThanOrEqual(208)
         expect(iconBox.width).toBe(40)
         expect(iconBox.height).toBe(40)
+        for (const asset of [icon, wordmark]) {
+          const decoration = await asset.evaluate((element) => {
+            const style = getComputedStyle(element)
+            return {
+              backgroundColor: style.backgroundColor,
+              borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+              boxShadow: style.boxShadow,
+              outlineStyle: style.outlineStyle,
+            }
+          })
+          expect(decoration.backgroundColor).toBe('rgba(0, 0, 0, 0)')
+          expect(decoration.borderWidths).toEqual(['0px', '0px', '0px', '0px'])
+          expect(decoration.boxShadow).toBe('none')
+          expect(decoration.outlineStyle).toBe('none')
+        }
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     })
