@@ -119,7 +119,7 @@ export class AlipayProvider extends PaymentProvider {
       const data = await this.client().request('/v3/alipay/trade/query', { out_trade_no: payment.merchantTradeNo }, `query-${payment.paymentNo}`)
       return { callback: this.mapQuery(payment, data) }
     } catch (error) {
-      return { callback: event(payment, 'pending', { failureCode: error.code || 'QUERY_AMBIGUOUS', failureMessage: '支付宝查询失败，需要继续核对' }) }
+      return { callback: event(payment, 'pending', { failureCode: error.providerCode || error.code || 'QUERY_AMBIGUOUS', failureMessage: '支付宝查询失败，需要继续核对' }) }
     }
   }
 
@@ -132,6 +132,9 @@ export class AlipayProvider extends PaymentProvider {
       if (String(data.retry_flag || 'N') === 'Y') return { callback: event(payment, 'pending', { failureCode: 'CANCEL_RETRY', failureMessage: '支付宝撤销需重试，禁止开启新支付' }) }
       return { callback: event(payment, 'closed', { failureCode: 'CANCELLED', failureMessage: '支付宝支付已撤销' }) }
     } catch (error) {
+      if (error?.providerCode === 'ACQ.TRADE_NOT_EXIST' && error?.ambiguous === false) {
+        return { callback: event(payment, 'closed', { failureCode: 'ACQ.TRADE_NOT_EXIST', failureMessage: '支付宝交易不存在，视为未支付' }) }
+      }
       return { callback: event(payment, 'pending', { failureCode: error.code || 'CANCEL_AMBIGUOUS', failureMessage: '支付宝撤销结果未知，需要继续核对' }) }
     }
   }

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import { AlipayProvider } from '../server/payments/providers/alipay.js'
-import { AlipayOpenApiClient } from '../server/payments/alipay-client.js'
+import { AlipayClientError, AlipayOpenApiClient } from '../server/payments/alipay-client.js'
 import { PaymentService, sanitizePayload } from '../server/payments/payment-service.js'
 import { MemoryPrisma } from './helpers/memory-prisma.mjs'
 import { PaymentReconciler } from '../server/payments/payment-reconciler.js'
@@ -62,6 +62,20 @@ test('主动查询只接受支付宝明确终态，撤销前先查询避免错�
   assert.equal(pendingClient.calls[1].path, '/v3/alipay/trade/cancel')
 })
 
+test('撤销时支付宝明确确认交易不存在才安全关闭 Payment', async () => {
+  const notFound = new AlipayClientError('NETWORK_OR_PROVIDER_ERROR', 'provider rejected request', {
+    ambiguous: false,
+    status: 400,
+    providerCode: 'ACQ.TRADE_NOT_EXIST',
+  })
+  const client = new FakeClient([notFound, notFound])
+  const result = await new AlipayProvider({ config, client }).closePayment(payment())
+  assert.equal(result.callback.status, 'closed')
+  assert.equal(result.callback.failureCode, 'ACQ.TRADE_NOT_EXIST')
+  assert.equal(client.calls[0].path, '/v3/alipay/trade/query')
+  assert.equal(client.calls[1].path, '/v3/alipay/trade/cancel')
+})
+
 test('回调必须 RSA2 验签并绑定 app/seller/金额/交易状态', async () => {
   const payload = {
     sign_type: 'RSA2', app_id: config.appId, seller_id: config.sellerId, out_trade_no: 'BUDUPAYA1', trade_no: 'ALI-T-4',
@@ -92,6 +106,37 @@ test('官方 SDK 对合成 RSA2 通知执行真实密码学验签，篡改金额
   const client = new AlipayOpenApiClient(realConfig)
   assert.equal(client.verifyNotification(payload), true)
   assert.equal(client.verifyNotification({ ...payload, total_amount: '71.00' }), false)
+})
+
+test('官方 SDK 明确按 PKCS8 装载应用私钥，V3 请求签名材料可用', () => {
+  const appKeys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const platformKeys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const client = new AlipayOpenApiClient({
+    ...config,
+    privateKey: appKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    alipayPublicKey: platformKeys.publicKey.export({ type: 'spki', format: 'pem' }),
+  })
+  assert.match(client.sdk.config.privateKey, /^-----BEGIN PRIVATE KEY-----/)
+  assert.doesNotThrow(() => crypto.createSign('RSA-SHA256').update('v3-signing-probe').sign(client.sdk.config.privateKey))
+})
+
+test('支付宝客户端保留官方 HTTP 状态和安全业务错误码', async () => {
+  const sdk = {
+    async curl() {
+      const error = new Error('provider rejected request')
+      error.code = 'ACQ.TRADE_NOT_EXIST'
+      error.responseHttpStatus = 400
+      throw error
+    },
+    checkNotifySignV2: () => false,
+  }
+  const client = new AlipayOpenApiClient(config, { sdk })
+  await assert.rejects(() => client.request('/v3/alipay/trade/query', {}, 'provider-error-test'), (error) => (
+    error.code === 'NETWORK_OR_PROVIDER_ERROR'
+    && error.providerCode === 'ACQ.TRADE_NOT_EXIST'
+    && error.status === 400
+    && error.ambiguous === false
+  ))
 })
 
 test('支付宝客户端绝对时限把永久挂起请求收敛为歧义错误', async () => {
