@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
-import wordmarkUrl from '../../brand/web/budu-wordmark.svg'
+import BrandSlot from './BrandSlot'
 import { APP_VERSION } from '../version'
 import { MODULE_KEYS, hasModuleAccess } from '../../shared/accountPermissions'
 
@@ -82,11 +82,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Logo */}
-      <div className="flex items-center px-6 pb-6 pt-7">
-        <div>
-          <img src={wordmarkUrl} alt="budu" className="h-auto w-24" />
-          <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
-        </div>
+      <div className="flex items-center px-6 pb-5 pt-6 lg:pb-6 lg:pt-7">
+        <BrandSlot />
       </div>
 
       {/* 菜单（移动端内容超出时可滚动，底部渐变提示可继续滑动） */}

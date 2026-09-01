@@ -28,11 +28,24 @@ test('brand skill is discoverable and router composes it for user-visible output
 })
 
 test('formal web brand positions use the canonical derivative', () => {
-  for (const file of ['src/components/LoginPage.jsx', 'src/components/Sidebar.jsx']) {
+  for (const file of ['src/components/LoginPage.jsx', 'src/components/BrandSlot.jsx']) {
     const source = read(file)
     assert.match(source, /brand\/web\/budu-wordmark\.svg/)
     assert.doesNotMatch(source, />\s*BUDU\s*</)
   }
+})
+
+test('system brand slot composes the controlled icon with the unchanged wordmark', () => {
+  const brandSlot = read('src/components/BrandSlot.jsx')
+  const sidebar = read('src/components/Sidebar.jsx')
+  assert.equal(hash('brand/source/budu-brand-slot-icon-source.png'), '0a64969e00313d33093734f6438720206c832e730289c2b73309097aa8083745')
+  assert.equal(hash('brand/web/budu-brand-slot-icon.png'), 'cf6222f41ca8731295cc6bd2e7dde6346920f56a6d41e4ce4d81f953070d93a2')
+  assert.match(brandSlot, /brand\/web\/budu-brand-slot-icon\.png/)
+  assert.match(brandSlot, /brand\/web\/budu-wordmark\.svg/)
+  assert.match(brandSlot, /alt="budu"/)
+  assert.match(brandSlot, /object-contain/)
+  assert.match(sidebar, /<BrandSlot \/>/)
+  assert.doesNotMatch(sidebar, /甜蜜治愈日常/)
 })
 
 test('POS header is lowercase and the release forces stale PWA sessions to refresh', () => {

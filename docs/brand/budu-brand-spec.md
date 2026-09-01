@@ -33,6 +33,18 @@ The SVG derivative uses the exact source path coordinates and measured crop. Nev
 
 Do not create additional independent logo files. A new delivery format should consume the SVG or a derivative produced by the generator.
 
+## System brand slot icon
+
+The application sidebar and mobile drawer pair the unchanged canonical wordmark with the user-approved simple character icon. The icon is a separate decorative asset; it does not replace or redraw the `budu` wordmark.
+
+- Approved source: `brand/source/budu-brand-slot-icon-source.png` (transparent 1080 × 1080 px).
+- Source SHA-256: `0a64969e00313d33093734f6438720206c832e730289c2b73309097aa8083745`.
+- Web derivative: `brand/web/budu-brand-slot-icon.png` (transparent 462 × 462 px).
+- Web derivative SHA-256: `cf6222f41ca8731295cc6bd2e7dde6346920f56a6d41e4ce4d81f953070d93a2`.
+- Processing is limited to transparent cropping with balanced clear space; the source pixels are not redrawn, recolored, stretched, or compressed.
+
+The authoritative application lockup is `src/components/BrandSlot.jsx`. Desktop navigation and the mobile drawer must consume this component rather than duplicating the assets. The former subtitle `甜蜜治愈日常` is intentionally absent from this brand position.
+
 ## Safe area and minimum size
 
 Safe area is derived from the wordmark's measured height (`1H`): keep at least `0.25H` clear on every side. This preserves the open counters and the source spacing without inventing a new lockup.

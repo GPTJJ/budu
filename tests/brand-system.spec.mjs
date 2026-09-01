@@ -1,7 +1,19 @@
 import { expect, test } from '@playwright/test'
 
+const surfaceViewports = {
+  login: [{ label: '390px', width: 390, height: 844 }, { label: 'desktop', width: 1280, height: 900 }],
+  sidebar: [
+    { label: '320px', width: 320, height: 740 },
+    { label: '340px', width: 340, height: 760 },
+    { label: '375px', width: 375, height: 812 },
+    { label: '390px', width: 390, height: 844 },
+    { label: '430px', width: 430, height: 932 },
+    { label: 'desktop', width: 1280, height: 900 },
+  ],
+}
+
 for (const surface of ['login', 'sidebar']) {
-  for (const viewport of [{ label: '390px', width: 390, height: 844 }, { label: 'desktop', width: 1280, height: 900 }]) {
+  for (const viewport of surfaceViewports[surface]) {
     test(`${surface} ${viewport.label} 使用 canonical budu wordmark`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await page.goto(`/tests/brand-harness.html?surface=${surface}`)
@@ -11,6 +23,17 @@ for (const surface of ['login', 'sidebar']) {
       expect(box.width).toBeGreaterThanOrEqual(80)
       expect(Math.abs((box.width / box.height) - 3.11235)).toBeLessThan(0.03)
       await expect(page.getByText('BUDU', { exact: true })).toHaveCount(0)
+      if (surface === 'sidebar') {
+        const slot = page.getByTestId('brand-slot')
+        const icon = page.getByTestId('brand-slot-icon')
+        await expect(slot).toBeVisible()
+        await expect(icon).toBeVisible()
+        await expect(page.getByText('甜蜜治愈日常', { exact: true })).toHaveCount(0)
+        const [slotBox, iconBox] = await Promise.all([slot.boundingBox(), icon.boundingBox()])
+        expect(slotBox.width).toBeLessThanOrEqual(208)
+        expect(iconBox.width).toBe(40)
+        expect(iconBox.height).toBe(40)
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     })
   }
