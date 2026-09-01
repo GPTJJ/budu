@@ -1,6 +1,15 @@
 import { expect, test } from '@playwright/test'
 
 const open = async (page, query = '') => {
+  await page.addInitScript(() => {
+    const RealDate = Date
+    const fixedNow = new RealDate('2026-08-31T04:00:00.000Z').valueOf()
+    // Keep this historical payroll fixture deterministic after the calendar advances.
+    window.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [fixedNow])) }
+      static now() { return fixedNow }
+    }
+  })
   await page.goto(`/tests/gate27-issue-harness.html${query}`)
   await expect(page.getByText('发放工资条', { exact: true })).toBeVisible()
   await expect(page.getByText('月度 · 2026-08-01 ～ 2026-08-31', { exact: true })).toBeVisible()

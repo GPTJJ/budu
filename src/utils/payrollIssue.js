@@ -8,6 +8,7 @@
 
 import { HOLIDAYS_2026, WORKDAYS_2026 } from './payroll.js'
 import { businessDateDayOfWeek, isBusinessDate, resolvePayrollPeriod } from './payrollPeriod.js'
+import { PAYROLL_ISSUANCE_SNAPSHOT_VERSION } from '../../shared/payrollIssuanceContract.js'
 
 /** 日标记（holiday/makeup/weekend/null）：工资条逐日展示（只读，无身份语义；与 payrollSlip.markOf 同构） */
 function markOf(full) {
@@ -115,6 +116,59 @@ export function buildIssueRows(payrollEmployees, readinessEmployees, users = [],
 }
 
 /**
+ * Bind the issuance list to the server preflight row that the submit guard also
+ * recomputes. Local payroll remains useful while loading, but it is never the
+ * submitted snapshot authority.
+ */
+export function bindAuthoritativeIssuePreflight(row, server) {
+  const hasCanonicalSnapshot = Boolean(
+    server
+    && server.employeeId === row.employeeId
+    && server.snapshotVersion === PAYROLL_ISSUANCE_SNAPSHOT_VERSION
+    && typeof server.snapshotDigest === 'string'
+    && server.snapshotDigest.length === 64
+    && server.snapshot
+    && typeof server.snapshot === 'object',
+  )
+  const summary = hasCanonicalSnapshot ? server.snapshot.summary || {} : {}
+  const canonicalIssue = hasCanonicalSnapshot
+    ? {
+        employeeId: server.employeeId,
+        employeeName: server.employeeName,
+        storeKey: server.storeKey,
+        totalCents: Number(server.totalCents),
+        snapshot: server.snapshot,
+        snapshotVersion: server.snapshotVersion,
+        snapshotDigest: server.snapshotDigest,
+      }
+    : null
+  return {
+    ...row,
+    server,
+    canonicalIssue,
+    name: canonicalIssue?.employeeName || row.name,
+    storeKey: canonicalIssue?.storeKey || row.storeKey,
+    snapshot: canonicalIssue?.snapshot || row.snapshot,
+    rec: canonicalIssue
+      ? {
+          ...row.rec,
+          days: summary.workedDays ?? row.rec.days,
+          payableHours: summary.payableHours ?? row.rec.payableHours,
+          workedRevenue: summary.revenue ?? row.rec.workedRevenue,
+          basePay: summary.basePay ?? row.rec.basePay,
+          commission: summary.commission ?? row.rec.commission,
+          transferSubsidy: summary.transferSubsidy ?? row.rec.transferSubsidy,
+          bigBonus: summary.bigBonus ?? row.rec.bigBonus,
+          salaryAdjustment: summary.adjustment ?? row.rec.salaryAdjustment,
+          salary: Number(server.totalCents) / 100,
+        }
+      : row.rec,
+    issueReady: Boolean(server?.issueReady && canonicalIssue && Number.isInteger(canonicalIssue.totalCents)),
+    overlap: Boolean(server?.overlaps?.length),
+  }
+}
+
+/**
  * 发放预检（发送第一个 POST 前校验全部选中员工）：
  * 1) 每名选中员工的 Gate 22 per-employee issueReady 必须为 true；
  * 2) Gate 27 澄清：选中员工 resolver salary < 0 → NEGATIVE_PAYROLL_TOTAL 阻断
@@ -135,13 +189,10 @@ export function preflightIssueSelection(rows, selectedIds) {
   return { ok: blocked.length === 0, blocked }
 }
 
-/** 发放请求行（金额/快照一律来自同一 Employee.id 的 resolver rec）。 */
+/** 发放请求行（金额/快照一律来自服务器 canonical preflight）。 */
 export function buildIssuePayloadRows(pickedRows) {
-  return pickedRows.map((r) => ({
-    employeeId: r.employeeId,
-    employeeName: r.name,
-    storeKey: r.storeKey,
-    snapshot: r.snapshot,
-    totalCents: Math.round((r.rec.salary || 0) * 100),
-  }))
+  return pickedRows.map((row) => {
+    if (!row.canonicalIssue) throw new Error('工资发放快照已过期，请刷新后重试')
+    return { ...row.canonicalIssue }
+  })
 }

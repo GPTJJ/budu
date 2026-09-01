@@ -1,6 +1,8 @@
 import { resolvePayrollCalculation } from '../src/utils/payrollResolver.js'
 import { buildIssueSnapshot } from '../src/utils/payrollIssue.js'
 import { payrollRangesOverlap, resolvePayrollPeriod } from '../src/utils/payrollPeriod.js'
+import { PAYROLL_ISSUANCE_SNAPSHOT_VERSION } from '../shared/payrollIssuanceContract.js'
+import crypto from 'node:crypto'
 
 const isoDate = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '')
 const dbDate = (value) => new Date(`${value}T00:00:00.000Z`)
@@ -15,6 +17,32 @@ function stableJsonValue(value) {
 
 export function stablePayrollJson(value) {
   return JSON.stringify(stableJsonValue(value))
+}
+
+export function payrollIssuanceSnapshotDigest(snapshot) {
+  return crypto.createHash('sha256').update(stablePayrollJson(snapshot)).digest('hex')
+}
+
+function firstPayrollDifference(actual, expected, path = '') {
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected)) return path || 'snapshot'
+    const length = Math.max(actual.length, expected.length)
+    for (let index = 0; index < length; index += 1) {
+      const difference = firstPayrollDifference(actual[index], expected[index], `${path}[${index}]`)
+      if (difference) return difference
+    }
+    return ''
+  }
+  if ((actual && typeof actual === 'object') || (expected && typeof expected === 'object')) {
+    if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object') return path || 'snapshot'
+    const keys = [...new Set([...Object.keys(actual), ...Object.keys(expected)])].sort()
+    for (const key of keys) {
+      const difference = firstPayrollDifference(actual[key], expected[key], path ? `${path}.${key}` : key)
+      if (difference) return difference
+    }
+    return ''
+  }
+  return Object.is(actual, expected) ? '' : (path || 'snapshot')
 }
 
 export function normalizeAuthoritativePeriod(input) {
@@ -158,13 +186,16 @@ export function buildAuthoritativeIssueRows(authority, employeeIds) {
       error.code = 'NEGATIVE_PAYROLL_TOTAL'
       throw error
     }
+    const snapshot = buildIssueSnapshot(rec, authority.period)
     return {
       employeeId,
       employeeName: employee.name,
       storeKey: employee.storeKey || rec.storesWorked?.[0] || 'payroll',
       targetUsername: recipients[0].username,
       totalCents: Math.round(Number(rec.salary || 0) * 100),
-      snapshot: buildIssueSnapshot(rec, authority.period),
+      snapshot,
+      snapshotVersion: PAYROLL_ISSUANCE_SNAPSHOT_VERSION,
+      snapshotDigest: payrollIssuanceSnapshotDigest(snapshot),
       readiness,
     }
   })
@@ -181,16 +212,22 @@ export function validateClientIssueRows(authoritativeRows, clientRows) {
   for (const expected of authoritativeRows) {
     const supplied = clientById.get(expected.employeeId)
     const totalCents = Number(supplied?.totalCents)
-    if (
-      !supplied
-      || supplied.employeeName !== expected.employeeName
-      || supplied.storeKey !== expected.storeKey
-      || totalCents !== expected.totalCents
-      || stablePayrollJson(supplied.snapshot) !== stablePayrollJson(expected.snapshot)
-    ) {
+    let mismatchField = ''
+    if (!supplied) mismatchField = 'employeeId'
+    else if (supplied.employeeName !== expected.employeeName) mismatchField = 'employeeName'
+    else if (supplied.storeKey !== expected.storeKey) mismatchField = 'storeKey'
+    else if (totalCents !== expected.totalCents) mismatchField = 'totalCents'
+    else if (supplied.snapshotVersion !== expected.snapshotVersion) mismatchField = 'snapshotVersion'
+    else if (supplied.snapshotDigest !== expected.snapshotDigest) {
+      mismatchField = firstPayrollDifference(supplied.snapshot, expected.snapshot, 'snapshot') || 'snapshotDigest'
+    } else if (stablePayrollJson(supplied.snapshot) !== stablePayrollJson(expected.snapshot)) {
+      mismatchField = firstPayrollDifference(supplied.snapshot, expected.snapshot, 'snapshot') || 'snapshot'
+    }
+    if (mismatchField) {
       const error = new Error(`「${expected.employeeName}」提交金额或快照与服务器工资权威不一致`)
       error.status = 409
       error.code = 'PAYROLL_AUTHORITY_MISMATCH'
+      error.mismatchField = mismatchField
       throw error
     }
   }

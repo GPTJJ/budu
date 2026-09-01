@@ -38,7 +38,29 @@
           rows: (body.employeeIds || []).map((employeeId) => {
             const recipients = (window.__users || []).filter((user) => user.employeeId === employeeId && user.status === 'active')
             const totalCents = totalFor(employeeId)
-            return { employeeId, totalCents, issueReady: recipients.length === 1 && totalCents >= 0, blockers: [], overlaps: [] }
+            const payableHours = !adjonly && !legacy && includes('2026-08-01') ? (employeeId === 'emp-A' ? 8 : 6) : 0
+            const adjustment = includes('2026-08-10') ? (employeeId === 'emp-A' ? 500 : negative ? -800 : -50) : 0
+            const days = []
+            if (payableHours > 0) days.push({ date: '2026-08-01', day: '2026-08-01', payableHours, adjustment: 0 })
+            if (adjustment !== 0) days.push({ date: '2026-08-10', day: '2026-08-10', payableHours: 0, adjustment })
+            const snapshot = {
+              period: { periodType: body.periodType, periodStart: body.periodStart, periodEnd: body.periodEnd },
+              employeeId,
+              days,
+              summary: { workedDays: payableHours > 0 ? 1 : 0, payableHours, total: totalCents / 100 },
+            }
+            return {
+              employeeId,
+              employeeName: '张伟',
+              storeKey: 'guanshe',
+              totalCents,
+              snapshot,
+              snapshotVersion: 'PAYROLL_ISSUANCE_V1',
+              snapshotDigest: (employeeId === 'emp-A' ? 'a' : 'b').repeat(64),
+              issueReady: recipients.length === 1 && totalCents >= 0,
+              blockers: [],
+              overlaps: [],
+            }
           }),
         })
       }

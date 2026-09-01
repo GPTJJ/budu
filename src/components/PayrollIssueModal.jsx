@@ -19,7 +19,12 @@ import {
   getStores,
   loadDailyStoreStaffRange,
 } from '../utils/userData'
-import { buildIssuePayloadRows, buildIssueRows, preflightIssueSelection } from '../utils/payrollIssue'
+import {
+  bindAuthoritativeIssuePreflight,
+  buildIssuePayloadRows,
+  buildIssueRows,
+  preflightIssueSelection,
+} from '../utils/payrollIssue'
 
 const yuan = (value) => `¥${Number(value || 0).toFixed(2)}`
 
@@ -48,6 +53,11 @@ function emptyPayroll(status = 'loading', blocked = '') {
     subjects: [], readinessById: new Map(), serverById: new Map(),
   }
 }
+
+const requestIssuePreflight = (period, employeeIds) => api('/v2/payroll-notices/preflight', {
+  method: 'POST',
+  body: JSON.stringify({ ...period, employeeIds }),
+})
 
 export default function PayrollIssueModal({ onClose, onIssued }) {
   const today = useMemo(shanghaiToday, [])
@@ -120,10 +130,7 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
         })
         setPreflighting(true)
         try {
-          const response = await api('/v2/payroll-notices/preflight', {
-            method: 'POST',
-            body: JSON.stringify({ ...period, employeeIds: result.payroll.employees.map((row) => row.employeeId) }),
-          })
+          const response = await requestIssuePreflight(period, result.payroll.employees.map((row) => row.employeeId))
           if (cancelled) return
           const serverById = new Map((response.rows || []).map((row) => [row.employeeId, row]))
           setPayroll((current) => ({ ...current, serverById }))
@@ -158,16 +165,10 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
     ),
     [payroll.subjects, payroll.readinessById, payroll.period, accounts, dirById],
   )
-  const rows = useMemo(() => baseRows.map((row) => {
-    const server = payroll.serverById.get(row.employeeId)
-    const totalsMatch = server && Number(server.totalCents) === Math.round(Number(row.rec.salary || 0) * 100)
-    return {
-      ...row,
-      server,
-      issueReady: Boolean(row.issueReady && server?.issueReady && totalsMatch),
-      overlap: Boolean(server?.overlaps?.length),
-    }
-  }), [baseRows, payroll.serverById])
+  const rows = useMemo(
+    () => baseRows.map((row) => bindAuthoritativeIssuePreflight(row, payroll.serverById.get(row.employeeId))),
+    [baseRows, payroll.serverById],
+  )
 
   const picked = rows.filter((row) => selected.has(row.employeeId))
   const pickedTotal = picked.reduce((sum, row) => sum + Number(row.rec.salary || 0), 0)
@@ -205,7 +206,21 @@ export default function PayrollIssueModal({ onClose, onIssued }) {
       setDone(`已发放 ${response.count} 份工资条（${periodLabel(period.periodType, period.periodKey)}）`)
       setTimeout(() => { onIssued?.(response.count); onClose() }, 1400)
     } catch (sendError) {
-      setError(sendError.message)
+      if (sendError.data?.code === 'PAYROLL_AUTHORITY_MISMATCH') {
+        setPreflighting(true)
+        setSelected(new Set())
+        try {
+          const response = await requestIssuePreflight(period, payroll.subjects.map((row) => row.employeeId))
+          const serverById = new Map((response.rows || []).map((row) => [row.employeeId, row]))
+          setPayroll((current) => ({ ...current, serverById }))
+          setError('工资权威快照已更新，请核对后重新选择发放')
+        } catch {
+          setPayroll((current) => ({ ...current, status: 'blocked', blocked: 'SERVER_PREFLIGHT_FAILED' }))
+          setError('工资权威快照已变化，重新预检失败，请刷新后重试')
+        } finally {
+          setPreflighting(false)
+        }
+      } else setError(sendError.message)
     } finally {
       setSending(false)
     }

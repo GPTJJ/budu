@@ -232,6 +232,7 @@ try {
     return buildAuthoritativeIssueRows(authority, employeeIds).map((row) => ({
       employeeId: row.employeeId, employeeName: row.employeeName, storeKey: row.storeKey,
       snapshot: row.snapshot, totalCents: row.totalCents,
+      snapshotVersion: row.snapshotVersion, snapshotDigest: row.snapshotDigest,
     }))
   }
   const payloadFor = (periodKey, employeeIds) => payloadForPeriod({ periodType: 'month', periodKey }, employeeIds)
@@ -317,6 +318,8 @@ try {
   const preflightRows = (await preflightH.json()).rows
   assert.equal(preflightRows.find((row) => row.employeeId === 'emp-A').issueReady, false, 'emp-A 月/周重叠预检阻断')
   assert.equal(preflightRows.find((row) => row.employeeId === 'emp-B').issueReady, true, 'emp-B 不被 emp-A 周期占用')
+  assert.equal(preflightRows.find((row) => row.employeeId === 'emp-B').snapshotVersion, 'PAYROLL_ISSUANCE_V1', 'H canonical snapshot version')
+  assert.equal(preflightRows.find((row) => row.employeeId === 'emp-B').snapshotDigest.length, 64, 'H canonical snapshot digest')
   const rH1 = await issuePeriod(febWeek, ['emp-A'])
   assert.equal(rH1.status, 409, `H 月/周重叠应 409: ${await rH1.text()}`)
   const rH2 = await issuePeriod(febWeek, ['emp-B'])
@@ -352,9 +355,26 @@ try {
 
   // K: 客户端金额/快照不是权威，任何篡改均 fail closed。
   const rK = await issue('2027-04', ['emp-A'], (rows) => rows.map((row) => ({ ...row, totalCents: row.totalCents + 1 })))
-  assert.equal(rK.status, 409, `K 金额篡改应 409: ${await rK.text()}`)
+  assert.equal(rK.status, 409, 'K 金额篡改应 409')
+  const errorK = await rK.json()
+  assert.equal(errorK.code, 'PAYROLL_AUTHORITY_MISMATCH')
+  assert.equal(errorK.mismatchField, 'totalCents')
   assert.equal(await prisma.payrollNotice.count({ where: { employeeId: 'emp-A', periodKey: '2027-04' } }), 0)
-  console.log('  [K] server authority tamper rejection PASS')
+  const rK2 = await issue('2027-04', ['emp-A'], (rows) => rows.map((row) => ({
+    ...row,
+    snapshot: { ...row.snapshot, summary: { ...row.snapshot.summary, commission: row.snapshot.summary.commission + 1 } },
+  })))
+  assert.equal(rK2.status, 409, 'K2 component mismatch 应 409')
+  const errorK2 = await rK2.json()
+  assert.equal(errorK2.code, 'PAYROLL_AUTHORITY_MISMATCH')
+  assert.equal(errorK2.mismatchField, 'snapshot.summary.commission')
+  const rK3 = await issue('2027-04', ['emp-A'], (rows) => rows.map((row) => ({ ...row, snapshotDigest: '0'.repeat(64) })))
+  assert.equal(rK3.status, 409, 'K3 stale digest 应 409')
+  const errorK3 = await rK3.json()
+  assert.equal(errorK3.code, 'PAYROLL_AUTHORITY_MISMATCH')
+  assert.equal(errorK3.mismatchField, 'snapshotDigest')
+  assert.equal(await prisma.payrollNotice.count({ where: { employeeId: 'emp-A', periodKey: '2027-04' } }), 0)
+  console.log('  [K] amount/component/stale snapshot guard PASS')
 
   console.log('GATE 18 PAYROLL NOTICE IDENTITY TEST OK')
 } finally {

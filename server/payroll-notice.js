@@ -21,7 +21,11 @@ const wrap = (fn) => async (req, res) => {
   } catch (err) {
     const status = err.status || 500
     if (status >= 500) console.error('[payroll-notice]', err)
-    res.status(status).json({ error: err.message || '服务器错误' })
+    res.status(status).json({
+      error: err.message || '服务器错误',
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.mismatchField ? { mismatchField: err.mismatchField } : {}),
+    })
   }
 }
 
@@ -113,8 +117,13 @@ payrollNoticeRouter.post('/payroll-notices/preflight', wrap(async (req, res) => 
       const employeeOverlaps = overlapById.get(employeeId) || []
       return {
         employeeId,
+        employeeName: row.employeeName,
+        storeKey: row.storeKey,
         issueReady: employeeOverlaps.length === 0,
         totalCents: row.totalCents,
+        snapshot: row.snapshot,
+        snapshotVersion: row.snapshotVersion,
+        snapshotDigest: row.snapshotDigest,
         blockers: employeeOverlaps.length > 0 ? ['OVERLAPPING_PAYROLL_NOTICE'] : [],
         overlaps: employeeOverlaps,
       }

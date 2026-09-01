@@ -6,7 +6,13 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const issueModalSource = fs.readFileSync(path.join(root, 'src/components/PayrollIssueModal.jsx'), 'utf8')
-const { buildIssueSnapshot, buildIssueRows, preflightIssueSelection, buildIssuePayloadRows } = await import(path.join(root, 'src/utils/payrollIssue.js').replaceAll('\\', '/'))
+const {
+  bindAuthoritativeIssuePreflight,
+  buildIssueSnapshot,
+  buildIssueRows,
+  preflightIssueSelection,
+  buildIssuePayloadRows,
+} = await import(path.join(root, 'src/utils/payrollIssue.js').replaceAll('\\', '/'))
 const { resolvePayrollCalculation } = await import(path.join(root, 'src/utils/payrollResolver.js').replaceAll('\\', '/'))
 
 const recA = { employeeId: 'emp-A', displayName: '张伟', storesWorked: ['guanshe'], days: 1, payableHours: 8, workedRevenue: 6000, orders: 60, basePay: 224, commission: 440, transferSubsidy: 16, bigBonus: 0, salaryAdjustment: 0, salary: 680 }
@@ -19,6 +25,18 @@ const dirById = new Map([
   ['emp-A', { id: 'emp-A', name: '张伟', employeeNo: 'A001', storeKey: 'guanshe', type: 'fulltime' }],
   ['emp-B', { id: 'emp-B', name: '张伟', employeeNo: 'B001', storeKey: 'guanshe', type: 'parttime' }],
 ])
+const canonicalServerRow = (row) => ({
+  employeeId: row.employeeId,
+  employeeName: row.name,
+  storeKey: row.storeKey,
+  totalCents: Math.round(Number(row.rec.salary || 0) * 100),
+  snapshot: row.snapshot,
+  snapshotVersion: 'PAYROLL_ISSUANCE_V1',
+  snapshotDigest: 'a'.repeat(64),
+  issueReady: true,
+  overlaps: [],
+})
+const bindCanonical = (rows) => rows.map((row) => bindAuthoritativeIssuePreflight(row, canonicalServerRow(row)))
 
 // ---- A: 稳定单员工（快照形状 + 金额来自同一 rec）----
 {
@@ -32,7 +50,7 @@ const dirById = new Map([
   assert.equal(rows.length, 1, 'A 一行')
   assert.equal(rows[0].employeeId, 'emp-A', 'A 主体 employeeId')
   assert.equal(rows[0].targetUsername, 'user-a', 'A 收件人 User.employeeId 精确')
-  const payload = buildIssuePayloadRows(rows)
+  const payload = buildIssuePayloadRows(bindCanonical(rows))
   assert.equal(payload[0].employeeId, 'emp-A')
   assert.equal(payload[0].totalCents, 68000, 'A totalCents = rec.salary*100')
   console.log('  [A] 稳定单员工快照/金额/收件人 PASS')
@@ -52,7 +70,7 @@ const dirById = new Map([
   assert.equal(b.rec.salary, 510, 'B B 金额 510')
   assert.equal(a.targetUsername, 'user-a', 'B 收件人 user-a')
   assert.equal(b.targetUsername, 'user-b', 'B 收件人 user-b')
-  const payload = buildIssuePayloadRows(rows)
+  const payload = buildIssuePayloadRows(bindCanonical(rows))
   assert.deepEqual(payload.map((p) => [p.employeeId, p.totalCents]), [['emp-A', 68000], ['emp-B', 51000]], 'B payload 独立')
   assert.equal(payload[0].snapshot.summary.total, 680)
   assert.equal(payload[1].snapshot.summary.total, 510)
@@ -135,9 +153,38 @@ const dirById = new Map([
   assert.equal(snap.summary.bigBonus, 66)
   assert.equal(snap.summary.adjustment, 55)
   assert.equal(snap.summary.total, 444, 'M 合计 = 同 rec.salary')
-  const payload = buildIssuePayloadRows([{ employeeId: 'emp-A', name: '张伟', storeKey: 'guanshe', rec: mixed, snapshot: snap }])
+  const payload = buildIssuePayloadRows(bindCanonical([{ employeeId: 'emp-A', name: '张伟', storeKey: 'guanshe', rec: mixed, snapshot: snap }]))
   assert.equal(payload[0].totalCents, 44400, 'M totalCents 同源')
   console.log('  [M] 快照全字段同源 PASS')
+}
+
+// ---- U: 总金额相同但本地大单奖小票投影漂移时，发放 payload 仍只使用服务器 canonical snapshot ----
+{
+  const localSnapshot = buildIssueSnapshot({
+    ...recA,
+    dailyExplanations: [{
+      date: '2026-08-04', storeKey: 'guanshe', payableHours: 8, bigBonus: 60.45,
+      explanation: { bigOrderBonuses: [{ orderAmount: 1209, bonusAmount: 60.45, receiptPresent: false }] },
+    }],
+    bigBonus: 60.45,
+    salary: 740.45,
+  }, { periodType: 'month', periodKey: '2026-08' })
+  const serverSnapshot = structuredClone(localSnapshot)
+  serverSnapshot.days[0].explanation.bigOrderBonuses[0].receiptPresent = true
+  const localRow = {
+    employeeId: 'emp-A', name: '张伟', storeKey: 'guanshe', rec: { ...recA, bigBonus: 60.45, salary: 740.45 },
+    snapshot: localSnapshot, issueReady: true,
+  }
+  const bound = bindAuthoritativeIssuePreflight(localRow, {
+    employeeId: 'emp-A', employeeName: '张伟', storeKey: 'guanshe', totalCents: 74045,
+    snapshot: serverSnapshot, snapshotVersion: 'PAYROLL_ISSUANCE_V1', snapshotDigest: 'b'.repeat(64),
+    issueReady: true, overlaps: [],
+  })
+  assert.equal(bound.issueReady, true, 'U canonical preflight 可发放')
+  assert.equal(buildIssuePayloadRows([bound])[0].snapshot.days[0].explanation.bigOrderBonuses[0].receiptPresent, true, 'U payload 使用服务器快照')
+  assert.equal(buildIssuePayloadRows([bound])[0].totalCents, 74045, 'U 金额与 canonical preflight 同源')
+  assert.throws(() => buildIssuePayloadRows([localRow]), /快照已过期/, 'U 未绑定服务器预检时 fail closed')
+  console.log('  [U] receiptPresent projection drift 收敛到 canonical preflight PASS')
 }
 
 // ---- N: 全链路——resolver 结果 → 行 → 预检 → payload（与 modal 同构）----

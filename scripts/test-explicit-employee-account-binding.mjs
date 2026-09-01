@@ -136,6 +136,7 @@ try {
   const rows = buildAuthoritativeIssueRows(authority, ['emp-A', 'emp-B']).map((row) => ({
     employeeId: row.employeeId, employeeName: row.employeeName, storeKey: row.storeKey,
     snapshot: row.snapshot, totalCents: row.totalCents,
+    snapshotVersion: row.snapshotVersion, snapshotDigest: row.snapshotDigest,
   }))
   const issueRes = await request(base, '/v2/payroll-notices', { cookie, method: 'POST', body: { periodType: 'month', periodKey: '2026-09', rows } })
   assert.equal(issueRes.status, 200, `Gate18 集成发放应成功: ${await issueRes.text()}`)
