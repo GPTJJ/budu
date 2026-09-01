@@ -117,7 +117,10 @@ export class MemoryPrisma {
         let rows = this.refunds.filter((item) => {
           if (where?.payment?.provider) {
             const payment = this.payments.find((candidate) => candidate.id === item.paymentId)
-            if (payment?.provider !== where.payment.provider) return false
+            const providerWhere = where.payment.provider
+            if (providerWhere && typeof providerWhere === 'object' && Array.isArray(providerWhere.in)) {
+              if (!providerWhere.in.includes(payment?.provider)) return false
+            } else if (payment?.provider !== providerWhere) return false
           }
           const plainWhere = { ...(where || {}) }
           delete plainWhere.payment

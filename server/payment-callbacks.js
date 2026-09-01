@@ -1,7 +1,5 @@
-import { Router } from 'express'
+import express, { Router } from 'express'
 import { paymentService } from './payments/index.js'
-
-export const paymentCallbackRouter = Router()
 
 const PROVIDER_ALIASES = {
   mock: 'mock',
@@ -11,7 +9,7 @@ const PROVIDER_ALIASES = {
   alipay: 'alipay',
 }
 
-const handle = async (req, res, rawProvider) => {
+const handle = async (service, req, res, rawProvider) => {
   try {
     const provider = PROVIDER_ALIASES[String(rawProvider || '').toLowerCase()] || ''
     if (!provider) return res.status(404).json({ error: '接口不存在' })
@@ -23,16 +21,24 @@ const handle = async (req, res, rawProvider) => {
     if (provider === 'mock' && process.env.ENABLE_MOCK_CALLBACK_API !== '1' && process.env.NODE_ENV !== 'test') {
       return res.status(404).json({ error: '接口不存在' })
     }
-    const result = await paymentService.handleCallback(provider, req.body || {})
+    const result = await service.handleCallback(provider, req.body || {})
+    if (provider === 'alipay') return res.type('text/plain').send('success')
     res.json({ ok: true, paymentId: result.payment.id, status: result.payment.status })
   } catch (error) {
     const status = error.status || 500
     if (status >= 500) console.error('[payment-callback]', error)
+    if (String(rawProvider || '').toLowerCase() === 'alipay') return res.status(status).type('text/plain').send('failure')
     res.status(status).json({ error: error.message || '支付回调处理失败' })
   }
 }
 
-paymentCallbackRouter.post('/callback/:provider', (req, res) => handle(req, res, req.params.provider))
-paymentCallbackRouter.post('/wechat/callback', (req, res) => handle(req, res, 'wechat'))
-paymentCallbackRouter.post('/alipay/callback', (req, res) => handle(req, res, 'alipay'))
-paymentCallbackRouter.post('/mock/callback', (req, res) => handle(req, res, 'mock'))
+export function createPaymentCallbackRouter(service = paymentService) {
+  const router = Router()
+  router.post('/callback/:provider', (req, res) => handle(service, req, res, req.params.provider))
+  router.post('/wechat/callback', (req, res) => handle(service, req, res, 'wechat'))
+  router.post('/alipay/callback', express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 80 }), (req, res) => handle(service, req, res, 'alipay'))
+  router.post('/mock/callback', (req, res) => handle(service, req, res, 'mock'))
+  return router
+}
+
+export const paymentCallbackRouter = createPaymentCallbackRouter()

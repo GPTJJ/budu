@@ -13,6 +13,11 @@ export function isValidWechatAuthCode(value) {
   return WECHAT_AUTH_CODE_RE.test(String(value ?? '').trim())
 }
 
+// 支付宝付款码仅作为瞬时支付凭证传给后端，不持久化；长度边界与 Provider 一致。
+export function isValidAlipayAuthCode(value) {
+  return /^\d{16,64}$/.test(String(value ?? '').trim())
+}
+
 export function cameraErrorMessage(error) {
   const name = String(error?.name || '')
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {

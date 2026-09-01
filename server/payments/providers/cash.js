@@ -19,7 +19,11 @@ const event = (payment, status, extra = {}) => ({
  */
 export class CashPaymentProvider extends PaymentProvider {
   constructor() {
-    super('cash')
+    super('cash', {
+      supportsQuery: true,
+      supportsCancel: true,
+      supportsRefund: true,
+    })
   }
 
   async createPayment(payment, options = {}) {

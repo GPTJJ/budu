@@ -361,6 +361,30 @@ test('live 现金模式：微信/支付宝暂未开通，现金确认收款后�
   expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(1)
 })
 
+test('iPad WebKit 支付宝灰度开启后可扫码，付款码不写浏览器存储', async ({ page }) => {
+  const authCode = '287634438256643948'
+  await enterPayment(page, `/tests/pos-harness.html?user=alipay-live&posmode=live&alipay=1&codes=${authCode}`)
+  await expect(page.getByRole('button', { name: '支付宝扫码', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
+  await page.getByRole('button', { name: '支付宝扫码', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '支付宝付款码扫码' })).toBeVisible()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate((code) => JSON.stringify({ local: localStorage, session: sessionStorage }).includes(code), authCode)).toBe(false)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
+test('375px 支付宝 pending 时禁用跨渠道付款，撤销明确后恢复', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await enterPayment(page, '/tests/pos-harness.html?user=alipay-pending&posmode=live&alipay=1&paymode=pending&codes=287634438256643948')
+  await page.getByRole('button', { name: '支付宝扫码', exact: true }).click()
+  await expect(page.getByText('正在核对支付宝扣款结果，请勿再次扫码或改用其他支付方式', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /现金收款/ })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()
+  await page.getByRole('button', { name: '关闭当前支付', exact: true }).click()
+  await expect(page.getByRole('button', { name: '现金收款', exact: true })).toBeEnabled()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
 test('手机端 POS：底部结算栏、分类横滑、购物车抽屉与结算', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/tests/pos-harness.html?user=mobile-pos')

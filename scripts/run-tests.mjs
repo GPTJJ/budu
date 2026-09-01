@@ -36,6 +36,10 @@ const NODE_TEST_SUITE = [
   'test-product-excel.mjs',         // 商品 Excel 导入（单元）
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
+  'test-alipay-config.mjs',         // 支付宝配置 fail-closed 与密钥文件校验
+  'test-alipay-provider.mjs',       // 支付宝付款码支付/查询/撤销/退款与 RSA2（合成传输）
+  'test-alipay-callback-route.mjs', // 支付宝 form-urlencoded callback 与应答合同
+  'test-alipay-pg-integration.mjs', // 支付宝幂等/退款并发（可弃用 PostgreSQL schema）
   'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
   'test-customer-request-wecom-unit.mjs', // CustomerRequest 固定 UserID 企微投递/幂等/隐私/深链
   'test-approval-ui-regressions.mjs', // 工资提交成功动画与移动端通知层级回归
@@ -222,6 +226,12 @@ const STRIPPED_ENV_KEYS = [
   'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_REST_API_READ_ONLY_TOKEN',
   // 支付
   'PAYMENT_MODE', 'ENABLE_MOCK_CALLBACK_API', 'EMAIL_NOTIFY_ENABLED',
+  // 支付宝付款码支付——测试只使用临时生成的合成密钥，绝不继承本机/生产配置
+  'ALIPAY_ENABLED', 'ALIPAY_PROTOCOL', 'ALIPAY_APP_ID', 'ALIPAY_SELLER_ID',
+  'ALIPAY_ENDPOINT', 'ALIPAY_NOTIFY_URL', 'ALIPAY_PRIVATE_KEY_FILE', 'ALIPAY_PUBLIC_KEY_FILE',
+  'ALIPAY_ENABLED_STORES', 'ALIPAY_REQUEST_TIMEOUT_MS', 'ALIPAY_QUERY_INTERVAL_MS',
+  'ALIPAY_MAX_QUERIES', 'ALIPAY_REVERSE_AFTER_MS', 'ALIPAY_LEASE_MS',
+  'ALIPAY_REFUND_QUERY_INTERVAL_MS',
   // 微信付款码支付（V2 MICROPAY）——测试一律剥离，绝不继承生产密钥
   'WECHAT_PAY_ENABLED', 'WECHAT_PAY_PROTOCOL', 'WECHAT_PAY_MCHID', 'WECHAT_PAY_APPID',
   'WECHAT_PAY_API_V2_KEY_FILE', 'WECHAT_PAY_CERT_FILE', 'WECHAT_PAY_PRIVATE_KEY_FILE',

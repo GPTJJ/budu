@@ -27,7 +27,7 @@ import crypto from 'node:crypto'
 import { PaymentProvider } from './base.js'
 import { httpError } from '../../pos-core.js'
 import { WechatV2Client, WechatV2Error, WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS } from '../wechat-v2-client.js'
-import { wechatPayConfig } from '../wechat-config.js'
+import { wechatPayConfig, wechatPayStoreAllowed } from '../wechat-config.js'
 import { isValidPublicIpv4 } from '../terminal-ip.js'
 import { parseV2Xml, verifyV2Signature } from '../wechat-v2-signature.js'
 
@@ -82,7 +82,17 @@ function safeMetadata(result) {
 
 export class WechatPayProvider extends PaymentProvider {
   constructor(options = {}) {
-    super('wechat_pay')
+    super('wechat_pay', {
+      supportsQuery: true,
+      supportsCancel: true,
+      supportsRefund: true,
+      supportsRefundQuery: true,
+      supportsCallback: false,
+      ambiguousResultRecovery: true,
+      refundResubmitAfterMs: 60_000,
+      refundRepeatDelayMs: 60_000,
+      refundRepeatMessage: '同一微信订单的多次退款需间隔 1 分钟',
+    })
     this._clientFactory = options.clientFactory || null
     this._config = options.config || null
     this._deadlineMs = options.deadlineMs || WECHAT_PAY_PROVIDER_ABSOLUTE_DEADLINE_MS
@@ -111,6 +121,17 @@ export class WechatPayProvider extends PaymentProvider {
     }
     // 终端 IP 是 MICROPAY 必填且必须为公网可路由 IPv4；缺失/非法时在发起任何
     // 网络请求之前 fail closed（R2 起已删除 127.0.0.1 回退；R3 使用共享严格校验）。
+    assertTerminalIp(config)
+  }
+
+  assertAvailable({ storeId, mode } = {}) {
+    const config = this.config()
+    if (mode !== 'live' || !config.enabled || !config.configured) {
+      throw httpError('微信支付未开通或配置不完整', 501)
+    }
+    if (!wechatPayStoreAllowed(storeId, config)) {
+      throw httpError('当前门店未授权微信支付', 403)
+    }
     assertTerminalIp(config)
   }
 

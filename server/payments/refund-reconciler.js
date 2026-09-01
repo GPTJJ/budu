@@ -13,13 +13,15 @@ function boundedInterval(value) {
   return parsed
 }
 
-export function refundReconcilerEnvConfig(env = process.env) {
-  return { intervalMs: boundedInterval(env.WECHAT_REFUND_QUERY_INTERVAL_MS) }
+export function refundReconcilerEnvConfig(env = process.env, providerNames = ['wechat_pay']) {
+  const values = providerNames.map((name) => name === 'alipay' ? env.ALIPAY_REFUND_QUERY_INTERVAL_MS : env.WECHAT_REFUND_QUERY_INTERVAL_MS)
+  return { intervalMs: Math.min(...values.map(boundedInterval)) }
 }
 
 export class RefundReconciler {
-  constructor({ service = paymentService, intervalMs = DEFAULT_INTERVAL_MS, batchSize = 20, alarm = (message) => console.error('[wechat-refund-reconciler]', message) } = {}) {
+  constructor({ service = paymentService, providerNames = ['wechat_pay'], intervalMs = DEFAULT_INTERVAL_MS, batchSize = 20, alarm = (message) => console.error('[refund-reconciler]', message) } = {}) {
     this.service = service
+    this.providerNames = providerNames
     this.intervalMs = intervalMs
     this.batchSize = batchSize
     this.alarm = alarm
@@ -41,7 +43,7 @@ export class RefundReconciler {
 
   async tick() {
     const refunds = await this.service.prisma.refund.findMany({
-      where: { refundMode: 'PAYMENT', status: 'pending', payment: { provider: 'wechat_pay' } },
+      where: { refundMode: 'PAYMENT', status: 'pending', payment: { provider: { in: this.providerNames } } },
       orderBy: { createdAt: 'asc' },
       take: this.batchSize,
     })
@@ -57,8 +59,10 @@ export class RefundReconciler {
 
 let instance = null
 
-export function startWechatRefundReconciler(options = {}) {
+export function startProviderRefundReconciler(options = {}) {
   if (instance) return instance
   instance = new RefundReconciler(options)
   return instance.start()
 }
+
+export function startWechatRefundReconciler(options = {}) { return startProviderRefundReconciler(options) }
