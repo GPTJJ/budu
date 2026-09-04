@@ -43,8 +43,15 @@ test('E/F: 直接 API 与伪造 body operatorId 都不能绕过登录主体', ()
   const forgedBody = { operatorId: allowlisted.id }
   assert.equal(forgedBody.operatorId, allowlisted.id)
   assert.throws(() => requireSweetCardProductionTestAccess(ordinary), (error) => error.status === 403)
-  assert.throws(() => requireSweetCardProductionTestForOrder(ordinary, { sweetCardAmount: 1n }), (error) => error.status === 403)
+  assert.throws(() => requireSweetCardProductionTestForOrder(ordinary, { sweetCardAmount: 1n }, { globalEnabled: true, storeEligible: true }), (error) => error.status === 403)
   assert.doesNotThrow(() => requireSweetCardProductionTestForOrder(ordinary, { sweetCardAmount: 0n }))
+})
+
+test('混合订单后续资金入口继续要求 global 与 eligible store', () => {
+  const order = { sweetCardAmount: 1n }
+  assert.throws(() => requireSweetCardProductionTestForOrder(allowlisted, order, { globalEnabled: false, storeEligible: true }), (error) => error.status === 403)
+  assert.throws(() => requireSweetCardProductionTestForOrder(allowlisted, order, { globalEnabled: true, storeEligible: false }), (error) => error.status === 403)
+  assert.doesNotThrow(() => requireSweetCardProductionTestForOrder(allowlisted, order, { globalEnabled: true, storeEligible: true }))
 })
 
 test('G: 撤销 allowlist 后立即 fail closed', () => {
@@ -66,7 +73,8 @@ test('路由在 UI 之外强制执行 allowlist 并记录名单审计', async ()
     readFile(new URL('../server/app.js', import.meta.url), 'utf8'),
   ])
   assert.match(posSource, /sweetCardEnabled\(\) && hasSweetCardProductionTestAccess\(req\.user\)/)
-  assert.equal((posSource.match(/requireSweetCardProductionTestForOrder\(req\.user,/g) || []).length >= 8, true)
+  assert.match(posSource, /await requireSweetCardOrderAccess\(req\.user, current\)/)
+  assert.equal((posSource.match(/await requireSweetCardOrderAccess\(req\.user,/g) || []).length >= 8, true)
   assert.equal((sweetCardSource.match(/requireSweetCardProductionTestAccess\(req\.user\)/g) || []).length >= 3, true)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_enabled/)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_disabled/)

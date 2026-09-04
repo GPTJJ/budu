@@ -22,6 +22,8 @@ export function requireSweetCardProductionTestAccess(user) {
   }
 }
 
-export function requireSweetCardProductionTestForOrder(user, order) {
-  if (BigInt(order?.sweetCardAmount || 0) > 0n) requireSweetCardProductionTestAccess(user)
+export function requireSweetCardProductionTestForOrder(user, order, { globalEnabled = sweetCardEnabled(), storeEligible = false } = {}) {
+  if (BigInt(order?.sweetCardAmount || 0) > 0n && !sweetCardProductionAccess({ user, storeEligible, globalEnabled })) {
+    throw httpError('当前账号或门店未进入甜意卡生产测试范围', 403)
+  }
 }
