@@ -41,7 +41,7 @@
     "test:skill:payroll-audit": "node --test scripts/test-budu-payroll-audit-skill.mjs",
     "test:payroll-audit-report": "node --test scripts/test-payroll-audit-report-v2.mjs",
     "test:skill:brand": "node --test scripts/test-budu-brand-system.mjs",
-    "test:sweet-card": "node --test scripts/test-budu-sweet-card-skill.mjs scripts/test-sweet-card-core.mjs scripts/test-sweet-card-migration.mjs scripts/test-sweet-card-settlement.mjs",
+    "test:sweet-card": "node --test scripts/test-budu-sweet-card-skill.mjs scripts/test-sweet-card-core.mjs scripts/test-sweet-card-migration.mjs scripts/test-sweet-card-rollout.mjs scripts/test-sweet-card-settlement.mjs",
     "brand:assets": "node scripts/generate-budu-brand-assets.mjs",
     "test:brand:browser": "playwright test --config=playwright.brand.config.mjs --workers=1",
     "payroll:audit": "node scripts/payroll-audit-runner.mjs",

@@ -98,6 +98,7 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
   DAILY_ENTRY: 'dailyEntry',
   SWEET_CARD: 'sweetCard',
+  SWEET_CARD_PRODUCTION_TEST: 'sweetCardProductionTest',
 })
 
 export const SWEET_CARD_CAPABILITIES = Object.freeze({
@@ -211,6 +212,8 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
       source[ACCOUNT_PERMISSION_KEYS.SWEET_CARD],
       role,
     ),
+    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST]:
+      source[ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST] === true,
   }
 }
 
@@ -241,6 +244,17 @@ export function hasSweetCardCapability(user, capability) {
   if (!user || user.status === 'disabled' || !Object.values(SWEET_CARD_CAPABILITIES).includes(capability)) return false
   return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
     [ACCOUNT_PERMISSION_KEYS.SWEET_CARD][capability] === true
+}
+
+/** Production grey-release authority: explicit User.id-bound allowlist, never role-derived. */
+export function hasSweetCardProductionTestAccess(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
+        [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST] === true,
+  )
 }
 
 export function hasAnyModuleAccess(user, moduleKeys) {

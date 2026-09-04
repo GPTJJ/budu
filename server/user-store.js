@@ -5,7 +5,7 @@ import { loadDb, persist } from './store.js'
 import { normalizeAccountPermissions } from '../shared/accountPermissions.js'
 
 /** KV 账号镜像（best-effort；失败不影响 PG 权威） */
-async function mirrorUsersToKv() {
+export async function mirrorUsersToKv() {
   try {
     const db = await loadDb()
     const rows = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } })

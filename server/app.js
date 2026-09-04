@@ -41,6 +41,7 @@ import {
   hasAnyModuleAccess,
   hasModuleAccess,
   hasInventoryTransferAll,
+  hasSweetCardProductionTestAccess,
   isSuperUser,
   normalizeAccountPermissions,
 } from '../shared/accountPermissions.js'
@@ -949,7 +950,10 @@ export function createApp() {
       // Gate 20：canonical staffKey 快照（显式/legacy 解析由 Employee 推导；非绑定角色清空）
       staffKey: !['manager', 'staff'].includes(role) ? '' : (bindingResult && bindingResult.staffKeySnapshot ? bindingResult.staffKeySnapshot : effStaffKey),
       employeeId: boundEmpId,
-      permissions: normalizeAccountPermissions(null, role, target.assetCenter === true),
+      permissions: {
+        ...normalizeAccountPermissions(null, role, target.assetCenter === true),
+        sweetCardProductionTest: hasSweetCardProductionTestAccess(target),
+      },
     }
     next.assetCenter = next.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
     const updated = await updateUser(target.id, next)
@@ -962,7 +966,10 @@ export function createApp() {
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.role === 'developer') return res.status(400).json({ error: '开发者固定拥有全部权限' })
     if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
-    const permissions = normalizeAccountPermissions(req.body, target.role, target.assetCenter === true)
+    const permissions = normalizeAccountPermissions({
+      ...req.body,
+      sweetCardProductionTest: hasSweetCardProductionTestAccess(target),
+    }, target.role, target.assetCenter === true)
     const updated = await updateUser(target.id, {
       permissions,
       assetCenter: permissions.modules[MODULE_KEYS.ASSET_CENTER] === true,

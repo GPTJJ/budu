@@ -5,7 +5,16 @@ import QRCode from 'qrcode'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { settlementCoordinator } from './settlements/settlement-coordinator.js'
-import { hasModuleAccess, hasSweetCardCapability, MODULE_KEYS, SWEET_CARD_CAPABILITIES } from '../shared/accountPermissions.js'
+import {
+  ACCOUNT_PERMISSION_KEYS,
+  canManageAccounts,
+  hasModuleAccess,
+  hasSweetCardCapability,
+  hasSweetCardProductionTestAccess,
+  MODULE_KEYS,
+  normalizeAccountPermissions,
+  SWEET_CARD_CAPABILITIES,
+} from '../shared/accountPermissions.js'
 import {
   SWEET_CARD_PRESENTATION_CONTRACT,
   allocateCents,
@@ -19,6 +28,8 @@ import {
   tokenHash,
 } from './sweet-card-core.js'
 import { renderMinimalSweetCard } from './sweet-card-presentation.js'
+import { requireSweetCardProductionTestAccess } from './sweet-card-rollout.js'
+import { mirrorUsersToKv } from './user-store.js'
 
 export const sweetCardRouter = Router()
 const wrap = (handler) => async (req, res) => {
@@ -33,6 +44,7 @@ const safeText = (value, max = 200) => String(value || '').trim().slice(0, max)
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
 const requireAdmin = (req, capability = SWEET_CARD_CAPABILITIES.VIEW) => {
   if (!hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) || !hasSweetCardCapability(req.user, capability)) throw httpError('无甜意卡权限', 403)
+  requireSweetCardProductionTestAccess(req.user)
 }
 const requirePos = (req) => {
   if (!hasModuleAccess(req.user, MODULE_KEYS.STORE_POS)) throw httpError('无 POS 权限', 403)
@@ -161,7 +173,47 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
 }
 
 sweetCardRouter.get('/sweet-cards/config', wrap(async (req, res) => {
-  res.json({ enabled: sweetCardEnabled(), presentation: SWEET_CARD_PRESENTATION_CONTRACT })
+  const productionTestAllowed = hasSweetCardProductionTestAccess(req.user)
+  res.json({ enabled: sweetCardEnabled() && productionTestAllowed, productionTestAllowed, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
+}))
+
+const requireAllowlistAdmin = (req) => {
+  if (!canManageAccounts(req.user)) throw httpError('仅开发者可管理生产测试名单', 403)
+}
+
+sweetCardRouter.get('/sweet-cards/production-test-allowlist', wrap(async (req, res) => {
+  requireDb(); requireAllowlistAdmin(req)
+  const users = await prisma.user.findMany({ where: { status: { not: 'disabled' } }, orderBy: { createdAt: 'asc' } })
+  res.json({ principals: users.filter(hasSweetCardProductionTestAccess).map((user) => ({ id: user.id, role: user.role })) })
+}))
+
+sweetCardRouter.put('/sweet-cards/production-test-allowlist/:principalId', wrap(async (req, res) => {
+  requireDb(); requireAllowlistAdmin(req)
+  if (typeof req.body?.enabled !== 'boolean') throw httpError('enabled 必须为布尔值')
+  const actor = who(req.user)
+  const target = await prisma.user.findUnique({ where: { id: req.params.principalId } })
+  if (!target || target.status === 'disabled' || target.role === 'public') throw httpError('测试账号不存在或不可用', 404)
+  if (req.body.enabled && !hasModuleAccess(target, MODULE_KEYS.STORE_POS)) throw httpError('测试账号缺少 POS 原始权限', 409)
+  const before = hasSweetCardProductionTestAccess(target)
+  const permissions = {
+    ...normalizeAccountPermissions(target.permissions, target.role, target.assetCenter === true),
+    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST]: req.body.enabled,
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: target.id }, data: {
+      permissions,
+      permissionsUpdatedAt: new Date(),
+      permissionsUpdatedBy: req.user.username,
+    } })
+    await audit(tx, actor, req.body.enabled ? 'sweet_card.production_test_allowlist_enabled' : 'sweet_card.production_test_allowlist_disabled', {}, {
+      targetPrincipalId: target.id,
+      before,
+      after: req.body.enabled,
+      change: req.body.enabled ? 'ADD' : 'REMOVE',
+    })
+  })
+  await mirrorUsersToKv()
+  res.json({ ok: true, principal: { id: target.id, role: target.role, enabled: req.body.enabled } })
 }))
 
 sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
@@ -407,14 +459,14 @@ sweetCardRouter.get('/sweet-cards/audit', wrap(async (req, res) => {
 }))
 
 sweetCardRouter.post('/pos/orders/:id/sweet-card/inspect', wrap(async (req, res) => {
-  requireDb(); requirePos(req); assertSweetCardEnabled()
+  requireDb(); requirePos(req); requireSweetCardProductionTestAccess(req.user); assertSweetCardEnabled()
   const order = await prisma.order.findUnique({ where: { id: req.params.id } }); if (!order) throw httpError('订单不存在', 404)
   if (!(req.user.role === 'developer' || req.user.role === 'admin' || req.user.role === 'finance' || (req.user.storeKeys || []).includes(order.storeId))) throw httpError('无权操作该门店订单', 403)
   res.json({ card: await inspectSweetCard({ orderId: order.id, token: req.body?.token, actor: who(req.user) }) })
 }))
 
 sweetCardRouter.post('/pos/orders/:id/sweet-card/redeem', wrap(async (req, res) => {
-  requireDb(); requirePos(req); assertSweetCardEnabled()
+  requireDb(); requirePos(req); requireSweetCardProductionTestAccess(req.user); assertSweetCardEnabled()
   const order = await prisma.order.findUnique({ where: { id: req.params.id } }); if (!order) throw httpError('订单不存在', 404)
   if (!(req.user.role === 'developer' || req.user.role === 'admin' || req.user.role === 'finance' || (req.user.storeKeys || []).includes(order.storeId))) throw httpError('无权操作该门店订单', 403)
   const result = await redeemSweetCard({ orderId: order.id, token: req.body?.token, amountCents: req.body?.amountCents, requestKey: req.body?.requestKey, actor: who(req.user) })

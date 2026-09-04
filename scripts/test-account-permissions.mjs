@@ -22,6 +22,7 @@ import {
   normalizeAccountPermissions,
   hasModuleAccess,
   hasDeveloperSensitiveRecordDelete,
+  hasSweetCardProductionTestAccess,
 } from '../shared/accountPermissions.js'
 
 test('开发者始终拥有库存调拨全权限', () => {
@@ -166,6 +167,16 @@ test('Developer 保留操作不向管理员或财务开放', () => {
   assert.equal(canManageAccounts({ role: 'admin' }), false)
   assert.equal(canManageAccounts({ role: 'finance' }), false)
   assert.equal(canManageAccounts({ role: 'developer', status: 'disabled' }), false)
+})
+
+test('甜意卡生产测试名单按显式账号权限默认拒绝且不随角色继承', () => {
+  for (const role of ['developer', 'admin', 'finance', 'manager', 'staff', 'cashier']) {
+    assert.equal(hasSweetCardProductionTestAccess({ role, status: 'active', permissions: {} }), false, `${role} 不应默认进入生产测试名单`)
+    assert.equal(hasSweetCardProductionTestAccess({ role, status: 'active', permissions: { sweetCardProductionTest: true } }), true, `${role} 显式加入后应可识别`)
+  }
+  assert.equal(hasSweetCardProductionTestAccess({ role: 'developer', status: 'disabled', permissions: { sweetCardProductionTest: true } }), false)
+  assert.equal(hasSweetCardProductionTestAccess({ role: 'public', status: 'active', permissions: { sweetCardProductionTest: true } }), false)
+  assert.equal(normalizeAccountPermissions({ sweetCardProductionTest: 'true' }, 'developer').sweetCardProductionTest, false)
 })
 
 test('每日录入 view/edit/confirm/revise 能力在现有 JSON 权限中独立表达', () => {
