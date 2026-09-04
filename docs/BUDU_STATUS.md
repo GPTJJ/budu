@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 ## Repository
 
@@ -20,11 +20,11 @@ Last reviewed: 2026-09-04
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Database authority: `budu_bj006` — VERIFIED on 2026-09-04; revalidate before use.
-- Migration ledger: 62, schema up to date — VERIFIED on 2026-09-04; revalidate before use.
-- Public/internal health and exact routed runtime: PASS / `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Latest Candidate checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`; it did not change Production.
+- Runtime SHA: `00d7a77235de2a3f29f8bffbd49116f5e382b2fb` — VERIFIED on 2026-09-05; revalidate before use.
+- Database authority: `budu_bj006` — VERIFIED on 2026-09-05; revalidate before use.
+- Migration ledger: 64 applied / 0 failed — VERIFIED on 2026-09-05; revalidate before use.
+- Public/internal health and exact routed runtime: PASS / `budu-prod-00d7a77-sweet-card-p7b-m64-disabled` — VERIFIED on 2026-09-05; revalidate before use.
+- Sweet Card is globally disabled after the P7 response-serialization HOLD. The committed 10-cent P7 settlement is reconciled with zero unexplained delta. See `docs/checkpoints/2026-09-05-sweet-card-p7b-m64-production-hold.md`.
 
 ## Architecture Contracts
 
@@ -35,7 +35,7 @@ Last reviewed: 2026-09-04
 
 ## Current Engineering Work
 
-- `codex/sweet-card-1-candidate` contains the feature-flagged budu 甜意卡 1.0 Candidate and additive migration 63. Production remains disabled and unmigrated; see its scoped checkpoint before any future release gate.
+- `codex/sweet-card-p7b-migration64-candidate` contains the settlement-aware Migration 64 Candidate deployed at SHA `00d7a77235de2a3f29f8bffbd49116f5e382b2fb`. P7 is on HOLD because the successful committed redemption response attempted to JSON-serialize remaining BigInt fields and returned HTTP 500. P8–P19 were not started.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
@@ -44,7 +44,7 @@ Last reviewed: 2026-09-04
 - Desktop navigation and the mobile drawer share `src/components/BrandSlot.jsx`: the approved simple character icon is paired with the unchanged canonical lowercase `budu` wordmark, and the former `甜蜜治愈日常` subtitle is absent.
 - BrandSlot assets locally override the legacy global image outline with transparent, borderless presentation; the underlying icon and canonical wordmark assets remain unchanged.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
-- Report Center migrations 59–62 are deployed in the canonical production ledger. Future work must treat 62 as the current migration baseline and revalidate before assigning the next number.
+- Report Center migrations 59–62, Sweet Card migration 63, and settlement compatibility migration 64 are deployed in the canonical production ledger. Future work must treat 64 as the current migration baseline and revalidate before assigning the next number.
 - Previous Production runtime `budu-prod-f7fd6e5-brand-slot-r2` and protected brand-border rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
 
 ## Rollback Notes
