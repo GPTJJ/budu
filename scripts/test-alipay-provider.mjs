@@ -120,6 +120,20 @@ test('官方 SDK 明确按 PKCS8 装载应用私钥，V3 请求签名材料可�
   assert.doesNotThrow(() => crypto.createSign('RSA-SHA256').update('v3-signing-probe').sign(client.sdk.config.privateKey))
 })
 
+test('支付宝 requestId 由官方 SDK 逐次生成，不复用 BUDU 业务幂等键', async () => {
+  let curlOptions = null
+  const sdk = {
+    async curl(_method, _path, options) {
+      curlOptions = options
+      return { data: { code: '10000' } }
+    },
+    checkNotifySignV2: () => false,
+  }
+  const client = new AlipayOpenApiClient(config, { sdk })
+  await client.request('/v3/alipay/trade/pay', { out_trade_no: 'BUDUPAYA1' }, 'x'.repeat(84))
+  assert.equal(Object.hasOwn(curlOptions, 'requestId'), false)
+})
+
 test('支付宝客户端保留官方 HTTP 状态和安全业务错误码', async () => {
   const sdk = {
     async curl() {

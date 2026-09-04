@@ -27,7 +27,7 @@ export class AlipayOpenApiClient {
     })
   }
 
-  async request(path, body, requestId) {
+  async request(path, body) {
     let timer = null
     try {
       const deadlineMs = this.config.requestTimeoutMs + 2000
@@ -36,7 +36,10 @@ export class AlipayOpenApiClient {
         if (typeof timer.unref === 'function') timer.unref()
       })
       const response = await Promise.race([
-        this.sdk.curl('POST', path, { body, requestId, requestTimeout: this.config.requestTimeoutMs }),
+        // alipay-request-id is a per-network-call trace id, not BUDU's
+        // idempotency key. Let the official SDK generate a bounded UUID for
+        // every call; merchantTradeNo/requestKey remain the payment authority.
+        this.sdk.curl('POST', path, { body, requestTimeout: this.config.requestTimeoutMs }),
         deadline,
       ])
       if (!response || typeof response.data !== 'object' || response.data == null) throw new AlipayClientError('BAD_RESPONSE', '支付宝响应格式不正确')

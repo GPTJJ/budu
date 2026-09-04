@@ -93,7 +93,7 @@ export class AlipayProvider extends PaymentProvider {
         scene: 'bar_code',
         auth_code: authCode,
         notify_url: config.notifyUrl,
-      }, payment.requestKey)
+      })
       this.validateTrade(payment, data)
       const providerTradeNo = data.trade_no ? String(data.trade_no) : null
       const state = String(data.trade_status || '')
@@ -116,7 +116,7 @@ export class AlipayProvider extends PaymentProvider {
 
   async queryPayment(payment) {
     try {
-      const data = await this.client().request('/v3/alipay/trade/query', { out_trade_no: payment.merchantTradeNo }, `query-${payment.paymentNo}`)
+      const data = await this.client().request('/v3/alipay/trade/query', { out_trade_no: payment.merchantTradeNo })
       return { callback: this.mapQuery(payment, data) }
     } catch (error) {
       return { callback: event(payment, 'pending', { failureCode: error.providerCode || error.code || 'QUERY_AMBIGUOUS', failureMessage: '支付宝查询失败，需要继续核对' }) }
@@ -127,7 +127,7 @@ export class AlipayProvider extends PaymentProvider {
     const before = await this.queryPayment(payment)
     if (before.callback?.status === 'success' || before.callback?.status === 'closed') return before
     try {
-      const data = await this.client().request('/v3/alipay/trade/cancel', { out_trade_no: payment.merchantTradeNo }, `cancel-${payment.paymentNo}`)
+      const data = await this.client().request('/v3/alipay/trade/cancel', { out_trade_no: payment.merchantTradeNo })
       this.validateTrade(payment, data)
       if (String(data.retry_flag || 'N') === 'Y') return { callback: event(payment, 'pending', { failureCode: 'CANCEL_RETRY', failureMessage: '支付宝撤销需重试，禁止开启新支付' }) }
       return { callback: event(payment, 'closed', { failureCode: 'CANCELLED', failureMessage: '支付宝支付已撤销' }) }
@@ -146,7 +146,7 @@ export class AlipayProvider extends PaymentProvider {
         refund_amount: yuan(input.refundAmount),
         out_request_no: input.refundNo,
         refund_reason: String(input.reason || '').slice(0, 200),
-      }, input.refundNo)
+      })
       this.validateTrade(payment, data)
       if (data.refund_fee != null && cents(data.refund_fee) !== input.refundAmount) throw httpError('支付宝退款响应金额不匹配', 502)
       return { status: 'pending', providerRefundNo: data.trade_no ? String(data.trade_no) : null }
@@ -157,7 +157,7 @@ export class AlipayProvider extends PaymentProvider {
 
   async queryRefund(payment, input) {
     try {
-      const data = await this.client().request('/v3/alipay/trade/fastpay/refund/query', { out_trade_no: payment.merchantTradeNo, out_request_no: input.refundNo }, `refund-query-${input.refundNo}`)
+      const data = await this.client().request('/v3/alipay/trade/fastpay/refund/query', { out_trade_no: payment.merchantTradeNo, out_request_no: input.refundNo })
       this.validateTrade(payment, data)
       const refundAmount = cents(data.refund_amount ?? data.refund_fee)
       if (refundAmount != null && refundAmount !== input.refundAmount) throw httpError('支付宝退款查询金额不匹配', 502)
