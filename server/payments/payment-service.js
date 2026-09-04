@@ -532,6 +532,10 @@ export class PaymentService {
     if (amount > remainingOrder) throw httpError('退款金额超出订单可退金额', 409)
 
     const no = `RF${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`
+    // CHECK constraints are immediate. A pure Sweet Card refund must carry its
+    // existing row-local rail discriminator at INSERT time; the deterministic
+    // allocation below re-derives and cross-validates the same values.
+    const pureSweetCardRefund = !payment && BigInt(order.sweetCardAmount || 0) === BigInt(order.payableAmount)
     let refund
     try {
       refund = await this.prisma.$transaction(async (tx) => {
@@ -544,6 +548,7 @@ export class PaymentService {
             externalSettlementId: null,
             refundMode: 'PAYMENT',
             refundAmount: amount,
+            ...(pureSweetCardRefund ? { providerRefundAmount: 0n, sweetCardRefundAmount: amount } : {}),
             reason,
             status: 'pending',
             requestKey,
