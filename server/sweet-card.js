@@ -470,5 +470,22 @@ sweetCardRouter.post('/pos/orders/:id/sweet-card/redeem', wrap(async (req, res) 
   const order = await prisma.order.findUnique({ where: { id: req.params.id } }); if (!order) throw httpError('订单不存在', 404)
   if (!(req.user.role === 'developer' || req.user.role === 'admin' || req.user.role === 'finance' || (req.user.storeKeys || []).includes(order.storeId))) throw httpError('无权操作该门店订单', 403)
   const result = await redeemSweetCard({ orderId: order.id, token: req.body?.token, amountCents: req.body?.amountCents, requestKey: req.body?.requestKey, actor: who(req.user) })
-  res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, redemption: { ...result.redemption, amountCents: result.redemption.amountCents.toString() }, order: { ...result.order, payableAmount: result.order.payableAmount.toString(), sweetCardAmount: result.order.sweetCardAmount.toString() } })
+  // Prisma returns all seven monetary columns as BigInt on both commit and replay.
+  // Match the POS/Sweet Card decimal-string contract without Number coercion.
+  res.status(result.reused ? 200 : 201).json({
+    ok: true, reused: result.reused,
+    redemption: {
+      ...result.redemption,
+      amountCents: result.redemption.amountCents.toString(),
+      eligibleSubtotalCents: result.redemption.eligibleSubtotalCents.toString(),
+      ineligibleSubtotalCents: result.redemption.ineligibleSubtotalCents.toString(),
+    },
+    order: {
+      ...result.order,
+      subtotal: result.order.subtotal.toString(),
+      discountAmount: result.order.discountAmount.toString(),
+      payableAmount: result.order.payableAmount.toString(),
+      sweetCardAmount: result.order.sweetCardAmount.toString(),
+    },
+  })
 }))
