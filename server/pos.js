@@ -70,6 +70,12 @@ function canReadOrder(user, order) {
   return isSuperUser(user) || order.cashierId === user.id
 }
 
+async function requireSweetCardOrderAccess(user, order) {
+  if (BigInt(order?.sweetCardAmount || 0) <= 0n) return
+  const policy = await prisma.sweetCardStorePolicy.findUnique({ where: { storeId: order.storeId } })
+  requireSweetCardProductionTestForOrder(user, order, { storeEligible: policy?.eligible === true })
+}
+
 function paymentAuthCode(body, channel) {
   if (!['wechat', 'alipay'].includes(channel)) return ''
   const authCode = String(body?.authCode ?? '').trim()
@@ -324,7 +330,7 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   if (!current) throw httpError('订单不存在', 404)
   const allowed = req.user.role !== 'public' && canStore(req.user, current.storeId)
   if (!allowed) throw httpError('无退款权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, current)
+  await requireSweetCardOrderAccess(req.user, current)
   const result = await paymentService.createRefund({
     orderId: current.id,
     items: req.body?.items,
@@ -347,7 +353,7 @@ posRouter.post('/pos/orders/:id/manual-external-refunds', wrap(async (req, res) 
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canStore(req.user, current.storeId)) throw httpError('无权记录该门店外部退款', 403)
-  requireSweetCardProductionTestForOrder(req.user, current)
+  await requireSweetCardOrderAccess(req.user, current)
   let result
   try {
     result = await manualExternalRefundService.createCompletedRefund({
@@ -369,7 +375,7 @@ posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {
   const refund = await prisma.refund.findUnique({ where: { id: req.params.id }, include: { order: true } })
   if (!refund) throw httpError('退款记录不存在', 404)
   if (!canStore(req.user, refund.order.storeId)) throw httpError('无权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, refund.order)
+  await requireSweetCardOrderAccess(req.user, refund.order)
   await paymentService.reconcileRefund(refund.id)
   const order = await prisma.order.findUnique({ where: { id: refund.orderId }, include: orderInclude() })
   const current = order.refunds.find((item) => item.id === refund.id)
@@ -562,7 +568,7 @@ posRouter.post('/pos/orders/:id/payments', wrap(async (req, res) => {
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, current)
+  await requireSweetCardOrderAccess(req.user, current)
   const channel = String(req.body?.channel || '')
   const result = await paymentService.createPayment({
     orderId: current.id,
@@ -595,7 +601,7 @@ posRouter.post('/pos/payments/:id/query', wrap(async (req, res) => {
   requirePosUser(req.user)
   const before = await paymentService.result(req.params.id)
   if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, before.order)
+  await requireSweetCardOrderAccess(req.user, before.order)
   const result = await paymentService.queryPayment(req.params.id)
   res.json({ payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))
@@ -605,7 +611,7 @@ posRouter.post('/pos/payments/:id/close', wrap(async (req, res) => {
   requirePosUser(req.user)
   const before = await paymentService.result(req.params.id)
   if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, before.order)
+  await requireSweetCardOrderAccess(req.user, before.order)
   const result = await paymentService.closePayment(req.params.id)
   res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))
@@ -616,7 +622,7 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   let current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canCancelOrder(req.user, current)) throw httpError('无权作废该订单', 403)
-  requireSweetCardProductionTestForOrder(req.user, current)
+  await requireSweetCardOrderAccess(req.user, current)
   if (current.status === 'cancelled') {
     const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
     return res.json({ ok: true, order: serializeOrder(order) })
@@ -657,7 +663,7 @@ posRouter.post('/pos/orders/:id/complete', wrap(async (req, res) => {
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
-  requireSweetCardProductionTestForOrder(req.user, current)
+  await requireSweetCardOrderAccess(req.user, current)
   if (current.status === 'completed' && current.paymentStatus === 'paid') {
     const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
     return res.json({ ok: true, order: serializeOrder(order) })
