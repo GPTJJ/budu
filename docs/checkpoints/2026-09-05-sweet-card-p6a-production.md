@@ -4,10 +4,10 @@ Date: 2026-09-05 (Asia/Shanghai)
 
 ## Verified production state
 
-- Runtime SHA: `644fb976206701b59aa89139e4f9395813b1a39b`.
+- Runtime SHA: `48c28fb1bfa9d1109c2a4562b916d0d1abc92e32`.
 - Exact deployed code branch: `codex/sweet-card-p6a-allowlist`.
 - PostgreSQL authority: `budu_bj006`; migration ledger 63 applied, 0 failed.
-- Runtime: `budu-prod-644fb97-sweet-card-p6a-xidan`; healthy, one production writer, zero error/fatal/exception log lines during the release window.
+- Runtime: `budu-prod-48c28fb-sweet-card-p6a-xidan`; healthy with one production writer.
 - Global Sweet Card flag: enabled.
 - Effective grey scope: exactly one canonical `User.id` principal (`daa77021…`) and exactly one eligible store (`xidan`).
 - Category blacklist: explicit empty set; no category identity was inferred from display names.
@@ -17,7 +17,7 @@ Date: 2026-09-05 (Asia/Shanghai)
 
 - The allowlist is stored in the existing PostgreSQL `User.permissions` JSON and bound to canonical authenticated `User.id`; it is not read from names, request bodies, browser storage or frontend state.
 - Access requires the intersection of the global flag, allowlisted principal, original module/capability and eligible store. Missing or false inputs fail closed.
-- POS config, inspect, redeem, mixed-provider payment/query/close, order cancel/complete and refund/query paths enforce the server-side gate where a Sweet Card amount exists.
+- POS config, inspect, redeem, mixed-provider payment/query/close, order cancel/complete and refund/query paths enforce the full global + principal + original permission + eligible-store gate where a Sweet Card amount exists.
 - Sweet Card management and economic APIs require the same allowlist. Provider callbacks and background reconciliation remain independent so an already-authorized transaction cannot be stranded by later revocation.
 - Generic role/permission edits preserve but cannot create or remove this high-risk flag. Only the developer-only allowlist endpoint can change it.
 - Allowlist add/remove events are immutable `SweetCardAuditLog` entries containing the target principal ID. Production evidence contains two enable entries, one disable entry and one rules update.
@@ -31,7 +31,7 @@ Date: 2026-09-05 (Asia/Shanghai)
 - Management smoke: PASS with 0 cards.
 - Existing POS product/order reads: PASS; 86 current POS products returned.
 - Existing WeChat and Alipay official payment queries remained `success`; existing WeChat and Alipay refund queries remained `completed`.
-- Local targeted suites: Sweet Card 44/44, permission 17/17, POS 10/10, payment 22/22, reconciliation 17/17, WeChat signature 12/12, provider 23/23, config 9/9, Alipay/payment-access 23/23; Vite build PASS.
+- Local targeted suites: Sweet Card 45/45, permission 17/17, POS 10/10, payment 22/22, reconciliation 17/17, WeChat signature 12/12, provider 23/23, config 9/9, Alipay/payment-access 23/23 and Product authority contract 6/6; Vite build PASS. The canonical unified-product PostgreSQL workflow also passed in an isolated 63-migration schema.
 - Prisma/schema difference from the migration-63 Candidate: 0. No new migration was created.
 
 ## Rollback and stop condition

@@ -20,10 +20,10 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED on 2026-09-05; revalidate before use.
+- Runtime SHA: `48c28fb1bfa9d1109c2a4562b916d0d1abc92e32` — VERIFIED on 2026-09-05; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-09-05; revalidate before use.
 - Migration ledger: 63 applied, 0 failed — VERIFIED on 2026-09-05; revalidate before use.
-- Public/internal health and exact routed runtime: PASS / `644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED on 2026-09-05; revalidate before use.
+- Public/internal health and exact routed runtime: PASS / `48c28fb1bfa9d1109c2a4562b916d0d1abc92e32` — VERIFIED on 2026-09-05; revalidate before use.
 - Sweet Card Gate P6 access is a server-side intersection of the global flag, canonical `User.id` allowlist, original capability, and store policy. Only masked principal `daa77021…` and `xidan` are active; production has 0 cards, 0 redemptions and 0 Sweet Card refunds.
 - Latest production checkpoint: `docs/checkpoints/2026-09-05-sweet-card-p6a-production.md`. STOP before P7 unless explicitly authorized.
 

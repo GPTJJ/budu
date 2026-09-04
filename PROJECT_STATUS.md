@@ -14,7 +14,7 @@
 
 ## 最新可信快照（2026-09-05：budu 甜意卡 Gate P6A）
 
-- Production runtime：`644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED。
+- Production runtime：`48c28fb1bfa9d1109c2a4562b916d0d1abc92e32` — VERIFIED。
 - PostgreSQL authority：`budu_bj006`；Migration ledger 63，失败 0 — VERIFIED。
 - Production branch：`codex/sweet-card-p6a-production`；精确代码 Candidate 保留于 `codex/sweet-card-p6a-allowlist`。
 - Sweet Card 全局开关已开启，但生产访问同时要求：服务端认证 `User.id` 明确在 allowlist、原有 POS/管理权限、以及门店 eligible。当前仅一名 masked principal `daa77021…` 与 `xidan` 生效；同店普通账号、其他门店和伪造 body 身份的直接 API 均为 403/disabled。
