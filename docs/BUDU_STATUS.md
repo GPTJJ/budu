@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 ## Repository
 
@@ -20,11 +20,16 @@ Last reviewed: 2026-09-04
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Database authority: `budu_bj006` — VERIFIED on 2026-09-04; revalidate before use.
-- Migration ledger: 62, schema up to date — VERIFIED on 2026-09-04; revalidate before use.
-- Public/internal health and exact routed runtime: PASS / `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Latest Candidate checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`; it did not change Production.
+- Runtime SHA: `cd5551352420b18e2347294604b51b28b4b92dda` — VERIFIED on 2026-09-05.
+- Database: `budu_bj006`; Migration 64 applied / 0 failed — VERIFIED on 2026-09-05.
+- Public/internal health PASS; exactly one production writer — VERIFIED on 2026-09-05.
+- Routed runtime: `budu-prod-cd55513-sweet-card-p7c-disabled`.
+- Sweet Card is DISABLED after P10 HOLD. P7C BigInt repair and P7/P8/P9 pass;
+  P10 loser rolled back safely but exposed Prisma P2034 as HTTP 500. No second fix.
+- Existing acceptance card: issue 50, five debits totaling 50, balance 0, refunds 0,
+  delta 0; original P7 preserved. P11–P19 NOT STARTED.
+- See `docs/checkpoints/2026-09-05-sweet-card-p7c-production-hold.md`.
+- Revalidate all facts before further production action.
 
 ## Architecture Contracts
 
@@ -35,7 +40,7 @@ Last reviewed: 2026-09-04
 
 ## Current Engineering Work
 
-- `codex/sweet-card-1-candidate` contains the feature-flagged budu 甜意卡 1.0 Candidate and additive migration 63. Production remains disabled and unmigrated; see its scoped checkpoint before any future release gate.
+- `codex/sweet-card-p7c-serialization` contains the deployed application-only serialization repair and subsequent documentation. Current blocker is P10 conflict error handling; continuation needs a separately authorized Candidate. No balance edits, automatic refunds or replay of completed acceptance orders.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
@@ -44,7 +49,7 @@ Last reviewed: 2026-09-04
 - Desktop navigation and the mobile drawer share `src/components/BrandSlot.jsx`: the approved simple character icon is paired with the unchanged canonical lowercase `budu` wordmark, and the former `甜蜜治愈日常` subtitle is absent.
 - BrandSlot assets locally override the legacy global image outline with transparent, borderless presentation; the underlying icon and canonical wordmark assets remain unchanged.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
-- Report Center migrations 59–62 are deployed in the canonical production ledger. Future work must treat 62 as the current migration baseline and revalidate before assigning the next number.
+- Report Center migrations 59–62 and Sweet Card migrations 63–64 are deployed. Current migration baseline is 64; no migration is authorized by the P7C application-only repair.
 - Previous Production runtime `budu-prod-f7fd6e5-brand-slot-r2` and protected brand-border rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
 
 ## Rollback Notes
