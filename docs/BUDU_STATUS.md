@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 ## Repository
 
@@ -20,11 +20,11 @@ Last reviewed: 2026-09-01
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `cc63b1857782929992ab391d616586240b592619` — VERIFIED on 2026-09-01; revalidate before use.
-- Database authority: `budu_bj006` — VERIFIED on 2026-09-01; revalidate before use.
-- Migration ledger: 62, failed migration count 0 — VERIFIED on 2026-09-01; revalidate before use.
-- Public/internal health and canonical-DB-connected runtime count: PASS / 1 — VERIFIED on 2026-09-01; revalidate before use.
-- Latest Production checkpoint: `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
+- Runtime SHA: `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
+- Database authority: `budu_bj006` — VERIFIED on 2026-09-04; revalidate before use.
+- Migration ledger: 62, schema up to date — VERIFIED on 2026-09-04; revalidate before use.
+- Public/internal health and exact routed runtime: PASS / `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
+- Latest Candidate checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`; it did not change Production.
 
 ## Architecture Contracts
 
@@ -35,6 +35,7 @@ Last reviewed: 2026-09-01
 
 ## Current Engineering Work
 
+- `codex/sweet-card-1-candidate` contains the feature-flagged budu 甜意卡 1.0 Candidate and additive migration 63. Production remains disabled and unmigrated; see its scoped checkpoint before any future release gate.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.

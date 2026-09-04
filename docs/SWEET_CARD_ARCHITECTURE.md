@@ -41,4 +41,3 @@ Refund allocation uses original order-item Sweet Card allocations and cumulative
 - QR export is capability-gated, audited, generated as a private download, and requires a local encryption key.
 - `SWEET_CARD_ENABLED` defaults off and all mutation/redemption endpoints fail closed when disabled.
 - Migration is additive: new tables, enums, nullable snapshot columns and zero-default projections only. Existing business rows are not rewritten.
-

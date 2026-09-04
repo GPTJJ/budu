@@ -12,6 +12,14 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新可信快照（2026-09-04：budu 甜意卡 1.0 Candidate）
+
+- Production runtime：`ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration ledger 62 — VERIFIED READ-ONLY。
+- Candidate branch：`codex/sweet-card-1-candidate`；Migration 63 仅存在 Candidate，未应用到 Production。
+- Production Sweet Card：DISABLED；本任务未部署、未修改生产数据或配置。
+- 交接 checkpoint：`docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`。
+
 ## 最新生产快照（2026-08-29：开发者安全删除）
 
 - 状态：**VERIFIED — LIVE**
