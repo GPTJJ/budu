@@ -14,6 +14,17 @@
 
 ## 最新可信快照（2026-09-04：budu 甜意卡 1.0 Candidate）
 
+### Production release Gate result — HOLD
+
+- Production runtime：`12c93379409d944c37e1ab9708ea972fb4be1474` — VERIFIED；Candidate 已禁用态部署。
+- PostgreSQL authority：`budu_bj006`；Migration 63 applied / 0 failed — VERIFIED。
+- Gates P0–P5 PASS；Gate P6 HOLD：POS 甜意卡缺少测试账号 allowlist，任一门店启用都会同时向该店普通 POS 账号开放。
+- `SWEET_CARD_ENABLED=0`；12 张 Sweet Card 表均为 0 行；P7–P19 未执行。
+- 完整报告：`docs/BUDU_SWEET_CARD_1_0_PRODUCTION_FINAL_REPORT.md`。
+- 交接 checkpoint：`docs/checkpoints/2026-09-04-sweet-card-1-production-hold.md`。
+
+以下 Candidate 前状态仅保留为历史快照：
+
 - Production runtime：`ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED。
 - PostgreSQL authority：`budu_bj006`；Migration ledger 62 — VERIFIED READ-ONLY。
 - Candidate branch：`codex/sweet-card-1-candidate`；Migration 63 仅存在 Candidate，未应用到 Production。

@@ -20,11 +20,11 @@ Last reviewed: 2026-09-04
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
+- Runtime SHA: `12c93379409d944c37e1ab9708ea972fb4be1474` — VERIFIED on 2026-09-04; Candidate is deployed with Sweet Card disabled; revalidate before use.
 - Database authority: `budu_bj006` — VERIFIED on 2026-09-04; revalidate before use.
-- Migration ledger: 62, schema up to date — VERIFIED on 2026-09-04; revalidate before use.
-- Public/internal health and exact routed runtime: PASS / `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Latest Candidate checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`; it did not change Production.
+- Migration ledger: 63 applied / 0 failed — VERIFIED on 2026-09-04; revalidate before use.
+- Public/internal health and exact routed runtime: PASS / `12c93379409d944c37e1ab9708ea972fb4be1474` — VERIFIED on 2026-09-04; revalidate before use.
+- Latest release checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-production-hold.md`.
 
 ## Architecture Contracts
 
@@ -35,7 +35,7 @@ Last reviewed: 2026-09-04
 
 ## Current Engineering Work
 
-- `codex/sweet-card-1-candidate` contains the feature-flagged budu 甜意卡 1.0 Candidate and additive migration 63. Production remains disabled and unmigrated; see its scoped checkpoint before any future release gate.
+- `codex/sweet-card-1-candidate` remains the immutable feature Candidate. It is deployed and migration 63 is applied, but Production Sweet Card remains disabled. Gate P6 is HOLD because POS redemption lacks a server-enforced test-account allowlist; see `docs/BUDU_SWEET_CARD_1_0_PRODUCTION_FINAL_REPORT.md`.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
@@ -44,7 +44,7 @@ Last reviewed: 2026-09-04
 - Desktop navigation and the mobile drawer share `src/components/BrandSlot.jsx`: the approved simple character icon is paired with the unchanged canonical lowercase `budu` wordmark, and the former `甜蜜治愈日常` subtitle is absent.
 - BrandSlot assets locally override the legacy global image outline with transparent, borderless presentation; the underlying icon and canonical wordmark assets remain unchanged.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
-- Report Center migrations 59–62 are deployed in the canonical production ledger. Future work must treat 62 as the current migration baseline and revalidate before assigning the next number.
+- Report Center migrations 59–62 and Sweet Card migration 63 are deployed in the canonical production ledger. Future work must treat 63 as the current migration baseline and revalidate before assigning the next number.
 - Previous Production runtime `budu-prod-f7fd6e5-brand-slot-r2` and protected brand-border rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
 
 ## Rollback Notes
