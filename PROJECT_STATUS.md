@@ -12,13 +12,14 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
-## 最新可信快照（2026-09-04：budu 甜意卡 1.0 Candidate）
+## 最新可信快照（2026-09-05：budu 甜意卡 Gate P6A）
 
-- Production runtime：`ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED。
-- PostgreSQL authority：`budu_bj006`；Migration ledger 62 — VERIFIED READ-ONLY。
-- Candidate branch：`codex/sweet-card-1-candidate`；Migration 63 仅存在 Candidate，未应用到 Production。
-- Production Sweet Card：DISABLED；本任务未部署、未修改生产数据或配置。
-- 交接 checkpoint：`docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`。
+- Production runtime：`644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration ledger 63，失败 0 — VERIFIED。
+- Production branch：`codex/sweet-card-p6a-production`；精确代码 Candidate 保留于 `codex/sweet-card-p6a-allowlist`。
+- Sweet Card 全局开关已开启，但生产访问同时要求：服务端认证 `User.id` 明确在 allowlist、原有 POS/管理权限、以及门店 eligible。当前仅一名 masked principal `daa77021…` 与 `xidan` 生效；同店普通账号、其他门店和伪造 body 身份的直接 API 均为 403/disabled。
+- 当前生产仍为 0 张卡、0 次核销、0 次甜意卡退款；P6 PASS。不得自动开始 P7 或创建真实价值卡。
+- 交接 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-p6a-production.md`。
 
 ## 最新生产快照（2026-08-29：开发者安全删除）
 

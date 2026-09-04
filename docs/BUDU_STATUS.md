@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 ## Repository
 
@@ -20,11 +20,12 @@ Last reviewed: 2026-09-04
 
 ## Last Directly Verified Production Baseline
 
-- Runtime SHA: `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Database authority: `budu_bj006` — VERIFIED on 2026-09-04; revalidate before use.
-- Migration ledger: 62, schema up to date — VERIFIED on 2026-09-04; revalidate before use.
-- Public/internal health and exact routed runtime: PASS / `ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED on 2026-09-04; revalidate before use.
-- Latest Candidate checkpoint: `docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`; it did not change Production.
+- Runtime SHA: `644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED on 2026-09-05; revalidate before use.
+- Database authority: `budu_bj006` — VERIFIED on 2026-09-05; revalidate before use.
+- Migration ledger: 63 applied, 0 failed — VERIFIED on 2026-09-05; revalidate before use.
+- Public/internal health and exact routed runtime: PASS / `644fb976206701b59aa89139e4f9395813b1a39b` — VERIFIED on 2026-09-05; revalidate before use.
+- Sweet Card Gate P6 access is a server-side intersection of the global flag, canonical `User.id` allowlist, original capability, and store policy. Only masked principal `daa77021…` and `xidan` are active; production has 0 cards, 0 redemptions and 0 Sweet Card refunds.
+- Latest production checkpoint: `docs/checkpoints/2026-09-05-sweet-card-p6a-production.md`. STOP before P7 unless explicitly authorized.
 
 ## Architecture Contracts
 
@@ -35,7 +36,7 @@ Last reviewed: 2026-09-04
 
 ## Current Engineering Work
 
-- `codex/sweet-card-1-candidate` contains the feature-flagged budu 甜意卡 1.0 Candidate and additive migration 63. Production remains disabled and unmigrated; see its scoped checkpoint before any future release gate.
+- `codex/sweet-card-p6a-allowlist` is the exact deployed code Candidate. `codex/sweet-card-p6a-production` records the production checkpoint only. Gate P6 passed with one-principal/one-store grey access; P7 and all card issuance remain unstarted.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
