@@ -52,7 +52,7 @@ function rethrowSafeCommandError(error, publicMessage, context) {
 }
 
 function requirePosUser(user) {
-  if (!user || !hasModuleAccess(user, MODULE_KEYS.STORE_POS) || (!isSuperUser(user) && !['manager', 'staff', 'cashier'].includes(user.role))) throw httpError('无权限', 403)
+  if (!user || !hasModuleAccess(user, MODULE_KEYS.STORE_POS)) throw httpError('无权限', 403)
 }
 
 function canStore(user, storeId) {

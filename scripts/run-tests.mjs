@@ -26,6 +26,7 @@ const NODE_TEST_SUITE = [
   'test-overlay-scroll-contract.mjs', // 全站弹层 inventory、共享锁与单滚动容器静态契约 → critical
   'test-config.mjs',                // 生产环境配置与数据存储 fail-closed
   'test-account-permissions.mjs',   // Auth / Permission（单元）→ critical
+  'test-payment-access.mjs',        // POS capability 支付账号资格与 Provider 门店开关 → critical
   'test-daily-entry-upgrade.mjs',   // DailyEntry（单元）→ critical
   'test-pos-core.mjs',              // POS 核心快照/归并（单元）→ critical
   'test-pos-daily.mjs',             // POS 日结（单元）
@@ -175,6 +176,7 @@ const CRITICAL_NODE_TEST = [
   'test-payroll-audit-report-v2.mjs',
   'test-overlay-scroll-contract.mjs',
   'test-account-permissions.mjs',
+  'test-payment-access.mjs',
   'test-daily-entry-upgrade.mjs',
   'test-pos-core.mjs',
   'test-homepage-lightweight.mjs',

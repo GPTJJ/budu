@@ -141,6 +141,18 @@ test('收银账号无论保存何种权限都固定仅开放 POS', () => {
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.OVERVIEW), false)
 })
 
+test('POS capability 是支付账号资格的唯一人员级权威', () => {
+  const granted = { status: 'active', permissions: { modules: { [MODULE_KEYS.STORE_POS]: true } } }
+  const denied = { status: 'active', permissions: { modules: { [MODULE_KEYS.STORE_POS]: false } } }
+
+  for (const role of ['admin', 'finance', 'manager', 'staff', 'operations']) {
+    assert.equal(hasModuleAccess({ ...granted, role }, MODULE_KEYS.STORE_POS), true, `${role} 应按 capability 允许`)
+    assert.equal(hasModuleAccess({ ...denied, role }, MODULE_KEYS.STORE_POS), false, `${role} 应按 capability 拒绝`)
+  }
+  assert.equal(hasModuleAccess({ ...granted, role: 'public' }, MODULE_KEYS.STORE_POS), false)
+  assert.equal(hasModuleAccess({ ...granted, role: 'staff', status: 'disabled' }, MODULE_KEYS.STORE_POS), false)
+})
+
 test('账号管理作为开发者保留页面不会被版块撤权检查送回首页', () => {
   assert.equal(hasPageAccess({ role: 'developer' }, 'account-admin'), true)
   assert.equal(hasPageAccess({ role: 'admin' }, 'account-admin'), false)
