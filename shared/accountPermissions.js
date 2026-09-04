@@ -29,6 +29,7 @@ export const MODULE_KEYS = Object.freeze({
   ASSET_CENTER: 'asset-center',
   SETTINGS: 'settings',
   EMPLOYEE_PROFILE: 'employee-profile',
+  SWEET_CARD: 'sweet-card',
 })
 
 export const MODULE_GROUPS = Object.freeze([
@@ -62,6 +63,9 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.APPROVAL, label: '审批中心' },
     { key: MODULE_KEYS.ASSET_CENTER, label: 'budu档案馆' },
   ] },
+  { key: 'customerValue', label: '客户权益', modules: [
+    { key: MODULE_KEYS.SWEET_CARD, label: 'budu 甜意卡' },
+  ] },
   { key: 'system', label: '系统管理', modules: [
     { key: MODULE_KEYS.SETTINGS, label: '系统设置' },
   ] },
@@ -93,7 +97,22 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   REPORT_COST_MANAGE: 'reportCostManage',
   DEVELOPER_SENSITIVE_RECORD_DELETE: 'developerSensitiveRecordDelete',
   DAILY_ENTRY: 'dailyEntry',
+  SWEET_CARD: 'sweetCard',
 })
+
+export const SWEET_CARD_CAPABILITIES = Object.freeze({
+  VIEW: 'view', ISSUE: 'issue', MANAGE: 'manage', ACTIVATE: 'activate',
+  FREEZE: 'freeze', VOID: 'void', AUDIT: 'audit',
+})
+
+function normalizeSweetCardCapabilities(value, role) {
+  const privileged = role === 'developer' || role === 'admin'
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return Object.fromEntries(Object.values(SWEET_CARD_CAPABILITIES).map((key) => [
+    key,
+    privileged || source[key] === true,
+  ]))
+}
 
 export const DAILY_ENTRY_CAPABILITIES = Object.freeze({
   VIEW: 'view',
@@ -188,6 +207,10 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
       role,
       modules,
     ),
+    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD]: normalizeSweetCardCapabilities(
+      source[ACCOUNT_PERMISSION_KEYS.SWEET_CARD],
+      role,
+    ),
   }
 }
 
@@ -212,6 +235,12 @@ export function hasDailyEntryCapability(user, capability) {
   if (!user || user.status === 'disabled' || !Object.values(DAILY_ENTRY_CAPABILITIES).includes(capability)) return false
   return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
     [ACCOUNT_PERMISSION_KEYS.DAILY_ENTRY][capability] === true
+}
+
+export function hasSweetCardCapability(user, capability) {
+  if (!user || user.status === 'disabled' || !Object.values(SWEET_CARD_CAPABILITIES).includes(capability)) return false
+  return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
+    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD][capability] === true
 }
 
 export function hasAnyModuleAccess(user, moduleKeys) {

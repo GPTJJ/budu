@@ -36,6 +36,7 @@ Default flow: strict audit → backup and rollback consideration → isolated ca
 - Code changes: `budu-regression`.
 - Candidate, deployment, cutover, or production verification: `budu-production-deploy`.
 - Payment/refund work: always `budu-payment-safety` and STRICT.
+- 甜意卡、礼品卡、商务赠卡、甜意卡核销/余额/绑定/挂失/补发：使用 `budu-sweet-card`；涉及价值、核销、混合结算或退款时为 STRICT，并组合 `budu-payment-safety`。
 - Payroll correctness audit for one or more employees over a day or period: always `budu-payroll-audit` and STRICT, even when phrased briefly (for example, “看看这个人工资算对了吗”).
 - Payroll settlement questions such as “已经发了多少” or “还欠多少” are payment/settlement reconciliation, not `budu-payroll-audit`; do not mix paid cash facts with calculated payroll.
 - Device or conversation handoff: `budu-handoff`.

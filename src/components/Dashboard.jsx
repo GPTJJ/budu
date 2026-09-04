@@ -14,7 +14,7 @@ import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { firstAccessibleModule, hasModuleAccess, hasPageAccess } from '../../shared/accountPermissions'
+import { firstAccessibleModule, hasModuleAccess, hasPageAccess, hasSweetCardCapability, SWEET_CARD_CAPABILITIES } from '../../shared/accountPermissions'
 import { consumeNotificationDeepLink } from '../utils/notificationNavigation'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
@@ -37,6 +37,7 @@ const ReportCenterPage = lazy(() => import('./ReportCenterPage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
 const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
+const SweetCardPage = lazy(() => import('./SweetCardPage'))
 
 const pageTitles = {
   analysis: '经营分析',
@@ -57,6 +58,7 @@ const pageTitles = {
   'finance-invoice': '发票开具',
   approval: '审批中心',
   'asset-center': 'budu档案馆',
+  'sweet-card': 'budu 甜意卡',
   settings: '系统设置',
   'account-admin': '账号管理',
 }
@@ -152,6 +154,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isInvoiceView = view === 'finance-invoice'
   const isApprovalView = view === 'approval'
   const isAssetCenterView = view === 'asset-center'
+  const isSweetCardView = view === 'sweet-card'
 
   const performReturnToOverview = () => {
     viewStackRef.current = []
@@ -405,6 +408,8 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 <ApprovalCenterPage user={user} onBack={returnToOverview} />
               ) : isAssetCenterView && hasModuleAccess(user, 'asset-center') ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
+              ) : isSweetCardView && hasModuleAccess(user, 'sweet-card') && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW) ? (
+                <SweetCardPage user={user} onBack={returnToOverview} />
               ) : (
                 <>
                   <HomeWorkspace

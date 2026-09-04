@@ -28,6 +28,8 @@ import { assertNoClientSettlementState, serializeExternalSettlement } from './se
 import { manualExternalRefundService } from './refunds/index.js'
 import { resolveEffectiveProductCosts } from './product-cost-authority.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
+import { sweetCardEnabled } from './sweet-card-core.js'
+import { reverseSweetCardRedemption } from './sweet-card-refunds.js'
 
 export const posRouter = Router()
 
@@ -92,6 +94,7 @@ const orderInclude = () => ({
   payments: { orderBy: { createdAt: 'desc' } },
   externalSettlement: true,
   refunds: { orderBy: { createdAt: 'desc' }, include: { items: { include: { orderItem: true } } } },
+  sweetCardRedemption: true,
 })
 
 function serializeRefund(refund) {
@@ -103,6 +106,8 @@ function serializeRefund(refund) {
     externalSettlementId: refund.externalSettlementId,
     refundMode: refund.refundMode,
     amount: refund.refundAmount.toString(),
+    providerRefundAmount: String(refund.providerRefundAmount == null && refund.sweetCardRefundAmount == null && refund.refundMode === 'PAYMENT' ? refund.refundAmount : refund.providerRefundAmount || 0),
+    sweetCardRefundAmount: String(refund.sweetCardRefundAmount || 0),
     reason: refund.reason,
     status: refund.status,
     providerRefundNo: refund.providerRefundNo,
@@ -133,6 +138,7 @@ function serializeOrder(order) {
     subtotal: order.subtotal.toString(),
     discountAmount: order.discountAmount.toString(),
     payableAmount: order.payableAmount.toString(),
+    sweetCardAmount: String(order.sweetCardAmount || 0),
     businessDate: order.businessDate ? order.businessDate.toISOString().slice(0, 10) : null,
     discountPercent: order.discountPercent ?? 100,
     remark: order.remark || '',
@@ -155,6 +161,7 @@ function serializeOrder(order) {
     payments: (order.payments || []).map(serializePayment),
     externalSettlement: serializeExternalSettlement(order.externalSettlement),
     refunds: (order.refunds || []).map(serializeRefund),
+    sweetCardRedemption: order.sweetCardRedemption ? { id: order.sweetCardRedemption.id, publicCardNo: undefined, amountCents: order.sweetCardRedemption.amountCents.toString() } : null,
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -168,6 +175,9 @@ function serializeOrder(order) {
       discountAmount: item.discountAmount.toString(),
       actualAmount: item.actualAmount.toString(),
       isGift: item.isGift === true,
+      sweetCardEligibleSnapshot: item.sweetCardEligibleSnapshot,
+      sweetCardCategoryIdSnapshot: item.sweetCardCategoryIdSnapshot,
+      sweetCardRedeemedAmount: String(item.sweetCardRedeemedAmount || 0),
     })),
   }
 }
@@ -243,7 +253,7 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   let storeKey = ''
   if (requestedStore) {
     if (!canStore(req.user, requestedStore)) {
-      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false }, alipay: { enabled: false } })
+      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false }, alipay: { enabled: false }, sweetCard: { enabled: false } })
     }
     storeKey = requestedStore
   } else {
@@ -251,9 +261,12 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   }
   const wechat = wechatPayFrontendStatus(storeKey, mode)
   const alipay = alipayFrontendStatus(storeKey, mode)
+  const sweetCard = sweetCardEnabled() && dbReady() && storeKey
+    ? await prisma.sweetCardStorePolicy.findUnique({ where: { storeId: storeKey } })
+    : null
   if (wechat.enabled) channels.push('wechat')
   if (alipay.enabled) channels.push('alipay')
-  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled } })
+  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled }, sweetCard: { enabled: sweetCard?.eligible === true } })
 }))
 
 posRouter.get('/pos/orders', wrap(async (req, res) => {
@@ -608,15 +621,18 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   assertOrderCancelable(current, unresolvedPayment)
   if (active) await paymentService.closePayment(active.id)
   current = await prisma.order.findUnique({ where: { id: current.id } })
-  const changed = await prisma.order.updateMany({
-    where: { id: current.id, status: current.status },
-    data: {
-      status: 'cancelled',
-      cancelledAt: new Date(),
-      cancelledBy: req.user.username,
-      cancelReason,
-      version: { increment: 1 },
-    },
+  const changed = await prisma.$transaction(async (tx) => {
+    await reverseSweetCardRedemption(tx, current.id, { id: req.user.id, name: req.user.username })
+    return tx.order.updateMany({
+      where: { id: current.id, status: current.status },
+      data: {
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        cancelledBy: req.user.username,
+        cancelReason,
+        version: { increment: 1 },
+      },
+    })
   })
   if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })

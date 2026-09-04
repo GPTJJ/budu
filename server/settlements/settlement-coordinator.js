@@ -15,16 +15,26 @@ export class SettlementCoordinator {
     if (!payment) throw httpError('支付结算事实不存在', 404)
     if (!PAYMENT_PROOF_STATUSES.includes(payment.status)) throw httpError('支付尚未形成有效结算事实', 409)
     if (payment.order.settlementAuthority !== 'PAYMENT') throw httpError('订单结算权威与 Payment 不匹配', 409)
-    if (payment.amount !== payment.order.payableAmount) throw httpError('支付金额与订单应付金额不一致', 409)
+    const sweetCardAmount = BigInt(payment.order.sweetCardAmount || 0)
+    if (payment.amount + sweetCardAmount !== payment.order.payableAmount) throw httpError('支付组成与订单应付金额不一致', 409)
     const externalCount = typeof tx.externalSettlement?.count === 'function'
       ? await tx.externalSettlement.count({ where: { orderId: payment.orderId } })
       : 0
     if (externalCount !== 0) throw httpError('Payment 订单存在外部结算事实', 409)
     return this.completeOrder(tx, payment.order, {
-      paymentMethod: payment.channel,
+      paymentMethod: sweetCardAmount > 0n ? `sweet-card+${payment.channel}` : payment.channel,
       paymentMode: payment.provider,
       completedAt,
     })
+  }
+
+  async settleSweetCard(tx, { orderId, completedAt = new Date() }) {
+    const order = await tx.order.findUnique({ where: { id: orderId }, include: { sweetCardRedemption: true } })
+    if (!order || !order.sweetCardRedemption) throw httpError('甜意卡结算事实不存在', 404)
+    if (order.settlementAuthority !== 'PAYMENT') throw httpError('订单结算权威不支持甜意卡', 409)
+    if (order.sweetCardRedemption.amountCents !== order.payableAmount || order.sweetCardAmount !== order.payableAmount) throw httpError('甜意卡结算金额不一致', 409)
+    if (await tx.payment.count({ where: { orderId } }) !== 0) throw httpError('纯甜意卡订单存在外部 Payment', 409)
+    return this.completeOrder(tx, order, { paymentMethod: 'sweet-card', paymentMode: 'internal', completedAt })
   }
 
   async settleExternal(tx, { settlementId, completedAt = new Date() }) {
@@ -91,16 +101,22 @@ export class SettlementCoordinator {
     const fullyRefunded = completedTotal === order.payableAmount
     const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
     if (refund.refundMode === 'PAYMENT') {
-      if (order.settlementAuthority !== 'PAYMENT' || !refund.paymentId || refund.externalSettlementId) {
+      if (order.settlementAuthority !== 'PAYMENT' || refund.externalSettlementId || (!refund.paymentId && BigInt(refund.sweetCardRefundAmount || 0) <= 0n)) {
         throw httpError('PAYMENT 退款权威不匹配', 409)
       }
-      const payment = await tx.payment.findUnique({ where: { id: refund.paymentId } })
-      if (!payment || payment.orderId !== order.id) throw httpError('退款 Payment 与订单不匹配', 409)
-      const changed = await tx.payment.updateMany({
-        where: { id: payment.id, status: { in: ['success', 'partially_refunded', nextOrderStatus] } },
-        data: { status: nextOrderStatus },
-      })
-      if (changed.count !== 1) throw httpError('Payment 退款状态已变化，请核对', 409)
+      const currentProviderRefund = refund.providerRefundAmount == null && refund.sweetCardRefundAmount == null ? BigInt(refund.refundAmount) : BigInt(refund.providerRefundAmount || 0)
+      if (refund.paymentId && currentProviderRefund > 0n) {
+        const payment = await tx.payment.findUnique({ where: { id: refund.paymentId } })
+        if (!payment || payment.orderId !== order.id) throw httpError('退款 Payment 与订单不匹配', 409)
+        const providerRefunds = completedRefunds.reduce((sum, row) => sum + (row.providerRefundAmount == null && row.sweetCardRefundAmount == null ? BigInt(row.refundAmount) : BigInt(row.providerRefundAmount || 0)), 0n)
+        if (providerRefunds > payment.amount) throw httpError('累计 Provider 退款超过支付金额', 409)
+        const nextPaymentStatus = providerRefunds === payment.amount ? 'refunded' : 'partially_refunded'
+        const changed = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: ['success', 'partially_refunded', nextPaymentStatus] } },
+          data: { status: nextPaymentStatus },
+        })
+        if (changed.count !== 1) throw httpError('Payment 退款状态已变化，请核对', 409)
+      }
     } else if (refund.refundMode === 'MANUAL_EXTERNAL') {
       if (order.settlementAuthority !== 'EXTERNAL' || refund.paymentId || !refund.externalSettlementId) {
         throw httpError('MANUAL_EXTERNAL 退款权威不匹配', 409)

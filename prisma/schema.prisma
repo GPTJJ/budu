@@ -43,6 +43,46 @@ enum RefundMode {
   MANUAL_EXTERNAL
 }
 
+enum SweetCardValidityType {
+  ONE_YEAR
+  THREE_YEARS
+  LONG_TERM
+}
+
+enum SweetCardCarrierType {
+  PHYSICAL
+  ELECTRONIC
+}
+
+enum SweetCardBindingMode {
+  NONE
+  OPTIONAL
+  REQUIRED
+}
+
+enum SweetCardAccountStatus {
+  CREATED
+  ACTIVE
+  FROZEN
+  LOST
+  EXHAUSTED
+  EXPIRED
+  VOID
+}
+
+enum SweetCardCredentialStatus {
+  UNACTIVATED
+  ACTIVE
+  REVOKED
+}
+
+enum SweetCardLedgerType {
+  ISSUE
+  REDEEM
+  REFUND
+  REVERSAL
+}
+
 enum StoreRentMode {
   FIXED
   PERCENT
@@ -89,6 +129,7 @@ model Store {
   rentHistories                StoreRentHistory[]
   utilityCosts                 StoreUtilityCost[]
   laborCostPeriods             StoreLaborCostPeriod[]
+  sweetCardPolicy              SweetCardStorePolicy?
 }
 
 /// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
@@ -213,34 +254,34 @@ model DailyEntryAuditLog {
 }
 
 model InventoryItem {
-  id                       String              @id
-  name                     String              @unique
-  unit                     String              @default("")
-  spec                     String              @default("")
-  barcode                  String              @default("")
-  category                 String              @default("product")
-  image                    String              @default("")
-  sku                      String?             @unique
-  posCategory              String              @default("")
+  id                       String                     @id
+  name                     String                     @unique
+  unit                     String                     @default("")
+  spec                     String                     @default("")
+  barcode                  String                     @default("")
+  category                 String                     @default("product")
+  image                    String                     @default("")
+  sku                      String?                    @unique
+  posCategory              String                     @default("")
   salePriceCents           BigInt?
   costPriceCents           BigInt?
-  isActive                 Boolean             @default(false)
-  trackInventory           Boolean             @default(false)
-  sortOrder                Int                 @default(0)
-  transferCode             String?             @unique
-  transferEnabled          Boolean             @default(false)
-  transferSortOrder        Int                 @default(0)
-  transferBoxEnabled       Boolean             @default(false)
+  isActive                 Boolean                    @default(false)
+  trackInventory           Boolean                    @default(false)
+  sortOrder                Int                        @default(0)
+  transferCode             String?                    @unique
+  transferEnabled          Boolean                    @default(false)
+  transferSortOrder        Int                        @default(0)
+  transferBoxEnabled       Boolean                    @default(false)
   transferBoxWeightGrams   Int?
-  transferPieceEnabled     Boolean             @default(false)
+  transferPieceEnabled     Boolean                    @default(false)
   transferPieceWeightGrams Int?
-  partnerSupplyEnabled     Boolean             @default(false)
+  partnerSupplyEnabled     Boolean                    @default(false)
   productCategoryId        String?
   productGroupId           String?
-  variantName              String              @default("")
-  version                  Int                 @default(1)
-  updatedAt                DateTime            @default(now()) @updatedAt
-  createdAt                DateTime            @default(now())
+  variantName              String                     @default("")
+  version                  Int                        @default(1)
+  updatedAt                DateTime                   @default(now()) @updatedAt
+  createdAt                DateTime                   @default(now())
   balances                 StockBalance[]
   ledger                   StockLedger[]
   transferItems            TransferItem[]
@@ -249,8 +290,9 @@ model InventoryItem {
   orderItems               OrderItem[]
   partnerSupplyItems       PartnerSupplyItem[]
   costHistories            InventoryItemCostHistory[]
-  productCategory          ProductCategory?    @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
-  productGroup             ProductGroup?       @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
+  productCategory          ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+  productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
+  sweetCardAllocations     SweetCardRedemptionItem[]
 
   @@index([productCategoryId])
   @@index([productGroupId])
@@ -274,14 +316,15 @@ model InventoryItemCostHistory {
 }
 
 model ProductCategory {
-  id        String          @id
-  name      String          @unique
-  sortOrder Int             @default(0)
-  isActive  Boolean         @default(true)
-  version   Int             @default(1)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @default(now()) @updatedAt
-  products  InventoryItem[]
+  id              String                   @id
+  name            String                   @unique
+  sortOrder       Int                      @default(0)
+  isActive        Boolean                  @default(true)
+  version         Int                      @default(1)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @default(now()) @updatedAt
+  products        InventoryItem[]
+  sweetCardPolicy SweetCardCategoryPolicy?
 
   @@index([isActive, sortOrder])
 }
@@ -401,40 +444,43 @@ model PartnerReceipt {
 }
 
 model Order {
-  id                  String              @id
-  orderNo             String              @unique @map("order_no")
-  storeId             String              @map("store_id")
-  cashierId           String              @map("cashier_id")
-  cashierNameSnapshot String              @default("") @map("cashier_name_snapshot")
-  subtotal            BigInt              @default(0)
-  discountAmount      BigInt              @default(0) @map("discount_amount")
-  payableAmount       BigInt              @default(0) @map("payable_amount")
-  businessDate        DateTime?           @map("business_date") @db.Date
-  discountPercent     Int                 @default(100) @map("discount_percent")
-  remark              String              @default("")
-  status              String              @default("draft")
-  paymentStatus       String              @default("unpaid") @map("payment_status")
-  paymentMethod       String?             @map("payment_method")
-  paymentMode         String              @default("mock") @map("payment_mode")
-  orderSource         OrderSource         @default(STORE_POS) @map("order_source")
-  entryMode           EntryMode           @default(POS_CHECKOUT) @map("entry_mode")
-  settlementAuthority SettlementAuthority @default(PAYMENT) @map("settlement_authority")
-  sourceOrderRef      String?             @map("source_order_ref")
-  checkoutKey         String              @unique @map("checkout_key")
-  cartHash            String              @map("cart_hash")
-  version             Int                 @default(1)
-  createdAt           DateTime            @default(now()) @map("created_at")
-  updatedAt           DateTime            @default(now()) @updatedAt @map("updated_at")
-  completedAt         DateTime?           @map("completed_at")
-  cancelledAt         DateTime?           @map("cancelled_at")
-  cancelledBy         String              @default("") @map("cancelled_by")
-  cancelReason        String              @default("") @map("cancel_reason")
-  store               Store               @relation(fields: [storeId], references: [key], onDelete: Restrict)
+  id                  String               @id
+  orderNo             String               @unique @map("order_no")
+  storeId             String               @map("store_id")
+  cashierId           String               @map("cashier_id")
+  cashierNameSnapshot String               @default("") @map("cashier_name_snapshot")
+  subtotal            BigInt               @default(0)
+  discountAmount      BigInt               @default(0) @map("discount_amount")
+  payableAmount       BigInt               @default(0) @map("payable_amount")
+  sweetCardAmount     BigInt               @default(0) @map("sweet_card_amount")
+  businessDate        DateTime?            @map("business_date") @db.Date
+  discountPercent     Int                  @default(100) @map("discount_percent")
+  remark              String               @default("")
+  status              String               @default("draft")
+  paymentStatus       String               @default("unpaid") @map("payment_status")
+  paymentMethod       String?              @map("payment_method")
+  paymentMode         String               @default("mock") @map("payment_mode")
+  orderSource         OrderSource          @default(STORE_POS) @map("order_source")
+  entryMode           EntryMode            @default(POS_CHECKOUT) @map("entry_mode")
+  settlementAuthority SettlementAuthority  @default(PAYMENT) @map("settlement_authority")
+  sourceOrderRef      String?              @map("source_order_ref")
+  checkoutKey         String               @unique @map("checkout_key")
+  cartHash            String               @map("cart_hash")
+  version             Int                  @default(1)
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @default(now()) @updatedAt @map("updated_at")
+  completedAt         DateTime?            @map("completed_at")
+  cancelledAt         DateTime?            @map("cancelled_at")
+  cancelledBy         String               @default("") @map("cancelled_by")
+  cancelReason        String               @default("") @map("cancel_reason")
+  store               Store                @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
   payments            Payment[]
   externalSettlement  ExternalSettlement?
   refunds             Refund[]
   paymentLogs         PaymentLog[]
+  sweetCardRedemption SweetCardRedemption?
+  sweetCardLedger     SweetCardLedger[]
 
   @@index([storeId, createdAt])
   @@index([cashierId, createdAt])
@@ -525,6 +571,8 @@ model Refund {
   externalSettlementId    String?             @map("external_settlement_id")
   refundMode              RefundMode          @default(PAYMENT) @map("refund_mode")
   refundAmount            BigInt              @map("refund_amount")
+  providerRefundAmount    BigInt?             @map("provider_refund_amount")
+  sweetCardRefundAmount   BigInt?             @map("sweet_card_refund_amount")
   reason                  String              @default("")
   status                  String              @default("pending")
   providerRefundNo        String?             @unique @map("provider_refund_no")
@@ -539,6 +587,8 @@ model Refund {
   payment                 Payment?            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   externalSettlement      ExternalSettlement? @relation(fields: [externalSettlementId], references: [id], onDelete: Restrict)
   items                   RefundItem[]
+  sweetCardRefund         SweetCardRefund?
+  sweetCardLedger         SweetCardLedger[]
 
   @@index([orderId, createdAt])
   @@index([paymentId, createdAt])
@@ -548,14 +598,15 @@ model Refund {
 }
 
 model RefundItem {
-  id          String    @id
-  refundId    String    @map("refund_id")
-  orderItemId String    @map("order_item_id")
-  quantity    Int
-  amountCents BigInt    @map("amount_cents")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  refund      Refund    @relation(fields: [refundId], references: [id], onDelete: Cascade)
-  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  id                  String               @id
+  refundId            String               @map("refund_id")
+  orderItemId         String               @map("order_item_id")
+  quantity            Int
+  amountCents         BigInt               @map("amount_cents")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  refund              Refund               @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  orderItem           OrderItem            @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  sweetCardRefundItem SweetCardRefundItem?
 
   @@unique([refundId, orderItemId])
   @@index([refundId])
@@ -587,23 +638,27 @@ model PaymentLog {
 }
 
 model OrderItem {
-  id                  String        @id
-  orderId             String        @map("order_id")
-  productId           String        @map("product_id")
-  productNameSnapshot String        @map("product_name_snapshot")
-  skuSnapshot         String        @map("sku_snapshot")
-  unitSnapshot        String        @default("") @map("unit_snapshot")
-  unitPrice           BigInt        @map("unit_price")
-  costPriceSnapshot   BigInt        @map("cost_price_snapshot")
-  skuId               String        @default("") @map("sku_id")
-  quantity            Int
-  lineAmount          BigInt        @map("line_amount")
-  discountAmount      BigInt        @default(0) @map("discount_amount")
-  actualAmount        BigInt        @default(0) @map("actual_amount")
-  isGift              Boolean       @default(false) @map("is_gift")
-  order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
-  refundItems         RefundItem[]
+  id                          String                    @id
+  orderId                     String                    @map("order_id")
+  productId                   String                    @map("product_id")
+  productNameSnapshot         String                    @map("product_name_snapshot")
+  skuSnapshot                 String                    @map("sku_snapshot")
+  unitSnapshot                String                    @default("") @map("unit_snapshot")
+  unitPrice                   BigInt                    @map("unit_price")
+  costPriceSnapshot           BigInt                    @map("cost_price_snapshot")
+  skuId                       String                    @default("") @map("sku_id")
+  quantity                    Int
+  lineAmount                  BigInt                    @map("line_amount")
+  discountAmount              BigInt                    @default(0) @map("discount_amount")
+  actualAmount                BigInt                    @default(0) @map("actual_amount")
+  isGift                      Boolean                   @default(false) @map("is_gift")
+  sweetCardEligibleSnapshot   Boolean?                  @map("sweet_card_eligible_snapshot")
+  sweetCardCategoryIdSnapshot String?                   @map("sweet_card_category_id_snapshot")
+  sweetCardRedeemedAmount     BigInt                    @default(0) @map("sweet_card_redeemed_amount")
+  order                       Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product                     InventoryItem             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems                 RefundItem[]
+  sweetCardAllocations        SweetCardRedemptionItem[]
 
   @@index([orderId])
   @@index([productId])
@@ -755,18 +810,18 @@ model Expense {
 }
 
 model StoreRentHistory {
-  id                 String              @id
-  storeKey           String              @map("store_key")
-  mode               StoreRentMode
-  fixedAmountCents   BigInt?             @map("fixed_amount_cents")
-  percentageBps      Int?                @map("percentage_bps")
-  percentageBasis    RentPercentageBasis? @map("percentage_basis")
-  effectiveFrom      DateTime            @map("effective_from") @db.Date
-  effectiveTo        DateTime?           @map("effective_to") @db.Date
-  reason             String              @default("")
-  createdBy          String              @default("") @map("created_by")
-  createdAt          DateTime            @default(now()) @map("created_at")
-  store              Store               @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  id               String               @id
+  storeKey         String               @map("store_key")
+  mode             StoreRentMode
+  fixedAmountCents BigInt?              @map("fixed_amount_cents")
+  percentageBps    Int?                 @map("percentage_bps")
+  percentageBasis  RentPercentageBasis? @map("percentage_basis")
+  effectiveFrom    DateTime             @map("effective_from") @db.Date
+  effectiveTo      DateTime?            @map("effective_to") @db.Date
+  reason           String               @default("")
+  createdBy        String               @default("") @map("created_by")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  store            Store                @relation(fields: [storeKey], references: [key], onDelete: Restrict)
 
   @@unique([storeKey, effectiveFrom])
   @@index([storeKey, effectiveFrom, effectiveTo])
@@ -809,16 +864,16 @@ model StoreLaborCostPeriod {
 }
 
 model StoreLaborCostEntry {
-  id         String               @id
-  periodId   String               @map("period_id")
-  category   LaborCostCategory
-  amountCents BigInt              @map("amount_cents")
-  employeeId String?              @map("employee_id")
-  note       String               @default("")
-  createdBy  String               @default("") @map("created_by")
-  createdAt  DateTime             @default(now()) @map("created_at")
-  period     StoreLaborCostPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  employee   Employee?            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  id          String               @id
+  periodId    String               @map("period_id")
+  category    LaborCostCategory
+  amountCents BigInt               @map("amount_cents")
+  employeeId  String?              @map("employee_id")
+  note        String               @default("")
+  createdBy   String               @default("") @map("created_by")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  period      StoreLaborCostPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee    Employee?            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([periodId, category])
   @@index([employeeId])
@@ -826,14 +881,15 @@ model StoreLaborCostEntry {
 }
 
 model Member {
-  id           String              @id
-  name         String
-  phone        String              @unique
-  birthday     DateTime?
-  level        Int                 @default(0)
-  points       Int                 @default(0)
-  createdAt    DateTime            @default(now())
-  consumptions MemberConsumption[]
+  id                String              @id
+  name              String
+  phone             String              @unique
+  birthday          DateTime?
+  level             Int                 @default(0)
+  points            Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  consumptions      MemberConsumption[]
+  sweetCardBindings SweetCardBinding[]
 }
 
 model Invoice {
@@ -1703,4 +1759,246 @@ model Schedule {
   @@unique([weekStart, storeKey, date])
   @@index([weekStart])
   @@map("schedules")
+}
+
+model SweetCardBatch {
+  id                      String                @id
+  name                    String
+  purpose                 String                @default("")
+  faceValueCents          BigInt                @map("face_value_cents")
+  cardCount               Int                   @map("card_count")
+  totalInitialAmountCents BigInt                @map("total_initial_amount_cents")
+  validityType            SweetCardValidityType @map("validity_type")
+  carrierType             SweetCardCarrierType  @map("carrier_type")
+  bindingMode             SweetCardBindingMode  @map("binding_mode")
+  giftingScenario         String                @default("") @map("gifting_scenario")
+  presentationTemplateKey String                @default("minimal-v1") @map("presentation_template_key")
+  createdById             String                @map("created_by_id")
+  createdByName           String                @default("") @map("created_by_name")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  accounts                SweetCardAccount[]
+  auditLogs               SweetCardAuditLog[]
+
+  @@index([createdAt])
+  @@map("sweet_card_batches")
+}
+
+model SweetCardAccount {
+  id                 String                 @id
+  publicCardNo       String                 @unique @map("public_card_no")
+  batchId            String?                @map("batch_id")
+  initialAmountCents BigInt                 @map("initial_amount_cents")
+  balanceCents       BigInt                 @map("balance_cents")
+  validityType       SweetCardValidityType  @map("validity_type")
+  validFrom          DateTime?              @map("valid_from")
+  expiresAt          DateTime?              @map("expires_at")
+  status             SweetCardAccountStatus @default(CREATED)
+  carrierType        SweetCardCarrierType   @map("carrier_type")
+  bindingMode        SweetCardBindingMode   @map("binding_mode")
+  recipientType      String                 @default("") @map("recipient_type")
+  recipientLabel     String                 @default("") @map("recipient_label")
+  recipientCompany   String                 @default("") @map("recipient_company")
+  recipientNote      String                 @default("") @map("recipient_note")
+  giftingScenario    String                 @default("") @map("gifting_scenario")
+  issuedById         String                 @default("") @map("issued_by_id")
+  issuedByName       String                 @default("") @map("issued_by_name")
+  issuedAt           DateTime?              @map("issued_at")
+  activatedById      String                 @default("") @map("activated_by_id")
+  activatedAt        DateTime?              @map("activated_at")
+  version            Int                    @default(1)
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @default(now()) @updatedAt @map("updated_at")
+  batch              SweetCardBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  credentials        SweetCardCredential[]
+  binding            SweetCardBinding?
+  ledger             SweetCardLedger[]
+  redemptions        SweetCardRedemption[]
+  refunds            SweetCardRefund[]
+  auditLogs          SweetCardAuditLog[]
+
+  @@index([batchId, status])
+  @@index([status, expiresAt])
+  @@map("sweet_card_accounts")
+}
+
+model SweetCardCredential {
+  id                     String                    @id
+  accountId              String                    @map("account_id")
+  publicTokenId          String                    @unique @map("public_token_id")
+  tokenHash              String                    @unique @map("token_hash")
+  tokenCiphertext        String                    @map("token_ciphertext")
+  tokenIv                String                    @map("token_iv")
+  tokenTag               String                    @map("token_tag")
+  status                 SweetCardCredentialStatus @default(UNACTIVATED)
+  carrierType            SweetCardCarrierType      @map("carrier_type")
+  activatedAt            DateTime?                 @map("activated_at")
+  revokedAt              DateTime?                 @map("revoked_at")
+  revokeReason           String                    @default("") @map("revoke_reason")
+  replacedByCredentialId String?                   @unique @map("replaced_by_credential_id")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  account                SweetCardAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  replacedByCredential   SweetCardCredential?      @relation("SweetCardReplacement", fields: [replacedByCredentialId], references: [id], onDelete: Restrict)
+  replacesCredential     SweetCardCredential?      @relation("SweetCardReplacement")
+  redemptions            SweetCardRedemption[]
+  auditLogs              SweetCardAuditLog[]
+
+  @@index([accountId, status])
+  @@map("sweet_card_credentials")
+}
+
+model SweetCardBinding {
+  id                 String           @id
+  accountId          String           @unique @map("account_id")
+  memberId           String           @map("member_id")
+  verificationMethod String           @default("ADMIN_VERIFIED") @map("verification_method")
+  boundById          String           @map("bound_by_id")
+  boundByName        String           @default("") @map("bound_by_name")
+  boundAt            DateTime         @default(now()) @map("bound_at")
+  account            SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  member             Member           @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@index([memberId, boundAt])
+  @@map("sweet_card_bindings")
+}
+
+model SweetCardStorePolicy {
+  storeId       String   @id @map("store_id")
+  eligible      Boolean  @default(false)
+  updatedById   String   @default("") @map("updated_by_id")
+  updatedByName String   @default("") @map("updated_by_name")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+  store         Store    @relation(fields: [storeId], references: [key], onDelete: Restrict)
+
+  @@map("sweet_card_store_policies")
+}
+
+model SweetCardCategoryPolicy {
+  categoryId    String          @id @map("category_id")
+  blocked       Boolean         @default(true)
+  updatedById   String          @default("") @map("updated_by_id")
+  updatedByName String          @default("") @map("updated_by_name")
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at")
+  category      ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@map("sweet_card_category_policies")
+}
+
+model SweetCardRedemption {
+  id                      String                    @id
+  redemptionNo            String                    @unique @map("redemption_no")
+  orderId                 String                    @unique @map("order_id")
+  accountId               String                    @map("account_id")
+  credentialId            String                    @map("credential_id")
+  amountCents             BigInt                    @map("amount_cents")
+  eligibleSubtotalCents   BigInt                    @map("eligible_subtotal_cents")
+  ineligibleSubtotalCents BigInt                    @map("ineligible_subtotal_cents")
+  requestKey              String                    @unique @map("request_key")
+  storeIdSnapshot         String                    @map("store_id_snapshot")
+  redeemedById            String                    @map("redeemed_by_id")
+  redeemedByName          String                    @default("") @map("redeemed_by_name")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  order                   Order                     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  account                 SweetCardAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  credential              SweetCardCredential       @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+  items                   SweetCardRedemptionItem[]
+  refunds                 SweetCardRefund[]
+  ledgerEntries           SweetCardLedger[]
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_redemptions")
+}
+
+model SweetCardRedemptionItem {
+  id                  String                @id
+  redemptionId        String                @map("redemption_id")
+  orderItemId         String                @map("order_item_id")
+  productId           String                @map("product_id")
+  categoryIdSnapshot  String?               @map("category_id_snapshot")
+  eligibleSnapshot    Boolean               @map("eligible_snapshot")
+  eligibleAmountCents BigInt                @map("eligible_amount_cents")
+  redeemedAmountCents BigInt                @map("redeemed_amount_cents")
+  redemption          SweetCardRedemption   @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  orderItem           OrderItem             @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  product             InventoryItem         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems         SweetCardRefundItem[]
+
+  @@unique([redemptionId, orderItemId])
+  @@index([orderItemId])
+  @@map("sweet_card_redemption_items")
+}
+
+model SweetCardLedger {
+  id                String               @id
+  accountId         String               @map("account_id")
+  type              SweetCardLedgerType
+  amountCents       BigInt               @map("amount_cents")
+  balanceAfterCents BigInt               @map("balance_after_cents")
+  orderId           String?              @map("order_id")
+  redemptionId      String?              @map("redemption_id")
+  refundId          String?              @map("refund_id")
+  requestKey        String               @unique @map("request_key")
+  actorId           String               @default("") @map("actor_id")
+  actorName         String               @default("") @map("actor_name")
+  metadata          Json                 @default("{}")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  account           SweetCardAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  redemption        SweetCardRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  order             Order?               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refund            Refund?              @relation(fields: [refundId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@index([orderId])
+  @@index([refundId])
+  @@map("sweet_card_ledger")
+}
+
+model SweetCardRefund {
+  id           String                @id
+  refundId     String                @unique @map("refund_id")
+  redemptionId String                @map("redemption_id")
+  accountId    String                @map("account_id")
+  amountCents  BigInt                @map("amount_cents")
+  requestKey   String                @unique @map("request_key")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  refund       Refund                @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  redemption   SweetCardRedemption   @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  items        SweetCardRefundItem[]
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_refunds")
+}
+
+model SweetCardRefundItem {
+  id                String                  @id
+  sweetCardRefundId String                  @map("sweet_card_refund_id")
+  refundItemId      String                  @unique @map("refund_item_id")
+  redemptionItemId  String                  @map("redemption_item_id")
+  amountCents       BigInt                  @map("amount_cents")
+  sweetCardRefund   SweetCardRefund         @relation(fields: [sweetCardRefundId], references: [id], onDelete: Restrict)
+  refundItem        RefundItem              @relation(fields: [refundItemId], references: [id], onDelete: Restrict)
+  redemptionItem    SweetCardRedemptionItem @relation(fields: [redemptionItemId], references: [id], onDelete: Restrict)
+
+  @@index([sweetCardRefundId])
+  @@map("sweet_card_refund_items")
+}
+
+model SweetCardAuditLog {
+  id           String               @id
+  batchId      String?              @map("batch_id")
+  accountId    String?              @map("account_id")
+  credentialId String?              @map("credential_id")
+  action       String
+  actorId      String               @default("") @map("actor_id")
+  actorName    String               @default("") @map("actor_name")
+  metadata     Json                 @default("{}")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  batch        SweetCardBatch?      @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount?    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  credential   SweetCardCredential? @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@index([batchId, createdAt])
+  @@index([action, createdAt])
+  @@map("sweet_card_audit_logs")
 }

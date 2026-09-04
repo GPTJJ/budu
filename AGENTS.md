@@ -9,6 +9,7 @@
 - After code changes: use `budu-regression`.
 - Deployment work: use `budu-production-deploy`.
 - Payment or refund work: MUST use `budu-payment-safety` in STRICT mode.
+- Sweet Card, gift-card, redemption, balance, binding, loss, or replacement work: use `budu-sweet-card` (and `budu-payment-safety` whenever value or settlement is involved).
 - Device, conversation, or task handoff: use `budu-handoff`.
 
 Detailed workflows belong in the skills under `.agents/skills/`; keep this file concise.

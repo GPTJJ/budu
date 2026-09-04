@@ -25,7 +25,7 @@ export const DAILY_SALES_AUTHORITIES = Object.freeze({
 const SETTLED_ORDER_STATUSES = Object.freeze(['completed', 'partially_refunded', 'refunded'])
 const EFFECTIVE_ORDER_STATUSES = Object.freeze(['completed', 'partially_refunded'])
 const ORDER_SOURCES = new Set(['STORE_POS', 'MEITUAN', 'TAOBAO_FLASH', 'JD_INSTANT', 'OTHER'])
-const SETTLEMENT_TYPES = new Set(['WECHAT', 'ALIPAY', 'CASH', 'PLATFORM', 'CUSTOM'])
+const SETTLEMENT_TYPES = new Set(['WECHAT', 'ALIPAY', 'CASH', 'SWEET_CARD', 'MIXED', 'PLATFORM', 'CUSTOM'])
 const PRODUCT_SORTS = new Set(['productRevenue', 'salesQuantity', 'salesCents'])
 const COMPARISON_MODES = new Set(['previous', 'year'])
 const MAX_RANGE_DAYS = 92
@@ -252,6 +252,10 @@ function settledOrdersCte() {
           (o."settlement_authority"::text = 'PAYMENT' AND EXISTS (
             SELECT 1 FROM "payments" p
             WHERE p."order_id" = o."id" AND p."status" IN ('success', 'partially_refunded', 'refunded')
+          ))
+          OR
+          (o."settlement_authority"::text = 'PAYMENT' AND o."sweet_card_amount" = o."payable_amount" AND EXISTS (
+            SELECT 1 FROM "sweet_card_redemptions" sr WHERE sr."order_id" = o."id"
           ))
           OR
           (o."settlement_authority"::text = 'EXTERNAL' AND EXISTS (
@@ -544,26 +548,35 @@ export class ReportQueryService {
     `)
     const settlements = await this.prisma.$queryRaw(Prisma.sql`
       WITH ${selected}, ${settled}, ${metrics},
-      settlement_metrics AS (
-        SELECT om.*,
-          CASE
-            WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."settlement_type"::text
-            WHEN lower(p."channel") = 'wechat' THEN 'WECHAT'
-            WHEN lower(p."channel") = 'alipay' THEN 'ALIPAY'
-            WHEN lower(p."channel") = 'cash' THEN 'CASH'
-            ELSE NULL
-          END AS settlement_key
+      refund_split AS (
+        SELECT "order_id", COALESCE(SUM(CASE WHEN "provider_refund_amount" IS NULL AND "sweet_card_refund_amount" IS NULL AND "refund_mode"::text = 'PAYMENT' THEN "refund_amount" ELSE COALESCE("provider_refund_amount", 0) END), 0)::bigint AS provider_refund,
+          COALESCE(SUM("sweet_card_refund_amount"), 0)::bigint AS sweet_refund
+        FROM "refunds" WHERE "status" = 'completed' GROUP BY "order_id"
+      ), settlement_metrics AS (
+        SELECT om."id" AS order_id, 'SWEET_CARD'::text AS settlement_key,
+          (om."sweet_card_amount" - COALESCE(rs.sweet_refund, 0))::bigint AS settlement_cents
+        FROM order_metrics om LEFT JOIN refund_split rs ON rs."order_id" = om."id"
+        WHERE om."sweet_card_amount" > COALESCE(rs.sweet_refund, 0)
+        UNION ALL
+        SELECT om."id", CASE WHEN lower(p."channel") = 'wechat' THEN 'WECHAT' WHEN lower(p."channel") = 'alipay' THEN 'ALIPAY' WHEN lower(p."channel") = 'cash' THEN 'CASH' END,
+          (p."amount" - COALESCE(rs.provider_refund, 0))::bigint
         FROM order_metrics om
         LEFT JOIN LATERAL (
-          SELECT "channel" FROM "payments"
+          SELECT "channel", "amount" FROM "payments"
           WHERE "order_id" = om."id" AND "status" IN ('success', 'partially_refunded', 'refunded')
           ORDER BY "paid_at" DESC NULLS LAST, "created_at" DESC LIMIT 1
         ) p ON om."settlement_authority"::text = 'PAYMENT'
+        LEFT JOIN refund_split rs ON rs."order_id" = om."id"
+        WHERE p."channel" IS NOT NULL AND p."amount" > COALESCE(rs.provider_refund, 0)
+        UNION ALL
+        SELECT om."id", es."settlement_type"::text, om.revenue_cents
+        FROM order_metrics om
         LEFT JOIN "external_settlements" es ON es."order_id" = om."id" AND om."settlement_authority"::text = 'EXTERNAL'
+        WHERE es."id" IS NOT NULL AND om.revenue_cents > 0
       )
       SELECT settlement_key AS key,
-        COALESCE(SUM(revenue_cents), 0)::bigint AS "revenueCents",
-        COUNT(*)::bigint AS "settledOrders"
+        COALESCE(SUM(settlement_cents), 0)::bigint AS "revenueCents",
+        COUNT(DISTINCT order_id)::bigint AS "settledOrders"
       FROM settlement_metrics WHERE settlement_key IS NOT NULL
       GROUP BY settlement_key ORDER BY settlement_key
     `)
@@ -730,12 +743,14 @@ export class ReportQueryService {
         SELECT om.*,
           CASE
             WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."settlement_type"::text
+            WHEN om."sweet_card_amount" > 0 AND p."channel" IS NOT NULL THEN 'MIXED'
+            WHEN om."sweet_card_amount" > 0 THEN 'SWEET_CARD'
             WHEN lower(p."channel") = 'wechat' THEN 'WECHAT'
             WHEN lower(p."channel") = 'alipay' THEN 'ALIPAY'
             WHEN lower(p."channel") = 'cash' THEN 'CASH'
             ELSE NULL
           END AS settlement_key,
-          CASE WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."amount_cents" ELSE p."amount" END AS settlement_amount_cents,
+          CASE WHEN om."settlement_authority"::text = 'EXTERNAL' THEN es."amount_cents" ELSE COALESCE(p."amount", 0) + om."sweet_card_amount" END AS settlement_amount_cents,
           lr.last_refund_at
         FROM order_metrics om
         LEFT JOIN LATERAL (

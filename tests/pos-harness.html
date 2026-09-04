@@ -18,6 +18,8 @@
     const payMode = params.get('paymode') || 'success'
     const externalCapabilities = params.get('external') === '1'
     const livePos = params.get('posmode') === 'live'
+    const sweetCard = params.get('sweet') === '1'
+    const sweetBalance = Number(params.get('sweetBalance') || 50000)
     // R2：双门店（验证 POS 配置按当前门店拉取）与过期配置响应（验证门店切换丢弃旧响应）
     const twoStores = params.get('stores') === '2'
     const configStale = params.get('configStale') === '1'
@@ -103,7 +105,7 @@
         }
         return json(livePos
           ? { mode: 'live', mock: false, channels: params.get('alipay') === '1' ? ['cash', 'alipay'] : ['cash'] }
-          : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
+          : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'], sweetCard: { enabled: sweetCard } })
       }
       if (path === '/api/v2/pos/products') return json({ rows: products })
       if (path === '/api/v2/pos/external-orders' && options.method === 'POST') {
@@ -145,7 +147,7 @@
         const chargeable = items.reduce((sum, item) => sum + Number(item.lineAmount), 0)
         const discountPercent = Number(body.discountPercent ?? 100)
         const payable = Math.round((chargeable * discountPercent) / 100)
-        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: body.storeId === 'xidan' ? '北京西单店' : '北京通盈中心店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable), payableAmount: String(payable), discountPercent, remark: body.remark || '', status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', checkoutKey: body.checkoutKey, items, payments: [] }
+        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: body.storeId === 'xidan' ? '北京西单店' : '北京通盈中心店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable), payableAmount: String(payable), sweetCardAmount: '0', discountPercent, remark: body.remark || '', status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', checkoutKey: body.checkoutKey, items, payments: [] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         return json({ ok: true, order }, 201)
       }
@@ -154,18 +156,28 @@
         return json({ ok: true, total: rows.length, rows })
       }
       if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order: { ...order, payments: payment ? [payment] : [] } })
+      if (order && path === `/api/v2/pos/orders/${order.id}/sweet-card/inspect`) {
+        const body = JSON.parse(options.body)
+        if (!String(body.token || '').startsWith('budu:sc:v1:')) return json({ error: '甜意卡 credential 无效' }, 404)
+        return json({ card: { publicCardNo: 'SC2026TEST01', status: 'ACTIVE', credentialStatus: 'ACTIVE', balanceCents: String(sweetBalance), eligibleSubtotalCents: order.payableAmount, ineligibleSubtotalCents: '0', maximumRedeemableCents: String(Math.min(sweetBalance, Number(order.payableAmount))), remainingPayableCents: String(Math.max(0, Number(order.payableAmount) - sweetBalance)), usable: true } })
+      }
+      if (order && path === `/api/v2/pos/orders/${order.id}/sweet-card/redeem`) {
+        const body = JSON.parse(options.body); const amount = String(body.amountCents)
+        order = { ...order, sweetCardAmount: amount, status: BigInt(amount) === BigInt(order.payableAmount) ? 'completed' : 'pending_payment', paymentStatus: BigInt(amount) === BigInt(order.payableAmount) ? 'paid' : 'unpaid', paymentMethod: BigInt(amount) === BigInt(order.payableAmount) ? 'sweet-card' : null }
+        return json({ ok: true, redemption: { id: `scr-${userId}`, amountCents: amount }, order }, 201)
+      }
       if (order && path === `/api/v2/pos/orders/${order.id}/payments`) {
         const body = JSON.parse(options.body)
         window.__paymentRequestCount += 1
         if (['wechat', 'alipay'].includes(body.channel) && !body.authCode) return json({ error: '请扫描有效的顾客付款码' }, 400)
         const failed = String(body.authCode || '').startsWith('FAIL')
         const pending = payMode === 'pending' && ['wechat', 'alipay'].includes(body.channel)
-        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: livePos && body.channel === 'alipay' ? 'alipay' : 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
+        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: String(BigInt(order.payableAmount) - BigInt(order.sweetCardAmount || 0)), currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: livePos && body.channel === 'alipay' ? 'alipay' : 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
         order = pending
           ? { ...order, status: 'pending_payment', paymentStatus: 'pending', paymentMethod: null, payments: [payment] }
           : failed
           ? { ...order, status: 'pending_payment', paymentStatus: 'failed', paymentMethod: null, payments: [payment] }
-          : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
+          : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: BigInt(order.sweetCardAmount || 0) > 0n ? `sweet-card+${body.channel}` : body.channel, completedAt: new Date().toISOString(), payments: [payment] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
         return json({ ok: true, payment, order }, 201)

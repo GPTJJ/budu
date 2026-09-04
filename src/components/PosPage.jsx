@@ -28,7 +28,7 @@ import {
   setSelectedPosStore,
 } from '../utils/pos'
 
-const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现金' }
+const paymentLabels = { wechat: '微信支付', alipay: '支付宝', cash: '现金', 'sweet-card': 'budu 甜意卡', 'sweet-card+wechat': '甜意卡 + 微信', 'sweet-card+alipay': '甜意卡 + 支付宝', 'sweet-card+cash': '甜意卡 + 现金' }
 const PRODUCTS_CACHE_TTL = 60 * 1000
 const productsCacheKey = (userId) => `budu-pos-products:${userId}`
 
@@ -75,6 +75,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   const [scannerChannel, setScannerChannel] = useState('')
   const [posConfig, setPosConfig] = useState(null)
   const [cashConfirm, setCashConfirm] = useState(false)
+  const [sweetCardPreview, setSweetCardPreview] = useState(null)
+  const [sweetCardToken, setSweetCardToken] = useState('')
   const [cartOpen, setCartOpen] = useState(false)
   const [platformCheckout, setPlatformCheckout] = useState(null)
   const [showOrders, setShowOrders] = useState(false)
@@ -565,6 +567,15 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     const paymentMethod = scannerChannel
     setScannerChannel('')
     if (!paymentMethod) return
+    if (String(authCode).startsWith('budu:sc:v1:')) {
+      if (posConfig?.sweetCard?.enabled !== true) { setError('当前门店未开放 budu 甜意卡'); return }
+      setPaying('sweet-card')
+      api(`/v2/pos/orders/${order.id}/sweet-card/inspect`, { method: 'POST', body: JSON.stringify({ token: authCode }) })
+        .then((data) => { setSweetCardToken(authCode); setSweetCardPreview(data.card) })
+        .catch((e) => setError(e.message))
+        .finally(() => setPaying(''))
+      return
+    }
     // 真实微信付款码仅接受 18 位数字（前缀 10-15）；mock 模式保持向后兼容
     if (paymentMethod === 'wechat' && !mockMode && !isValidWechatAuthCode(authCode)) {
       setError('付款码无效，请重新扫描顾客的微信付款码')
@@ -577,6 +588,19 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       return
     }
     completePayment(paymentMethod, authCode)
+  }
+
+  const confirmSweetCard = async () => {
+    if (!order || !sweetCardPreview || !sweetCardToken || paying) return
+    setPaying('sweet-card'); setError('')
+    try {
+      const data = await api(`/v2/pos/orders/${order.id}/sweet-card/redeem`, { method: 'POST', body: JSON.stringify({ token: sweetCardToken, amountCents: sweetCardPreview.maximumRedeemableCents, requestKey: `${order.id}:sweet-card:${createCheckoutKey()}` }) })
+      const nextOrder = { ...order, ...data.order, sweetCardRedemption: data.redemption }
+      setOrder(nextOrder); setSweetCardPreview(null); setSweetCardToken('')
+      if (nextOrder.status === 'completed') {
+        setCart({}); savePosCart(user.id, storeId, {}); savePendingOrder(user.id, storeId, ''); saveSuccessOrder(user.id, storeId, nextOrder.id); setStage('success')
+      }
+    } catch (e) { setError(e.message) } finally { setPaying('') }
   }
 
   const queryCurrentPayment = async () => {
@@ -758,6 +782,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
 
   if (stage === 'payment' && order) {
     const pendingPayment = payment && ['created', 'pending'].includes(payment.status)
+    const remainingPayable = BigInt(order.payableAmount) - BigInt(order.sweetCardAmount || 0)
     const channelButton = (channel, label, icon, colorClass) => {
       const enabled = channels.includes(channel)
       return (
@@ -777,7 +802,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
         <div className="flex min-h-[100dvh] items-center justify-center bg-slate-100 p-6" style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
             <button onClick={returnToOrdering} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
-            <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">应付金额</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(order.payableAmount)}</p><p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
+            <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">{BigInt(order.sweetCardAmount || 0) > 0n ? '剩余应付' : '应付金额'}</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(remainingPayable)}</p>{BigInt(order.sweetCardAmount || 0) > 0n && <p className="mt-2 text-sm font-semibold text-emerald-600">甜意卡已抵扣 {formatCents(order.sweetCardAmount)}</p>}<p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
               <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">
@@ -800,7 +825,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                 )}
               </div>
             )}
-            <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+            <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
+              {posConfig?.sweetCard?.enabled === true && <button disabled={Boolean(paying) || Boolean(pendingPayment) || BigInt(order.sweetCardAmount || 0) > 0n} onClick={() => setScannerChannel('sweet-card')} className="rounded-2xl border border-budu-200 bg-budu-50 px-3 py-6 font-bold text-budu-700 disabled:opacity-40"><Gift className="mx-auto mb-3 h-8 w-8" />甜意卡</button>}
               {channelButton('wechat', '微信扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-emerald-200 bg-emerald-50 text-emerald-700')}
               {channelButton('alipay', '支付宝扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-sky-200 bg-sky-50 text-sky-700')}
               {channelButton('cash', '现金收款', <Banknote className="mx-auto mb-3 h-8 w-8" />, 'border-amber-200 bg-amber-50 text-amber-700')}
@@ -813,7 +839,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-amber-100"><Banknote className="h-7 w-7 text-amber-600" /></div>
               <h3 className="mt-4 text-xl font-black text-slate-900">现金收款确认</h3>
               <p className="mt-2 text-sm text-slate-500">请当面确认已收到顾客现金</p>
-              <p className="mt-5 text-4xl font-black tracking-tight text-slate-900">{formatCents(order.payableAmount)}</p>
+              <p className="mt-5 text-4xl font-black tracking-tight text-slate-900">{formatCents(remainingPayable)}</p>
               <p className="mt-2 text-xs text-slate-400">订单号 {order.orderNo}</p>
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <button onClick={() => setCashConfirm(false)} className="rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-500">取消</button>
@@ -834,6 +860,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             )}
           </>
         )}
+        {sweetCardPreview && <div className="fixed inset-0 z-[125] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="甜意卡核销确认"><div className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}><p className="text-xs font-black tracking-[0.16em] text-budu-500">A LITTLE SWEETNESS.</p><h3 className="mt-2 text-2xl font-black text-slate-900">确认甜意卡核销</h3><div className="mt-5 space-y-3 rounded-2xl bg-slate-50 p-4 text-sm"><p className="flex justify-between"><span className="text-slate-400">卡号</span><strong>{sweetCardPreview.publicCardNo}</strong></p><p className="flex justify-between"><span className="text-slate-400">当前余额</span><strong>{formatCents(sweetCardPreview.balanceCents)}</strong></p><p className="flex justify-between"><span className="text-slate-400">本单可用商品</span><strong>{formatCents(sweetCardPreview.eligibleSubtotalCents)}</strong></p><p className="flex justify-between"><span className="text-slate-400">不可用商品</span><strong>{formatCents(sweetCardPreview.ineligibleSubtotalCents)}</strong></p><p className="flex justify-between border-t pt-3"><span className="font-bold text-slate-700">本次抵扣</span><strong className="text-lg text-budu-600">{formatCents(sweetCardPreview.maximumRedeemableCents)}</strong></p></div><div className="mt-5 grid grid-cols-2 gap-3"><button onClick={() => { setSweetCardPreview(null); setSweetCardToken('') }} className="rounded-xl border border-slate-200 py-3 font-bold text-slate-500">取消</button><button disabled={paying === 'sweet-card' || sweetCardPreview.usable !== true || BigInt(sweetCardPreview.maximumRedeemableCents) <= 0n} onClick={confirmSweetCard} className="rounded-xl bg-budu-500 py-3 font-bold text-white disabled:opacity-40">确认抵扣</button></div></div></div>}
       </>
     )
   }

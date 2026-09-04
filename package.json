@@ -41,6 +41,7 @@
     "test:skill:payroll-audit": "node --test scripts/test-budu-payroll-audit-skill.mjs",
     "test:payroll-audit-report": "node --test scripts/test-payroll-audit-report-v2.mjs",
     "test:skill:brand": "node --test scripts/test-budu-brand-system.mjs",
+    "test:sweet-card": "node --test scripts/test-budu-sweet-card-skill.mjs scripts/test-sweet-card-core.mjs scripts/test-sweet-card-migration.mjs scripts/test-sweet-card-settlement.mjs",
     "brand:assets": "node scripts/generate-budu-brand-assets.mjs",
     "test:brand:browser": "playwright test --config=playwright.brand.config.mjs --workers=1",
     "payroll:audit": "node scripts/payroll-audit-runner.mjs",
@@ -50,8 +51,8 @@
     "test:wechat-e2e": "node --test scripts/test-wechat-pay-e2e.mjs",
     "test:report-center:rc2a": "node scripts/test-report-center-rc2a.mjs",
     "test:report-center:rc2a-migration": "node --test scripts/test-report-center-rc2a-migration-rehearsal.mjs",
-    "test:report-center:rc2b:allocation": "node --test scripts/test-report-center-rc2b-allocation.mjs"
-    ,"test:report-center:rc2b": "node scripts/test-report-center-rc2b.mjs",
+    "test:report-center:rc2b:allocation": "node --test scripts/test-report-center-rc2b-allocation.mjs",
+    "test:report-center:rc2b": "node scripts/test-report-center-rc2b.mjs",
     "test:report-center:rc2b-migration": "node --test scripts/test-report-center-rc2b-migration-rehearsal.mjs",
     "test:report-center:rc2c": "node scripts/test-report-center-rc2c.mjs",
     "test:report-center:rc2c:ui": "node --test scripts/test-report-center-rc2c-ui-utils.mjs && playwright test tests/report-center-rc2c-pos.spec.mjs tests/report-center-rc2c-refund.spec.mjs",
@@ -78,6 +79,7 @@
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
     "lucide-react": "^0.469.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.0",
@@ -86,6 +88,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
     "@playwright/test": "^1.55.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",

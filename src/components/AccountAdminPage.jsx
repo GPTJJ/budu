@@ -10,6 +10,8 @@ import {
   DAILY_ENTRY_CAPABILITY_OPTIONS,
   MODULE_GROUPS,
   ROLE_LABELS,
+  ACCOUNT_PERMISSION_KEYS,
+  SWEET_CARD_CAPABILITIES,
   defaultModuleKeys,
   normalizeAccountPermissions,
 } from '../../shared/accountPermissions'
@@ -429,6 +431,7 @@ function PermissionModal({ user, onClose, onSaved }) {
   const [modules, setModules] = useState(initialModules)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
   const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
+  const [sweetCard, setSweetCard] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
   const [externalOrderCreate, setExternalOrderCreate] = useState(user.permissions?.externalOrderCreate === true)
   const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
   const [manualExternalRefundRecord, setManualExternalRefundRecord] = useState(user.permissions?.manualExternalRefundRecord === true)
@@ -454,6 +457,7 @@ function PermissionModal({ user, onClose, onSaved }) {
     const nextModules = Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)]))
     setModules(nextModules)
     setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
+    setSweetCard(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
     setExternalOrderCreate(false)
     setExternalSettlementConfirm(false)
     setManualExternalRefundRecord(false)
@@ -474,6 +478,7 @@ function PermissionModal({ user, onClose, onSaved }) {
           modules,
           inventoryTransferAll: transferAll,
           dailyEntry,
+          sweetCard,
           externalOrderCreate,
           externalSettlementConfirm,
           manualExternalRefundRecord,
@@ -578,6 +583,13 @@ function PermissionModal({ user, onClose, onSaved }) {
               <input type="checkbox" checked={manualExternalRefundConfirm} onChange={(e) => setManualExternalRefundConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
               {t('允许确认人工外部退款事实')}
             </label>
+          </section>
+        )}
+        {modules['sweet-card'] === true && (
+          <section className="mt-3 rounded-2xl border border-budu-100 bg-budu-50/60 p-3">
+            <p className="text-sm font-bold text-slate-700">{t('甜意卡独立权限')}</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('发卡、激活、冻结、作废与审计分开授权；POS 核销仍只认门店 POS 权限。')}</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.values(SWEET_CARD_CAPABILITIES).map((key) => <label key={key} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-medium text-slate-600"><input type="checkbox" checked={sweetCard[key] === true} onChange={(event) => setSweetCard((current) => ({ ...current, [key]: event.target.checked }))} className="h-4 w-4 accent-budu-500" />{({ view: '查看', issue: '制卡/导出', manage: '管理/绑定/补发', activate: '激活', freeze: '冻结/解冻', void: '作废', audit: '审计' })[key]}</label>)}</div>
           </section>
         )}
         <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">

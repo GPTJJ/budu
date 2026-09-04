@@ -19,6 +19,8 @@ export const SETTLEMENT_OPTIONS = Object.freeze([
   ['WECHAT', '微信'],
   ['ALIPAY', '支付宝'],
   ['CASH', '现金'],
+  ['SWEET_CARD', 'budu 甜意卡'],
+  ['MIXED', '混合支付'],
   ['PLATFORM', '平台结算'],
   ['CUSTOM', '其他'],
 ])

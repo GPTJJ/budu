@@ -11,12 +11,13 @@ import {
   FolderArchive,
   ChevronDown,
   ClipboardCheck,
+  Gift,
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
 import BrandSlot from './BrandSlot'
 import { APP_VERSION } from '../version'
-import { MODULE_KEYS, hasModuleAccess } from '../../shared/accountPermissions'
+import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasSweetCardCapability } from '../../shared/accountPermissions'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -28,6 +29,7 @@ const menus = [
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
   { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },
+  { key: 'sweet-card', label: 'budu 甜意卡', icon: Gift },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
 
@@ -60,6 +62,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE, MODULE_KEYS.PARTNER_SUPPLY, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT],
   }
   const visibleMenus = menus.filter((item) => {
+    if (item.key === MODULE_KEYS.SWEET_CARD) return hasModuleAccess(user, item.key) && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW)
     const keys = groupModules[item.key]
     return keys ? keys.some((key) => hasModuleAccess(user, key)) : hasModuleAccess(user, item.key)
   })

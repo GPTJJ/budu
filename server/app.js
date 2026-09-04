@@ -26,6 +26,7 @@ import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { employeeProfileRouter } from './employee-profile.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
+import { sweetCardRouter } from './sweet-card.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
@@ -623,6 +624,7 @@ export function createApp() {
       (/^\/products(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/product-groups(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/pos\/(?:config|orders|products|payments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_POS]) ||
+      (/^\/sweet-cards(?:\/|$)/.test(pathname) && [MODULE_KEYS.SWEET_CARD]) ||
       (/^\/pos\/(?:daily-summary|product-sales)(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.FINANCE]) ||
       (/^\/daily-entries(?:\/|$)/.test(pathname) && (req.method === 'GET'
         ? [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.FINANCE]
@@ -649,6 +651,7 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
+  app.use('/api/v2', sweetCardRouter)
   app.use('/api/v2', requireBusiness, reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
