@@ -14,6 +14,8 @@ EXPECTED_OLD_SHA="$5"
 APP_DIR="$6"
 NGINX_CONTAINER="$7"
 SHORT_SHA="${RELEASE_SHA:0:7}"
+BASELINE_MIGRATIONS="${EXPECTED_BASELINE_MIGRATIONS:-66}"
+[[ "$BASELINE_MIGRATIONS" =~ ^(66|67)$ ]] || exit 2
 CANDIDATE="budu-prod-${SHORT_SHA}-sweet-card-availability"
 MIGRATOR="budu-migrate-${SHORT_SHA}-sweet-card-availability"
 BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-sweet-card-availability"
@@ -160,9 +162,9 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 [ "$(docker inspect "$OLD_CONTAINER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$EXPECTED_OLD_SHA" ]
 [ "$(count_writers "$OLD_CONTAINER")" -eq 1 ]
 require_health "$OLD_CONTAINER" "$EXPECTED_OLD_SHA"
-verify_database "$OLD_CONTAINER" 66
+verify_database "$OLD_CONTAINER" "$BASELINE_MIGRATIONS"
 [ "$(docker inspect "$OLD_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^XIDAN_SWEET_CARD_COMMERCIAL=//p')" = 1 ]
-echo "production preflight PASS: runtime=${OLD_CONTAINER} database=budu_bj006 migration=66 writer=1 commercial=enabled"
+echo "production preflight PASS: runtime=${OLD_CONTAINER} database=budu_bj006 migration=${BASELINE_MIGRATIONS} writer=1 commercial=enabled"
 
 printf '%s' '{"username":"budu","userId":"dh"}' > "$BINDING_FILE"
 chmod 600 "$BINDING_FILE"
@@ -197,12 +199,12 @@ PY
 
 BEFORE_JSON="$(audit_container "$OLD_CONTAINER")"
 BEFORE_BATCH_COUNT="$(BEFORE_JSON="$BEFORE_JSON" python3 -c 'import json,os; print(len(json.loads(os.environ["BEFORE_JSON"])["batches"]))')"
-BEFORE_FILE="${ROLLBACK_ROOT}/production-before-m66.json"
+BEFORE_FILE="${ROLLBACK_ROOT}/production-before-m${BASELINE_MIGRATIONS}.json"
 printf '%s\n' "$BEFORE_JSON" > "$BEFORE_FILE"
 chmod 400 "$BEFORE_FILE"
-PRE_BACKUP="pre-promotion-budu_bj006-m66.dump"
+PRE_BACKUP="pre-promotion-budu_bj006-m${BASELINE_MIGRATIONS}.dump"
 create_backup "$PRE_BACKUP"
-echo "fresh pre-promotion M66 backup PASS"
+echo "fresh pre-promotion M${BASELINE_MIGRATIONS} backup PASS"
 
 docker network create "$ISOLATED_NETWORK" >/dev/null
 docker run -d --name "$RESTORE_CONTAINER" --network "$ISOLATED_NETWORK" \
@@ -230,7 +232,14 @@ python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BI
 [ "$(docker wait "$MIGRATOR")" = 0 ] || { docker logs --tail 100 "$MIGRATOR"; exit 1; }
 docker rm "$MIGRATOR" >/dev/null
 verify_database "$OLD_CONTAINER" 67
-docker run --rm --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e RELEASE_SHA="$RELEASE_SHA" "$IMAGE" node scripts/initialize-sweet-card-store-authority.mjs initialize
+docker create --name "$MIGRATOR" --network "$COMMON_NETWORK" --env-file "$DB_ENV_FILE" -e RELEASE_SHA="$RELEASE_SHA" "$IMAGE" node scripts/initialize-sweet-card-store-authority.mjs initialize >/dev/null
+while IFS= read -r network; do
+  [ -n "$network" ] || continue
+  [ "$network" = "$COMMON_NETWORK" ] || docker network connect "$network" "$MIGRATOR"
+done < <(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$OLD_CONTAINER")
+docker start -a "$MIGRATOR"
+[ "$(docker inspect "$MIGRATOR" --format '{{.State.ExitCode}}')" = 0 ]
+docker rm "$MIGRATOR" >/dev/null
 AFTER_MIGRATION_JSON="$(audit_container "$OLD_CONTAINER")"
 compare_business_facts "$BEFORE_JSON" "$AFTER_MIGRATION_JSON"
 echo "Migration 67 and verified DIRECT classification PASS"
