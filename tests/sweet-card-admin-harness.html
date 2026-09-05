@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><title>budu 甜意卡管理测试</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import SweetCardPage from '/src/components/SweetCardPage.jsx'
+    import '/src/index.css'
+
+    const now = '2026-09-05T04:30:00.000Z'
+    const batch = {
+      id: 'batch-commercial', name: 'BUDU-SC-202609-A01', businessPurpose: 'COMMERCIAL',
+      cardCount: 7, faceValueCents: '20000', carrierType: 'ELECTRONIC', bindingMode: 'REQUIRED',
+      metrics: { activated: 1, consumedCents: '0', balanceCents: '140000' },
+    }
+    const statuses = ['CREATED', 'ACTIVE', 'FROZEN', 'LOST', 'EXHAUSTED', 'EXPIRED', 'VOID']
+    const cards = statuses.map((status, index) => ({
+      id: `card-${status.toLowerCase()}`,
+      publicCardNo: `SC-UI-${String(index + 1).padStart(2, '0')}`,
+      batchId: batch.id,
+      initialAmountCents: '20000',
+      balanceCents: status === 'EXHAUSTED' ? '0' : '20000',
+      status,
+      carrierType: index % 2 === 0 ? 'ELECTRONIC' : 'PHYSICAL',
+      bindingMode: index % 3 === 0 ? 'NONE' : index % 3 === 1 ? 'OPTIONAL' : 'REQUIRED',
+      recipientLabel: index === 0 ? '西单商业客户' : '',
+      recipientCompany: '',
+    }))
+
+    window.__lastSweetCardBatchBody = null
+    window.__sweetCardListRequests = 0
+    window.fetch = async (url, options = {}) => {
+      const requestUrl = new URL(url, location.origin)
+      const path = requestUrl.pathname
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/sweet-cards/config') return json({ enabled: true })
+      if (path === '/api/v2/sweet-cards/overview') return json({ count: cards.length, issued: cards.length, initialAmountCents: '140000', balanceCents: '120000', statusCounts: Object.fromEntries(statuses.map((status) => [status, 1])) })
+      if (path === '/api/v2/sweet-cards/batches' && options.method === 'POST') {
+        window.__lastSweetCardBatchBody = JSON.parse(options.body)
+        return json({ batch }, 201)
+      }
+      if (path === '/api/v2/sweet-cards/batches') return json({ batches: [batch] })
+      if (path === '/api/v2/sweet-cards/cards') { window.__sweetCardListRequests += 1; return json({ cards }) }
+      if (path.startsWith('/api/v2/sweet-cards/cards/card-')) {
+        const card = cards.find((row) => path === `/api/v2/sweet-cards/cards/${row.id}`)
+        if (card) return json({ card: { ...card, expiresAt: null, binding: null, credentials: [], issuedByName: '西单操作员', issuedAt: now, giftingScenario: '商务赠礼', ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: '20000', balanceAfterCents: '20000', createdAt: now }] } })
+      }
+      if (path === '/api/v2/sweet-cards/rules') return json({ stores: [], categories: [] })
+      if (path === '/api/v2/sweet-cards/usage') return json({ redemptions: [] })
+      if (path === '/api/v2/sweet-cards/audit') return json({ events: [] })
+      return json({ error: `未模拟接口 ${path}` }, 404)
+    }
+
+    createRoot(document.getElementById('root')).render(React.createElement(SweetCardPage, {
+      onBack: () => { document.documentElement.dataset.back = 'true' },
+    }))
+  </script></body>
+</html>
