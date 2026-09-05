@@ -4,7 +4,7 @@ Date: 2026-09-05. MODEL_CONFIGURATION_NOT_VERIFIABLE.
 
 ## Evidence and authorization
 
-Candidate acceptance VERIFIED. Production promotion and final expansion pending at this commit. The user explicitly authorized production after candidate PASS and enabling all current ACTIVE DIRECT stores in sections 35–36. The user's business confirmation is: tongying, chaowai, guanshe and xidan are all DIRECT. No inference from names or existing eligibility is used.
+SWEET_CARD_STORE_AVAILABILITY_1_0_COMPLETE. Candidate, production promotion, final expansion and reconciliation VERIFIED at 2026-09-05 07:35 UTC. The user explicitly authorized production after candidate PASS and enabling all current ACTIVE DIRECT stores in sections 35–36. The user's business confirmation is: tongying, chaowai, guanshe and xidan are all DIRECT. No inference from names or existing eligibility is used.
 
 Production baseline directly audited over SSH: SHA `1d0899ac3b576f5a8045e49a929b4cf3939add35`, runtime `budu-prod-1d0899a-sweet-card-data-org`, database `budu_bj006`, migration 66 applied / 0 failed, health/db PASS, one production writer. Environment `SWEET_CARD_ENABLED=1`, `XIDAN_SWEET_CARD_COMMERCIAL=1`. Current four Store rows are active and existing per-store policies eligible=true. Prior backup is retained at `/opt/budu/.rollback-assets/sweet-card-data-org-1d0899a-20260905T063746Z/current-canonical-budu_bj006-m66-data-organization.dump`, SHA256 `cd9283c929d0dc17c768c2dea92b1ed2a896f8d08386d11f77ba9083c7aef374`.
 
@@ -66,8 +66,81 @@ Apply additive M67, initialize the four verified DIRECT classifications and glob
 
 Rollback restores the prior application/container/nginx route and preserves M67 additive columns/table. Old application ignores them; existing economic facts and store eligibility remain unchanged. Do not restore a pre-cutover database over subsequent business transactions. A P0 safety halt uses global OFF first; application rollback is a separately assessed recovery action.
 
-New M67 canonical backup and final runtime evidence will be appended after verified promotion. All prior artifacts, P19 acceptance baseline, and DO-NOT-RESTORE dumps remain retained with their existing designations.
+New M67 canonical backup and final runtime evidence are recorded below. All prior artifacts, P19 acceptance baseline, and DO-NOT-RESTORE dumps remain retained with their existing designations.
 
 ## Monitoring
 
-`monitor-sweet-card-availability.mjs` checks all facts and enabled stores in a consistent DB snapshot: negative balances, per-account/full Ledger delta, duplicate identities/effects, new authorization snapshots, Sweet Card refund failures. Default read-only; explicit `--halt-on-p0` atomically sets global OFF with audit on a redline. No balance/ledger adjustment. Existing legacy redemptions are reported separately; their historical authorization is not inferred from current permissions. The existing monitoring heartbeat will be updated after deployment to cover all enabled direct stores, HTTP 5xx/409, credential errors and refund failures, preserving quiet-on-no-change behavior.
+`monitor-sweet-card-availability.mjs` checks all facts and enabled stores in a consistent DB snapshot: negative balances, per-account/full Ledger delta, duplicate identities/effects, new authorization snapshots, Sweet Card refund failures. Default read-only; explicit `--halt-on-p0` atomically sets global OFF with audit on a redline. No balance/ledger adjustment. Existing legacy redemptions are reported separately; their historical authorization is not inferred from current permissions. The existing monitoring heartbeat was updated after deployment to cover all enabled direct stores, HTTP 5xx/409, credential errors and refund failures, preserving quiet-on-no-change behavior.
+
+
+## Final production evidence — VERIFIED
+
+- Deployed SHA: `3838b35b6e2abd2196a8183901462329d610636b`.
+- Runtime: `budu-prod-3838b35-sweet-card-availability`; nginx switched at `2026-09-05T07:34:16Z`.
+- Exact image revision, runtime GIT_SHA and `/opt/budu/.current-sha` agree. Public `/api/health` returns `ok=true`, `dbOk=true`, `gitSha=3838b35b6e2a`.
+- Database `budu_bj006`; **67 applied / 0 failed**; exactly **1 writer**.
+- Current direct stores **4**; Sweet Card enabled stores **4**; non-direct enabled **0**. GLOBAL **ENABLED**, preserved environment flags both `1`. Per-store control **AVAILABLE**.
+- Automatic normal POS redemption **PASS**; additional redeem permission required **NO**; Sweet Card admin capabilities **SEPARATE / PASS**.
+
+| Store key | Store | Classification evidence | Type / enabled | Current POS operators | Authorized | No POS scope for this store | Spoof operator/store |
+|---|---|---|---|---:|---|---|---|
+| tongying | 北京通盈中心店 | User explicitly confirmed DIRECT | DIRECT / ENABLED | 7 | ALLOW | 403 | 403 / 403 |
+| chaowai | 北京朝外店 | User explicitly confirmed DIRECT | DIRECT / ENABLED | 11 | ALLOW | 403 | 403 / 403 |
+| guanshe | 北京官舍店 | User explicitly confirmed DIRECT | DIRECT / ENABLED | 6 | ALLOW | 403 | 403 / 403 |
+| xidan | 北京西单店 | User explicitly confirmed DIRECT | DIRECT / ENABLED | 6 | ALLOW | 403 | 403 / 403 |
+
+The production authority probe used current authenticated accounts and live POS configuration. Denial-only POST probes against existing orders used deliberately invalid tokens and were rejected **before** credential processing or any economic effect. Current active non-public production accounts all have the POS module; therefore the verifier's separate `noPos` (module absent globally) field is UNVERIFIED in production because no such active account exists. This is not a permission bypass: actual accounts without the target store's POS scope were directly verified 403 in **each** store. The module-absent, grant and revoke cases were independently VERIFIED by real APIs against PostgreSQL acceptance accounts, without changing any production user's permissions.
+
+Cash, WeChat and Alipay configuration remains enabled for all four production stores. Provider implementation unchanged; provider payment/refund regression uses controlled synthetic transport, not live merchant charges. Reports, blacklist/rules, ordinary POS management denial, reconciliation, health and DB probes PASS.
+
+### Financial facts — unchanged
+
+ISSUE **400150** − REDEEM **160** + REFUND **100** = BALANCE **400090 cents**.
+
+- Full Ledger: **400090 cents**; full and per-account delta **0**.
+- COMMERCIAL: 11 cards, outstanding **250000 cents**, redeemed/refunded **0**.
+- ACCEPTANCE_TEST: 5 cards, outstanding **150090 cents**.
+- 16 total accounts, 29 Ledger rows, 9 Redemptions, 4 Sweet Card Refunds remain unchanged.
+- Full economic digest before/after: `367cb2c54abea909af01e3c710fa8ab5531ad2a9628250e1597865d620b8eff3`.
+- Payment provider/status summary and refund count unchanged. No production card issuance, redemption, refund, balance adjustment or history deletion was performed by this release.
+- Config operations audited: four verified Store classifications, global initialization, four per-store enable confirmations, one all-direct enable operation. Previous eligible=true records were preserved and confirmed, not duplicated into another authority.
+
+### Current canonical backup and rollback
+
+`CURRENT_CANONICAL_RESTORE_ARTIFACT`:
+
+`/opt/budu/.rollback-assets/sweet-card-availability-3838b35-20260905T073120Z/current-canonical-budu_bj006-m67-store-availability.dump`
+
+SHA-256: `227ee02340969b43478ed422a9e16327e3d5dc2c235f6c081114455d683e605f`.
+
+Dump exists; source DB identity **budu_bj006** checked before dump; restore listing **6107 entries**; actual isolated restore identity `budu_restore_m67|67|0|7|0` (67 successful migrations, no failures, 7 batches, no newly archived batches). CHECKSUM / LISTING / RESTORE **PASS**.
+
+Executable application rollback:
+
+`/opt/budu/.rollback-assets/sweet-card-availability-3838b35-20260905T073120Z/rollback-app.sh`
+
+Previous application `1d0899ac3b576f5a8045e49a929b4cf3939add35` remains stopped and retained. Additive M67 is compatible with it. No database downgrade/deletion is required for application rollback. Global OFF protection must be explicitly preserved before any rollback to the old application, which does not read the new DB global field.
+
+The first production gate stopped before cutover on a bundle HEAD issue. After that was fixed, M67 applied successfully but the bounded initialization container lacked the database network; it failed before any classification/global write. The old application stayed healthy, classifications/control remained empty, balance/Ledger stayed 400090. Network inheritance and early-failure cleanup were corrected, all gates re-run. The first pre-migration M66 backup remains retained:
+
+`/opt/budu/.rollback-assets/sweet-card-availability-5c1ac6b-20260905T072615Z/pre-promotion-budu_bj006-m66.dump`.
+
+The successful continuation created a fresh M67 pre-promotion backup before configuration. These resolved deployment failures did not change production economic facts.
+
+### Post-deploy monitoring / UI
+
+Direct initial check: negative balances **0**, duplicate economic effects **0**, new unauthorized-success snapshots **0**, failed Sweet Card refunds **0**, account deltas **0**, P0 **false**. All 9 existing redemptions predate the new authorization snapshot; no historical authorization claim is inferred from current permissions.
+
+Fresh runtime log aggregate at final audit: HTTP 5xx **0**, HTTP 409 **0**, 14 expected 403 denial probes among 35 logged requests. This is a bounded initial observation, not a future availability guarantee.
+
+Existing heartbeat `automation` updated to **甜意卡四店首日监控**, every 15 minutes, ACTIVE; keeps quiet unless actionable, covers dynamically enabled stores, and can halt new redemption through audited DB GLOBAL OFF on confirmed P0. Original first-business-day cutoff is preserved.
+
+New UI also passed WebKit at 320/340/375/390/430/1024/1440 widths; iPad screenshot `output/playwright/store-availability-ipad-webkit.png`. Screenshots contain clearly labeled isolated sample stores (including locked non-direct, inactive and default-disabled new-store examples), not production business mutations.
+
+### Changed implementation files
+
+- `prisma/schema.prisma`, additive M67 SQL.
+- `server/sweet-card-availability.js`, router registration in `server/app.js`.
+- Permission-check boundaries/audit in `server/sweet-card.js` and historical recovery scope in `server/pos.js`.
+- `src/components/SweetCardAvailability.jsx`, `SweetCardPage.jsx`, POS config refresh/Chinese reason in `PosPage.jsx`, shared `sweetCardLabels.js`.
+- API acceptance, historical rollout assertion, initialization, verification, monitor and deployment scripts; isolated UI harness and this report.

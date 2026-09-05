@@ -20,30 +20,17 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
-- Sweet Card reached `XIDAN_COMMERCIAL_LIVE` on 2026-09-05 at
-  `2026-09-05T04:17:04.700Z`. The commercial flag is enabled for the server-side
-  xidan permission intersection. See
-  `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
-- Runtime SHA: `fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED.
-- Database: `budu_bj006`; Migration 65 applied / 0 failed — VERIFIED.
-- `SweetCardBatch.businessPurpose` remains the canonical typed batch-use
-  authority. Three existing batches are `ACCEPTANCE_TEST`; first commercial
-  batch `BUDU-SC-202609-A01` has 10 untouched CREATED/UNACTIVATED cards at
-  20,000 cents each.
-- ISSUE 250,150 - REDEEM 160 + REFUND 100 = balance/Ledger 250,090 cents;
-  delta 0. Commercial-only outstanding is 200,000 cents with zero commercial
-  redemption/refund.
-- Three xidan POS operators hold `sweetCardPosRedeem`. The commercial-mode
-  read-only matrix passed authorized ALLOW and unauthorized/store/spoof DENY.
-- Public/internal health and all business regressions passed; exactly one
-  production writer was verified.
-- Current canonical restore artifact:
-  `/opt/budu/.rollback-assets/sweet-card-xidan-golive-fe4a725-20260905/current-canonical-budu_bj006-m65-xidan-live.dump`,
-  SHA-256 `b86e40aac33675ae16829a3024525d2bd0c8ac21f7db99f355122fbf32ffe1c2`;
-  checksum and isolated restore PASS.
-- First-day heartbeat monitoring is ACTIVE.
-- See `docs/checkpoints/2026-09-05-sweet-card-xidan-commercial-live.md`.
-- Revalidate all facts before further production action.
+- 2026-09-05 07:35 UTC: `SWEET_CARD_STORE_AVAILABILITY_1_0_COMPLETE` — VERIFIED.
+- Runtime SHA `3838b35b6e2abd2196a8183901462329d610636b`, container `budu-prod-3838b35-sweet-card-availability`.
+- PostgreSQL `budu_bj006`: Migration 67 applied / 0 failed; public/internal health PASS; one writer.
+- Store identity `Store.key`; `Store.active` + new `Store.operationType` determines ACTIVE DIRECT eligibility. User confirmed tongying/chaowai/guanshe/xidan all DIRECT. All four enabled.
+- Reuses `SweetCardStorePolicy.eligible`; missing policy DENY. DB singleton `SweetCardControl.GLOBAL.enabled` is ON; existing environment flags preserved.
+- Current normal POS module + store scope automatically grants redemption. `sweetCardPosRedeem` is legacy and not authoritative for new redemption. Management capabilities remain separate. Disabling store/global never blocks original historical Refund services.
+- Full Ledger/balance 400090 cents; ISSUE 400150 − REDEEM 160 + REFUND 100; delta 0. Commercial outstanding 250000, acceptance outstanding 150090; economic digest unchanged by release.
+- Canonical backup `/opt/budu/.rollback-assets/sweet-card-availability-3838b35-20260905T073120Z/current-canonical-budu_bj006-m67-store-availability.dump`; SHA256 `227ee02340969b43478ed422a9e16327e3d5dc2c235f6c081114455d683e605f`; listing and actual restore PASS.
+- Prior app, M66/M67 pre-promotion backups, earlier P19 baseline and DO-NOT-RESTORE artifacts retained. Four-store first-day heartbeat ACTIVE.
+- Full evidence, authority contract, test limits and rollback: `docs/BUDU_SWEET_CARD_STORE_AVAILABILITY_1_0.md`.
+- Revalidate current facts before future production work; this index is not live authority.
 
 ## Architecture Contracts
 
@@ -54,7 +41,7 @@ Last reviewed: 2026-09-05
 
 ## Current Engineering Work
 
-- `codex/sweet-card-p7c-serialization` contains the deployed application-only serialization repair and subsequent documentation. Current blocker is P10 conflict error handling; continuation needs a separately authorized Candidate. No balance edits, automatic refunds or replay of completed acceptance orders.
+- `codex/sweet-card-store-availability` contains deployed Store Availability 1.0 and final evidence. P7/P10 release notes are historical, not current blockers. No additional commercial card issuance is authorized by this completed task.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
 - `budu-payroll-audit` is the canonical team workflow for asking whether calculated payroll is correct. It is always STRICT and read-only, reuses the current Payroll authority and stable `Employee.id`, and explicitly excludes paid/owed settlement reconciliation.
