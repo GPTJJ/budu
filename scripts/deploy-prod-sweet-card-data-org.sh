@@ -31,6 +31,14 @@ OLD_STOPPED=0
 ROUTE_CHANGED=0
 DEPLOY_OK=0
 
+write_current_sha() {
+  docker run --rm --user root \
+    -e TARGET_SHA="$1" \
+    -v "${APP_DIR}:/target" \
+    "$IMAGE" \
+    sh -c 'printf "%s\n" "$TARGET_SHA" > /target/.current-sha'
+}
+
 safe_cleanup() {
   if [ -n "$OLD_CONTAINER" ] && docker inspect "$OLD_CONTAINER" >/dev/null 2>&1; then
     docker exec --user root "$OLD_CONTAINER" rm -f /app/scripts/.audit-sweet-card-production.mjs >/dev/null 2>&1 || true
@@ -53,7 +61,7 @@ rollback_on_error() {
     docker exec "$NGINX_CONTAINER" nginx -t >/dev/null
     docker exec "$NGINX_CONTAINER" nginx -s reload >/dev/null
   fi
-  printf '%s\n' "$EXPECTED_OLD_SHA" > "${APP_DIR}/.current-sha"
+  write_current_sha "$EXPECTED_OLD_SHA"
   safe_cleanup
   echo "SWEET_CARD_DATA_ORG_DEPLOY_ROLLBACK_COMPLETE" >&2
   exit "$rc"
@@ -151,9 +159,9 @@ OLD_CONTAINER="${ROUTE_TARGETS[0]}"
 [ "$(docker inspect "$OLD_CONTAINER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$EXPECTED_OLD_SHA" ]
 [ "$(count_writers "$OLD_CONTAINER")" -eq 1 ]
 require_health "$OLD_CONTAINER" "$EXPECTED_OLD_SHA"
-verify_database "$OLD_CONTAINER" 65
+verify_database "$OLD_CONTAINER" 66
 [ "$(docker inspect "$OLD_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^XIDAN_SWEET_CARD_COMMERCIAL=//p')" = 1 ]
-echo "production preflight PASS: runtime=${OLD_CONTAINER} database=budu_bj006 migration=65 writer=1 commercial=enabled"
+echo "production preflight PASS: runtime=${OLD_CONTAINER} database=budu_bj006 migration=66 writer=1 commercial=enabled"
 
 printf '%s' '{"username":"budu","userId":"dh"}' > "$BINDING_FILE"
 chmod 600 "$BINDING_FILE"
@@ -191,9 +199,9 @@ BEFORE_BATCH_COUNT="$(BEFORE_JSON="$BEFORE_JSON" python3 -c 'import json,os; pri
 BEFORE_FILE="${ROLLBACK_ROOT}/production-before-m66.json"
 printf '%s\n' "$BEFORE_JSON" > "$BEFORE_FILE"
 chmod 400 "$BEFORE_FILE"
-PRE_BACKUP="pre-migration66-budu_bj006-m65.dump"
+PRE_BACKUP="pre-promotion-budu_bj006-m66.dump"
 create_backup "$PRE_BACKUP"
-echo "fresh pre-M66 backup PASS"
+echo "fresh pre-promotion M66 backup PASS"
 
 docker network create "$ISOLATED_NETWORK" >/dev/null
 docker run -d --name "$RESTORE_CONTAINER" --network "$ISOLATED_NETWORK" \
@@ -214,7 +222,7 @@ docker run --rm --network "$ISOLATED_NETWORK" \
   "$IMAGE" node scripts/test-sweet-card-data-organization-restored.mjs
 docker rm -f "$RESTORE_CONTAINER" >/dev/null
 docker network rm "$ISOLATED_NETWORK" >/dev/null
-echo "restored canonical M65 -> M66 migration and real API integration PASS"
+echo "restored current M66 backup and real API integration PASS"
 
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migrator name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
@@ -223,7 +231,7 @@ docker rm "$MIGRATOR" >/dev/null
 verify_database "$OLD_CONTAINER" 66
 AFTER_MIGRATION_JSON="$(audit_container "$OLD_CONTAINER")"
 compare_business_facts "$BEFORE_JSON" "$AFTER_MIGRATION_JSON"
-echo "Migration 66 additive production rehearsal PASS"
+echo "Migration 66 already-applied production verification PASS"
 
 docker inspect "$CANDIDATE" >/dev/null 2>&1 && { echo "candidate name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
@@ -303,9 +311,9 @@ cp "${ROLLBACK_ROOT}/budu.conf.template.pre" "$HOST_TEMPLATE"
 docker cp "${ROLLBACK_ROOT}/budu.conf.active.pre" "${NGINX_CONTAINER}:${ACTIVE_CONFIG}" >/dev/null
 docker exec "$NGINX_CONTAINER" nginx -t
 docker exec "$NGINX_CONTAINER" nginx -s reload
-printf '%s\\n' "$EXPECTED_OLD_SHA" > "${APP_DIR}/.current-sha"
+docker run --rm --user root -e TARGET_SHA="$EXPECTED_OLD_SHA" -v "${APP_DIR}:/target" "$IMAGE" sh -c 'printf "%s\\n" "\$TARGET_SHA" > /target/.current-sha'
 EOF
 chmod 500 "${ROLLBACK_ROOT}/rollback-app.sh"
-printf '%s\n' "$RELEASE_SHA" > "${APP_DIR}/.current-sha"
+write_current_sha "$RELEASE_SHA"
 DEPLOY_OK=1
 echo "SWEET_CARD_DATA_ORGANIZATION_1_0_COMPLETE sha=${RELEASE_SHA} runtime=${CANDIDATE} migration=66 backup=${ROLLBACK_ROOT}/${POST_BACKUP} backup_sha256=${BACKUP_SHA} restore_listing=${RESTORE_LISTING} writer=1"
