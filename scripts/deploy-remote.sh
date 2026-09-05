@@ -22,6 +22,13 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
+# Sweet Card data organization has a dedicated STRICT release gate. The
+# candidate branch carries this additive-migration runner; other releases keep
+# using the established paths below.
+if [ "$ENV" = "prod" ] && [ -x scripts/release-prod-sweet-card-data-org.sh ] && [ -f prisma/migrations/20260905160000_sweet_card_batch_archive/migration.sql ]; then
+  exec bash scripts/release-prod-sweet-card-data-org.sh "$HOST" "$USER" "$APP_DIR" "$SHA"
+fi
+
 # Production remains on the authority-aware blue/green deployment path below.
 if [ "$ENV" = "prod" ]; then
   EXPECTED_OLD_SHA="d695bde5c2ecadfc1a3c2d41cae3f27c69f47060"
