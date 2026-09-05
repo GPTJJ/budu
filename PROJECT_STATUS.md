@@ -26,6 +26,7 @@
 - 当前权威事实新增一个正式 API 创建、purpose=`测试` 的 50,000 分 CREATED 卡；总账 ISSUE 50,150 - REDEEM 150 + REFUND 90 = 余额/Ledger 50,090，delta 0。旧 P19 150/90 基线已 STALE；分类报表与首批商业 batch 业务输入未完成，故商业上线 HOLD。
 - 完整交接 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-p10c-production-complete.md`。
 - 正确最终备份：P10C 保护目录内 `production-budu_bj006-m64-post-p19.dump`；两个误从非权威 `budu` 库生成的 dump 已明确标记 `DO-NOT-RESTORE`。
+- 该 frozen post-P19 backup 早于新增 50,000 分测试卡，不能代表当前完整数据库；未静默替换 canonical artifact，此差异属于下一商业 Gate blocker。
 
 ## 最新生产快照（2026-08-29：开发者安全删除）
 

@@ -45,6 +45,11 @@ made.
   6,100 entries. The protected `DO-NOT-RESTORE` marker for the two unrelated
   database `budu` dumps remains present.
 
+The frozen artifact is the exact post-P19 backup and therefore predates the later
+50,000-cent test card. It remains the designated P19 restore artifact, but it is
+not a complete snapshot of the current database. No replacement was silently
+promoted; that backup/current-facts gap is an additional release blocker.
+
 ## Commercial access candidate
 
 The new application-only authority is `User.permissions.sweetCardPosRedeem`,
