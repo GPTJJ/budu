@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Download, Gift, LockKeyhole, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
+import SweetCardAvailability from './SweetCardAvailability'
 import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
 import { hasSweetCardCapability, SWEET_CARD_CAPABILITIES } from '../../shared/accountPermissions'
@@ -13,7 +14,7 @@ import {
   sweetCardStatusLabel,
 } from '../utils/sweetCardLabels'
 
-const tabs = [['overview', '总览'], ['batches', '批次'], ['cards', '卡片'], ['issue', '发卡'], ['rules', '规则'], ['usage', '使用记录'], ['audit', '审计']]
+const tabs = [['overview', '总览'], ['batches', '批次'], ['cards', '卡片'], ['issue', '发卡'], ['rules', '规则'], ['settings', '设置'], ['usage', '使用记录'], ['audit', '审计']]
 const fieldClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 
 export default function SweetCardPage({ user, onBack }) {
@@ -64,7 +65,6 @@ export default function SweetCardPage({ user, onBack }) {
     setSaving(true); setError('')
     try {
       await api('/v2/sweet-cards/rules', { method: 'PUT', body: JSON.stringify({
-        eligibleStoreIds: data.rules.stores.filter((row) => row.eligible).map((row) => row.id),
         blockedCategoryIds: data.rules.categories.filter((row) => row.blocked).map((row) => row.id),
       }) }); await load()
     } catch (e) { setError(e.message) } finally { setSaving(false) }
@@ -97,7 +97,7 @@ export default function SweetCardPage({ user, onBack }) {
       </header>
       {error && <div className="mt-4 rounded-2xl bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
       {loading ? <div className="mt-6 rounded-3xl bg-white p-10 text-center text-sm text-slate-400">正在读取甜意卡权威数据…</div> : config?.enabled !== true ? <div className="mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center"><LockKeyhole className="mx-auto h-9 w-9 text-amber-500" /><h2 className="mt-3 font-black text-slate-800">Production capability 当前关闭</h2><p className="mt-2 text-sm text-slate-500">Candidate 已保留完整能力；开启前不会创建或核销任何真实价值。</p></div> : <>
-        <nav className="mt-4 flex gap-2 overflow-x-auto pb-2">{tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${tab === key ? 'bg-budu-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</nav>
+        <nav className="mt-4 flex gap-2 overflow-x-auto pb-2">{tabs.filter(([key]) => key !== 'settings' || hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.MANAGE)).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${tab === key ? 'bg-budu-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</nav>
         {['overview', 'batches', 'cards', 'usage'].includes(tab) && <div className="mt-2 flex gap-2 overflow-x-auto" aria-label="甜意卡运营视图">{[['COMMERCIAL', '商业运营'], ['ACCEPTANCE_TEST', '测试/验收'], ['ARCHIVED', '已归档']].map(([key, label]) => <button key={key} type="button" aria-pressed={viewScope === key} onClick={() => { setViewScope(key); setCardFilter((value) => ({ ...value, batchId: '' })) }} className={`min-h-10 shrink-0 rounded-xl px-4 text-xs font-bold ${viewScope === key ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</div>}
         {tab === 'overview' && data.overview && <section className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">{[
           ['已创建', data.overview.count], ['已激活', data.overview.statusCounts.ACTIVE || 0], ['未激活', data.overview.statusCounts.CREATED || 0], ['已发放', data.overview.issued || 0],
@@ -136,7 +136,8 @@ export default function SweetCardPage({ user, onBack }) {
           {form.carrierType === 'ELECTRONIC' && <label className="mt-4 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.activateNow} onChange={(e) => setForm({ ...form, activateNow: e.target.checked })} />创建后立即激活</label>}
           <button disabled={saving} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-budu-500 py-3.5 font-bold text-white disabled:opacity-50"><Plus className="h-5 w-5" />{saving ? '创建中…' : '创建甜意卡批次'}</button>
         </form>}
-        {tab === 'rules' && data.rules && <section className="mt-4 grid gap-4 lg:grid-cols-2"><div className="rounded-3xl bg-white p-5 shadow-sm"><h2 className="font-black">可核销直营门店</h2><p className="mt-1 text-xs text-slate-400">默认拒绝；只认 Store.key 策略。</p><div className="mt-4 space-y-2">{data.rules.stores.map((row) => <label key={row.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm"><span>{row.name}</span><input type="checkbox" checked={row.eligible} onChange={() => toggleRule('stores', row.id)} /></label>)}</div></div><div className="rounded-3xl bg-white p-5 shadow-sm"><h2 className="font-black">不可使用商品分类</h2><p className="mt-1 text-xs text-slate-400">规则保存 ProductCategory.id，名称仅展示。</p><div className="mt-4 space-y-2">{data.rules.categories.map((row) => <label key={row.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm"><span>{row.name}</span><input type="checkbox" checked={row.blocked} onChange={() => toggleRule('categories', row.id)} /></label>)}</div></div><button disabled={saving} onClick={saveRules} className="rounded-2xl bg-budu-500 py-3.5 font-bold text-white lg:col-span-2">保存规则</button></section>}
+        {tab === 'settings' && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.MANAGE) && <SweetCardAvailability />}
+        {tab === 'rules' && data.rules && <section className="mt-4 rounded-3xl bg-white p-5 shadow-sm"><h2 className="font-black">不可使用商品分类</h2><div className="mt-4 space-y-2">{data.rules.categories.map((row) => <label key={row.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm"><span>{row.name}</span><input type="checkbox" checked={row.blocked} onChange={() => toggleRule('categories', row.id)} /></label>)}</div><button disabled={saving} onClick={saveRules} className="mt-4 rounded-2xl bg-budu-500 px-5 py-3.5 font-bold text-white">保存规则</button></section>}
         {tab === 'usage' && <section className="mt-4 overflow-hidden rounded-3xl bg-white shadow-sm"><div className="border-b p-5"><h2 className="font-black">使用记录</h2><p className="mt-1 text-xs text-slate-400">订单销售与甜意卡核销依旧分别保留各自权威事实。</p></div><div className="divide-y">{data.usage.map((row) => <article key={row.id} className="p-4 text-sm"><div className="flex justify-between gap-3"><strong className="min-w-0 truncate text-slate-800">{row.publicCardNo} · {row.orderNo}</strong><strong className="shrink-0 text-budu-600">-{formatCents(row.amountCents)}</strong></div><p className="mt-1 text-xs text-slate-400">{row.storeId} · {row.redeemedByName || '未记录操作人'} · {new Date(row.createdAt).toLocaleString()}</p></article>)}{data.usage.length === 0 && <p className="p-8 text-center text-sm text-slate-400">暂无核销记录</p>}</div></section>}
         {tab === 'audit' && <section className="mt-4 overflow-hidden rounded-3xl bg-white shadow-sm"><div className="flex items-center gap-2 border-b p-5"><ShieldCheck className="h-5 w-5 text-budu-500" /><h2 className="font-black">安全审计</h2></div><div className="divide-y">{data.audit.map((event) => <div key={event.id} className="p-4 text-sm"><div className="flex justify-between gap-3"><strong className="text-slate-700">{event.action}</strong><time className="shrink-0 text-xs text-slate-400">{new Date(event.createdAt).toLocaleString()}</time></div><p className="mt-1 text-xs text-slate-400">{event.actorName || event.actorId || 'system'}</p></div>)}</div></section>}
       </>}

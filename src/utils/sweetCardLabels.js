@@ -34,3 +34,6 @@ export const sweetCardStatusLabel = (value) => labelFor(SWEET_CARD_STATUS_LABELS
 export const sweetCardBindingModeLabel = (value) => labelFor(SWEET_CARD_BINDING_MODE_LABELS, value)
 export const sweetCardCarrierTypeLabel = (value) => labelFor(SWEET_CARD_CARRIER_TYPE_LABELS, value)
 export const sweetCardBatchPurposeLabel = (value) => labelFor(SWEET_CARD_BATCH_PURPOSE_LABELS, value)
+
+const SWEET_CARD_STORE_TYPE_LABELS = Object.freeze({ DIRECT: '直营店', NON_DIRECT: '非直营店', UNKNOWN: '经营类型待确认' })
+export const sweetCardStoreTypeLabel = value => SWEET_CARD_STORE_TYPE_LABELS[value] || '经营类型待确认'

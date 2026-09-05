@@ -106,8 +106,24 @@ enum LaborCostCategory {
   OTHER
 }
 
+enum StoreOperationType {
+  UNKNOWN
+  DIRECT
+  NON_DIRECT
+}
+
+model SweetCardControl {
+  id            String   @id
+  enabled       Boolean  @default(false)
+  updatedById   String   @default("") @map("updated_by_id")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("sweet_card_control")
+}
+
 model Store {
   key                          String                   @id
+  operationType                StoreOperationType       @default(UNKNOWN) @map("operation_type")
   name                         String                   @unique
   district                     String                   @default("")
   active                       Boolean                  @default(true)

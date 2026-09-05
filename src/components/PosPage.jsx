@@ -129,7 +129,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       .then((data) => { if (active) setPosConfig(data) })
       .catch(() => { /* 配置读取失败时 fail closed：只保留现金，绝不回退为可用的模拟微信支付 */ })
     return () => { active = false }
-  }, [user.id, storeId])
+  }, [user.id, storeId, order?.id])
 
   useEffect(() => {
     let active = true
@@ -568,7 +568,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     setScannerChannel('')
     if (!paymentMethod) return
     if (String(authCode).startsWith('budu:sc:v1:')) {
-      if (posConfig?.sweetCard?.enabled !== true) { setError('当前门店未开放 budu 甜意卡'); return }
+      if (posConfig?.sweetCard?.enabled !== true) { setError(posConfig?.sweetCard?.reason || '当前门店暂未开启甜意卡'); return }
       setPaying('sweet-card')
       api(`/v2/pos/orders/${order.id}/sweet-card/inspect`, { method: 'POST', body: JSON.stringify({ token: authCode }) })
         .then((data) => { setSweetCardToken(authCode); setSweetCardPreview(data.card) })
@@ -826,6 +826,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               </div>
             )}
             <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
+              {posConfig?.sweetCard?.enabled === false && <p className="col-span-full text-sm text-slate-500">{posConfig.sweetCard.reason || '当前门店暂未开启甜意卡'}</p>}
               {posConfig?.sweetCard?.enabled === true && <button disabled={Boolean(paying) || Boolean(pendingPayment) || BigInt(order.sweetCardAmount || 0) > 0n} onClick={() => setScannerChannel('sweet-card')} className="rounded-2xl border border-budu-200 bg-budu-50 px-3 py-6 font-bold text-budu-700 disabled:opacity-40"><Gift className="mx-auto mb-3 h-8 w-8" />甜意卡</button>}
               {channelButton('wechat', '微信扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-emerald-200 bg-emerald-50 text-emerald-700')}
               {channelButton('alipay', '支付宝扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-sky-200 bg-sky-50 text-sky-700')}

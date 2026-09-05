@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>可用门店 UI 验收</title></head><body><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import SweetCardAvailability from '/src/components/SweetCardAvailability.jsx'
+import '/src/index.css'
+const names = ['北京通盈中心店','北京朝外店','北京官舍店','北京西单店','合作门店（测试）','新直营店（测试）','已停用直营店（测试）']
+const data = { globalEnabled: true, runtimeEnabled: true, stores: names.map((name,i)=>({ id:`store-${i}`, name, operationType:i===4?'NON_DIRECT':'DIRECT', active:i!==6, configurable:i!==4&&i!==6, enabled:i<4, posOperatorCount:[7,11,6,6,2,0,0][i] })) }
+window.__availabilityRequests = []
+window.fetch = async (url, init={}) => {
+ if(init.method==='PUT') {
+  const enabled=JSON.parse(init.body).enabled
+  window.__availabilityRequests.push({url,enabled})
+  if(url.endsWith('/global')) data.globalEnabled=enabled
+  else if(url.endsWith('/all-direct')) data.stores.filter(s=>s.configurable).forEach(s=>s.enabled=enabled)
+  else data.stores.find(s=>url.endsWith('/'+s.id)).enabled=enabled
+ }
+ return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}})
+}
+createRoot(document.getElementById('root')).render(React.createElement('main',{className:'min-h-screen bg-slate-50 p-4 md:p-8'},React.createElement('p',{className:'text-xs text-slate-400'},'隔离 UI 验收 · 门店示例数据'),React.createElement(SweetCardAvailability)))
+</script></body></html>

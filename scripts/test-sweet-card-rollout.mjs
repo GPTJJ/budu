@@ -1,3 +1,4 @@
+// Legacy helper tests describe historical behavior only; current APIs are tested separately.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -75,16 +76,16 @@ test('H: allowlist 不授予其他模块或甜意卡管理权限', () => {
   assert.equal(hasModuleAccess(allowlisted, MODULE_KEYS.FINANCE), false)
 })
 
-test('路由在 UI 之外强制执行 allowlist 并记录名单审计', async () => {
+test('新核销退出 legacy allowlist，历史名单审计保留', async () => {
   const [posSource, sweetCardSource, appSource] = await Promise.all([
     readFile(new URL('../server/pos.js', import.meta.url), 'utf8'),
     readFile(new URL('../server/sweet-card.js', import.meta.url), 'utf8'),
     readFile(new URL('../server/app.js', import.meta.url), 'utf8'),
   ])
-  assert.match(posSource, /sweetCardCommercialEnabled\(\) \? hasSweetCardPosRedeem\(req\.user\) : hasSweetCardProductionTestAccess\(req\.user\)/)
+  assert.match(posSource, /await availabilityFor\(prisma, storeKey, req.user\)/)
   assert.match(posSource, /await requireSweetCardOrderAccess\(req\.user, current\)/)
-  assert.equal((posSource.match(/await requireSweetCardOrderAccess\(req\.user,/g) || []).length >= 8, true)
-  assert.equal((sweetCardSource.match(/requireSweetCardPosAccess\(req\.user\)/g) || []).length >= 3, true)
+  assert.match(sweetCardSource, /await assertNewRedemptionAccess\(tx, accessOrder.storeId, actor.id, \{ lock: true \}\)/)
+  assert.doesNotMatch(posSource + sweetCardSource, /requireSweetCardPosAccess\(req\.user\)/)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_enabled/)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_disabled/)
   assert.match(sweetCardSource, /targetPrincipalId: target\.id/)

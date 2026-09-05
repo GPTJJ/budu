@@ -31,7 +31,7 @@ import {
   tokenHash,
 } from './sweet-card-core.js'
 import { renderMinimalSweetCard } from './sweet-card-presentation.js'
-import { requireSweetCardPosAccess } from './sweet-card-rollout.js'
+import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availability.js'
 import { mirrorUsersToKv } from './user-store.js'
 
 export const sweetCardRouter = Router()
@@ -78,7 +78,6 @@ export async function retrySweetCardTransaction(operation, {
 }
 const requireAdmin = (req, capability = SWEET_CARD_CAPABILITIES.VIEW) => {
   if (!hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) || !hasSweetCardCapability(req.user, capability)) throw httpError('无甜意卡权限', 403)
-  if (!sweetCardCommercialEnabled()) requireSweetCardPosAccess(req.user)
 }
 const requirePos = (req) => {
   if (!hasModuleAccess(req.user, MODULE_KEYS.STORE_POS)) throw httpError('无 POS 权限', 403)
@@ -131,6 +130,7 @@ export async function inspectSweetCard({ orderId, token, actor }) {
   if (!order) throw httpError('订单不存在', 404)
   if (!credential) throw httpError('甜意卡 credential 无效', 404)
   const account = credential.account
+  await assertNewRedemptionAccess(prisma, order.storeId, actor.id)
   const eligibility = await loadEligibility(prisma, order)
   const usable = credential.status === 'ACTIVE' && account.status === 'ACTIVE'
     && (!account.expiresAt || account.expiresAt > new Date())
@@ -151,6 +151,9 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
   if (String(requestKey || '').length < 8 || String(requestKey || '').length > 160) throw httpError('核销幂等键不正确')
   const runTransaction = () => prisma.$transaction(async (tx) => {
     await settlementCoordinator.lockOrder(tx, orderId)
+    const accessOrder = await tx.order.findUnique({ where: { id: orderId }, select: { storeId: true } })
+    if (!accessOrder) throw httpError('订单不存在', 404)
+    const authorization = await assertNewRedemptionAccess(tx, accessOrder.storeId, actor.id, { lock: true })
     // Re-read the same economic identity in every fresh transaction snapshot.
     const replay = await tx.sweetCardRedemption.findUnique({ where: { requestKey: String(requestKey) } })
     if (replay) {
@@ -201,7 +204,7 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
       balanceCents: balanceAfter, status: balanceAfter === 0n ? 'EXHAUSTED' : 'ACTIVE', version: { increment: 1 },
     } })
     await tx.order.update({ where: { id: order.id }, data: { sweetCardAmount: amount, ...(amount === order.payableAmount ? { paymentStatus: 'pending' } : {}), version: { increment: 1 } } })
-    await audit(tx, actor, 'sweet_card.redeemed', { accountId: account.id, credentialId: credential.id }, { orderId, amountCents: amount.toString(), storeId: order.storeId })
+    await audit(tx, actor, 'sweet_card.redeemed', { accountId: account.id, credentialId: credential.id }, { orderId, amountCents: amount.toString(), storeId: order.storeId, authorization: { authority: 'STORE_AVAILABILITY_1_0', ...authorization } })
     let settledOrder = await tx.order.findUnique({ where: { id: order.id } })
     if (amount === order.payableAmount) settledOrder = await settlementCoordinator.settleSweetCard(tx, { orderId: order.id })
     return { reused: false, redemption, order: settledOrder }
@@ -214,9 +217,9 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
 
 sweetCardRouter.get('/sweet-cards/config', wrap(async (req, res) => {
   const productionTestAllowed = hasSweetCardProductionTestAccess(req.user)
-  const commercialAllowed = hasSweetCardPosRedeem(req.user)
+  const commercialAllowed = hasModuleAccess(req.user, MODULE_KEYS.STORE_POS)
   const adminAllowed = hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) && hasSweetCardCapability(req.user, SWEET_CARD_CAPABILITIES.VIEW)
-  res.json({ enabled: sweetCardEnabled() && (sweetCardCommercialEnabled() ? commercialAllowed || adminAllowed : productionTestAllowed), productionTestAllowed, commercialAllowed, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
+  res.json({ enabled: adminAllowed || (sweetCardEnabled() && commercialAllowed), productionTestAllowed, commercialAllowed, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
 }))
 
 const requireAllowlistAdmin = (req) => {
@@ -264,28 +267,10 @@ sweetCardRouter.get('/sweet-cards/pos-operators', wrap(async (req, res) => {
   res.json({ principals: users.filter(hasSweetCardPosRedeem).map((user) => ({ id: user.id, role: user.role, storeKeys: user.storeKeys })) })
 }))
 
+// LEGACY / NOT_AUTHORITATIVE_FOR_POS_REDEMPTION. Preserve historical grants.
 sweetCardRouter.put('/sweet-cards/pos-operators/:principalId', wrap(async (req, res) => {
   requireDb(); requireAllowlistAdmin(req)
-  if (typeof req.body?.enabled !== 'boolean') throw httpError('enabled 必须为布尔值')
-  const actor = who(req.user)
-  const target = await prisma.user.findUnique({ where: { id: req.params.principalId } })
-  if (!target || target.status === 'disabled' || target.role === 'public') throw httpError('账号不存在或不可用', 404)
-  if (req.body.enabled && (!hasModuleAccess(target, MODULE_KEYS.STORE_POS) || !Array.isArray(target.storeKeys) || !target.storeKeys.includes('xidan'))) {
-    throw httpError('账号必须具有西单门店范围和 POS 权限', 409)
-  }
-  const before = hasSweetCardPosRedeem(target)
-  const permissions = {
-    ...normalizeAccountPermissions(target.permissions, target.role, target.assetCenter === true),
-    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_POS_REDEEM]: req.body.enabled,
-  }
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: target.id }, data: { permissions, permissionsUpdatedAt: new Date(), permissionsUpdatedBy: req.user.username } })
-    await audit(tx, actor, req.body.enabled ? 'sweet_card.pos_operator_enabled' : 'sweet_card.pos_operator_disabled', {}, {
-      targetPrincipalId: target.id, before, after: req.body.enabled, storeId: 'xidan',
-    })
-  })
-  await mirrorUsersToKv()
-  res.json({ ok: true, principal: { id: target.id, role: target.role, enabled: req.body.enabled } })
+  throw httpError('甜意卡核销已自动继承门店 POS 权限，无需单独授权', 410)
 }))
 
 sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
@@ -572,16 +557,16 @@ sweetCardRouter.get('/sweet-cards/rules', wrap(async (req, res) => {
 
 sweetCardRouter.put('/sweet-cards/rules', wrap(async (req, res) => {
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.MANAGE); assertSweetCardEnabled()
-  const actor = who(req.user); const eligibleStoreIds = new Set((req.body?.eligibleStoreIds || []).map(String)); const blockedCategoryIds = new Set((req.body?.blockedCategoryIds || []).map(String))
-  const [stores, categories] = await Promise.all([prisma.store.findMany({ select: { key: true } }), prisma.productCategory.findMany({ select: { id: true } })])
-  if ([...eligibleStoreIds].some((id) => !stores.some((s) => s.key === id)) || [...blockedCategoryIds].some((id) => !categories.some((c) => c.id === id))) throw httpError('规则包含无效权威 ID')
+  if (req.body?.eligibleStoreIds !== undefined) throw httpError('请通过设置中的可用门店修改门店开关', 409)
+  const actor = who(req.user); const blockedCategoryIds = new Set((req.body?.blockedCategoryIds || []).map(String))
+  const categories = await prisma.productCategory.findMany({ select: { id: true } })
+  if ([...blockedCategoryIds].some((id) => !categories.some((c) => c.id === id))) throw httpError('规则包含无效权威 ID')
   await prisma.$transaction(async (tx) => {
-    for (const store of stores) await tx.sweetCardStorePolicy.upsert({ where: { storeId: store.key }, create: { storeId: store.key, eligible: eligibleStoreIds.has(store.key), updatedById: actor.id, updatedByName: actor.name }, update: { eligible: eligibleStoreIds.has(store.key), updatedById: actor.id, updatedByName: actor.name } })
     for (const category of categories) {
       if (blockedCategoryIds.has(category.id)) await tx.sweetCardCategoryPolicy.upsert({ where: { categoryId: category.id }, create: { categoryId: category.id, blocked: true, updatedById: actor.id, updatedByName: actor.name }, update: { blocked: true, updatedById: actor.id, updatedByName: actor.name } })
       else await tx.sweetCardCategoryPolicy.deleteMany({ where: { categoryId: category.id } })
     }
-    await audit(tx, actor, 'sweet_card.rules_updated', {}, { eligibleStoreIds: [...eligibleStoreIds], blockedCategoryIds: [...blockedCategoryIds] })
+    await audit(tx, actor, 'sweet_card.rules_updated', {}, { blockedCategoryIds: [...blockedCategoryIds], storePolicyAuthority: 'sweet_card_store_policies' })
   })
   res.json({ ok: true })
 }))
@@ -592,15 +577,17 @@ sweetCardRouter.get('/sweet-cards/audit', wrap(async (req, res) => {
 }))
 
 sweetCardRouter.post('/pos/orders/:id/sweet-card/inspect', wrap(async (req, res) => {
-  requireDb(); requirePos(req); requireSweetCardPosAccess(req.user); assertSweetCardEnabled()
+  requireDb(); requirePos(req); assertSweetCardEnabled()
   const order = await prisma.order.findUnique({ where: { id: req.params.id } }); if (!order) throw httpError('订单不存在', 404)
+  rejectSpoof(req.body, req.user, order.storeId)
   if (!(req.user.role === 'developer' || req.user.role === 'admin' || req.user.role === 'finance' || (req.user.storeKeys || []).includes(order.storeId))) throw httpError('无权操作该门店订单', 403)
   res.json({ card: await inspectSweetCard({ orderId: order.id, token: req.body?.token, actor: who(req.user) }) })
 }))
 
 sweetCardRouter.post('/pos/orders/:id/sweet-card/redeem', wrap(async (req, res) => {
-  requireDb(); requirePos(req); requireSweetCardPosAccess(req.user); assertSweetCardEnabled()
+  requireDb(); requirePos(req); assertSweetCardEnabled()
   const order = await prisma.order.findUnique({ where: { id: req.params.id } }); if (!order) throw httpError('订单不存在', 404)
+  rejectSpoof(req.body, req.user, order.storeId)
   if (!(req.user.role === 'developer' || req.user.role === 'admin' || req.user.role === 'finance' || (req.user.storeKeys || []).includes(order.storeId))) throw httpError('无权操作该门店订单', 403)
   const result = await redeemSweetCard({ orderId: order.id, token: req.body?.token, amountCents: req.body?.amountCents, requestKey: req.body?.requestKey, actor: who(req.user) })
   // Prisma returns all seven monetary columns as BigInt on both commit and replay.

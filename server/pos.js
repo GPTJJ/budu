@@ -21,8 +21,6 @@ import {
   hasManualExternalRefundConfirm,
   hasManualExternalRefundRecord,
   hasModuleAccess,
-  hasSweetCardPosRedeem,
-  hasSweetCardProductionTestAccess,
   isSuperUser,
 } from '../shared/accountPermissions.js'
 import { externalSettlementService } from './settlements/index.js'
@@ -30,9 +28,8 @@ import { assertNoClientSettlementState, serializeExternalSettlement } from './se
 import { manualExternalRefundService } from './refunds/index.js'
 import { resolveEffectiveProductCosts } from './product-cost-authority.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
-import { sweetCardCommercialEnabled, sweetCardEnabled } from './sweet-card-core.js'
+import { availabilityFor, hasNormalPosForStore } from './sweet-card-availability.js'
 import { reverseSweetCardRedemption } from './sweet-card-refunds.js'
-import { requireSweetCardProductionTestForOrder } from './sweet-card-rollout.js'
 
 export const posRouter = Router()
 
@@ -71,10 +68,10 @@ function canReadOrder(user, order) {
   return isSuperUser(user) || order.cashierId === user.id
 }
 
+// Existing tender settlement, cancellation and historical refunds use normal POS
+// authority. Availability controls only new redemption, never these recovery paths.
 async function requireSweetCardOrderAccess(user, order) {
-  if (BigInt(order?.sweetCardAmount || 0) <= 0n) return
-  const policy = await prisma.sweetCardStorePolicy.findUnique({ where: { storeId: order.storeId } })
-  requireSweetCardProductionTestForOrder(user, order, { storeEligible: policy?.eligible === true })
+  if (BigInt(order?.sweetCardAmount || 0) > 0n && !hasNormalPosForStore(user, order.storeId)) throw httpError('无该门店 POS 权限', 403)
 }
 
 function paymentAuthCode(body, channel) {
@@ -270,13 +267,10 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   }
   const wechat = wechatPayFrontendStatus(storeKey, mode)
   const alipay = alipayFrontendStatus(storeKey, mode)
-  const operatorAllowed = sweetCardCommercialEnabled() ? hasSweetCardPosRedeem(req.user) : hasSweetCardProductionTestAccess(req.user)
-  const sweetCard = sweetCardEnabled() && operatorAllowed && dbReady() && storeKey
-    ? await prisma.sweetCardStorePolicy.findUnique({ where: { storeId: storeKey } })
-    : null
+  const sweetCard = dbReady() && storeKey ? await availabilityFor(prisma, storeKey, req.user) : { enabled: false, reason: '当前门店暂未开启甜意卡' }
   if (wechat.enabled) channels.push('wechat')
   if (alipay.enabled) channels.push('alipay')
-  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled }, sweetCard: { enabled: sweetCard?.eligible === true } })
+  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled }, sweetCard })
 }))
 
 posRouter.get('/pos/orders', wrap(async (req, res) => {
