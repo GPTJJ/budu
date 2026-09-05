@@ -12,13 +12,19 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
-## 最新可信快照（2026-09-04：budu 甜意卡 1.0 Candidate）
+## 最新可信快照（2026-09-05：budu 甜意卡 1.0 Production Complete）
 
-- Production runtime：`ccdf1358938e53da99daf2a24d2cf3c6b13c8fed` — VERIFIED。
-- PostgreSQL authority：`budu_bj006`；Migration ledger 62 — VERIFIED READ-ONLY。
-- Candidate branch：`codex/sweet-card-1-candidate`；Migration 63 仅存在 Candidate，未应用到 Production。
-- Production Sweet Card：DISABLED；本任务未部署、未修改生产数据或配置。
-- 交接 checkpoint：`docs/checkpoints/2026-09-04-sweet-card-1-candidate.md`。
+- 状态：**PRODUCTION_COMPLETE — CONTROLLED ROLLOUT ONLY**。
+- Production runtime：`02f3f8fb6431157378c583802075713dd8bde8ef` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration 64 applied / 0 failed — VERIFIED。
+- Production health：internal/public PASS；database-connected application writer = 1 — VERIFIED。
+- Sweet Card 范围：仅 `xidan` 与唯一批准 principal `daa77021…` 的交集；普通 principal 与其他门店拒绝。禁止自动扩大范围。
+- P0–P19：PASS；最终 2 卡，ISSUE 150 - REDEEM 150 + REFUND 90 = balance/Ledger sum 90 cents，delta 0。
+- Cash / WeChat / Alipay / POS / Product / Order / Report / Permission / Audit：PASS。
+- P10C 是 application-only P2034 full-transaction bounded retry；无 Migration 65、Schema 或资金权威算法修改。
+- Candidate/source commit：`02f3f8fb6431157378c583802075713dd8bde8ef`，分支 `codex/sweet-card-p10c-concurrency`；未收到 `push` 指令，因此未推送。
+- 完整交接 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-p10c-production-complete.md`。
+- 正确最终备份：P10C 保护目录内 `production-budu_bj006-m64-post-p19.dump`；两个误从非权威 `budu` 库生成的 dump 已明确标记 `DO-NOT-RESTORE`。
 
 ## 最新生产快照（2026-08-29：开发者安全删除）
 
