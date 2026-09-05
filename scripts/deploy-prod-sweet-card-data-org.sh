@@ -18,6 +18,7 @@ CANDIDATE="budu-prod-${SHORT_SHA}-sweet-card-data-org"
 MIGRATOR="budu-migrate-${SHORT_SHA}-sweet-card-data-org"
 BACKUP_CONTAINER="budu-backup-${SHORT_SHA}-sweet-card-data-org"
 RESTORE_CONTAINER="budu-restore-${SHORT_SHA}-sweet-card-data-org"
+ISOLATED_NETWORK="budu-isolated-${SHORT_SHA}-sweet-card-data-org"
 IMAGE="budu-api:sweet-card-data-org-${SHORT_SHA}"
 HOST_TEMPLATE="${APP_DIR}/deploy/nginx/conf.d/budu.conf.template"
 ACTIVE_CONFIG="/etc/nginx/conf.d/budu.conf"
@@ -35,6 +36,7 @@ safe_cleanup() {
     docker exec --user root "$OLD_CONTAINER" rm -f /app/scripts/.audit-sweet-card-production.mjs >/dev/null 2>&1 || true
   fi
   docker rm -f "$BACKUP_CONTAINER" "$RESTORE_CONTAINER" "$MIGRATOR" >/dev/null 2>&1 || true
+  docker network rm "$ISOLATED_NETWORK" >/dev/null 2>&1 || true
   rm -f "$BUNDLE_PATH" "$CLONER_PATH" "$AUDIT_PATH" "$0"
   rm -rf "$WORK_ROOT"
 }
@@ -192,6 +194,27 @@ chmod 400 "$BEFORE_FILE"
 PRE_BACKUP="pre-migration66-budu_bj006-m65.dump"
 create_backup "$PRE_BACKUP"
 echo "fresh pre-M66 backup PASS"
+
+docker network create "$ISOLATED_NETWORK" >/dev/null
+docker run -d --name "$RESTORE_CONTAINER" --network "$ISOLATED_NETWORK" \
+  -e POSTGRES_USER=restore -e POSTGRES_PASSWORD=restore -e POSTGRES_DB=budu_sc_data_org_isolated \
+  -v "${ROLLBACK_ROOT}:/backup:ro" postgres:16-alpine >/dev/null
+for _attempt in $(seq 1 30); do docker exec "$RESTORE_CONTAINER" pg_isready -U restore -d budu_sc_data_org_isolated >/dev/null 2>&1 && break; sleep 1; done
+docker exec "$RESTORE_CONTAINER" pg_isready -U restore -d budu_sc_data_org_isolated >/dev/null
+docker exec "$RESTORE_CONTAINER" pg_restore -U restore -d budu_sc_data_org_isolated --no-owner "/backup/${PRE_BACKUP}"
+ISOLATED_DATABASE_URL="postgresql://restore:restore@${RESTORE_CONTAINER}:5432/budu_sc_data_org_isolated"
+docker run --rm --network "$ISOLATED_NETWORK" -e DATABASE_URL="$ISOLATED_DATABASE_URL" "$IMAGE" npx prisma migrate deploy
+ISOLATED_IDENTITY="$(docker exec "$RESTORE_CONTAINER" psql -U restore -d budu_sc_data_org_isolated -Atc 'SELECT current_database() || '\''|'\'' || (SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL) || '\''|'\'' || (SELECT count(*) FROM "_prisma_migrations" WHERE started_at IS NOT NULL AND finished_at IS NULL AND rolled_back_at IS NULL) || '\''|'\'' || (SELECT count(*) FROM "sweet_card_batches" WHERE "archived_at" IS NOT NULL);')"
+[ "$ISOLATED_IDENTITY" = "budu_sc_data_org_isolated|66|0|0" ]
+docker run --rm --network "$ISOLATED_NETWORK" \
+  -e DATABASE_URL="$ISOLATED_DATABASE_URL" \
+  -e JWT_SECRET=isolated-sweet-card-data-organization-secret \
+  -e SWEET_CARD_ENABLED=1 -e XIDAN_SWEET_CARD_COMMERCIAL=1 \
+  -e SWEET_CARD_CREDENTIAL_KEY="$(printf '11%.0s' $(seq 1 32))" \
+  "$IMAGE" node scripts/test-sweet-card-data-organization-restored.mjs
+docker rm -f "$RESTORE_CONTAINER" >/dev/null
+docker network rm "$ISOLATED_NETWORK" >/dev/null
+echo "restored canonical M65 -> M66 migration and real API integration PASS"
 
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migrator name already exists" >&2; exit 1; }
 python3 "$CLONER_PATH" "$OLD_CONTAINER" "$MIGRATOR" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled migration
