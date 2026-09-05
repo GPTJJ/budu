@@ -352,8 +352,16 @@ class HangingClient {
   async request(path, params, opts = {}) {
     this.calls.push(path)
     this.aborted = new Promise((resolve) => {
-      if (opts.signal?.aborted) resolve(true)
-      else opts.signal?.addEventListener('abort', () => resolve(true), { once: true })
+      // A real in-flight socket keeps the event loop alive until it is destroyed.
+      // Keep this transport double equally realistic so the provider's deliberately
+      // unref'ed deadline timer can fire under Node's test runner.
+      const socketHandle = setTimeout(() => {}, 1000)
+      const markAborted = () => {
+        clearTimeout(socketHandle)
+        resolve(true)
+      }
+      if (opts.signal?.aborted) markAborted()
+      else opts.signal?.addEventListener('abort', markAborted, { once: true })
     })
     await this.aborted
     throw new WechatV2Error('ABSOLUTE_DEADLINE', 'aborted', { retryable: true, ambiguous: true })
