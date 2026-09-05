@@ -611,6 +611,37 @@ export function createApp() {
     gitSha: GIT_SHA || '',
     dbOk: dbReady(),
   }))
+  // A0.6 test-environment authority probe. It is deliberately unavailable in
+  // every non-test runtime and only reachable through the isolated test gateway.
+  app.get('/api/test-authority', async (req, res) => {
+    if (APP_ENV !== 'test' || req.get('x-budu-test-gateway') !== '1') {
+      return res.status(404).json({ error: 'NOT_FOUND' })
+    }
+    try {
+      const [identity] = await prisma.$queryRaw`
+        SELECT current_database() AS database_name,
+               current_setting('transaction_read_only') AS transaction_read_only
+      `
+      const [migration] = await prisma.$queryRaw`
+        SELECT COUNT(*)::int AS applied,
+               COUNT(*) FILTER (WHERE finished_at IS NULL)::int AS failed
+        FROM "_prisma_migrations"
+      `
+      return res.json({
+        ok: true,
+        env: APP_ENV,
+        gitSha: GIT_SHA || '',
+        database: identity?.database_name || '',
+        transactionReadOnly: identity?.transaction_read_only || '',
+        migration: {
+          applied: Number(migration?.applied || 0),
+          failed: Number(migration?.failed || 0),
+        },
+      })
+    } catch {
+      return res.status(503).json({ error: 'TEST_AUTHORITY_UNAVAILABLE' })
+    }
+  })
   // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
   app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
