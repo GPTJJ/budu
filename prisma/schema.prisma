@@ -60,6 +60,11 @@ enum SweetCardBindingMode {
   REQUIRED
 }
 
+enum SweetCardBatchPurpose {
+  ACCEPTANCE_TEST
+  COMMERCIAL
+}
+
 enum SweetCardAccountStatus {
   CREATED
   ACTIVE
@@ -1765,6 +1770,7 @@ model SweetCardBatch {
   id                      String                @id
   name                    String
   purpose                 String                @default("")
+  businessPurpose         SweetCardBatchPurpose @map("business_purpose")
   faceValueCents          BigInt                @map("face_value_cents")
   cardCount               Int                   @map("card_count")
   totalInitialAmountCents BigInt                @map("total_initial_amount_cents")
@@ -1780,6 +1786,7 @@ model SweetCardBatch {
   auditLogs               SweetCardAuditLog[]
 
   @@index([createdAt])
+  @@index([businessPurpose, createdAt])
   @@map("sweet_card_batches")
 }
 

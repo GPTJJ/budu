@@ -16,7 +16,7 @@ async function call(path, body) {
   return json
 }
 try {
-  const issued = await call('/sweet-cards/batches', { name: 'P7C isolated issue', cardCount: 1, faceValueCents: '50', validityType: 'LONG_TERM', carrierType: 'ELECTRONIC', bindingMode: 'OPTIONAL', activateNow: true })
+  const issued = await call('/sweet-cards/batches', { name: 'P7C isolated issue', businessPurpose: 'ACCEPTANCE_TEST', cardCount: 1, faceValueCents: '50', validityType: 'LONG_TERM', carrierType: 'ELECTRONIC', bindingMode: 'OPTIONAL', activateNow: true })
   const cardId = issued.cards[0].accountId
   await prisma.member.create({ data: { id: 'p7c-member', name: 'P7C fixture', phone: 'p7c-fixture-only' } })
   const bound = await call(`/sweet-cards/cards/${cardId}/bind`, { memberId: 'p7c-member' })

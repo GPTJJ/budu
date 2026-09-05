@@ -44,6 +44,13 @@ const wrap = (handler) => async (req, res) => {
 }
 const who = (user) => ({ id: String(user?.id || ''), name: String(user?.displayName || user?.username || '') })
 const safeText = (value, max = 200) => String(value || '').trim().slice(0, max)
+const BATCH_PURPOSES = new Set(['ACCEPTANCE_TEST', 'COMMERCIAL'])
+const reportPurpose = (value, fallback = 'COMMERCIAL') => {
+  const purpose = String(value || fallback).trim().toUpperCase()
+  if (purpose !== 'ALL' && !BATCH_PURPOSES.has(purpose)) throw httpError('批次用途筛选不正确')
+  return purpose
+}
+const accountPurposeWhere = (purpose) => purpose === 'ALL' ? {} : { batch: { is: { businessPurpose: purpose } } }
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
 export async function retrySweetCardTransaction(operation, {
   maxAttempts = 3,
@@ -273,25 +280,45 @@ sweetCardRouter.put('/sweet-cards/pos-operators/:principalId', wrap(async (req, 
 
 sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
+  const businessPurpose = reportPurpose(req.query.businessPurpose)
+  const where = accountPurposeWhere(businessPurpose)
   const [groups, sums, expired, issued] = await Promise.all([
-    prisma.sweetCardAccount.groupBy({ by: ['status'], _count: { _all: true } }),
-    prisma.sweetCardAccount.aggregate({ _count: { _all: true }, _sum: { initialAmountCents: true, balanceCents: true } }),
-    prisma.sweetCardAccount.count({ where: { status: 'ACTIVE', expiresAt: { lte: new Date() } } }),
-    prisma.sweetCardAccount.count({ where: { issuedAt: { not: null } } }),
+    prisma.sweetCardAccount.groupBy({ by: ['status'], where, _count: { _all: true } }),
+    prisma.sweetCardAccount.aggregate({ where, _count: { _all: true }, _sum: { initialAmountCents: true, balanceCents: true } }),
+    prisma.sweetCardAccount.count({ where: { ...where, status: 'ACTIVE', expiresAt: { lte: new Date() } } }),
+    prisma.sweetCardAccount.count({ where: { ...where, issuedAt: { not: null } } }),
   ])
   const statusCounts = Object.fromEntries(groups.map((row) => [row.status, row._count._all]))
   statusCounts.ACTIVE = Math.max(0, (statusCounts.ACTIVE || 0) - expired); statusCounts.EXPIRED = (statusCounts.EXPIRED || 0) + expired
-  res.json({ statusCounts, count: sums._count._all, issued,
+  res.json({ businessPurpose, statusCounts, count: sums._count._all, issued,
     initialAmountCents: String(sums._sum.initialAmountCents || 0), balanceCents: String(sums._sum.balanceCents || 0) })
+}))
+
+sweetCardRouter.get('/sweet-cards/reconciliation', wrap(async (req, res) => {
+  requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.AUDIT); assertSweetCardEnabled()
+  const [accounts, ledger] = await Promise.all([
+    prisma.sweetCardAccount.findMany({ select: { id: true, balanceCents: true, batch: { select: { businessPurpose: true } } } }),
+    prisma.sweetCardLedger.findMany({ select: { type: true, amountCents: true, account: { select: { batch: { select: { businessPurpose: true } } } } } }),
+  ])
+  const summarize = (purpose) => {
+    const accountRows = purpose === 'ALL' ? accounts : accounts.filter((row) => row.batch?.businessPurpose === purpose)
+    const ledgerRows = purpose === 'ALL' ? ledger : ledger.filter((row) => row.account.batch?.businessPurpose === purpose)
+    const amount = (type) => ledgerRows.filter((row) => row.type === type).reduce((sum, row) => sum + row.amountCents, 0n)
+    const balance = accountRows.reduce((sum, row) => sum + row.balanceCents, 0n)
+    const ledgerSum = ledgerRows.reduce((sum, row) => sum + row.amountCents, 0n)
+    return { cards: accountRows.length, issueCents: amount('ISSUE').toString(), redeemCents: (-amount('REDEEM')).toString(), refundCents: amount('REFUND').toString(), reversalCents: amount('REVERSAL').toString(), balanceCents: balance.toString(), ledgerCents: ledgerSum.toString(), deltaCents: (ledgerSum - balance).toString() }
+  }
+  res.json({ scope: 'ALL_REAL_FACTS', all: summarize('ALL'), byPurpose: { COMMERCIAL: summarize('COMMERCIAL'), ACCEPTANCE_TEST: summarize('ACCEPTANCE_TEST') } })
 }))
 
 sweetCardRouter.get('/sweet-cards/cards', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
-  const where = {}
+  const businessPurpose = reportPurpose(req.query.businessPurpose)
+  const where = accountPurposeWhere(businessPurpose)
   if (req.query.status) where.status = String(req.query.status)
   if (req.query.batchId) where.batchId = String(req.query.batchId)
   const cards = await prisma.sweetCardAccount.findMany({ where, orderBy: { createdAt: 'desc' }, take: 300, include: { binding: true, credentials: true } })
-  res.json({ cards: cards.map((row) => serializeCard(row)) })
+  res.json({ businessPurpose, cards: cards.map((row) => serializeCard(row)) })
 }))
 
 sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
@@ -303,11 +330,13 @@ sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
 
 sweetCardRouter.get('/sweet-cards/usage', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
+  const businessPurpose = reportPurpose(req.query.businessPurpose)
   const redemptions = await prisma.sweetCardRedemption.findMany({
+    where: businessPurpose === 'ALL' ? {} : { account: { batch: { is: { businessPurpose } } } },
     orderBy: { createdAt: 'desc' }, take: 300,
     include: { account: { select: { publicCardNo: true } }, order: { select: { orderNo: true } } },
   })
-  res.json({ redemptions: redemptions.map((row) => ({
+  res.json({ businessPurpose, redemptions: redemptions.map((row) => ({
     id: row.id, redemptionNo: row.redemptionNo, orderId: row.orderId, orderNo: row.order.orderNo,
     publicCardNo: row.account.publicCardNo, storeId: row.storeIdSnapshot,
     amountCents: row.amountCents.toString(), eligibleSubtotalCents: row.eligibleSubtotalCents.toString(),
@@ -317,8 +346,9 @@ sweetCardRouter.get('/sweet-cards/usage', wrap(async (req, res) => {
 
 sweetCardRouter.get('/sweet-cards/batches', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
-  const batches = await prisma.sweetCardBatch.findMany({ orderBy: { createdAt: 'desc' }, include: { accounts: { select: { status: true, balanceCents: true, initialAmountCents: true, issuedAt: true } } } })
-  res.json({ batches: batches.map(({ accounts, ...batch }) => ({ ...batch, faceValueCents: batch.faceValueCents.toString(), totalInitialAmountCents: batch.totalInitialAmountCents.toString(), metrics: {
+  const businessPurpose = reportPurpose(req.query.businessPurpose)
+  const batches = await prisma.sweetCardBatch.findMany({ where: businessPurpose === 'ALL' ? {} : { businessPurpose }, orderBy: { createdAt: 'desc' }, include: { accounts: { select: { status: true, balanceCents: true, initialAmountCents: true, issuedAt: true } } } })
+  res.json({ businessPurpose, batches: batches.map(({ accounts, ...batch }) => ({ ...batch, faceValueCents: batch.faceValueCents.toString(), totalInitialAmountCents: batch.totalInitialAmountCents.toString(), metrics: {
     issued: accounts.filter((a) => a.issuedAt).length, activated: accounts.filter((a) => ['ACTIVE', 'EXHAUSTED'].includes(a.status)).length,
     consumedCents: accounts.reduce((sum, a) => sum + a.initialAmountCents - a.balanceCents, 0n).toString(),
     balanceCents: accounts.reduce((sum, a) => sum + a.balanceCents, 0n).toString(),
@@ -334,15 +364,17 @@ sweetCardRouter.post('/sweet-cards/batches', wrap(async (req, res) => {
   const validityType = String(req.body?.validityType || '')
   const carrierType = String(req.body?.carrierType || '')
   const bindingMode = String(req.body?.bindingMode || '')
+  const businessPurpose = String(req.body?.businessPurpose || '').trim().toUpperCase()
   if (!['ONE_YEAR', 'THREE_YEARS', 'LONG_TERM'].includes(validityType)) throw httpError('有效期不正确')
   if (!['PHYSICAL', 'ELECTRONIC'].includes(carrierType)) throw httpError('载体不正确')
   if (!['NONE', 'OPTIONAL', 'REQUIRED'].includes(bindingMode)) throw httpError('绑定模式不正确')
+  if (!BATCH_PURPOSES.has(businessPurpose)) throw httpError('必须选择正式批次用途')
   const activateNow = carrierType === 'ELECTRONIC' && req.body?.activateNow === true
   const batchId = `scb-${crypto.randomUUID()}`
   const now = new Date()
   const cards = await prisma.$transaction(async (tx) => {
     await tx.sweetCardBatch.create({ data: {
-      id: batchId, name: safeText(req.body?.name, 100) || '未命名批次', purpose: safeText(req.body?.purpose, 300),
+      id: batchId, name: safeText(req.body?.name, 100) || '未命名批次', purpose: safeText(req.body?.purpose, 300), businessPurpose,
       faceValueCents: faceValue, cardCount: count, totalInitialAmountCents: faceValue * BigInt(count), validityType,
       carrierType, bindingMode, giftingScenario: safeText(req.body?.giftingScenario, 120),
       presentationTemplateKey: safeText(req.body?.presentationTemplateKey, 50) || 'minimal-v1', createdById: actor.id, createdByName: actor.name,
@@ -370,7 +402,7 @@ sweetCardRouter.post('/sweet-cards/batches', wrap(async (req, res) => {
       } })
       result.push({ accountId, publicCardNo })
     }
-    await audit(tx, actor, 'sweet_card.batch_created', { batchId }, { cardCount: count, faceValueCents: faceValue.toString(), carrierType, bindingMode })
+    await audit(tx, actor, 'sweet_card.batch_created', { batchId }, { cardCount: count, faceValueCents: faceValue.toString(), carrierType, bindingMode, businessPurpose })
     return result
   })
   res.status(201).json({ ok: true, batchId, cards, exportReady: true })
