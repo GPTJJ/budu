@@ -12,21 +12,20 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
-## 最新可信快照（2026-09-05：budu 甜意卡 1.0 Production Complete）
+## 最新可信快照（2026-09-05：Sweet Card Commercial R1 Ready）
 
-- 状态：**COMMERCIAL_RELEASE_HOLD**；已恢复 P10C controlled rollout runtime。
-- Production runtime：`02f3f8fb6431157378c583802075713dd8bde8ef` — VERIFIED。
-- PostgreSQL authority：`budu_bj006`；Migration 64 applied / 0 failed — VERIFIED。
-- Production health：internal/public PASS；database-connected application writer = 1 — VERIFIED。
-- Sweet Card 范围：仅 `xidan` 与唯一批准 principal `daa77021…` 的交集；普通 principal 与其他门店拒绝。禁止自动扩大范围。
-- P0–P19：PASS；最终 2 卡，ISSUE 150 - REDEEM 150 + REFUND 90 = balance/Ledger sum 90 cents，delta 0。
-- Cash / WeChat / Alipay / POS / Product / Order / Report / Permission / Audit：PASS。
-- P10C 是 application-only P2034 full-transaction bounded retry；商业权限候选同样无 Migration 65、Schema 或资金权威算法修改。
-- `sweet-card-v1.0.0` 已 push 并指向 `02f3f8fb6431157378c583802075713dd8bde8ef`；分支 `codex/sweet-card-p10c-concurrency` 已 push，商业权限候选为 `43a059bcf8eff0bc3ec553733e05fb676075aee7`。
-- 当前权威事实新增一个正式 API 创建、purpose=`测试` 的 50,000 分 CREATED 卡；总账 ISSUE 50,150 - REDEEM 150 + REFUND 90 = 余额/Ledger 50,090，delta 0。旧 P19 150/90 基线已 STALE；分类报表与首批商业 batch 业务输入未完成，故商业上线 HOLD。
-- 完整交接 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-p10c-production-complete.md`。
-- 正确最终备份：P10C 保护目录内 `production-budu_bj006-m64-post-p19.dump`；两个误从非权威 `budu` 库生成的 dump 已明确标记 `DO-NOT-RESTORE`。
-- 该 frozen post-P19 backup 早于新增 50,000 分测试卡，不能代表当前完整数据库；未静默替换 canonical artifact，此差异属于下一商业 Gate blocker。
+- 状态：**READY_FOR_XIDAN_COMMERCIAL_LAUNCH**；商业开关仍为 DISABLED，未创建或发行 `BUDU-SC-202609-A01`。
+- Production runtime：`fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration 65 applied / 0 failed — VERIFIED。
+- `SweetCardBatch.businessPurpose` 是唯一批次用途 authority，闭集为 `ACCEPTANCE_TEST` / `COMMERCIAL`；名称与 free-text notes 不作为 authority。
+- 现有 3 个批次均为 `ACCEPTANCE_TEST`，含 post-P19 `测试` 批次的一张 50,000 分 CREATED、未激活卡；无商业批次。
+- 商业运营报表默认仅统计 `COMMERCIAL`；验收视图显式统计 `ACCEPTANCE_TEST`；资金与 Ledger reconciliation 始终统计 ALL_REAL_FACTS。
+- ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents，delta 0；commercial-only outstanding = 0。
+- 西单商业 POS capability 最终授权 3 人；authorized xidan ALLOW，unauthorized xidan / other store / spoof 均 DENY。
+- POS / Cash / WeChat / Alipay / Report / Sweet Card / Ledger / Permission / health / single writer 全部 PASS。
+- 当前 canonical backup：`/opt/budu/.rollback-assets/sweet-card-r1-fe4a725-20260905/current-canonical-budu_bj006-m65.dump`，SHA-256 `c97d77a37efdefc47cf397aff6181fde1380ee37f6ad9174ef7795fb5925b773`，隔离 restore PASS。
+- 原 M64 post-P19 artifact 保留并标记 `P19_ACCEPTANCE_BASELINE`；两个误指向数据库 `budu` 的 dump 继续 `DO-NOT-RESTORE`。
+- 完整 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-commercial-r1-ready.md`。
 
 ## 最新生产快照（2026-08-29：开发者安全删除）
 

@@ -20,22 +20,25 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
-- Commercial release gate on 2026-09-05 ended `COMMERCIAL_RELEASE_HOLD`; the
-  prior controlled runtime and route were restored. See
-  `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
-- Current Sweet Card facts include an additional formal-API test batch/card:
-  ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents, delta 0.
-  The earlier P19 150/90-cent total is STALE for current production.
-
-- Runtime SHA: `cd5551352420b18e2347294604b51b28b4b92dda` — VERIFIED on 2026-09-05.
-- Database: `budu_bj006`; Migration 64 applied / 0 failed — VERIFIED on 2026-09-05.
-- Public/internal health PASS; exactly one production writer — VERIFIED on 2026-09-05.
-- Routed runtime: `budu-prod-cd55513-sweet-card-p7c-disabled`.
-- Sweet Card is DISABLED after P10 HOLD. P7C BigInt repair and P7/P8/P9 pass;
-  P10 loser rolled back safely but exposed Prisma P2034 as HTTP 500. No second fix.
-- Existing acceptance card: issue 50, five debits totaling 50, balance 0, refunds 0,
-  delta 0; original P7 preserved. P11–P19 NOT STARTED.
-- See `docs/checkpoints/2026-09-05-sweet-card-p7c-production-hold.md`.
+- Sweet Card Commercial R1 reached `READY_FOR_XIDAN_COMMERCIAL_LAUNCH` on
+  2026-09-05. The commercial flag remains disabled and no first commercial
+  batch was created. See `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
+- Runtime SHA: `fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED.
+- Database: `budu_bj006`; Migration 65 applied / 0 failed — VERIFIED.
+- `SweetCardBatch.businessPurpose` is the canonical typed batch-use authority.
+  All 3 existing batches are `ACCEPTANCE_TEST`; commercial reports default to
+  `COMMERCIAL`, while financial reconciliation remains all-facts.
+- ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents; delta 0;
+  commercial-only outstanding 0.
+- Three xidan POS operators hold `sweetCardPosRedeem`. The commercial-mode
+  read-only matrix passed authorized ALLOW and unauthorized/store/spoof DENY.
+- Public/internal health and all business regressions passed; exactly one
+  production writer was verified.
+- Current canonical restore artifact:
+  `/opt/budu/.rollback-assets/sweet-card-r1-fe4a725-20260905/current-canonical-budu_bj006-m65.dump`,
+  SHA-256 `c97d77a37efdefc47cf397aff6181fde1380ee37f6ad9174ef7795fb5925b773`;
+  checksum and isolated restore PASS.
+- See `docs/checkpoints/2026-09-05-sweet-card-commercial-r1-ready.md`.
 - Revalidate all facts before further production action.
 
 ## Architecture Contracts
@@ -56,7 +59,7 @@ Last reviewed: 2026-09-05
 - Desktop navigation and the mobile drawer share `src/components/BrandSlot.jsx`: the approved simple character icon is paired with the unchanged canonical lowercase `budu` wordmark, and the former `甜蜜治愈日常` subtitle is absent.
 - BrandSlot assets locally override the legacy global image outline with transparent, borderless presentation; the underlying icon and canonical wordmark assets remain unchanged.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
-- Report Center migrations 59–62 and Sweet Card migrations 63–64 are deployed. Current migration baseline is 64; no migration is authorized by the P7C application-only repair.
+- Report Center migrations 59–62 and Sweet Card migrations 63–65 are deployed. Current migration baseline is 65; Migration 65 adds the typed batch-purpose authority without changing economic amounts.
 - Previous Production runtime `budu-prod-f7fd6e5-brand-slot-r2` and protected brand-border rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
 
 ## Rollback Notes
