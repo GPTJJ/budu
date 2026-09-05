@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { Router } from 'express'
 import JSZip from 'jszip'
 import QRCode from 'qrcode'
@@ -42,6 +43,20 @@ const wrap = (handler) => async (req, res) => {
 const who = (user) => ({ id: String(user?.id || ''), name: String(user?.displayName || user?.username || '') })
 const safeText = (value, max = 200) => String(value || '').trim().slice(0, max)
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
+export async function retrySweetCardTransaction(operation, {
+  maxAttempts = 3,
+  wait = (attempt) => delay(20 * attempt + crypto.randomInt(0, 21)),
+} = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation(attempt)
+    } catch (error) {
+      if (error?.code !== 'P2034') throw error
+      if (attempt === maxAttempts) throw httpError('核销并发冲突，请刷新后重试', 409)
+      await wait(attempt)
+    }
+  }
+}
 const requireAdmin = (req, capability = SWEET_CARD_CAPABILITIES.VIEW) => {
   if (!hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) || !hasSweetCardCapability(req.user, capability)) throw httpError('无甜意卡权限', 403)
   requireSweetCardProductionTestAccess(req.user)
@@ -115,13 +130,14 @@ export async function inspectSweetCard({ orderId, token, actor }) {
 export async function redeemSweetCard({ orderId, token, amountCents, requestKey, actor }) {
   assertSweetCardEnabled()
   if (String(requestKey || '').length < 8 || String(requestKey || '').length > 160) throw httpError('核销幂等键不正确')
-  const replay = await prisma.sweetCardRedemption.findUnique({ where: { requestKey: String(requestKey) } })
-  if (replay) {
-    if (replay.orderId !== orderId) throw httpError('核销幂等键已用于其他订单', 409)
-    return { reused: true, redemption: replay, order: await prisma.order.findUnique({ where: { id: orderId } }) }
-  }
-  return prisma.$transaction(async (tx) => {
+  const runTransaction = () => prisma.$transaction(async (tx) => {
     await settlementCoordinator.lockOrder(tx, orderId)
+    // Re-read the same economic identity in every fresh transaction snapshot.
+    const replay = await tx.sweetCardRedemption.findUnique({ where: { requestKey: String(requestKey) } })
+    if (replay) {
+      if (replay.orderId !== orderId) throw httpError('核销幂等键已用于其他订单', 409)
+      return { reused: true, redemption: replay, order: await tx.order.findUnique({ where: { id: orderId } }) }
+    }
     const credential = await accountByCredential(tx, token)
     if (!credential) throw httpError('甜意卡 credential 无效', 404)
     await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS locked', credential.accountId)
@@ -130,6 +146,7 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
     if (!order) throw httpError('订单不存在', 404)
     if (order.status !== 'pending_payment' || !['unpaid', 'failed'].includes(order.paymentStatus)) throw httpError('当前订单不可核销甜意卡', 409)
     if (order.sweetCardRedemption || order.sweetCardAmount > 0n) throw httpError('一笔订单最多使用一张甜意卡', 409)
+    if (credential.status === 'ACTIVE' && account.status === 'EXHAUSTED') throw httpError('甜意卡余额不足', 409)
     if (credential.status !== 'ACTIVE' || account.status !== 'ACTIVE') throw httpError('甜意卡未激活或不可用', 409)
     if (account.expiresAt && account.expiresAt <= new Date()) throw httpError('甜意卡已过期', 409)
     if (account.bindingMode === 'REQUIRED' && !account.binding) throw httpError('该甜意卡需先完成身份绑定', 409)
@@ -170,6 +187,10 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
     if (amount === order.payableAmount) settledOrder = await settlementCoordinator.settleSweetCard(tx, { orderId: order.id })
     return { reused: false, redemption, order: settledOrder }
   }, { isolationLevel: 'Serializable' })
+
+  // P2034 aborts the whole DB-only transaction. Never retry an individual write
+  // or another error (whose commit outcome may be unknown).
+  return retrySweetCardTransaction(runTransaction)
 }
 
 sweetCardRouter.get('/sweet-cards/config', wrap(async (req, res) => {
