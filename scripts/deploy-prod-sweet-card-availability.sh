@@ -61,7 +61,7 @@ rollback_on_error() {
     docker exec "$NGINX_CONTAINER" nginx -t >/dev/null
     docker exec "$NGINX_CONTAINER" nginx -s reload >/dev/null
   fi
-  write_current_sha "$EXPECTED_OLD_SHA"
+  if [ "$OLD_STOPPED" -eq 1 ] || [ "$ROUTE_CHANGED" -eq 1 ]; then write_current_sha "$EXPECTED_OLD_SHA"; fi
   safe_cleanup
   echo "SWEET_CARD_AVAILABILITY_DEPLOY_ROLLBACK_COMPLETE" >&2
   exit "$rc"
@@ -166,7 +166,7 @@ echo "production preflight PASS: runtime=${OLD_CONTAINER} database=budu_bj006 mi
 
 printf '%s' '{"username":"budu","userId":"dh"}' > "$BINDING_FILE"
 chmod 600 "$BINDING_FILE"
-git clone -q "$BUNDLE_PATH" "${WORK_ROOT}/release"
+git clone -q --branch codex/sweet-card-store-availability "$BUNDLE_PATH" "${WORK_ROOT}/release"
 [ "$(git -C "${WORK_ROOT}/release" rev-parse HEAD)" = "$RELEASE_SHA" ]
 docker build --label "org.opencontainers.image.revision=${RELEASE_SHA}" -t "$IMAGE" "${WORK_ROOT}/release"
 
