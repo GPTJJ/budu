@@ -9,6 +9,10 @@ export function sweetCardEnabled() {
   return ['1', 'true', 'on', 'yes'].includes(String(process.env.SWEET_CARD_ENABLED || '').trim().toLowerCase())
 }
 
+export function sweetCardCommercialEnabled() {
+  return ['1', 'true', 'on', 'yes'].includes(String(process.env.XIDAN_SWEET_CARD_COMMERCIAL || '').trim().toLowerCase())
+}
+
 export function assertSweetCardEnabled() {
   if (!sweetCardEnabled()) throw httpError('budu 甜意卡尚未启用', 503)
 }

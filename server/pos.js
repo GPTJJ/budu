@@ -21,6 +21,7 @@ import {
   hasManualExternalRefundConfirm,
   hasManualExternalRefundRecord,
   hasModuleAccess,
+  hasSweetCardPosRedeem,
   hasSweetCardProductionTestAccess,
   isSuperUser,
 } from '../shared/accountPermissions.js'
@@ -29,7 +30,7 @@ import { assertNoClientSettlementState, serializeExternalSettlement } from './se
 import { manualExternalRefundService } from './refunds/index.js'
 import { resolveEffectiveProductCosts } from './product-cost-authority.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
-import { sweetCardEnabled } from './sweet-card-core.js'
+import { sweetCardCommercialEnabled, sweetCardEnabled } from './sweet-card-core.js'
 import { reverseSweetCardRedemption } from './sweet-card-refunds.js'
 import { requireSweetCardProductionTestForOrder } from './sweet-card-rollout.js'
 
@@ -269,7 +270,8 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   }
   const wechat = wechatPayFrontendStatus(storeKey, mode)
   const alipay = alipayFrontendStatus(storeKey, mode)
-  const sweetCard = sweetCardEnabled() && hasSweetCardProductionTestAccess(req.user) && dbReady() && storeKey
+  const operatorAllowed = sweetCardCommercialEnabled() ? hasSweetCardPosRedeem(req.user) : hasSweetCardProductionTestAccess(req.user)
+  const sweetCard = sweetCardEnabled() && operatorAllowed && dbReady() && storeKey
     ? await prisma.sweetCardStorePolicy.findUnique({ where: { storeId: storeKey } })
     : null
   if (wechat.enabled) channels.push('wechat')

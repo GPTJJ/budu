@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { MODULE_KEYS, hasModuleAccess } from '../shared/accountPermissions.js'
 import {
+  requireSweetCardPosAccess,
   requireSweetCardProductionTestAccess,
   requireSweetCardProductionTestForOrder,
   sweetCardProductionAccess,
@@ -22,6 +23,7 @@ const ordinary = {
   storeKeys: ['xidan'],
   permissions: {},
 }
+const commercial = { ...ordinary, id: 'user-commercial', permissions: { sweetCardPosRedeem: true } }
 
 test('A: global false 时即使门店和账号均满足也拒绝', () => {
   assert.equal(sweetCardProductionAccess({ user: allowlisted, storeEligible: true, globalEnabled: false }), false)
@@ -37,6 +39,13 @@ test('C: global true 且账号允许但门店未开放时拒绝', () => {
 
 test('D: global、门店、账号和原始 POS 权限全部满足才允许', () => {
   assert.equal(sweetCardProductionAccess({ user: allowlisted, storeEligible: true, globalEnabled: true }), true)
+})
+
+test('商业模式只认独立 POS 核销 capability，不继承测试名单或角色', () => {
+  assert.equal(sweetCardProductionAccess({ user: commercial, storeEligible: true, globalEnabled: true, commercialEnabled: true }), true)
+  assert.equal(sweetCardProductionAccess({ user: allowlisted, storeEligible: true, globalEnabled: true, commercialEnabled: true }), false)
+  assert.doesNotThrow(() => requireSweetCardPosAccess(commercial, { commercialEnabled: true }))
+  assert.throws(() => requireSweetCardPosAccess(allowlisted, { commercialEnabled: true }), (error) => error.status === 403)
 })
 
 test('E/F: 直接 API 与伪造 body operatorId 都不能绕过登录主体', () => {
@@ -72,10 +81,10 @@ test('路由在 UI 之外强制执行 allowlist 并记录名单审计', async ()
     readFile(new URL('../server/sweet-card.js', import.meta.url), 'utf8'),
     readFile(new URL('../server/app.js', import.meta.url), 'utf8'),
   ])
-  assert.match(posSource, /sweetCardEnabled\(\) && hasSweetCardProductionTestAccess\(req\.user\)/)
+  assert.match(posSource, /sweetCardCommercialEnabled\(\) \? hasSweetCardPosRedeem\(req\.user\) : hasSweetCardProductionTestAccess\(req\.user\)/)
   assert.match(posSource, /await requireSweetCardOrderAccess\(req\.user, current\)/)
   assert.equal((posSource.match(/await requireSweetCardOrderAccess\(req\.user,/g) || []).length >= 8, true)
-  assert.equal((sweetCardSource.match(/requireSweetCardProductionTestAccess\(req\.user\)/g) || []).length >= 3, true)
+  assert.equal((sweetCardSource.match(/requireSweetCardPosAccess\(req\.user\)/g) || []).length >= 3, true)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_enabled/)
   assert.match(sweetCardSource, /sweet_card\.production_test_allowlist_disabled/)
   assert.match(sweetCardSource, /targetPrincipalId: target\.id/)

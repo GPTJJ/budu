@@ -99,6 +99,7 @@ export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   DAILY_ENTRY: 'dailyEntry',
   SWEET_CARD: 'sweetCard',
   SWEET_CARD_PRODUCTION_TEST: 'sweetCardProductionTest',
+  SWEET_CARD_POS_REDEEM: 'sweetCardPosRedeem',
 })
 
 export const SWEET_CARD_CAPABILITIES = Object.freeze({
@@ -214,6 +215,8 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
     ),
     [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST]:
       source[ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST] === true,
+    [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_POS_REDEEM]:
+      source[ACCOUNT_PERMISSION_KEYS.SWEET_CARD_POS_REDEEM] === true,
   }
 }
 
@@ -254,6 +257,17 @@ export function hasSweetCardProductionTestAccess(user) {
       user.role !== 'public' &&
       normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
         [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_PRODUCTION_TEST] === true,
+  )
+}
+
+/** Commercial POS authority: explicit User.id-bound capability, never role-derived. */
+export function hasSweetCardPosRedeem(user) {
+  return Boolean(
+    user &&
+      user.status !== 'disabled' &&
+      user.role !== 'public' &&
+      normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
+        [ACCOUNT_PERMISSION_KEYS.SWEET_CARD_POS_REDEEM] === true,
   )
 }
 
