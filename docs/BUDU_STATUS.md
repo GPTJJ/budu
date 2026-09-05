@@ -20,25 +20,29 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
-- Sweet Card Commercial R1 reached `READY_FOR_XIDAN_COMMERCIAL_LAUNCH` on
-  2026-09-05. The commercial flag remains disabled and no first commercial
-  batch was created. See `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
+- Sweet Card reached `XIDAN_COMMERCIAL_LIVE` on 2026-09-05 at
+  `2026-09-05T04:17:04.700Z`. The commercial flag is enabled for the server-side
+  xidan permission intersection. See
+  `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
 - Runtime SHA: `fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED.
 - Database: `budu_bj006`; Migration 65 applied / 0 failed — VERIFIED.
-- `SweetCardBatch.businessPurpose` is the canonical typed batch-use authority.
-  All 3 existing batches are `ACCEPTANCE_TEST`; commercial reports default to
-  `COMMERCIAL`, while financial reconciliation remains all-facts.
-- ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents; delta 0;
-  commercial-only outstanding 0.
+- `SweetCardBatch.businessPurpose` remains the canonical typed batch-use
+  authority. Three existing batches are `ACCEPTANCE_TEST`; first commercial
+  batch `BUDU-SC-202609-A01` has 10 untouched CREATED/UNACTIVATED cards at
+  20,000 cents each.
+- ISSUE 250,150 - REDEEM 160 + REFUND 100 = balance/Ledger 250,090 cents;
+  delta 0. Commercial-only outstanding is 200,000 cents with zero commercial
+  redemption/refund.
 - Three xidan POS operators hold `sweetCardPosRedeem`. The commercial-mode
   read-only matrix passed authorized ALLOW and unauthorized/store/spoof DENY.
 - Public/internal health and all business regressions passed; exactly one
   production writer was verified.
 - Current canonical restore artifact:
-  `/opt/budu/.rollback-assets/sweet-card-r1-fe4a725-20260905/current-canonical-budu_bj006-m65.dump`,
-  SHA-256 `c97d77a37efdefc47cf397aff6181fde1380ee37f6ad9174ef7795fb5925b773`;
+  `/opt/budu/.rollback-assets/sweet-card-xidan-golive-fe4a725-20260905/current-canonical-budu_bj006-m65-xidan-live.dump`,
+  SHA-256 `b86e40aac33675ae16829a3024525d2bd0c8ac21f7db99f355122fbf32ffe1c2`;
   checksum and isolated restore PASS.
-- See `docs/checkpoints/2026-09-05-sweet-card-commercial-r1-ready.md`.
+- First-day heartbeat monitoring is ACTIVE.
+- See `docs/checkpoints/2026-09-05-sweet-card-xidan-commercial-live.md`.
 - Revalidate all facts before further production action.
 
 ## Architecture Contracts

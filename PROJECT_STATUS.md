@@ -12,20 +12,20 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
-## 最新可信快照（2026-09-05：Sweet Card Commercial R1 Ready）
+## 最新可信快照（2026-09-05：Sweet Card Xidan Commercial Live）
 
-- 状态：**READY_FOR_XIDAN_COMMERCIAL_LAUNCH**；商业开关仍为 DISABLED，未创建或发行 `BUDU-SC-202609-A01`。
-- Production runtime：`fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED。
-- PostgreSQL authority：`budu_bj006`；Migration 65 applied / 0 failed — VERIFIED。
-- `SweetCardBatch.businessPurpose` 是唯一批次用途 authority，闭集为 `ACCEPTANCE_TEST` / `COMMERCIAL`；名称与 free-text notes 不作为 authority。
-- 现有 3 个批次均为 `ACCEPTANCE_TEST`，含 post-P19 `测试` 批次的一张 50,000 分 CREATED、未激活卡；无商业批次。
-- 商业运营报表默认仅统计 `COMMERCIAL`；验收视图显式统计 `ACCEPTANCE_TEST`；资金与 Ledger reconciliation 始终统计 ALL_REAL_FACTS。
-- ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents，delta 0；commercial-only outstanding = 0。
-- 西单商业 POS capability 最终授权 3 人；authorized xidan ALLOW，unauthorized xidan / other store / spoof 均 DENY。
-- POS / Cash / WeChat / Alipay / Report / Sweet Card / Ledger / Permission / health / single writer 全部 PASS。
-- 当前 canonical backup：`/opt/budu/.rollback-assets/sweet-card-r1-fe4a725-20260905/current-canonical-budu_bj006-m65.dump`，SHA-256 `c97d77a37efdefc47cf397aff6181fde1380ee37f6ad9174ef7795fb5925b773`，隔离 restore PASS。
-- 原 M64 post-P19 artifact 保留并标记 `P19_ACCEPTANCE_BASELINE`；两个误指向数据库 `budu` 的 dump 继续 `DO-NOT-RESTORE`。
-- 完整 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-commercial-r1-ready.md`。
+- 状态：**XIDAN_COMMERCIAL_LIVE**；go-live `2026-09-05T04:17:04.700Z`，actor `daa77021…`，scope xidan。
+- Production runtime：`fe4a7254a0ec9a68390cefe12b0766b3ec15ef93`；`budu-prod-fe4a725-sweet-card-xidan-live` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration 65 applied / 0 failed；商业开关 ENABLED；单写者 1 — VERIFIED。
+- 首批 `BUDU-SC-202609-A01`：`COMMERCIAL`，10 张 × 20,000 分 = 200,000 分；全部 CREATED/UNACTIVATED、REQUIRED binding、recipient 空、无核销/退款。
+- 上线 smoke 使用 ACCEPTANCE_TEST 卡完成一次 10 分核销和 10 分全额退款；debit/credit 各一次，余额 90→80→90，订单 refunded，无 Payment fact。
+- Full Ledger：ISSUE 250,150 - REDEEM 160 + REFUND 100 = balance/Ledger 250,090 cents，delta 0。
+- Commercial-only：1 batch / 10 cards / issued 200,000 / redeemed 0 / refunded 0 / outstanding 200,000 cents。
+- 3 名批准 xidan operator ALLOW；未授权 xidan、其他门店、非直营探测、spoof 与普通 POS admin API 均 DENY。
+- POS / Cash / WeChat / Alipay / reports / permissions / health 全部 PASS；未创建新 provider charge。
+- CURRENT canonical backup：`/opt/budu/.rollback-assets/sweet-card-xidan-golive-fe4a725-20260905/current-canonical-budu_bj006-m65-xidan-live.dump`，SHA-256 `b86e40aac33675ae16829a3024525d2bd0c8ac21f7db99f355122fbf32ffe1c2`，隔离 restore PASS。
+- 西单首日 heartbeat monitoring ACTIVE；首个 409/5xx/P2034/negative-balance/credential-error snapshot 全为 0。
+- 完整 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-xidan-commercial-live.md`。
 
 ## 最新生产快照（2026-08-29：开发者安全删除）
 

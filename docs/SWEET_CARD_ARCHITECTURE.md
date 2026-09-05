@@ -1,7 +1,8 @@
 # SWEET_CARD_AUTHORITY_MAP
 
-Status: Production authority through Commercial Release R1. Commercial issuance
-remains disabled pending an explicit launch action and approved batch inputs.
+Status: Production authority through Xidan commercial go-live. The commercial
+flag is enabled only through the xidan store-policy and operator-capability
+intersection; other stores remain denied.
 
 ## Existing authorities
 
