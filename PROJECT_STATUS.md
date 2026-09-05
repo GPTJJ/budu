@@ -14,15 +14,16 @@
 
 ## 最新可信快照（2026-09-05：budu 甜意卡 1.0 Production Complete）
 
-- 状态：**PRODUCTION_COMPLETE — CONTROLLED ROLLOUT ONLY**。
+- 状态：**COMMERCIAL_RELEASE_HOLD**；已恢复 P10C controlled rollout runtime。
 - Production runtime：`02f3f8fb6431157378c583802075713dd8bde8ef` — VERIFIED。
 - PostgreSQL authority：`budu_bj006`；Migration 64 applied / 0 failed — VERIFIED。
 - Production health：internal/public PASS；database-connected application writer = 1 — VERIFIED。
 - Sweet Card 范围：仅 `xidan` 与唯一批准 principal `daa77021…` 的交集；普通 principal 与其他门店拒绝。禁止自动扩大范围。
 - P0–P19：PASS；最终 2 卡，ISSUE 150 - REDEEM 150 + REFUND 90 = balance/Ledger sum 90 cents，delta 0。
 - Cash / WeChat / Alipay / POS / Product / Order / Report / Permission / Audit：PASS。
-- P10C 是 application-only P2034 full-transaction bounded retry；无 Migration 65、Schema 或资金权威算法修改。
-- Candidate/source commit：`02f3f8fb6431157378c583802075713dd8bde8ef`，分支 `codex/sweet-card-p10c-concurrency`；未收到 `push` 指令，因此未推送。
+- P10C 是 application-only P2034 full-transaction bounded retry；商业权限候选同样无 Migration 65、Schema 或资金权威算法修改。
+- `sweet-card-v1.0.0` 已 push 并指向 `02f3f8fb6431157378c583802075713dd8bde8ef`；分支 `codex/sweet-card-p10c-concurrency` 已 push，商业权限候选为 `43a059bcf8eff0bc3ec553733e05fb676075aee7`。
+- 当前权威事实新增一个正式 API 创建、purpose=`测试` 的 50,000 分 CREATED 卡；总账 ISSUE 50,150 - REDEEM 150 + REFUND 90 = 余额/Ledger 50,090，delta 0。旧 P19 150/90 基线已 STALE；分类报表与首批商业 batch 业务输入未完成，故商业上线 HOLD。
 - 完整交接 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-p10c-production-complete.md`。
 - 正确最终备份：P10C 保护目录内 `production-budu_bj006-m64-post-p19.dump`；两个误从非权威 `budu` 库生成的 dump 已明确标记 `DO-NOT-RESTORE`。
 

@@ -20,6 +20,13 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
+- Commercial release gate on 2026-09-05 ended `COMMERCIAL_RELEASE_HOLD`; the
+  prior controlled runtime and route were restored. See
+  `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
+- Current Sweet Card facts include an additional formal-API test batch/card:
+  ISSUE 50,150 - REDEEM 150 + REFUND 90 = balance/Ledger 50,090 cents, delta 0.
+  The earlier P19 150/90-cent total is STALE for current production.
+
 - Runtime SHA: `cd5551352420b18e2347294604b51b28b4b92dda` — VERIFIED on 2026-09-05.
 - Database: `budu_bj006`; Migration 64 applied / 0 failed — VERIFIED on 2026-09-05.
 - Public/internal health PASS; exactly one production writer — VERIFIED on 2026-09-05.
