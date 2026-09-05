@@ -19,6 +19,11 @@ export const SWEET_CARD_CARRIER_TYPE_LABELS = Object.freeze({
   ELECTRONIC: '电子卡',
 })
 
+export const SWEET_CARD_BATCH_PURPOSE_LABELS = Object.freeze({
+  COMMERCIAL: '商业运营',
+  ACCEPTANCE_TEST: '测试/验收',
+})
+
 export const SWEET_CARD_STATUS_OPTIONS = Object.entries(SWEET_CARD_STATUS_LABELS)
 export const SWEET_CARD_BINDING_MODE_OPTIONS = Object.entries(SWEET_CARD_BINDING_MODE_LABELS)
 export const SWEET_CARD_CARRIER_TYPE_OPTIONS = Object.entries(SWEET_CARD_CARRIER_TYPE_LABELS)
@@ -28,3 +33,4 @@ const labelFor = (labels, value) => labels[value] || value || '—'
 export const sweetCardStatusLabel = (value) => labelFor(SWEET_CARD_STATUS_LABELS, value)
 export const sweetCardBindingModeLabel = (value) => labelFor(SWEET_CARD_BINDING_MODE_LABELS, value)
 export const sweetCardCarrierTypeLabel = (value) => labelFor(SWEET_CARD_CARRIER_TYPE_LABELS, value)
+export const sweetCardBatchPurposeLabel = (value) => labelFor(SWEET_CARD_BATCH_PURPOSE_LABELS, value)

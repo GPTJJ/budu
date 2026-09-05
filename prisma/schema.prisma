@@ -1782,11 +1782,13 @@ model SweetCardBatch {
   createdById             String                @map("created_by_id")
   createdByName           String                @default("") @map("created_by_name")
   createdAt               DateTime              @default(now()) @map("created_at")
+  archivedAt              DateTime?             @map("archived_at")
   accounts                SweetCardAccount[]
   auditLogs               SweetCardAuditLog[]
 
   @@index([createdAt])
   @@index([businessPurpose, createdAt])
+  @@index([archivedAt, createdAt])
   @@map("sweet_card_batches")
 }
 

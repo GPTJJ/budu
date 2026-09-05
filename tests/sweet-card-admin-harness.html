@@ -8,42 +8,87 @@
     import '/src/index.css'
 
     const now = '2026-09-05T04:30:00.000Z'
-    const batch = {
-      id: 'batch-commercial', name: 'BUDU-SC-202609-A01', businessPurpose: 'COMMERCIAL',
+    const commercialBatch = {
+      id: 'batch-commercial', name: 'BUDU-SC-202609-A01', businessPurpose: 'COMMERCIAL', archivedAt: null,
       cardCount: 7, faceValueCents: '20000', carrierType: 'ELECTRONIC', bindingMode: 'REQUIRED',
       metrics: { activated: 1, consumedCents: '0', balanceCents: '140000' },
     }
+    const acceptanceBatch = {
+      id: 'batch-acceptance', name: 'P19-验收事实', businessPurpose: 'ACCEPTANCE_TEST', archivedAt: null,
+      cardCount: 1, faceValueCents: '50000', carrierType: 'PHYSICAL', bindingMode: 'NONE',
+      metrics: { activated: 0, consumedCents: '0', balanceCents: '50000' },
+    }
+    const archivedCommercialBatch = {
+      id: 'batch-archived-commercial', name: '历史商业批次', businessPurpose: 'COMMERCIAL', archivedAt: now,
+      cardCount: 1, faceValueCents: '30000', carrierType: 'ELECTRONIC', bindingMode: 'OPTIONAL',
+      metrics: { activated: 0, consumedCents: '0', balanceCents: '30000' },
+    }
+    const archivedAcceptanceBatch = {
+      id: 'batch-archived-acceptance', name: '历史验收批次', businessPurpose: 'ACCEPTANCE_TEST', archivedAt: now,
+      cardCount: 1, faceValueCents: '10000', carrierType: 'PHYSICAL', bindingMode: 'NONE',
+      metrics: { activated: 0, consumedCents: '0', balanceCents: '10000' },
+    }
+    const batches = [commercialBatch, acceptanceBatch, archivedCommercialBatch, archivedAcceptanceBatch]
     const statuses = ['CREATED', 'ACTIVE', 'FROZEN', 'LOST', 'EXHAUSTED', 'EXPIRED', 'VOID']
     const cards = statuses.map((status, index) => ({
-      id: `card-${status.toLowerCase()}`,
-      publicCardNo: `SC-UI-${String(index + 1).padStart(2, '0')}`,
-      batchId: batch.id,
-      initialAmountCents: '20000',
-      balanceCents: status === 'EXHAUSTED' ? '0' : '20000',
-      status,
+      id: `card-${status.toLowerCase()}`, publicCardNo: `SC-UI-${String(index + 1).padStart(2, '0')}`,
+      batchId: commercialBatch.id, initialAmountCents: '20000', balanceCents: status === 'EXHAUSTED' ? '0' : '20000', status,
       carrierType: index % 2 === 0 ? 'ELECTRONIC' : 'PHYSICAL',
       bindingMode: index % 3 === 0 ? 'NONE' : index % 3 === 1 ? 'OPTIONAL' : 'REQUIRED',
-      recipientLabel: index === 0 ? '西单商业客户' : '',
-      recipientCompany: '',
+      recipientLabel: index === 0 ? '西单商业客户' : '', recipientCompany: '',
     }))
+    cards.push(
+      { id: 'card-acceptance', publicCardNo: 'SC-ACCEPTANCE-01', batchId: acceptanceBatch.id, initialAmountCents: '50000', balanceCents: '50000', status: 'CREATED', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
+      { id: 'card-archived-commercial', publicCardNo: 'SC-ARCHIVED-COMMERCIAL', batchId: archivedCommercialBatch.id, initialAmountCents: '30000', balanceCents: '30000', status: 'CREATED', carrierType: 'ELECTRONIC', bindingMode: 'OPTIONAL', recipientLabel: '', recipientCompany: '' },
+      { id: 'card-archived-acceptance', publicCardNo: 'SC-ARCHIVED-ACCEPTANCE', batchId: archivedAcceptanceBatch.id, initialAmountCents: '10000', balanceCents: '10000', status: 'CREATED', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
+    )
+
+    const scopedBatches = (requestUrl) => {
+      const purpose = requestUrl.searchParams.get('businessPurpose') || 'COMMERCIAL'
+      const archived = requestUrl.searchParams.get('archived') === 'true'
+      return batches.filter((batch) => Boolean(batch.archivedAt) === archived && (purpose === 'ALL' || batch.businessPurpose === purpose))
+    }
+    const scopedCards = (requestUrl) => {
+      const ids = new Set(scopedBatches(requestUrl).map((batch) => batch.id))
+      return cards.filter((card) => ids.has(card.batchId))
+    }
+    const overview = (requestUrl) => {
+      const rows = scopedCards(requestUrl)
+      return {
+        count: rows.length, issued: rows.length,
+        initialAmountCents: rows.reduce((sum, card) => sum + BigInt(card.initialAmountCents), 0n).toString(),
+        balanceCents: rows.reduce((sum, card) => sum + BigInt(card.balanceCents), 0n).toString(),
+        statusCounts: Object.fromEntries(statuses.map((status) => [status, rows.filter((card) => card.status === status).length])),
+      }
+    }
 
     window.__lastSweetCardBatchBody = null
     window.__sweetCardListRequests = 0
+    window.__archiveActions = []
     window.fetch = async (url, options = {}) => {
       const requestUrl = new URL(url, location.origin)
       const path = requestUrl.pathname
+      const method = options.method || 'GET'
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
       if (path === '/api/v2/sweet-cards/config') return json({ enabled: true })
-      if (path === '/api/v2/sweet-cards/overview') return json({ count: cards.length, issued: cards.length, initialAmountCents: '140000', balanceCents: '120000', statusCounts: Object.fromEntries(statuses.map((status) => [status, 1])) })
-      if (path === '/api/v2/sweet-cards/batches' && options.method === 'POST') {
+      if (path === '/api/v2/sweet-cards/overview') return json(overview(requestUrl))
+      if (path === '/api/v2/sweet-cards/batches' && method === 'POST') {
         window.__lastSweetCardBatchBody = JSON.parse(options.body)
-        return json({ batch }, 201)
+        return json({ batch: commercialBatch }, 201)
       }
-      if (path === '/api/v2/sweet-cards/batches') return json({ batches: [batch] })
-      if (path === '/api/v2/sweet-cards/cards') { window.__sweetCardListRequests += 1; return json({ cards }) }
+      if (path === '/api/v2/sweet-cards/batches') return json({ batches: scopedBatches(requestUrl) })
+      const archiveMatch = path.match(/^\/api\/v2\/sweet-cards\/batches\/([^/]+)\/(archive|restore)$/)
+      if (archiveMatch && method === 'POST') {
+        const batch = batches.find((row) => row.id === archiveMatch[1])
+        if (!batch) return json({ error: '批次不存在' }, 404)
+        batch.archivedAt = archiveMatch[2] === 'archive' ? now : null
+        window.__archiveActions.push({ id: batch.id, action: archiveMatch[2] })
+        return json({ ok: true, batch })
+      }
+      if (path === '/api/v2/sweet-cards/cards') { window.__sweetCardListRequests += 1; return json({ cards: scopedCards(requestUrl) }) }
       if (path.startsWith('/api/v2/sweet-cards/cards/card-')) {
         const card = cards.find((row) => path === `/api/v2/sweet-cards/cards/${row.id}`)
-        if (card) return json({ card: { ...card, expiresAt: null, binding: null, credentials: [], issuedByName: '西单操作员', issuedAt: now, giftingScenario: '商务赠礼', ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: '20000', balanceAfterCents: '20000', createdAt: now }] } })
+        if (card) return json({ card: { ...card, expiresAt: null, binding: null, credentials: [], issuedByName: '西单操作员', issuedAt: now, giftingScenario: '商务赠礼', ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: card.initialAmountCents, balanceAfterCents: card.balanceCents, createdAt: now }] } })
       }
       if (path === '/api/v2/sweet-cards/rules') return json({ stores: [], categories: [] })
       if (path === '/api/v2/sweet-cards/usage') return json({ redemptions: [] })
@@ -52,6 +97,7 @@
     }
 
     createRoot(document.getElementById('root')).render(React.createElement(SweetCardPage, {
+      user: { id: 'admin', username: 'admin', role: 'admin', status: 'active', permissions: {} },
       onBack: () => { document.documentElement.dataset.back = 'true' },
     }))
   </script></body>

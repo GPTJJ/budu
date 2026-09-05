@@ -42,10 +42,50 @@ test('Sweet Card 管理页统一显示中文 enum label，仍使用原始 enum �
   })
 })
 
+test('Sweet Card 三个运营视图按 purpose 与 archivedAt 隔离，并可审计式归档和恢复', async ({ page }) => {
+  await page.goto('/tests/sweet-card-admin-harness.html')
+  await page.getByRole('button', { name: '批次', exact: true }).click()
+
+  await expect(page.getByText('BUDU-SC-202609-A01')).toBeVisible()
+  await expect(page.getByText('P19-验收事实')).toHaveCount(0)
+  await expect(page.getByText('历史商业批次')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '测试/验收', exact: true }).click()
+  await expect(page.getByText('P19-验收事实')).toBeVisible()
+  await expect(page.getByText('BUDU-SC-202609-A01')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '已归档', exact: true }).click()
+  await expect(page.getByText('历史商业批次')).toBeVisible()
+  await expect(page.getByText('历史验收批次')).toBeVisible()
+  await expect(page.locator('span').filter({ hasText: /^商业运营$/ })).toBeVisible()
+  await expect(page.locator('span').filter({ hasText: /^测试\/验收$/ })).toBeVisible()
+
+  await page.getByRole('button', { name: '商业运营', exact: true }).click()
+  const batchCard = page.locator('article').filter({ has: page.getByRole('heading', { name: 'BUDU-SC-202609-A01' }) })
+  await batchCard.getByText('批次操作').click()
+  page.once('dialog', (dialog) => dialog.accept())
+  await batchCard.getByRole('button', { name: '归档批次' }).click()
+  await expect(page.getByText('BUDU-SC-202609-A01')).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => window.__archiveActions)).toContainEqual({ id: 'batch-commercial', action: 'archive' })
+
+  await page.getByRole('button', { name: '已归档', exact: true }).click()
+  const archivedCard = page.locator('article').filter({ has: page.getByRole('heading', { name: 'BUDU-SC-202609-A01' }) })
+  await expect(archivedCard.getByText('已归档', { exact: true })).toBeVisible()
+  await archivedCard.getByText('批次操作').click()
+  await archivedCard.getByRole('button', { name: '恢复归档' }).click()
+  await expect(page.getByText('BUDU-SC-202609-A01')).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => window.__archiveActions)).toContainEqual({ id: 'batch-commercial', action: 'restore' })
+
+  await page.getByRole('button', { name: '商业运营', exact: true }).click()
+  await expect(page.getByText('BUDU-SC-202609-A01')).toBeVisible()
+})
+
 for (const width of [320, 340, 375, 390, 430]) {
   test(`${width}px Sweet Card 中文 label 无横向溢出`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
     await page.goto('/tests/sweet-card-admin-harness.html')
+    await expect(page.getByRole('button', { name: '测试/验收', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '已归档', exact: true })).toBeVisible()
     await page.getByRole('button', { name: '卡片', exact: true }).click()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByLabel('按状态筛选').selectOption('FROZEN')

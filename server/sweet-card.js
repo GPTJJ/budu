@@ -50,7 +50,17 @@ const reportPurpose = (value, fallback = 'COMMERCIAL') => {
   if (purpose !== 'ALL' && !BATCH_PURPOSES.has(purpose)) throw httpError('批次用途筛选不正确')
   return purpose
 }
-const accountPurposeWhere = (purpose) => purpose === 'ALL' ? {} : { batch: { is: { businessPurpose: purpose } } }
+const archiveScope = (value) => {
+  const normalized = String(value == null ? 'false' : value).trim().toLowerCase()
+  if (normalized === 'false') return false
+  if (normalized === 'true') return true
+  throw httpError('归档筛选不正确')
+}
+const batchOperationalWhere = (purpose, archived) => ({
+  ...(purpose === 'ALL' ? {} : { businessPurpose: purpose }),
+  archivedAt: archived ? { not: null } : null,
+})
+const accountOperationalWhere = (purpose, archived) => ({ batch: { is: batchOperationalWhere(purpose, archived) } })
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
 export async function retrySweetCardTransaction(operation, {
   maxAttempts = 3,
@@ -281,7 +291,8 @@ sweetCardRouter.put('/sweet-cards/pos-operators/:principalId', wrap(async (req, 
 sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
   const businessPurpose = reportPurpose(req.query.businessPurpose)
-  const where = accountPurposeWhere(businessPurpose)
+  const archived = archiveScope(req.query.archived)
+  const where = accountOperationalWhere(businessPurpose, archived)
   const [groups, sums, expired, issued] = await Promise.all([
     prisma.sweetCardAccount.groupBy({ by: ['status'], where, _count: { _all: true } }),
     prisma.sweetCardAccount.aggregate({ where, _count: { _all: true }, _sum: { initialAmountCents: true, balanceCents: true } }),
@@ -290,7 +301,7 @@ sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
   ])
   const statusCounts = Object.fromEntries(groups.map((row) => [row.status, row._count._all]))
   statusCounts.ACTIVE = Math.max(0, (statusCounts.ACTIVE || 0) - expired); statusCounts.EXPIRED = (statusCounts.EXPIRED || 0) + expired
-  res.json({ businessPurpose, statusCounts, count: sums._count._all, issued,
+  res.json({ businessPurpose, archived, statusCounts, count: sums._count._all, issued,
     initialAmountCents: String(sums._sum.initialAmountCents || 0), balanceCents: String(sums._sum.balanceCents || 0) })
 }))
 
@@ -314,11 +325,12 @@ sweetCardRouter.get('/sweet-cards/reconciliation', wrap(async (req, res) => {
 sweetCardRouter.get('/sweet-cards/cards', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
   const businessPurpose = reportPurpose(req.query.businessPurpose)
-  const where = accountPurposeWhere(businessPurpose)
+  const archived = archiveScope(req.query.archived)
+  const where = accountOperationalWhere(businessPurpose, archived)
   if (req.query.status) where.status = String(req.query.status)
   if (req.query.batchId) where.batchId = String(req.query.batchId)
   const cards = await prisma.sweetCardAccount.findMany({ where, orderBy: { createdAt: 'desc' }, take: 300, include: { binding: true, credentials: true } })
-  res.json({ businessPurpose, cards: cards.map((row) => serializeCard(row)) })
+  res.json({ businessPurpose, archived, cards: cards.map((row) => serializeCard(row)) })
 }))
 
 sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
@@ -331,12 +343,13 @@ sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
 sweetCardRouter.get('/sweet-cards/usage', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
   const businessPurpose = reportPurpose(req.query.businessPurpose)
+  const archived = archiveScope(req.query.archived)
   const redemptions = await prisma.sweetCardRedemption.findMany({
-    where: businessPurpose === 'ALL' ? {} : { account: { batch: { is: { businessPurpose } } } },
+    where: { account: accountOperationalWhere(businessPurpose, archived) },
     orderBy: { createdAt: 'desc' }, take: 300,
     include: { account: { select: { publicCardNo: true } }, order: { select: { orderNo: true } } },
   })
-  res.json({ businessPurpose, redemptions: redemptions.map((row) => ({
+  res.json({ businessPurpose, archived, redemptions: redemptions.map((row) => ({
     id: row.id, redemptionNo: row.redemptionNo, orderId: row.orderId, orderNo: row.order.orderNo,
     publicCardNo: row.account.publicCardNo, storeId: row.storeIdSnapshot,
     amountCents: row.amountCents.toString(), eligibleSubtotalCents: row.eligibleSubtotalCents.toString(),
@@ -347,12 +360,45 @@ sweetCardRouter.get('/sweet-cards/usage', wrap(async (req, res) => {
 sweetCardRouter.get('/sweet-cards/batches', wrap(async (req, res) => {
   requireDb(); requireAdmin(req); assertSweetCardEnabled()
   const businessPurpose = reportPurpose(req.query.businessPurpose)
-  const batches = await prisma.sweetCardBatch.findMany({ where: businessPurpose === 'ALL' ? {} : { businessPurpose }, orderBy: { createdAt: 'desc' }, include: { accounts: { select: { status: true, balanceCents: true, initialAmountCents: true, issuedAt: true } } } })
-  res.json({ businessPurpose, batches: batches.map(({ accounts, ...batch }) => ({ ...batch, faceValueCents: batch.faceValueCents.toString(), totalInitialAmountCents: batch.totalInitialAmountCents.toString(), metrics: {
+  const archived = archiveScope(req.query.archived)
+  const batches = await prisma.sweetCardBatch.findMany({ where: batchOperationalWhere(businessPurpose, archived), orderBy: { createdAt: 'desc' }, include: { accounts: { select: { status: true, balanceCents: true, initialAmountCents: true, issuedAt: true } } } })
+  res.json({ businessPurpose, archived, batches: batches.map(({ accounts, ...batch }) => ({ ...batch, faceValueCents: batch.faceValueCents.toString(), totalInitialAmountCents: batch.totalInitialAmountCents.toString(), metrics: {
     issued: accounts.filter((a) => a.issuedAt).length, activated: accounts.filter((a) => ['ACTIVE', 'EXHAUSTED'].includes(a.status)).length,
     consumedCents: accounts.reduce((sum, a) => sum + a.initialAmountCents - a.balanceCents, 0n).toString(),
     balanceCents: accounts.reduce((sum, a) => sum + a.balanceCents, 0n).toString(),
   } })) })
+}))
+
+async function setBatchArchived(req, shouldArchive) {
+  requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.MANAGE); assertSweetCardEnabled()
+  const actor = who(req.user)
+  const reason = safeText(req.body?.reason, 200)
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.sweetCardBatch.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, businessPurpose: true, archivedAt: true } })
+    if (!batch) throw httpError('甜意卡批次不存在', 404)
+    if (shouldArchive === Boolean(batch.archivedAt)) throw httpError(shouldArchive ? '批次已归档' : '批次未归档', 409)
+    const archivedAt = shouldArchive ? new Date() : null
+    const changed = await tx.sweetCardBatch.updateMany({
+      where: { id: batch.id, archivedAt: shouldArchive ? null : { not: null } },
+      data: { archivedAt },
+    })
+    if (changed.count !== 1) throw httpError('批次已被其他操作更新，请刷新后重试', 409)
+    await audit(tx, actor, shouldArchive ? 'sweet_card.batch_archived' : 'sweet_card.batch_restored', { batchId: batch.id }, {
+      visibilityOnly: true,
+      reason,
+      beforeArchivedAt: batch.archivedAt,
+      afterArchivedAt: archivedAt,
+    })
+    return { id: batch.id, name: batch.name, businessPurpose: batch.businessPurpose, archivedAt }
+  })
+}
+
+sweetCardRouter.post('/sweet-cards/batches/:id/archive', wrap(async (req, res) => {
+  res.json({ ok: true, batch: await setBatchArchived(req, true) })
+}))
+
+sweetCardRouter.post('/sweet-cards/batches/:id/restore', wrap(async (req, res) => {
+  res.json({ ok: true, batch: await setBatchArchived(req, false) })
 }))
 
 sweetCardRouter.post('/sweet-cards/batches', wrap(async (req, res) => {
