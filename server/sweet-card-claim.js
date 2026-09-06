@@ -67,6 +67,7 @@ function claimDto({ account, claim, already = false }) {
     walletRef: claim.id,
     maskedCardNo: maskedCardNo(account.publicCardNo),
     faceValueCents: String(account.initialAmountCents),
+    balanceCents: String(account.balanceCents),
     validity: {
       type: account.validityType,
       validFrom: account.validFrom ? account.validFrom.toISOString() : null,
@@ -74,7 +75,57 @@ function claimDto({ account, claim, already = false }) {
     },
     carrierType: account.carrierType,
     bindingMode: account.bindingMode,
+    recipient: {
+      label: account.recipientLabel || '',
+      note: account.recipientNote || '',
+    },
+    status: account.status,
     cardPresentationStatus: account.status === 'CREATED' ? 'PENDING_ACTIVATION' : account.status,
+  }
+}
+
+function customerCardDto(account, claim) {
+  return {
+    walletRef: claim.id,
+    claimedAt: claim.claimedAt.toISOString(),
+    maskedCardNo: maskedCardNo(account.publicCardNo),
+    faceValueCents: String(account.initialAmountCents),
+    balanceCents: String(account.balanceCents),
+    status: account.status,
+    validity: {
+      type: account.validityType,
+      validFrom: account.validFrom ? account.validFrom.toISOString() : null,
+      expiresAt: account.expiresAt ? account.expiresAt.toISOString() : null,
+    },
+    recipient: {
+      label: account.recipientLabel || '',
+      note: account.recipientNote || '',
+    },
+    carrierType: account.carrierType,
+    bindingMode: account.bindingMode,
+    bindingStatus: account.binding?.userId === claim.userId ? 'BOUND' : 'UNBOUND',
+  }
+}
+
+function previewDto(account, state = 'AVAILABLE') {
+  return {
+    state,
+    claimable: state === 'AVAILABLE',
+    maskedCardNo: maskedCardNo(account.publicCardNo),
+    faceValueCents: String(account.initialAmountCents),
+    validity: {
+      type: account.validityType,
+      validFrom: account.validFrom ? account.validFrom.toISOString() : null,
+      expiresAt: account.expiresAt ? account.expiresAt.toISOString() : null,
+    },
+    recipient: {
+      label: account.recipientLabel || '',
+      note: account.recipientNote || '',
+    },
+    carrierType: account.carrierType,
+    bindingMode: account.bindingMode,
+    status: account.status,
+    activationState: account.status === 'CREATED' ? 'PENDING_ACTIVATION' : 'ACTIVE',
   }
 }
 
@@ -154,6 +205,88 @@ export async function resolveSweetCardClaimCredential({ rawToken, rawProof, db =
     carrierType: account.carrierType,
     bindingMode: account.bindingMode,
   }
+}
+
+export async function resolveSweetCardClaimExperience({ rawToken, rawProof, userId = null, db = prisma, now = new Date() }) {
+  const { token, proof } = validateCredential(rawToken, rawProof)
+  const record = await db.sweetCardClaimToken.findUnique({
+    where: { tokenHash: sha256(token) },
+    include: { account: { include: { batch: true, binding: true, claim: true } } },
+  })
+  if (!record || record.proofHash !== sha256(proof) || record.account?.batch?.businessPurpose !== 'ACCEPTANCE_TEST') {
+    deny('CLAIM_CREDENTIAL_INVALID', 404)
+  }
+  const account = record.account
+  if (record.revokedAt) deny('CLAIM_CREDENTIAL_REVOKED', 409)
+  if (record.expiresAt <= now) deny('CLAIM_CREDENTIAL_EXPIRED', 410)
+  if (account.status === 'LOST') deny('CARD_LOST', 409)
+  if (account.status === 'VOID') deny('CARD_VOID', 409)
+  if (account.status === 'EXPIRED' || (account.expiresAt && account.expiresAt <= now)) deny('CARD_EXPIRED', 409)
+  if (!CLAIMABLE_ACCOUNT_STATUSES.has(account.status)) deny('CARD_UNAVAILABLE', 409)
+  if (!CLAIMABLE_CARRIERS.has(account.carrierType) || !BINDING_MODES.has(account.bindingMode)) deny()
+  if (account.claim) {
+    return previewDto(account, userId && account.claim.userId === userId ? 'ALREADY_CLAIMED_BY_SELF' : 'ALREADY_CLAIMED')
+  }
+  if (account.binding) deny('CARD_UNAVAILABLE', 409)
+  if (record.consumedAt) deny('CLAIM_CREDENTIAL_USED', 409)
+  return previewDto(account)
+}
+
+export async function listCustomerSweetCards({ userId, db = prisma }) {
+  if (!userId) deny('CUSTOMER_SESSION_DENIED', 401)
+  const claims = await db.sweetCardClaim.findMany({
+    where: { userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    include: { account: { include: { binding: true } } },
+    orderBy: { claimedAt: 'desc' },
+  })
+  return claims.map(claim => customerCardDto(claim.account, claim))
+}
+
+export async function getCustomerSweetCard({ userId, walletRef, db = prisma }) {
+  if (!userId) deny('CUSTOMER_SESSION_DENIED', 401)
+  const claimRef = String(walletRef || '').trim()
+  if (!/^[A-Za-z0-9-]{16,100}$/.test(claimRef)) deny('SWEET_CARD_NOT_FOUND', 404)
+  const claim = await db.sweetCardClaim.findFirst({
+    where: { id: claimRef, userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    include: {
+      account: {
+        include: {
+          binding: true,
+          ledger: {
+            orderBy: { createdAt: 'desc' },
+            take: 30,
+            include: { redemption: { select: { storeIdSnapshot: true } } },
+          },
+        },
+      },
+    },
+  })
+  if (!claim) deny('SWEET_CARD_NOT_FOUND', 404)
+  const storeIds = [...new Set(claim.account.ledger.map(row => row.redemption?.storeIdSnapshot || row.metadata?.storeId).filter(Boolean))]
+  const stores = storeIds.length ? await db.store.findMany({ where: { key: { in: storeIds } }, select: { key: true, name: true } }) : []
+  const storeNames = new Map(stores.map(store => [store.key, store.name]))
+  return {
+    ...customerCardDto(claim.account, claim),
+    history: claim.account.ledger.map(row => {
+      const storeId = row.redemption?.storeIdSnapshot || row.metadata?.storeId || null
+      return {
+        type: row.type,
+        amountCents: String(row.amountCents),
+        occurredAt: row.createdAt.toISOString(),
+        storeName: storeId ? storeNames.get(storeId) || '' : '',
+        source: storeId ? 'budu 门店 POS' : 'budu 甜意卡',
+      }
+    }),
+  }
+}
+
+export async function listCustomerSweetCardStores({ db = prisma }) {
+  const stores = await db.store.findMany({
+    where: { active: true, operationType: 'DIRECT', sweetCardPolicy: { eligible: true } },
+    orderBy: { key: 'asc' },
+    select: { key: true, name: true },
+  })
+  return stores.map(store => ({ storeRef: store.key, name: store.name }))
 }
 
 export async function claimSweetCard({
@@ -284,6 +417,17 @@ function testOnlyRequest(req) {
 
 export function createSweetCardClaimRouter({ db = prisma, configLoader = validateWechatTestLoginConfig } = {}) {
   const router = express.Router()
+  const withPublic = handler => async (req, res) => {
+    if (!testOnlyRequest(req)) return res.status(404).json({ error: 'NOT_FOUND' })
+    try {
+      const config = configLoader(process.env)
+      if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      res.setHeader('Cache-Control', 'no-store')
+      return await handler(req, res)
+    } catch (error) {
+      return res.status(Number(error?.status) || 503).json({ error: error?.publicSafe ? error.message : 'CLAIM_SERVICE_UNAVAILABLE' })
+    }
+  }
   const withCustomer = handler => async (req, res) => {
     if (!testOnlyRequest(req)) return res.status(404).json({ error: 'NOT_FOUND' })
     try {
@@ -293,11 +437,19 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
         rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db,
       })
       if (!claimantAllowed(customer.userId, process.env)) return res.status(403).json({ error: 'CLAIM_ACCESS_DENIED' })
+      res.setHeader('Cache-Control', 'no-store')
       return await handler(req, res, customer)
     } catch (error) {
       return res.status(Number(error?.status) || 503).json({ error: error?.message || 'CLAIM_SERVICE_UNAVAILABLE' })
     }
   }
+  router.post('/claim/preview', withPublic(async (req, res) => {
+    rejectIdentityAuthority(req.body)
+    const result = await resolveSweetCardClaimExperience({
+      rawToken: req.body?.claimToken, rawProof: req.body?.claimProof, db,
+    })
+    return res.json({ ok: true, ...result })
+  }))
   router.post('/claim/resolve', withCustomer(async (req, res) => {
     rejectIdentityAuthority(req.body)
     const result = await resolveSweetCardClaimCredential({
@@ -317,6 +469,18 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
     rejectIdentityAuthority(req.body)
     const result = await bindClaimedSweetCard({ userId: customer.userId, walletRef: req.params.walletRef, db })
     return res.json({ ok: true, ...result })
+  }))
+  router.get('/wallet', withCustomer(async (req, res, customer) => {
+    rejectIdentityAuthority(req.query)
+    return res.json({ ok: true, cards: await listCustomerSweetCards({ userId: customer.userId, db }) })
+  }))
+  router.get('/wallet/stores', withCustomer(async (req, res) => {
+    rejectIdentityAuthority(req.query)
+    return res.json({ ok: true, stores: await listCustomerSweetCardStores({ db }) })
+  }))
+  router.get('/wallet/:walletRef', withCustomer(async (req, res, customer) => {
+    rejectIdentityAuthority(req.query)
+    return res.json({ ok: true, card: await getCustomerSweetCard({ userId: customer.userId, walletRef: req.params.walletRef, db }) })
   }))
   return router
 }

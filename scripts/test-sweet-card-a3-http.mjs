@@ -66,8 +66,9 @@ try {
   assert.equal(claimed.body.claimStatus, 'CLAIMED')
   assert.equal(claimed.body.bindingStatus, 'UNBOUND')
   assert.deepEqual(Object.keys(claimed.body).sort(), [
-    'bindingMode', 'bindingStatus', 'cardPresentationStatus', 'carrierType', 'claimStatus',
-    'faceValueCents', 'maskedCardNo', 'ok', 'validity', 'walletRef',
+    'balanceCents', 'bindingMode', 'bindingStatus', 'cardPresentationStatus', 'carrierType',
+    'claimStatus', 'faceValueCents', 'maskedCardNo', 'ok', 'recipient', 'status',
+    'validity', 'walletRef',
   ])
   assert.doesNotMatch(JSON.stringify(claimed.body), /userId|openid|session_key|ledger|token|proof|credential/i)
   const retry = await post('/claim', session.rawToken, body)
