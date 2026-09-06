@@ -41,11 +41,14 @@ Security review:
 - Current Test API logs contain 0 full Claim tokens, Claim proofs, POS credentials, `session_key` values, or OpenID-shaped values.
 - Result: `NO_SECRET_LEAK`.
 
-Manual platform evidence remains pending:
+Platform evidence:
 
-- Current official MiniProgram version, publish time, version remark, and state: `MANUAL_RELEASE_EVIDENCE_PENDING`.
-- Current WeChat privacy guide and declaration: `MANUAL_RELEASE_EVIDENCE_PENDING`.
-- A historical document records official version 3.2.5 published on 2026-09-01 16:39 CST, but this is STALE and is not accepted as current evidence.
+- Current official MiniProgram version: `VERIFIED` from the WeChat Public Platform version-management screenshot.
+- Online version: `3.2.7`; publisher: `Dh`; publish time: `2026-09-04 10:18:07`; remark: `首页 OUR STORY 品牌故事文案更新`; state: online.
+- Review version: none pending.
+- Test development version `3.5.0-a9-test`: submitted at `2026-09-06 20:29:53`, marked as the experience version, not submitted for review or released.
+- Evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-official-version-baseline.png`, SHA-256 `ee90a1541e9391bceebecc5eabdd191a6dd304163ed643871188f718153c933f`.
+- Current WeChat privacy guide and declaration remain `MANUAL_RELEASE_EVIDENCE_PENDING`.
 - The permitted in-app browser rejected `mp.weixin.qq.com` under its site safety policy. No alternate browser surface or protocol workaround was used.
 
 ## A9 — real Test E2E
@@ -79,7 +82,7 @@ Security and cleanup:
 
 Result: `NOT_STARTED_PREREQUISITES_INCOMPLETE`.
 
-A10 did not start because current official-version and privacy-platform evidence remain incomplete. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
+A10 did not start because current privacy-platform evidence remains incomplete. The official-version baseline is now VERIFIED. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
 
 Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then independently verify a fresh canonical backup, isolated Migration 68–70 rehearsal and schema diff, rollback assets, health, single writer, and full legacy regression. Any backend deployment must start with Claim OFF; any later Claim enablement must remain limited to an explicit test-customer allowlist. Full public rollout is not authorized.
 
@@ -98,9 +101,8 @@ Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then indepen
 
 ## Minimum manual steps
 
-1. In 微信公众平台 → 版本管理, record the current official MiniProgram version, publish time, remark and state.
-2. In 微信公众平台 → 用户隐私保护指引, capture the current effective declaration and reconcile it against the prepared checklist.
-3. Do not submit for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
+1. In 微信公众平台 → 用户隐私保护指引, capture the current effective declaration, update time, state and declared information types.
+2. Do not submit for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
 
 Evidence images are stored under `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906`. They contain no full OpenID, AppSecret, `session_key`, Claim token, POS credential, or internal User ID.
 

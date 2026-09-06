@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T21:28:49+08:00",
+  "recordedAt": "2026-09-06T21:58:45+08:00",
   "overall": "SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE",
   "modelConfiguration": "MODEL_CONFIGURATION_NOT_VERIFIABLE",
   "candidates": {
@@ -16,9 +16,19 @@
   },
   "privacy": {
     "candidateNotice": "READY",
-    "officialVersionEvidence": "MANUAL_RELEASE_EVIDENCE_PENDING",
+    "officialVersionEvidence": "VERIFIED",
     "platformPrivacyEvidence": "MANUAL_RELEASE_EVIDENCE_PENDING",
-    "securityScan": "NO_SECRET_LEAK"
+    "securityScan": "NO_SECRET_LEAK",
+    "officialMiniProgram": {
+      "version": "3.2.7",
+      "publisher": "Dh",
+      "publishedAt": "2026-09-04T10:18:07+08:00",
+      "remark": "首页 OUR STORY 品牌故事文案更新",
+      "state": "ONLINE",
+      "reviewVersion": "NONE",
+      "evidencePath": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-official-version-baseline.png",
+      "evidenceSha256": "ee90a1541e9391bceebecc5eabdd191a6dd304163ed643871188f718153c933f"
+    }
   },
   "realTestE2E": {
     "chain": "TEST_EXPERIENCE_VERSION_TO_TEST_CLOUDBASE_TO_TEST_API_TO_budu_sc11a_test",
@@ -85,5 +95,5 @@
     "fullPublicRollout": "NOT_AUTHORIZED",
     "sweetCard1_1B": "NOT_STARTED"
   },
-  "nextAction": "CAPTURE_CURRENT_OFFICIAL_VERSION_AND_PLATFORM_PRIVACY_EVIDENCE"
+  "nextAction": "CAPTURE_CURRENT_PLATFORM_PRIVACY_GUIDE_EVIDENCE"
 }
