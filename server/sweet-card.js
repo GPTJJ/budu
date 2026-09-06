@@ -30,7 +30,13 @@ import {
   sweetCardCommercialEnabled,
   tokenHash,
 } from './sweet-card-core.js'
-import { renderMinimalSweetCard } from './sweet-card-presentation.js'
+import {
+  buildSweetCardPresentation,
+  maskedSweetCardNo,
+  renderPhysicalClaimAsset,
+  renderSweetCardPresentation,
+} from './sweet-card-presentation.js'
+import { issueSweetCardClaimCredential, revokeSweetCardClaimCredential } from './sweet-card-claim.js'
 import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availability.js'
 import { mirrorUsersToKv } from './user-store.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
@@ -63,6 +69,13 @@ const batchOperationalWhere = (purpose, archived) => ({
 })
 const accountOperationalWhere = (purpose, archived) => ({ batch: { is: batchOperationalWhere(purpose, archived) } })
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
+const requireTestClaimPresentation = (req) => {
+  if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
+      || req.get('x-budu-test-gateway') !== '1'
+      || String(process.env.SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED || '') !== '1') {
+    throw httpError('NOT_FOUND', 404)
+  }
+}
 export async function retrySweetCardTransaction(operation, {
   maxAttempts = 3,
   wait = (attempt) => delay(20 * attempt + crypto.randomInt(0, 21)),
@@ -220,7 +233,9 @@ sweetCardRouter.get('/sweet-cards/config', wrap(async (req, res) => {
   const productionTestAllowed = hasSweetCardProductionTestAccess(req.user)
   const commercialAllowed = hasModuleAccess(req.user, MODULE_KEYS.STORE_POS)
   const adminAllowed = hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) && hasSweetCardCapability(req.user, SWEET_CARD_CAPABILITIES.VIEW)
-  res.json({ enabled: adminAllowed || (sweetCardEnabled() && commercialAllowed), productionTestAllowed, commercialAllowed, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
+  const claimPresentationEnabled = String(process.env.APP_ENV || '').trim().toLowerCase() === 'test'
+    && String(process.env.SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED || '') === '1'
+  res.json({ enabled: adminAllowed || (sweetCardEnabled() && commercialAllowed), productionTestAllowed, commercialAllowed, claimPresentationEnabled, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
 }))
 
 const requireAllowlistAdmin = (req) => {
@@ -547,14 +562,69 @@ sweetCardRouter.get('/sweet-cards/batches/:id/export', wrap(async (req, res) => 
 
 sweetCardRouter.get('/sweet-cards/cards/:id/presentation', wrap(async (req, res) => {
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
-  const card = await prisma.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { credentials: { where: { status: { not: 'REVOKED' } }, take: 1 } } })
-  if (!card?.credentials[0]) throw httpError('卡片或 credential 不存在', 404)
-  const qrDataUrl = await QRCode.toDataURL(decryptToken(card.credentials[0]), { errorCorrectionLevel: 'H', margin: 4, width: 800 })
-  const svg = renderMinimalSweetCard({ publicCardNo: card.publicCardNo, faceValueText: `¥${(Number(card.initialAmountCents) / 100).toFixed(2)}`,
-    expiryCopy: card.expiresAt ? `有效期至 ${card.expiresAt.toISOString().slice(0, 10)}` : card.validityType === 'LONG_TERM' ? '长期有效' : '激活后生效',
-    recipient: card.recipientLabel ? `赠予 ${card.recipientLabel}` : '', qrDataUrl })
-  await audit(prisma, who(req.user), 'sweet_card.presentation_exported', { accountId: card.id, credentialId: card.credentials[0].id }, { templateKey: 'minimal-v1' })
+  const card = await prisma.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { binding: true, batch: true } })
+  if (!card) throw httpError('卡片不存在', 404)
+  const presentation = buildSweetCardPresentation(card, { carrierType: 'ELECTRONIC' })
+  const svg = renderSweetCardPresentation(presentation)
+  await audit(prisma, who(req.user), 'sweet_card.presentation_exported', { accountId: card.id }, { templateKey: presentation.designVersion, credentialPurpose: 'NONE', economicMutation: false })
   res.setHeader('Cache-Control', 'no-store'); res.type('image/svg+xml').send(svg)
+}))
+
+async function generateClaimPresentation(req, card) {
+  requireTestClaimPresentation(req)
+  requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE)
+  assertSweetCardEnabled()
+  if (req.body?.holderVerificationConfirmed !== true || req.body?.separateProofDelivery !== true) {
+    throw httpError('必须确认持有人核验并通过独立渠道交付领取凭证', 400)
+  }
+  if (!card || card.batch?.businessPurpose !== 'ACCEPTANCE_TEST') throw httpError('测试甜意卡不存在', 404)
+  if (card.binding || card.claim) throw httpError('甜意卡已领取或绑定', 409)
+  const carrierType = ['PHYSICAL', 'ELECTRONIC'].includes(req.body?.carrierType) ? req.body.carrierType : card.carrierType
+  const actor = who(req.user)
+  const credential = await issueSweetCardClaimCredential({ accountId: card.id, createdById: actor.id })
+  const claimEntry = `pages/sweet-card-claim/sweet-card-claim?claimToken=${encodeURIComponent(credential.rawToken)}`
+  const claimQrDataUrl = await QRCode.toDataURL(claimEntry, { errorCorrectionLevel: 'H', margin: 4, width: 1000 })
+  const presentation = buildSweetCardPresentation(card, {
+    carrierType,
+    recipientText: safeText(req.body?.recipientText, 120) || undefined,
+    campaignText: safeText(req.body?.campaignText, 120) || undefined,
+    designVersion: safeText(req.body?.designVersion, 50) || undefined,
+    claimAsset: { state: 'ACTIVE' },
+  })
+  const svg = carrierType === 'PHYSICAL'
+    ? renderPhysicalClaimAsset({ claimQrDataUrl, maskedCardNo: maskedSweetCardNo(card.publicCardNo), expiresAt: credential.expiresAt })
+    : renderSweetCardPresentation(presentation, { claimQrDataUrl })
+  return {
+    claimAsset: {
+      id: credential.id, purpose: 'MINIPROGRAM_CLAIM', state: 'ACTIVE', carrierType,
+      expiresAt: credential.expiresAt, fileName: `${card.publicCardNo}.claim.${carrierType.toLowerCase()}.svg`,
+      svgBase64: Buffer.from(svg).toString('base64'),
+    },
+    presentation,
+    proofDelivery: { channel: 'SEPARATE_CHANNEL_REQUIRED', proof: credential.rawProof },
+    economicMutation: 'NONE',
+  }
+}
+
+sweetCardRouter.post('/sweet-cards/cards/:id/claim-presentation', wrap(async (req, res) => {
+  requireDb(); requireTestClaimPresentation(req)
+  const card = await prisma.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { batch: true, binding: true, claim: true } })
+  res.status(201).json({ ok: true, ...(await generateClaimPresentation(req, card)) })
+}))
+
+// A0 compatibility adapter: the printed card number only locates a verified legacy physical card.
+sweetCardRouter.post('/sweet-cards/legacy-physical/claim-presentation', wrap(async (req, res) => {
+  requireDb(); requireTestClaimPresentation(req)
+  const publicCardNo = safeText(req.body?.publicCardNo, 80)
+  const card = await prisma.sweetCardAccount.findUnique({ where: { publicCardNo }, include: { batch: true, binding: true, claim: true } })
+  if (!card || card.carrierType !== 'PHYSICAL') throw httpError('测试实体甜意卡不存在', 404)
+  res.status(201).json({ ok: true, legacyCompatibility: 'CARD_NO_LOCATOR_PLUS_SECONDARY_CLAIM', ...(await generateClaimPresentation(req, card)) })
+}))
+
+sweetCardRouter.post('/sweet-cards/cards/:id/claim-presentation/revoke', wrap(async (req, res) => {
+  requireDb(); requireTestClaimPresentation(req); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
+  const result = await revokeSweetCardClaimCredential({ accountId: req.params.id, revokedById: who(req.user).id })
+  res.json({ ok: true, claimAsset: { purpose: 'MINIPROGRAM_CLAIM', state: 'REVOKED' }, ...result })
 }))
 
 sweetCardRouter.get('/sweet-cards/rules', wrap(async (req, res) => {

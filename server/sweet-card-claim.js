@@ -1,9 +1,11 @@
 import crypto from 'node:crypto'
 import express from 'express'
-import { authenticateCustomerSession, bearerToken } from './customer-auth.js'
+import { authenticateCustomerSession, bearerToken, revokeCustomerSession } from './customer-auth.js'
+import { createFixedWindowLimiter, safeRateKey } from './customer-request-core.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { prisma } from './pg.js'
 import { validateWechatTestLoginConfig } from './wechat-test-login.js'
+import { buildSweetCardPresentation } from './sweet-card-presentation.js'
 
 export const CLAIM_TOKEN_PREFIX = 'budu:claim:v1:'
 export const CLAIM_PROOF_PREFIX = 'budu:claim-proof:v1:'
@@ -15,6 +17,9 @@ const CLAIMABLE_ACCOUNT_STATUSES = new Set(['CREATED', 'ACTIVE'])
 const CLAIMABLE_CARRIERS = new Set(['PHYSICAL', 'ELECTRONIC'])
 const BINDING_MODES = new Set(['NONE', 'OPTIONAL', 'REQUIRED'])
 const IDENTITY_FIELDS = new Set(['userId', 'ownerUserId', 'openId', 'openid', 'unionId', 'unionid'])
+const claimPreviewLimiter = createFixedWindowLimiter({ limit: 20, windowMs: 60_000 })
+const claimResolveLimiter = createFixedWindowLimiter({ limit: 12, windowMs: 60_000 })
+const claimSubmitLimiter = createFixedWindowLimiter({ limit: 8, windowMs: 60_000 })
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex')
@@ -42,6 +47,13 @@ function validateCredential(rawToken, rawProof) {
     deny('CLAIM_CREDENTIAL_INVALID', 400)
   }
   return { token, proof }
+}
+
+export function resolveSweetCardClaimEntry(rawToken) {
+  const token = String(rawToken || '').trim()
+  if (!CLAIM_TOKEN_PATTERN.test(token)) deny('CLAIM_CREDENTIAL_INVALID', 400)
+  // Deliberately does no database lookup. A syntactically valid guess receives the same response.
+  return { state: 'PROOF_REQUIRED', proofDelivery: 'SEPARATE_CHANNEL' }
 }
 
 function validateRequestKey(value) {
@@ -81,6 +93,7 @@ function claimDto({ account, claim, already = false }) {
     },
     status: account.status,
     cardPresentationStatus: account.status === 'CREATED' ? 'PENDING_ACTIVATION' : account.status,
+    presentation: buildSweetCardPresentation(account, { carrierType: claim.sourceCarrier }),
   }
 }
 
@@ -104,6 +117,7 @@ function customerCardDto(account, claim) {
     carrierType: account.carrierType,
     bindingMode: account.bindingMode,
     bindingStatus: account.binding?.userId === claim.userId ? 'BOUND' : 'UNBOUND',
+    presentation: buildSweetCardPresentation(account, { carrierType: claim.sourceCarrier }),
   }
 }
 
@@ -126,6 +140,7 @@ function previewDto(account, state = 'AVAILABLE') {
     bindingMode: account.bindingMode,
     status: account.status,
     activationState: account.status === 'CREATED' ? 'PENDING_ACTIVATION' : 'ACTIVE',
+    presentation: buildSweetCardPresentation(account),
   }
 }
 
@@ -166,8 +181,9 @@ export async function issueSweetCardClaimCredential({
   if (!accountId || !createdById) deny('CLAIM_CREDENTIAL_ISSUE_INVALID', 400)
   const work = async tx => {
     await lockSweetCardAccount(tx, accountId)
-    const account = await tx.sweetCardAccount.findUnique({ where: { id: accountId }, include: { batch: true } })
+    const account = await tx.sweetCardAccount.findUnique({ where: { id: accountId }, include: { batch: true, binding: true, claim: true } })
     if (!account || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') deny()
+    if (account.binding || account.claim || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)) deny('CLAIM_CREDENTIAL_ISSUE_DENIED', 409)
     await tx.sweetCardClaimToken.updateMany({
       where: { accountId, revokedAt: null, consumedAt: null }, data: { revokedAt: now },
     })
@@ -178,7 +194,27 @@ export async function issueSweetCardClaimCredential({
       id: crypto.randomUUID(), accountId, tokenHash: sha256(rawToken), proofHash: sha256(rawProof),
       expiresAt, createdById,
     } })
+    await a3Audit(tx, createdById, 'sweet_card.claim_credential_issued', account, {
+      claimTokenRef: record.id, expiresAt: expiresAt.toISOString(), purpose: 'MINIPROGRAM_CLAIM',
+    }, now)
     return { id: record.id, rawToken, rawProof, expiresAt }
+  }
+  return typeof db.$transaction === 'function' ? db.$transaction(work) : work(db)
+}
+
+export async function revokeSweetCardClaimCredential({ accountId, revokedById, db = prisma, now = new Date() }) {
+  if (!accountId || !revokedById) deny('CLAIM_CREDENTIAL_REVOKE_INVALID', 400)
+  const work = async tx => {
+    await lockSweetCardAccount(tx, accountId)
+    const account = await tx.sweetCardAccount.findUnique({ where: { id: accountId }, include: { batch: true } })
+    if (!account || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') deny()
+    const changed = await tx.sweetCardClaimToken.updateMany({
+      where: { accountId, revokedAt: null, consumedAt: null }, data: { revokedAt: now },
+    })
+    await a3Audit(tx, revokedById, 'sweet_card.claim_credential_revoked', account, {
+      revokedCount: changed.count, purpose: 'MINIPROGRAM_CLAIM',
+    }, now)
+    return { revokedCount: changed.count }
   }
   return typeof db.$transaction === 'function' ? db.$transaction(work) : work(db)
 }
@@ -415,6 +451,28 @@ function testOnlyRequest(req) {
     && req.get('x-budu-test-gateway') === '1' && claimEnabled(process.env)
 }
 
+
+function requestId(req) {
+  const supplied = String(req.get('x-request-id') || '').trim()
+  return /^[A-Za-z0-9._-]{8,100}$/.test(supplied) ? supplied : crypto.randomUUID()
+}
+
+function rateToken(req) {
+  return sha256(String(req.body?.claimToken || '').slice(0, 180))
+}
+
+function requireRate(req, limiter) {
+  const result = limiter.consume(safeRateKey(req.ip, rateToken(req)))
+  if (!result.allowed) {
+    const error = Object.assign(new Error('CLAIM_RATE_LIMITED'), { status: 429, publicSafe: true, retryAfterSeconds: result.retryAfterSeconds })
+    throw error
+  }
+}
+
+function securityLog(req, event, status, customerRef = '') {
+  console.info('[sweet-card-claim-security]', JSON.stringify({ requestId: requestId(req), event, status, channel: 'MINIPROGRAM', customerRef: customerRef || undefined }))
+}
+
 export function createSweetCardClaimRouter({ db = prisma, configLoader = validateWechatTestLoginConfig } = {}) {
   const router = express.Router()
   const withPublic = handler => async (req, res) => {
@@ -437,6 +495,7 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
         rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db,
       })
       if (!claimantAllowed(customer.userId, process.env)) return res.status(403).json({ error: 'CLAIM_ACCESS_DENIED' })
+      res.locals.customerRef = customer.customerRef
       res.setHeader('Cache-Control', 'no-store')
       return await handler(req, res, customer)
     } catch (error) {
@@ -445,25 +504,45 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
   }
   router.post('/claim/preview', withPublic(async (req, res) => {
     rejectIdentityAuthority(req.body)
+    requireRate(req, claimPreviewLimiter)
     const result = await resolveSweetCardClaimExperience({
       rawToken: req.body?.claimToken, rawProof: req.body?.claimProof, db,
     })
+    securityLog(req, 'CLAIM_PREVIEW', 'ALLOW')
+    return res.json({ ok: true, ...result })
+  }))
+  router.post('/claim/entry', withPublic(async (req, res) => {
+    rejectIdentityAuthority(req.body)
+    requireRate(req, claimPreviewLimiter)
+    const result = resolveSweetCardClaimEntry(req.body?.claimToken)
+    securityLog(req, 'CLAIM_ENTRY', 'PROOF_REQUIRED')
     return res.json({ ok: true, ...result })
   }))
   router.post('/claim/resolve', withCustomer(async (req, res) => {
     rejectIdentityAuthority(req.body)
+    requireRate(req, claimResolveLimiter)
     const result = await resolveSweetCardClaimCredential({
       rawToken: req.body?.claimToken, rawProof: req.body?.claimProof, db,
     })
+    securityLog(req, 'CLAIM_RESOLVE', 'ALLOW', res.locals?.customerRef)
     return res.json({ ok: true, ...result })
   }))
   router.post('/claim', withCustomer(async (req, res, customer) => {
     rejectIdentityAuthority(req.body)
+    requireRate(req, claimSubmitLimiter)
     const result = await claimSweetCard({
       userId: customer.userId, rawToken: req.body?.claimToken, rawProof: req.body?.claimProof,
       requestKey: req.body?.requestKey, bindIntent: req.body?.bindIntent ?? false, db,
     })
+    securityLog(req, 'CLAIM_SUBMIT', result.claimStatus, customer.customerRef)
     return res.status(result.claimStatus === 'CLAIMED' ? 201 : 200).json({ ok: true, ...result })
+  }))
+  router.post('/session/logout', withCustomer(async (req, res) => {
+    rejectIdentityAuthority(req.body)
+    const config = configLoader(process.env)
+    await revokeCustomerSession({ rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db })
+    securityLog(req, 'CUSTOMER_SESSION_LOGOUT', 'REVOKED')
+    return res.json({ ok: true, revoked: true })
   }))
   router.post('/:walletRef/bind', withCustomer(async (req, res, customer) => {
     rejectIdentityAuthority(req.body)
@@ -489,4 +568,8 @@ export const sweetCardClaimRouter = createSweetCardClaimRouter()
 export const sweetCardClaimInternals = {
   sha256, maskedCardNo, CLAIM_TOKEN_PATTERN, CLAIM_PROOF_PATTERN, REQUEST_KEY_PATTERN,
   rejectIdentityAuthority,
+}
+
+export function resetSweetCardClaimRateLimitsForTest() {
+  claimPreviewLimiter.clear(); claimResolveLimiter.clear(); claimSubmitLimiter.clear()
 }

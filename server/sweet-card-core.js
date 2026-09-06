@@ -77,7 +77,8 @@ export function allocateCents(total, lines) {
 }
 
 export const SWEET_CARD_PRESENTATION_CONTRACT = Object.freeze({
-  version: 1,
-  templateKey: 'minimal-v1',
-  slots: ['canonicalLogo', 'title', 'tagline', 'faceValue', 'expiryCopy', 'qr', 'publicCardNo', 'recipient', 'message'],
+  version: 2,
+  templateKey: 'minimal-v2',
+  slots: ['logoAsset', 'cardTheme', 'backgroundAsset', 'faceValueDisplay', 'currentBalanceDisplay', 'maskedCardNo', 'validityText', 'recipientText', 'campaignText', 'statusText', 'bindingText', 'claimAsset', 'designVersion'],
+  authorityExclusions: ['balance', 'owner', 'claimStatus', 'binding', 'credential', 'expiry', 'eligibility', 'activation'],
 })

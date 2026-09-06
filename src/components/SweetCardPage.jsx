@@ -24,6 +24,7 @@ export default function SweetCardPage({ user, onBack }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [detail, setDetail] = useState(null)
+  const [claimDelivery, setClaimDelivery] = useState(null)
   const [error, setError] = useState('')
   const [viewScope, setViewScope] = useState('COMMERCIAL')
   const [form, setForm] = useState({ name: '', purpose: '', businessPurpose: 'COMMERCIAL', cardCount: 1, faceValueCents: '50000', validityType: 'ONE_YEAR', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientType: '', recipientLabel: '', recipientCompany: '', recipientNote: '', giftingScenario: '', activateNow: false })
@@ -85,6 +86,35 @@ export default function SweetCardPage({ user, onBack }) {
   const openDetail = async (id) => { setError(''); try { const result = await api(`/v2/sweet-cards/cards/${id}`); setDetail(result.card) } catch (e) { setError(e.message) } }
   const bindCard = async (id) => { const memberId = window.prompt('请输入已验证的 Member.id'); if (!memberId) return; setSaving(true); try { await api(`/v2/sweet-cards/cards/${id}/bind`, { method: 'POST', body: JSON.stringify({ memberId }) }); setDetail(null); await load() } catch (e) { setError(e.message) } finally { setSaving(false) } }
   const credentialAction = async (id, action) => { if (!window.confirm(action === 'lost' ? '确认挂失并永久撤销当前 credential？' : '确认生成补发 credential？价值账户、余额与历史不移动。')) return; setSaving(true); try { await api(`/v2/sweet-cards/cards/${id}/${action}`, { method: 'POST' }); setDetail(null); await load() } catch (e) { setError(e.message) } finally { setSaving(false) } }
+  const generateClaimPresentation = async (carrierType) => {
+    if (!window.confirm('已核验领取人/持卡人，并确认领取图片与独立领取凭证将通过不同渠道交付？')) return
+    setSaving(true); setError('')
+    try {
+      const result = await api(`/v2/sweet-cards/cards/${detail.id}/claim-presentation`, { method: 'POST', body: JSON.stringify({ carrierType, holderVerificationConfirmed: true, separateProofDelivery: true }) })
+      setClaimDelivery(result)
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+  const downloadClaimAsset = () => {
+    if (!claimDelivery?.claimAsset?.svgBase64) return
+    const link = document.createElement('a')
+    link.href = `data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}`
+    link.download = claimDelivery.claimAsset.fileName
+    link.click()
+  }
+  const copyClaimProof = async () => {
+    const proof = claimDelivery?.proofDelivery?.proof
+    if (!proof) return
+    await navigator.clipboard.writeText(proof)
+    setClaimDelivery((value) => ({ ...value, proofCopied: true, proofDelivery: { ...value.proofDelivery, proof: '' } }))
+  }
+  const revokeClaimPresentation = async () => {
+    if (!window.confirm('撤销后旧领取图片不能再建立 ownership；原 POS 核销二维码不受影响。确认撤销？')) return
+    setSaving(true); setError('')
+    try {
+      await api(`/v2/sweet-cards/cards/${detail.id}/claim-presentation/revoke`, { method: 'POST', body: JSON.stringify({}) })
+      setClaimDelivery((value) => value ? { ...value, claimAsset: { ...value.claimAsset, state: 'REVOKED' }, proofDelivery: { ...value.proofDelivery, proof: '' } } : value)
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
   const toggleRule = (kind, id) => setData((current) => ({ ...current, rules: { ...current.rules, [kind]: current.rules[kind].map((row) => row.id === id ? { ...row, [kind === 'stores' ? 'eligible' : 'blocked']: !(kind === 'stores' ? row.eligible : row.blocked) } : row) } }))
 
   return <div className="min-h-full bg-slate-50 px-3 pb-28 pt-3 sm:px-6 sm:pt-6">
@@ -152,9 +182,18 @@ export default function SweetCardPage({ user, onBack }) {
           <p className="rounded-xl bg-slate-50 p-3">有效期<br/><strong>{detail.expiresAt ? new Date(detail.expiresAt).toLocaleDateString() : '长期 / 待激活'}</strong></p><p className="rounded-xl bg-slate-50 p-3">Credential<br/><strong>{(detail.credentials || []).map((row) => row.status).join(' / ') || '无'}</strong></p>
         </div>
         <div className="mt-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600"><p>赠送对象：{detail.recipientLabel || '—'}</p><p className="mt-1">赠送场景：{detail.giftingScenario || '—'}</p><p className="mt-1">创建/发放：{detail.issuedByName || '—'} · {detail.issuedAt ? new Date(detail.issuedAt).toLocaleString() : '—'}</p></div>
-        <div className="mt-4 flex flex-wrap gap-2">{detail.bindingMode !== 'NONE' && !detail.binding && <button onClick={() => bindCard(detail.id)} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">绑定已验证客户</button>}{detail.binding && ['ACTIVE', 'FROZEN'].includes(detail.status) && <button onClick={() => credentialAction(detail.id, 'lost')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600">挂失 credential</button>}{detail.binding && detail.status === 'LOST' && <button onClick={() => credentialAction(detail.id, 'replace')} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">补发 credential</button>}{detail.carrierType === 'ELECTRONIC' && <a href={`/api/v2/sweet-cards/cards/${detail.id}/presentation`} className="rounded-xl border border-budu-200 px-3 py-2 text-xs font-bold text-budu-600">电子卡展示稿</a>}</div>
+        <div className="mt-4 flex flex-wrap gap-2">{detail.bindingMode !== 'NONE' && !detail.binding && <button onClick={() => bindCard(detail.id)} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">绑定已验证客户</button>}{detail.binding && ['ACTIVE', 'FROZEN'].includes(detail.status) && <button onClick={() => credentialAction(detail.id, 'lost')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600">挂失 credential</button>}{detail.binding && detail.status === 'LOST' && <button onClick={() => credentialAction(detail.id, 'replace')} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">补发 credential</button>}<a href={`/api/v2/sweet-cards/cards/${detail.id}/presentation`} className="rounded-xl border border-budu-200 px-3 py-2 text-xs font-bold text-budu-600">安全电子展示稿</a>{config?.claimPresentationEnabled && !detail.binding && <><button disabled={saving} onClick={() => generateClaimPresentation('PHYSICAL')} className="rounded-xl border border-budu-200 px-3 py-2 text-xs font-bold text-budu-600 disabled:opacity-50">生成实体卡领取二维码</button><button disabled={saving} onClick={() => generateClaimPresentation('ELECTRONIC')} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">生成电子卡领取图</button></>}</div>
         {hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VOID) && !['VOID', 'EXHAUSTED', 'EXPIRED'].includes(detail.status) && <details className="mt-5 border-t border-slate-100 pt-4 text-xs"><summary className="cursor-pointer select-none font-bold text-slate-500">卡片危险操作</summary><button type="button" disabled={saving} onClick={() => voidCard(detail.id)} className="mt-3 min-h-10 rounded-xl border border-rose-200 px-3 font-bold text-rose-600 disabled:opacity-50">作废甜意卡</button></details>}
         <h3 className="mt-6 font-black">Ledger / Timeline</h3><div className="mt-2 divide-y rounded-2xl border">{(detail.ledger || []).map((entry) => <div key={entry.id} className="flex justify-between gap-3 p-3 text-xs"><span><strong>{entry.type}</strong><br/><span className="text-slate-400">{new Date(entry.createdAt).toLocaleString()}</span></span><span className="text-right font-mono">{entry.amountCents}<br/><span className="text-slate-400">余额 {entry.balanceAfterCents}</span></span></div>)}</div>
+      </div>
+    </div>}
+    {claimDelivery && <div className="fixed inset-0 z-[130] flex items-end bg-slate-950/70 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6" role="dialog" aria-modal="true" aria-label="领取资产交付">
+      <div className="max-h-[94dvh] w-full overflow-y-auto rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-xl sm:rounded-[30px]">
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black tracking-widest text-budu-500">MINIPROGRAM CLAIM</p><h2 className="mt-1 text-xl font-black">领取资产</h2></div><button onClick={() => setClaimDelivery(null)} className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-500">关闭</button></div>
+        <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">领取图片与独立领取凭证必须分渠道发送。页面不会显示 Claim token，原 POS 核销二维码保持不变。</div>
+        <img className="mt-4 w-full rounded-2xl border border-rose-100" alt="甜意卡领取资产预览" src={`data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}`} />
+        <div className="mt-4 grid gap-2 sm:grid-cols-2"><button onClick={downloadClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">下载领取图片</button><button disabled={!claimDelivery.proofDelivery?.proof} onClick={copyClaimProof} className="min-h-11 rounded-xl bg-budu-500 font-bold text-white disabled:opacity-50">{claimDelivery.proofCopied ? '凭证已复制并从页面清除' : '复制独立领取凭证'}</button></div>
+        <button disabled={saving || claimDelivery.claimAsset.state === 'REVOKED'} onClick={revokeClaimPresentation} className="mt-3 min-h-11 w-full rounded-xl border border-rose-200 font-bold text-rose-600 disabled:opacity-50">{claimDelivery.claimAsset.state === 'REVOKED' ? '领取资产已撤销' : '撤销领取资产'}</button>
       </div>
     </div>}
   </div>

@@ -114,6 +114,12 @@ export async function authenticateCustomerSession({ rawToken, markerKey, db = pr
   return { sessionId: session.id, userId: session.userId, customerRef: customerReference(session.userId, markerKey) }
 }
 
+export async function revokeCustomerSession({ rawToken, markerKey, db = prisma, now = new Date() }) {
+  const session = await authenticateCustomerSession({ rawToken, markerKey, db, now })
+  await db.customerSession.update({ where: { id: session.sessionId }, data: { revokedAt: now } })
+  return { revoked: true }
+}
+
 export function bearerToken(header) {
   const match = String(header || '').match(/^Bearer\s+(.+)$/i)
   return match ? match[1].trim() : ''
