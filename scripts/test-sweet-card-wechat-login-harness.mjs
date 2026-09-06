@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import express from 'express'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   APPROVED_TEST_SECRET_PATH,
   APPROVED_TEST_WECHAT_APP_ID,
@@ -20,6 +23,7 @@ const baseEnv = {
   SWEET_CARD_WECHAT_APP_SECRET_FILE: APPROVED_TEST_SECRET_PATH,
   SWEET_CARD_WECHAT_GATEWAY_PREFIX: '/api/v2/test-sc11a',
 }
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 test('harness startup accepts only the exact isolated test authority', () => {
   const result = validateWechatTestLoginConfig(baseEnv, safeIo)
@@ -122,4 +126,12 @@ test('HTTP harness requires the isolated gateway and returns only the safe DTO',
     if (previousEnv === undefined) delete process.env.APP_ENV
     else process.env.APP_ENV = previousEnv
   }
+})
+
+test('container validates the hard guards before any Prisma migration', () => {
+  const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8')
+  const command = dockerfile.match(/CMD \["sh", "-c", "([^"]+)"\]/)?.[1] || ''
+  assert.ok(command.indexOf('node scripts/validate-runtime-config.mjs') >= 0)
+  assert.ok(command.indexOf('npx prisma migrate deploy') > command.indexOf('node scripts/validate-runtime-config.mjs'))
+  assert.ok(command.indexOf('node server/index.js') > command.indexOf('npx prisma migrate deploy'))
 })
