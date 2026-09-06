@@ -46,13 +46,14 @@ async function makeCard(label, bindingMode, status = 'CREATED') {
     initialAmountCents: 1000n,
     balanceCents: 1000n,
     validityType: 'LONG_TERM',
-    status,
+    status: 'CREATED',
     carrierType: 'ELECTRONIC',
     bindingMode,
     recipientLabel: '一位很重要的朋友',
     recipientNote: '愿每一个平常日子里，都有一点刚刚好的甜。',
   } })
   const credential = await issueSweetCardClaimCredential({ accountId: id, createdById: ids.admin })
+  if (status !== 'CREATED') await prisma.sweetCardAccount.update({ where: { id }, data: { status } })
   return { accountId: id, ...credential }
 }
 

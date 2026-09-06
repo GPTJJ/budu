@@ -112,6 +112,7 @@ try {
     assert.equal(await tx.sweetCardBinding.count({ where: { accountId: { in: [ids.accountA, ids.accountB] } } }), 0)
     assert.equal(await tx.sweetCardLedger.count({ where: { accountId: { in: [ids.accountA, ids.accountB] } } }), 0)
     await tx.sweetCardClaimToken.deleteMany({ where: { accountId: { in: [ids.accountA, ids.accountB] } } })
+    await tx.sweetCardAuditLog.deleteMany({ where: { accountId: { in: [ids.accountA, ids.accountB] } } })
     await tx.sweetCardAccount.deleteMany({ where: { id: { in: [ids.accountA, ids.accountB] } } })
     await tx.sweetCardBatch.delete({ where: { id: ids.batch } })
     await tx.user.delete({ where: { id: ids.admin } })

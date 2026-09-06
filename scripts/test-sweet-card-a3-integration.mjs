@@ -40,9 +40,10 @@ async function makeAccount(label, bindingMode, { status = 'CREATED', expiresAt =
   await prisma.sweetCardAccount.create({ data: {
     id, publicCardNo: `A3-${label}-${run}`.toUpperCase(), batchId: ids.batch,
     initialAmountCents: 100n, balanceCents: 100n, validityType: 'LONG_TERM',
-    expiresAt, status, carrierType: 'ELECTRONIC', bindingMode,
+    expiresAt: null, status: 'CREATED', carrierType: 'ELECTRONIC', bindingMode,
   } })
   const credential = await issueSweetCardClaimCredential({ accountId: id, createdById: ids.admin })
+  if (status !== 'CREATED' || expiresAt) await prisma.sweetCardAccount.update({ where: { id }, data: { status, expiresAt } })
   return { ...credential, accountId: id, bindingMode, status }
 }
 

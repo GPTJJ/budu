@@ -112,6 +112,7 @@ try {
   await prisma.sweetCardClaimToken.deleteMany({ where: { accountId: ids.account } })
   await prisma.customerSession.deleteMany({ where: { userId: ids.customer } })
   await prisma.sweetCardBinding.deleteMany({ where: { accountId: ids.account } })
+  await prisma.sweetCardAuditLog.deleteMany({ where: { accountId: ids.account } })
   await prisma.sweetCardAccount.deleteMany({ where: { id: ids.account } })
   await prisma.sweetCardBatch.deleteMany({ where: { id: ids.batch } })
   await prisma.user.deleteMany({ where: { id: { in: [ids.customer, ids.admin] } } })
