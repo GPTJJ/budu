@@ -72,7 +72,8 @@ USER_B blocker:
 - USER_B is listed as an experience member, but scanning a Developer Tools preview QR displays `暂无体验权限`.
 - WeChat's official permission model gives experience members access to a platform-designated experience version, while development-version/Developer Tools access requires developer permission. Reissuing a preview QR cannot grant account permission.
 - No USER_B `wx.login`, Claim resolve, Claim submit, or Test API mutation occurred.
-- The exact Test Candidate must be uploaded as a development version and manually designated as the experience version before an experience-only USER_B can continue. It must not be submitted for review or released.
+- After explicit user approval, the exact Test Candidate was uploaded successfully as development version `3.5.0-a9-test`, description `A9 TEST ONLY｜Sweet Card 1.1A Test CloudBase｜不得审核发布`, package size 2,054,525 bytes. AppID is `wxfce0a3c4bb430023`; the bundled environment remains Test CloudBase `budu-test-d8gwb4xwy41dc6c61`.
+- An administrator must manually designate `3.5.0-a9-test` as the experience version before an experience-only USER_B can continue. Review and release were not started.
 
 Still required for A9 PASS:
 
@@ -103,11 +104,10 @@ Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then indepen
 
 ## Minimum manual steps
 
-1. Explicitly authorize uploading the exact Test Candidate as a development version for A9 only.
-2. In 微信公众平台 → 版本管理, manually select that uploaded development version as the experience version. Do not submit it for review or release it.
-3. USER_B opens the experience version, follows the retained race Claim entry, enters the independent proof already shown in Terminal, and stops before tapping the Claim button.
-4. Resume the controlled race while USER_A remains at the same card's ready state.
-5. In 微信公众平台, capture the current official-version details and current 用户隐私保护指引, then reconcile them against the prepared checklist.
+1. In 微信公众平台 → 版本管理, manually select uploaded development version `3.5.0-a9-test` as the experience version. Do not submit it for review or release it.
+2. USER_B opens the experience version, follows the retained race Claim entry, enters the independent proof already shown in Terminal, and stops before tapping the Claim button.
+3. Resume the controlled race while USER_A remains at the same card's ready state.
+4. In 微信公众平台, capture the current official-version details and current 用户隐私保护指引, then reconcile them against the prepared checklist.
 
 Evidence images are stored under `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906`. They contain no full OpenID, AppSecret, `session_key`, Claim token, POS credential, or internal User ID.
 

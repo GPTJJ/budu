@@ -35,6 +35,18 @@
     "crossUserDenial": "PENDING_REAL_USER_B",
     "fixtureCleanup": "PENDING_AFTER_REAL_TWO_USER_MATRIX"
   },
+  "miniProgramDevelopmentUpload": {
+    "performed": true,
+    "authorizedByUser": true,
+    "appId": "wxfce0a3c4bb430023",
+    "version": "3.5.0-a9-test",
+    "description": "A9 TEST ONLY | Sweet Card 1.1A Test CloudBase | DO NOT REVIEW OR RELEASE",
+    "packageBytes": 2054525,
+    "cloudEnvironment": "budu-test-d8gwb4xwy41dc6c61",
+    "experienceVersionSelected": false,
+    "reviewSubmitted": false,
+    "released": false
+  },
   "test": {
     "database": "budu_sc11a_test",
     "migrationsApplied": 70,
@@ -72,5 +84,5 @@
     "fullPublicRollout": "NOT_AUTHORIZED",
     "sweetCard1_1B": "NOT_STARTED"
   },
-  "nextAction": "AUTHORIZE_TEST_CANDIDATE_UPLOAD_THEN_MANUALLY_SET_EXPERIENCE_VERSION"
+  "nextAction": "MANUALLY_SET_3_5_0_A9_TEST_AS_EXPERIENCE_VERSION"
 }
