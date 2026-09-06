@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T22:23:00+08:00",
-  "status": "PRIVACY_UPDATED_CONTENT_VERIFIED",
+  "recordedAt": "2026-09-06T22:29:00+08:00",
+  "status": "PRIVACY_REVIEW_PENDING",
   "changeRequired": false,
   "guide": {
     "title": "budu小卖部 小程序隐私保护指引",
@@ -68,7 +68,12 @@
     }
   ],
   "platformMutationPerformed": "USER_PERFORMED_OBSERVED",
-  "effectiveStatusAndUpdatedAt": "EVIDENCE_PENDING",
+  "effectiveStatusAndUpdatedAt": {
+    "status": "审核中",
+    "evidenceStrength": "OBSERVED_USER_REPORTED",
+    "updatedAt": "NOT_SHOWN",
+    "screenshot": "NOT_PROVIDED"
+  },
   "currentContentVerification": {
     "wechatOpenidPurpose": "PASS_PRESERVES_ORDER_PAYMENT_AFTERSALES_AND_ADDS_SWEET_CARD",
     "sweetCardAccountRelationshipAndCardInformation": "PASS",
