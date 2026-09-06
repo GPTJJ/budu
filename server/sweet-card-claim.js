@@ -280,7 +280,7 @@ export async function getCustomerSweetCard({ userId, walletRef, db = prisma }) {
   }
 }
 
-export async function listCustomerSweetCardStores({ db = prisma }) {
+export async function listCustomerSweetCardStores({ db = prisma } = {}) {
   const stores = await db.store.findMany({
     where: { active: true, operationType: 'DIRECT', sweetCardPolicy: { eligible: true } },
     orderBy: { key: 'asc' },
