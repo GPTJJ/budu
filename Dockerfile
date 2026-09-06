@@ -18,6 +18,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
 
 COPY --from=builder /app/dist ./dist
 COPY server ./server
+COPY brand/web ./brand/web
 COPY shared ./shared
 COPY src/utils ./src/utils
 COPY prisma ./prisma
