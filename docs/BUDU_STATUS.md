@@ -32,7 +32,7 @@ Last reviewed: 2026-09-06
   management separation passed. No real payment was created.
 - Backup and rollback artifacts were not modified or revalidated during the
   A1/A2 Test-only Gate. Revalidate them before a later Production change.
-- See `docs/checkpoints/2026-09-06-sweet-card-1.1a-a2-ready.md`.
+- See `docs/checkpoints/2026-09-06-sweet-card-1.1a-a6-a7-ready.md`.
 - Revalidate all facts before further production action.
 
 ## Architecture Contracts
@@ -44,11 +44,13 @@ Last reviewed: 2026-09-06
 
 ## Current Engineering Work
 
-- Sweet Card 1.1A Gate A1/A2 is ready on local unpushed branch
-  `codex/sweet-card-1-1a` at implementation commit `150683db05283655482beee15cf5103c488a1432`.
-  Migrations 68/69 are applied only to Test database `budu_sc11a_test`; Production
-  remains SHA `3838b35b6e2a` at Migration 67. A3 has not started. See
-  `docs/checkpoints/2026-09-06-sweet-card-1.1a-a2-ready.md`.
+- Sweet Card 1.1A Gates A1–A7 are ready on branch `codex/sweet-card-1-1a`.
+  Physical and electronic presentations share one Sweet Card economic authority;
+  POS and Claim QR purposes remain separated; replay, cross-user authorization,
+  rate control, revocation, session, and non-enumeration matrices pass in Test.
+  Migrations 68–70 are applied only to Test database `budu_sc11a_test`; Production
+  remains SHA `3838b35b6e2a` at Migration 67. See
+  `docs/checkpoints/2026-09-06-sweet-card-1.1a-a6-a7-ready.md`.
 - `codex/sweet-card-p7c-serialization` contains the deployed application-only serialization repair and subsequent documentation. Current blocker is P10 conflict error handling; continuation needs a separately authorized Candidate. No balance edits, automatic refunds or replay of completed acceptance orders.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
