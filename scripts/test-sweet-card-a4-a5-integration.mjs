@@ -53,7 +53,7 @@ async function makeCard(label, bindingMode, status = 'CREATED') {
     recipientNote: '愿每一个平常日子里，都有一点刚刚好的甜。',
   } })
   const credential = await issueSweetCardClaimCredential({ accountId: id, createdById: ids.admin })
-  return { id, ...credential }
+  return { accountId: id, ...credential }
 }
 
 const before = await snapshot()
@@ -134,15 +134,15 @@ try {
   await prisma.sweetCardStorePolicy.update({ where: { storeId: ids.store }, data: { eligible: true } })
 
   await prisma.sweetCardLedger.create({ data: {
-    id: `a45-ledger-issue-${run}`, accountId: optional.id, type: 'ISSUE', amountCents: 1000n,
+    id: `a45-ledger-issue-${run}`, accountId: optional.accountId, type: 'ISSUE', amountCents: 1000n,
     balanceAfterCents: 1000n, requestKey: `a45-ledger-issue-${run}`,
   } })
   const beforeBalance = await getCustomerSweetCard({ userId: ids.userA, walletRef: optionalClaim.walletRef })
   assert.equal(beforeBalance.balanceCents, '1000')
   await prisma.$transaction(async tx => {
-    await tx.sweetCardAccount.update({ where: { id: optional.id }, data: { balanceCents: 875n } })
+    await tx.sweetCardAccount.update({ where: { id: optional.accountId }, data: { balanceCents: 875n } })
     await tx.sweetCardLedger.create({ data: {
-      id: `a45-ledger-redeem-${run}`, accountId: optional.id, type: 'REDEEM', amountCents: -125n,
+      id: `a45-ledger-redeem-${run}`, accountId: optional.accountId, type: 'REDEEM', amountCents: -125n,
       balanceAfterCents: 875n, requestKey: `a45-ledger-redeem-${run}`, metadata: { storeId: ids.store },
     } })
   })
