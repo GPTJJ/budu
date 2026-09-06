@@ -23,7 +23,7 @@
   "realTestE2E": {
     "chain": "TEST_MINIPROGRAM_TO_TEST_CLOUDBASE_TO_TEST_API_TO_budu_sc11a_test",
     "userA": "PASS",
-    "userB": "BLOCKED_BY_EXPERIENCE_MEMBER_PERMISSION",
+    "userB": "BLOCKED_BY_DEVELOPMENT_PREVIEW_PERMISSION",
     "none": "PASS",
     "optional": "PASS",
     "required": "PASS_USER_A",
@@ -72,5 +72,5 @@
     "fullPublicRollout": "NOT_AUTHORIZED",
     "sweetCard1_1B": "NOT_STARTED"
   },
-  "nextAction": "ADD_USER_B_AS_EXPERIENCE_MEMBER_THEN_RUN_REAL_TWO_WECHAT_RACE"
+  "nextAction": "AUTHORIZE_TEST_CANDIDATE_UPLOAD_THEN_MANUALLY_SET_EXPERIENCE_VERSION"
 }
