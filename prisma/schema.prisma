@@ -184,6 +184,8 @@ model User {
   weChatAuthIdentities          WeChatAuthIdentity[]
   customerSessions              CustomerSession[]
   sweetCardClaimTokensCreated   SweetCardClaimToken[]    @relation("SweetCardClaimTokenCreator")
+  sweetCardClaims               SweetCardClaim[]
+  sweetCardBindings             SweetCardBinding[]
 
   @@map("User")
 }
@@ -1874,6 +1876,7 @@ model SweetCardAccount {
   refunds            SweetCardRefund[]
   auditLogs          SweetCardAuditLog[]
   claimTokens        SweetCardClaimToken[]
+  claim              SweetCardClaim?
 
   @@index([batchId, status])
   @@index([status, expiresAt])
@@ -1917,6 +1920,7 @@ model SweetCardClaimToken {
   createdAt   DateTime         @default(now()) @map("created_at")
   account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   createdBy   User             @relation("SweetCardClaimTokenCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  claim       SweetCardClaim?
 
   @@index([accountId, createdAt])
   @@map("sweet_card_claim_tokens")
@@ -1925,16 +1929,38 @@ model SweetCardClaimToken {
 model SweetCardBinding {
   id                 String           @id
   accountId          String           @unique @map("account_id")
-  memberId           String           @map("member_id")
+  memberId           String?          @map("member_id")
+  userId             String?          @map("user_id")
+  channel            String           @default("ADMIN")
   verificationMethod String           @default("ADMIN_VERIFIED") @map("verification_method")
   boundById          String           @map("bound_by_id")
   boundByName        String           @default("") @map("bound_by_name")
   boundAt            DateTime         @default(now()) @map("bound_at")
   account            SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  member             Member           @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  member             Member?          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  user               User?            @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([memberId, boundAt])
+  @@index([userId, boundAt])
   @@map("sweet_card_bindings")
+}
+
+model SweetCardClaim {
+  id             String               @id
+  accountId      String               @unique @map("account_id")
+  userId         String               @map("user_id")
+  tokenId        String               @unique @map("token_id")
+  claimedAt      DateTime             @default(now()) @map("claimed_at")
+  channel        String               @default("MINIPROGRAM")
+  sourceCarrier  SweetCardCarrierType @map("source_carrier")
+  requestKeyHash String               @map("request_key_hash")
+  account        SweetCardAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  token          SweetCardClaimToken  @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, requestKeyHash])
+  @@index([userId, claimedAt])
+  @@map("sweet_card_claims")
 }
 
 model SweetCardStorePolicy {

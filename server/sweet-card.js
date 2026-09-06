@@ -33,6 +33,7 @@ import {
 import { renderMinimalSweetCard } from './sweet-card-presentation.js'
 import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availability.js'
 import { mirrorUsersToKv } from './user-store.js'
+import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 
 export const sweetCardRouter = Router()
 const wrap = (handler) => async (req, res) => {
@@ -444,6 +445,7 @@ async function cardTransition(req, action) {
   const capability = action === 'VOID' ? SWEET_CARD_CAPABILITIES.VOID : action === 'FROZEN' || action === 'UNFREEZE' ? SWEET_CARD_CAPABILITIES.FREEZE : SWEET_CARD_CAPABILITIES.ACTIVATE
   requireAdmin(req, capability); assertSweetCardEnabled()
   return prisma.$transaction(async (tx) => {
+    await lockSweetCardAccount(tx, req.params.id)
     const card = await tx.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { credentials: { where: { status: { not: 'REVOKED' } } } } })
     if (!card) throw httpError('甜意卡不存在', 404)
     const now = new Date()
@@ -471,13 +473,20 @@ for (const [path, action] of [['activate', 'ACTIVE'], ['freeze', 'FROZEN'], ['un
 sweetCardRouter.post('/sweet-cards/cards/:id/bind', wrap(async (req, res) => {
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.MANAGE); assertSweetCardEnabled()
   const actor = who(req.user); const memberId = safeText(req.body?.memberId, 100)
-  const card = await prisma.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { binding: true } })
-  if (!card) throw httpError('甜意卡不存在', 404)
-  if (card.bindingMode === 'NONE') throw httpError('该卡不允许绑定', 409)
-  if (card.binding) throw httpError('甜意卡已绑定', 409)
-  if (!await prisma.member.findUnique({ where: { id: memberId } })) throw httpError('客户身份不存在', 404)
-  const binding = await prisma.sweetCardBinding.create({ data: { id: `scbind-${crypto.randomUUID()}`, accountId: card.id, memberId, boundById: actor.id, boundByName: actor.name } })
-  await audit(prisma, actor, 'sweet_card.bound', { accountId: card.id }, { memberId })
+  const binding = await prisma.$transaction(async tx => {
+    await lockSweetCardAccount(tx, req.params.id)
+    const card = await tx.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { binding: true, claim: true } })
+    if (!card) throw httpError('甜意卡不存在', 404)
+    if (card.bindingMode === 'NONE') throw httpError('该卡不允许绑定', 409)
+    if (card.binding || card.claim) throw httpError('甜意卡已领取或绑定', 409)
+    if (!await tx.member.findUnique({ where: { id: memberId } })) throw httpError('客户身份不存在', 404)
+    const created = await tx.sweetCardBinding.create({ data: {
+      id: `scbind-${crypto.randomUUID()}`, accountId: card.id, memberId, userId: null,
+      channel: 'ADMIN', boundById: actor.id, boundByName: actor.name,
+    } })
+    await audit(tx, actor, 'sweet_card.bound', { accountId: card.id }, { memberId, channel: 'ADMIN' })
+    return created
+  })
   res.status(201).json({ binding })
 }))
 
@@ -485,6 +494,7 @@ sweetCardRouter.post('/sweet-cards/cards/:id/lost', wrap(async (req, res) => {
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.FREEZE); assertSweetCardEnabled()
   const actor = who(req.user); const now = new Date()
   const card = await prisma.$transaction(async (tx) => {
+    await lockSweetCardAccount(tx, req.params.id)
     const current = await tx.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { binding: true } })
     if (!current) throw httpError('甜意卡不存在', 404)
     if (!current.binding) throw httpError('只有已合法绑定的卡可挂失', 409)
@@ -501,6 +511,7 @@ sweetCardRouter.post('/sweet-cards/cards/:id/replace', wrap(async (req, res) => 
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.MANAGE); assertSweetCardEnabled()
   const actor = who(req.user)
   const result = await prisma.$transaction(async (tx) => {
+    await lockSweetCardAccount(tx, req.params.id)
     const card = await tx.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { binding: true, credentials: { where: { status: 'REVOKED', revokeReason: 'LOST' }, orderBy: { revokedAt: 'desc' }, take: 1 } } })
     if (!card) throw httpError('甜意卡不存在', 404)
     if (!card.binding || card.status !== 'LOST') throw httpError('仅已绑定且已挂失的卡可补发', 409)
