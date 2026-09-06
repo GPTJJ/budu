@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-06
 
 ## Repository
 
@@ -20,29 +20,19 @@ Last reviewed: 2026-09-05
 
 ## Last Directly Verified Production Baseline
 
-- Sweet Card reached `XIDAN_COMMERCIAL_LIVE` on 2026-09-05 at
-  `2026-09-05T04:17:04.700Z`. The commercial flag is enabled for the server-side
-  xidan permission intersection. See
-  `docs/BUDU_SWEET_CARD_1_0_COMMERCIAL_RELEASE.md`.
-- Runtime SHA: `fe4a7254a0ec9a68390cefe12b0766b3ec15ef93` — VERIFIED.
-- Database: `budu_bj006`; Migration 65 applied / 0 failed — VERIFIED.
-- `SweetCardBatch.businessPurpose` remains the canonical typed batch-use
-  authority. Three existing batches are `ACCEPTANCE_TEST`; first commercial
-  batch `BUDU-SC-202609-A01` has 10 untouched CREATED/UNACTIVATED cards at
-  20,000 cents each.
-- ISSUE 250,150 - REDEEM 160 + REFUND 100 = balance/Ledger 250,090 cents;
-  delta 0. Commercial-only outstanding is 200,000 cents with zero commercial
-  redemption/refund.
-- Three xidan POS operators hold `sweetCardPosRedeem`. The commercial-mode
-  read-only matrix passed authorized ALLOW and unauthorized/store/spoof DENY.
-- Public/internal health and all business regressions passed; exactly one
-  production writer was verified.
-- Current canonical restore artifact:
-  `/opt/budu/.rollback-assets/sweet-card-xidan-golive-fe4a725-20260905/current-canonical-budu_bj006-m65-xidan-live.dump`,
-  SHA-256 `b86e40aac33675ae16829a3024525d2bd0c8ac21f7db99f355122fbf32ffe1c2`;
-  checksum and isolated restore PASS.
-- First-day heartbeat monitoring is ACTIVE.
-- See `docs/checkpoints/2026-09-05-sweet-card-xidan-commercial-live.md`.
+- Runtime SHA `3838b35b6e2a`; container healthy with restart count 0 — VERIFIED on 2026-09-06.
+- Database `budu_bj006`; Migration 67 applied / 0 failed; exactly one running
+  container has the Production database authority — VERIFIED.
+- `SweetCardBatch.businessPurpose` remains the typed batch-use authority.
+- ISSUE 500,150 - REDEEM 160 + REFUND 100 = balance/Ledger 500,090 cents;
+  delta 0. Commercial-only outstanding is 350,000 cents with zero commercial
+  redemption/refund — VERIFIED.
+- Store Availability denial-only matrix passed for all four direct stores;
+  public/internal health, DB, POS channel configuration, permissions, and
+  management separation passed. No real payment was created.
+- Backup and rollback artifacts were not modified or revalidated during the
+  A1/A2 Test-only Gate. Revalidate them before a later Production change.
+- See `docs/checkpoints/2026-09-06-sweet-card-1.1a-a2-ready.md`.
 - Revalidate all facts before further production action.
 
 ## Architecture Contracts
@@ -54,6 +44,11 @@ Last reviewed: 2026-09-05
 
 ## Current Engineering Work
 
+- Sweet Card 1.1A Gate A1/A2 is ready on local unpushed branch
+  `codex/sweet-card-1-1a` at `cb5c28961327d51cad4a34bad333087773721956`.
+  Migrations 68/69 are applied only to Test database `budu_sc11a_test`; Production
+  remains SHA `3838b35b6e2a` at Migration 67. A3 has not started. See
+  `docs/checkpoints/2026-09-06-sweet-card-1.1a-a2-ready.md`.
 - `codex/sweet-card-p7c-serialization` contains the deployed application-only serialization repair and subsequent documentation. Current blocker is P10 conflict error handling; continuation needs a separately authorized Candidate. No balance edits, automatic refunds or replay of completed acceptance orders.
 - BUDU repository team-skill foundation lives under `.agents/skills/budu-*`.
 - `budu-brand-system` is the canonical user-visible brand workflow. Formal names are lowercase `budu`; formal brand positions use the canonical wordmark source or its controlled derivatives. Internal identifiers and historical facts are not renamed.
@@ -63,7 +58,7 @@ Last reviewed: 2026-09-05
 - Desktop navigation and the mobile drawer share `src/components/BrandSlot.jsx`: the approved simple character icon is paired with the unchanged canonical lowercase `budu` wordmark, and the former `甜蜜治愈日常` subtitle is absent.
 - BrandSlot assets locally override the legacy global image outline with transparent, borderless presentation; the underlying icon and canonical wordmark assets remain unchanged.
 - The settings surface now uses four browse-first groups with capability-aware secondary pages. Notification unread/routing, POS/DailyEntry source authority and all existing settings operations remain unchanged.
-- Report Center migrations 59–62 and Sweet Card migrations 63–65 are deployed. Current migration baseline is 65; Migration 65 adds the typed batch-purpose authority without changing economic amounts.
+- Production Migration baseline is 67. Sweet Card 1.1A Migrations 68/69 remain Test-only candidates.
 - Previous Production runtime `budu-prod-f7fd6e5-brand-slot-r2` and protected brand-border rollback assets are retained. See `docs/checkpoints/2026-09-01-budu-brand-slot-border-hotfix.md`.
 
 ## Rollback Notes
