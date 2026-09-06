@@ -4,6 +4,7 @@ import { prisma } from '../server/pg.js'
 import {
   authenticateCustomerSession,
   createCustomerSession,
+  customerAuthInternals,
   resolveOrCreateCustomerIdentity,
 } from '../server/customer-auth.js'
 import {
@@ -60,9 +61,12 @@ try {
   assert.equal(await prisma.weChatAuthIdentity.count({ where: { appId, openId: sameOpenId } }), 1)
 
   const issuedSession = await createCustomerSession({ userId: concurrent[0].userId, markerKey })
+  assert.match(issuedSession.rawToken, customerAuthInternals.SESSION_PATTERN)
   const verifiedSession = await authenticateCustomerSession({ rawToken: issuedSession.rawToken, markerKey })
   assert.equal(verifiedSession.userId, concurrent[0].userId)
   await assert.rejects(authenticateCustomerSession({ rawToken: `${issuedSession.rawToken}x`, markerKey }), /CUSTOMER_SESSION_DENIED/)
+  const tamperedSession = `${issuedSession.rawToken.slice(0, -1)}${issuedSession.rawToken.endsWith('a') ? 'b' : 'a'}`
+  await assert.rejects(authenticateCustomerSession({ rawToken: tamperedSession, markerKey }), /CUSTOMER_SESSION_DENIED/)
   const customer = await prisma.user.findUniqueOrThrow({ where: { id: concurrent[0].userId } })
   assert.equal(customer.role, 'customer')
   assert.equal(customer.employeeId, '')

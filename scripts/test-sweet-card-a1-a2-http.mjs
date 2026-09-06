@@ -94,7 +94,7 @@ try {
   assert.equal(invalid.body.error, 'CLAIM_CREDENTIAL_INVALID')
 
   const badSession = await resolve({
-    session: `budu:customer-session:v1:${'a'.repeat(43)}`,
+    session: `budu:customer-session:v1:${'a'.repeat(43)}.${'b'.repeat(22)}`,
     token: claim.rawToken,
     proof: claim.rawProof,
   })

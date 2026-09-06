@@ -5,7 +5,7 @@ import { prisma } from './pg.js'
 export const CUSTOMER_ROLE = 'customer'
 export const CUSTOMER_SESSION_TTL_MS = 15 * 60 * 1000
 const SESSION_PREFIX = 'budu:customer-session:v1:'
-const SESSION_PATTERN = /^budu:customer-session:v1:[A-Za-z0-9_-]{43}$/
+const SESSION_PATTERN = /^budu:customer-session:v1:([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22})$/
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex')
@@ -13,6 +13,18 @@ function sha256(value) {
 
 function customerReference(userId, markerKey) {
   return `customer-${crypto.createHmac('sha256', markerKey).update(String(userId)).digest('hex').slice(0, 12)}`
+}
+
+function sessionSignature(nonce, markerKey) {
+  return crypto.createHmac('sha256', markerKey).update(`${SESSION_PREFIX}${nonce}`).digest('base64url').slice(0, 22)
+}
+
+function validSessionSignature(token, markerKey) {
+  const match = token.match(SESSION_PATTERN)
+  if (!match || !markerKey) return false
+  const expected = Buffer.from(sessionSignature(match[1], markerKey))
+  const actual = Buffer.from(match[2])
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual)
 }
 
 function newCustomerData() {
@@ -80,7 +92,8 @@ export async function createCustomerSession({
   now = new Date(),
   ttlMs = CUSTOMER_SESSION_TTL_MS,
 }) {
-  const rawToken = `${SESSION_PREFIX}${crypto.randomBytes(32).toString('base64url')}`
+  const nonce = crypto.randomBytes(32).toString('base64url')
+  const rawToken = `${SESSION_PREFIX}${nonce}.${sessionSignature(nonce, markerKey)}`
   const expiresAt = new Date(now.getTime() + ttlMs)
   await db.customerSession.create({
     data: { id: crypto.randomUUID(), tokenHash: sha256(rawToken), userId, expiresAt },
@@ -90,7 +103,7 @@ export async function createCustomerSession({
 
 export async function authenticateCustomerSession({ rawToken, markerKey, db = prisma, now = new Date() }) {
   const token = String(rawToken || '').trim()
-  if (!SESSION_PATTERN.test(token)) throw Object.assign(new Error('CUSTOMER_SESSION_DENIED'), { status: 401 })
+  if (!validSessionSignature(token, markerKey)) throw Object.assign(new Error('CUSTOMER_SESSION_DENIED'), { status: 401 })
   const session = await db.customerSession.findUnique({
     where: { tokenHash: sha256(token) }, include: { user: true },
   })
@@ -106,4 +119,4 @@ export function bearerToken(header) {
   return match ? match[1].trim() : ''
 }
 
-export const customerAuthInternals = { sha256, customerReference, SESSION_PATTERN }
+export const customerAuthInternals = { sha256, customerReference, sessionSignature, validSessionSignature, SESSION_PATTERN }
