@@ -113,10 +113,10 @@ enum StoreOperationType {
 }
 
 model SweetCardControl {
-  id            String   @id
-  enabled       Boolean  @default(false)
-  updatedById   String   @default("") @map("updated_by_id")
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+  id          String   @id
+  enabled     Boolean  @default(false)
+  updatedById String   @default("") @map("updated_by_id")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("sweet_card_control")
 }
@@ -181,8 +181,41 @@ model User {
 
   dailyStoreStaffParticipations DailyStoreStaff[]        @relation("DailyStoreStaffParticipantUser")
   customerServiceRequests       CustomerServiceRequest[]
+  weChatAuthIdentities          WeChatAuthIdentity[]
+  customerSessions              CustomerSession[]
+  sweetCardClaimTokensCreated   SweetCardClaimToken[]    @relation("SweetCardClaimTokenCreator")
 
   @@map("User")
+}
+
+model WeChatAuthIdentity {
+  id        String   @id
+  provider  String
+  appId     String   @map("app_id")
+  openId    String   @map("open_id")
+  unionId   String?  @map("union_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, appId, openId])
+  @@index([userId])
+  @@index([unionId])
+  @@map("wechat_auth_identities")
+}
+
+model CustomerSession {
+  id        String    @id
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
+  @@map("customer_sessions")
 }
 
 model Staff {
@@ -1840,6 +1873,7 @@ model SweetCardAccount {
   redemptions        SweetCardRedemption[]
   refunds            SweetCardRefund[]
   auditLogs          SweetCardAuditLog[]
+  claimTokens        SweetCardClaimToken[]
 
   @@index([batchId, status])
   @@index([status, expiresAt])
@@ -1869,6 +1903,23 @@ model SweetCardCredential {
 
   @@index([accountId, status])
   @@map("sweet_card_credentials")
+}
+
+model SweetCardClaimToken {
+  id          String           @id
+  accountId   String           @map("account_id")
+  tokenHash   String           @unique @map("token_hash")
+  proofHash   String           @unique @map("proof_hash")
+  expiresAt   DateTime         @map("expires_at")
+  revokedAt   DateTime?        @map("revoked_at")
+  consumedAt  DateTime?        @map("consumed_at")
+  createdById String           @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  createdBy   User             @relation("SweetCardClaimTokenCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_claim_tokens")
 }
 
 model SweetCardBinding {

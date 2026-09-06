@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import https from 'node:https'
 import path from 'node:path'
 import express from 'express'
+import { createCustomerSession, authenticateCustomerSession, bearerToken, resolveOrCreateCustomerIdentity } from './customer-auth.js'
+import { prisma } from './pg.js'
 
 export const APPROVED_TEST_WECHAT_APP_ID = 'wxfce0a3c4bb430023'
 export const APPROVED_TEST_DATABASE = 'budu_sc11a_test'
@@ -120,6 +122,17 @@ function httpError(message, status) {
 }
 
 export async function resolveWechatTestIdentity({ code, config, exchange = requestWechatSession }) {
+  const proof = await resolveWechatIdentityProof({ code, config, exchange })
+  return {
+    ok: true,
+    wechatIdentityResolved: true,
+    identityMarker: proof.identityMarker,
+    environment: 'test',
+    databaseAuthority: APPROVED_TEST_DATABASE,
+  }
+}
+
+export async function resolveWechatIdentityProof({ code, config, exchange = requestWechatSession }) {
   const normalizedCode = String(code || '').trim()
   if (!normalizedCode) throw httpError('WECHAT_CODE_REQUIRED', 400)
   if (!CODE_PATTERN.test(normalizedCode)) throw httpError('WECHAT_CODE_INVALID', 400)
@@ -146,18 +159,13 @@ export async function resolveWechatTestIdentity({ code, config, exchange = reque
     .update(`${config.appId}\n${openId}`)
     .digest('hex')
     .slice(0, 12)
-  return {
-    ok: true,
-    wechatIdentityResolved: true,
-    identityMarker: `test-${identityMarker}`,
-    environment: 'test',
-    databaseAuthority: APPROVED_TEST_DATABASE,
-  }
+  return { openId, unionId: String(result.unionid || '').trim() || null, identityMarker: `test-${identityMarker}` }
 }
 
 export function createWechatTestLoginRouter({
   configLoader = validateWechatTestLoginConfig,
   exchange = requestWechatSession,
+  db = prisma,
 } = {}) {
   const router = express.Router()
   router.post('/live-verify', async (req, res) => {
@@ -172,6 +180,51 @@ export function createWechatTestLoginRouter({
     } catch (error) {
       const status = Number(error?.status) || 503
       return res.status(status).json({ error: error?.message || 'WECHAT_LOGIN_VERIFY_UNAVAILABLE' })
+    }
+  })
+  router.post('/session', async (req, res) => {
+    if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
+        || req.get('x-budu-test-gateway') !== '1') {
+      return res.status(404).json({ error: 'NOT_FOUND' })
+    }
+    if (['userId', 'openid', 'openId', 'unionid', 'unionId'].some(key => Object.hasOwn(req.body || {}, key))) {
+      return res.status(400).json({ error: 'IDENTITY_AUTHORITY_SPOOF_REJECTED' })
+    }
+    try {
+      const config = configLoader(process.env)
+      if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      const proof = await resolveWechatIdentityProof({ code: req.body?.code, config, exchange })
+      const identity = await resolveOrCreateCustomerIdentity({
+        appId: config.appId, openId: proof.openId, unionId: proof.unionId, db,
+      })
+      const session = await createCustomerSession({ userId: identity.userId, markerKey: config.markerKey, db })
+      return res.json({
+        ok: true,
+        wechatIdentityResolved: true,
+        userResolved: true,
+        customerRef: session.customerRef,
+        customerSession: session.rawToken,
+        expiresAt: session.expiresAt.toISOString(),
+        environment: 'test',
+        databaseAuthority: APPROVED_TEST_DATABASE,
+      })
+    } catch (error) {
+      return res.status(Number(error?.status) || 503).json({ error: error?.message || 'WECHAT_SESSION_UNAVAILABLE' })
+    }
+  })
+  router.post('/session/verify', async (req, res) => {
+    if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
+        || req.get('x-budu-test-gateway') !== '1') {
+      return res.status(404).json({ error: 'NOT_FOUND' })
+    }
+    try {
+      const config = configLoader(process.env)
+      const session = await authenticateCustomerSession({
+        rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db,
+      })
+      return res.json({ ok: true, customerRef: session.customerRef })
+    } catch (error) {
+      return res.status(Number(error?.status) || 503).json({ error: error?.message || 'CUSTOMER_SESSION_UNAVAILABLE' })
     }
   })
   return router
