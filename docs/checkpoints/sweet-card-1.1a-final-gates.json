@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T14:56:24+08:00",
+  "overall": "SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE",
+  "modelConfiguration": "MODEL_CONFIGURATION_NOT_VERIFIABLE",
+  "candidates": {
+    "osImplementation": "cc5dcf12fcbc9ae9552921d0fa917898a8403998",
+    "miniProgramA8": "3129ad9d75ccfed29101ae1e400f692f701361af",
+    "productionCandidate": null
+  },
+  "gates": {
+    "A1_A7": "PASS",
+    "A8": "A8_READY_PENDING_MANUAL_PLATFORM_STEP",
+    "A9": "MANUAL_TWO_WECHAT_E2E_REQUIRED",
+    "A10": "NOT_STARTED_PREREQUISITES_INCOMPLETE"
+  },
+  "privacy": {
+    "candidateNotice": "READY",
+    "officialVersionEvidence": "MANUAL_RELEASE_EVIDENCE_PENDING",
+    "platformPrivacyEvidence": "MANUAL_RELEASE_EVIDENCE_PENDING",
+    "securityScan": "NO_SECRET_LEAK"
+  },
+  "realTestE2E": {
+    "chain": "TEST_MINIPROGRAM_TO_TEST_CLOUDBASE_TO_TEST_API_TO_budu_sc11a_test",
+    "userA": "PASS",
+    "userB": "BLOCKED_BY_EXPERIENCE_MEMBER_PERMISSION",
+    "none": "PASS",
+    "optional": "PASS",
+    "required": "PASS_USER_A",
+    "physical": "PASS_USER_A",
+    "electronic": "PASS_USER_A",
+    "wallet": "PASS_USER_A",
+    "sameUserReplay": "PASS_USER_A",
+    "twoUserRace": "PENDING_REAL_USER_B",
+    "crossUserDenial": "PENDING_REAL_USER_B",
+    "fixtureCleanup": "PENDING_AFTER_REAL_TWO_USER_MATRIX"
+  },
+  "test": {
+    "database": "budu_sc11a_test",
+    "migrationsApplied": 70,
+    "migrationsFailed": 0,
+    "retainedA9Fixture": {
+      "batches": 1,
+      "accounts": 4,
+      "claims": 3,
+      "bindings": 1,
+      "raceCardsUnclaimed": 1,
+      "balanceCents": 19875,
+      "ledgerCents": 19875,
+      "deltaCents": 0
+    }
+  },
+  "production": {
+    "runtimeSha": "3838b35b6e2a",
+    "database": "budu_bj006",
+    "migrationsApplied": 67,
+    "migrationsFailed": 0,
+    "publicHealth": "PASS",
+    "internalHealth": "PASS",
+    "restartCount": 0,
+    "singleWriterCount": 1,
+    "claimFeatureFlag": "OFF_ENV_ABSENT",
+    "balanceCents": 500090,
+    "ledgerCents": 500090,
+    "deltaCents": 0,
+    "deployPerformed": false,
+    "schemaWritePerformed": false,
+    "businessWritePerformed": false
+  },
+  "rollout": {
+    "controlledRollout": "NOT_STARTED",
+    "fullPublicRollout": "NOT_AUTHORIZED",
+    "sweetCard1_1B": "NOT_STARTED"
+  },
+  "nextAction": "ADD_USER_B_AS_EXPERIENCE_MEMBER_THEN_RUN_REAL_TWO_WECHAT_RACE"
+}
