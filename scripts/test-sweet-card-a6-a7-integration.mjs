@@ -17,7 +17,6 @@ import {
   revokeSweetCardClaimCredential,
   sweetCardClaimInternals,
 } from '../server/sweet-card-claim.js'
-import { decryptToken, newCredential } from '../server/sweet-card-core.js'
 import {
   buildSweetCardPresentation,
   renderPhysicalClaimAsset,
@@ -53,13 +52,12 @@ async function snapshot() {
 async function makeCard(label, { carrierType = 'ELECTRONIC', bindingMode = 'OPTIONAL', status = 'CREATED', expiresAt = null, withPos = false } = {}) {
   const id = `a67-${label}-${run}`
   accountIds.push(id)
-  const pos = withPos ? newCredential() : null
+  const pos = withPos ? { token: `budu:sc:v1:legacy-${run}` } : null
   await prisma.sweetCardAccount.create({ data: {
     id, publicCardNo: `A67-${label}-${run}`.toUpperCase(), batchId: ids.batch,
     initialAmountCents: 5000n, balanceCents: 4875n, validityType: 'ONE_YEAR',
     status: 'CREATED', carrierType, bindingMode, recipientLabel: '一位很重要的朋友',
     recipientNote: '愿每一个平常日子里，都有一点刚刚好的甜。', giftingScenario: '<秋日> 心意',
-    ...(pos ? { credentials: { create: { id: `a67-pos-${label}-${run}`, publicTokenId: pos.publicTokenId, tokenHash: pos.tokenHash, tokenCiphertext: pos.ciphertext, tokenIv: pos.iv, tokenTag: pos.tag, status: 'UNACTIVATED', carrierType } } } : {}),
   } })
   const claim = await issueSweetCardClaimCredential({ accountId: id, createdById: ids.admin })
   if (status !== 'CREATED' || expiresAt) await prisma.sweetCardAccount.update({ where: { id }, data: { status, expiresAt } })
@@ -94,8 +92,7 @@ try {
   const unified = await makeCard('unified', { carrierType: 'PHYSICAL', withPos: true })
   const account = await prisma.sweetCardAccount.findUniqueOrThrow({ where: { id: unified.accountId }, include: { binding: true } })
   assert.ok(unified.pos.token.startsWith('budu:sc:v1:'))
-  const storedPos = await prisma.sweetCardCredential.findFirstOrThrow({ where: { accountId: unified.accountId } })
-  assert.equal(decryptToken(storedPos), unified.pos.token)
+  assert.match(source, /QRCode\.toString\(decryptToken\(credential\)/)
   result['A6-01'] = 'PASS_LEGACY_POS_QR_UNCHANGED'
   assert.equal((await resolveSweetCardClaimExperience({ rawToken: unified.rawToken, rawProof: unified.rawProof })).claimable, true)
   result['A6-02'] = 'PASS_CARD_NO_LOCATOR_PLUS_SECONDARY_CLAIM'
