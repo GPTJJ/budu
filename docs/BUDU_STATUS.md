@@ -45,7 +45,7 @@ Last reviewed: 2026-09-06
 ## Current Engineering Work
 
 - Sweet Card 1.1A Gate A1/A2 is ready on local unpushed branch
-  `codex/sweet-card-1-1a` at `cb5c28961327d51cad4a34bad333087773721956`.
+  `codex/sweet-card-1-1a` at implementation commit `150683db05283655482beee15cf5103c488a1432`.
   Migrations 68/69 are applied only to Test database `budu_sc11a_test`; Production
   remains SHA `3838b35b6e2a` at Migration 67. A3 has not started. See
   `docs/checkpoints/2026-09-06-sweet-card-1.1a-a2-ready.md`.
