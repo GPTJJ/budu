@@ -75,6 +75,10 @@ test('A7.5 电子卡发放使用领取凭证，保存展示信息并在显式确
   await expect(delivery.getByText(/微信扫码领取甜意卡/)).toBeVisible()
   await expect(delivery.getByRole('img', { name: '微信扫码领取甜意卡卡面预览' })).toBeVisible()
   await expect(delivery.getByRole('button', { name: '下载电子卡图片' })).toBeEnabled()
+  const downloadPromise = page.waitForEvent('download')
+  await delivery.getByRole('button', { name: '下载电子卡图片' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('SC-UI-01.claim.electronic.svg')
   expect(await delivery.textContent()).not.toContain('FAKE-PROOF-FOR-UI-HARNESS')
   await delivery.getByRole('button', { name: '关闭' }).click()
 
