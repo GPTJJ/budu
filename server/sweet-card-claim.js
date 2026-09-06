@@ -139,7 +139,8 @@ export async function resolveSweetCardClaimCredential({ rawToken, rawProof, db =
     include: { account: { include: { batch: true, binding: true, claim: true } } },
   })
   assertClaimable(record, proof, now)
-  if (record.revokedAt || record.consumedAt || record.account.binding || record.account.claim) deny()
+  if (record.revokedAt || record.consumedAt || record.expiresAt <= now
+      || record.account.binding || record.account.claim) deny()
   const account = record.account
   return {
     claimable: true,
