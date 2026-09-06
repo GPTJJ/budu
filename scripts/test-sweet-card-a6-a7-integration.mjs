@@ -106,7 +106,7 @@ try {
   const electronicSvg = renderSweetCardPresentation(electronicModel, { claimQrDataUrl: fakeQr })
   const physicalSvg = renderPhysicalClaimAsset({ claimQrDataUrl: fakeQr, maskedCardNo: physicalModel.maskedCardNo, expiresAt: unified.expiresAt })
   assert.match(electronicSvg, /当前余额 ¥48\.75/)
-  assert.match(physicalSvg, /独立渠道/)
+  assert.match(physicalSvg, /其他渠道/)
   result['A6-04'] = 'PASS'
   assert.equal(physicalModel.currentBalanceDisplay, electronicModel.currentBalanceDisplay)
   result['A6-05'] = 'PASS_ONE_ACCOUNT'
