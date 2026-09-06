@@ -45,6 +45,7 @@ import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
 import { personnelMonthlyComponents } from '../utils/payrollDisplay'
 import {
+  PAYROLL_DAILY_VIEW_STATE,
   PayrollDailyList,
   PayrollExplanationHeading,
   PayrollMonthlySummary,
@@ -344,7 +345,20 @@ function SecondPasswordModal({ name, onClose, onSuccess }) {
   )
 }
 
-function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentity, attendanceRows, dailyExplanations, onClose }) {
+function DailyPayModal({
+  emp,
+  month,
+  day,
+  weekStart,
+  hidePersonal,
+  stableIdentity,
+  attendanceRows,
+  dailyExplanations,
+  payrollState,
+  payrollRefreshing,
+  payrollRefreshError,
+  onClose,
+}) {
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const weekDays = weekStart ? getWeekDays(weekStart) : null
@@ -473,7 +487,13 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={`${emp.name}工资明细`}>
+    <div
+      className="fixed inset-0 z-[95] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${emp.name}工资明细`}
+      data-payroll-employee-id={emp.id || ''}
+    >
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-4 shadow-lg sm:max-h-[88vh] sm:rounded-2xl sm:p-6">
         <div className="sticky top-0 z-10 -mx-4 -mt-4 flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6">
@@ -505,6 +525,9 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, stableIdentit
               legacyRows={dayRows}
               legacyLimited={!stableIdentity && !emp.legacyAmbiguous}
               legacyAmbiguous={!stableIdentity && emp.legacyAmbiguous}
+              state={payrollState}
+              refreshing={payrollRefreshing}
+              refreshError={payrollRefreshError}
             />
           </div>
         )}
@@ -558,7 +581,15 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       ? [String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${day}`]
       : []
   const periodKey = periodDates.join('|')
-  const emptyPeriodState = (status = 'idle', key = '') => ({ status, key, rows: [], byEmployeeId: new Map(), dailyByEmployeeId: new Map() })
+  const emptyPeriodState = (status = 'idle', key = '') => ({
+    status,
+    key,
+    mode: '',
+    rows: [],
+    byEmployeeId: new Map(),
+    dailyByEmployeeId: new Map(),
+    error: null,
+  })
   const [periodAttendance, setPeriodAttendance] = useState(emptyPeriodState())
   const periodRequestRef = useRef(0)
   useEffect(() => {
@@ -579,13 +610,27 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       setPeriodAttendance(emptyPeriodState('error', key))
       return undefined
     }
-    setPeriodAttendance(emptyPeriodState('loading', key))
+    setPeriodAttendance((previous) => {
+      const canRetain = previous.key === key
+        && previous.mode === 'EMPLOYEE_ID'
+        && ['ready', 'refreshing', 'refresh_error'].includes(previous.status)
+      return canRetain
+        ? { ...previous, status: 'refreshing', error: null }
+        : emptyPeriodState('loading', key)
+    })
     let cancelled = false
-    loadDailyStoreStaffRange(period.periodStart, period.periodEnd).then(() => {
+    // The selected day/week owns refreshes for every intersecting month. The
+    // monthly projection below joins these in-flight requests without forcing
+    // a competing request token for the same month.
+    loadDailyStoreStaffRange(period.periodStart, period.periodEnd, { force: true }).then(() => {
       if (cancelled || periodRequestRef.current !== requestId) return
       const rangeState = getDailyStoreStaffRangeState(period.periodStart, period.periodEnd)
       if (!rangeState.complete) {
-        setPeriodAttendance(emptyPeriodState('error', key))
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
         return
       }
       const rows = getDailyStoreStaffRange(period.periodStart, period.periodEnd)
@@ -600,14 +645,24 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         storeNames: Object.fromEntries(allStores().map((store) => [store.key, store.name])),
       })
       if (result.mode !== 'EMPLOYEE_ID' || !result.calculationReady) {
-        setPeriodAttendance(emptyPeriodState('error', key))
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
         return
       }
       const byEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, resolverPeriodStatus(record)]))
       const dailyByEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, record.dailyExplanations || []]))
-      setPeriodAttendance({ status: 'ready', key, rows, byEmployeeId, dailyByEmployeeId })
+      setPeriodAttendance({ status: 'ready', key, mode: 'EMPLOYEE_ID', rows, byEmployeeId, dailyByEmployeeId, error: null })
     }).catch(() => {
-      if (!cancelled && periodRequestRef.current === requestId) setPeriodAttendance(emptyPeriodState('error', key))
+      if (!cancelled && periodRequestRef.current === requestId) {
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
+      }
     })
     return () => { cancelled = true }
     // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
@@ -617,23 +672,37 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   // ---- Gate 24：显式月份加载 + resolver（竞态安全：晚到的响应不覆盖当前所选月）----
   const [payrollDisplay, setPayrollDisplay] = useState({ status: 'loading', month: '', mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
   const requestedMonthRef = useRef('')
+  const monthlyRequestRef = useRef(0)
   useEffect(() => {
     const m = String(month || '')
+    const requestId = monthlyRequestRef.current + 1
+    monthlyRequestRef.current = requestId
     requestedMonthRef.current = m
-    setPayrollDisplay((prev) => ({ ...prev, status: 'loading', month: m }))
+    setPayrollDisplay((prev) => ({
+      ...prev,
+      status: prev.month === m && prev.mode ? 'refreshing' : 'loading',
+      month: m,
+    }))
     let cancelled = false
+    const markMonthlyUnavailable = () => {
+      setPayrollDisplay((previous) => (
+        previous.month === m && previous.mode
+          ? { ...previous, status: 'refresh_error' }
+          : { status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() }
+      ))
+    }
     // Completeness classification must use a fresh server business date rather
     // than a browser clock or a possibly stale month-cache value.
-    loadDailyStoreStaffMonth(m, { force: true }).then((staffLoad) => {
-      if (cancelled || requestedMonthRef.current !== m) return // 竞态：已切换月份则丢弃
+    loadDailyStoreStaffMonth(m, { force: !(day || weekStart) }).then((staffLoad) => {
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
       const monthState = getDailyStoreStaffMonthState(m)
       if (monthState.status !== 'loaded' || !monthState.hasPayload) {
-        setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+        markMonthlyUnavailable()
         return
       }
       const businessDate = staffLoad?.businessDate || ''
       if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
-        setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+        markMonthlyUnavailable()
         return
       }
       const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
@@ -647,7 +716,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         users: [],
         storeNames,
       })
-      if (cancelled || requestedMonthRef.current !== m) return
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
       if (res.mode === 'EMPLOYEE_ID') {
         const readinessById = new Map((res.readiness?.employees || []).map((row) => [row.employeeId, row]))
         // Employee-scoped business completeness may hide that employee's amount,
@@ -724,12 +793,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         setPayrollDisplay({ status: 'ready', month: m, mode: 'LEGACY', byEmployeeId: new Map(), legacyByName: byName, legacyAmbiguousNames: ambiguous })
       }
     }).catch(() => {
-      if (cancelled || requestedMonthRef.current !== m) return
-      setPayrollDisplay({ status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
+      markMonthlyUnavailable()
     })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, staffVersion, syncTick])
+  }, [month, day, weekStart, staffVersion, syncTick])
 
   // Gate 24：卡片 payroll 富集——EMPLOYEE_ID 按 id；LEGACY 唯一名兼容、重名不赋值
   const enrichPayroll = (d) => {
@@ -900,6 +969,16 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
                 </span>
               )}
+              {payrollDisplay.status === 'refreshing' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                  {t('正在刷新…')}
+                </span>
+              )}
+              {payrollDisplay.status === 'refresh_error' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                  {t('刷新失败，显示上次成功数据')}
+                </span>
+              )}
               {(payrollDisplay.status === 'partial' || payrollDisplay.status === 'incomplete') && (
                 <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
                   {t(payrollDisplay.status === 'partial' ? '部分工资待完善' : '工资事实待完善')}
@@ -1022,8 +1101,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {/* 员工卡片 */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-sync-tick={syncTick}>
             {list.map((emp, i) => {
-              const periodReady = periodAttendance.status === 'ready' && periodAttendance.key === periodKey
-              const stablePeriod = payrollDisplay.mode === 'EMPLOYEE_ID'
+              const periodReady = ['ready', 'refreshing', 'refresh_error'].includes(periodAttendance.status)
+                && periodAttendance.key === periodKey
+              const stablePeriod = periodAttendance.mode === 'EMPLOYEE_ID'
               const status = (day || weekStart) && stablePeriod && periodReady
                 ? periodAttendance.byEmployeeId.get(emp.id) || null
                 : null
@@ -1362,21 +1442,69 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           onClose={() => setShowExport(false)}
         />
       )}
-      {detailEmp && (
+      {detailEmp && (() => {
+        const currentDetailEmp = list.find((employee) => employee.id === detailEmp.id) || detailEmp
+        const scopedPeriod = Boolean(day || weekStart)
+        const periodMatches = scopedPeriod && periodAttendance.key === periodKey
+        const dailyExplanations = scopedPeriod
+          ? (periodMatches ? (periodAttendance.dailyByEmployeeId?.get(currentDetailEmp.id) || []) : [])
+          : (currentDetailEmp.dailyExplanations || [])
+        const stableIdentity = scopedPeriod
+          ? Boolean(currentDetailEmp.id)
+          : payrollDisplay.mode === 'EMPLOYEE_ID'
+        let payrollState
+        let payrollRefreshing = false
+        let payrollRefreshError = false
+        if (stableIdentity) {
+          if (scopedPeriod) {
+            if (!periodMatches || periodAttendance.status === 'loading' || periodAttendance.status === 'idle') {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+            } else if (periodAttendance.status === 'error') {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+            } else if (periodAttendance.status === 'refreshing' && dailyExplanations.length === 0) {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+            } else if (periodAttendance.status === 'refresh_error' && dailyExplanations.length === 0) {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+            } else {
+              payrollState = dailyExplanations.length > 0
+                ? PAYROLL_DAILY_VIEW_STATE.DATA
+                : PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY
+              payrollRefreshing = periodAttendance.status === 'refreshing'
+              payrollRefreshError = periodAttendance.status === 'refresh_error'
+            }
+          } else if (['loading', 'refreshing'].includes(payrollDisplay.status) && dailyExplanations.length === 0) {
+            payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+          } else if (['unavailable', 'refresh_error'].includes(payrollDisplay.status) && dailyExplanations.length === 0) {
+            payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+          } else {
+            payrollState = dailyExplanations.length > 0
+              ? PAYROLL_DAILY_VIEW_STATE.DATA
+              : PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY
+            payrollRefreshing = payrollDisplay.status === 'refreshing'
+            payrollRefreshError = payrollDisplay.status === 'refresh_error'
+          }
+        } else if (!scopedPeriod && payrollDisplay.status === 'loading') {
+          payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+        } else if (!scopedPeriod && payrollDisplay.status === 'unavailable') {
+          payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+        }
+        return (
         <DailyPayModal
-          emp={detailEmp}
+          emp={currentDetailEmp}
           month={month}
           day={day}
           weekStart={weekStart}
           hidePersonal={hidePersonal}
-          stableIdentity={payrollDisplay.mode === 'EMPLOYEE_ID'}
+          stableIdentity={stableIdentity}
           attendanceRows={day || weekStart ? (periodAttendance.key === periodKey ? periodAttendance.rows : []) : getDailyStoreStaff(month)}
-          dailyExplanations={day || weekStart
-            ? (periodAttendance.dailyByEmployeeId?.get(detailEmp.id) || [])
-            : (detailEmp.dailyExplanations || [])}
+          dailyExplanations={dailyExplanations}
+          payrollState={payrollState}
+          payrollRefreshing={payrollRefreshing}
+          payrollRefreshError={payrollRefreshError}
           onClose={() => setDetailEmp(null)}
         />
-      )}
+        )
+      })()}
       {bigBonusEmp && <BigBonusModal emp={bigBonusEmp} currentUser={user} onClose={() => setBigBonusEmp(null)} />}
       {adjustmentEmp && (
         <DailyPayAdjustmentModal

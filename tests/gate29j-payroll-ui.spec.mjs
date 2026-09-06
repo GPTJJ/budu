@@ -109,6 +109,19 @@ test('Gate 29J no-data and legacy states remain truthful', async ({ page }) => {
   await expect(page.getByTestId('payroll-legacy-ambiguous')).toContainText('同名员工工资归属无法确认')
 })
 
+test('Payroll detail distinguishes loading, error and authoritative real empty', async ({ page }) => {
+  await page.getByRole('button', { name: 'state-LOADING', exact: true }).click()
+  await expect(page.getByTestId('payroll-loading')).toBeVisible()
+  await expect(page.getByTestId('payroll-no-data')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'state-ERROR', exact: true }).click()
+  await expect(page.getByTestId('payroll-error')).toBeVisible()
+  await expect(page.getByTestId('payroll-no-data')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'state-REAL_EMPTY', exact: true }).click()
+  await expect(page.getByTestId('payroll-no-data')).toHaveText('暂无工资数据')
+})
+
 for (const viewport of [{ width: 375, height: 812 }, { width: 340, height: 740 }]) {
   test(`Gate 29J mobile ${viewport.width}px has no horizontal overflow`, async ({ page }) => {
     await page.setViewportSize(viewport)

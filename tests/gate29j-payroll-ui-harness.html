@@ -4,7 +4,7 @@
   <body class="m-0 bg-slate-50"><div id="root"></div><script type="module">
     import React, { useState } from 'react'
     import { createRoot } from 'react-dom/client'
-    import { PayrollDailyList, PayrollMonthlySummary } from '/src/components/payroll/EmployeePayrollPresentation.jsx'
+    import { PAYROLL_DAILY_VIEW_STATE, PayrollDailyList, PayrollMonthlySummary } from '/src/components/payroll/EmployeePayrollPresentation.jsx'
     import '/src/index.css'
 
     window.__payrollUiFetchCount = 0
@@ -82,16 +82,24 @@
     function App() {
       const [fixture, setFixture] = useState('normal')
       const [legacy, setLegacy] = useState('none')
+      const [viewState, setViewState] = useState()
       return React.createElement('main', { className: 'mx-auto max-w-xl space-y-5 p-3 sm:p-5' },
         React.createElement(PayrollMonthlySummary, { employee: monthly, monthText: '2026年08月' }),
         React.createElement('div', { className: 'flex flex-wrap gap-2', 'aria-label': 'fixture controls' },
-          Object.keys(fixtures).map((key) => React.createElement('button', { key, onClick: () => { setLegacy('none'); setFixture(key) }, className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': `fixture-${key}` }, key)),
+          Object.keys(fixtures).map((key) => React.createElement('button', { key, onClick: () => { setLegacy('none'); setFixture(key); setViewState(undefined) }, className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': `fixture-${key}` }, key)),
           React.createElement('button', { onClick: () => setLegacy('unique'), className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': 'fixture-legacy-unique' }, 'legacy'),
           React.createElement('button', { onClick: () => setLegacy('ambiguous'), className: 'rounded bg-white px-2 py-1 text-xs', 'aria-label': 'fixture-legacy-ambiguous' }, 'ambiguous'),
+          Object.values(PAYROLL_DAILY_VIEW_STATE).map((value) => React.createElement('button', {
+            key: value,
+            onClick: () => { setLegacy('none'); setFixture('none'); setViewState(value) },
+            className: 'rounded bg-white px-2 py-1 text-xs',
+            'aria-label': `state-${value}`,
+          }, value)),
         ),
         React.createElement('section', { 'data-current-fixture': legacy === 'none' ? fixture : legacy },
           React.createElement(PayrollDailyList, {
             records: legacy === 'none' ? fixtures[fixture] : [],
+            state: legacy === 'none' ? viewState : undefined,
             legacyLimited: legacy === 'unique',
             legacyAmbiguous: legacy === 'ambiguous',
             legacyRows: [{ day: '08-10', stores: '通盈中心', hours: 12, pay: 420, hasData: true }],

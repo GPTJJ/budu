@@ -95,7 +95,8 @@ const normal = {
   assert.doesNotMatch(presentationSource, /createdBy|updatedBy|operator|receipt image|POS订单/)
   assert.doesNotMatch(presentationSource, /fetch\s*\(|api\s*\(/)
   assert.match(personnelSource, /payrollDisplay\.byEmployeeId\.get\(d\.id\)/)
-  assert.match(personnelSource, /dailyByEmployeeId\?\.get\(detailEmp\.id\)/)
+  assert.match(personnelSource, /dailyByEmployeeId\?\.get\(currentDetailEmp\.id\)/)
+  assert.match(personnelSource, /data-payroll-employee-id=\{emp\.id \|\| ''\}/)
   assert.doesNotMatch(personnelSource, /find\([^\n]*\.name\s*===/)
   console.log('  [安全] 无前端公式 / 无隐私字段 / 无展开请求 / Employee.id 路由 PASS')
 }

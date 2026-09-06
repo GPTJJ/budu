@@ -14,6 +14,13 @@ const DAY_POLICY_LABELS = {
   HOLIDAY_POLICY: '周末/节假日计薪规则',
 }
 
+export const PAYROLL_DAILY_VIEW_STATE = Object.freeze({
+  LOADING: 'LOADING',
+  DATA: 'DATA',
+  REAL_EMPTY: 'REAL_EMPTY',
+  ERROR: 'ERROR',
+})
+
 function money(value) {
   if (value == null) return '—'
   return `¥${formatMoney(value)}`
@@ -249,7 +256,25 @@ export function PayrollDailyCard({ record }) {
   )
 }
 
-export function PayrollDailyList({ records = [], legacyRows = [], legacyLimited = false, legacyAmbiguous = false }) {
+export function PayrollDailyList({
+  records = [],
+  legacyRows = [],
+  legacyLimited = false,
+  legacyAmbiguous = false,
+  state,
+  refreshing = false,
+  refreshError = false,
+}) {
+  if (state === PAYROLL_DAILY_VIEW_STATE.LOADING) {
+    return <p data-testid="payroll-loading" className="py-10 text-center text-sm text-slate-400">工资数据加载中…</p>
+  }
+  if (state === PAYROLL_DAILY_VIEW_STATE.ERROR) {
+    return (
+      <div data-testid="payroll-error" className="rounded-2xl border border-rose-100 bg-rose-50/70 px-4 py-5 text-center text-sm font-semibold text-rose-600">
+        工资数据加载失败，请稍后重试
+      </div>
+    )
+  }
   if (legacyAmbiguous) {
     return (
       <div data-testid="payroll-legacy-ambiguous" className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-5 text-center text-sm font-semibold text-amber-700">
@@ -283,12 +308,31 @@ export function PayrollDailyList({ records = [], legacyRows = [], legacyLimited 
       </div>
     )
   }
-  if (!Array.isArray(records) || records.length === 0) {
+  const rows = Array.isArray(records) ? records : []
+  const viewState = state || (rows.length > 0 ? PAYROLL_DAILY_VIEW_STATE.DATA : PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY)
+  if (viewState === PAYROLL_DAILY_VIEW_STATE.DATA && rows.length === 0) {
+    return (
+      <div data-testid="payroll-error" className="rounded-2xl border border-rose-100 bg-rose-50/70 px-4 py-5 text-center text-sm font-semibold text-rose-600">
+        工资数据加载失败，请稍后重试
+      </div>
+    )
+  }
+  if (viewState === PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY) {
     return <p data-testid="payroll-no-data" className="py-10 text-center text-sm text-slate-400">暂无工资数据</p>
   }
   return (
     <div className="space-y-3" data-testid="payroll-daily-list">
-      {records.map((record, index) => (
+      {refreshing && (
+        <p data-testid="payroll-refreshing" className="rounded-xl bg-slate-50 px-3 py-2 text-center text-xs font-medium text-slate-400">
+          正在刷新工资数据…
+        </p>
+      )}
+      {refreshError && (
+        <p data-testid="payroll-refresh-error" className="rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-center text-xs font-medium text-amber-700">
+          刷新失败，当前显示上次成功数据
+        </p>
+      )}
+      {rows.map((record, index) => (
         <PayrollDailyCard key={`${record.employeeId || 'employee'}-${record.date}-${record.storeKey || 'adjustment'}-${index}`} record={record} />
       ))}
     </div>
