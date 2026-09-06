@@ -24,7 +24,7 @@ Physical and electronic carriers share one economic authority. Claim QR and proo
 
 ## A8 — privacy and platform preparation
 
-Result: `A8_READY_PENDING_MANUAL_PLATFORM_STEP`.
+Result: `A8_READY_PENDING_PRIVACY_EFFECTIVE_STATUS`.
 
 Completed in the MiniProgram candidate:
 
@@ -54,7 +54,9 @@ Platform evidence:
 - Result: `PRIVACY_CHANGE_REQUIRED`. The guide does not explicitly cover Sweet Card ownership/binding/wallet account relationships or recipient-name/blessing display for Sweet Card.
 - Required minimal platform change: expand the WeChat OpenID purpose to the stable budu account and Sweet Card relationship; add `甜意卡账户关系及卡片信息`; add `甜意卡收礼人称呼与祝福语`. Do not add 1.1B online-payment, online-refund, nationwide-ordering or logistics claims.
 - Redacted evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-1-redacted.jpg` and `a8-platform-privacy-guide-2-redacted.jpg`. The browser session token and contact address were removed from retained artifacts.
-- Effective status and update time were not visible in the supplied screenshots and remain `MANUAL_PLATFORM_CHANGE_EVIDENCE_PENDING`.
+- Updated platform content: `PRIVACY_UPDATED_CONTENT_VERIFIED`. The WeChat OpenID purpose preserves order, payment and after-sales handling and adds the budu account and Sweet Card relationship. Both new Sweet Card information types and their purposes match the prepared minimum scope; 1.1B claims remain excluded.
+- Updated-content evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-updated-content.png`, SHA-256 `f0b16bae1654d6ee105179ffc68ea81f29cd090375fb7c18b02d1f2e2480e4cc`.
+- Effective/review status and update time were not visible in the supplied screenshot and remain `EFFECTIVE_OR_REVIEW_STATUS_EVIDENCE_PENDING`.
 - The permitted in-app browser rejected `mp.weixin.qq.com` under its site safety policy. No alternate browser surface or protocol workaround was used.
 
 ## A9 — real Test E2E
@@ -88,7 +90,7 @@ Security and cleanup:
 
 Result: `NOT_STARTED_PREREQUISITES_INCOMPLETE`.
 
-A10 did not start because the verified current privacy guide requires a minimal Sweet Card declaration update, and its effective status/update time remain pending. The official-version baseline is VERIFIED. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
+A10 did not start because the verified updated privacy guide still lacks effective/review status and update-time evidence. The official-version baseline is VERIFIED. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
 
 Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then independently verify a fresh canonical backup, isolated Migration 68–70 rehearsal and schema diff, rollback assets, health, single writer, and full legacy regression. Any backend deployment must start with Claim OFF; any later Claim enablement must remain limited to an explicit test-customer allowlist. Full public rollout is not authorized.
 
@@ -107,9 +109,8 @@ Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then indepen
 
 ## Minimum manual steps
 
-1. In 微信公众平台 → 用户隐私保护指引, enter the three prepared minimal Sweet Card declaration changes and send a pre-save screenshot for review.
-2. After review, save the guide and capture its effective/pending state and update time.
-3. Do not submit the MiniProgram for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
+1. In 微信公众平台 → 用户隐私保护指引, capture the updated guide's effective/review state and update time.
+2. Do not submit the MiniProgram for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
 
 Evidence images are stored under `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906`. They contain no full OpenID, AppSecret, `session_key`, Claim token, POS credential, or internal User ID.
 
