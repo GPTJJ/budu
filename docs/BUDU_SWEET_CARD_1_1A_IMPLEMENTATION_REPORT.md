@@ -1,11 +1,12 @@
 # budu Sweet Card 1.1A — Implementation Report
 
-Date: 2026-09-06 (Asia/Shanghai)  
+Date: 2026-09-07 (Asia/Shanghai)
 Overall: `SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE`
 
 ## Release boundary
 
 - OS implementation baseline: `cc5dcf12fcbc9ae9552921d0fa917898a8403998` on `codex/sweet-card-1-1a`.
+- A7.5 electronic-delivery implementation: `d282c19cc5513a37706399eeda9cfbde143e73f6`; download verification: `c01431fb8ac47443379e8cecec863b7150aaa1b2` on the same branch.
 - MiniProgram post-A9 source candidate: `4c2ba50408bea6ea5e43bf54727f313ca0f85d4c` on `codex/sc11-a06-environment-isolation`; documentation head `302895a7ae5b6eeec3a61b11fbe03c8330f08e97`.
 - Production runtime: `3838b35b6e2a`, healthy, restart count 0.
 - Production database: `budu_bj006`; Migration 67 applied / 0 failed; exactly one running container uses the canonical Production `DATABASE_URL`.
@@ -21,6 +22,18 @@ A1–A7 remain PASS at the accepted baselines. The canonical authorities are the
 Test PostgreSQL `budu_sc11a_test` contains additive Migrations 68–70 for the identity bridge, customer session, Claim credential, Claim receipt, and User binding. Production remains at Migration 67; the Test migration state is not treated as Production approval.
 
 Physical and electronic carriers share one economic authority. Claim QR and proof remain separate from the POS credential. Store Availability remains dynamic. Security, replay, concurrency, wallet authorization, legacy Sweet Card 1.0, POS, payment-channel, Product, Payroll, and Transfer evidence is recorded in the A1–A7 checkpoints.
+
+## A7.5 — electronic card delivery workflow
+
+Result: `SWEET_CARD_1_1A_A7_5_READY`.
+
+The OS Card Detail now composes the accepted A1–A7 services into one Test/Candidate operator flow: edit existing recipient/blessing presentation fields, inspect the selected template, generate and download a card carrying the Claim QR, explicitly activate it for delivery, revoke or explicitly reissue its Claim credential, and refresh Claim/Binding facts from PostgreSQL. Card, activation, electronic-presentation, Claim-credential, Claim, Binding, and delivery-preparation states remain distinct.
+
+The Claim QR is labelled `微信扫码领取甜意卡`. The POS bearer credential generator and manufacturer export remain unchanged. Electronic delivery activation requires both an electronic carrier and a current active Claim credential. Reissue requires a second confirmation. The operator surface shows business batch names, Chinese credential/state labels, yuan amounts and formatted Ledger amounts; internal IDs remain in a collapsed technical section.
+
+No new schema or Migration was required. The existing `SweetCardAccount` recipient/presentation fields, `SweetCardBatch.presentationTemplateKey`, `SweetCardClaimToken`, `SweetCardClaim`, and `SweetCardBinding` remain canonical. Presentation edits and asset operations do not modify balance, Ledger, Redemption, Refund, Payment, Order, POS credentials, Binding, ownership, or P2034 behavior. Safe audit events cover presentation updates, generation, reissue, revoke, and delivery activation without recording secrets.
+
+The A7.5-01 through A7.5-18 unit/WebKit matrix passed. `npm run build`, the canonical Sweet Card suite, the A6/A7 plus A7.5 unit suite (21/21), and Sweet Card admin WebKit suite (8/8) passed. The WebKit suite verifies a real SVG download and 320–430px layouts. Ten sanitized screenshots are stored under `/Users/apple/.codex/outputs/sweet-card-a7-5-20260907`. See `docs/checkpoints/2026-09-07-sweet-card-1.1a-a7.5-ready.md`.
 
 ## A8 — privacy and platform preparation
 
@@ -96,6 +109,8 @@ Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then indepen
 
 ## Regression and current reconciliation
 
+- A7.5 electronic-delivery matrix A7.5-01 through A7.5-18: PASS; Sweet Card admin WebKit 8/8 PASS; A6/A7 plus A7.5 unit contract 21/21 PASS.
+- A wider critical-suite attempt could not run its database-backed cross-domain cases because this Mac has no local PostgreSQL or Docker. Reached non-database cases passed; this is not represented as current database execution evidence. Previously accepted isolated-Test PostgreSQL A1–A7 evidence remains unchanged.
 - A8 MiniProgram environment, CloudBase, payment safety, API, Claim UI, privacy, responsive, and accessibility contracts: 55/55 PASS.
 - Post-A9 launch-option compatibility regression: 38/38 PASS.
 - Privacy JavaScript syntax and diff checks: PASS.

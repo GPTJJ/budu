@@ -2,7 +2,7 @@
 
 > Lightweight context-recovery index. This file is not production authority and cannot replace current Git, runtime, database, migration, or reconciliation evidence.
 
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-07
 
 ## Repository
 
@@ -44,6 +44,14 @@ Last reviewed: 2026-09-06
 
 ## Current Engineering Work
 
+- Sweet Card 1.1A Gate A7.5 electronic delivery workflow is ready on
+  `codex/sweet-card-1-1a`. Card Detail now composes the accepted Claim,
+  Binding, activation, presentation, permissions, and audit authorities into a
+  mobile-first operator flow; it does not create another economic state or
+  alter balance/Ledger facts. No Migration, Production deploy, Test runtime
+  deploy, CloudBase deploy, or MiniProgram upload/review occurred. Privacy is
+  still `PRIVACY_REVIEW_PENDING` and A10 is `NOT STARTED`. See
+  `docs/checkpoints/2026-09-07-sweet-card-1.1a-a7.5-ready.md`.
 - Sweet Card 1.1A Gates A1–A7 are ready on branch `codex/sweet-card-1-1a`.
   Physical and electronic presentations share one Sweet Card economic authority;
   POS and Claim QR purposes remain separated; replay, cross-user authorization,
