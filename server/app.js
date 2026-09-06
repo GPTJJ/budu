@@ -28,6 +28,7 @@ import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { sweetCardRouter } from './sweet-card.js'
 import { sweetCardAvailabilityRouter } from './sweet-card-availability.js'
+import { wechatTestLoginRouter } from './wechat-test-login.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
@@ -642,6 +643,7 @@ export function createApp() {
       return res.status(503).json({ error: 'TEST_AUTHORITY_UNAVAILABLE' })
     }
   })
+  app.use('/api/customer/auth/wechat', wechatTestLoginRouter)
   // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
   app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
