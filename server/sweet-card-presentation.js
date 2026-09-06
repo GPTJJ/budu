@@ -24,6 +24,41 @@ export function sweetCardValidityText(card) {
   return card?.validityType === 'LONG_TERM' ? '长期有效' : '激活后生效'
 }
 
+function formatCents(value) {
+  const cents = BigInt(value || 0)
+  const sign = cents < 0n ? '-' : ''
+  const absolute = cents < 0n ? -cents : cents
+  return `${sign}¥${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`
+}
+
+export function buildSweetCardDeliveryState(card, now = new Date()) {
+  const latestClaimCredential = card?.claimTokens?.[0] || null
+  let claimCredentialStatus = 'NONE'
+  if (latestClaimCredential?.revokedAt) claimCredentialStatus = 'REVOKED'
+  else if (latestClaimCredential?.consumedAt) claimCredentialStatus = 'CONSUMED'
+  else if (latestClaimCredential?.expiresAt && new Date(latestClaimCredential.expiresAt) <= now) claimCredentialStatus = 'EXPIRED'
+  else if (latestClaimCredential) claimCredentialStatus = 'ACTIVE'
+
+  const claimStatus = card?.claim ? 'CLAIMED' : 'UNCLAIMED'
+  const bindingStatus = card?.bindingMode === 'NONE' ? 'NOT_REQUIRED' : card?.binding ? 'BOUND' : 'UNBOUND'
+  const presentationStatus = claimCredentialStatus === 'NONE' ? 'NOT_GENERATED'
+    : claimCredentialStatus === 'REVOKED' || claimCredentialStatus === 'EXPIRED' ? 'REVOKED'
+      : 'GENERATED'
+  const activationStatus = card?.activatedAt ? 'ACTIVATED' : 'UNACTIVATED'
+  const deliveryStatus = claimStatus === 'CLAIMED' ? 'CLAIMED'
+    : claimCredentialStatus === 'REVOKED' || claimCredentialStatus === 'EXPIRED' ? 'REVOKED'
+      : claimCredentialStatus === 'ACTIVE' && activationStatus === 'ACTIVATED' ? 'READY'
+        : claimCredentialStatus === 'ACTIVE' ? 'GENERATED'
+          : 'NOT_PREPARED'
+
+  return {
+    cardStatus: card?.status || 'CREATED', activationStatus, presentationStatus,
+    claimCredentialStatus, claimStatus, bindingStatus, deliveryStatus,
+    claimedAt: card?.claim?.claimedAt || null,
+    claimCredentialExpiresAt: latestClaimCredential?.expiresAt || null,
+  }
+}
+
 export function buildSweetCardPresentation(card, options = {}) {
   const initial = BigInt(card?.initialAmountCents || 0)
   const balance = BigInt(card?.balanceCents ?? initial)
@@ -32,22 +67,22 @@ export function buildSweetCardPresentation(card, options = {}) {
   return {
     carrierType,
     logoAsset: 'brand/web/budu-wordmark.svg', cardTheme: 'budu-rose', backgroundAsset: '',
-    faceValueDisplay: `¥${(Number(initial) / 100).toFixed(2)}`,
-    currentBalanceDisplay: `¥${(Number(balance) / 100).toFixed(2)}`,
+    faceValueDisplay: formatCents(initial),
+    currentBalanceDisplay: formatCents(balance),
     maskedCardNo: maskedSweetCardNo(card?.publicCardNo), validityText: sweetCardValidityText(card),
     recipientText: String(options.recipientText ?? (card?.recipientLabel ? `赠予 ${card.recipientLabel}` : '')).slice(0, 120),
-    campaignText: String(options.campaignText ?? card?.giftingScenario ?? '').slice(0, 120),
+    campaignText: String(options.campaignText ?? card?.recipientNote ?? card?.giftingScenario ?? '').slice(0, 120),
     statusText: STATUS_LABELS[card?.status] || '状态未知',
     bindingText: card?.binding ? '已绑定' : BINDING_LABELS[card?.bindingMode] || '未绑定',
     claimAsset: claimAsset ? { purpose: 'MINIPROGRAM_CLAIM', format: 'QR', state: claimAsset.state || 'ACTIVE' } : null,
-    designVersion: String(options.designVersion || SWEET_CARD_DESIGN_VERSION).slice(0, 50),
+    designVersion: String(options.designVersion || card?.batch?.presentationTemplateKey || SWEET_CARD_DESIGN_VERSION).slice(0, 50),
   }
 }
 
 /** Presentation renderer. It accepts display-only fields and cannot decide economic or ownership facts. */
 export function renderSweetCardPresentation(model, { claimQrDataUrl = '' } = {}) {
   const qr = claimQrDataUrl
-    ? `<rect x="820" y="250" width="290" height="330" rx="28" fill="#fff"/><image href="${escapeXml(claimQrDataUrl)}" x="835" y="265" width="260" height="260"/><text x="965" y="558" text-anchor="middle" font-family="Arial,sans-serif" font-size="18" fill="#8a6071">微信扫码领取</text>`
+    ? `<rect x="820" y="250" width="290" height="330" rx="28" fill="#fff"/><image href="${escapeXml(claimQrDataUrl)}" x="835" y="265" width="260" height="260"/><text x="965" y="558" text-anchor="middle" font-family="Arial,sans-serif" font-size="18" fill="#8a6071">微信扫码领取甜意卡</text>`
     : `<rect x="820" y="250" width="290" height="290" rx="28" fill="#fff" opacity=".72"/><text x="965" y="395" text-anchor="middle" font-family="Arial,sans-serif" font-size="20" fill="#a78b96">领取入口单独生成</text>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff8fb"/><stop offset="1" stop-color="#f7d7e5"/></linearGradient></defs>
   <rect width="1200" height="760" rx="64" fill="url(#bg)"/><circle cx="1060" cy="100" r="220" fill="#be4679" opacity=".08"/>

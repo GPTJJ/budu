@@ -28,6 +28,22 @@ export function parseAmount(value, label = '金额') {
   return amount
 }
 
+export function parseYuanAmount(value, label = '金额') {
+  const text = String(value ?? '').trim()
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(text)) throw httpError(`${label}不正确`)
+  const [yuan, decimal = ''] = text.split('.')
+  return parseAmount(BigInt(yuan) * 100n + BigInt(decimal.padEnd(2, '0') || '0'), label)
+}
+
+export function assertDeliveryActivationAllowed(card, now = new Date()) {
+  if (card?.carrierType !== 'ELECTRONIC') throw httpError('仅电子卡可执行发放准备', 409)
+  const liveClaimCredential = (card?.claimTokens || []).find((row) => (
+    !row.revokedAt && !row.consumedAt && row.expiresAt && new Date(row.expiresAt) > now
+  ))
+  if (!liveClaimCredential) throw httpError('请先生成有效的微信领取凭证', 409)
+  return true
+}
+
 export function tokenHash(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex')
 }
