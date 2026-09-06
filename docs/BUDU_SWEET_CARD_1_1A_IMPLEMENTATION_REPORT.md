@@ -6,12 +6,12 @@ Overall: `SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE`
 ## Release boundary
 
 - OS implementation baseline: `cc5dcf12fcbc9ae9552921d0fa917898a8403998` on `codex/sweet-card-1-1a`.
-- MiniProgram A8 candidate: `3129ad9d75ccfed29101ae1e400f692f701361af` on `codex/sc11-a06-environment-isolation`.
+- MiniProgram post-A9 source candidate: `4c2ba50408bea6ea5e43bf54727f313ca0f85d4c` on `codex/sc11-a06-environment-isolation`; documentation head `302895a7ae5b6eeec3a61b11fbe03c8330f08e97`.
 - Production runtime: `3838b35b6e2a`, healthy, restart count 0.
 - Production database: `budu_bj006`; Migration 67 applied / 0 failed; exactly one running container uses the canonical Production `DATABASE_URL`.
 - Production Sweet Card balance and Ledger: 500,090 / 500,090 cents; delta 0.
 - Production MiniProgram Claim feature flag: `OFF` because `SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED` is absent from the current Production runtime.
-- Production deploy, migration, Claim, Binding, MiniProgram upload, review, and release in A8/A9: NO.
+- Production deploy, migration, Claim, Binding, review, and release in A8/A9: NO. A Test-only development version was uploaded and manually designated as the experience version.
 - Sweet Card 1.1B: NOT STARTED.
 
 ## A1–A7 preserved result
@@ -50,49 +50,43 @@ Manual platform evidence remains pending:
 
 ## A9 — real Test E2E
 
-Result: `MANUAL_TWO_WECHAT_E2E_REQUIRED`.
+Result: `A9_PASS`.
 
-Verified chain: Test MiniProgram → Test CloudBase `budu-test-d8gwb4xwy41dc6c61` → Test `sweetCardApi` → Test API → `budu_sc11a_test`. Test is at Migration 70 / 0 failed.
+Verified chain: Test experience version `3.5.0-a9-test` → Test CloudBase `budu-test-d8gwb4xwy41dc6c61` → Test `sweetCardApi` → Test API → `budu_sc11a_test`. Test remains at Migration 70 / 0 failed.
 
-USER_A completed:
+Real identity and Claim matrix:
 
-- Two real `wx.login` exchanges resolved to the same stable internal customer, with different server sessions.
-- Claimed ACCEPTANCE_TEST cards for NONE, OPTIONAL, and REQUIRED binding modes.
-- Verified physical and electronic Claim flows, safe same-user replay, wallet authorization, and detailed balance/status/validity/recipient/binding/carrier/store presentation.
-- Verified a Test-only POS-side authoritative balance fixture change from 50.00 to 48.75 appeared after wallet refresh.
+- Two real WeChat identities resolved to different stable internal users. USER_A's 26 Test sessions continued to resolve through one WeChat identity; USER_B resolved through a separate identity.
+- USER_A completed ACCEPTANCE_TEST Claim flows for NONE, OPTIONAL, and REQUIRED binding modes across physical and electronic carriers.
+- Safe same-user replay, wallet authorization, balance/status/validity/recipient/binding/carrier/store detail, and a Test-side authoritative balance refresh from ¥50.00 to ¥48.75 all passed.
+- The real same-card race produced USER_A 201 and USER_B 409. Repeated USER_B requests remained 409. The database contained one owner, one Claim and one Binding for the race card, with no ownership transfer.
+- USER_B's wallet contained zero cards. USER_A's claimed card was not visible cross-user.
+- The race Claim and Binding left the card balance and Ledger at 5,000 / 5,000 cents. The complete A9 fixture reconciled at 19,875 / 19,875 cents, delta 0 before cleanup.
 
-Current Test fixture state is deliberately retained because the two-user race is incomplete:
+A9 compatibility fix:
 
-- One ACCEPTANCE_TEST batch, four accounts, three Claims, one Binding, and one unclaimed REQUIRED/PHYSICAL race card.
-- Fixture balance and Ledger both equal 19,875 cents; delta 0.
-- The preview QR carries only the Claim entry token. The independent proof remains a mode-0600 local temporary file and is displayed only in the system Terminal.
+- WeChat's experience-version code can deliver launch options percent-encoded. The Claim page now uses one guarded decoder for token, proof and scene inputs, accepting raw or encoded options and failing closed on malformed encoding.
+- The exact live E2E completed with raw launch options. The post-A9 compatibility fix is committed locally at `4c2ba50408bea6ea5e43bf54727f313ca0f85d4c`, passes 38/38 MiniProgram tests, and has not been uploaded.
 
-USER_B blocker:
+Security and cleanup:
 
-- USER_B is listed as an experience member, but scanning a Developer Tools preview QR displays `暂无体验权限`.
-- WeChat's official permission model gives experience members access to a platform-designated experience version, while development-version/Developer Tools access requires developer permission. Reissuing a preview QR cannot grant account permission.
-- No USER_B `wx.login`, Claim resolve, Claim submit, or Test API mutation occurred.
-- After explicit user approval, the exact Test Candidate was uploaded successfully as development version `3.5.0-a9-test`, description `A9 TEST ONLY｜Sweet Card 1.1A Test CloudBase｜不得审核发布`, package size 2,054,525 bytes. AppID is `wxfce0a3c4bb430023`; the bundled environment remains Test CloudBase `budu-test-d8gwb4xwy41dc6c61`.
-- An administrator must manually designate `3.5.0-a9-test` as the experience version before an experience-only USER_B can continue. Review and release were not started.
-
-Still required for A9 PASS:
-
-1. Prove USER_B repeated login resolves one stable internal user and differs from USER_A.
-2. Run the real USER_A/USER_B same-card competition: one success only, one owner, one Binding, no duplicate Claim.
-3. Verify losing-user replay and cross-user wallet/detail access are denied.
-4. Capture non-sensitive evidence, remove the exact A9 Test fixtures, and destroy all local Claim/session temporary files.
+- One Test proof suffix pasted into the operator conversation was immediately revoked. Its replacement was consumed by the race. No Production secret was exposed.
+- Exact Test cleanup removed one batch, four accounts, four Claims, two Bindings, five Ledger rows, three customer users, three WeChat identities and 28 customer sessions.
+- Post-cleanup A9 fixture rows, Test WeChat identities and Test customer sessions are all zero. All local Claim/session temporary files and QR artifacts were destroyed; non-sensitive success/denial/wallet screenshots remain.
+- Machine evidence: `docs/checkpoints/2026-09-06-sweet-card-1.1a-a9-real-e2e.json`.
 
 ## A10 — controlled Production rollout
 
 Result: `NOT_STARTED_PREREQUISITES_INCOMPLETE`.
 
-A10 did not start because current official-version/privacy evidence and the real USER_B matrix are still incomplete. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
+A10 did not start because current official-version and privacy-platform evidence remain incomplete. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
 
 Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then independently verify a fresh canonical backup, isolated Migration 68–70 rehearsal and schema diff, rollback assets, health, single writer, and full legacy regression. Any backend deployment must start with Claim OFF; any later Claim enablement must remain limited to an explicit test-customer allowlist. Full public rollout is not authorized.
 
 ## Regression and current reconciliation
 
 - A8 MiniProgram environment, CloudBase, payment safety, API, Claim UI, privacy, responsive, and accessibility contracts: 55/55 PASS.
+- Post-A9 launch-option compatibility regression: 38/38 PASS.
 - Privacy JavaScript syntax and diff checks: PASS.
 - A1–A7 accepted regression evidence remains PASS; A10 full Production regression is intentionally not claimed because A10 did not start.
 - Production public/internal health and DB: PASS.
@@ -104,10 +98,9 @@ Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then indepen
 
 ## Minimum manual steps
 
-1. In 微信公众平台 → 版本管理, manually select uploaded development version `3.5.0-a9-test` as the experience version. Do not submit it for review or release it.
-2. USER_B opens the experience version, follows the retained race Claim entry, enters the independent proof already shown in Terminal, and stops before tapping the Claim button.
-3. Resume the controlled race while USER_A remains at the same card's ready state.
-4. In 微信公众平台, capture the current official-version details and current 用户隐私保护指引, then reconcile them against the prepared checklist.
+1. In 微信公众平台 → 版本管理, record the current official MiniProgram version, publish time, remark and state.
+2. In 微信公众平台 → 用户隐私保护指引, capture the current effective declaration and reconcile it against the prepared checklist.
+3. Do not submit for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
 
 Evidence images are stored under `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906`. They contain no full OpenID, AppSecret, `session_key`, Claim token, POS credential, or internal User ID.
 

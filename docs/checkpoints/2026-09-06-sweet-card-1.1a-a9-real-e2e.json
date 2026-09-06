@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T21:24:02+08:00",
+  "gate": "A9",
+  "result": "PASS",
+  "chain": {
+    "miniProgram": "TEST_EXPERIENCE_VERSION_3.5.0-a9-test",
+    "cloudBase": "budu-test-d8gwb4xwy41dc6c61",
+    "api": "TEST_API",
+    "database": "budu_sc11a_test",
+    "migrationsApplied": 70,
+    "migrationsFailed": 0
+  },
+  "realIdentity": {
+    "userA": {
+      "stableUserRef": "7396c4325d02",
+      "identityCount": 1,
+      "sessionCount": 26,
+      "walletCardsBeforeCleanup": 4
+    },
+    "userB": {
+      "stableUserRef": "5812c6ad7eb7",
+      "identityCount": 1,
+      "sessionCount": 1,
+      "walletCardsBeforeCleanup": 0
+    },
+    "differentStableUsers": true,
+    "sameUserRepeatedLoginStable": "PASS_USER_A"
+  },
+  "claimMatrix": {
+    "NONE": "PASS",
+    "OPTIONAL": "PASS",
+    "REQUIRED": "PASS",
+    "PHYSICAL": "PASS",
+    "ELECTRONIC": "PASS"
+  },
+  "race": {
+    "successResponses": [
+      201
+    ],
+    "loserResponses": [
+      409,
+      409,
+      409
+    ],
+    "oneSuccessOnly": true,
+    "claimCount": 1,
+    "bindingCount": 1,
+    "claimBindingSameOwner": true,
+    "ownershipTransfer": false,
+    "crossUserWalletVisibility": "DENIED"
+  },
+  "replay": {
+    "owner": "SAFE_IDEMPOTENT",
+    "otherUser": "DENIED_409"
+  },
+  "wallet": {
+    "authorization": "PASS",
+    "detailFields": [
+      "balance",
+      "status",
+      "validity",
+      "recipient",
+      "binding",
+      "carrier",
+      "availableStores"
+    ],
+    "testBalanceRefresh": "50.00_TO_48.75_PASS"
+  },
+  "economicsBeforeCleanup": {
+    "fixtureBalanceCents": 19875,
+    "fixtureLedgerCents": 19875,
+    "deltaCents": 0,
+    "raceCardBalanceCents": 5000,
+    "raceCardLedgerCents": 5000
+  },
+  "security": {
+    "finalSecretLeak": "NO_SECRET_LEAK",
+    "exposedTestProofSuffix": "IMMEDIATELY_REVOKED",
+    "productionCredentialExposure": false
+  },
+  "evidence": {
+    "userASuccess": {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a9-user-a-race-success.png",
+      "sha256": "bcaaa1a1b3c8aa9826e9d4b4514a95a8cc7090dce719843bff5ddcffd663bfb8"
+    },
+    "userBRaceDenied": {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a9-user-b-race-denied.jpg",
+      "sha256": "06f0284b052b1cf8efe5917ea0493773d8580ca866e6aa21d562d14fd38fa7c2"
+    },
+    "userBEmptyWallet": {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a9-user-b-empty-wallet.jpg",
+      "sha256": "37c2aa5fd684dd6d9365f8dfe1b658091c3da726ebb0d38e58bffd1afdb78744"
+    }
+  },
+  "cleanup": {
+    "status": "PASS",
+    "batchesRemoved": 1,
+    "accountsRemoved": 4,
+    "claimsRemoved": 4,
+    "bindingsRemoved": 2,
+    "ledgerRowsRemoved": 5,
+    "customerUsersRemoved": 3,
+    "wechatIdentitiesRemoved": 3,
+    "customerSessionsRemoved": 28,
+    "postCleanupA9Rows": 0
+  },
+  "production": {
+    "runtimeSha": "3838b35b6e2a",
+    "database": "budu_bj006",
+    "migrationsApplied": 67,
+    "migrationsFailed": 0,
+    "balanceCents": 500090,
+    "ledgerCents": 500090,
+    "deltaCents": 0,
+    "singleWriterCount": 1,
+    "publicHealth": "PASS",
+    "writePerformed": false,
+    "deployPerformed": false
+  }
+}
