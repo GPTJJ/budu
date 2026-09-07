@@ -72,10 +72,21 @@ const batchOperationalWhere = (purpose, archived) => ({
 })
 const accountOperationalWhere = (purpose, archived) => ({ batch: { is: batchOperationalWhere(purpose, archived) } })
 const requireDb = () => { if (!dbReady()) throw httpError('数据库未配置', 503) }
-const requireTestClaimPresentation = (req) => {
-  if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
-      || req.get('x-budu-test-gateway') !== '1'
-      || String(process.env.SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED || '') !== '1') {
+export const sweetCardClaimPresentationEnabled = (env = process.env) => {
+  const appEnv = String(env.APP_ENV || '').trim().toLowerCase()
+  if (String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED || '') !== '1') return false
+  if (appEnv === 'test') return true
+  if (appEnv !== 'production' && appEnv !== 'prod') return false
+  const allowlistedUserIds = String(env.SWEET_CARD_MINIPROGRAM_CLAIM_USER_IDS || '')
+    .split(',').map(value => value.trim()).filter(Boolean)
+  return String(env.SWEET_CARD_PRODUCTION_GATEWAY_ENABLED || '') === '1'
+    && String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY || '') === '1'
+    && allowlistedUserIds.length > 0
+}
+const requireControlledClaimPresentation = (req) => {
+  const appEnv = String(process.env.APP_ENV || '').trim().toLowerCase()
+  if (!sweetCardClaimPresentationEnabled()
+      || (appEnv === 'test' && req.get('x-budu-test-gateway') !== '1')) {
     throw httpError('NOT_FOUND', 404)
   }
 }
@@ -240,8 +251,7 @@ sweetCardRouter.get('/sweet-cards/config', wrap(async (req, res) => {
   const productionTestAllowed = hasSweetCardProductionTestAccess(req.user)
   const commercialAllowed = hasModuleAccess(req.user, MODULE_KEYS.STORE_POS)
   const adminAllowed = hasModuleAccess(req.user, MODULE_KEYS.SWEET_CARD) && hasSweetCardCapability(req.user, SWEET_CARD_CAPABILITIES.VIEW)
-  const claimPresentationEnabled = String(process.env.APP_ENV || '').trim().toLowerCase() === 'test'
-    && String(process.env.SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED || '') === '1'
+  const claimPresentationEnabled = sweetCardClaimPresentationEnabled()
   res.json({ enabled: adminAllowed || (sweetCardEnabled() && commercialAllowed), productionTestAllowed, commercialAllowed, claimPresentationEnabled, presentation: SWEET_CARD_PRESENTATION_CONTRACT })
 }))
 
@@ -640,7 +650,7 @@ sweetCardRouter.get('/sweet-cards/cards/:id/presentation', wrap(async (req, res)
 }))
 
 async function generateClaimPresentation(req, card) {
-  requireTestClaimPresentation(req)
+  requireControlledClaimPresentation(req)
   requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE)
   assertSweetCardEnabled()
   if (req.body?.holderVerificationConfirmed !== true || req.body?.separateProofDelivery !== true) {
@@ -684,14 +694,14 @@ async function generateClaimPresentation(req, card) {
 }
 
 sweetCardRouter.post('/sweet-cards/cards/:id/claim-presentation', wrap(async (req, res) => {
-  requireDb(); requireTestClaimPresentation(req)
+  requireDb(); requireControlledClaimPresentation(req)
   const card = await prisma.sweetCardAccount.findUnique({ where: { id: req.params.id }, include: { batch: true, binding: true, claim: true, claimTokens: { orderBy: { createdAt: 'desc' } } } })
   res.status(201).json({ ok: true, ...(await generateClaimPresentation(req, card)) })
 }))
 
 // A0 compatibility adapter: the printed card number only locates a verified legacy physical card.
 sweetCardRouter.post('/sweet-cards/legacy-physical/claim-presentation', wrap(async (req, res) => {
-  requireDb(); requireTestClaimPresentation(req)
+  requireDb(); requireControlledClaimPresentation(req)
   const publicCardNo = safeText(req.body?.publicCardNo, 80)
   const card = await prisma.sweetCardAccount.findUnique({ where: { publicCardNo }, include: { batch: true, binding: true, claim: true } })
   if (!card || card.carrierType !== 'PHYSICAL') throw httpError('测试实体甜意卡不存在', 404)
@@ -699,7 +709,7 @@ sweetCardRouter.post('/sweet-cards/legacy-physical/claim-presentation', wrap(asy
 }))
 
 sweetCardRouter.post('/sweet-cards/cards/:id/claim-presentation/revoke', wrap(async (req, res) => {
-  requireDb(); requireTestClaimPresentation(req); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
+  requireDb(); requireControlledClaimPresentation(req); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
   const actor = who(req.user)
   const result = await revokeSweetCardClaimCredential({ accountId: req.params.id, revokedById: actor.id })
   if (result.revokedCount > 0) await audit(prisma, actor, 'sweet_card.claim_asset_revoked', { accountId: req.params.id }, {

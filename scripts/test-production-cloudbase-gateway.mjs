@@ -12,6 +12,7 @@ import {
 } from '../server/production-cloudbase-gateway.js'
 import { createWechatTestLoginRouter } from '../server/wechat-test-login.js'
 import { createSweetCardClaimRouter } from '../server/sweet-card-claim.js'
+import { sweetCardClaimPresentationEnabled } from '../server/sweet-card.js'
 
 const now = 1788759000000
 const secret = 'production-gateway-test-secret-0123456789'
@@ -25,6 +26,25 @@ const base = {
   environment: PRODUCTION_CLOUDBASE_ENV_ID,
   appId: PRODUCTION_WECHAT_APP_ID,
 }
+
+test('production claim presentation is available only for a non-empty controlled allowlist', () => {
+  const controlled = {
+    APP_ENV: 'prod',
+    SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED: '1',
+    SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY: '1',
+    SWEET_CARD_MINIPROGRAM_CLAIM_USER_IDS: 'approved-user-id',
+    SWEET_CARD_PRODUCTION_GATEWAY_ENABLED: '1',
+  }
+  assert.equal(sweetCardClaimPresentationEnabled(controlled), true)
+  assert.equal(sweetCardClaimPresentationEnabled({ ...controlled, SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED: '0' }), false)
+  assert.equal(sweetCardClaimPresentationEnabled({ ...controlled, SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY: '0' }), false)
+  assert.equal(sweetCardClaimPresentationEnabled({ ...controlled, SWEET_CARD_MINIPROGRAM_CLAIM_USER_IDS: '' }), false)
+  assert.equal(sweetCardClaimPresentationEnabled({ ...controlled, SWEET_CARD_PRODUCTION_GATEWAY_ENABLED: '0' }), false)
+  assert.equal(sweetCardClaimPresentationEnabled({ ...controlled, APP_ENV: 'unknown' }), false)
+  assert.equal(sweetCardClaimPresentationEnabled({
+    APP_ENV: 'test', SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED: '1',
+  }), true)
+})
 
 function request(fields = base, requestBody = body) {
   const signature = signProductionGatewayRequest(fields, secret)
