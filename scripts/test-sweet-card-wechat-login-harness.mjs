@@ -128,10 +128,10 @@ test('HTTP harness requires the isolated gateway and returns only the safe DTO',
   }
 })
 
-test('container validates the hard guards before any Prisma migration', () => {
+test('container validates the hard guards and never auto-migrates on startup', () => {
   const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8')
   const command = dockerfile.match(/CMD \["sh", "-c", "([^"]+)"\]/)?.[1] || ''
   assert.ok(command.indexOf('node scripts/validate-runtime-config.mjs') >= 0)
-  assert.ok(command.indexOf('npx prisma migrate deploy') > command.indexOf('node scripts/validate-runtime-config.mjs'))
-  assert.ok(command.indexOf('node server/index.js') > command.indexOf('npx prisma migrate deploy'))
+  assert.ok(command.indexOf('node server/index.js') > command.indexOf('node scripts/validate-runtime-config.mjs'))
+  assert.equal(command.includes('npx prisma migrate deploy'), false)
 })
