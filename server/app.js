@@ -28,6 +28,8 @@ import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
 import { sweetCardRouter } from './sweet-card.js'
 import { sweetCardAvailabilityRouter } from './sweet-card-availability.js'
+import { wechatTestLoginRouter } from './wechat-test-login.js'
+import { sweetCardClaimRouter } from './sweet-card-claim.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
@@ -317,7 +319,7 @@ export function createApp() {
     // Data Authority DA-2：账号权威 = PostgreSQL
     const user = await getUserById(payload.sub)
     if (!user) return res.status(401).json({ error: '账号不存在' })
-    if (user.status === 'disabled' || user.role === 'public') return res.status(403).json({ error: '账号已停用，请联系开发者' })
+    if (user.status === 'disabled' || user.role === 'public' || user.role === 'customer') return res.status(403).json({ error: '账号已停用，请联系开发者' })
     req.user = user
     next()
   }
@@ -611,6 +613,39 @@ export function createApp() {
     gitSha: GIT_SHA || '',
     dbOk: dbReady(),
   }))
+  // A0.6 test-environment authority probe. It is deliberately unavailable in
+  // every non-test runtime and only reachable through the isolated test gateway.
+  app.get('/api/test-authority', async (req, res) => {
+    if (APP_ENV !== 'test' || req.get('x-budu-test-gateway') !== '1') {
+      return res.status(404).json({ error: 'NOT_FOUND' })
+    }
+    try {
+      const [identity] = await prisma.$queryRaw`
+        SELECT current_database() AS database_name,
+               current_setting('transaction_read_only') AS transaction_read_only
+      `
+      const [migration] = await prisma.$queryRaw`
+        SELECT COUNT(*)::int AS applied,
+               COUNT(*) FILTER (WHERE finished_at IS NULL)::int AS failed
+        FROM "_prisma_migrations"
+      `
+      return res.json({
+        ok: true,
+        env: APP_ENV,
+        gitSha: GIT_SHA || '',
+        database: identity?.database_name || '',
+        transactionReadOnly: identity?.transaction_read_only || '',
+        migration: {
+          applied: Number(migration?.applied || 0),
+          failed: Number(migration?.failed || 0),
+        },
+      })
+    } catch {
+      return res.status(503).json({ error: 'TEST_AUTHORITY_UNAVAILABLE' })
+    }
+  })
+  app.use('/api/customer/auth/wechat', wechatTestLoginRouter)
+  app.use('/api/customer/sweet-card', sweetCardClaimRouter)
   // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
   app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
@@ -760,7 +795,7 @@ export function createApp() {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
     }
-    if (user.status === 'disabled' || user.role === 'public') {
+    if (user.status === 'disabled' || user.role === 'public' || user.role === 'customer') {
       return res.status(403).json({ error: '账号已停用，请联系开发者' })
     }
     setAuthCookie(res, signToken(user, await getSecret()))
@@ -893,7 +928,7 @@ export function createApp() {
   // ---------- 账号管理（最高权限） ----------
   app.get('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    res.json({ users: users.map(userPublic) })
+    res.json({ users: users.filter(user => user.role !== 'customer').map(userPublic) })
   })
 
   app.put('/api/admin/users/:id/role', requireAuth, requireAccountAdmin, async (req, res) => {

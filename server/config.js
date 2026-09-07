@@ -1,4 +1,5 @@
 import { CHANGELOG } from './changelog.js'
+import { validateWechatTestLoginConfig } from './wechat-test-login.js'
 
 /** 环境：dev / test / prod；未设置默认 dev（本地开发） */
 export const APP_ENV = String(process.env.APP_ENV || 'dev').trim().toLowerCase()
@@ -39,4 +40,5 @@ export function validateConfig() {
       throw new Error('[config] 环境 prod 必须配置 Redis/KV，或显式设置 DATA_STORE=file 与 DATA_DIR')
     }
   }
+  validateWechatTestLoginConfig(process.env)
 }

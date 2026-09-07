@@ -36,6 +36,8 @@
       carrierType: index % 2 === 0 ? 'ELECTRONIC' : 'PHYSICAL',
       bindingMode: index % 3 === 0 ? 'NONE' : index % 3 === 1 ? 'OPTIONAL' : 'REQUIRED',
       recipientLabel: index === 0 ? '西单商业客户' : '', recipientCompany: '',
+      recipientType: index === 0 ? '个人' : '', recipientNote: index === 0 ? '愿每一天都有一点甜。' : '',
+      giftingScenario: index === 0 ? '商务赠礼' : '', activatedAt: status === 'ACTIVE' ? now : null,
     }))
     cards.push(
       { id: 'card-acceptance', publicCardNo: 'SC-ACCEPTANCE-01', batchId: acceptanceBatch.id, initialAmountCents: '50000', balanceCents: '50000', status: 'CREATED', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
@@ -63,6 +65,14 @@
     }
 
     window.__lastSweetCardBatchBody = null
+    window.__presentationUpdates = []
+    window.__claimPresentationBodies = []
+    window.__deliveryActions = []
+    window.__setA75CardState = ({ card: cardPatch = {}, delivery: deliveryPatch = {}, binding } = {}) => {
+      Object.assign(cards[0], cardPatch)
+      cards[0].delivery = { ...(cards[0].delivery || {}), ...deliveryPatch }
+      if (binding !== undefined) cards[0].binding = binding
+    }
     window.__sweetCardListRequests = 0
     window.__archiveActions = []
     window.fetch = async (url, options = {}) => {
@@ -70,7 +80,7 @@
       const path = requestUrl.pathname
       const method = options.method || 'GET'
       const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
-      if (path === '/api/v2/sweet-cards/config') return json({ enabled: true })
+      if (path === '/api/v2/sweet-cards/config') return json({ enabled: true, claimPresentationEnabled: true })
       if (path === '/api/v2/sweet-cards/overview') return json(overview(requestUrl))
       if (path === '/api/v2/sweet-cards/batches' && method === 'POST') {
         window.__lastSweetCardBatchBody = JSON.parse(options.body)
@@ -86,9 +96,49 @@
         return json({ ok: true, batch })
       }
       if (path === '/api/v2/sweet-cards/cards') { window.__sweetCardListRequests += 1; return json({ cards: scopedCards(requestUrl) }) }
-      if (path.startsWith('/api/v2/sweet-cards/cards/card-')) {
-        const card = cards.find((row) => path === `/api/v2/sweet-cards/cards/${row.id}`)
-        if (card) return json({ card: { ...card, expiresAt: null, binding: null, credentials: [], issuedByName: '西单操作员', issuedAt: now, giftingScenario: '商务赠礼', ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: card.initialAmountCents, balanceAfterCents: card.balanceCents, createdAt: now }] } })
+      const cardPath = path.match(/^\/api\/v2\/sweet-cards\/cards\/([^/]+)(?:\/(.+))?$/)
+      if (cardPath) {
+        const card = cards.find((row) => row.id === cardPath[1])
+        if (!card) return json({ error: '甜意卡不存在' }, 404)
+        const detail = () => ({
+          ...card,
+          batch: { name: batches.find((row) => row.id === card.batchId)?.name || '无批次', presentationTemplateKey: 'minimal-v2' },
+          expiresAt: null, binding: card.binding || null,
+          credentials: [{ id: 'credential-safe-id', status: card.status === 'ACTIVE' ? 'ACTIVE' : 'UNACTIVATED', carrierType: card.carrierType }],
+          issuedByName: '西单操作员', issuedAt: now,
+          delivery: card.delivery || {
+            activationStatus: card.activatedAt ? 'ACTIVATED' : 'UNACTIVATED', presentationStatus: 'NOT_GENERATED',
+            claimCredentialStatus: 'NONE', claimStatus: 'UNCLAIMED',
+            bindingStatus: card.bindingMode === 'NONE' ? 'NOT_REQUIRED' : card.binding ? 'BOUND' : 'UNBOUND',
+            deliveryStatus: 'NOT_PREPARED', claimedAt: null,
+          },
+          ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: card.initialAmountCents, balanceAfterCents: card.balanceCents, createdAt: now }],
+        })
+        if (!cardPath[2] && method === 'GET') return json({ card: detail() })
+        if (cardPath[2] === 'presentation' && method === 'PUT') {
+          const body = JSON.parse(options.body)
+          window.__presentationUpdates.push(body)
+          Object.assign(card, body)
+          return json({ ok: true, card: detail() })
+        }
+        if (cardPath[2] === 'claim-presentation' && method === 'POST') {
+          const body = JSON.parse(options.body)
+          window.__claimPresentationBodies.push(body)
+          card.delivery = { ...(detail().delivery), presentationStatus: 'GENERATED', claimCredentialStatus: 'ACTIVE', deliveryStatus: card.activatedAt ? 'READY' : 'GENERATED' }
+          const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760"><rect width="1200" height="760" rx="64" fill="#fff4f8"/><text x="80" y="100" font-size="42">budu 甜意卡</text><text x="80" y="200" font-size="72">¥200.00</text><rect x="820" y="220" width="280" height="280" fill="white"/><path d="M850 250h220v220H850zM880 280h50v50h-50zM990 380h50v50h-50z" fill="#111827"/><text x="960" y="540" text-anchor="middle" font-size="24">微信扫码领取甜意卡</text></svg>'
+          return json({ ok: true, claimAsset: { id: 'claim-safe-id', purpose: 'MINIPROGRAM_CLAIM', state: 'ACTIVE', carrierType: body.carrierType, expiresAt: '2026-09-12T04:30:00.000Z', fileName: `${card.publicCardNo}.claim.electronic.svg`, svgBase64: btoa(unescape(encodeURIComponent(svg))) }, presentation: { designVersion: 'minimal-v2' }, proofDelivery: { channel: 'SEPARATE_CHANNEL_REQUIRED', proof: 'FAKE-PROOF-FOR-UI-HARNESS' }, economicMutation: 'NONE' }, 201)
+        }
+        if (cardPath[2] === 'claim-presentation/revoke' && method === 'POST') {
+          card.delivery = { ...(detail().delivery), presentationStatus: 'REVOKED', claimCredentialStatus: 'REVOKED', deliveryStatus: 'REVOKED' }
+          window.__deliveryActions.push('REVOKE')
+          return json({ ok: true, claimAsset: { purpose: 'MINIPROGRAM_CLAIM', state: 'REVOKED' }, revokedCount: 1 })
+        }
+        if (cardPath[2] === 'activate-delivery' && method === 'POST') {
+          card.status = 'ACTIVE'; card.activatedAt = now
+          card.delivery = { ...(detail().delivery), activationStatus: 'ACTIVATED', deliveryStatus: 'READY' }
+          window.__deliveryActions.push('ACTIVATE')
+          return json({ card: detail() })
+        }
       }
       if (path === '/api/v2/sweet-cards/rules') return json({ stores: [], categories: [] })
       if (path === '/api/v2/sweet-cards/usage') return json({ redemptions: [] })
