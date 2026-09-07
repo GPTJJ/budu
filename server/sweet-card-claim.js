@@ -1,11 +1,13 @@
 import crypto from 'node:crypto'
 import express from 'express'
+import QRCode from 'qrcode'
 import { authenticateCustomerSession, bearerToken, revokeCustomerSession } from './customer-auth.js'
 import { createFixedWindowLimiter, safeRateKey } from './customer-request-core.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { prisma } from './pg.js'
 import { authorizeWechatGateway, validateWechatLoginConfig } from './wechat-test-login.js'
 import { buildSweetCardPresentation } from './sweet-card-presentation.js'
+import { decryptToken, isSweetCardToken } from './sweet-card-core.js'
 
 export const CLAIM_TOKEN_PREFIX = 'budu:claim:v1:'
 export const CLAIM_PROOF_PREFIX = 'budu:claim-proof:v1:'
@@ -20,6 +22,7 @@ const IDENTITY_FIELDS = new Set(['userId', 'ownerUserId', 'openId', 'openid', 'u
 const claimPreviewLimiter = createFixedWindowLimiter({ limit: 20, windowMs: 60_000 })
 const claimResolveLimiter = createFixedWindowLimiter({ limit: 12, windowMs: 60_000 })
 const claimSubmitLimiter = createFixedWindowLimiter({ limit: 8, windowMs: 60_000 })
+const posPresentationLimiter = createFixedWindowLimiter({ limit: 12, windowMs: 60_000 })
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex')
@@ -334,6 +337,67 @@ export async function listCustomerSweetCardStores({ db = prisma } = {}) {
   return stores.map(store => ({ storeRef: store.key, name: store.name }))
 }
 
+export async function createCustomerPosRedemptionPresentation({
+  userId,
+  walletRef,
+  db = prisma,
+  now = new Date(),
+  renderQr = (token) => QRCode.toDataURL(token, { errorCorrectionLevel: 'H', margin: 2, width: 420 }),
+}) {
+  if (!userId) deny('CUSTOMER_SESSION_DENIED', 401)
+  const claimRef = String(walletRef || '').trim()
+  if (!/^[A-Za-z0-9-]{16,100}$/.test(claimRef)) deny('CLAIM_REFERENCE_INVALID', 400)
+  const claim = await db.sweetCardClaim.findFirst({
+    where: { id: claimRef, userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    include: {
+      account: {
+        include: {
+          binding: true,
+          credentials: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
+        },
+      },
+    },
+  })
+  if (!claim?.account) deny('SWEET_CARD_NOT_FOUND', 404)
+  const account = claim.account
+  if (account.binding?.userId && account.binding.userId !== userId) deny('SWEET_CARD_OWNERSHIP_DENIED', 403)
+  if (account.bindingMode === 'REQUIRED' && account.binding?.userId !== userId) deny('SWEET_CARD_BINDING_REQUIRED', 409)
+  if (account.status !== 'ACTIVE') deny('POS_PRESENTATION_CARD_UNAVAILABLE', 409)
+  if (account.validFrom && account.validFrom > now) deny('POS_PRESENTATION_CARD_NOT_ACTIVE', 409)
+  if (account.expiresAt && account.expiresAt <= now) deny('POS_PRESENTATION_CARD_EXPIRED', 409)
+  if (account.balanceCents <= 0n) deny('POS_PRESENTATION_BALANCE_EMPTY', 409)
+  const availableStoreCount = await db.store.count({
+    where: { active: true, operationType: 'DIRECT', sweetCardPolicy: { eligible: true } },
+  })
+  if (availableStoreCount < 1) deny('POS_PRESENTATION_NO_AVAILABLE_STORE', 409)
+  const credential = account.credentials?.[0]
+  if (!credential || credential.revokedAt) deny('POS_PRESENTATION_CREDENTIAL_UNAVAILABLE', 409)
+  let token
+  try {
+    token = decryptToken(credential)
+  } catch {
+    deny('POS_PRESENTATION_CREDENTIAL_UNAVAILABLE', 409)
+  }
+  if (!isSweetCardToken(token)) deny('POS_PRESENTATION_CREDENTIAL_UNAVAILABLE', 409)
+  let qrImageDataUrl
+  try {
+    qrImageDataUrl = await renderQr(token)
+  } catch {
+    deny('POS_PRESENTATION_RENDER_FAILED', 503)
+  }
+  if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(String(qrImageDataUrl || ''))) {
+    deny('POS_PRESENTATION_RENDER_FAILED', 503)
+  }
+  return {
+    purpose: 'POS_REDEMPTION',
+    qrImageDataUrl,
+    balanceCents: String(account.balanceCents),
+    maskedCardNo: maskedCardNo(account.publicCardNo),
+    availableStoreCount,
+    generatedAt: now.toISOString(),
+  }
+}
+
 export async function claimSweetCard({
   userId, rawToken, rawProof, requestKey, bindIntent = false,
   db = prisma, now = new Date(), faultInjector = null,
@@ -560,6 +624,17 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
     rejectIdentityAuthority(req.query)
     return res.json({ ok: true, stores: await listCustomerSweetCardStores({ db }) })
   }))
+  router.post('/wallet/:walletRef/pos-presentation', withCustomer(async (req, res, customer) => {
+    rejectIdentityAuthority(req.body)
+    const rate = posPresentationLimiter.consume(safeRateKey(req.ip, sha256(`${customer.customerRef}:${req.params.walletRef}`)))
+    if (!rate.allowed) deny('POS_PRESENTATION_RATE_LIMITED', 429)
+    return res.json({
+      ok: true,
+      presentation: await createCustomerPosRedemptionPresentation({
+        userId: customer.userId, walletRef: req.params.walletRef, db,
+      }),
+    })
+  }))
   router.get('/wallet/:walletRef', withCustomer(async (req, res, customer) => {
     rejectIdentityAuthority(req.query)
     return res.json({ ok: true, card: await getCustomerSweetCard({ userId: customer.userId, walletRef: req.params.walletRef, db }) })
@@ -574,5 +649,5 @@ export const sweetCardClaimInternals = {
 }
 
 export function resetSweetCardClaimRateLimitsForTest() {
-  claimPreviewLimiter.clear(); claimResolveLimiter.clear(); claimSubmitLimiter.clear()
+  claimPreviewLimiter.clear(); claimResolveLimiter.clear(); claimSubmitLimiter.clear(); posPresentationLimiter.clear()
 }

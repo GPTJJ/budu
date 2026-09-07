@@ -23,6 +23,7 @@ const NODE_TEST_SUITE = [
   'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
   'test-budu-sweet-card-skill.mjs', // Sweet Card 业务 Skill、路由与核心合同
   'test-sweet-card-core.mjs', // Sweet Card 金额、credential、权限、分配与结算合同
+  'test-sweet-card-pos-presentation.mjs', // 小程序出示现有 POS credential，Claim/POS 隔离与零经济写入
   'test-sweet-card-migration.mjs', // migration 63 PGlite rehearsal 与 legacy 零改写
   'test-sweet-card-settlement.mjs', // mixed settlement 与退款分配
   'test-budu-payroll-audit-skill.mjs', // Team Skill：STRICT 只读工资审计路由与领域合同
