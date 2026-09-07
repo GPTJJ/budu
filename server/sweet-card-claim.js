@@ -4,7 +4,7 @@ import { authenticateCustomerSession, bearerToken, revokeCustomerSession } from 
 import { createFixedWindowLimiter, safeRateKey } from './customer-request-core.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { prisma } from './pg.js'
-import { validateWechatTestLoginConfig } from './wechat-test-login.js'
+import { authorizeWechatGateway, validateWechatLoginConfig } from './wechat-test-login.js'
 import { buildSweetCardPresentation } from './sweet-card-presentation.js'
 
 export const CLAIM_TOKEN_PREFIX = 'budu:claim:v1:'
@@ -446,12 +446,6 @@ function claimantAllowed(userId, env) {
   return allowlist.has(userId)
 }
 
-function testOnlyRequest(req) {
-  return String(process.env.APP_ENV || '').trim().toLowerCase() === 'test'
-    && req.get('x-budu-test-gateway') === '1' && claimEnabled(process.env)
-}
-
-
 function requestId(req) {
   const supplied = String(req.get('x-request-id') || '').trim()
   return /^[A-Za-z0-9._-]{8,100}$/.test(supplied) ? supplied : crypto.randomUUID()
@@ -473,13 +467,13 @@ function securityLog(req, event, status, customerRef = '') {
   console.info('[sweet-card-claim-security]', JSON.stringify({ requestId: requestId(req), event, status, channel: 'MINIPROGRAM', customerRef: customerRef || undefined }))
 }
 
-export function createSweetCardClaimRouter({ db = prisma, configLoader = validateWechatTestLoginConfig } = {}) {
+export function createSweetCardClaimRouter({ db = prisma, configLoader = validateWechatLoginConfig } = {}) {
   const router = express.Router()
   const withPublic = handler => async (req, res) => {
-    if (!testOnlyRequest(req)) return res.status(404).json({ error: 'NOT_FOUND' })
     try {
       const config = configLoader(process.env)
-      if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      if (!config.enabled || !claimEnabled(process.env)) return res.status(404).json({ error: 'NOT_FOUND' })
+      authorizeWechatGateway(req, config)
       res.setHeader('Cache-Control', 'no-store')
       return await handler(req, res)
     } catch (error) {
@@ -487,10 +481,10 @@ export function createSweetCardClaimRouter({ db = prisma, configLoader = validat
     }
   }
   const withCustomer = handler => async (req, res) => {
-    if (!testOnlyRequest(req)) return res.status(404).json({ error: 'NOT_FOUND' })
     try {
       const config = configLoader(process.env)
-      if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      if (!config.enabled || !claimEnabled(process.env)) return res.status(404).json({ error: 'NOT_FOUND' })
+      authorizeWechatGateway(req, config)
       const customer = await authenticateCustomerSession({
         rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db,
       })

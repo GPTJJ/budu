@@ -5,6 +5,7 @@ import path from 'node:path'
 import express from 'express'
 import { createCustomerSession, authenticateCustomerSession, bearerToken, resolveOrCreateCustomerIdentity } from './customer-auth.js'
 import { prisma } from './pg.js'
+import { validateProductionGatewayConfig, verifyProductionGatewayRequest } from './production-cloudbase-gateway.js'
 
 export const APPROVED_TEST_WECHAT_APP_ID = 'wxfce0a3c4bb430023'
 export const APPROVED_TEST_DATABASE = 'budu_sc11a_test'
@@ -70,6 +71,7 @@ export function validateWechatTestLoginConfig(
 
   return {
     enabled: true,
+    mode: 'test',
     appId: APPROVED_TEST_WECHAT_APP_ID,
     database: APPROVED_TEST_DATABASE,
     secretPath,
@@ -132,6 +134,17 @@ export async function resolveWechatTestIdentity({ code, config, exchange = reque
   }
 }
 
+export async function resolveWechatIdentity({ code, config, exchange = requestWechatSession }) {
+  const proof = await resolveWechatIdentityProof({ code, config, exchange })
+  return {
+    ok: true,
+    wechatIdentityResolved: true,
+    identityMarker: proof.identityMarker,
+    environment: config.mode === 'production' ? 'production' : 'test',
+    databaseAuthority: config.database,
+  }
+}
+
 export async function resolveWechatIdentityProof({ code, config, exchange = requestWechatSession }) {
   const normalizedCode = String(code || '').trim()
   if (!normalizedCode) throw httpError('WECHAT_CODE_REQUIRED', 400)
@@ -159,40 +172,58 @@ export async function resolveWechatIdentityProof({ code, config, exchange = requ
     .update(`${config.appId}\n${openId}`)
     .digest('hex')
     .slice(0, 12)
-  return { openId, unionId: String(result.unionid || '').trim() || null, identityMarker: `test-${identityMarker}` }
+  return {
+    openId,
+    unionId: String(result.unionid || '').trim() || null,
+    identityMarker: `${config.mode === 'production' ? 'production' : 'test'}-${identityMarker}`,
+  }
+}
+
+export function validateWechatLoginConfig(env = process.env, io) {
+  return String(env.APP_ENV || '').trim().toLowerCase() === 'prod'
+    ? validateProductionGatewayConfig(env, io)
+    : validateWechatTestLoginConfig(env, io)
+}
+
+export function authorizeWechatGateway(req, config) {
+  if (config.mode === 'production') {
+    if (!String(req.originalUrl || '').startsWith('/api/v2/customer/')) {
+      throw Object.assign(new Error('PRODUCTION_GATEWAY_SCOPE_DENIED'), { status: 403, publicSafe: true })
+    }
+    return verifyProductionGatewayRequest(req, config)
+  }
+  if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
+      || req.get('x-budu-test-gateway') !== '1') {
+    throw Object.assign(new Error('NOT_FOUND'), { status: 404, publicSafe: true })
+  }
+  return { verified: true, environment: 'test' }
 }
 
 export function createWechatTestLoginRouter({
-  configLoader = validateWechatTestLoginConfig,
+  configLoader = validateWechatLoginConfig,
   exchange = requestWechatSession,
   db = prisma,
 } = {}) {
   const router = express.Router()
   router.post('/live-verify', async (req, res) => {
-    if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
-        || req.get('x-budu-test-gateway') !== '1') {
-      return res.status(404).json({ error: 'NOT_FOUND' })
-    }
     try {
       const config = configLoader(process.env)
       if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
-      return res.json(await resolveWechatTestIdentity({ code: req.body?.code, config, exchange }))
+      authorizeWechatGateway(req, config)
+      return res.json(await resolveWechatIdentity({ code: req.body?.code, config, exchange }))
     } catch (error) {
       const status = Number(error?.status) || 503
-      return res.status(status).json({ error: error?.message || 'WECHAT_LOGIN_VERIFY_UNAVAILABLE' })
+      return res.status(status).json({ error: error?.publicSafe ? error.message : (error?.message || 'WECHAT_LOGIN_VERIFY_UNAVAILABLE') })
     }
   })
   router.post('/session', async (req, res) => {
-    if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
-        || req.get('x-budu-test-gateway') !== '1') {
-      return res.status(404).json({ error: 'NOT_FOUND' })
-    }
-    if (['userId', 'openid', 'openId', 'unionid', 'unionId'].some(key => Object.hasOwn(req.body || {}, key))) {
-      return res.status(400).json({ error: 'IDENTITY_AUTHORITY_SPOOF_REJECTED' })
-    }
     try {
       const config = configLoader(process.env)
       if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      authorizeWechatGateway(req, config)
+      if (['userId', 'openid', 'openId', 'unionid', 'unionId'].some(key => Object.hasOwn(req.body || {}, key))) {
+        return res.status(400).json({ error: 'IDENTITY_AUTHORITY_SPOOF_REJECTED' })
+      }
       const proof = await resolveWechatIdentityProof({ code: req.body?.code, config, exchange })
       const identity = await resolveOrCreateCustomerIdentity({
         appId: config.appId, openId: proof.openId, unionId: proof.unionId, db,
@@ -205,26 +236,24 @@ export function createWechatTestLoginRouter({
         customerRef: session.customerRef,
         customerSession: session.rawToken,
         expiresAt: session.expiresAt.toISOString(),
-        environment: 'test',
-        databaseAuthority: APPROVED_TEST_DATABASE,
+        environment: config.mode === 'production' ? 'production' : 'test',
+        databaseAuthority: config.database,
       })
     } catch (error) {
-      return res.status(Number(error?.status) || 503).json({ error: error?.message || 'WECHAT_SESSION_UNAVAILABLE' })
+      return res.status(Number(error?.status) || 503).json({ error: error?.publicSafe ? error.message : (error?.message || 'WECHAT_SESSION_UNAVAILABLE') })
     }
   })
   router.post('/session/verify', async (req, res) => {
-    if (String(process.env.APP_ENV || '').trim().toLowerCase() !== 'test'
-        || req.get('x-budu-test-gateway') !== '1') {
-      return res.status(404).json({ error: 'NOT_FOUND' })
-    }
     try {
       const config = configLoader(process.env)
+      if (!config.enabled) return res.status(404).json({ error: 'NOT_FOUND' })
+      authorizeWechatGateway(req, config)
       const session = await authenticateCustomerSession({
         rawToken: bearerToken(req.get('authorization')), markerKey: config.markerKey, db,
       })
       return res.json({ ok: true, customerRef: session.customerRef })
     } catch (error) {
-      return res.status(Number(error?.status) || 503).json({ error: error?.message || 'CUSTOMER_SESSION_UNAVAILABLE' })
+      return res.status(Number(error?.status) || 503).json({ error: error?.publicSafe ? error.message : (error?.message || 'CUSTOMER_SESSION_UNAVAILABLE') })
     }
   })
   return router

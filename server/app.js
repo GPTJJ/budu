@@ -646,6 +646,10 @@ export function createApp() {
   })
   app.use('/api/customer/auth/wechat', wechatTestLoginRouter)
   app.use('/api/customer/sweet-card', sweetCardClaimRouter)
+  // Production MiniProgram traffic enters only through the signed CloudBase
+  // gateway. These mounts must remain before the authenticated employee v2 API.
+  app.use('/api/v2/customer/auth/wechat', wechatTestLoginRouter)
+  app.use('/api/v2/customer/sweet-card', sweetCardClaimRouter)
   // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
   app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
