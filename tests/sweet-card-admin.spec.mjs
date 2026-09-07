@@ -46,13 +46,24 @@ test('Sweet Card 管理页统一显示中文 enum label，仍使用原始 enum �
 test('A7.5 电子卡发放使用领取凭证，保存展示信息并在显式确认后激活', async ({ page }) => {
   await page.goto('/tests/sweet-card-admin-harness.html')
   await page.getByRole('button', { name: '卡片', exact: true }).click()
-  const card = page.locator('article').filter({ hasText: 'SC-UI-01' })
+  const commercialCard = page.locator('article').filter({ hasText: 'SC-UI-01' })
+  await commercialCard.getByRole('button', { name: '详情 / Ledger' }).click()
+  let detail = page.getByRole('dialog', { name: '甜意卡详情' })
+  const commercialDelivery = detail.getByRole('region', { name: '电子卡发放' })
+  await expect(commercialDelivery.getByRole('button', { name: '生成电子卡' })).toBeDisabled()
+  await expect(commercialDelivery.getByTestId('claim-asset-blocked-reason')).toContainText('正式商业卡暂未开放电子领取凭证生成')
+  expect(await page.evaluate(() => window.__claimPresentationBodies.length)).toBe(0)
+  await detail.getByRole('button', { name: '关闭' }).click()
+
+  await page.getByRole('button', { name: '测试/验收', exact: true }).click()
+  const card = page.locator('article').filter({ hasText: 'SC-ACCEPTANCE-01' })
   await card.getByRole('button', { name: '详情 / Ledger' }).click()
-  const detail = page.getByRole('dialog', { name: '甜意卡详情' })
+  detail = page.getByRole('dialog', { name: '甜意卡详情' })
   const deliverySection = detail.getByRole('region', { name: '电子卡发放' })
 
   await expect(detail.getByRole('heading', { name: '电子卡发放' })).toBeVisible()
-  await expect(detail.getByText('BUDU-SC-202609-A01')).toBeVisible()
+  await expect(detail.getByText('P19-验收事实')).toBeVisible()
+  await expect(deliverySection.getByRole('button', { name: '生成电子卡' })).toBeEnabled()
   await expect(deliverySection.getByLabel('电子卡状态')).toContainText('未生成')
   await expect(deliverySection.getByLabel('领取状态')).toContainText('未领取')
   await expect(deliverySection.getByLabel('激活状态')).toContainText('未激活')
@@ -68,17 +79,25 @@ test('A7.5 电子卡发放使用领取凭证，保存展示信息并在显式确
     recipientLabel: '林女士', recipientNote: '愿每一天都有一点甜。',
   })
 
+  await page.evaluate(() => window.__setClaimPresentationResponse({ mode: 'success', delayMs: 250 }))
   page.once('dialog', (dialog) => dialog.accept())
   await detail.getByRole('button', { name: '生成电子卡' }).click()
+  await expect(deliverySection.getByRole('status')).toHaveText('正在生成电子卡…')
   const delivery = page.getByRole('dialog', { name: '电子卡交付' })
   await expect(delivery.getByRole('heading', { name: '电子卡已生成' })).toBeVisible()
+  await expect(deliverySection.getByRole('status')).toHaveText('电子卡已生成')
   await expect(delivery.getByText(/微信扫码领取甜意卡/)).toBeVisible()
   await expect(delivery.getByRole('img', { name: '微信扫码领取甜意卡卡面预览' })).toBeVisible()
-  await expect(delivery.getByRole('button', { name: '下载电子卡图片' })).toBeEnabled()
+  await expect(delivery.getByRole('button', { name: '查看电子卡' })).toBeEnabled()
+  await expect(delivery.getByRole('button', { name: '下载电子卡' })).toBeEnabled()
+  let automaticDownloads = 0
+  page.on('download', () => { automaticDownloads += 1 })
+  await page.waitForTimeout(100)
+  expect(automaticDownloads).toBe(0)
   const downloadPromise = page.waitForEvent('download')
-  await delivery.getByRole('button', { name: '下载电子卡图片' }).click()
+  await delivery.getByRole('button', { name: '下载电子卡' }).click()
   const download = await downloadPromise
-  expect(download.suggestedFilename()).toBe('SC-UI-01.claim.electronic.svg')
+  expect(download.suggestedFilename()).toBe('SC-ACCEPTANCE-01.claim.electronic.svg')
   expect(await delivery.textContent()).not.toContain('FAKE-PROOF-FOR-UI-HARNESS')
   await delivery.getByRole('button', { name: '关闭' }).click()
 
@@ -101,6 +120,24 @@ test('A7.5 电子卡发放使用领取凭证，保存展示信息并在显式确
   await expect.poll(() => page.evaluate(() => window.__deliveryActions)).toContain('ACTIVATE')
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('电子卡生成失败在当前详情弹层内显示规范错误且不会被遮挡', async ({ page }) => {
+  await page.goto('/tests/sweet-card-admin-harness.html')
+  await page.getByRole('button', { name: '测试/验收', exact: true }).click()
+  await page.getByRole('button', { name: '卡片', exact: true }).click()
+  const card = page.locator('article').filter({ hasText: 'SC-ACCEPTANCE-01' })
+  await card.getByRole('button', { name: '详情 / Ledger' }).click()
+  const detail = page.getByRole('dialog', { name: '甜意卡详情' })
+  const deliverySection = detail.getByRole('region', { name: '电子卡发放' })
+  await page.evaluate(() => window.__setClaimPresentationResponse({ mode: 'error', delayMs: 0 }))
+  page.once('dialog', (dialog) => dialog.accept())
+  await deliverySection.getByRole('button', { name: '生成电子卡' }).click()
+  const alert = deliverySection.getByRole('alert')
+  await expect(alert).toHaveText('当前卡暂不可生成电子领取卡')
+  await expect(alert).toBeVisible()
+  await expect(page.getByRole('dialog', { name: '电子卡交付' })).toHaveCount(0)
+  expect(await page.evaluate(() => window.__claimPresentationBodies.length)).toBe(1)
 })
 
 test('Sweet Card 三个运营视图按 purpose 与 archivedAt 隔离，并可审计式归档和恢复', async ({ page }) => {

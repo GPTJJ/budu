@@ -3,10 +3,14 @@ import fs from 'node:fs'
 import test from 'node:test'
 import { assertDeliveryActivationAllowed, parseYuanAmount } from '../server/sweet-card-core.js'
 import {
+  buildClaimAssetEligibility,
   buildSweetCardDeliveryState,
   buildSweetCardPresentation,
+  CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON,
   renderSweetCardPresentation,
 } from '../server/sweet-card-presentation.js'
+import { issueSweetCardClaimCredential } from '../server/sweet-card-claim.js'
+import { sweetCardClaimGenerationErrorLabel } from '../src/utils/sweetCardLabels.js'
 import {
   hasModuleAccess,
   hasSweetCardCapability,
@@ -23,7 +27,7 @@ const baseCard = () => ({
   initialAmountCents: 50000n, balanceCents: 50000n, validityType: 'ONE_YEAR', status: 'CREATED',
   carrierType: 'ELECTRONIC', bindingMode: 'REQUIRED', binding: null, claim: null, claimTokens: [],
   activatedAt: null, recipientLabel: '林女士', recipientNote: '愿每一天都有一点甜。',
-  batch: { name: 'A7.5-验收批次', presentationTemplateKey: 'minimal-v2' },
+  batch: { name: 'A7.5-验收批次', businessPurpose: 'ACCEPTANCE_TEST', presentationTemplateKey: 'minimal-v2' },
 })
 
 test('A7.5-01 delivery state keeps card, activation, claim, binding and presentation distinct', () => {
@@ -125,4 +129,47 @@ test('A7.5-16/17/18 Chinese labels, manufacturer export and A1-A7 contracts rema
   assert.equal(assertDeliveryActivationAllowed({ carrierType: 'ELECTRONIC', claimTokens: [{ expiresAt: future, revokedAt: null, consumedAt: null }] }, now), true)
   assert.throws(() => assertDeliveryActivationAllowed({ carrierType: 'ELECTRONIC', claimTokens: [] }, now), /请先生成有效的微信领取凭证/)
   assert.throws(() => assertDeliveryActivationAllowed({ carrierType: 'PHYSICAL', claimTokens: [{ expiresAt: future }] }, now), /仅电子卡/)
+})
+
+test('A7.5-19 server eligibility keeps controlled commercial cards disabled', () => {
+  const acceptance = buildClaimAssetEligibility(baseCard(), { claimPresentationEnabled: true, canIssue: true })
+  assert.equal(acceptance.claimAssetEligible, true)
+  const commercial = buildClaimAssetEligibility({ ...baseCard(), batch: { name: '测试', businessPurpose: 'COMMERCIAL' } }, { claimPresentationEnabled: true, canIssue: true })
+  assert.deepEqual(commercial, {
+    claimAssetEligible: false,
+    claimAssetBlockedCode: 'NOT_ELIGIBLE',
+    claimAssetBlockedReason: CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON,
+  })
+  assert.doesNotMatch(read('server/sweet-card.js'), /测试甜意卡不存在/)
+})
+
+test('A7.5-20 generation error mapping never exposes raw HTTP or legacy test-only copy', () => {
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 409, data: { code: 'NOT_ELIGIBLE' } }), '当前卡暂不可生成电子领取卡')
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 403 }), '无权限执行此操作')
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 404, data: { code: 'CLAIM_DISABLED' } }), '甜意卡领取功能当前未开放')
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 404, data: { error: 'NOT_FOUND' } }), '甜意卡领取功能当前未开放')
+  assert.equal(sweetCardClaimGenerationErrorLabel({}), '网络异常，请稍后重试')
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 500 }), '生成失败，请稍后再试')
+  assert.equal(sweetCardClaimGenerationErrorLabel({ status: 404, data: { error: '测试甜意卡不存在' } }), '生成失败，请稍后再试')
+})
+
+test('A7.5-21 a repeated normal issue cannot silently replace an active Claim credential', async () => {
+  let writes = 0
+  const active = { id: 'active-claim-token', expiresAt: future, revokedAt: null, consumedAt: null, createdAt: now }
+  const db = {
+    $transaction: async work => work(db),
+    $executeRaw: async () => undefined,
+    sweetCardAccount: { findUnique: async () => ({ ...baseCard(), claimTokens: [active] }) },
+    sweetCardClaimToken: {
+      updateMany: async () => { writes += 1; return { count: 1 } },
+      create: async () => { writes += 1; return active },
+    },
+    sweetCardAuditLog: { create: async () => { writes += 1 } },
+  }
+  await assert.rejects(
+    issueSweetCardClaimCredential({ accountId: baseCard().id, createdById: 'admin-id', db, now }),
+    error => error?.status === 409 && error?.message === 'CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED',
+  )
+  assert.equal(writes, 0)
+  assert.match(read('prisma/migrations/20260906021000_sweet_card_claim_credential/migration.sql'), /one_active_per_account_key/)
 })

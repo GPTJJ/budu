@@ -35,6 +35,7 @@ import {
 import {
   buildSweetCardPresentation,
   buildSweetCardDeliveryState,
+  buildClaimAssetEligibility,
   maskedSweetCardNo,
   renderPhysicalClaimAsset,
   renderSweetCardPresentation,
@@ -49,7 +50,10 @@ const wrap = (handler) => async (req, res) => {
   try { await handler(req, res) } catch (error) {
     const status = error.status || 500
     if (status >= 500 && error.reported !== true) console.error('[sweet-card]', error)
-    res.status(status).json({ error: status >= 500 && error.publicSafe !== true ? '服务器暂时无法处理，请稍后重试' : error.message || '服务器错误' })
+    res.status(status).json({
+      error: status >= 500 && error.publicSafe !== true ? '服务器暂时无法处理，请稍后重试' : error.message || '服务器错误',
+      ...(error.publicCode ? { code: error.publicCode } : {}),
+    })
   }
 }
 const who = (user) => ({ id: String(user?.id || ''), name: String(user?.displayName || user?.username || '') })
@@ -115,7 +119,7 @@ const audit = (tx, actor, action, refs = {}, metadata = {}) => tx.sweetCardAudit
   batchId: refs.batchId || null, accountId: refs.accountId || null, credentialId: refs.credentialId || null, metadata,
 } })
 const effectiveStatus = (row) => row.status === 'ACTIVE' && row.expiresAt && row.expiresAt <= new Date() ? 'EXPIRED' : row.status
-const serializeCard = (row, detail = false) => ({
+const serializeCard = (row, detail = false, viewer = null) => ({
   id: row.id, publicCardNo: row.publicCardNo, batchId: row.batchId,
   initialAmountCents: row.initialAmountCents.toString(), balanceCents: row.balanceCents.toString(),
   validityType: row.validityType, validFrom: row.validFrom, expiresAt: row.expiresAt, status: effectiveStatus(row),
@@ -126,8 +130,14 @@ const serializeCard = (row, detail = false) => ({
   binding: row.binding ? { memberId: row.binding.memberId, boundAt: row.binding.boundAt, verificationMethod: row.binding.verificationMethod } : null,
   credentials: (row.credentials || []).map((credential) => ({ id: credential.id, status: credential.status, carrierType: credential.carrierType, activatedAt: credential.activatedAt, revokedAt: credential.revokedAt })),
   ...(detail ? {
-    batch: row.batch ? { name: row.batch.name, presentationTemplateKey: row.batch.presentationTemplateKey } : null,
-    delivery: buildSweetCardDeliveryState(row),
+    batch: row.batch ? { name: row.batch.name, businessPurpose: row.batch.businessPurpose, presentationTemplateKey: row.batch.presentationTemplateKey } : null,
+    delivery: {
+      ...buildSweetCardDeliveryState(row),
+      ...buildClaimAssetEligibility(row, {
+        claimPresentationEnabled: sweetCardClaimPresentationEnabled(),
+        canIssue: hasModuleAccess(viewer, MODULE_KEYS.SWEET_CARD) && hasSweetCardCapability(viewer, SWEET_CARD_CAPABILITIES.ISSUE),
+      }),
+    },
     ledger: (row.ledger || []).map((entry) => ({ ...entry, amountCents: entry.amountCents.toString(), balanceAfterCents: entry.balanceAfterCents.toString() })),
   } : {}),
 })
@@ -356,7 +366,7 @@ sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
   const card = await prisma.sweetCardAccount.findUnique({
     where: { id: req.params.id },
     include: {
-      batch: { select: { name: true, presentationTemplateKey: true } },
+      batch: { select: { name: true, businessPurpose: true, presentationTemplateKey: true } },
       binding: true,
       credentials: true,
       claim: { select: { claimedAt: true } },
@@ -368,7 +378,7 @@ sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
     },
   })
   if (!card) throw httpError('甜意卡不存在', 404)
-  res.json({ card: serializeCard(card, true) })
+  res.json({ card: serializeCard(card, true, req.user) })
 }))
 
 sweetCardRouter.get('/sweet-cards/usage', wrap(async (req, res) => {
@@ -656,13 +666,35 @@ async function generateClaimPresentation(req, card) {
   if (req.body?.holderVerificationConfirmed !== true || req.body?.separateProofDelivery !== true) {
     throw httpError('必须确认持有人核验并通过独立渠道交付领取凭证', 400)
   }
-  if (!card || card.batch?.businessPurpose !== 'ACCEPTANCE_TEST') throw httpError('测试甜意卡不存在', 404)
-  if (card.binding || card.claim) throw httpError('甜意卡已领取或绑定', 409)
+  const eligibility = buildClaimAssetEligibility(card, { claimPresentationEnabled: true, canIssue: true })
+  if (!eligibility.claimAssetEligible) {
+    const error = httpError(eligibility.claimAssetBlockedReason, 409)
+    error.publicCode = eligibility.claimAssetBlockedCode
+    throw error
+  }
   const activeClaimCredential = (card.claimTokens || []).find(row => !row.revokedAt && !row.consumedAt && row.expiresAt > new Date())
-  if (activeClaimCredential && req.body?.reissueConfirmed !== true) throw httpError('已有有效领取凭证，重新生成前必须二次确认', 409)
+  if (activeClaimCredential && req.body?.reissueConfirmed !== true) {
+    const error = httpError('已有有效领取凭证，重新生成前必须二次确认', 409)
+    error.publicCode = 'CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED'
+    throw error
+  }
   const carrierType = ['PHYSICAL', 'ELECTRONIC'].includes(req.body?.carrierType) ? req.body.carrierType : card.carrierType
   const actor = who(req.user)
-  const credential = await issueSweetCardClaimCredential({ accountId: card.id, createdById: actor.id })
+  let credential
+  try {
+    credential = await issueSweetCardClaimCredential({
+      accountId: card.id,
+      createdById: actor.id,
+      reissueConfirmed: req.body?.reissueConfirmed === true,
+    })
+  } catch (error) {
+    if (error?.message === 'CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED') {
+      const publicError = httpError('已有有效领取凭证，重新生成前必须二次确认', 409)
+      publicError.publicCode = 'CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED'
+      throw publicError
+    }
+    throw error
+  }
   const claimEntry = `pages/sweet-card-claim/sweet-card-claim?claimToken=${encodeURIComponent(credential.rawToken)}`
   const claimQrDataUrl = await QRCode.toDataURL(claimEntry, { errorCorrectionLevel: 'H', margin: 4, width: 1000 })
   const presentation = buildSweetCardPresentation(card, {

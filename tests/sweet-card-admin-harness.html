@@ -40,7 +40,7 @@
       giftingScenario: index === 0 ? '商务赠礼' : '', activatedAt: status === 'ACTIVE' ? now : null,
     }))
     cards.push(
-      { id: 'card-acceptance', publicCardNo: 'SC-ACCEPTANCE-01', batchId: acceptanceBatch.id, initialAmountCents: '50000', balanceCents: '50000', status: 'CREATED', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
+      { id: 'card-acceptance', publicCardNo: 'SC-ACCEPTANCE-01', batchId: acceptanceBatch.id, initialAmountCents: '50000', balanceCents: '50000', status: 'CREATED', carrierType: 'ELECTRONIC', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
       { id: 'card-archived-commercial', publicCardNo: 'SC-ARCHIVED-COMMERCIAL', batchId: archivedCommercialBatch.id, initialAmountCents: '30000', balanceCents: '30000', status: 'CREATED', carrierType: 'ELECTRONIC', bindingMode: 'OPTIONAL', recipientLabel: '', recipientCompany: '' },
       { id: 'card-archived-acceptance', publicCardNo: 'SC-ARCHIVED-ACCEPTANCE', batchId: archivedAcceptanceBatch.id, initialAmountCents: '10000', balanceCents: '10000', status: 'CREATED', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientLabel: '', recipientCompany: '' },
     )
@@ -67,6 +67,8 @@
     window.__lastSweetCardBatchBody = null
     window.__presentationUpdates = []
     window.__claimPresentationBodies = []
+    window.__claimPresentationResponse = { mode: 'success', delayMs: 0 }
+    window.__setClaimPresentationResponse = (next) => { window.__claimPresentationResponse = { ...window.__claimPresentationResponse, ...next } }
     window.__deliveryActions = []
     window.__setA75CardState = ({ card: cardPatch = {}, delivery: deliveryPatch = {}, binding } = {}) => {
       Object.assign(cards[0], cardPatch)
@@ -102,7 +104,7 @@
         if (!card) return json({ error: '甜意卡不存在' }, 404)
         const detail = () => ({
           ...card,
-          batch: { name: batches.find((row) => row.id === card.batchId)?.name || '无批次', presentationTemplateKey: 'minimal-v2' },
+          batch: { name: batches.find((row) => row.id === card.batchId)?.name || '无批次', businessPurpose: batches.find((row) => row.id === card.batchId)?.businessPurpose, presentationTemplateKey: 'minimal-v2' },
           expiresAt: null, binding: card.binding || null,
           credentials: [{ id: 'credential-safe-id', status: card.status === 'ACTIVE' ? 'ACTIVE' : 'UNACTIVATED', carrierType: card.carrierType }],
           issuedByName: '西单操作员', issuedAt: now,
@@ -111,6 +113,9 @@
             claimCredentialStatus: 'NONE', claimStatus: 'UNCLAIMED',
             bindingStatus: card.bindingMode === 'NONE' ? 'NOT_REQUIRED' : card.binding ? 'BOUND' : 'UNBOUND',
             deliveryStatus: 'NOT_PREPARED', claimedAt: null,
+            claimAssetEligible: batches.find((row) => row.id === card.batchId)?.businessPurpose === 'ACCEPTANCE_TEST',
+            claimAssetBlockedCode: batches.find((row) => row.id === card.batchId)?.businessPurpose === 'ACCEPTANCE_TEST' ? 'ELIGIBLE' : 'NOT_ELIGIBLE',
+            claimAssetBlockedReason: batches.find((row) => row.id === card.batchId)?.businessPurpose === 'ACCEPTANCE_TEST' ? '' : '当前仍处于甜意卡领取受控验收阶段，正式商业卡暂未开放电子领取凭证生成。',
           },
           ledger: [{ id: 'ledger-1', type: 'ISSUE', amountCents: card.initialAmountCents, balanceAfterCents: card.balanceCents, createdAt: now }],
         })
@@ -124,6 +129,8 @@
         if (cardPath[2] === 'claim-presentation' && method === 'POST') {
           const body = JSON.parse(options.body)
           window.__claimPresentationBodies.push(body)
+          if (window.__claimPresentationResponse.delayMs) await new Promise((resolve) => setTimeout(resolve, window.__claimPresentationResponse.delayMs))
+          if (window.__claimPresentationResponse.mode === 'error') return json({ error: '测试甜意卡不存在', code: 'NOT_ELIGIBLE' }, 409)
           card.delivery = { ...(detail().delivery), presentationStatus: 'GENERATED', claimCredentialStatus: 'ACTIVE', deliveryStatus: card.activatedAt ? 'READY' : 'GENERATED' }
           const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760"><rect width="1200" height="760" rx="64" fill="#fff4f8"/><text x="80" y="100" font-size="42">budu 甜意卡</text><text x="80" y="200" font-size="72">¥200.00</text><rect x="820" y="220" width="280" height="280" fill="white"/><path d="M850 250h220v220H850zM880 280h50v50h-50zM990 380h50v50h-50z" fill="#111827"/><text x="960" y="540" text-anchor="middle" font-size="24">微信扫码领取甜意卡</text></svg>'
           return json({ ok: true, claimAsset: { id: 'claim-safe-id', purpose: 'MINIPROGRAM_CLAIM', state: 'ACTIVE', carrierType: body.carrierType, expiresAt: '2026-09-12T04:30:00.000Z', fileName: `${card.publicCardNo}.claim.electronic.svg`, svgBase64: btoa(unescape(encodeURIComponent(svg))) }, presentation: { designVersion: 'minimal-v2' }, proofDelivery: { channel: 'SEPARATE_CHANNEL_REQUIRED', proof: 'FAKE-PROOF-FOR-UI-HARNESS' }, economicMutation: 'NONE' }, 201)

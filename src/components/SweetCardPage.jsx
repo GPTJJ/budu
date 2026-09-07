@@ -13,6 +13,7 @@ import {
   sweetCardBatchPurposeLabel,
   sweetCardCarrierTypeLabel,
   sweetCardClaimCredentialStatusLabel,
+  sweetCardClaimGenerationErrorLabel,
   sweetCardClaimStatusLabel,
   sweetCardCredentialStatusLabel,
   sweetCardDeliveryStatusLabel,
@@ -33,6 +34,7 @@ export default function SweetCardPage({ user, onBack }) {
   const [saving, setSaving] = useState(false)
   const [detail, setDetail] = useState(null)
   const [claimDelivery, setClaimDelivery] = useState(null)
+  const [claimGeneration, setClaimGeneration] = useState({ status: 'IDLE', message: '' })
   const [error, setError] = useState('')
   const [viewScope, setViewScope] = useState('COMMERCIAL')
   const [form, setForm] = useState({ name: '', purpose: '', businessPurpose: 'COMMERCIAL', cardCount: 1, faceValueYuan: '500.00', validityType: 'ONE_YEAR', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientType: '', recipientLabel: '', recipientCompany: '', recipientNote: '', giftingScenario: '', activateNow: false })
@@ -100,7 +102,10 @@ export default function SweetCardPage({ user, onBack }) {
       recipientNote: card.recipientNote || '',
     })
   }
-  const openDetail = async (id) => { setError(''); try { const result = await api(`/v2/sweet-cards/cards/${id}`); applyDetail(result.card) } catch (e) { setError(e.message) } }
+  const openDetail = async (id) => {
+    setError(''); setClaimDelivery(null); setClaimGeneration({ status: 'IDLE', message: '' })
+    try { const result = await api(`/v2/sweet-cards/cards/${id}`); applyDetail(result.card) } catch (e) { setError(e.message) }
+  }
   const refreshDetail = async () => {
     if (!detail?.id) return
     const result = await api(`/v2/sweet-cards/cards/${detail.id}`)
@@ -127,19 +132,31 @@ export default function SweetCardPage({ user, onBack }) {
       ? '重新生成会撤销当前未使用的领取凭证，旧二维码将失效。原 POS 使用码和余额不受影响。确认继续？'
       : '已核验领取人/持卡人，并确认领取图片与独立领取凭证将通过不同渠道交付？'
     if (!window.confirm(message)) return
-    setSaving(true); setError('')
+    setSaving(true); setClaimGeneration({ status: 'GENERATING', message: '正在生成电子卡…' })
     try {
       const result = await api(`/v2/sweet-cards/cards/${detail.id}/claim-presentation`, { method: 'POST', body: JSON.stringify({ carrierType, holderVerificationConfirmed: true, separateProofDelivery: true, reissueConfirmed: reissue }) })
       setClaimDelivery(result)
-      await refreshDetail()
-    } catch (e) { setError(e.message) } finally { setSaving(false) }
+      setClaimGeneration({ status: 'SUCCESS', message: '电子卡已生成' })
+      try { await refreshDetail() } catch { setClaimGeneration({ status: 'SUCCESS', message: '电子卡已生成；状态刷新失败，请稍后手动刷新。' }) }
+    } catch (e) {
+      setClaimGeneration({ status: 'ERROR', message: sweetCardClaimGenerationErrorLabel(e) })
+    } finally { setSaving(false) }
+  }
+  const claimAssetHref = () => claimDelivery?.claimAsset?.svgBase64 ? `data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}` : ''
+  const viewClaimAsset = () => {
+    const href = claimAssetHref()
+    if (!href) return
+    const link = document.createElement('a')
+    link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'
+    document.body.appendChild(link); link.click(); link.remove()
   }
   const downloadClaimAsset = () => {
-    if (!claimDelivery?.claimAsset?.svgBase64) return
+    const href = claimAssetHref()
+    if (!href) return
     const link = document.createElement('a')
-    link.href = `data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}`
+    link.href = href
     link.download = claimDelivery.claimAsset.fileName
-    link.click()
+    document.body.appendChild(link); link.click(); link.remove()
   }
   const copyClaimProof = async () => {
     const proof = claimDelivery?.proofDelivery?.proof
@@ -157,6 +174,9 @@ export default function SweetCardPage({ user, onBack }) {
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
   const toggleRule = (kind, id) => setData((current) => ({ ...current, rules: { ...current.rules, [kind]: current.rules[kind].map((row) => row.id === id ? { ...row, [kind === 'stores' ? 'eligible' : 'blocked']: !(kind === 'stores' ? row.eligible : row.blocked) } : row) } }))
+  const claimAssetEligible = detail?.delivery?.claimAssetEligible === true
+  const claimAssetBlockedReason = detail?.delivery?.claimAssetBlockedReason || '当前卡暂不可生成电子领取卡。'
+  const claimGenerating = claimGeneration.status === 'GENERATING'
 
   return <div className="min-h-full bg-slate-50 px-3 pb-28 pt-3 sm:px-6 sm:pt-6">
     <div className="mx-auto max-w-6xl">
@@ -236,6 +256,8 @@ export default function SweetCardPage({ user, onBack }) {
               <p aria-label="绑定状态" className="rounded-xl bg-white p-3">绑定<br/><strong className="mt-1 inline-block text-sm text-slate-800">{sweetCardBindingStatusLabel(detail.delivery?.bindingStatus)}</strong></p>
               <p aria-label="发放准备状态" className="rounded-xl bg-white p-3">发放准备<br/><strong className="mt-1 inline-block text-sm text-slate-800">{sweetCardDeliveryStatusLabel(detail.delivery?.deliveryStatus)}</strong></p>
             </div>
+            {claimGeneration.status !== 'IDLE' && <div role={claimGeneration.status === 'ERROR' ? 'alert' : 'status'} data-claim-generation-state={claimGeneration.status} className={`mt-3 rounded-xl px-3 py-2 text-sm font-bold ${claimGeneration.status === 'ERROR' ? 'bg-rose-100 text-rose-700' : claimGeneration.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-budu-50 text-budu-700'}`}>{claimGeneration.message}</div>}
+            {!claimAssetEligible && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800" data-testid="claim-asset-blocked-reason">{claimAssetBlockedReason}</p>}
             {detail.delivery?.claimedAt && <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs text-slate-600">领取时间：{new Date(detail.delivery.claimedAt).toLocaleString()}</p>}
 
             <form onSubmit={savePresentation} className="mt-5 rounded-2xl bg-white p-4" aria-label="编辑赠送信息">
@@ -257,7 +279,7 @@ export default function SweetCardPage({ user, onBack }) {
             </div>
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {config?.claimPresentationEnabled && !detail.binding && detail.delivery?.claimStatus !== 'CLAIMED' && <button disabled={saving} onClick={() => generateClaimPresentation('ELECTRONIC')} className="min-h-12 rounded-xl bg-budu-500 px-4 font-bold text-white disabled:opacity-50">{detail.delivery?.claimCredentialStatus === 'ACTIVE' ? '重新生成领取凭证' : '生成电子卡'}</button>}
+              <button type="button" disabled={saving || !claimAssetEligible} onClick={() => generateClaimPresentation('ELECTRONIC')} className="min-h-12 rounded-xl bg-budu-500 px-4 font-bold text-white disabled:opacity-50">{claimGenerating ? '正在生成电子卡…' : detail.delivery?.claimCredentialStatus === 'ACTIVE' ? '重新生成领取凭证' : '生成电子卡'}</button>
               {detail.status === 'CREATED' && <button disabled={saving || detail.delivery?.claimCredentialStatus !== 'ACTIVE'} onClick={activateDelivery} className="min-h-12 rounded-xl border border-budu-300 bg-white px-4 font-bold text-budu-600 disabled:opacity-40">激活并准备发放</button>}
               {config?.claimPresentationEnabled && detail.delivery?.claimCredentialStatus === 'ACTIVE' && detail.delivery?.claimStatus !== 'CLAIMED' && <button disabled={saving} onClick={revokeClaimPresentation} className="min-h-11 rounded-xl border border-rose-200 bg-white px-4 font-bold text-rose-600 disabled:opacity-50">撤销领取凭证</button>}
             </div>
@@ -266,7 +288,7 @@ export default function SweetCardPage({ user, onBack }) {
 
           <section className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600" aria-label="发放摘要"><p>赠送对象：{detail.recipientLabel || '—'}</p><p className="mt-1">公司：{detail.recipientCompany || '—'}</p><p className="mt-1">赠送场景：{detail.giftingScenario || '—'}</p><p className="mt-1">祝福语：{detail.recipientNote || '—'}</p><p className="mt-1">创建人：{detail.issuedByName || '—'} · {detail.issuedAt ? new Date(detail.issuedAt).toLocaleString() : '—'}</p></section>
 
-          <div className="flex flex-wrap gap-2">{detail.bindingMode !== 'NONE' && !detail.binding && <button onClick={() => bindCard(detail.id)} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">绑定已验证客户</button>}{detail.binding && ['ACTIVE', 'FROZEN'].includes(detail.status) && <button onClick={() => credentialAction(detail.id, 'lost')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600">挂失使用凭证</button>}{detail.binding && detail.status === 'LOST' && <button onClick={() => credentialAction(detail.id, 'replace')} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">补发使用凭证</button>}{detail.carrierType === 'PHYSICAL' && config?.claimPresentationEnabled && !detail.binding && <button disabled={saving} onClick={() => generateClaimPresentation('PHYSICAL')} className="rounded-xl border border-budu-200 px-3 py-2 text-xs font-bold text-budu-600 disabled:opacity-50">生成实体卡领取二维码</button>}</div>
+          <div className="flex flex-wrap gap-2">{detail.bindingMode !== 'NONE' && !detail.binding && <button onClick={() => bindCard(detail.id)} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">绑定已验证客户</button>}{detail.binding && ['ACTIVE', 'FROZEN'].includes(detail.status) && <button onClick={() => credentialAction(detail.id, 'lost')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600">挂失使用凭证</button>}{detail.binding && detail.status === 'LOST' && <button onClick={() => credentialAction(detail.id, 'replace')} className="rounded-xl bg-budu-500 px-3 py-2 text-xs font-bold text-white">补发使用凭证</button>}{detail.carrierType === 'PHYSICAL' && <button type="button" disabled={saving || !claimAssetEligible} onClick={() => generateClaimPresentation('PHYSICAL')} className="rounded-xl border border-budu-200 px-3 py-2 text-xs font-bold text-budu-600 disabled:opacity-50">生成实体卡领取二维码</button>}</div>
           {hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VOID) && !['VOID', 'EXHAUSTED', 'EXPIRED'].includes(detail.status) && <details className="border-t border-slate-100 pt-4 text-xs"><summary className="cursor-pointer select-none font-bold text-slate-500">卡片危险操作</summary><button type="button" disabled={saving} onClick={() => voidCard(detail.id)} className="mt-3 min-h-10 rounded-xl border border-rose-200 px-3 font-bold text-rose-600 disabled:opacity-50">作废甜意卡</button></details>}
           <section aria-label="账务记录"><h3 className="font-black">账务记录</h3><div className="mt-2 divide-y rounded-2xl border">{(detail.ledger || []).map((entry) => { const amount = BigInt(entry.amountCents); const positive = entry.type !== 'REDEEM'; return <div key={entry.id} className="flex justify-between gap-3 p-3 text-xs"><span><strong>{sweetCardLedgerTypeLabel(entry.type)}</strong><br/><span className="text-slate-400">{new Date(entry.createdAt).toLocaleString()}</span></span><span className="text-right font-semibold">{positive ? '+' : '-'}{formatCents(amount < 0n ? -amount : amount)}<br/><span className="text-slate-400">余额 {formatCents(entry.balanceAfterCents)}</span></span></div> })}</div></section>
           <details className="rounded-2xl border border-slate-100 p-4 text-xs text-slate-500"><summary className="cursor-pointer font-bold">技术信息</summary><p className="mt-2 break-all">Card ID：{detail.id}</p><p className="mt-1 break-all">Batch ID：{detail.batchId || '—'}</p></details>
@@ -278,7 +300,7 @@ export default function SweetCardPage({ user, onBack }) {
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black tracking-widest text-budu-500">MINIPROGRAM CLAIM</p><h2 className="mt-1 text-xl font-black">{claimDelivery.claimAsset.carrierType === 'ELECTRONIC' ? '电子卡已生成' : '实体卡领取二维码已生成'}</h2></div><button onClick={() => setClaimDelivery(null)} className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-500">关闭</button></div>
         <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">卡面主二维码仅用于“微信扫码领取甜意卡”。独立领取凭证必须分渠道发送；原 POS 使用码保持不变。</div>
         <img className="mt-4 w-full rounded-2xl border border-rose-100" alt="微信扫码领取甜意卡卡面预览" src={`data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}`} />
-        <div className="mt-4 grid gap-2 sm:grid-cols-2"><button onClick={downloadClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">下载电子卡图片</button><button disabled={!claimDelivery.proofDelivery?.proof} onClick={copyClaimProof} className="min-h-11 rounded-xl bg-budu-500 font-bold text-white disabled:opacity-50">{claimDelivery.proofCopied ? '凭证已复制并从页面清除' : '复制独立领取凭证'}</button></div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={viewClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">查看电子卡</button><button type="button" onClick={downloadClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">下载电子卡</button><button type="button" disabled={!claimDelivery.proofDelivery?.proof} onClick={copyClaimProof} className="min-h-11 rounded-xl bg-budu-500 font-bold text-white disabled:opacity-50 sm:col-span-2">{claimDelivery.proofCopied ? '凭证已复制并从页面清除' : '复制独立领取凭证'}</button></div>
         <button disabled={saving || claimDelivery.claimAsset.state === 'REVOKED'} onClick={revokeClaimPresentation} className="mt-3 min-h-11 w-full rounded-xl border border-rose-200 font-bold text-rose-600 disabled:opacity-50">{claimDelivery.claimAsset.state === 'REVOKED' ? '领取资产已撤销' : '撤销领取资产'}</button>
       </div>
     </div>}

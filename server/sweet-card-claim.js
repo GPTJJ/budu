@@ -174,6 +174,7 @@ async function a3Audit(tx, userId, action, account, metadata, now) {
 export async function issueSweetCardClaimCredential({
   accountId,
   createdById,
+  reissueConfirmed = false,
   db = prisma,
   now = new Date(),
   ttlMs = CLAIM_TOKEN_TTL_MS,
@@ -181,9 +182,17 @@ export async function issueSweetCardClaimCredential({
   if (!accountId || !createdById) deny('CLAIM_CREDENTIAL_ISSUE_INVALID', 400)
   const work = async tx => {
     await lockSweetCardAccount(tx, accountId)
-    const account = await tx.sweetCardAccount.findUnique({ where: { id: accountId }, include: { batch: true, binding: true, claim: true } })
+    const account = await tx.sweetCardAccount.findUnique({
+      where: { id: accountId },
+      include: {
+        batch: true, binding: true, claim: true,
+        claimTokens: { where: { revokedAt: null, consumedAt: null }, orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+    })
     if (!account || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') deny()
     if (account.binding || account.claim || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)) deny('CLAIM_CREDENTIAL_ISSUE_DENIED', 409)
+    const activeClaimCredential = account.claimTokens.find(row => row.expiresAt > now)
+    if (activeClaimCredential && reissueConfirmed !== true) deny('CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED', 409)
     await tx.sweetCardClaimToken.updateMany({
       where: { accountId, revokedAt: null, consumedAt: null }, data: { revokedAt: now },
     })

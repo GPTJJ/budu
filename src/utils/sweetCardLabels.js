@@ -57,5 +57,22 @@ export const sweetCardDeliveryStatusLabel = (value) => labelFor(SWEET_CARD_DELIV
 export const sweetCardClaimCredentialStatusLabel = (value) => labelFor(SWEET_CARD_CLAIM_CREDENTIAL_STATUS_LABELS, value)
 export const sweetCardLedgerTypeLabel = (value) => labelFor(SWEET_CARD_LEDGER_TYPE_LABELS, value)
 
+const SWEET_CARD_CLAIM_GENERATION_ERROR_LABELS = Object.freeze({
+  NOT_ELIGIBLE: '当前卡暂不可生成电子领取卡',
+  PERMISSION_DENIED: '无权限执行此操作',
+  CLAIM_DISABLED: '甜意卡领取功能当前未开放',
+  CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED: '已有有效领取凭证，请确认后重新生成',
+})
+
+export function sweetCardClaimGenerationErrorLabel(error) {
+  const code = String(error?.data?.code || '')
+  if (SWEET_CARD_CLAIM_GENERATION_ERROR_LABELS[code]) return SWEET_CARD_CLAIM_GENERATION_ERROR_LABELS[code]
+  if (error?.status === 401 || error?.status === 403) return SWEET_CARD_CLAIM_GENERATION_ERROR_LABELS.PERMISSION_DENIED
+  if (error?.status === 404 && error?.data?.error === 'NOT_FOUND') return SWEET_CARD_CLAIM_GENERATION_ERROR_LABELS.CLAIM_DISABLED
+  if (!error?.status) return '网络异常，请稍后重试'
+  if (Number(error.status) >= 500) return '生成失败，请稍后再试'
+  return '生成失败，请稍后再试'
+}
+
 const SWEET_CARD_STORE_TYPE_LABELS = Object.freeze({ DIRECT: '直营店', NON_DIRECT: '非直营店', UNKNOWN: '经营类型待确认' })
 export const sweetCardStoreTypeLabel = value => SWEET_CARD_STORE_TYPE_LABELS[value] || '经营类型待确认'
