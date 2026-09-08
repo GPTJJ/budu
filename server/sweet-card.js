@@ -83,9 +83,10 @@ export const sweetCardClaimPresentationEnabled = (env = process.env) => {
   if (appEnv !== 'production' && appEnv !== 'prod') return false
   const allowlistedUserIds = String(env.SWEET_CARD_MINIPROGRAM_CLAIM_USER_IDS || '')
     .split(',').map(value => value.trim()).filter(Boolean)
+  const publicClaim = String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY ?? '1') === '0'
   return String(env.SWEET_CARD_PRODUCTION_GATEWAY_ENABLED || '') === '1'
-    && String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY || '') === '1'
-    && allowlistedUserIds.length > 0
+    && (publicClaim || (String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY ?? '1') === '1'
+      && allowlistedUserIds.length > 0))
 }
 const requireControlledClaimPresentation = (req) => {
   const appEnv = String(process.env.APP_ENV || '').trim().toLowerCase()

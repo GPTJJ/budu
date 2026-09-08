@@ -1,3 +1,4 @@
+import { supportsSweetCardClaim } from './sweet-card-claim-eligibility.js'
 import fs from 'node:fs'
 
 const escapeXml = (value) => String(value || '').replace(/[<>&"']/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[char])
@@ -12,7 +13,7 @@ export const SWEET_CARD_PRESENTATION_FIELDS = Object.freeze([
 const STATUS_LABELS = Object.freeze({ CREATED: '待激活', ACTIVE: '可使用', FROZEN: '已冻结', LOST: '已挂失', EXHAUSTED: '已用尽', EXPIRED: '已过期', VOID: '已作废' })
 const BINDING_LABELS = Object.freeze({ NONE: '不绑定', OPTIONAL: '可选绑定', REQUIRED: '必须绑定' })
 const CLAIM_ASSET_ELIGIBLE_STATUSES = new Set(['CREATED', 'ACTIVE'])
-export const CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON = '当前仍处于甜意卡领取受控验收阶段，正式商业卡暂未开放电子领取凭证生成。'
+
 const logoSvg = fs.readFileSync(new URL('../brand/web/budu-wordmark.svg', import.meta.url), 'utf8')
 export const CANONICAL_LOGO_DATA_URL = `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`
 
@@ -62,7 +63,7 @@ export function buildSweetCardDeliveryState(card, now = new Date()) {
 }
 
 /** Server-owned eligibility contract for issuing a MiniProgram Claim asset. */
-export function buildClaimAssetEligibility(card, { claimPresentationEnabled = false, canIssue = false } = {}) {
+export function buildClaimAssetEligibility(card, { claimPresentationEnabled = false, canIssue = false, now = new Date() } = {}) {
   if (!claimPresentationEnabled) return {
     claimAssetEligible: false,
     claimAssetBlockedCode: 'CLAIM_DISABLED',
@@ -73,17 +74,17 @@ export function buildClaimAssetEligibility(card, { claimPresentationEnabled = fa
     claimAssetBlockedCode: 'PERMISSION_DENIED',
     claimAssetBlockedReason: '无权限执行此操作。',
   }
-  if (card?.batch?.businessPurpose !== 'ACCEPTANCE_TEST') return {
+  if (!supportsSweetCardClaim(card?.batch?.businessPurpose)) return {
     claimAssetEligible: false,
     claimAssetBlockedCode: 'NOT_ELIGIBLE',
-    claimAssetBlockedReason: CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON,
+    claimAssetBlockedReason: '当前卡用途暂不支持电子领取凭证生成。',
   }
   if (card?.binding || card?.claim) return {
     claimAssetEligible: false,
     claimAssetBlockedCode: 'NOT_ELIGIBLE',
     claimAssetBlockedReason: '当前卡已领取或绑定，无法生成新的电子领取凭证。',
   }
-  if (!CLAIM_ASSET_ELIGIBLE_STATUSES.has(card?.status)) return {
+  if (!CLAIM_ASSET_ELIGIBLE_STATUSES.has(card?.status) || (card?.expiresAt && new Date(card.expiresAt) <= now)) return {
     claimAssetEligible: false,
     claimAssetBlockedCode: 'NOT_ELIGIBLE',
     claimAssetBlockedReason: '当前卡状态暂不可生成电子领取凭证。',

@@ -1,3 +1,4 @@
+import { CLAIM_SUPPORTED_PURPOSES, supportsSweetCardClaim } from './sweet-card-claim-eligibility.js'
 import crypto from 'node:crypto'
 import express from 'express'
 import QRCode from 'qrcode'
@@ -68,7 +69,7 @@ function validateRequestKey(value) {
 function assertClaimable(record, proof, now) {
   const account = record?.account
   if (!record || record.proofHash !== sha256(proof) || !account
-      || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST'
+      || !supportsSweetCardClaim(account.batch?.businessPurpose)
       || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)
       || !CLAIMABLE_CARRIERS.has(account.carrierType)
       || !BINDING_MODES.has(account.bindingMode)
@@ -192,8 +193,9 @@ export async function issueSweetCardClaimCredential({
         claimTokens: { where: { revokedAt: null, consumedAt: null }, orderBy: { createdAt: 'desc' }, take: 1 },
       },
     })
-    if (!account || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') deny()
-    if (account.binding || account.claim || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)) deny('CLAIM_CREDENTIAL_ISSUE_DENIED', 409)
+    if (!account || !supportsSweetCardClaim(account.batch?.businessPurpose)) deny()
+    if (account.binding || account.claim || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)
+        || (account.expiresAt && account.expiresAt <= now)) deny('CLAIM_CREDENTIAL_ISSUE_DENIED', 409)
     const activeClaimCredential = account.claimTokens.find(row => row.expiresAt > now)
     if (activeClaimCredential && reissueConfirmed !== true) deny('CLAIM_CREDENTIAL_REISSUE_CONFIRMATION_REQUIRED', 409)
     await tx.sweetCardClaimToken.updateMany({
@@ -219,7 +221,7 @@ export async function revokeSweetCardClaimCredential({ accountId, revokedById, d
   const work = async tx => {
     await lockSweetCardAccount(tx, accountId)
     const account = await tx.sweetCardAccount.findUnique({ where: { id: accountId }, include: { batch: true } })
-    if (!account || account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') deny()
+    if (!account || !supportsSweetCardClaim(account.batch?.businessPurpose)) deny()
     const changed = await tx.sweetCardClaimToken.updateMany({
       where: { accountId, revokedAt: null, consumedAt: null }, data: { revokedAt: now },
     })
@@ -261,7 +263,7 @@ export async function resolveSweetCardClaimExperience({ rawToken, rawProof, user
     where: { tokenHash: sha256(token) },
     include: { account: { include: { batch: true, binding: true, claim: true } } },
   })
-  if (!record || record.proofHash !== sha256(proof) || record.account?.batch?.businessPurpose !== 'ACCEPTANCE_TEST') {
+  if (!record || record.proofHash !== sha256(proof) || !supportsSweetCardClaim(record.account?.batch?.businessPurpose)) {
     deny('CLAIM_CREDENTIAL_INVALID', 404)
   }
   const account = record.account
@@ -283,7 +285,7 @@ export async function resolveSweetCardClaimExperience({ rawToken, rawProof, user
 export async function listCustomerSweetCards({ userId, db = prisma }) {
   if (!userId) deny('CUSTOMER_SESSION_DENIED', 401)
   const claims = await db.sweetCardClaim.findMany({
-    where: { userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    where: { userId, account: { batch: { businessPurpose: { in: [...CLAIM_SUPPORTED_PURPOSES] } } } },
     include: { account: { include: { binding: true } } },
     orderBy: { claimedAt: 'desc' },
   })
@@ -295,7 +297,7 @@ export async function getCustomerSweetCard({ userId, walletRef, db = prisma }) {
   const claimRef = String(walletRef || '').trim()
   if (!/^[A-Za-z0-9-]{16,100}$/.test(claimRef)) deny('SWEET_CARD_NOT_FOUND', 404)
   const claim = await db.sweetCardClaim.findFirst({
-    where: { id: claimRef, userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    where: { id: claimRef, userId, account: { batch: { businessPurpose: { in: [...CLAIM_SUPPORTED_PURPOSES] } } } },
     include: {
       account: {
         include: {
@@ -348,7 +350,7 @@ export async function createCustomerPosRedemptionPresentation({
   const claimRef = String(walletRef || '').trim()
   if (!/^[A-Za-z0-9-]{16,100}$/.test(claimRef)) deny('CLAIM_REFERENCE_INVALID', 400)
   const claim = await db.sweetCardClaim.findFirst({
-    where: { id: claimRef, userId, account: { batch: { businessPurpose: 'ACCEPTANCE_TEST' } } },
+    where: { id: claimRef, userId, account: { batch: { businessPurpose: { in: [...CLAIM_SUPPORTED_PURPOSES] } } } },
     include: {
       account: {
         include: {
@@ -482,10 +484,12 @@ export async function bindClaimedSweetCard({
     const claim = await tx.sweetCardClaim.findUnique({
       where: { id: claimRef }, include: { account: { include: { batch: true, binding: true } } },
     })
-    if (!claim || claim.userId !== userId || claim.account.batch?.businessPurpose !== 'ACCEPTANCE_TEST') {
+    if (!claim || claim.userId !== userId || !supportsSweetCardClaim(claim.account.batch?.businessPurpose)) {
       deny('CLAIM_NOT_FOUND', 404)
     }
     const account = claim.account
+    if (!CLAIMABLE_ACCOUNT_STATUSES.has(account.status)
+        || (account.expiresAt && account.expiresAt <= now)) deny('CARD_UNAVAILABLE', 409)
     if (account.bindingMode !== 'OPTIONAL') deny('BINDING_MODE_DENIED', 409)
     if (account.binding) {
       if (account.binding.userId !== userId) deny('ALREADY_BOUND', 409)
@@ -514,7 +518,7 @@ function claimEnabled(env) {
 }
 
 function claimantAllowed(userId, env) {
-  if (String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY ?? '1') !== '1') return true
+  if (String(env.SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY ?? '1') === '0') return true
   const allowlist = new Set(String(env.SWEET_CARD_MINIPROGRAM_CLAIM_USER_IDS || '').split(',').map(x => x.trim()).filter(Boolean))
   return allowlist.has(userId)
 }

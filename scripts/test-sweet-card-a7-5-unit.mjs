@@ -6,7 +6,6 @@ import {
   buildClaimAssetEligibility,
   buildSweetCardDeliveryState,
   buildSweetCardPresentation,
-  CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON,
   renderSweetCardPresentation,
 } from '../server/sweet-card-presentation.js'
 import { issueSweetCardClaimCredential } from '../server/sweet-card-claim.js'
@@ -131,14 +130,14 @@ test('A7.5-16/17/18 Chinese labels, manufacturer export and A1-A7 contracts rema
   assert.throws(() => assertDeliveryActivationAllowed({ carrierType: 'PHYSICAL', claimTokens: [{ expiresAt: future }] }, now), /仅电子卡/)
 })
 
-test('A7.5-19 server eligibility keeps controlled commercial cards disabled', () => {
+test('A7.5-19 server eligibility supports commercial cards with capability checks', () => {
   const acceptance = buildClaimAssetEligibility(baseCard(), { claimPresentationEnabled: true, canIssue: true })
   assert.equal(acceptance.claimAssetEligible, true)
   const commercial = buildClaimAssetEligibility({ ...baseCard(), batch: { name: '测试', businessPurpose: 'COMMERCIAL' } }, { claimPresentationEnabled: true, canIssue: true })
   assert.deepEqual(commercial, {
-    claimAssetEligible: false,
-    claimAssetBlockedCode: 'NOT_ELIGIBLE',
-    claimAssetBlockedReason: CONTROLLED_COMMERCIAL_CLAIM_BLOCKED_REASON,
+    claimAssetEligible: true,
+    claimAssetBlockedCode: 'ELIGIBLE',
+    claimAssetBlockedReason: '',
   })
   assert.doesNotMatch(read('server/sweet-card.js'), /测试甜意卡不存在/)
 })
