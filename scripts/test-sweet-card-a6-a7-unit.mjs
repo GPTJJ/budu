@@ -66,8 +66,8 @@ test('A6 legacy manufacturer contract and POS QR generation remain unchanged', (
 test('A6/A7 QR purpose separation is explicit', () => {
   const source = read('server/sweet-card.js')
   assert.match(source, /purpose: 'MINIPROGRAM_CLAIM'/)
-  assert.match(source, /pages\/sweet-card-claim\/sweet-card-claim\?claimToken=/)
-  assert.doesNotMatch(source.match(/const claimEntry =[^\n]+/)[0], /rawProof|decryptToken|budu:sc:v1:/)
+  assert.match(source, /await createOfficialClaimCode\(\{ credentialId \}\)/)
+  assert.doesNotMatch(source, /QRCode\.toDataURL\(claimEntry/)
   assert.match(read('server/sweet-card-core.js'), /SWEET_CARD_NAMESPACE = 'budu:sc:v1:'/) 
 })
 

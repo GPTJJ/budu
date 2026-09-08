@@ -48,9 +48,9 @@ test('A7.5-02/06 generation state is derived without creating a second economic 
 
 test('A7.5-03/10 Claim QR copy and POS QR source remain deliberately separate', () => {
   const source = read('server/sweet-card.js')
-  assert.match(source, /pages\/sweet-card-claim\/sweet-card-claim\?claimToken=/)
+  assert.match(source, /await createOfficialClaimCode\(\{ credentialId \}\)/)
   assert.match(source, /QRCode\.toString\(decryptToken\(credential\)/)
-  assert.doesNotMatch(source.match(/const claimEntry =[^\n]+/)[0], /decryptToken|budu:sc:v1:/)
+  assert.doesNotMatch(source, /QRCode\.toDataURL\(claimEntry/)
   const model = buildSweetCardPresentation(baseCard(), { claimAsset: { state: 'ACTIVE' } })
   assert.match(renderSweetCardPresentation(model, { claimQrDataUrl: 'data:image/svg+xml;base64,c2FmZQ==' }), /微信扫码领取甜意卡/)
 })

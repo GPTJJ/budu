@@ -14,6 +14,19 @@ export const CLAIM_TOKEN_PREFIX = 'budu:claim:v1:'
 export const CLAIM_PROOF_PREFIX = 'budu:claim-proof:v1:'
 export const CLAIM_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const CLAIM_TOKEN_PATTERN = /^budu:claim:v1:[A-Za-z0-9_-]{43}$/
+const CLAIM_SCENE_PATTERN = /^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$/
+export function claimSceneReference(id) {
+  const scene = String(id).replaceAll('-', '')
+  if (!CLAIM_SCENE_PATTERN.test(scene)) deny('CLAIM_REFERENCE_INVALID', 400)
+  return scene
+}
+export function claimCredentialLookup(token) {
+  if (CLAIM_SCENE_PATTERN.test(token)) {
+    return { id: `${token.slice(0,8)}-${token.slice(8,12)}-${token.slice(12,16)}-${token.slice(16,20)}-${token.slice(20)}` }
+  }
+  if (!CLAIM_TOKEN_PATTERN.test(token)) deny('CLAIM_CREDENTIAL_INVALID', 400)
+  return { tokenHash: sha256(token) }
+}
 const CLAIM_PROOF_PATTERN = /^budu:claim-proof:v1:[A-Za-z0-9_-]{22}$/
 const REQUEST_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/
 const CLAIMABLE_ACCOUNT_STATUSES = new Set(['CREATED', 'ACTIVE'])
@@ -47,7 +60,7 @@ function rejectIdentityAuthority(body) {
 function validateCredential(rawToken, rawProof) {
   const token = String(rawToken || '').trim()
   const proof = String(rawProof || '').trim()
-  if (!CLAIM_TOKEN_PATTERN.test(token) || !CLAIM_PROOF_PATTERN.test(proof)) {
+  if ((!CLAIM_TOKEN_PATTERN.test(token) && !CLAIM_SCENE_PATTERN.test(token)) || !CLAIM_PROOF_PATTERN.test(proof)) {
     deny('CLAIM_CREDENTIAL_INVALID', 400)
   }
   return { token, proof }
@@ -55,7 +68,7 @@ function validateCredential(rawToken, rawProof) {
 
 export function resolveSweetCardClaimEntry(rawToken) {
   const token = String(rawToken || '').trim()
-  if (!CLAIM_TOKEN_PATTERN.test(token)) deny('CLAIM_CREDENTIAL_INVALID', 400)
+  claimCredentialLookup(token)
   // Deliberately does no database lookup. A syntactically valid guess receives the same response.
   return { state: 'PROOF_REQUIRED', proofDelivery: 'SEPARATE_CHANNEL' }
 }
@@ -182,7 +195,9 @@ export async function issueSweetCardClaimCredential({
   db = prisma,
   now = new Date(),
   ttlMs = CLAIM_TOKEN_TTL_MS,
+  credentialId = crypto.randomUUID(),
 }) {
+  claimSceneReference(credentialId)
   if (!accountId || !createdById) deny('CLAIM_CREDENTIAL_ISSUE_INVALID', 400)
   const work = async tx => {
     await lockSweetCardAccount(tx, accountId)
@@ -205,7 +220,7 @@ export async function issueSweetCardClaimCredential({
     const rawProof = `${CLAIM_PROOF_PREFIX}${crypto.randomBytes(16).toString('base64url')}`
     const expiresAt = new Date(now.getTime() + ttlMs)
     const record = await tx.sweetCardClaimToken.create({ data: {
-      id: crypto.randomUUID(), accountId, tokenHash: sha256(rawToken), proofHash: sha256(rawProof),
+      id: credentialId, accountId, tokenHash: sha256(rawToken), proofHash: sha256(rawProof),
       expiresAt, createdById,
     } })
     await a3Audit(tx, createdById, 'sweet_card.claim_credential_issued', account, {
@@ -236,7 +251,7 @@ export async function revokeSweetCardClaimCredential({ accountId, revokedById, d
 export async function resolveSweetCardClaimCredential({ rawToken, rawProof, db = prisma, now = new Date() }) {
   const { token, proof } = validateCredential(rawToken, rawProof)
   const record = await db.sweetCardClaimToken.findUnique({
-    where: { tokenHash: sha256(token) },
+    where: claimCredentialLookup(token),
     include: { account: { include: { batch: true, binding: true, claim: true } } },
   })
   assertClaimable(record, proof, now)
@@ -260,7 +275,7 @@ export async function resolveSweetCardClaimCredential({ rawToken, rawProof, db =
 export async function resolveSweetCardClaimExperience({ rawToken, rawProof, userId = null, db = prisma, now = new Date() }) {
   const { token, proof } = validateCredential(rawToken, rawProof)
   const record = await db.sweetCardClaimToken.findUnique({
-    where: { tokenHash: sha256(token) },
+    where: claimCredentialLookup(token),
     include: { account: { include: { batch: true, binding: true, claim: true } } },
   })
   if (!record || record.proofHash !== sha256(proof) || !supportsSweetCardClaim(record.account?.batch?.businessPurpose)) {
@@ -409,14 +424,14 @@ export async function claimSweetCard({
   const keyHash = sha256(validateRequestKey(requestKey))
   if (typeof bindIntent !== 'boolean') deny('BIND_INTENT_INVALID', 400)
   const candidate = await db.sweetCardClaimToken.findUnique({
-    where: { tokenHash: sha256(token) }, select: { accountId: true },
+    where: claimCredentialLookup(token), select: { accountId: true },
   })
   if (!candidate) deny()
 
   const work = async tx => {
     await lockSweetCardAccount(tx, candidate.accountId)
     const record = await tx.sweetCardClaimToken.findUnique({
-      where: { tokenHash: sha256(token) },
+      where: claimCredentialLookup(token),
       include: { account: { include: { batch: true, binding: true, claim: true } } },
     })
     if (!record || record.proofHash !== sha256(proof)) deny()

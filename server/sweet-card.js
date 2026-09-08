@@ -1,3 +1,4 @@
+import { createOfficialClaimCode } from './sweet-card-wechat-code.js'
 import crypto from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Router } from 'express'
@@ -681,10 +682,13 @@ async function generateClaimPresentation(req, card) {
   }
   const carrierType = ['PHYSICAL', 'ELECTRONIC'].includes(req.body?.carrierType) ? req.body.carrierType : card.carrierType
   const actor = who(req.user)
+  const credentialId = crypto.randomUUID()
+  const claimQrDataUrl = await createOfficialClaimCode({ credentialId })
   let credential
   try {
     credential = await issueSweetCardClaimCredential({
       accountId: card.id,
+      credentialId,
       createdById: actor.id,
       reissueConfirmed: req.body?.reissueConfirmed === true,
     })
@@ -696,8 +700,6 @@ async function generateClaimPresentation(req, card) {
     }
     throw error
   }
-  const claimEntry = `pages/sweet-card-claim/sweet-card-claim?claimToken=${encodeURIComponent(credential.rawToken)}`
-  const claimQrDataUrl = await QRCode.toDataURL(claimEntry, { errorCorrectionLevel: 'H', margin: 4, width: 1000 })
   const presentation = buildSweetCardPresentation(card, {
     carrierType,
     recipientText: safeText(req.body?.recipientText, 120) || undefined,
