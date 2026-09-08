@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><div id="root"></div><script type="module">
+import React from 'react';import {createRoot} from 'react-dom/client';import SweetCardDelivery from '/src/components/SweetCardDelivery.jsx';import '/src/index.css';
+const svg='<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600"><rect width="900" height="600" fill="#fce7f3"/><text x="50" y="100" font-size="50">budu TEST ONLY</text><text x="50" y="240" font-size="70">0.10</text></svg>';
+function App(){const [d,setD]=React.useState({claimAsset:{svgBase64:btoa(svg),fileName:'fixture.svg',carrierType:'ELECTRONIC',state:'ACTIVE'},proofDelivery:{proof:'SYNTHETIC_NOT_A_REAL_CREDENTIAL'}});return d?React.createElement(SweetCardDelivery,{delivery:d,onClose:()=>setD(null),onCopy:async()=>setD({...d,proofCopied:true,proofDelivery:{proof:''}}),onRevoke:()=>setD({...d,claimAsset:{...d.claimAsset,state:'REVOKED'},proofDelivery:{proof:''}})}):React.createElement('p',null,'已关闭')};createRoot(document.getElementById('root')).render(React.createElement(App));
+</script></html>

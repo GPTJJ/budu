@@ -86,18 +86,24 @@ test('A7.5 电子卡发放使用领取凭证，保存展示信息并在显式确
   const delivery = page.getByRole('dialog', { name: '电子卡交付' })
   await expect(delivery.getByRole('heading', { name: '电子卡已生成' })).toBeVisible()
   await expect(deliverySection.getByRole('status')).toHaveText('电子卡已生成')
-  await expect(delivery.getByText(/微信扫码领取甜意卡/)).toBeVisible()
+  await expect(delivery.getByText(/管理员保存包包含/)).toBeVisible()
   await expect(delivery.getByRole('img', { name: '微信扫码领取甜意卡卡面预览' })).toBeVisible()
   await expect(delivery.getByRole('button', { name: '查看电子卡' })).toBeEnabled()
-  await expect(delivery.getByRole('button', { name: '下载电子卡' })).toBeEnabled()
+  await expect(delivery.getByRole('button', { name: '保存电子卡 PNG' })).toBeEnabled()
   let automaticDownloads = 0
   page.on('download', () => { automaticDownloads += 1 })
   await page.waitForTimeout(100)
   expect(automaticDownloads).toBe(0)
-  const downloadPromise = page.waitForEvent('download')
-  await delivery.getByRole('button', { name: '下载电子卡' }).click()
-  const download = await downloadPromise
-  expect(download.suggestedFilename()).toBe('SC-ACCEPTANCE-01.claim.electronic.svg')
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true })
+    Object.defineProperty(navigator, 'share', { configurable: true, value: async ({ files }) => {
+      window.__sharedFile = { name: files[0].name, type: files[0].type, size: files[0].size }
+    } })
+  })
+  await delivery.getByRole('button', { name: '保存电子卡 PNG' }).click()
+  await expect.poll(() => page.evaluate(() => window.__sharedFile)).toMatchObject({ name: 'SC-ACCEPTANCE-01.claim.electronic.png', type: 'image/png' })
+  await delivery.getByRole('button', { name: '保存管理员文件包 ZIP' }).click()
+  await expect.poll(() => page.evaluate(() => window.__sharedFile)).toMatchObject({ name: 'SC-ACCEPTANCE-01.claim.electronic.zip', type: 'application/zip' })
   expect(await delivery.textContent()).not.toContain('FAKE-PROOF-FOR-UI-HARNESS')
   await delivery.getByRole('button', { name: '关闭' }).click()
 

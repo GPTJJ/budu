@@ -1,3 +1,4 @@
+import SweetCardDelivery from './SweetCardDelivery'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Download, Gift, LockKeyhole, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
 import SweetCardAvailability from './SweetCardAvailability'
@@ -142,22 +143,6 @@ export default function SweetCardPage({ user, onBack }) {
       setClaimGeneration({ status: 'ERROR', message: sweetCardClaimGenerationErrorLabel(e) })
     } finally { setSaving(false) }
   }
-  const claimAssetHref = () => claimDelivery?.claimAsset?.svgBase64 ? `data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}` : ''
-  const viewClaimAsset = () => {
-    const href = claimAssetHref()
-    if (!href) return
-    const link = document.createElement('a')
-    link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'
-    document.body.appendChild(link); link.click(); link.remove()
-  }
-  const downloadClaimAsset = () => {
-    const href = claimAssetHref()
-    if (!href) return
-    const link = document.createElement('a')
-    link.href = href
-    link.download = claimDelivery.claimAsset.fileName
-    document.body.appendChild(link); link.click(); link.remove()
-  }
   const copyClaimProof = async () => {
     const proof = claimDelivery?.proofDelivery?.proof
     if (!proof) return
@@ -295,14 +280,6 @@ export default function SweetCardPage({ user, onBack }) {
         </div>
       </div>
     </div>}
-    {claimDelivery && <div className="fixed inset-0 z-[130] flex items-end bg-slate-950/70 backdrop-blur-sm sm:items-center sm:justify-center sm:p-6" role="dialog" aria-modal="true" aria-label="电子卡交付">
-      <div className="max-h-[94dvh] w-full overflow-y-auto rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-xl sm:rounded-[30px]">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black tracking-widest text-budu-500">MINIPROGRAM CLAIM</p><h2 className="mt-1 text-xl font-black">{claimDelivery.claimAsset.carrierType === 'ELECTRONIC' ? '电子卡已生成' : '实体卡领取二维码已生成'}</h2></div><button onClick={() => setClaimDelivery(null)} className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-500">关闭</button></div>
-        <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">卡面主二维码仅用于“微信扫码领取甜意卡”。独立领取凭证必须分渠道发送；原 POS 使用码保持不变。</div>
-        <img className="mt-4 w-full rounded-2xl border border-rose-100" alt="微信扫码领取甜意卡卡面预览" src={`data:image/svg+xml;base64,${claimDelivery.claimAsset.svgBase64}`} />
-        <div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={viewClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">查看电子卡</button><button type="button" onClick={downloadClaimAsset} className="min-h-11 rounded-xl border border-budu-200 font-bold text-budu-600">下载电子卡</button><button type="button" disabled={!claimDelivery.proofDelivery?.proof} onClick={copyClaimProof} className="min-h-11 rounded-xl bg-budu-500 font-bold text-white disabled:opacity-50 sm:col-span-2">{claimDelivery.proofCopied ? '凭证已复制并从页面清除' : '复制独立领取凭证'}</button></div>
-        <button disabled={saving || claimDelivery.claimAsset.state === 'REVOKED'} onClick={revokeClaimPresentation} className="mt-3 min-h-11 w-full rounded-xl border border-rose-200 font-bold text-rose-600 disabled:opacity-50">{claimDelivery.claimAsset.state === 'REVOKED' ? '领取资产已撤销' : '撤销领取资产'}</button>
-      </div>
-    </div>}
+    {claimDelivery && <SweetCardDelivery delivery={claimDelivery} onClose={() => setClaimDelivery(null)} onCopy={copyClaimProof} onRevoke={revokeClaimPresentation} saving={saving} />}
   </div>
 }
