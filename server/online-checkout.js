@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { normalizeOnlineCheckoutIntent } from './online-checkout-intent.js'
 import { httpError } from './pos-core.js'
 import { cents, onlinePaymentAllowed, quoteOnlineCheckout } from './online-checkout-policy.js'
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
@@ -10,20 +11,7 @@ const key = value => {
   if (typeof value !== 'string' || !/^[A-Za-z0-9:_-]{8,128}$/.test(value)) throw httpError('请求标识无效', 400)
   return value
 }
-function intentOf(input) {
-  if (!Array.isArray(input?.lines) || !input.lines.length || input.lines.length > 100) throw httpError('商品选择无效', 400)
-  const lines = input.lines.map(x => {
-    if (!x || typeof x.productId !== 'string' || !x.productId || x.productId.length > 160
-      || typeof x.skuId !== 'string' || !x.skuId || x.skuId.length > 160
-      || !Number.isInteger(x.quantity) || x.quantity < 1 || x.quantity > 999) throw httpError('商品选择无效', 400)
-    return { productId: x.productId, skuId: x.skuId, quantity: x.quantity }
-  })
-  if (!['PICKUP', 'DELIVERY'].includes(input.fulfillment)) throw httpError('配送方式无效', 400)
-  if (input.fulfillment === 'DELIVERY' && (typeof input.addressRef !== 'string' || !input.addressRef || input.addressRef.length > 160)) throw httpError('配送地址无效', 400)
-  if (input.walletRef != null && (typeof input.walletRef !== 'string' || !input.walletRef || input.walletRef.length > 160)) throw httpError('甜意卡选择无效', 400)
-  return { lines, fulfillment: input.fulfillment, addressRef: input.fulfillment === 'DELIVERY' ? input.addressRef : null,
-    walletRef: input.walletRef || null, desiredSweetCardCents: String(cents(input.desiredSweetCardCents ?? 0)) }
-}
+
 async function customer(tx, userId, env, { newPurchase = true } = {}) {
   const user = await tx.user.findUnique({ where: { id: userId } })
   if (!user || user.status !== 'active') throw httpError('请重新登录', 401)
@@ -62,7 +50,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
   if (typeof resolveCatalog !== 'function') throw Error('ONLINE_CATALOG_AUTHORITY_REQUIRED')
   return {
     async quote(userId, input) {
-      const requestKey = key(input.requestKey), intent = intentOf(input)
+      const requestKey = key(input.requestKey), intent = normalizeOnlineCheckoutIntent(input)
       const fingerprint = digest(intent), quoteId = `oq-${digest([userId, requestKey])}`
       await customer(prisma, userId, env)
       const replay = await prisma.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
@@ -94,7 +82,10 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
         const snapshot = { ...quoteOnlineCheckout({ lines, shippingCents: catalog.shippingCents, availableCents: available, desiredSweetCardCents: intent.desiredSweetCardCents }),
           accountId: account?.id || null, walletRef: intent.walletRef,
           cardValidity: account ? { validFrom: account.validFrom?.toISOString() || null, expiresAt: account.expiresAt?.toISOString() || null } : null,
-          fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace }
+          fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace,
+          // Immutable customer selections for trusted commerce draft recovery.
+          // Labels/prices still come from the server catalog, never these strings.
+          commerceIntent: { lines: intent.lines, storeRef: intent.storeRef ?? null } }
         snapshot.lines = snapshot.lines.map((line, i) => ({ ...line, canonicalProductId: lines[i].canonicalProductId }))
         if (cents(snapshot.wechatCents) > 0n) {
           if (!/^wx[A-Za-z0-9]{16}$/.test(wechat?.appId || '') || !/^\d{8,16}$/.test(wechat?.mchId || '')) throw httpError('微信支付配置暂不可用', 503)

@@ -63,6 +63,19 @@ test('WX-only has no reservation',async()=>{
  const s=await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})
  assert.equal(s.wechatCents,100n);assert.equal(await prisma.sweetCardReservation.count({where:{settlementId:s.id}}),0)
 })
+test('quote freezes commerce selections and rejects same-key changed combo/store',async()=>{
+ const f=await fixture(),requestKey=uuid()
+ const intent={requestKey,storeRef:'synthetic-store',lines:[{productId:f.id,skuId:f.id,quantity:1,options:['礼盒'],comboFlavors:['a','b']}]}
+ const q=await f.quote(intent)
+ assert.deepEqual(q.snapshot.commerceIntent,{storeRef:'synthetic-store',lines:intent.lines})
+ await assert.rejects(f.quote({...intent,storeRef:'another-store'}),{status:409})
+ await assert.rejects(f.quote({...intent,lines:[{...intent.lines[0],comboFlavors:['a','c']}]}),{status:409})
+ assert.equal((await f.quote(intent)).id,q.id)
+ const settled=await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})
+ assert.equal(settled.status,'PAID')
+ assert.deepEqual((await prisma.onlineCheckoutQuote.findUnique({where:{id:q.id}})).snapshot.commerceIntent,q.snapshot.commerceIntent)
+ assert.equal(await reconcile(f.id),0n)
+})
 test('quote retry ignores fresh prices but rejects changed intent',async()=>{
  const f=await fixture(),requestKey=uuid(),q=await f.quote({requestKey})
  assert.equal((await f.quote({requestKey})).id,q.id);assert.equal(f.calls(),1)
