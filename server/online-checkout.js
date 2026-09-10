@@ -92,7 +92,9 @@ export function createOnlineCheckout(prisma, { resolveCatalog, env = process.env
             onlineEligible: policy.allowed, canonicalProductId: policy.canonicalProductId })
         }
         const snapshot = { ...quoteOnlineCheckout({ lines, shippingCents: catalog.shippingCents, availableCents: available, desiredSweetCardCents: intent.desiredSweetCardCents }),
-          accountId: account?.id || null, walletRef: intent.walletRef, fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace }
+          accountId: account?.id || null, walletRef: intent.walletRef,
+          cardValidity: account ? { validFrom: account.validFrom?.toISOString() || null, expiresAt: account.expiresAt?.toISOString() || null } : null,
+          fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace }
         snapshot.lines = snapshot.lines.map((line, i) => ({ ...line, canonicalProductId: lines[i].canonicalProductId }))
         const expiresAt = new Date(Math.min(now.getTime() + 15 * 60000, account?.expiresAt?.getTime() ?? Infinity))
         return tx.onlineCheckoutQuote.create({ data: { id: quoteId, userId, requestKey, requestFingerprint: fingerprint, snapshot, expiresAt } })
