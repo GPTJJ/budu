@@ -17,6 +17,7 @@ Updated 2026-09-11. Full scope: MASTER_PLAN; no release claim yet.
 | G3 transaction/outbox | IN PROGRESS | Native11/11; atomic envelope + lease worker; CloudBase receiver15/15 offline; transport/draft integration pending |
 | G3 quote/reserve/card-only | IN PROGRESS | Native13/13; ownership/availability/idempotency; catalog/provider/fulfillment integration pending |
 | G3 verified payment/cancel | IN PROGRESS | Native17/17 signed synthetic evidence; capture/cancel/expiry races and compensation; provider transport/recovery integration pending |
+| G3 prepay/transport | IN PROGRESS | Native10/10 + offline transport15/15; query-before-retry, immutable payer/merchant, attempted marker; routes and scheduled recovery pending |
 | G4–G6 implementation | NOT STARTED | Checkout/refund/logistics remain; no fake PASS |
 | G7 native certification | NOT STARTED | No mock-only certification |
 | G8–G10 integration/clone/deploy | NOT STARTED | Fresh backup/rollback required; no deployment yet |

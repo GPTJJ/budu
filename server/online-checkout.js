@@ -58,7 +58,7 @@ async function productEligibility(tx, namespace, line) {
 // It authenticates catalog/address ownership and computes SKU price, discounts,
 // shipping, inventory and fulfillment policy from current commerce authority.
 // No HTTP routes register until this trusted adapter is wired and certified.
-export function createOnlineCheckout(prisma, { resolveCatalog, env = process.env, namespace = 'cloudbase-miniprogram' }) {
+export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = process.env, namespace = 'cloudbase-miniprogram' }) {
   if (typeof resolveCatalog !== 'function') throw Error('ONLINE_CATALOG_AUTHORITY_REQUIRED')
   return {
     async quote(userId, input) {
@@ -96,6 +96,12 @@ export function createOnlineCheckout(prisma, { resolveCatalog, env = process.env
           cardValidity: account ? { validFrom: account.validFrom?.toISOString() || null, expiresAt: account.expiresAt?.toISOString() || null } : null,
           fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace }
         snapshot.lines = snapshot.lines.map((line, i) => ({ ...line, canonicalProductId: lines[i].canonicalProductId }))
+        if (cents(snapshot.wechatCents) > 0n) {
+          if (!/^wx[A-Za-z0-9]{16}$/.test(wechat?.appId || '') || !/^\d{8,16}$/.test(wechat?.mchId || '')) throw httpError('微信支付配置暂不可用', 503)
+          const identities = await tx.weChatAuthIdentity.findMany({ where: { userId, provider: 'WECHAT_MINIPROGRAM', appId: wechat.appId }, take: 2 })
+          if (identities.length !== 1) throw httpError('微信支付身份需重新核对', 409)
+          snapshot.paymentIdentity = { identityId: identities[0].id, appId: wechat.appId, mchId: wechat.mchId }
+        }
         const expiresAt = new Date(Math.min(now.getTime() + 15 * 60000, account?.expiresAt?.getTime() ?? Infinity))
         return tx.onlineCheckoutQuote.create({ data: { id: quoteId, userId, requestKey, requestFingerprint: fingerprint, snapshot, expiresAt } })
       })

@@ -2222,6 +2222,7 @@ model OnlineTender {
   merchantTradeNo       String?          @unique @map("merchant_trade_no")
   providerTransactionId String?          @unique @map("provider_transaction_id")
   prepayId              String?          @map("prepay_id")
+  prepayRequestedAt     DateTime?        @map("prepay_requested_at")
   verifiedAt            DateTime?        @map("verified_at")
   providerSuccessAt     DateTime?        @map("provider_success_at")
   createdAt             DateTime         @default(now()) @map("created_at")

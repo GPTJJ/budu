@@ -15,6 +15,7 @@ async function fixture({shipping=0,price=100}={}){
  const id=uuid(),token=uuid();const expiresAt=new Date(Date.now()+86400000)
  await prisma.$transaction(async tx=>{
   await tx.user.create({data:{id,username:id,passwordHash:'synthetic'}})
+  await tx.weChatAuthIdentity.create({data:{id:uuid(),provider:'WECHAT_MINIPROGRAM',appId:'wx0123456789abcdef',openId:id,userId:id}})
   await tx.inventoryItem.create({data:{id,name:`Synthetic ${id}`,sku:id,isActive:true,salePriceCents:BigInt(price)}})
   await tx.onlineProductPolicy.create({data:{id,namespace:'cloudbase-miniprogram',externalProductId:id,externalSkuId:id,productId:id,enabled:true,updatedById:id}})
   await tx.sweetCardAccount.create({data:{id,publicCardNo:id,initialAmountCents:100n,balanceCents:100n,validityType:'LONG_TERM',status:'ACTIVE',carrierType:'ELECTRONIC',bindingMode:'REQUIRED',
@@ -25,7 +26,7 @@ async function fixture({shipping=0,price=100}={}){
  })
  const env={SWEET_CARD_ONLINE_PAYMENT_ENABLED:'1',SWEET_CARD_ONLINE_PAYMENT_ALLOWLIST:id}
  let calls=0
- const service=createOnlineCheckout(prisma,{env,resolveCatalog:async({intent})=>{calls++;return {lines:intent.lines.map(line=>({...line,name:'Synthetic product',unitPriceCents:String(price),discountCents:'0'})),shippingCents:String(shipping)}}})
+ const service=createOnlineCheckout(prisma,{env,wechat:{appId:'wx0123456789abcdef',mchId:'1111111111'},resolveCatalog:async({intent})=>{calls++;return {lines:intent.lines.map(line=>({...line,name:'Synthetic product',unitPriceCents:String(price),discountCents:'0'})),shippingCents:String(shipping)}}})
  const quote=overrides=>service.quote(id,{requestKey:uuid(),lines:[{productId:id,skuId:id,quantity:1}],fulfillment:'PICKUP',walletRef:id,desiredSweetCardCents:'100',...overrides})
  return {id,env,service,quote,calls:()=>calls}
 }
@@ -52,7 +53,6 @@ async function pending({wxOnly=false,expiresIn=null}={}){
  const f=await fixture({shipping:10})
  if(expiresIn)await prisma.sweetCardAccount.update({where:{id:f.id},data:{expiresAt:new Date(Date.now()+expiresIn)}})
  const q=await f.quote(wxOnly?{walletRef:null,desiredSweetCardCents:'0'}:{}),s=await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})
- await prisma.weChatAuthIdentity.create({data:{id:uuid(),provider:'WECHAT_MINIPROGRAM',appId:cfg.appId,openId:f.id,userId:f.id}})
  const t=await prisma.onlineTender.findUnique({where:{settlementId_type:{settlementId:s.id,type:'WECHAT'}}})
  const result={appid:cfg.appId,mchid:cfg.mchId,trade_type:'JSAPI',out_trade_no:t.merchantTradeNo,trade_state:'SUCCESS',transaction_id:uuid(),
   amount:{total:Number(s.wechatCents),currency:'CNY'},payer:{openid:f.id},success_time:new Date().toISOString()}
@@ -100,7 +100,7 @@ test('callback recovery ignores new-checkout flag OFF',async()=>{
 })
 test('provider transaction cannot be reused across orders',async()=>{
  const a=await pending(),b=await pending();await finalize(signed(a.result))
- await assert.rejects(finalize(signed({...b.result,transaction_id:a.result.transaction_id})))
+ await assert.rejects(finalize(signed({...b.result,transaction_id:a.result.transaction_id})),{status:409})
  assert.equal(await reconcile(b.id),100n);assert.equal((await prisma.onlineSettlement.findUnique({where:{id:b.s.id}})).status,'PENDING')
 })
 test('HTTP error, wrong serial and malformed success cannot settle',async()=>{

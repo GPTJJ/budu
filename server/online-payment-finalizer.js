@@ -23,7 +23,10 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
       const identity = await tx.weChatAuthIdentity.findUnique({ where: { provider_appId_openId: {
         provider: 'WECHAT_MINIPROGRAM', appId: fact.appId, openId: fact.payerOpenId,
       } } })
-      if (!identity || identity.userId !== settlement.userId) throw httpError('支付身份核对不一致', 409)
+      const originalQuote = await tx.onlineCheckoutQuote.findUnique({ where: { id: settlement.quoteId } })
+      const paymentIdentity = originalQuote?.snapshot?.paymentIdentity
+      if (!identity || identity.userId !== settlement.userId || paymentIdentity?.identityId !== identity.id
+        || paymentIdentity.appId !== fact.appId || paymentIdentity.mchId !== fact.mchId) throw httpError('支付身份核对不一致', 409)
       // WeChat success_time has second precision; PG creation has milliseconds.
       if (fact.successAt.getTime() < Math.floor(settlement.createdAt.getTime() / 1000) * 1000) throw httpError('支付时间核对不一致', 409)
       if (wx.status === 'SUCCEEDED') {
@@ -38,8 +41,7 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
         account = await tx.sweetCardAccount.findUnique({ where: { id: settlement.accountId }, include: { binding: true, claim: true } })
         reservation = await tx.sweetCardReservation.findUnique({ where: { settlementId: settlement.id } })
         if (!reservation || reservation.amountCents !== settlement.sweetCardCents) throw httpError('预留金额核对不一致', 409)
-        const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: settlement.quoteId } })
-        const validity = quote?.snapshot?.cardValidity
+        const validity = originalQuote.snapshot.cardValidity
         const date = value => value === null ? null : (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value) : undefined)
         const validFrom = date(validity?.validFrom), expiresAt = date(validity?.expiresAt)
         if (validFrom === undefined || expiresAt === undefined) throw httpError('原支付有效期快照缺失，需核对', 409)
@@ -76,6 +78,9 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
       }
       return tx.onlineSettlement.update({ where: { id: settlement.id }, data: { status: 'PAID', paidAt: now,
         capturedLedgerId: ledgerId, version: { increment: 1 } } })
+    }).catch(error => {
+      if (error?.code === 'P2002') throw httpError('支付交易标识冲突，需要核对原订单', 409)
+      throw error
     })
   }
 }

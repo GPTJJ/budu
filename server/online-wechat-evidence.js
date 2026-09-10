@@ -13,24 +13,36 @@ function base64(value, max) {
   return Buffer.from(value, 'base64')
 }
 
-// Separate JSAPI v3 trust boundary; the existing POS MICROPAY v2 adapter is
-// unchanged. Configuration comes only from the server composition root.
-export function createOnlineWechatEvidence({ appId, mchId, platformPublicKey, platformKeyId, apiV3Key }) {
-  if (!/^wx[A-Za-z0-9]{16}$/.test(appId || '') || !/^\d{8,16}$/.test(mchId || '')
-    || !bounded(platformKeyId, 128)) throw Error('ONLINE_WECHAT_CONFIG_REQUIRED')
+// Raw v3 responses (including empty 204 close responses) use the same byte
+// signature contract. No parsed JSON is trusted before this step.
+export function createOnlineWechatMessageVerifier({ platformPublicKey, platformKeyId }) {
+  if (!bounded(platformKeyId, 128)) throw Error('ONLINE_WECHAT_CONFIG_REQUIRED')
   const publicKey = crypto.createPublicKey(platformPublicKey)
   if (publicKey.asymmetricKeyType !== 'rsa' || publicKey.asymmetricKeyDetails?.modulusLength < 2048) throw Error('ONLINE_WECHAT_PUBLIC_KEY_INVALID')
-  const decryptKey = Buffer.from(apiV3Key || '', 'utf8')
-  if (decryptKey.length !== 32) throw Error('ONLINE_WECHAT_API_V3_KEY_INVALID')
-  return function verifyPayment({ source, headers, rawBody, statusCode }) {
-    if (!['QUERY', 'NOTIFY'].includes(source) || (source === 'QUERY' && statusCode !== 200)
-      || !Buffer.isBuffer(rawBody) || rawBody.length === 0 || rawBody.length > 1024 * 1024) return deny()
+  return function verifyMessage({ headers, rawBody }) {
+    if (!Buffer.isBuffer(rawBody) || rawBody.length > 1024 * 1024) return deny()
     const timestamp = header(headers, 'wechatpay-timestamp'), nonce = header(headers, 'wechatpay-nonce')
     if (!/^\d{10}$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300
       || !bounded(nonce, 256) || /[\r\n]/.test(nonce) || header(headers, 'wechatpay-serial') !== platformKeyId) return deny()
     const signature = base64(header(headers, 'wechatpay-signature'), 2048)
     const message = Buffer.concat([Buffer.from(`${timestamp}\n${nonce}\n`), rawBody, Buffer.from('\n')])
     if (!crypto.verify('RSA-SHA256', message, publicKey, signature)) return deny()
+    return true
+  }
+}
+
+// Separate JSAPI v3 trust boundary; existing POS MICROPAY v2 is unchanged.
+export function createOnlineWechatEvidence(configuration) {
+  const { appId, mchId, apiV3Key } = configuration
+  if (!/^wx[A-Za-z0-9]{16}$/.test(appId || '') || !/^\d{8,16}$/.test(mchId || '')) throw Error('ONLINE_WECHAT_CONFIG_REQUIRED')
+  const verifyMessage = createOnlineWechatMessageVerifier(configuration)
+  const decryptKey = Buffer.from(apiV3Key || '', 'utf8')
+  if (decryptKey.length !== 32) throw Error('ONLINE_WECHAT_API_V3_KEY_INVALID')
+  return function verifyPayment(input) {
+    const { source, rawBody, statusCode } = input
+    if (!['QUERY', 'NOTIFY'].includes(source) || (source === 'QUERY' && statusCode !== 200)
+      || !Buffer.isBuffer(rawBody) || rawBody.length === 0) return deny()
+    verifyMessage(input)
     let result
     try {
       result = JSON.parse(rawBody.toString('utf8'))

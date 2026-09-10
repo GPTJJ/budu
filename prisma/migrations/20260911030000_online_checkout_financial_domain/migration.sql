@@ -92,6 +92,7 @@ CREATE TABLE "online_tenders" (
     "merchant_trade_no" TEXT,
     "provider_transaction_id" TEXT,
     "prepay_id" TEXT,
+    "prepay_requested_at" TIMESTAMP(3),
     "verified_at" TIMESTAMP(3),
     "provider_success_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -322,7 +323,7 @@ ALTER TABLE online_tenders ADD CONSTRAINT online_tender_amount CHECK (amount_cen
 ALTER TABLE online_tenders ADD CONSTRAINT online_tender_contract CHECK (
   type IN ('SWEET_CARD','WECHAT') AND status IN ('PENDING','SUCCEEDED','CLOSED')
   AND ((type = 'WECHAT' AND merchant_trade_no IS NOT NULL) OR
-       (type = 'SWEET_CARD' AND merchant_trade_no IS NULL AND provider_transaction_id IS NULL AND prepay_id IS NULL))
+       (type = 'SWEET_CARD' AND merchant_trade_no IS NULL AND provider_transaction_id IS NULL AND prepay_id IS NULL AND prepay_requested_at IS NULL))
   AND (status <> 'SUCCEEDED' OR (verified_at IS NOT NULL AND (type <> 'WECHAT' OR (provider_transaction_id IS NOT NULL AND provider_success_at IS NOT NULL))))
 );
 ALTER TABLE online_refunds ADD CONSTRAINT online_refund_amounts CHECK (
@@ -552,7 +553,7 @@ FOR EACH ROW EXECUTE FUNCTION budu_online_transition_guard('captured_ledger_id',
 CREATE TRIGGER online_reservation_transition BEFORE UPDATE ON sweet_card_reservations
 FOR EACH ROW EXECUTE FUNCTION budu_online_transition_guard('captured_at','released_at');
 CREATE TRIGGER online_tender_transition BEFORE UPDATE ON online_tenders
-FOR EACH ROW EXECUTE FUNCTION budu_online_transition_guard('provider_transaction_id','verified_at','provider_success_at');
+FOR EACH ROW EXECUTE FUNCTION budu_online_transition_guard('provider_transaction_id','verified_at','provider_success_at','prepay_requested_at','prepay_id');
 CREATE TRIGGER online_refund_transition BEFORE UPDATE ON online_refunds
 FOR EACH ROW EXECUTE FUNCTION budu_online_transition_guard('provider_refund_id','credited_ledger_id','verified_at','settled_at');
 CREATE TRIGGER online_compensation_transition BEFORE UPDATE ON online_payment_compensations
