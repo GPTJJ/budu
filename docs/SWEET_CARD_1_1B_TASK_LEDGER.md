@@ -18,6 +18,7 @@ Updated 2026-09-11. Full scope: MASTER_PLAN; no release claim yet.
 | G3 quote/reserve/card-only | IN PROGRESS | Native13/13; ownership/availability/idempotency; catalog/provider/fulfillment integration pending |
 | G3 verified payment/cancel | IN PROGRESS | Native17/17 signed synthetic evidence; capture/cancel/expiry races and compensation; provider transport/recovery integration pending |
 | G3 prepay/transport | IN PROGRESS | Native10/10 + offline transport15/15; query-before-retry, immutable payer/merchant, attempted marker; routes and scheduled recovery pending |
+| G3 recovery scanner | IN PROGRESS | Scanner9/9 + native prepay12/12; finite scans, nonoverlap, drain, flag-OFF recovery; runtime composition and compensation pending |
 | G4–G6 implementation | NOT STARTED | Checkout/refund/logistics remain; no fake PASS |
 | G7 native certification | NOT STARTED | No mock-only certification |
 | G8–G10 integration/clone/deploy | NOT STARTED | Fresh backup/rollback required; no deployment yet |
@@ -45,6 +46,6 @@ documents. They are preserved. Scoped candidate commits/pushes use only the two
 `codex/sweet-card-1-1b` branches. Check Git HEAD/upstream on recovery; never infer
 deployment from a pushed commit. Uncommitted or unpushed later work remains local.
 
-MP current targeted regression: 44/44 PASS including real installed SDK wrapper
+MP current targeted regression: 57/57 PASS including legacy PG-domain guards and real installed SDK wrapper
 with offline transport and unchanged merchant refund tests. This does not prove
 native database concurrency or production callback reachability.

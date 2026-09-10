@@ -7,6 +7,7 @@ import {createOnlinePaymentService} from '../server/online-payment-service.js'
 import {createOnlinePaymentFinalizer} from '../server/online-payment-finalizer.js'
 import {createOnlinePaymentCancellation} from '../server/online-payment-cancellation.js'
 import {createOnlineCheckout} from '../server/online-checkout.js'
+import {createOnlinePaymentRecovery} from '../server/online-payment-recovery.js'
 const config=JSON.parse(fs.readFileSync(process.env.SC11B_NATIVE_CONFIG))
 if(config.host!=='127.0.0.1'||config.database!=='budu_sc11b_native')throw Error('ISOLATED_NATIVE_DB_REQUIRED')
 const prisma=new PrismaClient({datasourceUrl:`postgresql://${config.user}:${config.password}@${config.host}:${config.port}/${config.database}`})
@@ -148,4 +149,29 @@ test('close before delayed POST dispatch retains hold until provider closure is 
  assert.equal((await prisma.sweetCardReservation.findUnique({where:{settlementId:f.s.id}})).status,'RESERVED')
  release();const response=await preparing;assert.equal(response.paymentParameters,undefined)
  assert.equal((await svc.recover(f.s.id)).status,'CANCELLED');assert.equal(await reconcile(f.id),100n)
+})
+test('background native scan recovers paid result with purchase flag OFF and no client call',async()=>{
+ const f=await pending();let calls=0
+ await prisma.onlineTender.update({where:{settlementId_type:{settlementId:f.s.id,type:'WECHAT'}},data:{prepayRequestedAt:new Date()}})
+ f.env.SWEET_CARD_ONLINE_PAYMENT_ENABLED='0'
+ const svc=createOnlinePaymentService(prisma,cfg,{env:f.env,request:async method=>{assert.equal(method,'GET');calls++;return signed(f.result)}})
+ // Restrict fixtures only; preserve the scanner's actual Prisma selection and
+ // delegate all money work to the real service/native database.
+ const isolated={onlineSettlement:{findFirst:q=>prisma.onlineSettlement.findFirst({...q,where:{AND:[q.where,{id:f.s.id}]}}),findMany:q=>prisma.onlineSettlement.findMany({...q,where:{AND:[q.where,{id:f.s.id}]}})}}
+ const worker=createOnlinePaymentRecovery(isolated,svc)
+ assert.equal((await worker.tick()).resolved,1);assert.equal(calls,1)
+ assert.equal(await reconcile(f.id),0n)
+ assert.equal((await worker.tick()).scanned,0)
+ assert.equal(await prisma.sweetCardLedger.count({where:{accountId:f.id,type:'REDEEM'}}),1)
+})
+test('native scan skips new unattempted payment but recovers its durable cancellation',async()=>{
+ const f=await pending();let calls=0
+ const svc=createOnlinePaymentService(prisma,cfg,{env:f.env,request:async()=>{calls++;throw Error('MUST_NOT_CALL')}})
+ const isolated={onlineSettlement:{findFirst:q=>prisma.onlineSettlement.findFirst({...q,where:{AND:[q.where,{id:f.s.id}]}}),findMany:q=>prisma.onlineSettlement.findMany({...q,where:{AND:[q.where,{id:f.s.id}]}})}}
+ const worker=createOnlinePaymentRecovery(isolated,svc)
+ assert.equal((await worker.tick()).scanned,0)
+ await cancellation.request(f.s.id,f.id)
+ assert.equal((await worker.tick()).resolved,1);assert.equal(calls,0)
+ assert.equal((await prisma.sweetCardReservation.findUnique({where:{settlementId:f.s.id}})).status,'RELEASED')
+ assert.equal(await reconcile(f.id),100n)
 })
