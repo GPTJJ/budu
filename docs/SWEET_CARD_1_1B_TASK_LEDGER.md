@@ -14,7 +14,8 @@ Updated 2026-09-11. Full scope: MASTER_PLAN; no release claim yet.
 | Money policy | VERIFIED unit scope | 15/15 tests incl integer limits, shipping, discount, cumulative tender and quantity rounding; production build PASS; no PG concurrency claim |
 | G2 models/migration | IN PROGRESS | Native PG16.14 empty DB applied71 migrations; 24/24 constraint tests; quote/compensation/ledger/state protections reviewed |
 | POS holds compatibility | IN PROGRESS | Available-balance integration; native legacy matrix27/27; online-vs-POS concurrency pending |
-| G3–G6 implementation | NOT STARTED | Orchestrator/outbox/refund quantity authority remains; no fake PASS |
+| G3 transaction/outbox | IN PROGRESS | Native11/11; atomic financial envelope + lease/fencing worker; receiver/orchestrator pending |
+| G4–G6 implementation | NOT STARTED | Checkout/refund/logistics remain; no fake PASS |
 | G7 native certification | NOT STARTED | No mock-only certification |
 | G8–G10 integration/clone/deploy | NOT STARTED | Fresh backup/rollback required; no deployment yet |
 | G11–G12 human E2E/public | NOT STARTED | Real owner actions remain human boundary |
