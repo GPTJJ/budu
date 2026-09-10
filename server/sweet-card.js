@@ -45,6 +45,7 @@ import { issueSweetCardClaimCredential, revokeSweetCardClaimCredential } from '.
 import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availability.js'
 import { mirrorUsersToKv } from './user-store.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
+import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
 
 export const sweetCardRouter = Router()
 const wrap = (handler) => async (req, res) => {
@@ -180,7 +181,8 @@ export async function inspectSweetCard({ orderId, token, actor }) {
     && (!account.expiresAt || account.expiresAt > new Date())
     && (account.bindingMode !== 'REQUIRED' || Boolean(account.binding))
     && !order.sweetCardRedemption
-  const maximum = usable ? [account.balanceCents, eligibility.eligibleSubtotal, BigInt(order.payableAmount)].reduce((a, b) => a < b ? a : b) : 0n
+  const spending = await sweetCardAvailableBalance(prisma, account)
+  const maximum = usable ? [spending.availableCents, eligibility.eligibleSubtotal, BigInt(order.payableAmount)].reduce((a, b) => a < b ? a : b) : 0n
   return {
     publicCardNo: account.publicCardNo, status: account.status, credentialStatus: credential.status,
     balanceCents: account.balanceCents.toString(), expiresAt: account.expiresAt, bindingMode: account.bindingMode,
@@ -217,7 +219,9 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
     if (account.expiresAt && account.expiresAt <= new Date()) throw httpError('甜意卡已过期', 409)
     if (account.bindingMode === 'REQUIRED' && !account.binding) throw httpError('该甜意卡需先完成身份绑定', 409)
     const eligibility = await loadEligibility(tx, order)
-    const maximum = [account.balanceCents, eligibility.eligibleSubtotal, BigInt(order.payableAmount)].reduce((a, b) => a < b ? a : b)
+    const spending = await sweetCardAvailableBalance(tx, account)
+    if (spending.availableCents <= 0n) throw httpError('甜意卡当前可用余额不足', 409)
+    const maximum = [spending.availableCents, eligibility.eligibleSubtotal, BigInt(order.payableAmount)].reduce((a, b) => a < b ? a : b)
     if (maximum <= 0n) throw httpError('当前订单没有甜意卡可用商品', 409)
     const amount = amountCents == null ? maximum : parseAmount(amountCents, '核销金额')
     if (amount > maximum) throw httpError('核销金额超过本单可用额度', 409)

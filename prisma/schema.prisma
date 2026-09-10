@@ -186,6 +186,9 @@ model User {
   sweetCardClaimTokensCreated   SweetCardClaimToken[]    @relation("SweetCardClaimTokenCreator")
   sweetCardClaims               SweetCardClaim[]
   sweetCardBindings             SweetCardBinding[]
+  onlineQuotes                  OnlineCheckoutQuote[]
+  onlineSettlements             OnlineSettlement[]
+  sweetCardReservations         SweetCardReservation[]
 
   @@map("User")
 }
@@ -349,6 +352,7 @@ model InventoryItem {
   productCategory          ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
   productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
   sweetCardAllocations     SweetCardRedemptionItem[]
+  onlinePolicies           OnlineProductPolicy[]
 
   @@index([productCategoryId])
   @@index([productGroupId])
@@ -1877,6 +1881,9 @@ model SweetCardAccount {
   auditLogs          SweetCardAuditLog[]
   claimTokens        SweetCardClaimToken[]
   claim              SweetCardClaim?
+  onlinePolicy       SweetCardOnlinePolicy?
+  reservations       SweetCardReservation[]
+  onlineSettlements  OnlineSettlement[]
 
   @@index([batchId, status])
   @@index([status, expiresAt])
@@ -2047,6 +2054,8 @@ model SweetCardLedger {
   redemption        SweetCardRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
   order             Order?               @relation(fields: [orderId], references: [id], onDelete: Restrict)
   refund            Refund?              @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  onlineCapture     OnlineSettlement?    @relation("OnlineCaptureLedger")
+  onlineCredit      OnlineRefund?        @relation("OnlineRefundLedger")
 
   @@index([accountId, createdAt])
   @@index([orderId])
@@ -2103,4 +2112,193 @@ model SweetCardAuditLog {
   @@index([batchId, createdAt])
   @@index([action, createdAt])
   @@map("sweet_card_audit_logs")
+}
+
+// Online authorization is explicit and independent of existing POS policy.
+model SweetCardOnlinePolicy {
+  accountId   String           @id @map("account_id")
+  enabled     Boolean          @default(false)
+  updatedById String           @map("updated_by_id")
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at")
+  account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  @@map("sweet_card_online_policies")
+}
+
+model OnlineProductPolicy {
+  id                String        @id
+  namespace         String
+  externalProductId String        @map("external_product_id")
+  externalSkuId     String        @map("external_sku_id")
+  productId         String        @map("product_id")
+  enabled           Boolean       @default(false)
+  updatedById       String        @map("updated_by_id")
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at")
+  product           InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([namespace, externalProductId, externalSkuId])
+  @@map("online_product_policies")
+}
+
+model OnlineCheckoutQuote {
+  id                 String            @id
+  userId             String            @map("user_id")
+  requestKey         String            @map("request_key")
+  requestFingerprint String            @map("request_fingerprint")
+  snapshot           Json
+  expiresAt          DateTime          @map("expires_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  user               User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  settlement         OnlineSettlement?
+  @@unique([userId, requestKey])
+  @@index([expiresAt])
+  @@map("online_checkout_quotes")
+}
+
+model OnlineSettlement {
+  id                       String               @id
+  userId                   String               @map("user_id")
+  quoteId                  String               @unique @map("quote_id")
+  namespace                String
+  externalOrderId          String               @map("external_order_id")
+  requestKey               String               @map("request_key")
+  requestFingerprint       String               @map("request_fingerprint")
+  accountId                String?              @map("account_id")
+  status                   String               @default("PENDING")
+  version                  Int                  @default(1)
+  currency                 String               @default("CNY")
+  merchandiseCents         BigInt               @map("merchandise_cents")
+  eligibleMerchandiseCents BigInt               @map("eligible_merchandise_cents")
+  shippingCents            BigInt               @map("shipping_cents")
+  totalCents               BigInt               @map("total_cents")
+  sweetCardCents           BigInt               @map("sweet_card_cents")
+  wechatCents              BigInt               @map("wechat_cents")
+  capturedLedgerId         String?              @unique @map("captured_ledger_id")
+  expiresAt                DateTime             @map("expires_at")
+  paidAt                   DateTime?            @map("paid_at")
+  cancelledAt              DateTime?            @map("cancelled_at")
+  reconciliationReason     String?              @map("reconciliation_reason")
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @default(now()) @updatedAt @map("updated_at")
+  user                     User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote                    OnlineCheckoutQuote  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  account                  SweetCardAccount?    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  capturedLedger           SweetCardLedger?     @relation("OnlineCaptureLedger", fields: [capturedLedgerId], references: [id], onDelete: Restrict)
+  reservation              SweetCardReservation?
+  tenders                  OnlineTender[]
+  refunds                  OnlineRefund[]
+  compensations            OnlinePaymentCompensation[]
+  outbox                   OnlineOutbox[]
+  @@unique([namespace, externalOrderId])
+  @@unique([userId, requestKey])
+  @@index([status, expiresAt])
+  @@map("online_settlements")
+}
+
+model SweetCardReservation {
+  id           String           @id
+  settlementId String           @unique @map("settlement_id")
+  accountId    String           @map("account_id")
+  userId       String           @map("user_id")
+  requestKey   String           @unique @map("request_key")
+  amountCents  BigInt           @map("amount_cents")
+  status       String           @default("RESERVED")
+  expiresAt    DateTime         @map("expires_at")
+  capturedAt   DateTime?        @map("captured_at")
+  releasedAt   DateTime?        @map("released_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([accountId, status])
+  @@index([status, expiresAt])
+  @@map("sweet_card_reservations")
+}
+
+model OnlineTender {
+  id                    String           @id
+  settlementId          String           @map("settlement_id")
+  type                  String
+  amountCents           BigInt           @map("amount_cents")
+  status                String           @default("PENDING")
+  merchantTradeNo       String?          @unique @map("merchant_trade_no")
+  providerTransactionId String?          @unique @map("provider_transaction_id")
+  prepayId              String?          @map("prepay_id")
+  verifiedAt            DateTime?        @map("verified_at")
+  providerSuccessAt     DateTime?        @map("provider_success_at")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, type])
+  @@map("online_tenders")
+}
+
+model OnlineRefund {
+  id                      String           @id
+  settlementId            String           @map("settlement_id")
+  requestKey              String           @map("request_key")
+  requestFingerprint      String           @map("request_fingerprint")
+  sequence                Int
+  status                  String           @default("PENDING")
+  eligibleCents           BigInt           @map("eligible_cents")
+  ineligibleCents         BigInt           @map("ineligible_cents")
+  shippingCents           BigInt           @map("shipping_cents")
+  totalCents              BigInt           @map("total_cents")
+  sweetCardCents          BigInt           @map("sweet_card_cents")
+  wechatCents             BigInt           @map("wechat_cents")
+  cumulativeEligibleCents BigInt           @map("cumulative_eligible_cents")
+  cumulativeCardCents     BigInt           @map("cumulative_card_cents")
+  items                   Json
+  merchantRefundNo        String?          @unique @map("merchant_refund_no")
+  providerRefundId        String?          @unique @map("provider_refund_id")
+  providerStatus          String?          @map("provider_status")
+  creditedLedgerId        String?          @unique @map("credited_ledger_id")
+  verifiedAt              DateTime?        @map("verified_at")
+  settledAt               DateTime?        @map("settled_at")
+  createdById             String           @map("created_by_id")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement              OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  creditedLedger          SweetCardLedger? @relation("OnlineRefundLedger", fields: [creditedLedgerId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, requestKey])
+  @@unique([settlementId, sequence])
+  @@index([status, updatedAt])
+  @@map("online_refunds")
+}
+
+model OnlinePaymentCompensation {
+  id                    String           @id
+  settlementId          String           @map("settlement_id")
+  providerTransactionId String           @unique @map("provider_transaction_id")
+  amountCents           BigInt           @map("amount_cents")
+  reason                String
+  status                String           @default("PENDING")
+  merchantRefundNo      String           @unique @map("merchant_refund_no")
+  providerRefundId      String?          @unique @map("provider_refund_id")
+  providerStatus        String?          @map("provider_status")
+  verifiedAt            DateTime?        @map("verified_at")
+  settledAt             DateTime?        @map("settled_at")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, updatedAt])
+  @@map("online_payment_compensations")
+}
+
+model OnlineOutbox {
+  id           String           @id
+  eventKey     String           @unique @map("event_key")
+  settlementId String           @map("settlement_id")
+  version      Int
+  type         String
+  payload      Json
+  attempts     Int              @default(0)
+  availableAt  DateTime         @default(now()) @map("available_at")
+  leaseUntil   DateTime?        @map("lease_until")
+  leaseOwner   String?          @map("lease_owner")
+  deliveredAt  DateTime?        @map("delivered_at")
+  lastError    String?          @map("last_error")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, version, type])
+  @@index([deliveredAt, availableAt])
+  @@map("online_outbox")
 }
