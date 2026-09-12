@@ -252,8 +252,9 @@ function normalizeInventory(raw) {
   return out
 }
 
-export function createApp() {
+export function createApp({ onlineCheckoutRuntime = null } = {}) {
   const app = express()
+  onlineCheckoutRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
   // 请求级结构化日志（只记录方法/路径/状态/耗时/requestId，不记录 body）

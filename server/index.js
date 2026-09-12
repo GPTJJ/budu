@@ -6,6 +6,9 @@ import { startProviderRefundReconciler, refundReconcilerEnvConfig } from './paym
 import { wechatPayStatus } from './payments/wechat-config.js'
 import { alipayStatus } from './payments/alipay-config.js'
 import * as Sentry from '@sentry/node'
+import { prisma } from './pg.js'
+import { loadOnlineCheckoutConfig } from './online-checkout-config.js'
+import { createOnlineCheckoutRuntime } from './online-checkout-runtime.js'
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -24,15 +27,19 @@ if (process.env.SENTRY_DSN) {
   })
 }
 
+let onlineCheckoutRuntime = null
 try {
   validateConfig()
+  const configuration = loadOnlineCheckoutConfig()
+  if (configuration) onlineCheckoutRuntime = createOnlineCheckoutRuntime({db:prisma,...configuration})
 } catch (error) {
   console.error(error.message)
   process.exit(1)
 }
 
 const PORT = Number(process.env.PORT || 3000)
-createApp().listen(PORT, '0.0.0.0', () => {
+createApp({onlineCheckoutRuntime}).listen(PORT, '0.0.0.0', () => {
+  onlineCheckoutRuntime?.start()
   console.log(`BUDU server: http://localhost:${PORT}`)
   console.log(`env=${APP_ENV} version=${APP_VERSION} sha=${GIT_SHA || 'local'}`)
   console.log(`局域网访问: http://<本机IP>:${PORT}（可用 ipconfig 查看）`)

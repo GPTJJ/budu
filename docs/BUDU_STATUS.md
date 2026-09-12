@@ -4,6 +4,13 @@
 
 Last reviewed: 2026-09-07
 
+## Active candidate (2026-09-12)
+
+- Sweet Card1.1B branch `codex/sweet-card-1-1b`: [backend settlement checkpoint](checkpoints/2026-09-12-sc11b-backend-settlement-ready.md).
+- OS140/140 andMP192/192 isolated regression PASS; no Production deployment.
+- Existing production statements below are historical and require fresh runtime verification.
+- Full1.1B delivery is unfinished; preserve unrelated native helper/checkpoint files.
+
 ## Repository
 
 - Remote: `https://github.com/GPTJJ/budu.git`.

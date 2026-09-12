@@ -1,27 +1,27 @@
 # Sweet Card 1.1B task ledger
 
-Updated 2026-09-11. Full scope: MASTER_PLAN; no release claim yet.
+Updated 2026-09-12. Full scope: MASTER_PLAN; no release claim yet.
 
 | Work | Status | Evidence / next action |
 |---|---|---|
-| Bootstrap production baseline | VERIFIED | OS95cd9ce; DBbudu_bj006; migration70/0; health; exact-db writer1; Ledger=balance=1300110 |
+| Bootstrap production baseline | VERIFIED2026-09-11; STALE for release | OS95cd9ce; DBbudu_bj006; migration70/0; health; exact-db writer1; Ledger=balance=1300110 |
 | Production duplicate transactionId | VERIFIED within queried scope | Nonempty string transactionId aggregate: zero duplicate groups; request4bdc91f8-bd0e-4c92-9f48-7f1adeb04d84 |
 | Production duplicate payNo | VERIFIED within queried scope | Nonempty string payNo aggregate: zero duplicate groups; request347c06c8-d823-4c8f-b029-6bbff885fcaf |
 | Isolated OS candidate | VERIFIED | codex/sweet-card-1-1b from exact live95cd9ce; unknown original files preserved |
-| Isolated MP candidate | VERIFIED | codex/sweet-card-1-1b from1332ab8; includes merchant82ea2ec repair and CloudBase5115174 |
+| Isolated MP candidate | CORRECTED 2026-09-12 | 1332ab8 was merchant-only, did NOT contain released client/5115174. Candidate now merges5115174/a1eb519 while retaining G0.6 merchant/payOrder. Client/Claim/payment/mirror150/150; fresh live artifact verification still required at G8 |
 | G0.6 legacy payment safety | IN PROGRESS | orders/payOrder identity coordination and verified finalizer implemented; actual SDK missing-doc semantics corrected; deployment prerequisites remain |
 | G1 architecture freeze | IN PROGRESS | FINANCIAL_CONTRACT.md reviewed; capture eligibility changes, quantity rounding, compensation, ledger constraints and hold-aware rollback recorded |
 | Money policy | VERIFIED unit scope | 15/15 tests incl integer limits, shipping, discount, cumulative tender and quantity rounding; production build PASS; no PG concurrency claim |
 | G2 models/migration | IN PROGRESS | Native PG16.14 empty DB applied71 migrations; 24/24 constraint tests; quote/compensation/ledger/state protections reviewed |
 | POS holds compatibility | IN PROGRESS | Available-balance integration; native legacy matrix27/27; online-vs-POS concurrency pending |
-| G3 transaction/outbox | IN PROGRESS | Native11/11; atomic envelope + lease worker; CloudBase receiver15/15 offline; transport/draft integration pending |
-| G3 quote/reserve/card-only | IN PROGRESS | Native13/13; ownership/availability/idempotency; catalog/provider/fulfillment integration pending |
+| G3 transaction/outbox | VERIFIED isolated integration | Native lease/retry/fencedACK → signed mirror HTTP handler, actual private draft/link contract; deployed CloudBase SDK remains pending |
+| G3 quote/reserve/card-only | VERIFIED isolated integration | Server catalog→signed quote→PG reserve/tender/SC-only transaction; full140/140 OS suite includes7 HTTP E2Es |
 | G3 verified payment/cancel | IN PROGRESS | Native17/17 signed synthetic evidence; capture/cancel/expiry races and compensation; provider transport/recovery integration pending |
-| G3 prepay/transport | IN PROGRESS | Native10/10 + offline transport15/15; query-before-retry, immutable payer/merchant, attempted marker; routes and scheduled recovery pending |
+| G3 prepay/transport | VERIFIED isolated integration | Mounted bounded routes, raw notify, verified query/prepay/capture, default-OFF candidate runtime; live callback not verified |
 | G3 recovery scanner | IN PROGRESS | Scanner9/9 + native prepay12/12; finite scans, nonoverlap, drain, flag-OFF recovery; runtime composition and compensation pending |
 | G3 signed mirror HTTP contract | VERIFIED offline scope | Cross-repo3/3: actual OS transport → MP HTTP/auth/receiver, lost ACK retry, base64 body, stale event and tamper rejection; CloudBase SDK/network/provisioning and trusted draft creation remain pending |
 | G3 commerce intent | IN PROGRESS | Input4/4 + native checkout14/14; immutable options/combo/store selections and legacy fingerprint compatibility; trusted catalog, variant SKU and draft integration pending |
-| G4–G6 implementation | NOT STARTED | Checkout/refund/logistics remain; no fake PASS |
+| G4–G6 implementation | IN PROGRESS | Backend checkout milestone complete; customer UI, merchant fulfillment and refund/compensation executor remain |
 | G7 native certification | NOT STARTED | No mock-only certification |
 | G8–G10 integration/clone/deploy | NOT STARTED | Fresh backup/rollback required; no deployment yet |
 | G11–G12 human E2E/public | NOT STARTED | Real owner actions remain human boundary |
@@ -51,3 +51,10 @@ deployment from a pushed commit. Uncommitted or unpushed later work remains loca
 MP current targeted regression: 57/57 PASS including legacy PG-domain guards and real installed SDK wrapper
 with offline transport and unchanged merchant refund tests. This does not prove
 native database concurrency or production callback reachability.
+
+## Backend integration checkpoint2026-09-12
+
+[Reviewed backend settlement candidate](checkpoints/2026-09-12-sc11b-backend-settlement-ready.md).
+OS140/140 andMP192/192 PASS; buildsPASS. Companion77c91456030d961a0df1f636ea1122d9c50ca607.
+No Production mutation/deployment. Earlier pending module rows are historical;
+this checkpoint records the current integration scope and remaining real gates.

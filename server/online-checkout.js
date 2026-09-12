@@ -46,9 +46,21 @@ async function productEligibility(tx, namespace, line) {
 // It authenticates catalog/address ownership and computes SKU price, discounts,
 // shipping, inventory and fulfillment policy from current commerce authority.
 // No HTTP routes register until this trusted adapter is wired and certified.
-export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = process.env, namespace = 'cloudbase-miniprogram' }) {
+export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillment = async () => {}, wechat, env = process.env, namespace = 'cloudbase-miniprogram' }) {
   if (typeof resolveCatalog !== 'function') throw Error('ONLINE_CATALOG_AUTHORITY_REQUIRED')
   return {
+    async plan(userId, {quoteId,requestKey:rawKey}) {
+      const requestKey=key(rawKey),id=`os-${digest([userId,requestKey])}`
+      if(typeof quoteId!=='string' || !quoteId || quoteId.length>160)throw httpError('报价无效',400)
+      const prior=await prisma.onlineSettlement.findUnique({where:{id}})
+      await customer(prisma,userId,env,{newPurchase:!prior})
+      const quote=await prisma.onlineCheckoutQuote.findUnique({where:{id:quoteId}})
+      if(!quote || quote.userId!==userId || quote.snapshot.namespace!==namespace
+        || (prior && (prior.userId!==userId || prior.quoteId!==quoteId))
+        || (!prior && quote.expiresAt<=new Date()))throw httpError('报价已失效或不匹配',409)
+      const payNo = `B${digest(id).slice(0,31)}`
+      return {settlementId:id,externalOrderId:id,namespace,payNo,orderNo:payNo,quote}
+    },
     async quote(userId, input) {
       const requestKey = key(input.requestKey), intent = normalizeOnlineCheckoutIntent(input)
       const fingerprint = digest(intent), quoteId = `oq-${digest([userId, requestKey])}`
@@ -56,6 +68,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
       const replay = await prisma.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
       if (replay) {
         if (replay.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他报价', 409)
+        if (replay.expiresAt <= new Date()) throw httpError('报价已失效，请重新确认', 409)
         return replay
       }
       const catalog = await resolveCatalog({ userId, intent: structuredClone(intent) })
@@ -65,9 +78,11 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
         const prior = await tx.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
         if (prior) {
           if (prior.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他报价', 409)
+          if (prior.expiresAt <= new Date()) throw httpError('报价已失效，请重新确认', 409)
           return prior
         }
         const now = new Date()
+        await validateFulfillment(tx, intent)
         const account = intent.walletRef ? await walletAccount(tx, userId, intent.walletRef, now) : null
         const available = account ? (await sweetCardAvailableBalance(tx, account)).availableCents : 0n
         const lines = []
@@ -81,19 +96,27 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
         }
         const snapshot = { ...quoteOnlineCheckout({ lines, shippingCents: catalog.shippingCents, availableCents: available, desiredSweetCardCents: intent.desiredSweetCardCents }),
           accountId: account?.id || null, walletRef: intent.walletRef,
+          availableSweetCardCents: String(available), requestedSweetCardCents: intent.desiredSweetCardCents,
+          commerceRef: catalog.commerceRef || null,
           cardValidity: account ? { validFrom: account.validFrom?.toISOString() || null, expiresAt: account.expiresAt?.toISOString() || null } : null,
           fulfillment: intent.fulfillment, addressRef: intent.addressRef, namespace,
           // Immutable customer selections for trusted commerce draft recovery.
           // Labels/prices still come from the server catalog, never these strings.
           commerceIntent: { lines: intent.lines, storeRef: intent.storeRef ?? null } }
-        snapshot.lines = snapshot.lines.map((line, i) => ({ ...line, canonicalProductId: lines[i].canonicalProductId }))
+        snapshot.lines = snapshot.lines.map((line, i) => ({ ...line, canonicalProductId: lines[i].canonicalProductId,
+          // Server catalogue labels/selections, never client-supplied prices or
+          // presentation strings. Fulfillment needs the purchased SKU choices.
+          options: catalog.lines[i].options || [], comboFlavors: catalog.lines[i].comboFlavors || null,
+          spec: catalog.lines[i].spec || '', unit: catalog.lines[i].unit || '' }))
         if (cents(snapshot.wechatCents) > 0n) {
           if (!/^wx[A-Za-z0-9]{16}$/.test(wechat?.appId || '') || !/^\d{8,16}$/.test(wechat?.mchId || '')) throw httpError('微信支付配置暂不可用', 503)
           const identities = await tx.weChatAuthIdentity.findMany({ where: { userId, provider: 'WECHAT_MINIPROGRAM', appId: wechat.appId }, take: 2 })
           if (identities.length !== 1) throw httpError('微信支付身份需重新核对', 409)
           snapshot.paymentIdentity = { identityId: identities[0].id, appId: wechat.appId, mchId: wechat.mchId }
         }
-        const expiresAt = new Date(Math.min(now.getTime() + 15 * 60000, account?.expiresAt?.getTime() ?? Infinity))
+        const catalogExpiry = catalog.expiresAt == null ? Infinity : new Date(catalog.expiresAt).getTime()
+        if (!(catalogExpiry > now.getTime())) throw httpError('商品报价已失效', 409)
+        const expiresAt = new Date(Math.min(now.getTime() + 15 * 60000, account?.expiresAt?.getTime() ?? Infinity, catalogExpiry))
         return tx.onlineCheckoutQuote.create({ data: { id: quoteId, userId, requestKey, requestFingerprint: fingerprint, snapshot, expiresAt } })
       })
     },
@@ -113,6 +136,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, wechat, env = pro
           if (!quote || quote.userId !== userId || quote.expiresAt <= now) throw httpError('报价已失效，请重新确认', 409)
           const q = quote.snapshot, sc = cents(q.sweetCardCents), wx = cents(q.wechatCents)
           if (q.namespace !== namespace) throw httpError('报价渠道不匹配', 409)
+          await validateFulfillment(tx, { fulfillment: q.fulfillment, addressRef: q.addressRef, storeRef: q.commerceIntent?.storeRef })
           let account
           if (sc > 0n) {
             for (const line of q.lines) {
