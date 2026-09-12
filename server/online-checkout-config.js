@@ -32,7 +32,11 @@ export function loadOnlineCheckoutConfig(env=process.env,io=fs) {
   const mirrorConfig={appId:gatewayConfig.appId,environment:gatewayConfig.cloudBaseEnvId,
     keyId:env.SWEET_CARD_ONLINE_MIRROR_KEY_ID,endpoint:env.SWEET_CARD_ONLINE_MIRROR_URL,
     privateKey:secret('SWEET_CARD_ONLINE_MIRROR_PRIVATE_KEY_FILE',{raw:true})}
+  const merchantGatewayConfig=env.SWEET_CARD_ONLINE_MERCHANT_ENABLED==='1'
+    ? {...gatewayConfig,gatewaySecret:secret('SWEET_CARD_ONLINE_MERCHANT_GATEWAY_SECRET_FILE')}:null
+  if(merchantGatewayConfig && (merchantGatewayConfig.gatewaySecret===gatewayConfig.gatewaySecret
+    || !/^[A-Za-z0-9_-]{32,128}$/.test(merchantGatewayConfig.gatewaySecret)))throw Error('ONLINE_MERCHANT_KEY_SEPARATION_REQUIRED')
   // Detailed cryptographic/URL validation happens when runtime is constructed,
   // before listen. Do not log the returned configuration on success or failure.
-  return {gatewayConfig,paymentConfig,mirrorConfig}
+  return {gatewayConfig,paymentConfig,mirrorConfig,merchantGatewayConfig}
 }

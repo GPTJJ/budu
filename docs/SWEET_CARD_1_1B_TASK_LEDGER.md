@@ -1,6 +1,12 @@
 # Sweet Card 1.1B task ledger
 
-Updated 2026-09-12. Full scope: MASTER_PLAN; no release claim yet.
+Updated 2026-09-13. Full scope: MASTER_PLAN; no release claim yet.
+
+Latest: [payment/refund/fulfillment financial certification](checkpoints/2026-09-13-sc11b-financial-certification.md).
+The historical rows below describe earlier checkpoints. G4–G6 candidate code is
+now integrated; G7 has native payment/refund/capture/fulfillment race evidence.
+G8–G12 remain unfulfilled. Privacy console confirmation is a manual release
+boundary. No Production mutation or actual payment/refund occurred.
 
 | Work | Status | Evidence / next action |
 |---|---|---|

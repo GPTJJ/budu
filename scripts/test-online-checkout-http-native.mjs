@@ -32,6 +32,7 @@ const uuid=()=>crypto.randomUUID(),copy=v=>v==null?v:JSON.parse(JSON.stringify(v
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex')
 const keys=crypto.generateKeyPairSync('rsa',{modulusLength:2048})
 const cfg={appId:PRODUCTION_APP_ID,mchId:'1111111111',platformKeyId:'SYNTHETIC',platformPublicKey:keys.publicKey.export({type:'spki',format:'pem'}),apiV3Key:'1'.repeat(32),merchantPrivateKey:keys.privateKey.export({type:'pkcs8',format:'pem'}),merchantSerial:'ABCD',notifyUrl:'https://buducandy.cn/api/online-checkout/wechat/notify'}
+const merchantSecret='synthetic-merchant-separate-key-'.repeat(2)
 const gateway={enabled:true,mode:'production',appId:PRODUCTION_APP_ID,cloudBaseEnvId:PRODUCTION_ENV_ID,gatewaySecret:'synthetic-gateway-secret-'.repeat(2),markerKey:'synthetic-session-marker-'.repeat(2)}
 function signed(result,{notify=false,statusCode=200}={}){
  let body=result
@@ -81,7 +82,7 @@ async function fixture(t,{desired='100',delivery=false,balance=100n,combo=false,
  })
  input.customerSession=(await createCustomerSession({userId:id,markerKey:gateway.markerKey,db:prisma})).rawToken
  const providerCalls=[],requests=[];let success=null,loss=false
- const runtime=createOnlineCheckoutRuntime({db:prisma,gatewayConfig:gateway,paymentConfig:cfg,mirrorConfig:{appId:cfg.appId,environment:PRODUCTION_ENV_ID,keyId:'synthetic-mirror',privateKey:cfg.merchantPrivateKey,endpoint:'https://mirror.test.internal/online-financial-mirror'},env,request:async(method,p,body)=>{
+ const runtime=createOnlineCheckoutRuntime({db:prisma,gatewayConfig:gateway,merchantGatewayConfig:{...gateway,gatewaySecret:merchantSecret},paymentConfig:cfg,mirrorConfig:{appId:cfg.appId,environment:PRODUCTION_ENV_ID,keyId:'synthetic-mirror',privateKey:cfg.merchantPrivateKey,endpoint:'https://mirror.test.internal/online-financial-mirror'},env,request:async(method,p,body)=>{
   providerCalls.push({method,path:p,body});return method==='GET'?(success?signed(success):signed({code:'ORDER_NOT_EXIST'},{statusCode:404})):signed({prepay_id:'synthetic-prepay'})
  }})
  const app=express();runtime.mount(app);app.use(express.json({limit:'15mb'}))
@@ -199,4 +200,24 @@ test('HTTP expired quote rejects submit without financial writes, and oversized 
  assert.equal(await prisma.onlineSettlement.count({where:{userId:f.id}}),0);assert.equal(await f.reconcile(),100n)
  const res=await fetch(f.origin+'/api/v2/customer/online-checkout/quote',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({padding:'x'.repeat(256*1024)})})
  assert.equal(res.status,413);assert.equal((await res.json()).error,'ONLINE_REQUEST_INVALID')
+})
+
+test('HTTP merchant approval is separate-key scoped and SC refund settles exact cents',async t=>{
+ const f=await fixture(t),q=await f.bridge.quote(f.input,f.context),s=await f.bridge.submit(f.submitInput(q),f.context)
+ const body={settlementId:s.settlementId,actorOpenId:f.context.OPENID,requestKey:uuid(),items:q.items.map(i=>({productId:i.productId,skuId:i.skuId,quantity:i.quantity})),refundShipping:false,reason:'Synthetic approval'}
+ const request=secret=>fetch(f.origin+'/api/v2/merchant/online-checkout/refund',{method:'POST',headers:{'content-type':'application/json',...productionGatewayHeaders({pathname:'/merchant/online-checkout/refund',method:'POST',body,secret})},body:JSON.stringify(body)})
+ assert.equal((await request(gateway.gatewaySecret)).status,401)
+ const r=await request(merchantSecret);assert.equal(r.status,200);const data=await r.json();assert.equal(data.result.status,'SETTLED');assert.equal(data.result.sweetCardCents,'100')
+ assert.equal(await f.reconcile(),100n);const state=await f.action('status',s.settlementId);assert.equal(state.status,'REFUNDED');assert.equal(state.refunds[0].totalCents,'100')
+})
+test('HTTP capabilities returns owned available card and canonical active stores only',async t=>{
+ const f=await fixture(t);const c=await f.action('capabilities')
+ assert.equal(c.enabled,true);assert.equal(c.cards.length,1);assert.equal(c.cards[0].walletRef,f.id);assert.equal(c.cards[0].availableCents,'100');assert.ok(c.stores.some(s=>s.key===f.storeKey))
+ f.env.SWEET_CARD_ONLINE_PAYMENT_ENABLED='0';assert.deepEqual(await f.action('capabilities'),{enabled:false,cards:[],stores:[]})
+})
+test('HTTP fulfillment receipt is durable and replay does not create duplicate authorization',async t=>{
+ const f=await fixture(t),q=await f.bridge.quote(f.input,f.context),s=await f.bridge.submit(f.submitInput(q),f.context)
+ const body={settlementId:s.settlementId,actorOpenId:f.context.OPENID,requestKey:uuid(),method:'PICKUP'}
+ const request=()=>fetch(f.origin+'/api/v2/merchant/online-checkout/fulfill',{method:'POST',headers:{'content-type':'application/json',...productionGatewayHeaders({pathname:'/merchant/online-checkout/fulfill',method:'POST',body,secret:merchantSecret})},body:JSON.stringify(body)})
+ const a=await request();assert.equal(a.status,200);const b=await request();assert.deepEqual(await a.json(),await b.json());assert.equal(await f.reconcile(),0n)
 })

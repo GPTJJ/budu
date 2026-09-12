@@ -114,3 +114,47 @@ test('WX-only concurrent double-key submit is constrained by immutable quote ide
  assert.equal(await prisma.onlineSettlement.count({where:{quoteId:q.id}}),1)
  assert.equal(await reconcile(f.id),100n)
 })
+
+// Real existing POS authority and online reservation share the same isolated account.
+// No mocked economic operations and no Production configuration are used.
+async function posFixture(f) {
+ globalThis.__buduPrisma=prisma
+ process.env.SWEET_CARD_ENABLED='1'
+ process.env.XIDAN_SWEET_CARD_COMMERCIAL='1'
+ const {redeemSweetCard}=await import('../server/sweet-card.js')
+ const token=`budu:sc:v1:${uuid()}.isolated-only`,orderId=uuid()
+ await prisma.sweetCardControl.upsert({where:{id:'GLOBAL'},create:{id:'GLOBAL',enabled:true},update:{enabled:true}})
+ await prisma.store.create({data:{key:f.id,name:`Isolated POS competition ${f.id}`,active:true,operationType:'DIRECT',sweetCardPolicy:{create:{eligible:true}}}})
+ await prisma.user.update({where:{id:f.id},data:{role:'staff',storeKeys:[f.id],permissions:{modules:{'store-pos':true}}}})
+ await prisma.sweetCardCredential.create({data:{id:uuid(),accountId:f.id,publicTokenId:uuid(),tokenHash:crypto.createHash('sha256').update(token).digest('hex'),tokenCiphertext:'isolated',tokenIv:'isolated',tokenTag:'isolated',status:'ACTIVE',carrierType:'ELECTRONIC'}})
+ await prisma.order.create({data:{id:orderId,orderNo:orderId,storeId:f.id,cashierId:f.id,subtotal:100n,payableAmount:100n,status:'pending_payment',paymentStatus:'unpaid',checkoutKey:orderId,cartHash:orderId,
+  items:{create:{id:uuid(),productId:f.id,productNameSnapshot:'Synthetic',skuSnapshot:f.id,unitPrice:100n,costPriceSnapshot:0n,quantity:1,lineAmount:100n,actualAmount:100n}}}})
+ return {orderId,redeem:()=>redeemSweetCard({orderId,token,amountCents:'100',requestKey:`pos:${orderId}`,actor:{id:f.id,name:'Synthetic'}})}
+}
+test('existing POS redemption cannot spend value held by an online reservation',async()=>{
+ const f=await fixture({shipping:10}),p=await posFixture(f),q=await f.quote()
+ await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})
+ await assert.rejects(p.redeem(),{status:409})
+ assert.equal(await prisma.sweetCardRedemption.count({where:{orderId:p.orderId}}),0)
+ assert.equal(await reconcile(f.id),100n)
+ assert.equal((await prisma.sweetCardReservation.aggregate({where:{accountId:f.id,status:'RESERVED'},_sum:{amountCents:true}}))._sum.amountCents,100n)
+})
+test('real POS redemption competes with online reservation without overspending',async()=>{
+ const f=await fixture({shipping:10}),p=await posFixture(f),q=await f.quote()
+ const results=await Promise.allSettled([p.redeem(),f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})])
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1)
+ assert.ok([403,409].includes(results.find(r=>r.status==='rejected').reason.status))
+ const held=(await prisma.sweetCardReservation.aggregate({where:{accountId:f.id,status:'RESERVED'},_sum:{amountCents:true}}))._sum.amountCents||0n
+ const redeemed=(await prisma.sweetCardRedemption.aggregate({where:{accountId:f.id},_sum:{amountCents:true}}))._sum.amountCents||0n
+ assert.equal(held+redeemed,100n)
+ assert.equal(await reconcile(f.id),100n-redeemed)
+ assert.ok((await reconcile(f.id))-held>=0n)
+})
+test('completed existing POS debit prevents later online reservation of the same value',async()=>{
+ const f=await fixture({shipping:10}),p=await posFixture(f),q=await f.quote()
+ await p.redeem()
+ await assert.rejects(f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()}),error=>[403,409].includes(error.status))
+ assert.equal(await prisma.sweetCardRedemption.count({where:{orderId:p.orderId}}),1)
+ assert.equal(await prisma.sweetCardReservation.count({where:{accountId:f.id,status:'RESERVED'}}),0)
+ assert.equal(await reconcile(f.id),0n)
+})

@@ -5,6 +5,10 @@ import { verifyProductionGatewayRequest } from './production-cloudbase-gateway.j
 import { createOnlineCheckout } from './online-checkout.js'
 import { createOnlinePaymentFinalizer } from './online-payment-finalizer.js'
 import { httpError } from './pos-core.js'
+import { onlinePaymentAllowed } from './online-checkout-policy.js'
+import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
+import { createOnlineRefundFinalizer } from './online-refund-finalizer.js'
+import { onlineFinancialEnvelope } from './online-financial-transaction.js'
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex')
 export function onlineQuotePresentation(quote) {
@@ -39,9 +43,23 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
       return res.json({ok:true,result:await fn(req.body,customer)})
     }catch(error){
       const status=Number(error?.status)
-      return res.status([400,401,403,404,409,429].includes(status)?status:503).json({ok:false,error:'ONLINE_CHECKOUT_REQUEST_FAILED'})
+      return res.status([400,401,403,404,409,429].includes(status)?status:503).json({ok:false,error:status===409 && error?.code==='ONLINE_QUOTE_EXPIRED'?'ONLINE_QUOTE_EXPIRED':'ONLINE_CHECKOUT_REQUEST_FAILED'})
     }
   }
+  router.post('/capabilities',handle(async(body,customer)=>{
+    if(!onlinePaymentAllowed(customer.userId,env))return {enabled:false,stores:[],cards:[]}
+    const stores=await db.store.findMany({where:{active:true},select:{key:true,name:true},orderBy:{key:'asc'}})
+    const claims=await db.sweetCardClaim.findMany({where:{userId:customer.userId},include:{account:{include:{binding:true,onlinePolicy:true}}}})
+    const now=new Date(),cards=[]
+    for(const claim of claims){
+      const a=claim.account
+      if(!a || a.status!=='ACTIVE' || !a.onlinePolicy?.enabled || (a.validFrom && a.validFrom>now) || (a.expiresAt && a.expiresAt<=now)
+        || (a.binding && a.binding.userId!==customer.userId) || (a.bindingMode==='REQUIRED' && a.binding?.userId!==customer.userId))continue
+      const available=await sweetCardAvailableBalance(db,a)
+      if(available.availableCents>0n)cards.push({walletRef:claim.id,label:`甜意卡 · ${a.publicCardNo.slice(-4)}`,availableCents:String(available.availableCents)})
+    }
+    return {enabled:true,userId:customer.userId,stores,cards}
+  }))
   router.post('/quote',handle(async(body,customer)=>{
     const c=body.catalog,i=body.intent
     if(!c || typeof c.commerceRef!=='string' || !/^ocd-[0-9a-f]{64}$/.test(c.commerceRef)
@@ -67,7 +85,11 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
   for(const action of ['prepare','cancel','status'])router.post('/'+action,handle(async(body,customer)=>{
     const s=await owned(body,customer)
     if(!paymentService)throw httpError('支付服务暂不可用',503)
-    if(action==='status')return paymentService.recover(s.id)
+    if(action==='status'){
+      await paymentService.recover(s.id)
+      const current=await db.onlineSettlement.findUnique({where:{id:s.id},include:{tenders:true,refunds:true,compensations:true}})
+      return onlineFinancialEnvelope(current)
+    }
     return paymentService[action](s.id,customer.userId)
   }))
   return router
@@ -77,6 +99,16 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
 // the customer API deliberately has no client-success/finalize operation.
 export function createOnlineWechatNotifyRouter({db,configuration}) {
   const router=express.Router(),finalize=createOnlinePaymentFinalizer(db,configuration)
+  const refundFinalize=createOnlineRefundFinalizer(db,configuration)
+  router.post('/refund-notify',express.raw({type:'application/json',limit:'1mb'}),async(req,res)=>{
+    res.setHeader('Cache-Control','no-store')
+    try {
+      if(!Buffer.isBuffer(req.body))throw httpError('回调格式无效',400)
+      await refundFinalize({source:'NOTIFY',rawBody:req.body,headers:req.headers})
+      return res.status(204).end()
+    }catch(error){return res.status([400,401,403,404,409].includes(error?.status)?error.status:503)
+      .json({code:'FAIL',message:'REFUND_NOTIFICATION_NOT_ACCEPTED'})}
+  })
   router.post('/notify',express.raw({type:'application/json',limit:'1mb'}),async(req,res)=>{
     res.setHeader('Cache-Control','no-store')
     try {

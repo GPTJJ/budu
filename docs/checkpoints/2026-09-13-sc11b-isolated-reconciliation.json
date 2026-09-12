@@ -1,0 +1,12 @@
+{
+  "settlements": 627,
+  "settled": 325,
+  "pendingRefunds": 27,
+  "pendingCompensations": 26,
+  "activeReservations": 133,
+  "overdueReservations": 88,
+  "mismatches": 0,
+  "monetaryDeltaCents": "0",
+  "pass": true,
+  "operationallyClear": false
+}

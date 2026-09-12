@@ -2191,6 +2191,7 @@ model OnlineSettlement {
   @@unique([userId, requestKey])
   @@index([status, expiresAt])
   @@map("online_settlements")
+  fulfillmentAuthorization OnlineFulfillmentAuthorization?
 }
 
 model SweetCardReservation {
@@ -2237,6 +2238,7 @@ model OnlineRefund {
   settlementId            String           @map("settlement_id")
   requestKey              String           @map("request_key")
   requestFingerprint      String           @map("request_fingerprint")
+  approvalReason          String?          @map("approval_reason")
   sequence                Int
   status                  String           @default("PENDING")
   eligibleCents           BigInt           @map("eligible_cents")
@@ -2302,4 +2304,20 @@ model OnlineOutbox {
   @@unique([settlementId, version, type])
   @@index([deliveredAt, availableAt])
   @@map("online_outbox")
+}
+
+
+model OnlineFulfillmentAuthorization {
+  id                 String @id
+  settlementId       String @unique @map("settlement_id")
+  requestKey         String @map("request_key")
+  requestFingerprint String @map("request_fingerprint")
+  method             String
+  carrierCode        String? @map("carrier_code")
+  trackingNo         String? @map("tracking_no")
+  actorId            String @map("actor_id")
+  settlementVersion  Int @map("settlement_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+  settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@map("online_fulfillment_authorizations")
 }

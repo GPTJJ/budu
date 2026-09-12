@@ -4,7 +4,14 @@
 
 Last reviewed: 2026-09-07
 
-## Active candidate (2026-09-12)
+## Active candidate (2026-09-13)
+
+- Sweet Card 1.1B payment/refund/fulfillment integration: [isolated financial certification](checkpoints/2026-09-13-sc11b-financial-certification.md).
+- Native PostgreSQL and synthetic provider certification only; no Production mutation.
+- [Broader stale test exceptions](checkpoints/2026-09-13-sc11b-regression-exceptions.md) remain explicit; no unrelated fixes.
+- Current privacy approval, deployed CloudBase/WeChat verification and Production clone rehearsal remain release boundaries.
+
+## Previous candidate (2026-09-12)
 
 - Sweet Card1.1B branch `codex/sweet-card-1-1b`: [backend settlement checkpoint](checkpoints/2026-09-12-sc11b-backend-settlement-ready.md).
 - OS140/140 andMP192/192 isolated regression PASS; no Production deployment.
