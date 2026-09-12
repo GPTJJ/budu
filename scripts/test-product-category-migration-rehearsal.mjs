@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -29,10 +30,7 @@ test('产品分类 additive migration leaves every product uncategorized and pre
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
     await client.$executeRawUnsafe(`INSERT INTO "InventoryItem" (id, name, category, "transferCode", "transferEnabled", "transferSortOrder", "isActive", "sortOrder") VALUES ('p1', 'NO.1树莓', 'product', 'NO.1', true, 1, false, 77), ('p2', 'POS产品', 'product', NULL, false, 0, true, 9), ('m1', '冰袋', 'material', NULL, true, 1, false, 4)`)
     await client.$executeRawUnsafe(`INSERT INTO "Store" (key, name) VALUES ('from', '调出'), ('to', '调入')`)
@@ -43,8 +41,7 @@ test('产品分类 additive migration leaves every product uncategorized and pre
     const digest = crypto.createHash('sha256').update(JSON.stringify(before)).digest('hex')
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex'), digest)
     assert.equal(await client.productCategory.count(), 0)
     assert.equal(await client.inventoryItem.count({ where: { productCategoryId: { not: null } } }), 0)

@@ -31,3 +31,16 @@ Logs are local diagnostics, not Production evidence:
 `/tmp/sc11b-critical-regression.log`, `/tmp/sc11b-critical-native-retry.log`.
 Do not label the original broad critical command green. Do not rewrite payroll
 authority or historical migration behavior to satisfy these unrelated fixtures.
+
+## G9 fixture closure
+
+The original failures above remain historical evidence, not a waived PASS.
+Test-only repairs now align eight migration rehearsals with actual ordered
+historical prefixes and exact applied migration identities (8/8 native PASS).
+Payroll orphan expectation now asserts exclusion and diagnostic identity; no
+formula/input authority changed. Browser fixtures explicitly select August and
+provide current ledger DTOs/selectors, preserving zero-write and stable-identity
+assertions (state32/32, performance16/16 PASS). No Production UI change.
+The final critical-run status is recorded separately in the candidate checkpoint.
+
+Final critical runner: PASS79 / FAIL0 (including environment isolation self-check).

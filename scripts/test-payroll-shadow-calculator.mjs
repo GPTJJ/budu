@@ -1,6 +1,7 @@
+import { buildEmployeePayrollDayInputs } from '../src/utils/payrollShadowInput.js'
 // Gate 14：Employee.id shadow 月度工资计算器（SHADOW ONLY，零 live 消费）
 // A 单员工整月 / B 同日两人 share / C 跨店同名分离 / D 调店 / E 前员工
-// F mixed legacy 日拒绝 / G 仅姓名日 unresolved / H 缺业务日 unresolved
+// F mixed legacy 日拒绝 / G 仅姓名日 unresolved / H 缺业务日 orphan excluded
 // I 简单 parity（legacy vs shadow）/ J 重名 legacy merge vs shadow 分离 / K coverage
 import assert from 'node:assert/strict'
 import path from 'node:path'
@@ -144,13 +145,18 @@ const { monthlyPayrollFromEntries } = await import(path.join(root, 'src/utils/pa
   console.log('  [G] 仅姓名日 unresolved PASS')
 }
 
-// ---- H: 缺业务日 unresolved（不虚构收入）----
+// ---- H: 缺业务日 orphan excluded（不虚构收入）----
 {
   const staff = [{ id: 'r1', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-06', employeeId: 'emp-A', staffId: 'st-a', staffNameSnapshot: '张三', actualHours: 8 }]
   const out = calculateEmployeeIdShadowPayroll({}, staff)
   assert.equal(out.employees.length, 0, 'H 不计算缺业务日')
-  assert.ok(out.unresolvedDays.some((u) => u.reason === 'MISSING_DAILY_ENTRY'))
-  console.log('  [H] 缺业务日 unresolved PASS')
+  assert.deepEqual(out.unresolvedDays, [], 'orphan history must not block current payroll')
+  const input = buildEmployeePayrollDayInputs({}, staff)
+  assert.equal(input.stableRows.length, 0)
+  assert.equal(input.orphanRows.length, 1)
+  assert.equal(input.orphanRows[0].reason, 'ORPHAN_DAILY_STORE_STAFF')
+  assert.equal(input.orphanRows[0].employeeId, 'emp-A')
+  console.log('  [H] 缺业务日 orphan excluded PASS')
 }
 
 // ---- J: 重名 legacy merge vs shadow 分离 ----

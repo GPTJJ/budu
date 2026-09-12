@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -29,10 +30,7 @@ test('Partner Supply additive migration seeds explicit partner data and preserve
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
     await client.$executeRawUnsafe(`INSERT INTO "Store" (key, name) VALUES ('guanshe', '北京官舍店'), ('tongying', '北京通盈中心店')`)
     await client.$executeRawUnsafe(`INSERT INTO "InventoryItem" (id, name, category, "transferCode", "transferEnabled", "isActive", "salePriceCents") VALUES ('p1', 'NO.1树莓', 'product', 'NO.1', true, true, 500), ('m1', '冰袋', 'material', NULL, true, true, NULL)`)
@@ -44,8 +42,7 @@ test('Partner Supply additive migration seeds explicit partner data and preserve
     const stockBefore = await client.$queryRawUnsafe(`SELECT (SELECT COUNT(*)::int FROM "StockBalance") AS balances, (SELECT COUNT(*)::int FROM "StockLedger") AS ledger`)
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(await client.$queryRawUnsafe(projection))).digest('hex'), digest)
     assert.deepEqual(await client.$queryRawUnsafe(`SELECT (SELECT COUNT(*)::int FROM "StockBalance") AS balances, (SELECT COUNT(*)::int FROM "StockLedger") AS ledger`), stockBefore)
     const partner = await client.partner.findUnique({ where: { id: 'partner-qinhuangdao-v1' } })

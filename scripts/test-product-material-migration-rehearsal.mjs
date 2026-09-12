@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -29,10 +30,7 @@ test('产品物料 additive migration preserves legacy business facts and seeds 
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
     const products = ['NO.1树莓','NO.2柠檬','NO.3百香果','NO.4橙子','NO.5英式伯爵茶','NO.6泰式奶茶','NO.7抹茶','NO.8榛子','NO.9海盐焦糖','NO.10香草','NO.11生椰拿铁','NO.12巧克力']
     const materials = ['物料-8颗礼盒（长）','物料8颗礼盒（方）','物料12颗礼盒','物料24颗礼盒','丝带-红','丝带-蓝','手提袋','散糖袋','冰袋','巧克力豆礼盒','巧克力豆礼盒手提袋','保温袋','酒精','手套','纸巾','湿巾','背贴','胶带','糖果口味卡','生巧保存提示卡','封口贴','试吃签','冰淇淋小勺','冰淇淋碗-圆','冰淇淋碗内-方','小票打印纸']
@@ -51,8 +49,7 @@ test('产品物料 additive migration preserves legacy business facts and seeds 
     const digest = crypto.createHash('sha256').update(JSON.stringify(before)).digest('hex')
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
     const after = await client.$queryRawUnsafe(oldProjection)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(after)).digest('hex'), digest)
     const counts = await client.$queryRawUnsafe(`SELECT category, COUNT(*)::int AS count FROM "InventoryItem" WHERE "transferEnabled" = true GROUP BY category ORDER BY category`)

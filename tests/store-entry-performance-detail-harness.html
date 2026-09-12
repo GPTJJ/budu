@@ -57,6 +57,21 @@
           window.__writes.push({ path, method })
           return json({ ok: true })
         }
+        if (path.startsWith('/api/v2/daily-entry/ledger?')) {
+          const q = new URL(path, location.origin).searchParams
+          const rows = q.get('month') === '2026-08' && q.get('store') === 'chaowai' ? dailyEntries.map((entry) => ({
+            ...entry, storeName: '北京朝外店', baseStatus: entry.status,
+            incCents: entry.date === '2026-08-24' ? '22300' : entry.incCents,
+            ord: entry.date === '2026-08-24' ? 2 : entry.ord,
+            avgCents: entry.date === '2026-08-24' ? '11150' : entry.incCents,
+            salesSourceLabel: 'BUDU POS', salesDataSource: 'pos',
+            completeness: { status: 'COMPLETE', issues: [] }, audits: [], revisionCount: 0,
+            staff: dailyStoreStaff.filter(row => row.date === entry.date).map(row => ({ ...row,
+              staffName: row.employeeId === 'emp-renamed' ? '新名字' : row.staffName,
+            })),
+          })) : []
+          return json({ ok: true, month: q.get('month'), storeKey: q.get('store'), rows })
+        }
         if (path === '/api/userdata') return json({ analysis: {}, productImages: {} })
         if (path === '/api/v2/daily-entries') return json({ ok: true, rows: dailyEntries })
         if (path.startsWith('/api/v2/daily-store-staff')) {

@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -29,11 +30,7 @@ test('Unified Product Center migration adds only an independent opt-in flag and 
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName || entry === 'migration_lock.toml') continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
-    fs.copyFileSync(path.join(root, 'prisma', 'migrations', 'migration_lock.toml'), path.join(temp, 'migrations', 'migration_lock.toml'))
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
 
     await client.$executeRawUnsafe(`INSERT INTO "Store" (key, name) VALUES ('guanshe', '北京官舍店'), ('tongying', '北京通盈中心店') ON CONFLICT DO NOTHING`)
@@ -59,8 +56,7 @@ test('Unified Product Center migration adds only an independent opt-in flag and 
     assert.equal(updated.transferEnabled, false)
     assert.equal(updated.isActive, true)
     assert.equal(updated.salePriceCents, 1000n)
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
   } finally {
     await client.$disconnect()
     await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)

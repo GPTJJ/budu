@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -37,10 +38,7 @@ test('Mailing QR-only additive migration preserves legacy records and old-app ro
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
     await client.$executeRawUnsafe(`
       INSERT INTO "MailingRecord" (id, method, postage, fee, address, recipient, phone, remark, status, "createdBy", "createdAt")
@@ -50,8 +48,7 @@ test('Mailing QR-only additive migration preserves legacy records and old-app ro
     const beforeDigest = crypto.createHash('sha256').update(JSON.stringify(legacyBefore)).digest('hex')
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
     const legacyAfter = await client.$queryRawUnsafe(`SELECT id, method, postage, fee, address, recipient, phone, remark, status, "createdBy" FROM "MailingRecord" ORDER BY id`)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(legacyAfter)).digest('hex'), beforeDigest)
 

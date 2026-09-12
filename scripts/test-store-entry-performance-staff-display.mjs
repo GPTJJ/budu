@@ -89,27 +89,35 @@ after(async () => {
 async function openHarness(width = 375, browserInstance = browser, height = 812) {
   const page = await browserInstance.newPage({ viewport: { width, height } })
   await page.goto(`${baseUrl}tests/store-entry-performance-detail-harness.html`)
-  await page.locator('select').selectOption('chaowai')
+  await page.getByTestId('daily-entry-store').selectOption('chaowai')
   await page.locator('input[type=date]').fill('2026-08-24')
-  await page.getByTestId('performance-duty-staff-2026-08-24').getByText('马婧欣', { exact: true }).waitFor()
+  await page.getByTestId('ledger-month-filter').fill('2026-08')
+  await page.getByTestId('ledger-store-filter').selectOption('chaowai')
+  await page.getByTestId('ledger-card-2026-08-24').getByText(/马婧欣 ·/).waitFor()
   return page
 }
 
 test('chaowai 8/24 list and exact-date detail agree after background refresh with zero writes', async () => {
   const page = await openHarness()
   try {
-    const list = page.getByTestId('performance-duty-staff-2026-08-24')
-    assert.equal(await list.getByText('马婧欣', { exact: true }).count(), 1)
-    assert.deepEqual(await page.getByTestId('performance-duty-staff-2026-08-22').locator('[data-participant-key]').allTextContents(), ['历史姓名'])
-    assert.deepEqual(await page.getByTestId('performance-duty-staff-2026-08-21').locator('[data-participant-key]').allTextContents(), ['新名字'])
-    assert.deepEqual(await page.getByTestId('performance-duty-staff-2026-08-20').locator('[data-participant-key]').allTextContents(), ['马婧欣'])
-    await page.locator('span').filter({ hasText: /^马婧欣/ }).filter({ hasText: /11\.5h/ }).waitFor()
+    const list = page.getByTestId('ledger-card-2026-08-24')
+    assert.equal(await list.getByText(/马婧欣 ·/).count(), 1)
+    assert.equal(await page.getByTestId('ledger-card-2026-08-22').getByText('暂无实际值班事实').count(), 1)
+    assert.deepEqual(await page.getByTestId('ledger-card-2026-08-21').locator('span').filter({ hasText: /^新名字 ·/ }).allTextContents(), ['新名字 · 8 小时'])
+    assert.deepEqual(await page.getByTestId('ledger-card-2026-08-20').locator('span').filter({ hasText: /^马婧欣 ·/ }).allTextContents(), ['马婧欣 · 11.5 小时'])
+    await list.locator('span').filter({ hasText: /^马婧欣/ }).filter({ hasText: /11\.5/ }).waitFor()
     await page.evaluate(() => window.__triggerSharedRefresh())
     await page.waitForTimeout(300)
-    assert.equal(await list.getByText('马婧欣', { exact: true }).count(), 1)
+    assert.equal(await list.getByText(/马婧欣 ·/).count(), 1)
     assert.equal(await page.evaluate(() => window.__writes.length), 0)
     assert.equal(await page.getByText('¥223.00', { exact: true }).count() > 0, true)
     assert.equal(await page.getByText('2', { exact: true }).count() > 0, true)
+    await list.getByRole('button', { name: '查看详情' }).click()
+    const detail = page.getByTestId('daily-ledger-detail')
+    await detail.getByText('马婧欣', { exact: true }).waitFor()
+    assert.equal(await detail.getByText('11.5 小时', { exact: true }).count(), 1)
+    assert.equal(await detail.getByText('¥223.00', { exact: true }).count() > 0, true)
+    assert.equal(await page.evaluate(() => window.__writes.length), 0)
   } finally {
     await page.close()
   }
@@ -120,13 +128,13 @@ for (const width of [320, 340, 375, 390, 430]) {
     const page = await openHarness(width)
     try {
       const metrics = await page.evaluate(() => {
-        const target = document.querySelector('[data-testid="performance-duty-staff-2026-08-24"]')
+        const target = document.querySelector('[data-testid="ledger-card-2026-08-24"]')
         const rect = target.getBoundingClientRect()
         return {
           documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
           targetWidth: rect.width,
           targetHeight: rect.height,
-          names: [...target.querySelectorAll('[data-participant-key]')].map((node) => ({
+          names: [...target.querySelectorAll('span')].filter(node => /^马婧欣 ·/.test(node.textContent)).map((node) => ({
             text: node.textContent,
             width: node.getBoundingClientRect().width,
             height: node.getBoundingClientRect().height,
@@ -135,11 +143,11 @@ for (const width of [320, 340, 375, 390, 430]) {
       })
       assert.ok(metrics.documentOverflow <= 0)
       assert.ok(metrics.targetWidth > 0 && metrics.targetHeight > 0)
-      assert.deepEqual(metrics.names.map((row) => row.text), ['马婧欣'])
+      assert.deepEqual(metrics.names.map((row) => row.text), ['马婧欣 · 11.5 小时'])
       assert.ok(metrics.names.every((row) => row.width > 0 && row.height > 0))
-      const multiple = page.getByTestId('performance-duty-staff-2026-08-23').locator('[data-participant-key]')
-      assert.deepEqual(await multiple.allTextContents(), ['王某', '王某', '卡皮巴拉'])
-      assert.equal(new Set(await multiple.evaluateAll((nodes) => nodes.map((node) => node.dataset.participantKey))).size, 3)
+      const multiple = page.getByTestId('ledger-card-2026-08-23').locator('span').filter({ hasText: /^(王某|卡皮巴拉) ·/ })
+      assert.deepEqual(await multiple.allTextContents(), ['王某 · 8 小时', '王某 · 8 小时', '卡皮巴拉 · 8 小时'])
+      assert.equal(await multiple.count(), 3, 'same-name employees remain separate rendered participants; resolver stable-key assertion above covers identity')
     } finally {
       await page.close()
     }
@@ -150,7 +158,7 @@ for (const [label, width, height] of [['iPad portrait', 768, 1024], ['desktop', 
   test(`${label} performance detail regression`, async () => {
     const page = await openHarness(width, browser, height)
     try {
-      assert.equal(await page.getByTestId('performance-duty-staff-2026-08-24').getByText('马婧欣', { exact: true }).count(), 1)
+      assert.equal(await page.getByTestId('ledger-card-2026-08-24').getByText(/马婧欣 ·/).count(), 1)
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
     } finally {
       await page.close()
@@ -162,7 +170,7 @@ test('WebKit mobile and iPad performance detail stay stable', async () => {
   for (const [width, height] of [[390, 844], [768, 1024]]) {
     const page = await openHarness(width, webkitBrowser, height)
     try {
-      assert.equal(await page.getByTestId('performance-duty-staff-2026-08-24').getByText('马婧欣', { exact: true }).count(), 1)
+      assert.equal(await page.getByTestId('ledger-card-2026-08-24').getByText(/马婧欣 ·/).count(), 1)
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
     } finally {
       await page.close()

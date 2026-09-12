@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -12,10 +13,6 @@ const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_
 const schemaName = `transfer_actual_migration_${process.pid}`
 const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
 const migrationName = '20260830130000_transfer_actual_shipment'
-const laterMigrations = new Set([
-  '20260831190000_report_center_order_source_external_settlement',
-  '20260831193000_report_center_unified_refund_authority',
-])
 
 function migrate(schemaPath) {
   execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', schemaPath], {
@@ -26,7 +23,7 @@ function migrate(schemaPath) {
   })
 }
 
-test('57→58 additive migration preserves every requested transfer fact and leaves actual shipment unknown', async () => {
+test('Target-prefix additive migration preserves every requested transfer fact and leaves actual shipment unknown', async () => {
   const { PrismaClient } = await import('@prisma/client')
   const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } })
   const client = new PrismaClient({ datasources: { db: { url: testUrl } } })
@@ -36,11 +33,7 @@ test('57→58 additive migration preserves every requested transfer fact and lea
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName || laterMigrations.has(entry) || entry === 'migration_lock.toml') continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
-    fs.copyFileSync(path.join(root, 'prisma', 'migrations', 'migration_lock.toml'), path.join(temp, 'migrations', 'migration_lock.toml'))
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
 
     await client.$executeRawUnsafe(`INSERT INTO "Store" (key, name) VALUES ('guanshe', '北京官舍店'), ('tongying', '北京通盈中心店')`)
@@ -67,8 +60,7 @@ test('57→58 additive migration preserves every requested transfer fact and lea
     await assert.rejects(client.$executeRawUnsafe(`UPDATE "TransferItem" SET "shippedQuantity" = 167 WHERE id = 'piece-row'`))
     await assert.rejects(client.$executeRawUnsafe(`UPDATE "TransferItem" SET "shippedQuantity" = -1 WHERE id = 'legacy-row'`))
     await assert.rejects(client.$executeRawUnsafe(`INSERT INTO "TransferItem" (id, "requestId", "itemId", quantity, "quantityUnit", "unitWeightGramsSnapshot") VALUES ('duplicate-piece', 'historical-transfer', 'candy', 1, 'piece', 6)`))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 58)
+    await assertMigrationHistory(client, migrationNames(root).filter(name => name <= migrationName))
   } finally {
     await client.$disconnect()
     await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)

@@ -1,3 +1,4 @@
+import { copyBeforeMigration, migrationNames, assertMigrationHistory } from './migration-rehearsal-plan.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -29,10 +30,7 @@ test('Transfer 2.0 additive migration preserves every legacy transfer fact and o
     await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
-    for (const entry of fs.readdirSync(path.join(root, 'prisma', 'migrations'))) {
-      if (entry === migrationName) continue
-      fs.cpSync(path.join(root, 'prisma', 'migrations', entry), path.join(temp, 'migrations', entry), { recursive: true })
-    }
+    copyBeforeMigration(root, temp, migrationName)
     migrate(path.join(temp, 'schema.prisma'))
     await client.$executeRawUnsafe(`INSERT INTO "Store" (key, name) VALUES ('legacy-from', '历史调出'), ('legacy-to', '历史调入')`)
     await client.$executeRawUnsafe(`INSERT INTO "InventoryItem" (id, name, category) VALUES ('legacy-item', '历史产品', 'product')`)
@@ -43,8 +41,7 @@ test('Transfer 2.0 additive migration preserves every legacy transfer fact and o
     const beforeDigest = crypto.createHash('sha256').update(JSON.stringify(before)).digest('hex')
 
     migrate(path.join(root, 'prisma', 'schema.prisma'))
-    const migrations = await client.$queryRawUnsafe(`SELECT COUNT(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`)
-    assert.equal(Number(migrations[0].count), 55)
+    await assertMigrationHistory(client, migrationNames(root))
     const after = await client.$queryRawUnsafe(oldProjection)
     assert.equal(crypto.createHash('sha256').update(JSON.stringify(after)).digest('hex'), beforeDigest)
     const additive = await client.$queryRawUnsafe(`SELECT "shippedBy", "shippedAt", "withdrawnBy", "withdrawnAt" FROM "TransferRequest" WHERE id = 'legacy-transfer'`)

@@ -117,6 +117,7 @@ async function openLedgerHarness(width = 390, browserInstance = browser, height 
     window.__setLedgerPlan('2026-08', 'xidan', 'confirmed', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: rows.filter((row) => row.baseStatus === 'confirmed') } }])
     window.__setLedgerPlan('2026-08', 'xidan', 'anomaly', [{ payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: rows.filter((row) => row.completeness.status !== 'COMPLETE') } }])
   }, ledgerRows)
+  await page.getByTestId('ledger-month-filter').fill('2026-08')
   await page.getByTestId('ledger-store-filter').selectOption('xidan')
   await page.getByTestId('ledger-card-2026-08-28').waitFor()
   return page
@@ -312,6 +313,7 @@ test('sales, participant and actual-hours edits stay local until one atomic conf
         { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [ledger] } },
       ])
     }, [confirmedOverview, confirmedLedger])
+    await page.getByTestId('ledger-month-filter').fill('2026-08')
     await page.getByTestId('ledger-store-filter').selectOption('xidan')
     await page.evaluate(() => window.__releaseSharedRefresh())
     await page.getByTestId('daily-entry-confirm').click()
@@ -473,6 +475,7 @@ test('POS sales stay read-only while staff facts use the atomic confirmation', a
         { payload: { ok: true, month: '2026-08', storeKey: 'xidan', rows: [ledger] } },
       ])
     }, [confirmedOverview, confirmedLedger])
+    await page.getByTestId('ledger-month-filter').fill('2026-08')
     await page.getByTestId('ledger-store-filter').selectOption('xidan')
     await page.evaluate(() => window.__releaseSharedRefresh())
     await page.getByTestId('daily-entry-confirm').click()
