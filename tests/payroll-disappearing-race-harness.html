@@ -6,7 +6,7 @@
     import { createRoot } from 'react-dom/client'
     import PersonnelPage from '/src/components/PersonnelPage.jsx'
     import { PublicModeProvider } from '/src/visibility.jsx'
-    import { prepareUserDataForUser, seedCachedDataForTest } from '/src/utils/userData.js'
+    import { prepareUserDataForUser, seedCachedDataForTest, loadUserData, getStaff, getPersonnelReadState } from '/src/utils/userData.js'
     import '/src/index.css'
 
     const employees = [
@@ -47,6 +47,13 @@
         for (const request of pending) request.resolve(rowsByMonth[request.month] || [])
       },
     }
+    race.basePhase = 'success'
+    race.basePending = []
+    race.refreshBase = () => loadUserData()
+    race.staffCount = () => getStaff().length
+    race.readState = () => getPersonnelReadState()
+    race.staffState = () => getPersonnelReadState().status
+    race.resolveBase = () => { for (const resolve of race.basePending.splice(0)) resolve() }
     window.__payrollRace = race
     const originalFetch = window.fetch.bind(window)
     window.fetch = async (input, init = {}) => {
@@ -65,6 +72,16 @@
           })
         }
         return json({ ok: true, month, businessDate: '2026-09-07', rows: authoritativeRows[month] || [] })
+      }
+      if (value.includes('/api/userdata')) return json({ staff: [], entries: {}, stores: [] })
+      if (value.includes('/api/v2/') && !value.includes('/daily-store-staff')) {
+        const phase = race.basePhase
+        if (phase === 'pending') await new Promise((resolve) => race.basePending.push(resolve))
+        if (phase === 'error') return json({ error: 'synthetic' }, 503)
+        if (value.includes('/staff-list')) return json({ rows: employees })
+        if (value.includes('/stores')) return json({ rows: [{ key: 'guanshe', name: '北京官舍店' }] })
+        if (value.includes('/daily-entries')) return json({ rows: Object.entries(entries).map(([key, row]) => ({ ...row, date: key.slice(0,4) + '-' + key.split('|')[2], storeKey:'guanshe', staffNames:row.staff, incCents:0 })) })
+        return json({ rows: [] })
       }
       if (value.includes('/api/v2/staff-list') && (init.method || 'GET') === 'GET') return json({ ok: true, rows: employees })
       if (value.includes('/api/v2/employees/backfill') || value.includes('/api/v2/staff') || value.includes('/api/v2/daily-entries')) return json({ ok: true })
@@ -87,6 +104,7 @@
       if (payrollIntervals.delete(id)) return
       nativeClearInterval(id)
     }
+    window.__nativeInterval = nativeSetInterval
     window.__runPayrollSyncTick = () => {
       for (const callback of payrollIntervals.values()) callback()
     }

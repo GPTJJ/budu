@@ -13,6 +13,28 @@ let cached = null
 let activeUserId = ''
 let userDataGeneration = 0
 let staffMonthRequestSequence = 0
+let baseRequestSequence = 0
+const personnelReadStates = new Map()
+const personnelReadListeners = new Set()
+export function onPersonnelReadStateUpdated(listener) {
+  personnelReadListeners.add(listener)
+  return () => personnelReadListeners.delete(listener)
+}
+export function getPersonnelReadState(domain = 'staff') {
+  return personnelReadStates.get(domain) || { status: 'INITIAL_LOADING', hasSuccess: false, sequence: 0 }
+}
+function beginPersonnelRead(sequence) {
+  for (const domain of ['staff', 'entries', 'stores', 'dailyPayAdjustments', 'bigBonuses']) {
+    const old = getPersonnelReadState(domain)
+    personnelReadStates.set(domain, { ...old, sequence, status: old.hasSuccess ? 'REFRESHING' : 'INITIAL_LOADING' })
+  }
+}
+function finishPersonnelRead(domain, valid, count, sequence) {
+  const old = getPersonnelReadState(domain)
+  personnelReadStates.set(domain, { sequence, hasSuccess: valid || old.hasSuccess,
+    status: valid ? (count ? 'DATA' : 'REAL_EMPTY') : (old.hasSuccess ? 'ERROR_WITH_STALE_DATA' : 'ERROR') })
+}
+
 
 export const STAFF_MONTH_LOAD_STATE = Object.freeze({
   NOT_LOADED: 'not_loaded',
@@ -28,6 +50,8 @@ const inflightStaffMonths = new Map()
 
 function invalidateMonthlyAttendanceCache({ clearPayload = true } = {}) {
   userDataGeneration += 1
+  baseRequestSequence += 1
+  personnelReadStates.clear()
   staffMonthStates.clear()
   inflightStaffMonths.clear()
   if (clearPayload && cached) cached.dailyStoreStaffByMonth = {}
@@ -100,9 +124,16 @@ export async function loadUserData(options = {}) {
   if (userId) {
     activateUser(userId)
   }
+  const sequence = ++baseRequestSequence
+  beginPersonnelRead(sequence)
+  // Loading metadata is not a business-data commit. Do not trigger other
+  // domains' authoritative-data refresh handlers before a response arrives.
+  for (const listener of personnelReadListeners) {
+    try { listener() } catch { /* isolate rendering subscribers */ }
+  }
   const requestOwner = { userId: activeUserId, generation: userDataGeneration }
   const ownsCurrentSession = () => (
-    requestOwner.generation === userDataGeneration && requestOwner.userId === activeUserId
+    requestOwner.generation === userDataGeneration && requestOwner.userId === activeUserId && sequence === baseRequestSequence
   )
   // Data Authority DA-4/DA-2.2：entries 与 staff 的唯一权威是 PostgreSQL。
   // 先暂存进入本函数前的内存缓存（上一次会话内成功的 PG 数据），
@@ -129,11 +160,9 @@ export async function loadUserData(options = {}) {
   // DA-5：JSON 镜像不再作为业务数据源；bigBonuses/调整/POS 汇总等一律以 PG 接口为准。
   // legacy 失败时仅保留当前账号已有的内存数据；首次加载则创建空缓存容器承接 PG 结果，
   // 但不把 KV 空对象或 legacy 字段当成任何 PG 权威域的业务事实。
-  if (data && typeof data === 'object') cached = normalizeCachedData(data)
-  else if (!cached) cached = normalizeCachedData(null)
-  cached.entries = {} // entries 权威为 PG：不以 KV 初始值/回退
-  cached.staff = [] // staff 权威为 PG /v2/staff-list：不以 KV 初始值/回退
-  cached.stores = [] // stores 权威为 PG /v2/stores：不展示 KV/旧缓存中的幽灵门店
+  // Legacy may supply presentation metadata, never overwrite PG payroll domains.
+  // Publish no intermediate empty snapshot while the parallel PG reads are pending.
+  if (!cached) cached = normalizeCachedData(null)
   // 基础数据到达即可解除首屏等待，其余 PostgreSQL 数据并行在后台补齐。
   if (onBaseReady) {
     try {
@@ -145,6 +174,10 @@ export async function loadUserData(options = {}) {
 
   const requests = await pgAuthorityRequest
   if (!ownsCurrentSession()) return cached
+  const nextCache = normalizeCachedData(data || cached)
+  for (const domain of ['entries', 'staff', 'stores', 'dailyPayAdjustments', 'bigBonuses', 'dailyStoreStaffByMonth']) {
+    nextCache[domain] = cached[domain]
+  }
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
   // v2（PostgreSQL）为业绩数据唯一权威源：即使 PG 返回空也是事实（无 KV 回退）。
@@ -162,30 +195,30 @@ export async function loadUserData(options = {}) {
         v2version: row.version,
       }
     }
-    cached.entries = merged
+    nextCache.entries = merged
   } else {
-    if (Object.keys(prevEntries).length > 0) cached.entries = prevEntries
+    // nextCache already retains the latest successful PG entries.
     console.error(`[data-authority] DailyEntry 读取失败（PostgreSQL 不可用），${Object.keys(prevEntries).length > 0 ? '展示上次 PG 成功缓存' : '不使用 KV 回退'}`)
   }
 
   // DA-2.2：员工名单权威 = PG /v2/staff-list
   const staffRes = result(8)
   if (staffRes && Array.isArray(staffRes.rows)) {
-    cached.staff = staffRes.rows
+    nextCache.staff = staffRes.rows
   } else {
-    if (prevStaff.length > 0) cached.staff = prevStaff
+    // nextCache already retains the latest successful PG staff.
     console.error(`[data-authority] 员工名单读取失败（PostgreSQL 不可用），${prevStaff.length > 0 ? '展示上次 PG 成功缓存' : '不使用 KV 回退'}`)
   }
 
   // DA-2.3：门店目录权威 = PG /v2/stores（静态 BASE_STORES 仅作同步渲染种子，PG 覆盖）
   const storesRes = result(9)
   if (storesRes && Array.isArray(storesRes.rows)) {
-    cached.stores = storesRes.rows
+    nextCache.stores = storesRes.rows
   }
 
   const adjustments = result(1)
-  if (adjustments) {
-    cached.dailyPayAdjustments = ((adjustments && adjustments.rows) || []).map((row) => ({
+  if (adjustments && Array.isArray(adjustments.rows)) {
+    nextCache.dailyPayAdjustments = ((adjustments && adjustments.rows) || []).map((row) => ({
       id: row.id,
       employeeId: row.employeeId || '',
       staffName: row.staffName,
@@ -204,10 +237,10 @@ export async function loadUserData(options = {}) {
   const posDaily = result(2)
   const posProductSales = result(3)
   if (posDaily) {
-    cached.posDaily = (posDaily && Array.isArray(posDaily.rows)) ? posDaily.rows : []
+    nextCache.posDaily = (posDaily && Array.isArray(posDaily.rows)) ? posDaily.rows : []
   }
   if (posProductSales) {
-    cached.posProductSales = (posProductSales && Array.isArray(posProductSales.rows)) ? posProductSales.rows : []
+    nextCache.posProductSales = (posProductSales && Array.isArray(posProductSales.rows)) ? posProductSales.rows : []
   }
 
   // v2（PostgreSQL）为申请单/库存数据源
@@ -285,10 +318,10 @@ export async function loadUserData(options = {}) {
         })),
       })
     }
-    cached.inventoryRequests = reqs
+    nextCache.inventoryRequests = reqs
   }
   if (stock) {
-    cached.inventory = ((stock && stock.rows) || []).map((r) => ({
+    nextCache.inventory = ((stock && stock.rows) || []).map((r) => ({
       storeKey: r.storeKey,
       productName: r.name,
       quantity: r.quantity,
@@ -299,8 +332,8 @@ export async function loadUserData(options = {}) {
   }
 
   const bb = result(7)
-  if (bb) {
-    cached.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
+  if (bb && Array.isArray(bb.rows)) {
+    nextCache.bigBonuses = ((bb && bb.rows) || []).map((r) => ({
       id: r.id,
       employeeId: r.employeeId || '',
       staffKey: r.staffKey,
@@ -311,6 +344,13 @@ export async function loadUserData(options = {}) {
       bonusCents: Number(r.bonusCents) || 0,
     }))
   }
+  for (const [domain, index] of [['entries', 0], ['staff', 8], ['stores', 9], ['dailyPayAdjustments', 1], ['bigBonuses', 7]]) {
+    const value = result(index)
+    finishPersonnelRead(domain, !!value && Array.isArray(value.rows), value?.rows?.length || 0, sequence)
+  }
+  // One synchronous commit. Monthly attendance owns its immutable month entries.
+  nextCache.dailyStoreStaffByMonth = cached.dailyStoreStaffByMonth
+  cached = nextCache
   // DA-5：legacy localStorage 迁移已退役（数据权威 = PG）
   // 后台并行数据（含 PostgreSQL 业绩权威源）合并完成后，通知已挂载页面刷新
   notifyUserDataUpdated()
@@ -368,7 +408,8 @@ export async function loadDailyStoreStaffMonth(month, opts = {}) {
   const promise = (async () => {
     try {
       const res = await api(`/v2/daily-store-staff?month=${key}`)
-      const rows = Array.isArray(res && res.rows) ? res.rows : []
+      if (!res || !Array.isArray(res.rows) || (res.month && res.month !== key)) throw new Error('考勤响应上下文无效')
+      const rows = res.rows
       const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(res?.businessDate || '')) ? res.businessDate : ''
       if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
       if (!cached) cached = normalizeCachedData(null)
@@ -388,7 +429,7 @@ export async function loadDailyStoreStaffMonth(month, opts = {}) {
     } catch (e) {
       if (!ownsCurrentRequest()) return { month: key, status: 'ignored', rows: [] }
       const nextByMonth = { ...(cached?.dailyStoreStaffByMonth || {}) }
-      delete nextByMonth[key]
+      // Keep the last successful rows for visual continuity; ERROR still blocks fresh calculations.
       if (!cached) cached = normalizeCachedData(null)
       cached.dailyStoreStaffByMonth = nextByMonth
       staffMonthStates.set(key, {
@@ -704,6 +745,9 @@ export function resetUserData() {
 export function seedCachedDataForTest(data) {
   invalidateMonthlyAttendanceCache()
   cached = normalizeCachedData(data)
+  for (const domain of ['staff', 'entries', 'stores', 'dailyPayAdjustments', 'bigBonuses']) {
+    finishPersonnelRead(domain, true, Object.keys(cached[domain]).length, baseRequestSequence)
+  }
   for (const [month, rows] of Object.entries(cached.dailyStoreStaffByMonth || {})) {
     if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month) && Array.isArray(rows)) {
       staffMonthStates.set(month, {

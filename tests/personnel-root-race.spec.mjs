@@ -1,0 +1,61 @@
+import {test,expect} from '@playwright/test'
+async function openDetail(page){
+ await page.goto('/tests/payroll-disappearing-race-harness.html');await expect(page.getByText('稳定计算',{exact:true})).toBeVisible()
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('textbox',{name:'快速选择日期'}).fill('2026-08-31')
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('button',{name:'查看整周'}).click()
+ await page.locator('.card').filter({hasText:'BUDU-0004'}).click()
+ await expect(page.getByTestId('payroll-daily-card')).toHaveCount(4)
+}
+test('RACE-08/09/10/11 global refresh and monthly ticks keep directory/detail through 12 cycles',async({page})=>{
+ await openDetail(page)
+ for(let cycle=0;cycle<12;cycle++){
+  await page.evaluate(()=>{const r=window.__payrollRace;r.basePhase='pending';r.refreshBase();window.__runPayrollSyncTick()})
+  await expect.poll(()=>page.evaluate(()=>window.__payrollRace.basePending.length)).toBe(10)
+  await expect(page.getByTestId('personnel-counts')).toContainText('全职 2 人')
+  await expect(page.getByTestId('payroll-daily-card')).toHaveCount(4)
+  await expect(page.getByTestId('payroll-no-data')).toHaveCount(0)
+  await page.evaluate(()=>window.__payrollRace.resolveBase())
+  await expect.poll(()=>page.evaluate(()=>window.__payrollRace.staffState())).toBe('DATA')
+ }
+ await page.evaluate(()=>{window.__payrollRace.basePhase='error';window.__payrollRace.refreshBase()})
+ await expect.poll(()=>page.evaluate(()=>window.__payrollRace.staffState())).toBe('ERROR_WITH_STALE_DATA')
+ await expect(page.getByTestId('personnel-counts')).toContainText('全职 2 人')
+ await expect(page.getByTestId('payroll-daily-card')).toHaveCount(4)
+})
+test('five-minute real-time soak: shared bootstrap and payroll ticks',async({page})=>{
+ test.skip(process.env.PERSONNEL_SOAK!=='1','Explicit long-run certification');test.setTimeout(350000)
+ await openDetail(page)
+ const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ await page.evaluate(()=>{
+  window.__soak={cycles:0,samples:[],bad:0}
+  const sample=()=>{const s=window.__soak;const count=window.__payrollRace.staffCount();const details=document.querySelectorAll('[data-testid="payroll-daily-card"]').length;s.samples.push({count,details,fulltime:2,parttime:0,month:document.querySelector('[data-testid="personnel-month-selector"]')?.textContent,sequence:window.__payrollRace.readState().sequence});if(count!==2||details!==4||document.querySelector('[data-testid="payroll-no-data"]'))s.bad++}
+  window.__nativeInterval(sample,100)
+  window.__nativeInterval(()=>{window.__soak.cycles++;const r=window.__payrollRace;r.basePhase='pending';r.refreshBase();window.__runPayrollSyncTick();setTimeout(()=>r.resolveBase(),700)},8000)
+ })
+ await page.waitForTimeout(305000)
+ const evidence=await page.evaluate(()=>({cycles:window.__soak.cycles,samples:window.__soak.samples.length,bad:window.__soak.bad}))
+ console.log('SOAK',JSON.stringify(evidence));expect(evidence.cycles).toBeGreaterThanOrEqual(30);expect(evidence.bad).toBe(0);expect(errors).toEqual([])
+})
+test('RACE-06/12 rapid month/filter transitions discard old monthly results',async({page})=>{
+ await page.goto('/tests/payroll-disappearing-race-harness.html');await expect(page.getByText('稳定计算',{exact:true})).toBeVisible()
+ await page.evaluate(()=>window.__payrollRace.setPhase('pending'))
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('textbox',{name:'快速选择日期'}).fill('2026-08-31')
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('button',{name:'查看整月'}).click()
+ await page.getByRole('button',{name:'兼职人员（0）',exact:true}).click()
+ await page.getByRole('button',{name:'全职人员（2）',exact:true}).click()
+ await page.evaluate(()=>window.__payrollRace.setPhase('success'))
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('textbox',{name:'快速选择日期'}).fill('2026-09-03')
+ await page.getByTestId('personnel-month-selector').getByRole('button').first().click()
+ await page.getByRole('button',{name:'查看整月'}).click()
+ await expect(page.getByText('稳定计算',{exact:true})).toBeVisible()
+ await page.evaluate(()=>window.__payrollRace.resolvePending({'2026-08':[],'2026-09':[]}))
+ await page.getByRole('button',{name:'全部（2）',exact:true}).click()
+ await page.locator('.card').filter({hasText:'BUDU-0004'}).getByRole('button',{name:'查看每日工资明细'}).click()
+ await expect(page.getByTestId('payroll-daily-card')).toHaveCount(3)
+ await expect(page.getByRole('dialog')).toHaveAttribute('data-payroll-employee-id','emp-sui')
+})

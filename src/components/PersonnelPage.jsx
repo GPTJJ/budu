@@ -19,6 +19,9 @@ import {
   storeName,
 } from '../utils/selectors'
 import {
+  getPersonnelReadState,
+  onUserDataUpdated,
+  onPersonnelReadStateUpdated,
   resignEmployeeById,
   loadDailyStoreStaffMonth,
   refreshDailyStoreStaffMonth,
@@ -559,6 +562,11 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     return () => clearInterval(id)
   }, [])
   const [staffVersion, setStaffVersion] = useState(0)
+  const [, renderReadState] = useState(0)
+  useEffect(() => onUserDataUpdated(() => renderReadState((v) => v + 1)), [])
+  useEffect(() => onPersonnelReadStateUpdated(() => renderReadState((v) => v + 1)), [])
+  const staffRead = getPersonnelReadState('staff')
+  const visibleCount = (count) => staffRead.hasSuccess ? count : '…'
 
   const localStaff = localStaffList()
   // Gate 7：PersonnelPage 当前目录卡片 = PostgreSQL Employee 当前在册记录（均有 Employee.id）。
@@ -679,7 +687,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     monthlyRequestRef.current = requestId
     requestedMonthRef.current = m
     setPayrollDisplay((prev) => ({
-      ...prev,
+      ...(prev.month === m ? prev : { mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() }),
       status: prev.month === m && prev.mode ? 'refreshing' : 'loading',
       month: m,
     }))
@@ -944,7 +952,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
               </span>
             </div>
             <p className="mt-1 text-[13px] font-semibold text-slate-600" data-testid="personnel-counts">
-              {t('全职 {full} 人 · 兼职 {part} 人', {
+              {!staffRead.hasSuccess ? (staffRead.status === 'ERROR' ? '人员数据暂不可用' : '人员加载中…') : t('全职 {full} 人 · 兼职 {part} 人', {
                 full: fulltime.length,
                 part: parttime.length,
               })}
@@ -1021,7 +1029,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             {canUseAllFilter && (
               <button
                 type="button"
-                aria-label={`${t('全部')}（${scopedAll.length}）`}
+                aria-label={`${t('全部')}（${visibleCount(scopedAll.length)}）`}
                 onClick={() => setFilter('all')}
                 className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                   filter === 'all'
@@ -1029,13 +1037,13 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
-                <span className="sm:hidden">{t('全部')} {scopedAll.length}</span>
-                <span className="hidden sm:inline">{t('全部')}（{scopedAll.length}）</span>
+                <span className="sm:hidden">{t('全部')} {visibleCount(scopedAll.length)}</span>
+                <span className="hidden sm:inline">{t('全部')}（{visibleCount(scopedAll.length)}）</span>
               </button>
             )}
             <button
               type="button"
-              aria-label={`${t('全职人员')}（${fulltime.length}）`}
+              aria-label={`${t('全职人员')}（${visibleCount(fulltime.length)}）`}
               onClick={() => setFilter('fulltime')}
               className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'fulltime'
@@ -1043,12 +1051,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              <span className="sm:hidden">{t('全职')} {fulltime.length}</span>
-              <span className="hidden sm:inline">{t('全职人员')}（{fulltime.length}）</span>
+              <span className="sm:hidden">{t('全职')} {visibleCount(fulltime.length)}</span>
+              <span className="hidden sm:inline">{t('全职人员')}（{visibleCount(fulltime.length)}）</span>
             </button>
             <button
               type="button"
-              aria-label={`${t('兼职人员')}（${parttime.length}）`}
+              aria-label={`${t('兼职人员')}（${visibleCount(parttime.length)}）`}
               onClick={() => setFilter('parttime')}
               className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'parttime'
@@ -1056,8 +1064,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              <span className="sm:hidden">{t('兼职')} {parttime.length}</span>
-              <span className="hidden sm:inline">{t('兼职人员')}（{parttime.length}）</span>
+              <span className="sm:hidden">{t('兼职')} {visibleCount(parttime.length)}</span>
+              <span className="hidden sm:inline">{t('兼职人员')}（{visibleCount(parttime.length)}）</span>
             </button>
           </div>
 
@@ -1088,6 +1096,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         </div>
       </section>
 
+      {staffRead.status.startsWith('ERROR') && <p role="status" className="text-sm text-amber-700">数据刷新失败，正在重试</p>}
+      {staffRead.status === 'REFRESHING' && <p role="status" className="text-sm text-slate-500">正在刷新人员数据…</p>}
       {day && !dayHasData && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-medium text-amber-600">
           {t('所选日期 {date} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩', {
@@ -1397,7 +1407,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         <div className="card grid place-items-center py-20 text-center">
           <CalendarDays className="h-9 w-9 text-slate-200" />
           <p className="mt-3 text-sm font-semibold text-slate-400">
-            {t('{month}暂无薪资数据', { month: monthLabel(month) })}
+            {['DATA', 'REAL_EMPTY'].includes(staffRead.status) ? t('{month}暂无薪资数据', { month: monthLabel(month) }) : staffRead.status.startsWith('ERROR') ? '人员数据刷新失败，正在重试' : '人员数据加载中…'}
           </p>
           <p className="mt-1.5 text-xs text-slate-300">
             {t('当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月）；已录入业绩的月份自动计算薪酬，可切换日历月份或添加本地员工')}

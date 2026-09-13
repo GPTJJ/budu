@@ -87,6 +87,7 @@ const NODE_TEST_SUITE = [
   'test-invoice-parser.mjs',    // 发票开票信息智能拆分（单元）
   'test-data-authority-freeze.mjs', // Data Authority 1.0 DA-1：冻结 PG 权威域（静态扫描 + 可选 DB 冒烟）→ critical
   'test-pg-bootstrap-independence.mjs', // Data Authority Gate 1：/userdata 不得阻塞 PG authority bootstrap → critical
+  'test-personnel-read-race.mjs', // Personnel P0: atomic PG cache, same-session generations and stale/error retention
   'test-removed-staff-retirement.mjs', // Data Authority Gate 2：removedStaff 退出当前员工目录裁决 → critical
   'test-pg-employee-reactivity.mjs', // Data Authority Gate 3：异步 PG 员工更新驱动已挂载 React consumer → critical
   'test-store-entry-state-integrity.mjs', // StoreEntry P0：历史日期代际/迟到响应/移动候选面板 → critical
@@ -192,6 +193,7 @@ const CRITICAL_NODE_TEST = [
   'test-homepage-lightweight.mjs',
   'test-data-authority-freeze.mjs',
   'test-pg-bootstrap-independence.mjs',
+  'test-personnel-read-race.mjs',
   'test-removed-staff-retirement.mjs',
   'test-pg-employee-reactivity.mjs',
   'test-store-entry-state-integrity.mjs',
