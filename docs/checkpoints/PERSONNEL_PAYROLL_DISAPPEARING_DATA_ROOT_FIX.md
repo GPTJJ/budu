@@ -60,6 +60,12 @@ Fresh canonical backup `/opt/budu/.rollback-assets/personnel-root-fix-20260913/b
 
 Original runtime inspect and nginx active/template preserved privately in that directory. Rollback is code/runtime only: stop candidate writer, restart original container, restore saved nginx route/template and reload after `nginx -t`. No DB restore for this frontend defect. Runtime env/mounts must be identical except GIT_SHA; all public rollout flags preserved.
 
-## Production acceptance
+## Production acceptance / closure
 
-Deployment and final production soak are pending at this checkpoint revision. Do not infer production success from candidate tests. Final evidence will record exact SHA, health, writer count, five-minute/30+ cycle DOM+network samples and before/after source/financial digests.
+First controlled deployment `a3e8c1c2715625397bcfc0de860430a0d18c3414`: health PASS, single writer, only runtime GIT_SHA changed. Six payroll source-table hashes unchanged. Protected Sweet Card/Refund/Partner/online-settlement hashes unchanged. Historical 309 Payment rows retain exact original digest; two new STORE_POS provider-success payments during normal trading explain the total-count increase.
+
+Candidate Chromium/WebKit soak: 38 cycles each, 3073/3026 samples, zero bad samples; full browser run 12/12 PASS. First production continuous 310-second soak: 3871 samples, 38 staff refresh cycles, no incorrect counts/empty detail/context change/uncaught errors. All fixed sample IDs and counts remain DB = API = UI. Early debugger-buffer overflow was resolved by draining events every four seconds; final evidence has no event truncation.
+
+An additional cold-bootstrap test then exposed an existing eight-second delay: mounted monthly view did not depend on the completed base-data revision. Closure adds completedSequence (separate from pending request sequence) as the monthly/period recalculation dependency; initial missing/failed PG inputs cannot become real empty. Partial PG failure shows unavailable and next successful base commit recovers. No calculation semantics changed. Expanded browser tests 14/14 PASS, core scripts 20/20 PASS. Final closure candidate deployment/soak will be appended after certification.
+
+Critical certification: 78 groups passed in the broad native-PG run; the only remaining group hit a WebKit timing timeout under concurrent browser load. Its entire StoreEntry suite was rerun alone: 32/32 PASS, including the earlier fixed metadata-notification regression. New race script is in the critical runner; no stale assertions or unexplained business failures are waived.

@@ -31,7 +31,7 @@ function beginPersonnelRead(sequence) {
 }
 function finishPersonnelRead(domain, valid, count, sequence) {
   const old = getPersonnelReadState(domain)
-  personnelReadStates.set(domain, { sequence, hasSuccess: valid || old.hasSuccess,
+  personnelReadStates.set(domain, { sequence, completedSequence: sequence, hasSuccess: valid || old.hasSuccess,
     status: valid ? (count ? 'DATA' : 'REAL_EMPTY') : (old.hasSuccess ? 'ERROR_WITH_STALE_DATA' : 'ERROR') })
 }
 

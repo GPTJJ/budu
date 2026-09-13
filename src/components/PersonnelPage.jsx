@@ -566,6 +566,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   useEffect(() => onUserDataUpdated(() => renderReadState((v) => v + 1)), [])
   useEffect(() => onPersonnelReadStateUpdated(() => renderReadState((v) => v + 1)), [])
   const staffRead = getPersonnelReadState('staff')
+  const baseReadRevision = staffRead.completedSequence || 0
+  const payrollBaseReadStatus = () => {
+    const states = ['staff', 'entries', 'stores', 'dailyPayAdjustments', 'bigBonuses'].map(getPersonnelReadState)
+    if (states.some((state) => state.status.startsWith('ERROR'))) return 'error'
+    return states.every((state) => state.hasSuccess) ? 'ready' : 'loading'
+  }
   const visibleCount = (count) => staffRead.hasSuccess ? count : '…'
 
   const localStaff = localStaffList()
@@ -632,8 +638,10 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     // a competing request token for the same month.
     loadDailyStoreStaffRange(period.periodStart, period.periodEnd, { force: true }).then(() => {
       if (cancelled || periodRequestRef.current !== requestId) return
+      if (baseReadRevision !== (getPersonnelReadState('staff').completedSequence || 0)) return
+      if (payrollBaseReadStatus() === 'loading') return
       const rangeState = getDailyStoreStaffRangeState(period.periodStart, period.periodEnd)
-      if (!rangeState.complete) {
+      if (!rangeState.complete || payrollBaseReadStatus() === 'error') {
         setPeriodAttendance((previous) => (
           previous.key === key && previous.mode === 'EMPLOYEE_ID'
             ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
@@ -675,7 +683,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     return () => { cancelled = true }
     // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, day, weekStart, staffVersion, syncTick])
+  }, [month, day, weekStart, staffVersion, syncTick, baseReadRevision])
 
   // ---- Gate 24：显式月份加载 + resolver（竞态安全：晚到的响应不覆盖当前所选月）----
   const [payrollDisplay, setPayrollDisplay] = useState({ status: 'loading', month: '', mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
@@ -703,6 +711,9 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     // than a browser clock or a possibly stale month-cache value.
     loadDailyStoreStaffMonth(m, { force: !(day || weekStart) }).then((staffLoad) => {
       if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
+      if (baseReadRevision !== (getPersonnelReadState('staff').completedSequence || 0)) return
+      if (payrollBaseReadStatus() === 'loading') return
+      if (payrollBaseReadStatus() === 'error') { markMonthlyUnavailable(); return }
       const monthState = getDailyStoreStaffMonthState(m)
       if (monthState.status !== 'loaded' || !monthState.hasPayload) {
         markMonthlyUnavailable()
@@ -806,7 +817,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, day, weekStart, staffVersion, syncTick])
+  }, [month, day, weekStart, staffVersion, syncTick, baseReadRevision])
 
   // Gate 24：卡片 payroll 富集——EMPLOYEE_ID 按 id；LEGACY 唯一名兼容、重名不赋值
   const enrichPayroll = (d) => {
@@ -841,6 +852,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         salaryAdjustment: null, adjustmentCount: null, dailyExplanations: [], payrollComputed: false, roi: null,
         payrollAvailable: false,
         payrollUnavailable: payrollDisplay.status === 'unavailable',
+        payrollLoading: payrollDisplay.status === 'loading',
       }
     }
     if (p.payrollIncomplete) {
@@ -1252,6 +1264,8 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       }`}>
                         {t(emp.payrollUnavailable
                           ? '工资数据暂不可用'
+                          : emp.payrollLoading
+                            ? '工资数据加载中…'
                           : emp.payrollIncomplete
                             ? (emp.payrollCompleteness?.title || '工资数据待完善')
                             : '暂无工资数据')}

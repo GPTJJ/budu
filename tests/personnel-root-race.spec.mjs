@@ -59,3 +59,26 @@ test('RACE-06/12 rapid month/filter transitions discard old monthly results',asy
  await expect(page.getByTestId('payroll-daily-card')).toHaveCount(3)
  await expect(page.getByRole('dialog')).toHaveAttribute('data-payroll-employee-id','emp-sui')
 })
+
+test('initial global bootstrap commits to mounted monthly payroll without waiting another tick',async({page})=>{
+ await page.goto('/tests/payroll-disappearing-race-harness.html?bootstrap=1')
+ await expect.poll(()=>page.evaluate(()=>window.__payrollRace.basePending.length)).toBe(10)
+ await expect(page.getByTestId('personnel-counts')).toContainText('人员加载中')
+ await page.evaluate(()=>window.__payrollRace.resolveBase())
+ await expect(page.getByTestId('personnel-counts')).toContainText('全职 2 人')
+ const card=page.locator('.card').filter({hasText:'BUDU-0004'})
+ await expect(card.getByRole('button',{name:'查看每日工资明细'})).toBeVisible({timeout:4000})
+ await card.getByRole('button',{name:'查看每日工资明细'}).click()
+ await expect(page.getByTestId('payroll-daily-card')).toHaveCount(3)
+})
+
+test('initial partial PG failure is unavailable, never empty, and recovers on next base commit',async({page})=>{
+ await page.goto('/tests/payroll-disappearing-race-harness.html?bootstrap=1')
+ await expect.poll(()=>page.evaluate(()=>window.__payrollRace.basePending.length)).toBe(10)
+ await page.evaluate(()=>{window.__payrollRace.entriesError=true;window.__payrollRace.resolveBase()})
+ const card=page.locator('.card').filter({hasText:'BUDU-0004'})
+ await expect(card).toContainText('工资数据暂不可用')
+ await expect(card).not.toContainText('暂无工资数据')
+ await page.evaluate(()=>{const r=window.__payrollRace;r.entriesError=false;r.basePhase='success';r.refreshBase()})
+ await expect(card.getByRole('button',{name:'查看每日工资明细'})).toBeVisible()
+})
