@@ -369,6 +369,12 @@ export function isSuperUser(user) {
   return Boolean(user && user.status !== 'disabled' && (user.role === 'developer' || user.role === 'finance' || user.role === 'admin'))
 }
 
+// Historical correction is limited to Developer / the existing admin role.
+export function canCorrectDailyPerformance(user) {
+  return Boolean(user && ['developer', 'admin'].includes(user.role)
+    && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE))
+}
+
 export function canManageAccounts(user) {
   return Boolean(user && user.status !== 'disabled' && user.role === 'developer')
 }

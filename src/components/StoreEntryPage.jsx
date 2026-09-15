@@ -9,7 +9,8 @@ import { loadUserData, onUserDataUpdated } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
-import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability } from '../../shared/accountPermissions'
+import DailyPerformanceCorrection, { SalesFact } from './DailyPerformanceCorrection'
+import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability, canCorrectDailyPerformance } from '../../shared/accountPermissions'
 import { OverlayPanel, OverlayViewport } from './overlay/OverlayPrimitives'
 
 function pad(n) {
@@ -86,7 +87,7 @@ const inputCls = 'input'
 const LEDGER_STATUS = Object.freeze({
   draft: { label: '待确认', className: 'bg-amber-50 text-amber-700' },
   confirmed: { label: '已确认', className: 'bg-emerald-50 text-emerald-700' },
-  revised: { label: '已修正', className: 'bg-violet-50 text-violet-700' },
+  revised: { label: '已更正', className: 'bg-violet-50 text-violet-700' },
 })
 
 const COMPLETENESS_LABELS = Object.freeze({
@@ -235,6 +236,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [ledgerDetail, setLedgerDetail] = useState(null)
   const [ledgerRefresh, setLedgerRefresh] = useState(0)
   const [revisionMode, setRevisionMode] = useState(false)
+  const [correctionRow, setCorrectionRow] = useState(null)
   const [revisionReason, setRevisionReason] = useState('')
   const authorityGenerationRef = useRef(0)
   const selectedAuthorityRef = useRef(null)
@@ -266,7 +268,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const adjustmentCents = overview?.entry ? BigInt(overview.entry.hybridAdjustmentCents) : 0n
   const canEdit = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
   const canConfirm = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
-  const canRevise = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE)
+  const canRevise = canCorrectDailyPerformance(user)
   const canEditSales = source === 'manual' && ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode))
   const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
   const canEditStaff = ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode)) && !hasHistoricalStaff
@@ -794,7 +796,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
 
       <section className="card p-5">
         <h3 className="text-[15px] font-bold text-slate-800">闭店确认</h3>
-        <p className="mt-2 text-xs text-slate-400">提交前请确认：营业数据完整、值班人员与实际工时已确认。确认后只能由具备 REVISE 权限的账号通过留痕修正。</p>
+        <p className="mt-2 text-xs text-slate-400">提交前请确认：营业数据完整、值班人员与实际工时已确认。确认后仅开发者或获授权的超级管理员可通过留痕更正。</p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {confirmed ? (
             <>
@@ -849,7 +851,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
               <select data-testid="ledger-status-filter" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`}>
                 <option value="all">全部</option>
                 <option value="draft">待确认</option>
-                <option value="confirmed">已确认 / 已修正</option>
+                <option value="confirmed">已确认 / 已更正</option>
                 <option value="anomaly">待完善</option>
               </select>
             </label>
@@ -993,6 +995,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                         <span className="shrink-0 text-[10px] text-slate-400">{new Date(audit.createdAt).toLocaleString('zh-CN', { hour12: false })}</span>
                       </div>
                       <p className="mt-1 break-words leading-5 text-slate-500">{audit.reason || '系统记录'}{audit.operatorName ? ` · ${audit.operatorName}` : ''}</p>
+                      {audit.beforeValue?.entry && audit.afterValue?.entry && <div className="mt-2 grid gap-2 sm:grid-cols-2"><SalesFact title="修改前" entry={audit.beforeValue.entry} /><SalesFact title="修改后" entry={audit.afterValue.entry} /></div>}
                     </div>
                   )) : <p className="rounded-2xl bg-slate-50 px-3 py-5 text-center text-xs text-slate-400">暂无确认后修正审计</p>}
                 </div>
@@ -1003,11 +1006,19 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                   <Pencil className="h-4 w-4" />继续填写这一天
                 </button>
               )}
+              {ledgerDetail.baseStatus === 'confirmed' && canRevise && ledgerDetail.salesDataSource === 'manual' && (
+                <button type="button" onClick={() => setCorrectionRow(ledgerDetail)} className="mt-5 min-h-11 w-full rounded-xl bg-budu-600 px-4 text-sm font-semibold text-white">更正数据</button>
+              )}
             </div>
           </OverlayPanel>
         </OverlayViewport>
       )}
 
+      {correctionRow && <DailyPerformanceCorrection row={correctionRow} onClose={() => setCorrectionRow(null)} onSaved={() => {
+        setCorrectionRow(null); setLedgerDetail(null); setLedgerRefresh(v => v + 1)
+        void loadUserData().catch(() => setError('更正已保存，刷新失败，请重新加载'))
+        setFeedback({ title: '更正已保存', description: '修改前后业绩和操作审计已保留' })
+      }} />}
       {discardOpen && (
         <OverlayViewport data-testid="daily-entry-unsaved-dialog" className="fixed inset-0 z-[110] grid place-items-center p-4">
           <button

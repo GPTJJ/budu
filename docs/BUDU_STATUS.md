@@ -4,6 +4,12 @@
 
 Last reviewed: 2026-09-07
 
+## Isolated Daily Performance Correction (2026-09-16)
+
+- Baseline f18e903; branch `codex/daily-performance-correction`.
+- [Scoped audit and acceptance checkpoint](checkpoints/2026-09-16-daily-performance-correction.md).
+- No production mutation/deployment or authoritative branch movement. Candidate preservation is on the independent branch only; see [Reviewer handoff](checkpoints/2026-09-16-daily-performance-correction-reviewer-handoff.md) for recovery and acceptance checks.
+
 ## Active candidate (2026-09-13)
 
 - Sweet Card1.1B [controlled Production Candidate](checkpoints/2026-09-13-sc11b-production-candidate.md).

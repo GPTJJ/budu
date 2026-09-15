@@ -7,6 +7,7 @@ import {
   DAILY_ENTRY_CAPABILITIES,
   hasDailyEntryCapability,
   isSuperUser,
+  canCorrectDailyPerformance,
 } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
@@ -1062,16 +1063,24 @@ function comparableStaffList(rows) {
 }
 
 export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, options = {}) {
+  if (!canCorrectDailyPerformance(input?.actor)) throw httpError('仅开发者或超级管理员可更正历史业绩', 403)
+  const salesOnly = input?.scope === 'sales'
+  if (salesOnly && Object.prototype.hasOwnProperty.call(input, 'items')) throw httpError('业绩更正不可提交考勤', 400)
   const storeKey = String(input?.storeKey || '').trim()
   const dateStr = String(input?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   const expectedVersion = Number(input?.version)
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw httpError('数据版本缺失，请刷新后重新核对', 409)
   const reason = parseRevisionReason(input?.reason)
-  const normalized = normalizeDailyStaffSubmission(input?.items)
-  if (normalized.length === 0) throw httpError('请至少保留一位实际值班人员')
+  const normalized = salesOnly ? [] : normalizeDailyStaffSubmission(input?.items)
+  if (!salesOnly && normalized.length === 0) throw httpError('请至少保留一位实际值班人员')
   const actor = input.actor || { id: '', username: '' }
   const auditWriter = options.auditWriter || writeAudit
+  const requestKey = String(input?.requestKey || '')
+  if (salesOnly && !/^[a-zA-Z0-9_-]{16,100}$/.test(requestKey)) throw httpError('更正请求标识缺失，请重新打开窗口', 400)
+  const sales = salesOnly ? parseManualSales(input.manualSales) : null
+  const commandDigest = salesOnly ? crypto.createHash('sha256').update(JSON.stringify({ storeKey, dateStr, expectedVersion, reason, incCents: sales.incCents.toString(), ord: sales.ord })).digest('hex') : null
+  const auditId = salesOnly ? `correction-${crypto.createHash('sha256').update(`${actor.id}:${requestKey}`).digest('hex')}` : null
 
   return prismaClient.$transaction(async (tx) => {
     await tx.$queryRawUnsafe(
@@ -1083,9 +1092,33 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
     const d = dateOnly(dateStr)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before || before.status !== 'confirmed') throw httpError('只有已确认每日记录可以进入受控修正', 409)
+    if (salesOnly) {
+      const previous = await tx.dailyEntryAuditLog.findUnique({ where: { id: auditId } })
+      if (previous) {
+        if (previous.afterValue?.commandDigest !== commandDigest) throw httpError('同一请求标识不可用于不同更正', 409)
+        const staff = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
+        return { entry: before, staff, source: effectiveSource(store, dateStr), posSnapshot: null, replayed: true }
+      }
+    }
     if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
 
     const source = effectiveSource(store, dateStr)
+    if (salesOnly) {
+      const confirmationAudits = await tx.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: d, module: 'daily_confirmation' } })
+      if (source !== 'manual' || before.posSyncAt || confirmationAudits.some(a => a.afterValue?.salesAuthority && a.afterValue.salesAuthority !== 'manual')) throw httpError('订单来源或来源冲突的业绩不可手工更正', 403)
+      if (before.incCents === sales.incCents && before.ord === sales.ord) throw httpError('更正内容未变化', 409)
+      const staff = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
+      const row = await tx.dailyEntry.update({ where: { id: before.id }, data: {
+        ...sales, version: { increment: 1 }, updatedBy: actor.username,
+      } })
+      await tx.dailyEntryAuditLog.create({ data: {
+        id: auditId, storeId: storeKey, date: d, module: 'daily_revision', fieldName: 'sales',
+        beforeValue: { entry: serializeEntry(before) },
+        afterValue: { entry: serializeEntry(row), commandDigest },
+        reason, operatorId: actor.id, operatorName: actor.username,
+      } })
+      return { entry: row, staff, source, posSnapshot: null }
+    }
     let manualSales = null
     let posSnapshot = null
     if (source === 'manual') {
@@ -1145,7 +1178,7 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
 dailyEntryUpgradeRouter.post('/daily-entry/revise', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.body?.storeKey || '').trim()
-  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
+  if (!canStore(req.user, storeKey) || !canCorrectDailyPerformance(req.user)) throw httpError('无权限', 403)
   const result = await reviseConfirmedDailyEntryAtomic(prisma, { ...req.body, actor: req.user })
   res.json({
     ok: true,
@@ -1168,7 +1201,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => 
 
 dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
+  if (!canCorrectDailyPerformance(req.user)) throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')

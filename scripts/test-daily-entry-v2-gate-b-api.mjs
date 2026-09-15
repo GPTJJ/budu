@@ -2,12 +2,23 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-daily-entry-gate-b-'))
 process.env.JWT_SECRET = 'daily-entry-gate-b-local-test-only'
 const { createDisposablePgSchema } = await import('./helpers/test-pg-schema.mjs')
-process.env.DATABASE_URL = await createDisposablePgSchema('daily_entry_gate_b')
-const schema = new URL(process.env.DATABASE_URL).searchParams.get('schema')
+if (process.env.DAILY_CORRECTION_ISOLATED === '1') {
+  const target = new URL(process.env.TEST_DATABASE_URL)
+  assert.equal(target.hostname, '127.0.0.1')
+  assert.equal(target.port, '15487')
+  assert.equal(target.pathname, '/budu_correction_test')
+  assert.equal(target.search, '')
+  process.env.DATABASE_URL = target.toString()
+  execFileSync('./node_modules/.bin/prisma', ['migrate', 'deploy'], { env: process.env, stdio: 'inherit' })
+} else {
+  process.env.DATABASE_URL = await createDisposablePgSchema('daily_entry_gate_b')
+}
+const schema = new URL(process.env.DATABASE_URL).searchParams.get('schema') || 'public'
 const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_dev@localhost:5432/budu'
 const { PrismaClient } = await import('@prisma/client')
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } })
@@ -516,10 +527,82 @@ try {
   })
   assert.equal(historicalAfter, historicalBefore)
 
-  console.log('DAILY ENTRY V2 GATE B-F API TEST OK')
+  // Sales-only corrections reuse the confirmed entry and audit authority, including legacy attendance.
+  const immutable = async () => stableRows({
+    staff: await prisma.dailyStoreStaff.findMany({ orderBy: { id: 'asc' } }),
+    notices: await prisma.payrollNotice.findMany({ orderBy: { id: 'asc' } }),
+    employees: await prisma.employee.findMany({ orderBy: { id: 'asc' } }),
+    schedules: await prisma.schedule.findMany({ orderBy: { id: 'asc' } }),
+  })
+  const immutableBefore = await immutable()
+  const correctionEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey: 'tongying', date: date('2026-09-13') } } })
+  const correction = { scope: 'sales', storeKey: 'tongying', date: '2026-09-13', version: correctionEntry.version,
+    requestKey: 'sales-correction-test-0001', manualSales: { incCents: 55500, ord: 5 }, reason: '核对真实营业收入' }
+  const revise = (body, cookie = devCookie) => request(base, '/v2/daily-entry/revise', { cookie, method: 'POST', body })
+  assert.equal((await revise(correction, staffCookie)).status, 403)
+  assert.equal((await revise({ ...correction, reason: '' })).status, 400)
+  assert.equal((await revise({ ...correction, items: [] })).status, 400)
+  const first = await revise(correction)
+  assert.equal(first.status, 200, await first.text())
+  assert.equal((await revise(correction)).status, 200)
+  assert.equal((await revise({ ...correction, reason: '不同更正内容' })).status, 409)
+  const corrected = await prisma.dailyEntry.findUnique({ where: { id: correctionEntry.id } })
+  assert.equal(corrected.version, correctionEntry.version + 1)
+  assert.equal(corrected.incCents, 55500n)
+  const correctionAudits = await prisma.dailyEntryAuditLog.findMany({ where: { storeId: 'tongying', date: date(correction.date), fieldName: 'sales' } })
+  assert.equal(correctionAudits.length, 1)
+  assert.equal(correctionAudits[0].beforeValue.entry.incCents, correctionEntry.incCents.toString())
+  assert.equal(correctionAudits[0].afterValue.entry.incCents, '55500')
+  assert.ok(correctionAudits[0].operatorId)
+  const parallel = await Promise.all([1, 2].map(n => revise({ ...correction, version: corrected.version,
+    requestKey: `sales-concurrent-test-000${n}`, manualSales: { incCents: 56000 + n, ord: 6 } })))
+  assert.deepEqual(parallel.map(r => r.status).sort(), [200, 409])
+  const current = await prisma.dailyEntry.findUnique({ where: { id: correctionEntry.id } })
+  const same = { ...correction, version: current.version, requestKey: 'sales-same-request-0001', manualSales: { incCents: 57000, ord: 7 } }
+  assert.deepEqual((await Promise.all([revise(same), revise(same)])).map(r => r.status), [200, 200])
+  assert.equal((await prisma.dailyEntry.findUnique({ where: { id: current.id } })).version, current.version + 1)
+  assert.equal(await immutable(), immutableBefore)
+  for (const role of ['admin', 'finance', 'manager']) {
+    const created = await request(base, '/admin/users', { cookie: devCookie, method: 'POST', body: {
+      username: `correction-${role}`, password: '123456', role, storeKeys: ['tongying'],
+      ...(role === 'manager' ? { employeeId: 'emp-gb-b' } : {}),
+    } })
+    assert.equal(created.status, 200, await created.text())
+    const cookie = await login(base, `correction-${role}`, '123456')
+    const latest = await prisma.dailyEntry.findUnique({ where: { id: current.id } })
+    const response = await revise({ ...correction, version: latest.version, requestKey: `sales-role-${role}-00001`, manualSales: { incCents: 58000, ord: 8 } }, cookie)
+    assert.equal(response.status, role === 'admin' ? 200 : 403, await response.text())
+    if (role !== 'admin') assert.equal((await request(base, '/v2/daily-entry/adjust', { cookie, method: 'POST', body: { storeKey: 'tongying', date: correction.date } })).status, 403)
+  }
+  const ledger = await request(base, '/v2/daily-entry/ledger?store=tongying&month=2026-09', { cookie: devCookie })
+  assert.equal(ledger.status, 200)
+  const ledgerRow = (await ledger.json()).rows.find(r => r.date === correction.date)
+  assert.equal(ledgerRow.incCents, '58000')
+  assert.equal(ledgerRow.status, 'revised')
+  assert.ok(ledgerRow.audits.some(a => a.beforeValue?.entry && a.afterValue?.entry && a.reason))
+  const { ReportQueryService } = await import('../server/report-center-query.js')
+  const summary = await new ReportQueryService(prisma).summary({ role: 'developer' }, { store: 'tongying', from: correction.date, to: correction.date })
+  assert.equal(summary.metrics.revenue.valueCents, '58000')
+  const payrollSalesBefore = await loadAuthoritativePayrollRange(prisma, { periodType: 'custom', periodStart: payrollDay, periodEnd: payrollDay })
+  const payrollSalesEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey: 'tongying', date: date(payrollDay) } } })
+  assert.equal((await revise({ ...correction, date: payrollDay, version: payrollSalesEntry.version, requestKey: 'sales-payroll-input-0001', manualSales: { incCents: 990000, ord: 30 } })).status, 200)
+  const payrollSalesAfter = await loadAuthoritativePayrollRange(prisma, { periodType: 'custom', periodStart: payrollDay, periodEnd: payrollDay })
+  const aBefore = payrollSalesBefore.result.payroll.employees.find(r => r.employeeId === 'emp-gb-a')
+  const aAfter = payrollSalesAfter.result.payroll.employees.find(r => r.employeeId === 'emp-gb-a')
+  assert.equal(aAfter.payableHours, aBefore.payableHours)
+  assert.notEqual(aAfter.commission, aBefore.commission)
+  const beforeFailedCorrection = await prisma.dailyEntry.findUnique({ where: { id: current.id } })
+  await prisma.$executeRawUnsafe(`CREATE FUNCTION "${schema}".correction_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW."field_name" = 'sales' THEN RAISE EXCEPTION 'private audit failure'; END IF; RETURN NEW; END $$`)
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER correction_fail_audit BEFORE INSERT ON "${schema}"."daily_entry_audit_logs" FOR EACH ROW EXECUTE FUNCTION "${schema}".correction_fail_audit()`)
+  const failedCorrection = await revise({ ...correction, version: beforeFailedCorrection.version, requestKey: 'sales-audit-failure-0001', manualSales: { incCents: 59000, ord: 9 } })
+  assert.equal(failedCorrection.status, 500)
+  assert.deepEqual(await prisma.dailyEntry.findUnique({ where: { id: current.id } }), beforeFailedCorrection)
+  assert.equal(await immutable(), immutableBefore)
+  console.log('DAILY ENTRY V2 GATE B-F + SALES CORRECTION API TEST OK')
 } finally {
   await new Promise((resolve) => server.close(resolve))
   await prisma.$disconnect().catch(() => {})
-  await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => {})
+  if (process.env.DAILY_CORRECTION_ISOLATED !== '1') await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => {})
   await admin.$disconnect().catch(() => {})
 }

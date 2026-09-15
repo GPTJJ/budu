@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Correction isolated harness</title></head>
+<body><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import Correction from '/src/components/DailyPerformanceCorrection.jsx'
+import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+import '/src/index.css'
+window.__writes = []
+window.__fail = 0
+window.fetch = async (url, opts) => {
+  window.__writes.push(JSON.parse(opts.body))
+  return new Response(JSON.stringify(window.__fail ? { error: '隔离测试失败' } : { ok: true }), { status: window.__fail || 200, headers: {'Content-Type':'application/json'} })
+}
+function App() {
+  const [open, setOpen] = React.useState(true)
+  return React.createElement(React.Fragment, null, React.createElement(OverlayStackManager),
+    React.createElement('button', {onClick:()=>setOpen(true)}, '更正数据'),
+    open && React.createElement(Correction, {row: {storeKey:'tongying',storeName:'北京通盈中心店',date:'2026-08-31',incCents:'843645',ord:50,version:2,revisionCount:1,
+      audits:[{module:'daily_revision',beforeValue:{entry:{incCents:'800000',ord:49,version:1}}}]}, onClose:()=>setOpen(false), onSaved:()=>setOpen(false)}))
+}
+createRoot(document.getElementById('root')).render(React.createElement(App))
+</script></body></html>
