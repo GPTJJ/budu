@@ -1,0 +1,572 @@
+[
+  {
+    "id": "c1",
+    "name": "92%生巧克力",
+    "category": "生巧克力",
+    "status": "on",
+    "unit": "盒",
+    "spec": "100g/盒",
+    "unitPriceCent": 13800,
+    "subtitle": "高可可 · 醇苦回甘",
+    "media": {
+      "cover": "/images/c1.jpg",
+      "gallery": [],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c1/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c1/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c1/3.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "c2",
+    "name": "抹茶生巧克力",
+    "category": "生巧克力",
+    "status": "on",
+    "unit": "盒",
+    "spec": "100g/盒",
+    "unitPriceCent": 13800,
+    "subtitle": "清新抹茶 · 微苦回甘",
+    "media": {
+      "cover": "/images/c2.jpg",
+      "gallery": [],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c2/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c2/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c2/3.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "c3",
+    "name": "榛子生巧克力",
+    "category": "生巧克力",
+    "status": "on",
+    "unit": "盒",
+    "spec": "100g/盒",
+    "unitPriceCent": 13800,
+    "subtitle": "榛子浓香 · 酥脆夹心",
+    "media": {
+      "cover": "/images/c3.jpg",
+      "gallery": [],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c3/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c3/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c3/3.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "c4",
+    "name": "茉莉花茶生巧克力",
+    "category": "生巧克力",
+    "status": "on",
+    "unit": "盒",
+    "spec": "100g/盒",
+    "unitPriceCent": 13800,
+    "subtitle": "茉莉花香 · 淡雅清甜",
+    "media": {
+      "cover": "/images/c4.jpg",
+      "gallery": [],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c4/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c4/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c4/3.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "c5",
+    "name": "柚子生巧克力",
+    "category": "生巧克力",
+    "status": "on",
+    "unit": "盒",
+    "spec": "100g/盒",
+    "unitPriceCent": 13800,
+    "subtitle": "柚子果香 · 酸甜清爽",
+    "media": {
+      "cover": "/images/c5.jpg",
+      "gallery": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c5/head.jpg"
+      ],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c5/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c5/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/c5/3.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "s1",
+    "name": "NO.1树莓",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s1.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s2",
+    "name": "NO.2柠檬",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s2.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s3",
+    "name": "NO.3百香果",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s3.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s4",
+    "name": "NO.4橙子",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s4.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s5",
+    "name": "NO.5英式伯爵茶",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s5.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s6",
+    "name": "NO.6泰式奶茶",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s6.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s7",
+    "name": "NO.7抹茶",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s7.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s8",
+    "name": "NO.8榛子",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s8.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s9",
+    "name": "NO.9海盐焦糖",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s9.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s10",
+    "name": "NO.10香草",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s10.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s11",
+    "name": "NO.11生椰拿铁",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s11.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "s12",
+    "name": "NO.12巧克力",
+    "category": "糖果",
+    "status": "on",
+    "unit": "颗",
+    "spec": "6g/颗",
+    "unitPriceCent": 500,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/s12.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "g24",
+    "name": "24颗礼盒",
+    "category": "糖果-礼盒",
+    "status": "on",
+    "unit": "盒",
+    "spec": "24颗/盒",
+    "unitPriceCent": 12900,
+    "subtitle": "分享装 · 一盒满足",
+    "media": {
+      "cover": "/images/g24.jpg",
+      "gallery": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/cover.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/9.jpg"
+      ],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/9.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g24/10.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "g12",
+    "name": "12颗礼盒",
+    "category": "糖果-礼盒",
+    "status": "on",
+    "unit": "盒",
+    "spec": "12颗/盒",
+    "unitPriceCent": 6900,
+    "subtitle": "经典组合 · 送礼首选",
+    "media": {
+      "cover": "/images/g12.jpg",
+      "gallery": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/cover.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/9.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/10.jpg"
+      ],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/9.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/10.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g12/11.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "g8f",
+    "name": "8颗礼盒-方",
+    "category": "糖果-礼盒",
+    "status": "on",
+    "unit": "盒",
+    "spec": "8颗/盒",
+    "unitPriceCent": 4900,
+    "subtitle": "方盒小巧 · 精致心意",
+    "media": {
+      "cover": "/images/g8f.jpg",
+      "gallery": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/cover.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/9.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/10.jpg"
+      ],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/8.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/9.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/10.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8f/11.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "g8l",
+    "name": "8颗礼盒-长",
+    "category": "糖果-礼盒",
+    "status": "on",
+    "unit": "盒",
+    "spec": "8颗/盒",
+    "unitPriceCent": 4900,
+    "subtitle": "长盒轻巧 · 随身分享",
+    "media": {
+      "cover": "/images/g8l.jpg",
+      "gallery": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/cover.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/7.jpg"
+      ],
+      "detail": [
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/1.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/2.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/3.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/4.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/5.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/6.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/7.jpg",
+        "cloud://budu-d6gz358ixe39faf43.6275-budu-d6gz358ixe39faf43-1468945179/product-detail/g8l/8.jpg"
+      ]
+    },
+    "combo": null
+  },
+  {
+    "id": "b1",
+    "name": "巧克力豆.爆酸豆",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b1.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "b2",
+    "name": "巧克力豆.泰奶麻薯",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b2.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "b3",
+    "name": "巧克力豆.原粒杏仁",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b3.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "b4",
+    "name": "巧克力豆.百香果凤梨",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b4.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "b5",
+    "name": "巧克力豆.山核桃",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b5.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "b6",
+    "name": "巧克力豆.青苹果益生菌",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "罐",
+    "spec": "75g/罐",
+    "unitPriceCent": 6900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/b6.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": null
+  },
+  {
+    "id": "bb",
+    "name": "Balls-礼盒",
+    "category": "巧克力豆",
+    "status": "on",
+    "unit": "盒",
+    "spec": "4款自由搭配/盒",
+    "unitPriceCent": 29900,
+    "subtitle": "",
+    "media": {
+      "cover": "/images/bb.jpg",
+      "gallery": [],
+      "detail": []
+    },
+    "combo": {
+      "slots": 4,
+      "repeat": true,
+      "flavorIds": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6"
+      ],
+      "unitPriceCent": 29900
+    }
+  }
+]

@@ -43,7 +43,7 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
       return res.json({ok:true,result:await fn(req.body,customer)})
     }catch(error){
       const status=Number(error?.status)
-      return res.status([400,401,403,404,409,429].includes(status)?status:503).json({ok:false,error:status===409 && error?.code==='ONLINE_QUOTE_EXPIRED'?'ONLINE_QUOTE_EXPIRED':'ONLINE_CHECKOUT_REQUEST_FAILED'})
+      return res.status([400,401,403,404,409,429].includes(status)?status:503).json({ok:false,error:status===409 && ['ONLINE_QUOTE_EXPIRED','CATALOG_MAPPING_REQUIRED'].includes(error?.code)?error.code:'ONLINE_CHECKOUT_REQUEST_FAILED'})
     }
   }
   router.post('/capabilities',handle(async(body,customer)=>{

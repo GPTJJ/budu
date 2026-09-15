@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { classifyOnlinePolicy } from './online-catalog-coverage.js'
 import { normalizeOnlineCheckoutIntent } from './online-checkout-intent.js'
 import { httpError } from './pos-core.js'
 import { cents, onlinePaymentAllowed, quoteOnlineCheckout } from './online-checkout-policy.js'
@@ -38,8 +39,11 @@ async function productEligibility(tx, namespace, line) {
   } }, include: { product: true } })
   const category = policy?.product?.productCategoryId
   const blocked = category ? await tx.sweetCardCategoryPolicy.findUnique({ where: { categoryId: category } }) : null
-  return { canonicalProductId: policy?.productId || null,
-    allowed: policy?.enabled === true && policy.product.isActive === true && blocked?.blocked !== true }
+  const decision = classifyOnlinePolicy(policy, blocked)
+  if (decision.status === 'MAPPING_REQUIRES_CONFIRMATION') {
+    throw Object.assign(httpError('商品线上甜意卡资格尚未配置，请联系商家', 409), { code: 'CATALOG_MAPPING_REQUIRED' })
+  }
+  return { canonicalProductId: policy.productId, allowed: decision.allowed }
 }
 
 // resolveCatalog is an INTERNAL server adapter, never a client-supplied envelope.
