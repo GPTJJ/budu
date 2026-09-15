@@ -612,13 +612,14 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   }
 
   const statusBadge = () => {
+    if (source === 'conflict') return <span className="text-xs font-semibold text-rose-600">历史数据来源冲突</span>
     if (source === 'pos' || source === 'hybrid') {
       if (salesDataStatus === 'sync_failed') {
         return <span className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600"><ShieldAlert className="h-3.5 w-3.5" />POS 数据同步异常</span>
       }
       return <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" />POS 自动同步</span>
     }
-    return <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600"><WalletCards className="h-3.5 w-3.5" />当前门店暂未接入 POS</span>
+    return <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600"><WalletCards className="h-3.5 w-3.5" />{confirmed ? '人工录入 · 历史确认来源' : '当前门店暂未接入 POS'}</span>
   }
 
   const posCards = pos ? [
@@ -650,7 +651,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {statusBadge()}
           {dirty && <span data-testid="daily-entry-dirty" className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">有未确认修改</span>}
-          {confirmed && <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">已确认{overview?.entry?.confirmedBy ? ` · ${overview.entry.confirmedBy}` : ''}</span>}
+          {confirmed && <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">{overview?.status === 'revised' ? '已更正' : '已确认'}{overview?.entry?.confirmedBy ? ` · ${overview.entry.confirmedBy}` : ''}</span>}
           <button onClick={() => setExportOpen(true)} className="btn-secondary px-3 py-2"><FileSpreadsheet className="h-4 w-4 text-budu-600" />{t('表格导出')}</button>
         </div>
       </div>
@@ -685,7 +686,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
           </Field>
           <div className="flex items-end">
             <p className="text-xs text-slate-400">
-              {source === 'pos' ? '该门店营业数据由 POS 自动同步，普通员工不可修改。' : source === 'hybrid' ? '该门店优先读取 POS 数据，管理员可调整补录。' : '当前门店暂未接入 POS，营业数据由门店录入。'}
+              {source === 'conflict' ? '历史来源证据不一致，请核对；不能按当前门店配置推断。' : source === 'pos' ? '该日营业数据由 POS 自动同步，普通员工不可修改。' : source === 'hybrid' ? '该门店优先读取 POS 数据，管理员可调整补录。' : '该日营业数据由门店人工录入。'}
             </p>
           </div>
         </div>
@@ -700,6 +701,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
             <p className="text-sm font-semibold text-rose-600">当前门店/日期的数据未完整加载，页面不会以 0 或空值代替。</p>
             <button type="button" onClick={() => requestTransition(retryCurrentAuthority)} className="mt-3 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm">重试加载</button>
           </div>
+        ) : source === 'conflict' ? (
+          <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">营业数据 — · 历史数据来源冲突，暂不可更正。</p>
         ) : source === 'pos' || source === 'hybrid' ? (
           <>
             {salesDataStatus === 'sync_failed' ? (
@@ -801,7 +804,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
           {confirmed ? (
             <>
               <span className="rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-500">已确认记录在普通每日录入中只读</span>
-              {canRevise && !revisionMode && !hasHistoricalStaff && (
+              {canRevise && source !== 'conflict' && !revisionMode && !hasHistoricalStaff && (
                 <button data-testid="daily-entry-start-revision" type="button" onClick={() => { setRevisionMode(true); setRevisionReason('') }} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700">启动受控修正</button>
               )}
             </>
@@ -1016,6 +1019,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
 
       {correctionRow && <DailyPerformanceCorrection row={correctionRow} onClose={() => setCorrectionRow(null)} onSaved={() => {
         setCorrectionRow(null); setLedgerDetail(null); setLedgerRefresh(v => v + 1)
+        // Refresh the selected authority without overwriting an unrelated local draft.
+        void reloadCurrentAuthority({ mode: 'background' })
         void loadUserData().catch(() => setError('更正已保存，刷新失败，请重新加载'))
         setFeedback({ title: '更正已保存', description: '修改前后业绩和操作审计已保留' })
       }} />}

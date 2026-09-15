@@ -605,6 +605,7 @@ try {
   // not a second implementation of historical source selection.
   const reportService = new ReportQueryService(prisma)
   const adminCookie = await login(base, 'correction-admin', '123456')
+  await prisma.inventoryItem.create({ data: { id: 'source-product', name: '隔离来源商品', sku: 'SOURCE-PRODUCT' } })
   const cases = [
     ['A', 'manual', 'manual', 'manual', 200],
     ['B', 'manual', 'pos', 'manual', 200],
@@ -618,11 +619,45 @@ try {
     const original = await prisma.dailyEntry.create({ data: { id: `de-source-${label}`, storeKey: 'tongying', date: date(day), status: 'confirmed', version: 1,
       incCents: 10000n, ord: 2, confirmedAt: date(day), posSyncAt: historicalSource === 'pos' ? date(day) : null } })
     await prisma.dailyEntryAuditLog.create({ data: { id: `audit-source-${label}`, storeId: 'tongying', date: date(day), module: 'daily_confirmation', fieldName: 'atomic_confirm', afterValue: { salesAuthority: auditSource } } })
+    await prisma.order.create({ data: { id: `source-order-${label}`, orderNo: `SOURCE-${label}`, storeId: 'tongying', cashierId: 'fixture',
+      checkoutKey: `source-checkout-${label}`, cartHash: 'fixture', status: 'draft', paymentStatus: 'unpaid', businessDate: date(day),
+      subtotal: 7000n, payableAmount: 7000n,
+      items: { create: { id: `source-item-${label}`, productId: 'source-product', productNameSnapshot: '隔离来源商品', skuSnapshot: 'SOURCE-PRODUCT', unitPrice: 7000n, costPriceSnapshot: 1000n, quantity: 1, lineAmount: 7000n, actualAmount: 7000n } },
+      payments: { create: { id: `source-payment-${label}`, paymentNo: `SOURCE-PAY-${label}`, channel: 'cash', provider: 'cash', amount: 7000n, status: 'success', merchantTradeNo: `SOURCE-TRADE-${label}`, requestKey: `source-pay-${label}` } },
+    } })
+    await prisma.order.update({ where: { id: `source-order-${label}` }, data: { status: 'completed', paymentStatus: 'paid' } })
     const list = await request(base, '/v2/daily-entry/ledger?store=tongying&month=2026-08', { cookie: devCookie })
     assert.equal(list.status, 200)
     const projected = (await list.json()).rows.find(r => r.date === day)
     const scope = await reportService.resolveScope({ role: 'developer' }, { store: 'tongying', from: day, to: day })
     assert.equal(projected.salesAuthority.authority, scope.days[0].authority)
+    const overviewResponse = await request(base, `/v2/daily-entry/overview?store=tongying&date=${day}`, { cookie: devCookie })
+    assert.equal(overviewResponse.status, 200)
+    const overview = await overviewResponse.json()
+    assert.deepEqual(overview.salesAuthority, projected.salesAuthority)
+    assert.equal(overview.salesDataSource, projected.salesDataSource)
+    assert.equal(overview.correctionEligible, projected.correctionEligible)
+    if (expectedStatus === 200) assert.equal(overview.entry.incCents, projected.incCents)
+    if (historicalSource === 'pos') assert.equal(overview.pos.effectiveAfterRefund, projected.incCents)
+    if (historicalSource === 'pos') {
+      assert.equal(projected.incCents, '7000')
+      assert.equal((await reportService.summary({ role: 'developer' }, { store: 'tongying', from: day, to: day })).metrics.revenue.valueCents, '7000')
+    }
+    if (label !== 'E') {
+      const daily = await (await request(base, '/v2/pos/daily-summary', { cookie: devCookie })).json()
+      assert.equal(daily.rows.some(r => r.date === day && r.storeKey === 'tongying'), historicalSource === 'pos')
+      const products = await (await request(base, '/v2/pos/product-sales', { cookie: devCookie })).json()
+      assert.equal(products.rows.some(r => r.productId === 'source-product'), ['C', 'D'].includes(label))
+    }
+    if (label === 'E') {
+      assert.equal(overview.salesDataStatus, 'source_conflict')
+      assert.equal(overview.pos, null)
+      for (const path of ['/v2/pos/daily-summary', '/v2/pos/product-sales']) {
+        const conflict = await request(base, path, { cookie: devCookie })
+        assert.equal(conflict.status, 409)
+        assert.equal((await conflict.json()).code, 'SOURCE_AUTHORITY_CONFLICT')
+      }
+    }
     assert.equal(projected.correctionEligible, expectedStatus === 200)
     if (expectedStatus === 200) assert.equal(projected.incCents, '10000')
     if (label === 'E') assert.equal(projected.incCents, null)
@@ -633,6 +668,10 @@ try {
       assert.equal(body.salesAuthority.authority, scope.days[0].authority)
       assert.equal(body.salesDataSource, 'manual')
       assert.equal((await reportService.summary({ role: 'developer' }, { store: 'tongying', from: day, to: day })).metrics.revenue.valueCents, '12000')
+      const after = await (await request(base, `/v2/daily-entry/overview?store=tongying&date=${day}`, { cookie: devCookie })).json()
+      assert.equal(after.entry.incCents, '12000')
+      assert.equal(after.salesDataSource, 'manual')
+      assert.equal(after.status, 'revised')
     } else {
       if (label === 'E') assert.equal(body.code, 'SOURCE_AUTHORITY_CONFLICT')
       assert.deepEqual(await prisma.dailyEntry.findUnique({ where: { id: original.id } }), original)
@@ -645,6 +684,7 @@ try {
   await prisma.store.update({ where: { key: 'tongying' }, data: { salesDataSource: 'manual' } })
   const chainDay = '2026-08-10'
   await prisma.dailyEntry.create({ data: { id: 'de-review-chain', storeKey: 'tongying', date: date(chainDay), status: 'confirmed', version: 1, incCents: 10000n, ord: 2, confirmedAt: date(chainDay) } })
+  await prisma.store.update({ where: { key: 'tongying' }, data: { salesDataSource: 'pos' } })
   const command1 = { ...correction, date: chainDay, version: 1, requestKey: 'review-chain-first-0001', manualSales: { incCents: 12000, ord: 2 } }
   assert.equal((await revise(command1)).status, 200)
   assert.equal((await revise({ ...command1, requestKey: 'review-chain-stale-admin' }, adminCookie)).status, 409)
@@ -655,6 +695,23 @@ try {
   assert.ok(chain.every(a => a.reason && a.operatorId && a.createdAt))
   assert.notEqual(chain[0].operatorId, chain[1].operatorId)
   assert.equal((await prisma.dailyEntry.findUnique({ where: { id: 'de-review-chain' } })).incCents, 11000n)
+  const chainOverview = await (await request(base, `/v2/daily-entry/overview?store=tongying&date=${chainDay}`, { cookie: devCookie })).json()
+  assert.equal(chainOverview.salesDataSource, 'manual')
+  assert.equal(chainOverview.entry.incCents, '11000')
+  assert.equal(chainOverview.status, 'revised')
+  assert.equal((await reportService.summary({ role: 'developer' }, { store: 'tongying', from: chainDay, to: chainDay })).metrics.revenue.valueCents, '11000')
+  await prisma.dailyEntry.create({ data: { id: 'source-draft', storeKey: 'tongying', date: date('2026-08-21'), status: 'draft', incCents: 3000n, ord: 1 } })
+  for (const configured of ['manual', 'pos']) {
+    await prisma.store.update({ where: { key: 'tongying' }, data: { salesDataSource: configured } })
+    const newDay = await (await request(base, '/v2/daily-entry/overview?store=tongying&date=2026-08-20', { cookie: devCookie })).json()
+    assert.equal(newDay.entry, null)
+    assert.equal(newDay.salesDataSource, configured)
+    assert.equal(newDay.correctionEligible, false)
+    const draft = await (await request(base, '/v2/daily-entry/overview?store=tongying&date=2026-08-21', { cookie: devCookie })).json()
+    assert.equal(draft.entry.status, 'draft')
+    assert.equal(draft.salesDataSource, configured)
+    assert.equal(draft.correctionEligible, false)
+  }
   const competing = await Promise.all([
     revise({ ...command1, version: 3, requestKey: 'review-concurrent-dev-0001', manualSales: { incCents: 13000, ord: 2 } }),
     revise({ ...command1, version: 3, requestKey: 'review-concurrent-admin-0001', manualSales: { incCents: 14000, ord: 2 } }, adminCookie),

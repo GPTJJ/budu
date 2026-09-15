@@ -402,15 +402,23 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
   const store = await ensureStore(storeKey)
-  const source = effectiveSource(store, dateStr)
   const d = dateOnly(dateStr)
-  const [entry, staff] = await Promise.all([
+  const [entry, staff, audits] = await Promise.all([
     prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } }),
     prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d }, orderBy: [{ staffNameSnapshot: 'asc' }] }),
+    prisma.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: d } }),
   ])
+  const salesAuthority = resolveDailySalesAuthority({ store, date: dateStr, entry,
+    audits: audits.filter(a => a.module === 'daily_confirmation' && a.fieldName === 'atomic_confirm') })
+  const source = entry?.status !== 'confirmed' ? effectiveSource(store, dateStr)
+    : salesAuthority.authority === DAILY_SALES_AUTHORITIES.MANUAL ? 'manual'
+      : salesAuthority.authority === DAILY_SALES_AUTHORITIES.POS ? 'pos' : 'conflict'
+  const revised = audits.some(a => isConfirmedRevisionAudit(entry, a))
   let pos = null
   let salesDataStatus = 'waiting_input'
-  if (source === 'manual') {
+  if (source === 'conflict') {
+    salesDataStatus = 'source_conflict'
+  } else if (source === 'manual') {
     salesDataStatus = entry ? 'synced' : 'waiting_input'
   } else {
     try {
@@ -425,6 +433,9 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
     storeKey,
     date: dateStr,
     salesDataSource: source,
+    salesAuthority,
+    correctionEligible: entry?.status === 'confirmed' && salesAuthority.authority === DAILY_SALES_AUTHORITIES.MANUAL,
+    status: entry?.status === 'confirmed' && revised ? 'revised' : entry?.status || null,
     storeConfig: {
       salesDataSource: store.salesDataSource,
       salesDataSourceEffectiveDate: isoDate(store.salesDataSourceEffectiveDate),
@@ -625,6 +636,31 @@ async function posScopeStores(req, storeParam) {
   return stores
 }
 
+// Bulk evidence loading only; the source decision remains the report resolver.
+async function historicalReadSources(storeIds, entries) {
+  const audits = await prisma.dailyEntryAuditLog.findMany({ where: {
+    storeId: { in: storeIds }, module: 'daily_confirmation', fieldName: 'atomic_confirm',
+  } })
+  const auditMap = new Map()
+  for (const audit of audits) {
+    const key = `${audit.storeId}|${isoDate(audit.date)}`
+    auditMap.set(key, [...(auditMap.get(key) || []), audit])
+  }
+  const sources = new Map()
+  for (const entry of entries) {
+    if (entry.status !== 'confirmed') continue
+    const key = `${entry.storeKey}|${isoDate(entry.date)}`
+    const resolved = resolveDailySalesAuthority({ entry, date: isoDate(entry.date), audits: auditMap.get(key) || [] })
+    if (resolved.authority === DAILY_SALES_AUTHORITIES.CONFLICT) {
+      const error = httpError('历史数据来源冲突，汇总暂不可用', 409)
+      error.code = 'SOURCE_AUTHORITY_CONFLICT'
+      throw error
+    }
+    sources.set(key, resolved.authority)
+  }
+  return sources
+}
+
 dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const stores = await posScopeStores(req, String(req.query.store || '').trim())
@@ -646,11 +682,14 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
   ])
   const storeMap = new Map(stores.map((store) => [store.key, store]))
   const entryMap = new Map(entries.map((entry) => [`${entry.storeKey}|${isoDate(entry.date)}`, entry]))
+  const historicalSources = await historicalReadSources(storeIds, entries)
   const groups = new Map()
   for (const order of orders) {
     const dateStr = isoDate(order.businessDate)
     const store = storeMap.get(order.storeId)
-    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    if (!store || (historicalSources.has(`${order.storeId}|${dateStr}`)
+      ? historicalSources.get(`${order.storeId}|${dateStr}`) !== DAILY_SALES_AUTHORITIES.POS
+      : effectiveSource(store, dateStr) === 'manual')) continue
     const key = `${order.storeId}|${dateStr}`
     const group = groups.get(key) || {
       storeId: order.storeId,
@@ -677,7 +716,9 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
   for (const refund of refunds) {
     const dateStr = isoDate(refund.order.businessDate)
     const store = storeMap.get(refund.order.storeId)
-    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    if (!store || (historicalSources.has(`${refund.order.storeId}|${dateStr}`)
+      ? historicalSources.get(`${refund.order.storeId}|${dateStr}`) !== DAILY_SALES_AUTHORITIES.POS
+      : effectiveSource(store, dateStr) === 'manual')) continue
     const key = `${refund.order.storeId}|${dateStr}`
     const group = groups.get(key) || {
       storeId: refund.order.storeId,
@@ -719,6 +760,8 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   if (stores.length === 0) return res.json({ rows: [] })
   const storeIds = stores.map((store) => store.key)
   const storeMap = new Map(stores.map((store) => [store.key, store]))
+  const historicalSources = await historicalReadSources(storeIds,
+    await prisma.dailyEntry.findMany({ where: { storeKey: { in: storeIds }, status: 'confirmed' } }))
   const items = await prisma.orderItem.findMany({
     where: { order: { is: buildRecognizedRevenueWhere({ storeId: { in: storeIds }, businessDate: { not: null } }) } },
     include: { order: { select: { storeId: true, businessDate: true, subtotal: true, payableAmount: true } } },
@@ -727,7 +770,9 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   for (const item of items) {
     const dateStr = isoDate(item.order.businessDate)
     const store = storeMap.get(item.order.storeId)
-    if (!store || effectiveSource(store, dateStr) === 'manual') continue
+    if (!store || (historicalSources.has(`${item.order.storeId}|${dateStr}`)
+      ? historicalSources.get(`${item.order.storeId}|${dateStr}`) !== DAILY_SALES_AUTHORITIES.POS
+      : effectiveSource(store, dateStr) === 'manual')) continue
     const key = `${item.order.storeId}|${item.productId}`
     const current = map.get(key) || {
       storeKey: item.order.storeId,
