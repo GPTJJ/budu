@@ -2,6 +2,8 @@
 
 Date: 2026-09-16 (Asia/Shanghai). Scope: preserve candidate and independent review only. NO DEPLOYMENT.
 
+Update: candidate 52d6d8b received REVIEW_BLOCKED. See [blocker remediation and fresh evidence](2026-09-16-daily-performance-correction-remediation.md) for the descendant candidate; re-review that exact delivered SHA. The original candidate description below is historical, not a PASS claim for the remediation.
+
 ## Exact review boundary
 
 - Baseline: `f18e903f721567d4d35c0d19d0a99cd268edf045`.

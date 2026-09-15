@@ -8,6 +8,7 @@ Last reviewed: 2026-09-07
 
 - Baseline f18e903; branch `codex/daily-performance-correction`.
 - [Scoped audit and acceptance checkpoint](checkpoints/2026-09-16-daily-performance-correction.md).
+- [Reviewer blocker remediation](checkpoints/2026-09-16-daily-performance-correction-remediation.md): shared historical source resolver and fresh isolated PostgreSQL validation; awaiting independent re-review.
 - No production mutation/deployment or authoritative branch movement. Candidate preservation is on the independent branch only; see [Reviewer handoff](checkpoints/2026-09-16-daily-performance-correction-reviewer-handoff.md) for recovery and acceptance checks.
 
 ## Active candidate (2026-09-13)

@@ -892,9 +892,9 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-50/80 p-3">
-                    <div className="min-w-0"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(row.incCents))}</p></div>
-                    <div className="min-w-0"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{row.ord}</p></div>
-                    <div className="min-w-0"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(row.avgCents))}</p></div>
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{row.incCents == null ? '—' : formatCents(BigInt(row.incCents))}</p></div>
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{row.ord ?? '—'}</p></div>
+                    <div className="min-w-0"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{row.avgCents == null ? '—' : formatCents(BigInt(row.avgCents))}</p></div>
                   </div>
 
                   <div className="mt-3 min-w-0">
@@ -941,9 +941,9 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
               <div className="grid grid-cols-3 gap-2">
-                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(ledgerDetail.incCents))}</p></div>
-                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{ledgerDetail.ord}</p></div>
-                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{formatCents(BigInt(ledgerDetail.avgCents))}</p></div>
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">营业收入</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{ledgerDetail.incCents == null ? '—' : formatCents(BigInt(ledgerDetail.incCents))}</p></div>
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">订单数</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{ledgerDetail.ord ?? '—'}</p></div>
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-3"><p className="text-[10px] text-slate-400">客单价</p><p className="mt-1 truncate text-sm font-black tabular-nums text-slate-800">{ledgerDetail.avgCents == null ? '—' : formatCents(BigInt(ledgerDetail.avgCents))}</p></div>
               </div>
 
               <section className="mt-5">
@@ -1006,7 +1006,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                   <Pencil className="h-4 w-4" />继续填写这一天
                 </button>
               )}
-              {ledgerDetail.baseStatus === 'confirmed' && canRevise && ledgerDetail.salesDataSource === 'manual' && (
+              {canRevise && ledgerDetail.correctionEligible === true && (
                 <button type="button" onClick={() => setCorrectionRow(ledgerDetail)} className="mt-5 min-h-11 w-full rounded-xl bg-budu-600 px-4 text-sm font-semibold text-white">更正数据</button>
               )}
             </div>

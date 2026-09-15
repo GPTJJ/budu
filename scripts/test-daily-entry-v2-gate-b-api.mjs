@@ -13,6 +13,16 @@ if (process.env.DAILY_CORRECTION_ISOLATED === '1') {
   assert.equal(target.port, '15487')
   assert.equal(target.pathname, '/budu_correction_test')
   assert.equal(target.search, '')
+  const { PrismaClient: IsolationProbe } = await import('@prisma/client')
+  const probe = new IsolationProbe({ datasources: { db: { url: target.toString() } } })
+  try {
+    const [identity] = await probe.$queryRawUnsafe('SELECT current_database() AS database, current_user AS username')
+    assert.equal(identity.database, 'budu_correction_test')
+    assert.notEqual(identity.database, 'budu_bj006')
+    const [empty] = await probe.$queryRawUnsafe("SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema='public'")
+    assert.equal(empty.count, 0, 'Use a fresh disposable test database, never an existing business database')
+    console.log('TEST_DB_ISOLATION = PASS', JSON.stringify(identity))
+  } finally { await probe.$disconnect() }
   process.env.DATABASE_URL = target.toString()
   execFileSync('./node_modules/.bin/prisma', ['migrate', 'deploy'], { env: process.env, stdio: 'inherit' })
 } else {
@@ -591,13 +601,76 @@ try {
   const aAfter = payrollSalesAfter.result.payroll.employees.find(r => r.employeeId === 'emp-gb-a')
   assert.equal(aAfter.payableHours, aBefore.payableHours)
   assert.notEqual(aAfter.commission, aBefore.commission)
+  // Reviewer remediation: exercise the real HTTP/API and PostgreSQL transaction,
+  // not a second implementation of historical source selection.
+  const reportService = new ReportQueryService(prisma)
+  const adminCookie = await login(base, 'correction-admin', '123456')
+  const cases = [
+    ['A', 'manual', 'manual', 'manual', 200],
+    ['B', 'manual', 'pos', 'manual', 200],
+    ['C', 'pos', 'pos', 'pos', 403],
+    ['D', 'pos', 'manual', 'pos', 403],
+    ['E', 'manual', 'manual', 'pos', 409],
+  ]
+  for (const [i, [label, historicalSource, configuredSource, auditSource, expectedStatus]] of cases.entries()) {
+    const day = `2026-08-0${i + 1}`
+    await prisma.store.update({ where: { key: 'tongying' }, data: { salesDataSource: configuredSource, salesDataSourceEffectiveDate: null } })
+    const original = await prisma.dailyEntry.create({ data: { id: `de-source-${label}`, storeKey: 'tongying', date: date(day), status: 'confirmed', version: 1,
+      incCents: 10000n, ord: 2, confirmedAt: date(day), posSyncAt: historicalSource === 'pos' ? date(day) : null } })
+    await prisma.dailyEntryAuditLog.create({ data: { id: `audit-source-${label}`, storeId: 'tongying', date: date(day), module: 'daily_confirmation', fieldName: 'atomic_confirm', afterValue: { salesAuthority: auditSource } } })
+    const list = await request(base, '/v2/daily-entry/ledger?store=tongying&month=2026-08', { cookie: devCookie })
+    assert.equal(list.status, 200)
+    const projected = (await list.json()).rows.find(r => r.date === day)
+    const scope = await reportService.resolveScope({ role: 'developer' }, { store: 'tongying', from: day, to: day })
+    assert.equal(projected.salesAuthority.authority, scope.days[0].authority)
+    assert.equal(projected.correctionEligible, expectedStatus === 200)
+    if (expectedStatus === 200) assert.equal(projected.incCents, '10000')
+    if (label === 'E') assert.equal(projected.incCents, null)
+    const response = await revise({ ...correction, date: day, version: 1, requestKey: `review-source-case-${label}-0001`, manualSales: { incCents: 12000, ord: 2 } })
+    assert.equal(response.status, expectedStatus)
+    const body = await response.json()
+    if (expectedStatus === 200) {
+      assert.equal(body.salesAuthority.authority, scope.days[0].authority)
+      assert.equal(body.salesDataSource, 'manual')
+      assert.equal((await reportService.summary({ role: 'developer' }, { store: 'tongying', from: day, to: day })).metrics.revenue.valueCents, '12000')
+    } else {
+      if (label === 'E') assert.equal(body.code, 'SOURCE_AUTHORITY_CONFLICT')
+      assert.deepEqual(await prisma.dailyEntry.findUnique({ where: { id: original.id } }), original)
+      assert.equal(await prisma.dailyEntryAuditLog.count({ where: { storeId: 'tongying', date: date(day), fieldName: 'sales' } }), 0)
+      const legacy = await revise({ storeKey: 'tongying', date: day, version: 1, reason: '旧入口不可绕过来源保护', items: [staffItem('emp-gb-a')], manualSales: { incCents: 12000, ord: 2 } })
+      assert.equal(legacy.status, expectedStatus)
+    }
+    console.log(`HISTORICAL SOURCE CASE ${label} / REPORT EQUALITY PASS`)
+  }
+  await prisma.store.update({ where: { key: 'tongying' }, data: { salesDataSource: 'manual' } })
+  const chainDay = '2026-08-10'
+  await prisma.dailyEntry.create({ data: { id: 'de-review-chain', storeKey: 'tongying', date: date(chainDay), status: 'confirmed', version: 1, incCents: 10000n, ord: 2, confirmedAt: date(chainDay) } })
+  const command1 = { ...correction, date: chainDay, version: 1, requestKey: 'review-chain-first-0001', manualSales: { incCents: 12000, ord: 2 } }
+  assert.equal((await revise(command1)).status, 200)
+  assert.equal((await revise({ ...command1, requestKey: 'review-chain-stale-admin' }, adminCookie)).status, 409)
+  assert.equal((await revise(command1)).status, 200)
+  assert.equal((await revise({ ...command1, version: 2, requestKey: 'review-chain-second-0001', manualSales: { incCents: 11000, ord: 2 } }, adminCookie)).status, 200)
+  const chain = await prisma.dailyEntryAuditLog.findMany({ where: { storeId: 'tongying', date: date(chainDay), fieldName: 'sales' }, orderBy: { createdAt: 'asc' } })
+  assert.deepEqual(chain.map(a => [a.beforeValue.entry.incCents, a.afterValue.entry.incCents]), [['10000', '12000'], ['12000', '11000']])
+  assert.ok(chain.every(a => a.reason && a.operatorId && a.createdAt))
+  assert.notEqual(chain[0].operatorId, chain[1].operatorId)
+  assert.equal((await prisma.dailyEntry.findUnique({ where: { id: 'de-review-chain' } })).incCents, 11000n)
+  const competing = await Promise.all([
+    revise({ ...command1, version: 3, requestKey: 'review-concurrent-dev-0001', manualSales: { incCents: 13000, ord: 2 } }),
+    revise({ ...command1, version: 3, requestKey: 'review-concurrent-admin-0001', manualSales: { incCents: 14000, ord: 2 } }, adminCookie),
+  ])
+  assert.deepEqual(competing.map(r => r.status).sort(), [200, 409])
+  assert.equal(await prisma.dailyEntryAuditLog.count({ where: { storeId: 'tongying', date: date(chainDay), fieldName: 'sales' } }), 3)
+  console.log('CONTINUOUS CHAIN / DISTINCT ACTOR CONCURRENCY / IDEMPOTENCY PASS')
   const beforeFailedCorrection = await prisma.dailyEntry.findUnique({ where: { id: current.id } })
+  const beforeFailedAudits = stableRows(await prisma.dailyEntryAuditLog.findMany({ orderBy: { id: 'asc' } }))
   await prisma.$executeRawUnsafe(`CREATE FUNCTION "${schema}".correction_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN IF NEW."field_name" = 'sales' THEN RAISE EXCEPTION 'private audit failure'; END IF; RETURN NEW; END $$`)
   await prisma.$executeRawUnsafe(`CREATE TRIGGER correction_fail_audit BEFORE INSERT ON "${schema}"."daily_entry_audit_logs" FOR EACH ROW EXECUTE FUNCTION "${schema}".correction_fail_audit()`)
   const failedCorrection = await revise({ ...correction, version: beforeFailedCorrection.version, requestKey: 'sales-audit-failure-0001', manualSales: { incCents: 59000, ord: 9 } })
   assert.equal(failedCorrection.status, 500)
   assert.deepEqual(await prisma.dailyEntry.findUnique({ where: { id: current.id } }), beforeFailedCorrection)
+  assert.equal(stableRows(await prisma.dailyEntryAuditLog.findMany({ orderBy: { id: 'asc' } })), beforeFailedAudits)
   assert.equal(await immutable(), immutableBefore)
   console.log('DAILY ENTRY V2 GATE B-F + SALES CORRECTION API TEST OK')
 } finally {

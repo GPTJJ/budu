@@ -22,6 +22,7 @@ import {
   PAYROLL_PARTICIPANT_TYPES,
 } from './payroll-participant-authority.js'
 import { resolveDailyEntryCompleteness } from './daily-entry-completeness.js'
+import { resolveDailySalesAuthority, DAILY_SALES_AUTHORITIES } from './report-center-query.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
@@ -35,7 +36,7 @@ const wrap = (handler) => async (req, res) => {
   } catch (error) {
     const status = error.status || 500
     if (status >= 500) console.error('[daily-entry-upgrade]', error)
-    res.status(status).json({ error: status >= 500 ? '每日录入处理失败，请稍后重试' : (error.message || '请求处理失败') })
+    res.status(status).json({ error: status >= 500 ? '每日录入处理失败，请稍后重试' : (error.message || '请求处理失败'), ...(error.code === 'SOURCE_AUTHORITY_CONFLICT' ? { code: error.code } : {}) })
   }
 }
 
@@ -508,12 +509,15 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
     const staff = staffByDate.get(dateStr) || []
     const entryAudits = auditByDate.get(dateStr) || []
     const revisionAudits = entryAudits.filter((audit) => isConfirmedRevisionAudit(entry, audit))
-    const source = effectiveSource(store, dateStr)
+    const salesAuthority = resolveDailySalesAuthority({ store, date: dateStr, entry,
+      audits: entryAudits.filter(a => a.module === 'daily_confirmation' && a.fieldName === 'atomic_confirm') })
+    const source = entry.status !== 'confirmed' ? effectiveSource(store, dateStr) : salesAuthority.authority === DAILY_SALES_AUTHORITIES.MANUAL ? 'manual'
+      : salesAuthority.authority === DAILY_SALES_AUTHORITIES.POS ? 'pos' : 'conflict'
     const pos = posGroups.get(dateStr)
-    const incCents = source === 'manual'
+    const incCents = source === 'conflict' ? null : source === 'manual'
       ? entry.incCents
       : (pos?.effectiveSales || 0n) + entry.hybridAdjustmentCents
-    const ord = source === 'manual' ? entry.ord : (pos?.orderCount || 0)
+    const ord = source === 'conflict' ? null : source === 'manual' ? entry.ord : (pos?.orderCount || 0)
     const completeness = resolveDailyEntryCompleteness({ entry, staffRows: staff, knownEmployeeIds })
     const derivedStatus = entry.status === 'confirmed' && revisionAudits.length > 0 ? 'revised' : entry.status
     return {
@@ -523,11 +527,13 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
       date: dateStr,
       status: derivedStatus,
       baseStatus: entry.status,
-      incCents: incCents.toString(),
+      incCents: incCents === null ? null : incCents.toString(),
       ord,
-      avgCents: (ord > 0 ? incCents / BigInt(ord) : 0n).toString(),
+      avgCents: incCents === null ? null : (ord > 0 ? incCents / BigInt(ord) : 0n).toString(),
+      salesAuthority,
+      correctionEligible: entry.status === 'confirmed' && salesAuthority.authority === DAILY_SALES_AUTHORITIES.MANUAL,
       salesDataSource: source,
-      salesSourceLabel: source === 'manual' ? '美团收银 · 人工录入' : 'budu POS',
+      salesSourceLabel: source === 'conflict' ? '历史数据来源冲突' : source === 'manual' ? '美团收银 · 人工录入' : 'budu POS',
       confirmedBy: entry.confirmedBy,
       confirmedAt: entry.confirmedAt,
       version: entry.version,
@@ -1092,20 +1098,26 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
     const d = dateOnly(dateStr)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before || before.status !== 'confirmed') throw httpError('只有已确认每日记录可以进入受控修正', 409)
+    const audits = await tx.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: d, module: 'daily_confirmation', fieldName: 'atomic_confirm' } })
+    const correctionSource = resolveDailySalesAuthority({ store, date: dateStr, entry: before, audits })
+    if (correctionSource.authority === DAILY_SALES_AUTHORITIES.CONFLICT) {
+      const error = httpError('历史数据来源冲突，不能更正', 409)
+      error.code = 'SOURCE_AUTHORITY_CONFLICT'
+      throw error
+    }
+    if (salesOnly && correctionSource.authority !== DAILY_SALES_AUTHORITIES.MANUAL) throw httpError('订单来源业绩不可手工更正', 403)
     if (salesOnly) {
       const previous = await tx.dailyEntryAuditLog.findUnique({ where: { id: auditId } })
       if (previous) {
         if (previous.afterValue?.commandDigest !== commandDigest) throw httpError('同一请求标识不可用于不同更正', 409)
         const staff = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
-        return { entry: before, staff, source: effectiveSource(store, dateStr), posSnapshot: null, replayed: true }
+        return { entry: before, staff, source: 'manual', salesAuthority: correctionSource, posSnapshot: null, replayed: true }
       }
     }
     if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
 
-    const source = effectiveSource(store, dateStr)
+    const source = correctionSource.authority === DAILY_SALES_AUTHORITIES.MANUAL ? 'manual' : 'pos'
     if (salesOnly) {
-      const confirmationAudits = await tx.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: d, module: 'daily_confirmation' } })
-      if (source !== 'manual' || before.posSyncAt || confirmationAudits.some(a => a.afterValue?.salesAuthority && a.afterValue.salesAuthority !== 'manual')) throw httpError('订单来源或来源冲突的业绩不可手工更正', 403)
       if (before.incCents === sales.incCents && before.ord === sales.ord) throw httpError('更正内容未变化', 409)
       const staff = await tx.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } })
       const row = await tx.dailyEntry.update({ where: { id: before.id }, data: {
@@ -1117,7 +1129,7 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
         afterValue: { entry: serializeEntry(row), commandDigest },
         reason, operatorId: actor.id, operatorName: actor.username,
       } })
-      return { entry: row, staff, source, posSnapshot: null }
+      return { entry: row, staff, source: 'manual', salesAuthority: correctionSource, posSnapshot: null }
     }
     let manualSales = null
     let posSnapshot = null
@@ -1182,6 +1194,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/revise', wrap(async (req, res) => {
   const result = await reviseConfirmedDailyEntryAtomic(prisma, { ...req.body, actor: req.user })
   res.json({
     ok: true,
+    ...(result.salesAuthority ? { salesAuthority: result.salesAuthority } : {}),
     salesDataSource: result.source,
     entry: serializeEntry(result.entry),
     staff: result.staff.map(serializeStaff),
