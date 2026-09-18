@@ -8,7 +8,7 @@ import { httpError } from './pos-core.js'
 // Dedicated merchant-function key, never the customer gateway key. The
 // CloudBase merchant function authenticates its runtime OPENID against its
 // canonical merchant allowlist before it signs this narrowly scoped request.
-export function createOnlineMerchantRouter({ db, gatewayConfig }) {
+export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null }) {
   const router = express.Router()
   async function activeActor(tx, actor){
     if(!actor?.id)throw httpError('商家身份已停用',403)
@@ -54,6 +54,14 @@ export function createOnlineMerchantRouter({ db, gatewayConfig }) {
     return { authorizationId: receipt.id, settlementId: s.id, requestKey: receipt.requestKey,
       status: receipt.method === 'DELIVERY' ? 'SHIPPED' : 'PICKED_UP', carrier: receipt.carrierCode,
       trackingNo: receipt.trackingNo, shippedAt: receipt.authorizedAt.toISOString() }
+  }))
+  // WeChat logistics reporting, deliberately separate from /fulfill: the
+  // shipment is already committed before this is called, and a failure here is
+  // recorded for background retry instead of surfacing as a shipping error.
+  router.post('/logistics', handle(async (body, actor, s) => {
+    if (!logistics) throw httpError('物流服务暂不可用', 503)
+    return logistics.register({ settlementId: s.id, receiverPhone: body.receiverPhone,
+      goodsName: body.goodsName, goodsImgUrl: body.goodsImgUrl, orderDetailPath: body.orderDetailPath })
   }))
   return router
 }

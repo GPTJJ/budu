@@ -6,6 +6,8 @@ import {createOnlineMirrorTransport} from './online-mirror-transport.js'
 import {deliverOnlineOutboxOnce} from './online-outbox.js'
 import {createOnlineRefundService,createOnlineRefundRecovery} from './online-refund-service.js'
 import {createOnlineMerchantRouter} from './online-merchant-api.js'
+import {createOnlineLogistics} from './online-logistics.js'
+import {createWechatLogistics} from './wechat-logistics.js'
 
 // Composition has no side effects until explicitly mounted/started. Purchase
 // rollout and recovery are separate: disabling purchases cannot abandon holds.
@@ -19,7 +21,11 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
     || !/^[A-Za-z0-9_-]{32,128}$/.test(merchantGatewayConfig.gatewaySecret||'')))throw Error('ONLINE_MERCHANT_SCOPE_INVALID')
   const payment=createOnlinePaymentService(db,paymentConfig,{env,...(request?{request}:{})})
   const notify=createOnlineWechatNotifyRouter({db,configuration:paymentConfig})
-  const customer=createOnlineCheckoutRouter({db,gatewayConfig,paymentService:payment,wechat:paymentConfig,env})
+  // WeChat logistics reporting. It reuses the single MiniProgram access_token
+  // authority, so it must not grow a token cache of its own.
+  const logistics=createOnlineLogistics(db,{appId:gatewayConfig.appId,
+    logistics:createWechatLogistics({config:{appId:gatewayConfig.appId,appSecret:gatewayConfig.appSecret},...(fetchImpl?{fetchImpl}:{})})})
+  const customer=createOnlineCheckoutRouter({db,gatewayConfig,paymentService:payment,wechat:paymentConfig,env,logistics})
   const deliver=createOnlineMirrorTransport(mirrorConfig,fetchImpl?{fetchImpl}:{})
   const recovery=createOnlinePaymentRecovery(db,payment)
   const refund=createOnlineRefundService(db,paymentConfig,request?{request}:{})
@@ -32,7 +38,7 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
       // Must precede the host's general JSON parser and employee auth routes.
       app.use('/api/online-checkout/wechat',notify)
       app.use('/api/v2/customer/online-checkout',express.json({limit:'256kb'}),customer)
-      if(merchantGatewayConfig)app.use('/api/v2/merchant/online-checkout',express.json({limit:'256kb'}),createOnlineMerchantRouter({db,gatewayConfig:merchantGatewayConfig}))
+      if(merchantGatewayConfig)app.use('/api/v2/merchant/online-checkout',express.json({limit:'256kb'}),createOnlineMerchantRouter({db,gatewayConfig:merchantGatewayConfig,logistics}))
       app.use(['/api/online-checkout/wechat','/api/v2/customer/online-checkout','/api/v2/merchant/online-checkout'],(error,req,res,next)=>{
         res.status(error?.type==='entity.too.large'?413:400).json({ok:false,error:'ONLINE_REQUEST_INVALID'})
       })
@@ -40,11 +46,11 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
     async tick() {
       // Exposed for controlled one-shot operational recovery and isolated tests.
       // No caller money/state and no switch required to finish existing facts.
-      return {payment:await recovery.tick(),refund:await refundRecovery.tick(),mirror:await deliverOnlineOutboxOnce(db,deliver)}
+      return {payment:await recovery.tick(),refund:await refundRecovery.tick(),mirror:await deliverOnlineOutboxOnce(db,deliver),logistics:await logistics.tick()}
     },
     start() {
       if(workers)return
-      workers=[startOnlinePaymentRecovery(recovery),startOnlinePaymentRecovery(refundRecovery,{intervalMs:60000}),startOnlinePaymentRecovery({tick:()=>deliverOnlineOutboxOnce(db,deliver)},{intervalMs:1000})]
+      workers=[startOnlinePaymentRecovery(recovery),startOnlinePaymentRecovery(refundRecovery,{intervalMs:60000}),startOnlinePaymentRecovery({tick:()=>deliverOnlineOutboxOnce(db,deliver)},{intervalMs:1000}),startOnlinePaymentRecovery({tick:()=>logistics.tick()},{intervalMs:15000})]
     },
     async stop() {const active=workers;workers=null;if(active)await Promise.all(active.map(worker=>worker.stop()))},
   }

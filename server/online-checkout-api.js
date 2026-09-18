@@ -21,7 +21,7 @@ export function onlineQuotePresentation(quote) {
 
 // Candidate router, not mounted by production startup. Gateway signature alone
 // is not customer authority: session AND runtime WeChat identity must agree.
-export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wechat,env=process.env}) {
+export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wechat,env=process.env,logistics=null}) {
   const router=express.Router()
   async function fulfillment(tx,intent){
     if(intent.fulfillment==='PICKUP'){
@@ -82,6 +82,14 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
     if(!s || s.userId!==customer.userId)throw httpError('订单不存在',404)
     return s
   }
+  // Read-only logistics state for the order's own owner. It never triggers a
+  // WeChat call: a missing or still-pending token is reported as such so the
+  // customer keeps the carrier and waybill number instead of a spinner.
+  router.post('/logistics',handle(async(body,customer)=>{
+    const s=await owned(body,customer)
+    if(!logistics)return {status:'UNREGISTERED',waybillToken:null,officialTracking:'UNAVAILABLE'}
+    return (await logistics.status(s.id)) || {status:'UNREGISTERED',waybillToken:null,officialTracking:'UNAVAILABLE'}
+  }))
   for(const action of ['prepare','cancel','status'])router.post('/'+action,handle(async(body,customer)=>{
     const s=await owned(body,customer)
     if(!paymentService)throw httpError('支付服务暂不可用',503)

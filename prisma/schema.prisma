@@ -2192,6 +2192,7 @@ model OnlineSettlement {
   @@index([status, expiresAt])
   @@map("online_settlements")
   fulfillmentAuthorization OnlineFulfillmentAuthorization?
+  logisticsTrace           OnlineLogisticsTrace?
 }
 
 model SweetCardReservation {
@@ -2320,4 +2321,34 @@ model OnlineFulfillmentAuthorization {
   createdAt          DateTime @default(now()) @map("created_at")
   settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
   @@map("online_fulfillment_authorizations")
+}
+
+/// 微信物流服务「传运单」（trace_waybill）的同步状态。
+///
+/// 这里是发货的从属事实，不是第二套发货权威：发货事实永远是
+/// OnlineFulfillmentAuthorization。物流上报失败绝不影响发货，所以本表与
+/// 发货授权分离，并且只记录「我们向微信上报过什么、结果如何」。
+/// receiverPhone 等字段是承运商查单必需信息，由 CloudBase 边缘层在发货时
+/// 转发；OS 不从 payNo 或任何哈希推导它们。
+model OnlineLogisticsTrace {
+  id              String    @id
+  settlementId    String    @unique @map("settlement_id")
+  authorizationId String    @map("authorization_id")
+  status          String    @default("PENDING") // PENDING | SYNCED | UNSUPPORTED | FAILED
+  waybillToken    String?   @map("waybill_token")
+  receiverPhone   String    @map("receiver_phone")
+  goodsName       String    @map("goods_name")
+  goodsImgUrl     String    @map("goods_img_url")
+  orderDetailPath String    @map("order_detail_path")
+  attempts        Int       @default(0)
+  availableAt     DateTime  @default(now()) @map("available_at")
+  leaseUntil      DateTime? @map("lease_until")
+  leaseOwner      String?   @map("lease_owner")
+  lastError       String?   @map("last_error")
+  syncedAt        DateTime? @map("synced_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  settlement      OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt])
+  @@map("online_logistics_traces")
 }
