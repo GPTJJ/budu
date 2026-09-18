@@ -67,14 +67,24 @@ export function customerRequestWecomRecipientUserId() {
 }
 
 /**
- * 新订单通知接收人：可独立配置；未配置时复用同一条已验证的 BUDU 企微绑定。
- * 与 CustomerRequest 一样，绝不按姓名、角色或通讯录搜索推断接收人。
+ * 新订单通知接收人。
+ *
+ * 生产环境并没有配置固定的「商家 userid」：企微个人通道实际是靠 wechat_bindings
+ * 表里员工自己扫码建立的绑定在工作（线上已有多个 active 绑定）。所以接收人默认
+ * 取该表里所有 active 绑定；需要收窄时用 ORDER_NOTICE_WECOM_RECIPIENTS
+ * （逗号分隔 username）显式指定。绝不按姓名、角色或通讯录搜索推断接收人。
  */
-export function orderPaidWecomRecipientBinding() {
-  const username = String(process.env.ORDER_NOTICE_WECOM_RECIPIENT_USERNAME || '').trim()
-  const userId = String(process.env.ORDER_NOTICE_WECOM_RECIPIENT_USER_ID || '').trim()
-  if (username && userId) return { username, userId }
-  return developerWecomRecipientBinding()
+export async function orderPaidRecipients(prismaClient = prisma) {
+  const cfg = wechatPersonalConfig()
+  if (!cfg) return []
+  const explicit = String(process.env.ORDER_NOTICE_WECOM_RECIPIENTS || '')
+    .split(',').map(value => value.trim()).filter(Boolean).slice(0, 50)
+  const where = { channel: cfg.channel, status: 'active' }
+  if (explicit.length) where.username = { in: explicit }
+  const bound = await prismaClient.wechatBinding.findMany({
+    where, select: { username: true, openId: true },
+  }).catch(() => [])
+  return bound.filter(row => row.username && row.openId)
 }
 
 /** BUDU 站内深链：固定 HTTPS origin，记录 ID 只作为登录后的页面定位提示。 */
@@ -343,7 +353,7 @@ const orderPaidBackoffMs = attempts => Math.min(300000, 30000 * 2 ** Math.max(0,
  */
 export async function createOrderPaidNotification({ prismaClient = prisma, settlementId, username, title, content }) {
   const notificationId = `${ORDER_PAID_NOTIFICATION_PREFIX}${crypto.createHash('sha256')
-    .update(String(settlementId)).digest('hex').slice(0, 32)}`
+    .update(`${settlementId}\0${username}`).digest('hex').slice(0, 32)}`
   try {
     const row = await prismaClient.notification.create({
       data: {
@@ -372,13 +382,13 @@ export async function createOrderPaidNotification({ prismaClient = prisma, settl
  * - 确定性 delivery 主键抢占：支付回调重放、结算重放或进程重启都不会重复发送。
  * - 失败记录 attempts 与 nextAttemptAt，由 retryOrderPaidNotices 后台补发。
  */
-export async function deliverOrderPaidWecom({ prismaClient = prisma, notification, settlementId, title, content }) {
-  if (!notification?.id || !/^os-[0-9a-f]{64}$/.test(String(settlementId || ''))) {
+export async function deliverOrderPaidWecom({ prismaClient = prisma, notification, settlementId, recipient, title, content }) {
+  if (!notification?.id || !recipient?.username || !recipient?.openId
+    || !/^os-[0-9a-f]{64}$/.test(String(settlementId || ''))) {
     return { ok: false, status: 'skipped', reason: 'invalid order paid delivery event' }
   }
-  const binding = orderPaidWecomRecipientBinding()
   const deliveryId = `${ORDER_PAID_DELIVERY_PREFIX}${crypto.createHash('sha256')
-    .update(`${settlementId}\0${binding?.username || 'missing'}\0${binding?.userId || 'missing'}`)
+    .update(`${settlementId}\0${recipient.username}`)
     .digest('hex')
     .slice(0, 32)}`
   try {
@@ -389,20 +399,20 @@ export async function deliverOrderPaidWecom({ prismaClient = prisma, notificatio
     if (error?.code === 'P2002') return { ok: true, status: 'duplicate' }
     throw error
   }
-  return sendOrderPaidDelivery({ prismaClient, deliveryId, binding, notification, title, content })
+  return sendOrderPaidDelivery({ prismaClient, deliveryId, recipient, notification, title, content })
 }
 
-async function sendOrderPaidDelivery({ prismaClient, deliveryId, binding, notification, title, content }) {
+async function sendOrderPaidDelivery({ prismaClient, deliveryId, recipient, notification, title, content }) {
   const cfg = wechatPersonalConfig()
-  if (!binding?.userId || !cfg || cfg.channel !== 'wecom') {
-    const reason = !binding?.userId ? 'order notice recipient not configured' : 'wecom app channel not configured'
+  if (!recipient?.openId || !cfg || cfg.channel !== 'wecom') {
+    const reason = !recipient?.openId ? 'order notice recipient not reachable' : 'wecom app channel not configured'
     await prismaClient.notificationDelivery.update({
       where: { id: deliveryId }, data: { status: 'skipped', error: reason },
     }).catch(() => {})
     return { ok: false, status: 'skipped', reason }
   }
   const url = notificationDeepLink(notification.target, notification.refType, notification.refId)
-  const result = await sendWechatPersonal(cfg, { openId: binding.userId }, { title, content, target: notification.target, url })
+  const result = await sendWechatPersonal(cfg, { openId: recipient.openId }, { title, content, target: notification.target, url })
   if (result.ok) {
     await prismaClient.notificationDelivery.update({
       where: { id: deliveryId },
@@ -442,8 +452,15 @@ export async function retryOrderPaidNotices({ prismaClient = prisma, batchSize =
   for (const row of rows) {
     const notification = await prismaClient.notification.findUnique({ where: { id: row.notificationId } }).catch(() => null)
     if (!notification) continue
+    // Rebinding is not needed: the delivery row's own recipient is recovered from
+    // the notification it belongs to, so a retry reaches the same person.
+    const recipient = await prismaClient.wechatBinding.findFirst({
+      where: { username: notification.username, channel: wechatPersonalConfig()?.channel || 'wecom', status: 'active' },
+      select: { username: true, openId: true },
+    }).catch(() => null)
+    if (!recipient?.openId) continue
     const outcome = await sendOrderPaidDelivery({
-      prismaClient, deliveryId: row.id, binding: orderPaidWecomRecipientBinding(), notification,
+      prismaClient, deliveryId: row.id, recipient, notification,
       title: notification.title, content: notification.content,
     }).catch(() => ({ ok: false }))
     if (outcome.ok) sent++

@@ -17,7 +17,7 @@
 import {
   createOrderPaidNotification,
   deliverOrderPaidWecom,
-  orderPaidWecomRecipientBinding,
+  orderPaidRecipients,
 } from './notification-center.js'
 import { buildOrderPaidNotice } from './online-order-notice-format.js'
 
@@ -37,24 +37,37 @@ export async function notifyAuthoritativeOrderPaid(prisma, settlementId) {
   // 待付款、已取消、核对中没有「新成交订单」可通知。
   if (!settlement || settlement.status !== 'PAID' || !settlement.paidAt) return { ok: false, status: 'not_paid' }
 
+  // 接收人来自员工自己扫码建立的企微绑定，不是配置里的固定 userid。
+  const recipients = await orderPaidRecipients(prisma)
+  // 没有任何可达接收人时必须显式返回，而不是安静地什么都不做。
+  if (!recipients.length) return { ok: false, status: 'no_recipient' }
+
   const snapshot = settlement.quote?.snapshot || {}
   const storeRef = snapshot.commerceIntent?.storeRef
   const store = typeof storeRef === 'string' && storeRef
     ? await prisma.store.findUnique({ where: { key: storeRef }, select: { name: true } }).catch(() => null)
     : null
   const notice = buildOrderPaidNotice({ settlement, snapshot, storeName: store?.name })
-  const binding = orderPaidWecomRecipientBinding()
 
-  const { row, created } = await createOrderPaidNotification({
-    prismaClient: prisma, settlementId, username: binding?.username || 'budu',
-    title: notice.title, content: notice.content,
-  }).catch(() => ({ row: null, created: false }))
-  if (!row) return { ok: false, status: 'notification_failed' }
-  // 已经通知过：不再重复投递。投递失败的企微补发由后台负责。
-  if (!created) return { ok: true, status: 'duplicate', notificationId: row.id }
-
-  const delivery = await deliverOrderPaidWecom({
-    prismaClient: prisma, notification: row, settlementId, title: notice.title, content: notice.content,
-  }).catch(() => ({ ok: false, status: 'failed' }))
-  return { ok: delivery.ok, status: delivery.status, notificationId: row.id }
+  const summary = { ok: true, status: 'delivered', delivered: 0, duplicate: 0, failed: 0, skipped: 0 }
+  for (const recipient of recipients) {
+    const { row, created } = await createOrderPaidNotification({
+      prismaClient: prisma, settlementId, username: recipient.username,
+      title: notice.title, content: notice.content,
+    }).catch(() => ({ row: null, created: false }))
+    if (!row) { summary.failed++; continue }
+    // 已经通知过这个人：不再重复投递；投递失败的企微补发由后台负责。
+    if (!created) { summary.duplicate++; continue }
+    const delivery = await deliverOrderPaidWecom({
+      prismaClient: prisma, notification: row, settlementId, recipient,
+      title: notice.title, content: notice.content,
+    }).catch(() => ({ ok: false, status: 'failed' }))
+    if (delivery.ok) summary.delivered++
+    else if (delivery.status === 'skipped') summary.skipped++
+    else summary.failed++
+  }
+  summary.ok = summary.failed === 0 && summary.skipped === 0
+  if (summary.delivered === 0 && summary.duplicate > 0) summary.status = 'duplicate'
+  else if (!summary.ok) summary.status = 'partial'
+  return summary
 }
