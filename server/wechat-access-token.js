@@ -79,5 +79,5 @@ export async function miniprogramAccessToken({ config, fetchImpl = fetch, now = 
  * config object. Same cache, same endpoint — it is not a second authority.
  */
 export async function mpAccessToken(appId, secret, { mode, fetchImpl, now } = {}) {
-  return miniprogramAccessToken({ config: { appId, secret, mode }, fetchImpl, now })
+  return miniprogramAccessToken({ config: { appId, appSecret: secret, mode }, fetchImpl, now })
 }

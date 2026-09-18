@@ -20,6 +20,7 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-wechat-access-token.mjs', // 微信小程序 access_token 唯一权威：单 cache、过期重取、失效重取、失败不抛
   'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
   'test-budu-sweet-card-skill.mjs', // Sweet Card 业务 Skill、路由与核心合同
   'test-sweet-card-core.mjs', // Sweet Card 金额、credential、权限、分配与结算合同
