@@ -6,6 +6,7 @@ import { cents, onlinePaymentAllowed, quoteOnlineCheckout } from './online-check
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
+import { notifyAuthoritativeOrderPaid } from './online-order-notice.js'
 
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const key = value => {
@@ -142,7 +143,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
       if (typeof quoteId !== 'string' || !quoteId || quoteId.length > 160) throw httpError('报价无效', 400)
       const id = `os-${digest([userId, requestKey])}`, fingerprint = digest({ quoteId })
       try {
-        return await onlineFinancialTransaction(prisma, id, async (tx, prior) => {
+        const settled = await onlineFinancialTransaction(prisma, id, async (tx, prior) => {
           await customer(tx, userId, env, { newPurchase: !prior })
           if (prior) {
             if (prior.userId !== userId || prior.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他订单', 409)
@@ -191,6 +192,11 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
           }
           return { ...row, capturedLedgerId: ledgerId }
         })
+        // A Sweet Card-only order is authoritatively captured and PAID the
+        // moment submit commits; no WeChat step follows. The notice is fired
+        // after the commit, is idempotent, and never affects the settlement.
+        if (settled?.status === 'PAID') void notifyAuthoritativeOrderPaid(prisma, id).catch(() => {})
+        return settled
       } catch (error) {
         if(error?.code==='ONLINE_EXPIRY_RECHECK_REQUIRED'){
           const fact=await submissionFact(userId,id,quoteId)

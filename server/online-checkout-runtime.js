@@ -8,6 +8,7 @@ import {createOnlineRefundService,createOnlineRefundRecovery} from './online-ref
 import {createOnlineMerchantRouter} from './online-merchant-api.js'
 import {createOnlineLogistics} from './online-logistics.js'
 import {createWechatLogistics} from './wechat-logistics.js'
+import {retryOrderPaidNotices} from './notification-center.js'
 
 // Composition has no side effects until explicitly mounted/started. Purchase
 // rollout and recovery are separate: disabling purchases cannot abandon holds.
@@ -46,11 +47,11 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
     async tick() {
       // Exposed for controlled one-shot operational recovery and isolated tests.
       // No caller money/state and no switch required to finish existing facts.
-      return {payment:await recovery.tick(),refund:await refundRecovery.tick(),mirror:await deliverOnlineOutboxOnce(db,deliver),logistics:await logistics.tick()}
+      return {payment:await recovery.tick(),refund:await refundRecovery.tick(),mirror:await deliverOnlineOutboxOnce(db,deliver),logistics:await logistics.tick(),orderNotice:await retryOrderPaidNotices({prismaClient:db})}
     },
     start() {
       if(workers)return
-      workers=[startOnlinePaymentRecovery(recovery),startOnlinePaymentRecovery(refundRecovery,{intervalMs:60000}),startOnlinePaymentRecovery({tick:()=>deliverOnlineOutboxOnce(db,deliver)},{intervalMs:1000}),startOnlinePaymentRecovery({tick:()=>logistics.tick()},{intervalMs:15000})]
+      workers=[startOnlinePaymentRecovery(recovery),startOnlinePaymentRecovery(refundRecovery,{intervalMs:60000}),startOnlinePaymentRecovery({tick:()=>deliverOnlineOutboxOnce(db,deliver)},{intervalMs:1000}),startOnlinePaymentRecovery({tick:()=>logistics.tick()},{intervalMs:15000}),startOnlinePaymentRecovery({tick:()=>retryOrderPaidNotices({prismaClient:db})},{intervalMs:60000})]
     },
     async stop() {const active=workers;workers=null;if(active)await Promise.all(active.map(worker=>worker.stop()))},
   }

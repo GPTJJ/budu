@@ -3,6 +3,7 @@ import { httpError } from './pos-core.js'
 import { createOnlineWechatEvidence, providerAmountMatches } from './online-wechat-evidence.js'
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
+import { notifyAuthoritativeOrderPaid } from './online-order-notice.js'
 
 const id = prefix => `${prefix}-${crypto.randomUUID()}`
 // All entry points accept raw signed provider evidence, never client success or
@@ -13,7 +14,7 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
     const fact = verify(input)
     const tender = await prisma.onlineTender.findUnique({ where: { merchantTradeNo: fact.merchantTradeNo } })
     if (!tender || tender.type !== 'WECHAT') throw httpError('支付订单不存在', 404)
-    return onlineFinancialTransaction(prisma, tender.settlementId, async (tx, settlement) => {
+    const settled = await onlineFinancialTransaction(prisma, tender.settlementId, async (tx, settlement) => {
       const wx = settlement?.tenders.find(t => t.type === 'WECHAT')
       if (!wx || wx.merchantTradeNo !== fact.merchantTradeNo
         || !providerAmountMatches(fact, wx.amountCents, settlement.currency)) throw httpError('支付订单核对不一致', 409)
@@ -82,5 +83,10 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
       if (error?.code === 'P2002') throw httpError('支付交易标识冲突，需要核对原订单', 409)
       throw error
     })
+    // The merchant notice belongs to the committed result, not to the money
+    // path: it is fired after the transaction returns, is idempotent, and can
+    // never roll back, delay or fail a payment that already settled.
+    if (settled?.status === 'PAID') void notifyAuthoritativeOrderPaid(prisma, settled.id).catch(() => {})
+    return settled
   }
 }

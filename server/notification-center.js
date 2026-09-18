@@ -6,6 +6,11 @@ import { prisma, dbReady } from './pg.js'
 import { listUsers } from './user-store.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
 import { mpAccessToken, invalidateMiniprogramToken, _resetMiniprogramTokenAuthority } from './wechat-access-token.js'
+import { formatBeijingNotificationTime } from './online-order-notice-format.js'
+
+// 时间格式与订单成交通知文案的纯逻辑集中在零依赖模块中（server/online-order-notice-format.js），
+// 这样「通知里会出现哪些信息」可以在无数据库环境下直接做回归断言。这里保持原导出不变。
+export { formatBeijingNotificationTime }
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -61,6 +66,17 @@ export function customerRequestWecomRecipientUserId() {
   return customerRequestWecomRecipientBinding()?.userId || ''
 }
 
+/**
+ * 新订单通知接收人：可独立配置；未配置时复用同一条已验证的 BUDU 企微绑定。
+ * 与 CustomerRequest 一样，绝不按姓名、角色或通讯录搜索推断接收人。
+ */
+export function orderPaidWecomRecipientBinding() {
+  const username = String(process.env.ORDER_NOTICE_WECOM_RECIPIENT_USERNAME || '').trim()
+  const userId = String(process.env.ORDER_NOTICE_WECOM_RECIPIENT_USER_ID || '').trim()
+  if (username && userId) return { username, userId }
+  return developerWecomRecipientBinding()
+}
+
 /** BUDU 站内深链：固定 HTTPS origin，记录 ID 只作为登录后的页面定位提示。 */
 export function notificationDeepLink(target, refType = '', refId = '') {
   const baseUrl = publicBaseUrl()
@@ -73,20 +89,6 @@ export function notificationDeepLink(target, refType = '', refId = '') {
   url.searchParams.set('refType', String(refType || '').slice(0, 40))
   url.searchParams.set('refId', recordId)
   return url.toString()
-}
-
-export function formatBeijingNotificationTime(value) {
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
 }
 
 /** 模板占位符渲染：{key} → 数据值（缺失留空） */
@@ -321,6 +323,133 @@ export async function deliverCustomerRequestWecom({
     recipientCount: 1,
     retried: Boolean(result.retried),
   }
+}
+
+// ---------------- 新订单成交通知（企业微信） ----------------
+
+const ORDER_PAID_NOTIFICATION_PREFIX = 'ntf-omp-'
+const ORDER_PAID_DELIVERY_PREFIX = 'nld-omp-wecom-'
+const ORDER_PAID_MAX_ATTEMPTS = 5
+const orderPaidBackoffMs = attempts => Math.min(300000, 30000 * 2 ** Math.max(0, attempts - 1))
+
+/**
+ * 新订单成交通知的站内记录。确定性主键：同一笔结算无论被触发多少次
+ * （支付回调重放、对账补扫、结算重放）都只产生一条。
+ *
+ * 刻意不走 pushWechat：企微投递由 deliverOrderPaidWecom 单独负责，
+ * 否则同一条通知会在两个通道适配器上各发一次。
+ *
+ * @returns {Promise<{row: object|null, created: boolean}>} created=false 表示本次是重放
+ */
+export async function createOrderPaidNotification({ prismaClient = prisma, settlementId, username, title, content }) {
+  const notificationId = `${ORDER_PAID_NOTIFICATION_PREFIX}${crypto.createHash('sha256')
+    .update(String(settlementId)).digest('hex').slice(0, 32)}`
+  try {
+    const row = await prismaClient.notification.create({
+      data: {
+        id: notificationId, username, templateKey: 'online_order_paid', title, content,
+        priority: 'high', status: 'unread', ackStatus: 'none', target: '',
+        refType: 'online_order', refId: String(settlementId),
+      },
+    })
+    await prismaClient.notificationDelivery.create({
+      data: { id: `${ORDER_PAID_DELIVERY_PREFIX}inapp-${notificationId.slice(ORDER_PAID_NOTIFICATION_PREFIX.length)}`,
+        notificationId: row.id, channel: 'inapp', status: 'sent' },
+    })
+    return { row, created: true }
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      const row = await prismaClient.notification.findUnique({ where: { id: notificationId } }).catch(() => null)
+      return { row, created: false }
+    }
+    throw error
+  }
+}
+
+/**
+ * 新订单成交通知的企业微信投递。
+ * - 由业务事务提交后调用；失败不影响订单、支付或结算。
+ * - 确定性 delivery 主键抢占：支付回调重放、结算重放或进程重启都不会重复发送。
+ * - 失败记录 attempts 与 nextAttemptAt，由 retryOrderPaidNotices 后台补发。
+ */
+export async function deliverOrderPaidWecom({ prismaClient = prisma, notification, settlementId, title, content }) {
+  if (!notification?.id || !/^os-[0-9a-f]{64}$/.test(String(settlementId || ''))) {
+    return { ok: false, status: 'skipped', reason: 'invalid order paid delivery event' }
+  }
+  const binding = orderPaidWecomRecipientBinding()
+  const deliveryId = `${ORDER_PAID_DELIVERY_PREFIX}${crypto.createHash('sha256')
+    .update(`${settlementId}\0${binding?.username || 'missing'}\0${binding?.userId || 'missing'}`)
+    .digest('hex')
+    .slice(0, 32)}`
+  try {
+    await prismaClient.notificationDelivery.create({
+      data: { id: deliveryId, notificationId: notification.id, channel: 'wecom', status: 'pending' },
+    })
+  } catch (error) {
+    if (error?.code === 'P2002') return { ok: true, status: 'duplicate' }
+    throw error
+  }
+  return sendOrderPaidDelivery({ prismaClient, deliveryId, binding, notification, title, content })
+}
+
+async function sendOrderPaidDelivery({ prismaClient, deliveryId, binding, notification, title, content }) {
+  const cfg = wechatPersonalConfig()
+  if (!binding?.userId || !cfg || cfg.channel !== 'wecom') {
+    const reason = !binding?.userId ? 'order notice recipient not configured' : 'wecom app channel not configured'
+    await prismaClient.notificationDelivery.update({
+      where: { id: deliveryId }, data: { status: 'skipped', error: reason },
+    }).catch(() => {})
+    return { ok: false, status: 'skipped', reason }
+  }
+  const url = notificationDeepLink(notification.target, notification.refType, notification.refId)
+  const result = await sendWechatPersonal(cfg, { openId: binding.userId }, { title, content, target: notification.target, url })
+  if (result.ok) {
+    await prismaClient.notificationDelivery.update({
+      where: { id: deliveryId },
+      data: { status: 'sent', error: '', sentAt: new Date(), nextAttemptAt: null, attempts: { increment: 1 } },
+    }).catch(() => {})
+    return { ok: true, status: 'sent' }
+  }
+  const error = `send failed (errcode=${result.errcode || 'UNKNOWN'}${result.errmsg ? ` ${String(result.errmsg).slice(0, 160)}` : ''})`.slice(0, 240)
+  const current = await prismaClient.notificationDelivery.findUnique({ where: { id: deliveryId } }).catch(() => null)
+  const attempts = (current?.attempts || 0) + 1
+  const exhausted = attempts >= ORDER_PAID_MAX_ATTEMPTS
+  await prismaClient.notificationDelivery.update({
+    where: { id: deliveryId },
+    data: {
+      status: 'failed', error, attempts: { increment: 1 },
+      nextAttemptAt: exhausted ? null : new Date(Date.now() + orderPaidBackoffMs(attempts)),
+    },
+  }).catch(() => {})
+  return { ok: false, status: 'failed', exhausted }
+}
+
+/**
+ * 有界后台补发：企业微信短暂故障时补齐送达。
+ * 只重试新订单通知（前缀隔离），不改动其它业务既有的投递语义。
+ */
+export async function retryOrderPaidNotices({ prismaClient = prisma, batchSize = 5 } = {}) {
+  if (!dbReady()) return { retried: 0, sent: 0, failed: 0 }
+  const rows = await prismaClient.notificationDelivery.findMany({
+    where: {
+      channel: 'wecom', status: 'failed', id: { startsWith: ORDER_PAID_DELIVERY_PREFIX },
+      attempts: { lt: ORDER_PAID_MAX_ATTEMPTS },
+      OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
+    },
+    orderBy: { sentAt: 'asc' }, take: batchSize,
+  }).catch(() => [])
+  let sent = 0, failed = 0
+  for (const row of rows) {
+    const notification = await prismaClient.notification.findUnique({ where: { id: row.notificationId } }).catch(() => null)
+    if (!notification) continue
+    const outcome = await sendOrderPaidDelivery({
+      prismaClient, deliveryId: row.id, binding: orderPaidWecomRecipientBinding(), notification,
+      title: notification.title, content: notification.content,
+    }).catch(() => ({ ok: false }))
+    if (outcome.ok) sent++
+    else failed++
+  }
+  return { retried: rows.length, sent, failed }
 }
 
 /** 企业微信自建应用消息：textcard 卡片，点击跳转 budu 页面（touser = 企微 userid） */

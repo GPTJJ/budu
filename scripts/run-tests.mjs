@@ -23,6 +23,7 @@ const NODE_TEST_SUITE = [
   'test-wechat-access-token.mjs', // 微信小程序 access_token 唯一权威：单 cache、过期重取、失效重取、失败不抛
   'test-wechat-logistics.mjs', // 传运单客户端：无 trans_id 不上报、错误分类、token 不泄漏、不伪造 waybill_token
   'test-online-logistics.mjs', // 物流上报状态：发货前不注册、幂等、自提不进入、失败不阻断发货、upsert 后不重复上报
+  'test-online-order-notice-format.mjs', // 新订单成交通知文案：必需信息齐全、不含收件人 PII、金额/时间边界
   'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
   'test-budu-sweet-card-skill.mjs', // Sweet Card 业务 Skill、路由与核心合同
   'test-sweet-card-core.mjs', // Sweet Card 金额、credential、权限、分配与结算合同

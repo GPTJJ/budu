@@ -1510,11 +1510,14 @@ model NotificationDelivery {
   id             String   @id
   notificationId String   @map("notification_id")
   channel        String   @default("inapp")
-  status         String   @default("sent") // sent | failed | skipped
+  status         String   @default("sent") // pending | sent | failed | skipped
   error          String   @default("")
   sentAt         DateTime @default(now()) @map("sent_at")
+  attempts       Int      @default(0)
+  nextAttemptAt  DateTime? @map("next_attempt_at")
 
   @@index([notificationId])
+  @@index([status, nextAttemptAt])
   @@map("notification_deliveries")
 }
 
