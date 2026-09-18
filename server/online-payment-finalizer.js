@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { httpError } from './pos-core.js'
-import { createOnlineWechatEvidence } from './online-wechat-evidence.js'
+import { createOnlineWechatEvidence, providerAmountMatches } from './online-wechat-evidence.js'
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 
@@ -15,8 +15,8 @@ export function createOnlinePaymentFinalizer(prisma, configuration) {
     if (!tender || tender.type !== 'WECHAT') throw httpError('支付订单不存在', 404)
     return onlineFinancialTransaction(prisma, tender.settlementId, async (tx, settlement) => {
       const wx = settlement?.tenders.find(t => t.type === 'WECHAT')
-      if (!wx || wx.merchantTradeNo !== fact.merchantTradeNo || wx.amountCents !== fact.amountCents
-        || settlement.currency !== fact.currency) throw httpError('支付订单核对不一致', 409)
+      if (!wx || wx.merchantTradeNo !== fact.merchantTradeNo
+        || !providerAmountMatches(fact, wx.amountCents, settlement.currency)) throw httpError('支付订单核对不一致', 409)
       // Unpaid query/close orchestration is separate. NOTPAY is not proof that
       // a provider order is closed and must never release a reservation.
       if (fact.state !== 'SUCCESS') return settlement

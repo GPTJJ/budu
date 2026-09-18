@@ -1,5 +1,5 @@
 import { httpError } from './pos-core.js'
-import { createOnlineWechatEvidence } from './online-wechat-evidence.js'
+import { createOnlineWechatEvidence, providerAmountMatches } from './online-wechat-evidence.js'
 import { createOnlinePaymentFinalizer } from './online-payment-finalizer.js'
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
@@ -54,6 +54,31 @@ export function createOnlinePaymentCancellation(prisma, configuration) {
         } })
       })
     },
+    // Bounded convergence for a hold whose provider obligation does not exist
+    // or is definitively unpaid. The caller MUST have re-queried the provider
+    // and proven the trade is not SUCCESS; this never overrides provider truth.
+    // A released hold always ends CANCELLED, never EXPIRED, so the customer's
+    // checkout blocker is unambiguous.
+    releaseUnpaid(settlementId, reason) {
+      return onlineFinancialTransaction(prisma, settlementId, async (tx, s) => {
+        const wx = s?.tenders.find(t => t.type === 'WECHAT')
+        if (!s || s.status !== 'CLOSING' || !wx || wx.providerTransactionId) return s
+        const settled = { ...s, reconciliationReason: reason }
+        await tx.onlineSettlement.update({ where: { id: s.id }, data: { reconciliationReason: reason } })
+        return release(tx, settled)
+      })
+    },
+    // Terminal escape for a provider obligation that cannot be closed. Money may
+    // still move, so the hold is deliberately NOT released; it only leaves the
+    // ambiguous CLOSING state so a customer is never blocked indefinitely.
+    escalate(settlementId, reason) {
+      return onlineFinancialTransaction(prisma, settlementId, async (tx, s) => {
+        if (!s || s.status !== 'CLOSING') return s
+        return tx.onlineSettlement.update({ where: { id: s.id }, data: {
+          status: 'RECONCILIATION_REQUIRED', reconciliationReason: reason, version: { increment: 1 },
+        } })
+      })
+    },
     async confirm(input) {
       if (input?.source !== 'QUERY') throw httpError('必须查询原支付订单状态', 400)
       const fact = verify(input)
@@ -62,8 +87,8 @@ export function createOnlinePaymentCancellation(prisma, configuration) {
       if (!tender || tender.type !== 'WECHAT') throw httpError('支付订单不存在', 404)
       return onlineFinancialTransaction(prisma, tender.settlementId, async (tx, s) => {
         const wx = s?.tenders.find(t => t.type === 'WECHAT')
-        if (!wx || wx.merchantTradeNo !== fact.merchantTradeNo || wx.amountCents !== fact.amountCents
-          || s.currency !== fact.currency) throw httpError('支付订单核对不一致', 409)
+        if (!wx || wx.merchantTradeNo !== fact.merchantTradeNo
+          || !providerAmountMatches(fact, wx.amountCents, s.currency)) throw httpError('支付订单核对不一致', 409)
         const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: s.quoteId } })
         if (quote?.snapshot?.paymentIdentity?.appId !== fact.appId || quote?.snapshot?.paymentIdentity?.mchId !== fact.mchId) throw httpError('原支付商户核对不一致', 409)
         if (s.status !== 'CLOSING' || fact.state !== 'CLOSED') return s

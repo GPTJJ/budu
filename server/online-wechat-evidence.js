@@ -31,6 +31,17 @@ export function createOnlineWechatMessageVerifier({ platformPublicKey, platformK
   }
 }
 
+// The trade is bound to our merchant trade number, so an amount the provider
+// did not report (closed/revoked trade) is absence of evidence, never a
+// mismatch. Any amount the provider DOES report must match the recorded tender
+// exactly, in the recorded currency. SUCCESS can never omit an amount because
+// verifyPayment only permits absence for CLOSED/REVOKED.
+export function providerAmountMatches(fact, expectedCents, expectedCurrency) {
+  if (!fact) return false
+  if (fact.amountCents == null) return ['CLOSED', 'REVOKED'].includes(fact.state)
+  return fact.amountCents === expectedCents && fact.currency === expectedCurrency
+}
+
 // Separate JSAPI v3 trust boundary; existing POS MICROPAY v2 is unchanged.
 export function createOnlineWechatEvidence(configuration) {
   const { appId, mchId, apiV3Key } = configuration
@@ -59,20 +70,38 @@ export function createOnlineWechatEvidence(configuration) {
         result = JSON.parse(Buffer.concat([decipher.update(encrypted.subarray(0, -16)), decipher.final()]).toString('utf8'))
       }
     } catch { return deny() }
-    if (!result || result.appid !== appId || result.mchid !== mchId || result.trade_type !== 'JSAPI'
-      || !bounded(result.out_trade_no, 32) || !['SUCCESS', 'NOTPAY', 'USERPAYING', 'CLOSED', 'REVOKED', 'PAYERROR'].includes(result.trade_state)
-      || !Number.isSafeInteger(result.amount?.total) || result.amount.total <= 0 || result.amount.total > 2000000000
-      || result.amount.currency !== 'CNY' || (source === 'NOTIFY' && result.trade_state !== 'SUCCESS')) return deny()
+    // WeChat shapes the query payload by trade_state. Observed against the live
+    // provider on 2026-09-18:
+    //   NOTPAY  -> amount/appid/mchid/out_trade_no/trade_state, NO trade_type
+    //   CLOSED  -> appid/attach/mchid/out_trade_no/payer/trade_state, NO amount
+    //   SUCCESS -> full payload incl. trade_type, amount, transaction_id
+    // Absence is therefore accepted only where the provider omits the field,
+    // and every present value is still validated. A decrypted notification
+    // always carries trade_type, so strictness is kept there.
+    const state = result.trade_state
+    const tradeTypeOk = source === 'NOTIFY'
+      ? result.trade_type === 'JSAPI'
+      : result.trade_type == null || result.trade_type === 'JSAPI'
+    const amount = result.amount
+    const amountAbsentOk = amount == null && ['CLOSED', 'REVOKED'].includes(state)
+    const amountPresentOk = amount != null && Number.isSafeInteger(amount.total)
+      && amount.total > 0 && amount.total <= 2000000000 && amount.currency === 'CNY'
+    if (!result || result.appid !== appId || result.mchid !== mchId || !tradeTypeOk
+      || !bounded(result.out_trade_no, 32) || !['SUCCESS', 'NOTPAY', 'USERPAYING', 'CLOSED', 'REVOKED', 'PAYERROR'].includes(state)
+      || !(amountAbsentOk || amountPresentOk) || (source === 'NOTIFY' && state !== 'SUCCESS')) return deny()
     let successAt = null
-    if (result.trade_state === 'SUCCESS') {
+    if (state === 'SUCCESS') {
       successAt = new Date(result.success_time)
       if (!bounded(result.transaction_id, 128) || !bounded(result.payer?.openid, 128)
         || !bounded(result.success_time, 40) || !Number.isFinite(successAt.getTime()) || successAt.getTime() > Date.now() + 300000) return deny()
     }
     // This object stays in the service call stack, never logs/HTTP/mirror JSON.
+    // A null amountCents means the provider did not report one (closed/revoked
+    // trade); it is never treated as a zero or as a matching amount.
     return Object.freeze({ appId, mchId, merchantTradeNo: result.out_trade_no,
-      amountCents: BigInt(result.amount.total), currency: 'CNY', state: result.trade_state,
-      transactionId: result.trade_state === 'SUCCESS' ? result.transaction_id : null,
-      payerOpenId: result.trade_state === 'SUCCESS' ? result.payer.openid : null, successAt })
+      amountCents: amount == null ? null : BigInt(amount.total),
+      currency: amount == null ? null : amount.currency, state,
+      transactionId: state === 'SUCCESS' ? result.transaction_id : null,
+      payerOpenId: state === 'SUCCESS' ? result.payer.openid : null, successAt })
   }
 }

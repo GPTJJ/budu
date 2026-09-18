@@ -3,12 +3,20 @@ import { httpError } from './pos-core.js'
 import { onlinePaymentAllowed } from './online-checkout-policy.js'
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { createOnlineWechatTransport } from './online-wechat-transport.js'
-import { createOnlineWechatEvidence, createOnlineWechatMessageVerifier } from './online-wechat-evidence.js'
+import { createOnlineWechatEvidence, createOnlineWechatMessageVerifier, providerAmountMatches } from './online-wechat-evidence.js'
 import { createOnlinePaymentFinalizer } from './online-payment-finalizer.js'
 import { createOnlinePaymentCancellation } from './online-payment-cancellation.js'
 
 const publicState = s => ({ settlementId: s.id, status: s.status })
 const unknown = () => httpError('支付结果正在核对，请稍后重试原订单', 503)
+// Bounded convergence bounds. Provider truth still decides money; these only
+// bound how long an unpaid hold may keep a customer's checkout blocked.
+//   ABSENT: WeChat holds no trade for this merchantTradeNo. Grace absorbs query
+//   lag between a dispatched prepay and its visibility at the provider.
+//   USERPAYING: the customer may still be paying. The provider closes its own
+//   trade at time_expire, so escalation is only allowed past that bound + grace.
+const ABSENT_GRACE_MS = 120000
+const USERPAYING_GRACE_MS = 180000
 export function createOnlinePaymentService(prisma, configuration, { request = createOnlineWechatTransport(configuration), env = process.env } = {}) {
   const verifyMessage = createOnlineWechatMessageVerifier(configuration), verifyPayment = createOnlineWechatEvidence(configuration)
   const finalize = createOnlinePaymentFinalizer(prisma, configuration), cancellation = createOnlinePaymentCancellation(prisma, configuration)
@@ -40,7 +48,7 @@ export function createOnlinePaymentService(prisma, configuration, { request = cr
       if (error.code === 'ORDER_NOT_EXIST') return { absent: true }
     }
     const input = { ...reply, source: 'QUERY' }, fact = verifyPayment(input)
-    if (fact.merchantTradeNo !== wx.merchantTradeNo || fact.amountCents !== s.wechatCents) throw httpError('原支付订单核对不一致', 409)
+    if (fact.merchantTradeNo !== wx.merchantTradeNo || !providerAmountMatches(fact, s.wechatCents, s.currency)) throw httpError('原支付订单核对不一致', 409)
     if (fact.state === 'SUCCESS') return { settled: await finalize(input) }
     if (fact.state === 'CLOSED') {
       if (s.status === 'PENDING') await cancellation.request(s.id, s.userId)
@@ -113,14 +121,49 @@ export function createOnlinePaymentService(prisma, configuration, { request = cr
         context = await read(settlementId)
         if (context.s.status !== 'CLOSING') return publicState(context.s)
       }
+      // Ask the provider to close, then re-query. A close that raced a real
+      // payment must never release the hold, so the re-query is authoritative.
+      async function closeThenRequery() {
+        const reply = await request('POST', `/v3/pay/transactions/out-trade-no/${context.wx.merchantTradeNo}/close`, { mchid: configuration.mchId })
+        verifyMessage(reply)
+        if (reply.statusCode !== 204) throw unknown()
+        return query(await read(settlementId))
+      }
       const observed = await query(context)
       if (observed.settled) return publicState(observed.settled)
+      const now = Date.now()
+      // The provider holds no trade for this merchantTradeNo, so a lost prepay
+      // response cannot conceal a payment. Release only past the grace bound.
+      if (observed.absent) {
+        const since = context.wx.prepayRequestedAt
+        if (context.s.status !== 'CLOSING' || !since || now - since.getTime() < ABSENT_GRACE_MS) return publicState(context.s)
+        const confirmed = await query(await read(settlementId))
+        if (confirmed.settled) return publicState(confirmed.settled)
+        if (!confirmed.absent) return publicState((await read(settlementId)).s)
+        return publicState(await cancellation.releaseUnpaid(settlementId, 'PROVIDER_TRADE_ABSENT'))
+      }
+      const state = observed.fact.state
+      // Money may still move while the customer is paying. The provider closes
+      // its own trade at time_expire; escalation is bounded past that point so
+      // an unpaid hold can never occupy a checkout forever.
+      if (state === 'USERPAYING') {
+        if (context.s.expiresAt.getTime() + USERPAYING_GRACE_MS > now) return publicState(context.s)
+        return publicState(await cancellation.escalate(settlementId, 'PROVIDER_CLOSE_UNRESOLVED'))
+      }
+      if (context.s.status !== 'CLOSING') return publicState(context.s)
+      // Definitive non-payment outcomes: no money moved, so the hold can end
+      // even if the provider refuses the close. Re-query first to be certain.
+      if (state === 'PAYERROR' || state === 'REVOKED') {
+        let confirmed
+        try { confirmed = await closeThenRequery() }
+        catch { confirmed = await query(await read(settlementId)) }
+        if (confirmed.settled) return publicState(confirmed.settled)
+        if (!confirmed.absent && ['SUCCESS', 'USERPAYING'].includes(confirmed.fact?.state)) return publicState((await read(settlementId)).s)
+        return publicState(await cancellation.releaseUnpaid(settlementId, 'PROVIDER_' + state))
+      }
       // An attempted request + ORDER_NOT_EXIST is still ambiguous; retain hold.
-      if (observed.absent || context.s.status !== 'CLOSING' || observed.fact.state !== 'NOTPAY') return publicState(context.s)
-      const reply = await request('POST', `/v3/pay/transactions/out-trade-no/${context.wx.merchantTradeNo}/close`, { mchid: configuration.mchId })
-      verifyMessage(reply)
-      if (reply.statusCode !== 204) throw unknown()
-      const after = await query(await read(settlementId))
+      if (state !== 'NOTPAY') return publicState(context.s)
+      const after = await closeThenRequery()
       return publicState(after.settled || (await read(settlementId)).s)
     },
   }
