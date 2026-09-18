@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { listUsers } from './user-store.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
+import { mpAccessToken, invalidateMiniprogramToken, _resetMiniprogramTokenAuthority } from './wechat-access-token.js'
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -388,7 +389,7 @@ async function sendMpTemplate(cfg, binding, title, content, jumpUrl) {
   const first = await doSend(token)
   if (first.ok) return first
   if ([40001, 40014].includes(first.errcode)) {
-    mpTokenCache = { token: '', at: 0 }
+    invalidateMiniprogramToken({ appId: cfg.appId })
     const retryToken = await mpAccessToken(cfg.appId, cfg.secret)
     if (retryToken) {
       const second = await doSend(retryToken)
@@ -417,30 +418,16 @@ export async function wecomAccessToken(corpId, secret) {
   }
 }
 
-let mpTokenCache = { token: '', at: 0 }
-export async function mpAccessToken(appId, secret) {
-  if (mpTokenCache.token && Date.now() - mpTokenCache.at < 7000 * 1000) return mpTokenCache.token
-  try {
-    const url = new URL('https://api.weixin.qq.com/cgi-bin/token')
-    url.searchParams.set('grant_type', 'client_credential')
-    url.searchParams.set('appid', appId)
-    url.searchParams.set('secret', secret)
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    const j = await res.json()
-    if (j.access_token) {
-      mpTokenCache = { token: j.access_token, at: Date.now() }
-      return j.access_token
-    }
-    return ''
-  } catch {
-    return ''
-  }
-}
+// The MiniProgram access_token lives in server/wechat-access-token.js (imported
+// above). Do not reintroduce a cache here: one appid must have exactly one token
+// authority, or WeChat invalidates the token held by the other cache and both
+// start failing intermittently with 40001.
+export { mpAccessToken }
 
 /** 测试辅助：重置 access_token 缓存（企微/公众号；仅测试使用） */
 export function _resetWechatTokenCaches() {
   wecomTokenCache = { token: '', at: 0 }
-  mpTokenCache = { token: '', at: 0 }
+  _resetMiniprogramTokenAuthority()
 }
 
 /** 企微群机器人广播（兼容现状：与 sendWechatMarkdown 行为一致，统一入口） */
