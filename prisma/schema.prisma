@@ -1840,11 +1840,29 @@ model SweetCardBatch {
   archivedAt              DateTime?             @map("archived_at")
   accounts                SweetCardAccount[]
   auditLogs               SweetCardAuditLog[]
+  issueOperation          SweetCardIssueOperation?
 
   @@index([createdAt])
   @@index([businessPurpose, createdAt])
   @@index([archivedAt, createdAt])
   @@map("sweet_card_batches")
+}
+
+/// Durable request identity for one completed batch issuance. The row and the
+/// entire value issuance commit atomically; absence therefore never means
+/// "PENDING", and this index is not a second Batch/Ledger business authority.
+model SweetCardIssueOperation {
+  id                 String         @id
+  actorId            String         @map("actor_id")
+  requestKey         String         @map("request_key")
+  requestFingerprint String         @map("request_fingerprint")
+  batchId            String         @unique @map("batch_id")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  batch              SweetCardBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, requestKey])
+  @@index([createdAt])
+  @@map("sweet_card_issue_operations")
 }
 
 model SweetCardAccount {

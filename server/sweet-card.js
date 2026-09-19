@@ -28,7 +28,6 @@ import {
   isSweetCardToken,
   newCredential,
   parseAmount,
-  parseYuanAmount,
   sweetCardEnabled,
   sweetCardCommercialEnabled,
   tokenHash,
@@ -46,6 +45,12 @@ import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availabilit
 import { mirrorUsersToKv } from './user-store.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
+import {
+  createLegacySweetCardIssueRequestKey,
+  issueSweetCardBatch,
+  logSweetCardIssueObservation,
+  normalizeSweetCardIssueRequestKey,
+} from './sweet-card-issue.js'
 
 export const sweetCardRouter = Router()
 const wrap = (handler) => async (req, res) => {
@@ -451,56 +456,26 @@ sweetCardRouter.post('/sweet-cards/batches/:id/restore', wrap(async (req, res) =
 sweetCardRouter.post('/sweet-cards/batches', wrap(async (req, res) => {
   requireDb(); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
   const actor = who(req.user)
-  const count = Number(req.body?.cardCount)
-  const faceValue = req.body?.faceValueYuan !== undefined
-    ? parseYuanAmount(req.body.faceValueYuan, '面额')
-    : parseAmount(req.body?.faceValueCents, '面额')
-  if (!Number.isInteger(count) || count < 1 || count > 500) throw httpError('制卡数量必须为 1–500')
-  const validityType = String(req.body?.validityType || '')
-  const carrierType = String(req.body?.carrierType || '')
-  const bindingMode = String(req.body?.bindingMode || '')
-  const businessPurpose = String(req.body?.businessPurpose || '').trim().toUpperCase()
-  if (!['ONE_YEAR', 'THREE_YEARS', 'LONG_TERM'].includes(validityType)) throw httpError('有效期不正确')
-  if (!['PHYSICAL', 'ELECTRONIC'].includes(carrierType)) throw httpError('载体不正确')
-  if (!['NONE', 'OPTIONAL', 'REQUIRED'].includes(bindingMode)) throw httpError('绑定模式不正确')
-  if (!BATCH_PURPOSES.has(businessPurpose)) throw httpError('必须选择正式批次用途')
-  const activateNow = carrierType === 'ELECTRONIC' && req.body?.activateNow === true
-  const batchId = `scb-${crypto.randomUUID()}`
-  const now = new Date()
-  const cards = await prisma.$transaction(async (tx) => {
-    await tx.sweetCardBatch.create({ data: {
-      id: batchId, name: safeText(req.body?.name, 100) || '未命名批次', purpose: safeText(req.body?.purpose, 300), businessPurpose,
-      faceValueCents: faceValue, cardCount: count, totalInitialAmountCents: faceValue * BigInt(count), validityType,
-      carrierType, bindingMode, giftingScenario: safeText(req.body?.giftingScenario, 120),
-      presentationTemplateKey: safeText(req.body?.presentationTemplateKey, 50) || 'minimal-v1', createdById: actor.id, createdByName: actor.name,
-    } })
-    const result = []
-    for (let index = 0; index < count; index += 1) {
-      const accountId = `scv-${crypto.randomUUID()}`
-      const credentialId = `scc-${crypto.randomUUID()}`
-      const generated = newCredential()
-      const publicCardNo = `SC${now.getUTCFullYear()}${crypto.randomBytes(6).toString('hex').toUpperCase()}`
-      const active = activateNow
-      const validFrom = active ? now : null
-      const expiresAt = active ? expiryFor(validityType, now) : null
-      await tx.sweetCardAccount.create({ data: {
-        id: accountId, publicCardNo, batchId, initialAmountCents: faceValue, balanceCents: faceValue,
-        validityType, validFrom, expiresAt, status: active ? 'ACTIVE' : 'CREATED', carrierType, bindingMode,
-        recipientType: safeText(req.body?.recipientType, 60), recipientLabel: safeText(req.body?.recipientLabel, 120),
-        recipientCompany: safeText(req.body?.recipientCompany, 120), recipientNote: safeText(req.body?.recipientNote, 300),
-        giftingScenario: safeText(req.body?.giftingScenario, 120), issuedById: actor.id, issuedByName: actor.name, issuedAt: now,
-        activatedById: active ? actor.id : '', activatedAt: active ? now : null,
-        credentials: { create: { id: credentialId, publicTokenId: generated.publicTokenId, tokenHash: generated.tokenHash,
-          tokenCiphertext: generated.ciphertext, tokenIv: generated.iv, tokenTag: generated.tag, status: active ? 'ACTIVE' : 'UNACTIVATED', carrierType, activatedAt: active ? now : null } },
-        ledger: { create: { id: `scl-${crypto.randomUUID()}`, type: 'ISSUE', amountCents: faceValue, balanceAfterCents: faceValue,
-          requestKey: `issue:${batchId}:${index}`, actorId: actor.id, actorName: actor.name, metadata: { batchId } } },
-      } })
-      result.push({ accountId, publicCardNo })
-    }
-    await audit(tx, actor, 'sweet_card.batch_created', { batchId }, { cardCount: count, faceValueCents: faceValue.toString(), carrierType, bindingMode, businessPurpose })
-    return result
+  const suppliedRequestKey = req.get('Idempotency-Key')
+  const compatibilityRequest = !suppliedRequestKey
+  const requestKey = compatibilityRequest
+    ? createLegacySweetCardIssueRequestKey()
+    : normalizeSweetCardIssueRequestKey(suppliedRequestKey)
+  if (compatibilityRequest) {
+    logSweetCardIssueObservation({
+      event: 'LEGACY_REQUEST_WITHOUT_IDEMPOTENCY_KEY',
+      operation: 'SWEET_CARD_BATCH_ISSUE',
+    })
+  }
+  const result = await issueSweetCardBatch({
+    db: prisma,
+    actor,
+    requestKey,
+    input: req.body,
+    observe: logSweetCardIssueObservation,
   })
-  res.status(201).json({ ok: true, batchId, cards, exportReady: true })
+  if (result.event !== 'NEW_REQUEST') res.set('Idempotent-Replayed', 'true')
+  res.status(201).json(result.response)
 }))
 
 async function cardTransition(req, action, { deliveryActivation = false } = {}) {
