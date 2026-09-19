@@ -36,16 +36,75 @@ async function reconcile(id){
 }
 async function paid(){const f=await fixture(),q=await f.quote(),s=await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()});return {...f,s}}
 const authorize=async(tx,{settlement})=>({actorId:settlement.userId}) // Synthetic permission authority, not production ownership policy.
+async function protectedFacts(f){
+ const [settlement,outbox,notifications,audits]=await Promise.all([
+  prisma.onlineSettlement.findUnique({where:{id:f.s.id},select:{status:true,version:true,paidAt:true,cancelledAt:true,
+   tenders:{orderBy:{type:'asc'},select:{id:true,type:true,status:true,amountCents:true,providerTransactionId:true}},
+   refunds:{select:{id:true,status:true}},compensations:{select:{id:true,status:true}}}}),
+  prisma.onlineOutbox.count({where:{settlementId:f.s.id}}),
+  prisma.notification.count({where:{refId:f.s.id}}),
+  prisma.sweetCardAuditLog.count({where:{accountId:f.id}}),
+ ])
+ return {settlement,outbox,notifications,audits,balance:await reconcile(f.id)}
+}
 test('PAID pickup authorization is durable/idempotent and leaves money/version/outbox unchanged',async()=>{
+ for(const concurrency of [2,8,16,24]){
+  const f=await paid(),service=createOnlineFulfillment(prisma,{authorize}),input={settlementId:f.s.id,requestKey:uuid(),method:'PICKUP'}
+  const before=await protectedFacts(f)
+  const results=await Promise.all(Array.from({length:concurrency},()=>service.authorize(input)))
+  assert.equal(new Set(results.map(row=>row.id)).size,1)
+  assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:f.s.id}}),1)
+  assert.deepEqual(await protectedFacts(f),before)
+  await assert.rejects(service.authorize({...input,requestKey:uuid()}),error=>error.status===409)
+  await assert.rejects(prisma.onlineFulfillmentAuthorization.update({where:{id:results[0].id},data:{actorId:'tamper'}}))
+  await assert.rejects(prisma.onlineFulfillmentAuthorization.delete({where:{id:results[0].id}}))
+ }
+})
+test('sequential retry returns the canonical authorization without duplicate side effects',async()=>{
  const f=await paid(),service=createOnlineFulfillment(prisma,{authorize}),input={settlementId:f.s.id,requestKey:uuid(),method:'PICKUP'}
- const count=await prisma.onlineOutbox.count({where:{settlementId:f.s.id}})
- const [a,b]=await Promise.all([service.authorize(input),service.authorize(input)]);assert.equal(a.id,b.id)
+ const before=await protectedFacts(f),first=await service.authorize(input),replay=await service.authorize(input)
+ assert.equal(replay.id,first.id);assert.deepEqual(replay.authorizedAt,first.authorizedAt)
  assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:f.s.id}}),1)
- assert.equal(await reconcile(f.id),0n);assert.equal((await prisma.onlineSettlement.findUnique({where:{id:f.s.id}})).version,f.s.version)
- assert.equal(await prisma.onlineOutbox.count({where:{settlementId:f.s.id}}),count)
- await assert.rejects(service.authorize({...input,requestKey:uuid()}));
- await assert.rejects(prisma.onlineFulfillmentAuthorization.update({where:{id:a.id},data:{actorId:'tamper'}}))
- await assert.rejects(prisma.onlineFulfillmentAuthorization.delete({where:{id:a.id}}))
+ assert.deepEqual(await protectedFacts(f),before)
+})
+test('lost authorization response retries to the same durable receipt',async()=>{
+ const f=await paid(),service=createOnlineFulfillment(prisma,{authorize}),input={settlementId:f.s.id,requestKey:uuid(),method:'PICKUP'}
+ const before=await protectedFacts(f);await service.authorize(input) // Simulate commit followed by a lost response.
+ const replay=await service.authorize(input),stored=await prisma.onlineFulfillmentAuthorization.findUnique({where:{settlementId:f.s.id}})
+ assert.equal(replay.id,stored.id);assert.equal(replay.requestKey,input.requestKey)
+ assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:f.s.id}}),1)
+ assert.deepEqual(await protectedFacts(f),before)
+})
+test('different logical settlements authorize independently even with the same request key',async()=>{
+ const first=await paid(),second=await paid(),service=createOnlineFulfillment(prisma,{authorize}),requestKey=uuid()
+ const [a,b]=await Promise.all([
+  service.authorize({settlementId:first.s.id,requestKey,method:'PICKUP'}),
+  service.authorize({settlementId:second.s.id,requestKey,method:'PICKUP'}),
+ ])
+ assert.notEqual(a.id,b.id)
+ assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:{in:[first.s.id,second.s.id]}}}),2)
+})
+test('authorization failure rolls back fully and the same request can retry',async()=>{
+ const f=await paid(),service=createOnlineFulfillment(prisma,{authorize}),input={settlementId:f.s.id,requestKey:`gate23-fail:${uuid()}`,method:'PICKUP'}
+ const before=await protectedFacts(f)
+ await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS gate23_fail_authorization ON online_fulfillment_authorizations')
+ await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS gate23_fail_authorization()')
+ await prisma.$executeRawUnsafe(`CREATE FUNCTION gate23_fail_authorization() RETURNS trigger LANGUAGE plpgsql AS $$
+  BEGIN IF NEW.request_key LIKE 'gate23-fail:%' THEN RAISE EXCEPTION 'GATE23_INJECTED_FAILURE'; END IF; RETURN NEW; END $$`)
+ await prisma.$executeRawUnsafe(`CREATE TRIGGER gate23_fail_authorization AFTER INSERT ON online_fulfillment_authorizations
+  FOR EACH ROW EXECUTE FUNCTION gate23_fail_authorization()`)
+ try{
+  await assert.rejects(service.authorize(input))
+  assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:f.s.id}}),0)
+  assert.deepEqual(await protectedFacts(f),before)
+ }finally{
+  await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS gate23_fail_authorization ON online_fulfillment_authorizations')
+  await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS gate23_fail_authorization()')
+ }
+ const retried=await service.authorize(input)
+ assert.equal((await prisma.onlineFulfillmentAuthorization.findUnique({where:{settlementId:f.s.id}})).id,retried.id)
+ assert.equal(await prisma.onlineFulfillmentAuthorization.count({where:{settlementId:f.s.id}}),1)
+ assert.deepEqual(await protectedFacts(f),before)
 })
 test('pending settlement and delivery/pickup mismatch deny without authorization record',async()=>{
  const f=await fixture({shipping:10}),q=await f.quote(),s=await f.service.submit(f.id,{quoteId:q.id,requestKey:uuid()})
