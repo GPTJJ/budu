@@ -25,9 +25,10 @@ const include = { compensations: { orderBy: { id: 'asc' } }, tenders: { orderBy:
 
 // operation is a DB-only unit; all provider calls belong outside this retry.
 // Lock order: settlement -> existing account advisory lock. Never the reverse.
-export async function onlineFinancialTransaction(prisma, settlementId, operation, { maxAttempts = 5 } = {}) {
+export async function onlineFinancialTransaction(prisma, settlementId, operation, { maxAttempts = 5, isolationLevel = 'Serializable' } = {}) {
   if (typeof settlementId !== 'string' || !settlementId || settlementId.length > 160) throw httpError('结算标识无效', 400)
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 8) throw Error('ONLINE_RETRY_LIMIT_INVALID')
+  if (!['ReadCommitted', 'Serializable'].includes(isolationLevel)) throw Error('ONLINE_TRANSACTION_ISOLATION_INVALID')
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await prisma.$transaction(async tx => {
@@ -48,7 +49,7 @@ export async function onlineFinancialTransaction(prisma, settlementId, operation
           } })
         }
         return result
-      }, { isolationLevel: 'Serializable', maxWait: 5000, timeout: 10000 })
+      }, { isolationLevel, maxWait: 5000, timeout: 10000 })
     } catch (error) {
       // Only a proven transaction abort is retryable. Unknown commit outcomes
       // must be resolved by the caller's original idempotency identity.

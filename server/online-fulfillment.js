@@ -17,9 +17,9 @@ export function createOnlineFulfillment(prisma,{authorize}={}) {
    const fingerprint=hash(intent)
    return onlineFinancialTransaction(prisma,input.settlementId,async(tx,settlement)=>{
     if(!settlement)throw httpError('订单不存在',404)
-    // Advisory-lock waits can establish a Serializable snapshot before a rival
-    // commits. A row lock detects that stale snapshot even though this service
-    // writes only the separate authorization table; retry then reads fresh facts.
+    // Fulfillment uses ReadCommitted below so a waiter obtains a fresh snapshot
+    // after the shared settlement advisory lock. Serializable would retain the
+    // pre-wait snapshot and miss a rival's authorization in this separate table.
     await tx.$queryRaw`SELECT id FROM online_settlements WHERE id = ${settlement.id} FOR UPDATE`
     const authority=await authorize(tx,{settlement,actor:input.actor,input:{...input}})
     if(typeof authority?.actorId!=='string'||!authority.actorId.trim()||authority.actorId.length>160)throw httpError('无履约权限',403)
@@ -38,7 +38,7 @@ export function createOnlineFulfillment(prisma,{authorize}={}) {
     const authorization=await tx.onlineFulfillmentAuthorization.create({data:{id:'ofa-'+hash(settlement.id),settlementId:settlement.id,
      requestKey:input.requestKey,requestFingerprint:fingerprint,...intent,actorId:authority.actorId,settlementVersion:settlement.version}})
     return {...authorization,authorizedAt:authorization.createdAt}
-   })
+   }, {isolationLevel:'ReadCommitted'})
   }
  }
 }
