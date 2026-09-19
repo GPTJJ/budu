@@ -1,6 +1,6 @@
 import SweetCardDelivery from './SweetCardDelivery'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronRight, Download, Gift, LayoutGrid, List, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings2, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, BookOpen, ChevronRight, Download, Gift, LayoutGrid, List, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings2, ShieldCheck } from 'lucide-react'
 import SweetCardAvailability from './SweetCardAvailability'
 import SweetCardCreateWizard from './sweet-card/SweetCardCreateWizard'
 import SweetCardSuccess from './sweet-card/SweetCardSuccess'
@@ -241,11 +241,13 @@ export default function SweetCardPage({ user, onBack }) {
             </div>
             <div className="rounded-3xl bg-white p-4 shadow-card">
               <p className="text-xs font-bold text-slate-400">快捷操作</p>
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <button onClick={() => goTab('issue')} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-budu-500 px-4 font-bold text-white"><Plus className="h-4 w-4" />创建并发卡</button>
-                <button onClick={openUsage} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 font-bold text-slate-600"><ReceiptText className="h-4 w-4" />使用记录 / Ledger</button>
+                <button onClick={() => goTab('cards')} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 font-bold text-slate-600"><BookOpen className="h-4 w-4" />查看 Ledger</button>
                 <button onClick={() => goTab('batches')} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 font-bold text-slate-600"><Download className="h-4 w-4" />下载 QR 包</button>
+                <button onClick={openUsage} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 font-bold text-slate-600"><ReceiptText className="h-4 w-4" />使用记录</button>
               </div>
+              <p className="mt-2 text-[11px] leading-4 text-slate-400">「创建并发卡」同时创建批次与卡片（单次原子提交）。Ledger 为单卡账务流水（卡片详情内），使用记录为全量核销记录。</p>
             </div>
             <details className="rounded-3xl bg-white px-5 py-4 shadow-card"><summary className="cursor-pointer select-none text-xs font-bold text-slate-500">更多统计</summary><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">{[['已创建', data.overview.count], ['已发放', data.overview.issued || 0], ['已用尽', data.overview.statusCounts.EXHAUSTED || 0], ['已冻结', data.overview.statusCounts.FROZEN || 0], ['已挂失', data.overview.statusCounts.LOST || 0], ['已过期', data.overview.statusCounts.EXPIRED || 0]].map(([label, value]) => <div key={label} className="rounded-2xl bg-slate-50 p-3"><p className="text-[10px] font-semibold text-slate-400">{label}</p><p className="mt-1 text-lg font-black text-slate-800">{value}</p></div>)}</div></details>
           </section>}
