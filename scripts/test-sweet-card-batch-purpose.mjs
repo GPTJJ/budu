@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite'
 const migration = fs.readFileSync(new URL('../prisma/migrations/20260905130000_sweet_card_batch_purpose_authority/migration.sql', import.meta.url), 'utf8')
 const rollback = fs.readFileSync(new URL('../prisma/rollbacks/20260905130000_sweet_card_batch_purpose_authority.rollback.sql', import.meta.url), 'utf8')
 const service = fs.readFileSync(new URL('../server/sweet-card.js', import.meta.url), 'utf8')
+const issueService = fs.readFileSync(new URL('../server/sweet-card-issue.js', import.meta.url), 'utf8')
 
 test('Migration 65 classifies every pre-authority batch as ACCEPTANCE_TEST without touching economic tables', async () => {
   const db = new PGlite()
@@ -39,7 +40,7 @@ test('commercial reports default to typed COMMERCIAL and full reconciliation rem
   assert.match(service, /scope: 'ALL_REAL_FACTS'/)
   assert.match(service, /byPurpose: \{ COMMERCIAL:/)
   assert.match(service, /businessPurpose: purpose/)
-  assert.match(service, /必须选择正式批次用途/)
+  assert.match(issueService, /必须选择正式批次用途/)
 })
 
 test('migration is classification-only and does not update economic tables', () => {
