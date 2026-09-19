@@ -7,6 +7,7 @@ import {
   normalizeSweetCardIssueRequestKey,
   sweetCardIssueFingerprint,
 } from '../server/sweet-card-issue.js'
+import { retainSweetCardIssueAttempt, sweetCardSuccessNavigation } from '../src/utils/sweetCardIssueFlow.js'
 
 const migration = fs.readFileSync(new URL('../prisma/migrations/20260919010000_sweet_card_issue_idempotency/migration.sql', import.meta.url), 'utf8')
 const route = fs.readFileSync(new URL('../server/sweet-card.js', import.meta.url), 'utf8')
@@ -87,4 +88,32 @@ test('route and current client expose compatible idempotency contracts', () => {
   assert.match(client, /issueAttemptRef = useRef\(null\)/)
   assert.match(client, /'Idempotency-Key': issueAttemptRef\.current\.requestKey/)
   assert.match(client, /issueAttemptRef\.current = null/)
+})
+
+test('Scheme B retries retain key X across response loss and payload edits, while reset starts key Y', () => {
+  const keys = ['issue:key-X', 'issue:key-Y']
+  const createRequestKey = () => keys.shift()
+  const firstPayload = JSON.stringify(basePayload)
+  const changedPayload = JSON.stringify({ ...basePayload, faceValueYuan: '501.00' })
+  let attempt = retainSweetCardIssueAttempt(null, firstPayload, createRequestKey)
+  assert.equal(attempt.requestKey, 'issue:key-X')
+  attempt = retainSweetCardIssueAttempt(attempt, firstPayload, createRequestKey)
+  assert.equal(attempt.requestKey, 'issue:key-X')
+  attempt = retainSweetCardIssueAttempt(attempt, changedPayload, createRequestKey)
+  assert.equal(attempt.requestKey, 'issue:key-X')
+  assert.equal(attempt.payloadIdentity, firstPayload)
+  attempt = retainSweetCardIssueAttempt(null, firstPayload, createRequestKey)
+  assert.equal(attempt.requestKey, 'issue:key-Y')
+})
+
+test('success navigation replaces a stale COMMERCIAL scope with the issued ACCEPTANCE_TEST scope', () => {
+  const current = { viewScope: 'COMMERCIAL', tab: 'issue', batchId: '' }
+  const navigation = sweetCardSuccessNavigation({ target: 'cards', businessPurpose: 'ACCEPTANCE_TEST', batchId: 'scb-test' })
+  const next = { ...current, ...navigation }
+  assert.deepEqual(next, { viewScope: 'ACCEPTANCE_TEST', tab: 'cards', batchId: 'scb-test' })
+  assert.deepEqual(
+    sweetCardSuccessNavigation({ target: 'batches', businessPurpose: 'ACCEPTANCE_TEST', batchId: 'scb-test' }),
+    { viewScope: 'ACCEPTANCE_TEST', tab: 'batches', batchId: '' },
+  )
+  assert.throws(() => sweetCardSuccessNavigation({ target: 'cards', businessPurpose: 'ARCHIVED', batchId: 'scb-test' }))
 })
