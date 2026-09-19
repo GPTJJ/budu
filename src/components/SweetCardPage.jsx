@@ -235,7 +235,7 @@ export default function SweetCardPage({ user, onBack }) {
               <div className="rounded-3xl bg-white p-5 shadow-card sm:col-span-2 lg:col-span-1 lg:row-span-2">
                 <p className="text-xs font-semibold text-slate-400">剩余余额</p>
                 <p className="mt-2 break-words text-3xl font-black text-budu-600">{formatCents(data.overview.balanceCents)}</p>
-                <div className="mt-4 space-y-2 text-sm"><p className="flex justify-between"><span className="text-slate-400">总发行额度</span><strong>{formatCents(data.overview.initialAmountCents)}</strong></p><p className="flex justify-between"><span className="text-slate-400">已消费额度</span><strong>{formatCents(consumed)}</strong></p></div>
+                <p className="mt-3 text-[11px] leading-4 text-slate-400">总发行额度、已消费额度见下方统计。</p>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:col-span-2 lg:col-span-2">{[['已激活', data.overview.statusCounts.ACTIVE || 0], ['未激活', data.overview.statusCounts.CREATED || 0], ['总发行额度', formatCents(data.overview.initialAmountCents)], ['已消费额度', formatCents(consumed)]].map(([label, value]) => <div key={label} className="rounded-3xl bg-white p-5 shadow-card"><p className="text-xs font-semibold text-slate-400">{label}</p><p className="mt-2 break-words text-2xl font-black text-slate-900">{value}</p></div>)}</div>
             </div>

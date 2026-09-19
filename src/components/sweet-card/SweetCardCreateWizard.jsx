@@ -53,6 +53,11 @@ export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit
     {step === 2 && <div className="mt-6">
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <label className={`${labelClass} sm:col-span-2`}>祝福语<input value={form.recipientNote} onChange={(e) => set({ recipientNote: e.target.value })} placeholder="可选，展示在电子卡卡面" className={`${fieldClass} mt-1`} /></label>
+        <p className="text-xs font-black text-slate-400 sm:col-span-2">赠送信息</p>
+        <label className={labelClass}>赠送对象类型（可选）<input value={form.recipientType} onChange={(e) => set({ recipientType: e.target.value })} placeholder="例如：个人 / 企业" className={`${fieldClass} mt-1`} /></label>
+        <label className={labelClass}>公司（可选）<input value={form.recipientCompany} onChange={(e) => set({ recipientCompany: e.target.value })} className={`${fieldClass} mt-1`} /></label>
+        <label className={`${labelClass} sm:col-span-2`}>赠送场景（可选）<input value={form.giftingScenario} onChange={(e) => set({ giftingScenario: e.target.value })} className={`${fieldClass} mt-1`} /></label>
+        <p className="text-xs font-black text-slate-400 sm:col-span-2">批次设置</p>
         <label className={labelClass}>载体<select value={form.carrierType} onChange={(e) => set({ carrierType: e.target.value })} className={`${fieldClass} mt-1`}>{SWEET_CARD_CARRIER_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className={labelClass}>绑定模式<select value={form.bindingMode} onChange={(e) => set({ bindingMode: e.target.value })} className={`${fieldClass} mt-1`}>{SWEET_CARD_BINDING_MODE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className={labelClass}>批次用途<select required value={form.businessPurpose} onChange={(e) => set({ businessPurpose: e.target.value })} className={`${fieldClass} mt-1`}><option value="COMMERCIAL">商业运营</option><option value="ACCEPTANCE_TEST">验收 / 测试</option></select></label>
