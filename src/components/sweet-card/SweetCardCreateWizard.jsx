@@ -6,7 +6,7 @@ import { SWEET_CARD_BINDING_MODE_OPTIONS, SWEET_CARD_CARRIER_TYPE_OPTIONS } from
 const fieldClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 const labelClass = 'text-xs font-bold text-slate-500'
 
-const STEPS = [['基本信息', '批次 · 数量 · 面额 · 有效期 · 赠送对象'], ['发卡设置', '祝福语 · 载体 · 绑定 · 用途'], ['确认并发卡', '核对后一次性提交']]
+const STEPS = [['基本信息', '批次 · 数量 · 面额 · 有效期 · 赠送对象'], ['发卡设置', '祝福语 · 赠送信息 · 载体 · 绑定 · 用途'], ['确认并发卡', '核对后一次性提交']]
 
 // 面额预设：只作快捷填入，最终仍走服务端 parseYuanAmount 校验。
 const FACE_VALUE_PRESETS = [['500.00', '¥500'], ['1000.00', '¥1000']]
@@ -44,9 +44,6 @@ export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit
           <span className="mt-2 flex gap-2">{FACE_VALUE_PRESETS.map(([value, label]) => <button key={value} type="button" onClick={() => set({ faceValueYuan: value })} className={`rounded-full px-3 py-1 text-xs font-bold ${form.faceValueYuan === value ? 'bg-budu-500 text-white' : 'bg-budu-50 text-budu-600'}`}>{label}</button>)}</span></label>
         <label className={labelClass}>有效期<select value={form.validityType} onChange={(e) => set({ validityType: e.target.value })} className={`${fieldClass} mt-1`}><option value="ONE_YEAR">1 年</option><option value="THREE_YEARS">3 年</option><option value="LONG_TERM">长期</option></select></label>
         <label className={labelClass}>赠送对象<input value={form.recipientLabel} onChange={(e) => set({ recipientLabel: e.target.value })} placeholder="可选" className={`${fieldClass} mt-1`} /></label>
-        <label className={labelClass}>赠送对象类型（可选）<input value={form.recipientType} onChange={(e) => set({ recipientType: e.target.value })} placeholder="例如：个人 / 企业" className={`${fieldClass} mt-1`} /></label>
-        <label className={labelClass}>公司（可选）<input value={form.recipientCompany} onChange={(e) => set({ recipientCompany: e.target.value })} className={`${fieldClass} mt-1`} /></label>
-        <label className={labelClass}>赠送场景（可选）<input value={form.giftingScenario} onChange={(e) => set({ giftingScenario: e.target.value })} className={`${fieldClass} mt-1`} /></label>
       </div>
     </div>}
 
@@ -81,8 +78,8 @@ export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit
       <p className="mt-3 text-xs leading-5 text-slate-400">提交后将一次性创建批次与 {form.cardCount} 张卡，每张卡含使用凭证与发卡账务记录。请确认信息无误后提交。</p>
     </div>}
 
-    <div className="mt-6 flex items-center gap-3">
-      {step > 1 && <button type="button" disabled={saving} onClick={() => setStep(step - 1)} className="inline-flex min-h-12 items-center gap-1 rounded-2xl border border-slate-200 px-4 font-bold text-slate-600 disabled:opacity-50"><ArrowLeft className="h-4 w-4" />上一步</button>}
+    <div className="mt-6 flex flex-wrap items-center gap-3">
+      {step > 1 && <button type="button" disabled={saving} onClick={() => setStep(step - 1)} className="inline-flex min-h-12 shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-slate-200 px-4 font-bold text-slate-600 disabled:opacity-50"><ArrowLeft className="h-4 w-4" />上一步</button>}
       {step < 3 && <button type="button" disabled={!canNext} onClick={() => setStep(step + 1)} className="ml-auto inline-flex min-h-12 items-center gap-1 rounded-2xl bg-budu-500 px-6 font-bold text-white disabled:opacity-50">下一步<ArrowRight className="h-4 w-4" /></button>}
       {step === 3 && <button type="button" disabled={saving} onClick={onSubmit} className="ml-auto inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-budu-500 px-6 font-bold text-white disabled:opacity-50 sm:w-auto"><Plus className="h-5 w-5" />{saving ? '创建中…' : '创建并发卡'}</button>}
     </div>
