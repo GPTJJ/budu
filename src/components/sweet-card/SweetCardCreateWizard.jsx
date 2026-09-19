@@ -11,9 +11,10 @@ const STEPS = [['基本信息', '批次 · 数量 · 面额 · 有效期 · 赠�
 // 面额预设：只作快捷填入，最终仍走服务端 parseYuanAmount 校验。
 const FACE_VALUE_PRESETS = [['500.00', '¥500'], ['1000.00', '¥1000']]
 
-export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit }) {
+export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit, onReset }) {
   const [step, setStep] = useState(1)
   const set = (patch) => onChange({ ...form, ...patch })
+  const reset = () => { setStep(1); onReset() }
   const canNext = useMemo(() => {
     if (step === 1) return String(form.name || '').trim() !== '' && String(form.faceValueYuan || '').trim() !== ''
     return true
@@ -79,6 +80,7 @@ export default function SweetCardCreateWizard({ form, onChange, saving, onSubmit
     </div>}
 
     <div className="mt-6 flex flex-wrap items-center gap-3">
+      <button type="button" disabled={saving} onClick={reset} className="inline-flex min-h-12 shrink-0 items-center rounded-2xl px-2 text-sm font-bold text-slate-400 disabled:opacity-50">取消并重置</button>
       {step > 1 && <button type="button" disabled={saving} onClick={() => setStep(step - 1)} className="inline-flex min-h-12 shrink-0 items-center gap-1 whitespace-nowrap rounded-2xl border border-slate-200 px-4 font-bold text-slate-600 disabled:opacity-50"><ArrowLeft className="h-4 w-4" />上一步</button>}
       {step < 3 && <button type="button" disabled={!canNext} onClick={() => setStep(step + 1)} className="ml-auto inline-flex min-h-12 items-center gap-1 rounded-2xl bg-budu-500 px-6 font-bold text-white disabled:opacity-50">下一步<ArrowRight className="h-4 w-4" /></button>}
       {step === 3 && <button type="button" disabled={saving} onClick={onSubmit} className="ml-auto inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-budu-500 px-6 font-bold text-white disabled:opacity-50 sm:w-auto"><Plus className="h-5 w-5" />{saving ? '创建中…' : '创建并发卡'}</button>}

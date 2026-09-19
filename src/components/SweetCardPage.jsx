@@ -6,6 +6,7 @@ import SweetCardCreateWizard from './sweet-card/SweetCardCreateWizard'
 import SweetCardSuccess from './sweet-card/SweetCardSuccess'
 import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
+import { retainSweetCardIssueAttempt, sweetCardSuccessNavigation } from '../utils/sweetCardIssueFlow'
 import { hasSweetCardCapability, SWEET_CARD_CAPABILITIES } from '../../shared/accountPermissions'
 import {
   SWEET_CARD_BINDING_MODE_OPTIONS,
@@ -91,25 +92,25 @@ export default function SweetCardPage({ user, onBack }) {
     try {
       const payload = { ...form, cardCount: Number(form.cardCount) }
       const payloadIdentity = JSON.stringify(payload)
-      if (!issueAttemptRef.current) {
-        issueAttemptRef.current = { requestKey: crypto.randomUUID(), payloadIdentity }
-      }
+      issueAttemptRef.current = retainSweetCardIssueAttempt(issueAttemptRef.current, payloadIdentity)
       const result = await api('/v2/sweet-cards/batches', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': issueAttemptRef.current.requestKey },
         body: payloadIdentity,
       })
       issueAttemptRef.current = null
-      setIssueResult(result)
+      setIssueResult({ ...result, businessPurpose: payload.businessPurpose })
       await load()
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
-  const continueIssue = () => {
+  const resetIssue = () => {
     issueAttemptRef.current = null
     setIssueResult(null)
     setForm(INITIAL_FORM)
+    setError('')
     setCardFilter((value) => ({ ...value, batchId: '', status: '', faceValueCents: '', search: '' }))
   }
+  const continueIssue = () => resetIssue()
 
   const saveRules = async () => {
     setSaving(true); setError('')
@@ -203,6 +204,16 @@ export default function SweetCardPage({ user, onBack }) {
 
   const goTab = (next) => { setUsageOpen(false); setTab(next) }
   const openUsage = () => setUsageOpen(true)
+  const viewIssuedBatch = (target) => {
+    const navigation = sweetCardSuccessNavigation({
+      target,
+      businessPurpose: issueResult.businessPurpose,
+      batchId: issueResult.batchId,
+    })
+    setViewScope(navigation.viewScope)
+    if (navigation.batchId) setCardFilter((value) => ({ ...value, batchId: navigation.batchId, status: '', faceValueCents: '', search: '' }))
+    goTab(navigation.tab)
+  }
   const statusPill = (status) => {
     const tone = status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : status === 'FROZEN' || status === 'LOST' ? 'bg-amber-50 text-amber-700' : status === 'VOID' || status === 'EXPIRED' || status === 'EXHAUSTED' ? 'bg-slate-100 text-slate-500' : 'bg-budu-50 text-budu-700'
     return `rounded-full px-2 py-0.5 text-[10px] font-black ${tone}`
@@ -276,7 +287,7 @@ export default function SweetCardPage({ user, onBack }) {
             {filteredCards.length === 0 && <p className="mt-3 rounded-3xl bg-white p-8 text-center text-sm text-slate-400">没有符合条件的卡片</p>}
           </section>}
 
-          {tab === 'issue' && (issueResult ? <SweetCardSuccess result={issueResult} onViewBatches={() => goTab('batches')} onViewCards={() => { setCardFilter((value) => ({ ...value, batchId: issueResult.batchId, status: '', faceValueCents: '', search: '' })); goTab('cards') }} onContinue={continueIssue} /> : <SweetCardCreateWizard form={form} onChange={setForm} saving={saving} onSubmit={createBatch} />)}
+          {tab === 'issue' && (issueResult ? <SweetCardSuccess result={issueResult} onViewBatches={() => viewIssuedBatch('batches')} onViewCards={() => viewIssuedBatch('cards')} onContinue={continueIssue} /> : <SweetCardCreateWizard form={form} onChange={setForm} saving={saving} onSubmit={createBatch} onReset={resetIssue} />)}
 
           {tab === 'manage' && <section className="mt-4 space-y-3">
             <div className="flex gap-2 overflow-x-auto">{MANAGE_SECTIONS.filter(([key]) => key !== 'settings' || canManage).map(([key, label]) => <button key={key} onClick={() => setManageSection(key)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${manageSection === key ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</div>
