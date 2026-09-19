@@ -1,5 +1,5 @@
 import SweetCardDelivery from './SweetCardDelivery'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Download, Gift, LockKeyhole, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
 import SweetCardAvailability from './SweetCardAvailability'
 import { api } from '../utils/api'
@@ -41,6 +41,7 @@ export default function SweetCardPage({ user, onBack }) {
   const [form, setForm] = useState({ name: '', purpose: '', businessPurpose: 'COMMERCIAL', cardCount: 1, faceValueYuan: '500.00', validityType: 'ONE_YEAR', carrierType: 'PHYSICAL', bindingMode: 'NONE', recipientType: '', recipientLabel: '', recipientCompany: '', recipientNote: '', giftingScenario: '', activateNow: false })
   const [presentationForm, setPresentationForm] = useState({ recipientType: '', recipientLabel: '', recipientCompany: '', giftingScenario: '', recipientNote: '' })
   const [cardFilter, setCardFilter] = useState({ search: '', batchId: '', status: '', faceValueCents: '' })
+  const issueAttemptRef = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -68,7 +69,17 @@ export default function SweetCardPage({ user, onBack }) {
   const createBatch = async (event) => {
     event.preventDefault(); setSaving(true); setError('')
     try {
-      await api('/v2/sweet-cards/batches', { method: 'POST', body: JSON.stringify({ ...form, cardCount: Number(form.cardCount) }) })
+      const payload = { ...form, cardCount: Number(form.cardCount) }
+      const payloadIdentity = JSON.stringify(payload)
+      if (!issueAttemptRef.current || issueAttemptRef.current.payloadIdentity !== payloadIdentity) {
+        issueAttemptRef.current = { requestKey: crypto.randomUUID(), payloadIdentity }
+      }
+      await api('/v2/sweet-cards/batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': issueAttemptRef.current.requestKey },
+        body: payloadIdentity,
+      })
+      issueAttemptRef.current = null
       setForm((value) => ({ ...value, name: '', purpose: '', recipientType: '', recipientLabel: '', recipientCompany: '', recipientNote: '', giftingScenario: '' }))
       await load(); setTab('batches')
     } catch (e) { setError(e.message) } finally { setSaving(false) }
