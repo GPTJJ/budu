@@ -7,6 +7,7 @@ import {
   DAILY_ENTRY_CAPABILITIES,
   hasDailyEntryCapability,
   isSuperUser,
+  canCorrectDailyPerformance,
 } from '../shared/accountPermissions.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
@@ -99,7 +100,7 @@ async function writeAudit(tx, input) {
   })
 }
 
-async function aggregatePosDay(storeId, dateStr, prismaClient = prisma) {
+export async function aggregatePosDay(storeId, dateStr, prismaClient = prisma) {
   const businessDate = dateOnly(dateStr)
   const [orders, refunds] = await Promise.all([
     prismaClient.order.findMany({
@@ -174,7 +175,7 @@ async function aggregatePosPeriod(storeId, start, end, prismaClient = prisma) {
   return groups
 }
 
-function serializeEntry(entry) {
+export function serializeEntry(entry) {
   if (!entry) return null
   return {
     id: entry.id,
@@ -196,7 +197,7 @@ function serializeEntry(entry) {
   }
 }
 
-function serializeStaff(row) {
+export function serializeStaff(row) {
   return {
     id: row.id,
     employeeId: row.employeeId || '',
@@ -400,12 +401,12 @@ dailyEntryUpgradeRouter.get('/daily-entry/overview', wrap(async (req, res) => {
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
   const store = await ensureStore(storeKey)
-  const source = effectiveSource(store, dateStr)
   const d = dateOnly(dateStr)
   const [entry, staff] = await Promise.all([
     prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } }),
     prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d }, orderBy: [{ staffNameSnapshot: 'asc' }] }),
   ])
+  const source = entry?.salesDataStatus === 'corrected' ? 'manual' : effectiveSource(store, dateStr)
   let pos = null
   let salesDataStatus = 'waiting_input'
   if (source === 'manual') {
@@ -462,6 +463,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/completeness', wrap(async (req, res) =
 }))
 
 function isConfirmedRevisionAudit(entry, audit) {
+  if (audit.module === 'daily_correction' && audit.afterValue?.entry?.id === entry?.id) return true
   if (!entry?.confirmedAt || !audit?.createdAt || new Date(audit.createdAt) <= new Date(entry.confirmedAt)) return false
   if (audit.module === 'daily_confirmation') return false
   if (!String(audit.reason || '').trim() || audit.beforeValue === undefined || audit.afterValue === undefined) return false
@@ -507,7 +509,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
     const staff = staffByDate.get(dateStr) || []
     const entryAudits = auditByDate.get(dateStr) || []
     const revisionAudits = entryAudits.filter((audit) => isConfirmedRevisionAudit(entry, audit))
-    const source = effectiveSource(store, dateStr)
+    const source = entry.salesDataStatus === 'corrected' ? 'manual' : effectiveSource(store, dateStr)
     const pos = posGroups.get(dateStr)
     const incCents = source === 'manual'
       ? entry.incCents
@@ -533,7 +535,7 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
       completeness,
       staff: staff.map(serializeStaff),
       revisionCount: revisionAudits.length,
-      audits: entryAudits.map((audit) => ({
+      audits: entryAudits.filter((audit) => audit.module !== 'daily_correction' || canCorrectDailyPerformance(req.user)).map((audit) => ({
         id: audit.id,
         module: audit.module,
         fieldName: audit.fieldName,
@@ -645,6 +647,7 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
     const store = storeMap.get(order.storeId)
     if (!store || effectiveSource(store, dateStr) === 'manual') continue
     const key = `${order.storeId}|${dateStr}`
+    if (entryMap.get(key)?.salesDataStatus === 'corrected') continue
     const group = groups.get(key) || {
       storeId: order.storeId,
       date: dateStr,
@@ -672,6 +675,7 @@ dailyEntryUpgradeRouter.get('/pos/daily-summary', wrap(async (req, res) => {
     const store = storeMap.get(refund.order.storeId)
     if (!store || effectiveSource(store, dateStr) === 'manual') continue
     const key = `${refund.order.storeId}|${dateStr}`
+    if (entryMap.get(key)?.salesDataStatus === 'corrected') continue
     const group = groups.get(key) || {
       storeId: refund.order.storeId,
       date: dateStr,
@@ -749,7 +753,7 @@ dailyEntryUpgradeRouter.get('/pos/product-sales', wrap(async (req, res) => {
   })
 }))
 
-function normalizeDailyStaffSubmission(items) {
+export function normalizeDailyStaffSubmission(items) {
   if (!Array.isArray(items) || items.length > 100) throw httpError('值班人员数量不正确')
   return items.map((item) => {
     if (
@@ -781,7 +785,7 @@ function normalizeDailyStaffSubmission(items) {
   })
 }
 
-async function resolveDailyStaffSubmission(prismaClient, normalizedInput, storeKey) {
+export async function resolveDailyStaffSubmission(prismaClient, normalizedInput, storeKey) {
   const employeeIds = [...new Set(normalizedInput.map((item) => item.employeeId).filter(Boolean))]
   const userIds = [...new Set(normalizedInput.map((item) => item.participantUserId).filter(Boolean))]
   const [employees, participantUsers] = await Promise.all([
@@ -810,7 +814,7 @@ async function resolveDailyStaffSubmission(prismaClient, normalizedInput, storeK
   }
 }
 
-async function replaceDailyStaff(tx, {
+export async function replaceDailyStaff(tx, {
   storeKey,
   dateStr,
   parsed,
@@ -1083,6 +1087,7 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
     const d = dateOnly(dateStr)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before || before.status !== 'confirmed') throw httpError('只有已确认每日记录可以进入受控修正', 409)
+    if (before.salesDataStatus === 'corrected') throw httpError('请通过更正记录入口继续修改', 409)
     if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
 
     const source = effectiveSource(store, dateStr)
@@ -1145,7 +1150,7 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
 dailyEntryUpgradeRouter.post('/daily-entry/revise', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const storeKey = String(req.body?.storeKey || '').trim()
-  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
+  if (!canStore(req.user, storeKey) || !canCorrectDailyPerformance(req.user)) throw httpError('无权限', 403)
   const result = await reviseConfirmedDailyEntryAtomic(prisma, { ...req.body, actor: req.user })
   res.json({
     ok: true,
@@ -1168,7 +1173,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/unconfirm', wrap(async (req, res) => 
 
 dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  if (!hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.REVISE)) throw httpError('无权限', 403)
+  if (!canCorrectDailyPerformance(req.user)) throw httpError('无权限', 403)
   const storeKey = String(req.body?.storeKey || '').trim()
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
@@ -1190,6 +1195,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
     )
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before) throw httpError('每日记录不存在，请先完成当日确认', 409)
+    if (before.salesDataStatus === 'corrected') throw httpError('请通过更正记录入口继续修改', 409)
     if (before.version !== expectedVersion) throw httpError('数据已被其他用户更新，请刷新后重新核对', 409)
     const note = String(req.body?.note || '').slice(0, 300)
     if (before.hybridAdjustmentCents === BigInt(adjustmentCents) && before.hybridAdjustmentNote === note) {

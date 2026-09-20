@@ -128,6 +128,12 @@ export const DAILY_ENTRY_CAPABILITIES = Object.freeze({
   REVISE: 'revise',
 })
 
+// admin is the existing top-level administrator role; finance is not included.
+export function canCorrectDailyPerformance(user) {
+  return Boolean(user && user.status !== 'disabled' && ['developer', 'admin'].includes(user.role)
+    && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE))
+}
+
 export const DAILY_ENTRY_CAPABILITY_OPTIONS = Object.freeze([
   { key: DAILY_ENTRY_CAPABILITIES.VIEW, label: '查看每日录入' },
   { key: DAILY_ENTRY_CAPABILITIES.EDIT, label: '编辑未确认录入' },

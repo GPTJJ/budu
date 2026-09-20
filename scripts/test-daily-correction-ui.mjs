@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict'
+import { webkit } from '@playwright/test'
+import { createServer } from 'vite'
+const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' })
+await vite.listen()
+const origin = vite.resolvedUrls.local[0]
+const browser = await webkit.launch()
+try {
+  for (const width of [320, 340, 375, 390, 430, 1024, 1280]) {
+    const page = await browser.newPage({ viewport: { width, height: 812 } })
+    const errors = []; page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto(`${origin}tests/daily-correction-harness.html`)
+    await page.getByLabel('更正营业额').waitFor()
+    assert.equal(await page.getByLabel('更正营业额').inputValue(), '716.00')
+    assert.equal(await page.getByRole('button', { name: '保存并记录更正历史' }).isDisabled(), true)
+    await page.getByLabel('更正门店').selectOption('xidan')
+    await page.getByLabel('员工甲实际工时').fill('11.5')
+    await page.getByLabel('更正原因').fill('门店误选，核对后更正')
+    await page.getByRole('checkbox').check()
+    await page.getByRole('button', { name: '保存并记录更正历史' }).click()
+    await page.waitForFunction(() => window.__saved)
+    const body = await page.evaluate(() => window.__writes[0])
+    assert.equal(body.targetStoreKey, 'xidan'); assert.equal(body.items[0].actualHours, '11.5')
+    assert.equal(body.items[0].employeeId, 'emp-a'); assert.equal(body.incCents, 71600)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    assert.deepEqual(errors, [])
+    if (width === 390) await page.screenshot({ path: 'output/playwright/daily-correction-mobile.png', fullPage: true })
+    await page.close()
+  }
+  const page = await browser.newPage({ viewport: { width: 390, height: 600 } })
+  await page.goto(`${origin}tests/daily-correction-harness.html?supplement`)
+  await page.getByLabel('更正营业额').fill('4000')
+  await page.getByLabel('更正订单数').fill('30')
+  await page.getByLabel('添加实际值班人员').selectOption('emp-b')
+  await page.getByLabel('员工乙实际工时').fill('13')
+  await page.getByLabel('更正原因').fill('核对原始凭证后补录')
+  await page.getByRole('checkbox').check()
+  await page.evaluate(() => { window.__error = '记录已被修改，请重新打开核对' })
+  await page.getByRole('button', { name: '保存并记录更正历史' }).click()
+  await page.getByRole('alert').waitFor()
+  assert.equal(await page.getByRole('button', { name: '保存并记录更正历史' }).isDisabled(), true)
+  assert.equal(await page.getByLabel('员工乙实际工时').inputValue(), '13')
+  assert.equal(await page.evaluate(() => window.__saved), false)
+  await page.close()
+  for (const multi of [false, true]) {
+    const p = await browser.newPage()
+    await p.goto(`${origin}tests/store-entry-integrity-harness.html${multi ? '?multi' : ''}`)
+    await p.getByTestId('daily-entry-store').selectOption('xidan')
+    await p.locator('input[type=date]').first().fill('2026-08-22')
+    await p.getByTestId('daily-entry-confirm').waitFor()
+    await p.getByTestId('daily-entry-confirm').click()
+    if (multi) {
+      await p.getByRole('dialog', { name: '确认提交门店' }).waitFor()
+      assert.equal(await p.evaluate(() => window.__writes.length), 0)
+      await p.getByRole('button', { name: '返回核对' }).click()
+      assert.equal(await p.evaluate(() => window.__writes.length), 0)
+    } else assert.equal(await p.getByRole('dialog', { name: '确认提交门店' }).count(), 0)
+    await p.close()
+  }
+  console.log('DAILY_CORRECTION_UI_PASS: 7 WebKit widths, edit/supplement/stale/reason, multi-store confirmation, single-store unchanged')
+} finally { await browser.close(); await vite.close() }

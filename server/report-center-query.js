@@ -130,6 +130,9 @@ function auditAuthority(audits) {
  * days without a confirmed snapshot and cannot rewrite confirmed history.
  */
 export function resolveDailySalesAuthority({ store, date, entry, audits = [] }) {
+  if (entry?.status === 'confirmed' && entry.salesDataStatus === 'corrected') {
+    return { authority: DAILY_SALES_AUTHORITIES.MANUAL, evidence: 'AUDITED_DAILY_ENTRY_CORRECTION' }
+  }
   if (entry?.status === 'confirmed') {
     const persisted = entry.posSyncAt ? DAILY_SALES_AUTHORITIES.POS : DAILY_SALES_AUTHORITIES.MANUAL
     const audited = auditAuthority(audits)

@@ -23,6 +23,7 @@ import { redactCustomerRequestUrl } from './customer-request-core.js'
 import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
+import { dailyCorrectionRouter } from './daily-performance-correction.js'
 import { employeeProfileRouter } from './employee-profile.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
@@ -706,7 +707,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', posRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
+  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

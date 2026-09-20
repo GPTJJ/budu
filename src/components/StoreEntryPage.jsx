@@ -5,11 +5,12 @@ import {
 import { allStores } from '../utils/selectors'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
-import { loadUserData, onUserDataUpdated } from '../utils/userData'
+import { loadUserData, onUserDataUpdated, refreshDailyStoreStaffMonth } from '../utils/userData'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { t } from '../utils/text'
 import StoreEntryExportModal from './StoreEntryExportModal'
-import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability } from '../../shared/accountPermissions'
+import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability, canCorrectDailyPerformance } from '../../shared/accountPermissions'
+import DailyHistoricalCorrection from './DailyHistoricalCorrection'
 import { OverlayPanel, OverlayViewport } from './overlay/OverlayPrimitives'
 
 function pad(n) {
@@ -236,6 +237,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const [ledgerRefresh, setLedgerRefresh] = useState(0)
   const [revisionMode, setRevisionMode] = useState(false)
   const [revisionReason, setRevisionReason] = useState('')
+  const [historicalCorrection, setHistoricalCorrection] = useState(null)
+  const [storeConfirmation, setStoreConfirmation] = useState(false)
   const authorityGenerationRef = useRef(0)
   const selectedAuthorityRef = useRef(null)
   const loadedAuthorityRef = useRef('')
@@ -266,7 +269,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const adjustmentCents = overview?.entry ? BigInt(overview.entry.hybridAdjustmentCents) : 0n
   const canEdit = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
   const canConfirm = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
-  const canRevise = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.REVISE)
+  const canRevise = canCorrectDailyPerformance(user)
   const canEditSales = source === 'manual' && ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode))
   const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
   const canEditStaff = ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode)) && !hasHistoricalStaff
@@ -511,9 +514,11 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
     markDirty()
   }
 
-  const confirmEntry = async () => {
+  const confirmEntry = async (storeConfirmed = false) => {
     const authority = requireLoadedAuthority()
     if (!authority) return
+    if ((user?.storeKeys || []).length > 1 && storeConfirmed !== true) { setStoreConfirmation(true); return }
+    setStoreConfirmation(false)
     setSaving('confirm')
     setError('')
     try {
@@ -799,7 +804,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
           {confirmed ? (
             <>
               <span className="rounded-xl bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-500">已确认记录在普通每日录入中只读</span>
-              {canRevise && !revisionMode && !hasHistoricalStaff && (
+              {canRevise && !revisionMode && !hasHistoricalStaff && overview?.entry?.salesDataStatus !== 'corrected' && (
                 <button data-testid="daily-entry-start-revision" type="button" onClick={() => { setRevisionMode(true); setRevisionReason('') }} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700">启动受控修正</button>
               )}
             </>
@@ -831,6 +836,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <h3 className="text-[15px] font-bold text-slate-800">每日事实账本</h3>
+            {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerStore, initialDate: `${ledgerMonth}-01`, supplement: true })} className="btn-secondary mt-2 min-h-11">历史补录</button>}
             <p className="mt-1 text-xs leading-5 text-slate-400">仅展示已保存的营业与实际值班事实，不使用当前排班反推历史。</p>
           </div>
           <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[36rem]">
@@ -998,6 +1004,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                 </div>
               </section>
 
+              {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerDetail.storeKey, initialDate: ledgerDetail.date })} className="btn-primary mt-4 min-h-11 w-full">更正记录</button>}
               {ledgerDetail.baseStatus === 'draft' && canEdit && (
                 <button type="button" onClick={() => handleLedgerEdit(ledgerDetail)} className="mt-5 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
                   <Pencil className="h-4 w-4" />继续填写这一天
@@ -1008,6 +1015,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         </OverlayViewport>
       )}
 
+      {historicalCorrection && <DailyHistoricalCorrection {...historicalCorrection} onClose={() => setHistoricalCorrection(null)} onSaved={async (correctedDate) => { setHistoricalCorrection(null); setLedgerDetail(null); setLedgerRefresh((value) => value + 1); await refreshDailyStoreStaffMonth(correctedDate.slice(0, 7)); await refreshAll(); await reloadCurrentAuthority() }} />}
+      {storeConfirmation && <OverlayViewport className="fixed inset-0 z-[120] flex items-center justify-center p-4"><div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/45" /><OverlayPanel role="dialog" aria-modal="true" aria-label="确认提交门店" className="relative w-full max-w-sm rounded-3xl bg-white p-5"><h3 className="font-bold">你正在提交</h3><p className="my-4 text-lg font-bold text-budu-600">{storeInfo?.name} · {date}</p><p className="text-sm text-slate-500">请确认这是你当天实际值班的门店。</p><div className="mt-4 grid grid-cols-2 gap-3"><button type="button" onClick={() => setStoreConfirmation(false)} className="btn-secondary min-h-11">返回核对</button><button type="button" onClick={() => confirmEntry(true)} className="btn-primary min-h-11">确认门店并提交</button></div></OverlayPanel></OverlayViewport>}
       {discardOpen && (
         <OverlayViewport data-testid="daily-entry-unsaved-dialog" className="fixed inset-0 z-[110] grid place-items-center p-4">
           <button
