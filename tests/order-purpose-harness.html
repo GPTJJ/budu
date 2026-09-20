@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>budu 订单用途隔离验收</title></head><body><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import OrderPurposeCenter from '/src/components/OrderPurposeCenter.jsx'
+import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+import '/src/index.css'
+const role=new URLSearchParams(location.search).get('role')||'developer'
+const safe={safe:true,counts:{payments:0,refunds:0,sweetCardLedger:0,externalSettlement:0,salesOrderReferences:0,stockLedger:0,notificationObligations:0,shipments:0,afterSales:0},blockers:[]}
+let rows=['LEGACY_UNCLASSIFIED','REAL','TEST','ACCEPTANCE_TEST'].map((purpose,i)=>({id:'fixture-'+i,orderNo:'RPL-ISOLATED-'+i,type:'partner',purpose,status:'SUBMITTED',createdAt:'2026-09-21T01:00:00Z',createdBy:'隔离验收',partner:'较长合作商名称手机端检查',items:[{name:'糖果',requestedQuantity:10,unit:'PCS'}],safety:safe}))
+const audits=[]
+window.__purposeRequests=[]
+window.fetch=async(url,opt={})=>{
+ const pathname=new URL(url,location.origin).pathname
+ window.__purposeRequests.push({pathname,method:opt.method||'GET',body:opt.body?JSON.parse(opt.body):null})
+ const row=rows.find(r=>pathname.includes('/'+r.id))
+ if(pathname.endsWith('/orders'))return Response.json({rows,audits})
+ if(opt.method==='POST'){
+  const body=JSON.parse(opt.body)
+  if(!body.reason)return Response.json({message:'需要原因'},{status:400})
+  audits.push({id:String(audits.length),orderId:row?.id,orderNo:row?.orderNo,orderType:'partner',action:pathname.endsWith('delete-test')?'DELETE_TEST':'CLASSIFY',reason:body.reason,actorRole:role,actorId:'fixture-user',createdAt:new Date().toISOString(),beforePurpose:row?.purpose,afterPurpose:body.purpose})
+  if(pathname.endsWith('delete-test'))rows=rows.filter(r=>r!==row)
+  else if(row)row.purpose=body.purpose
+  return Response.json({ok:true})
+ }
+ if(row)return Response.json({order:row,safety:safe,audits:audits.filter(a=>a.orderId===row.id)})
+ return Response.json({message:'不存在'},{status:404})
+}
+createRoot(document.getElementById('root')).render(React.createElement(React.Fragment,null,React.createElement(OverlayStackManager),React.createElement('main',{className:'mx-auto max-w-3xl p-3'},React.createElement(OrderPurposeCenter,{user:{id:'fixture-user',role,status:'active'}}))))
+</script></body></html>

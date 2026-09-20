@@ -12,6 +12,7 @@ import { v2Router } from './v2.js'
 import { partnerSupplyRouter } from './partner-supply.js'
 import { reportCenterRouter } from './report-center.js'
 import { developerSafeDeleteRouter } from './developer-safe-delete.js'
+import { orderPurposeRouter } from './order-purpose.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
@@ -705,6 +706,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
+  app.use('/api/v2', requireBusiness, orderPurposeRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
   app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)

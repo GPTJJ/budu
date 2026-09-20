@@ -5,6 +5,8 @@ import { isCatalogueEligible, partnerBasePriceCents, partnerCatalogueSelect } fr
 import { calculatePartnerAmountCents, normalizePositiveSafeInteger, PARTNER_ORDER_UNITS } from './partner-replenishment-pricing.js'
 import { partnerScopedWhere } from './principals.js'
 import { httpError } from './pos-core.js'
+import { appendPurposeAudit, assertPurposeActor, cleanReason } from './order-purpose-service.js'
+import { isTestOrderPurpose } from '../shared/orderPurpose.js'
 
 export const REPLENISHMENT_ORDER_STATUSES = Object.freeze({
   SUBMITTED: 'SUBMITTED',
@@ -173,19 +175,27 @@ function uniqueConstraintError(error) {
   return error?.code === 'P2002' || error?.code === '23505'
 }
 
-export async function createReplenishmentOrder({ db, createdByType, actor, principalPartnerId = '', body, idempotencyKey }) {
+export async function createReplenishmentOrder({ db, createdByType, actor, principalPartnerId = '', body, idempotencyKey, testPurpose = null, testReason = '' }) {
+  if (testPurpose && (!isTestOrderPurpose(testPurpose) || createdByType !== 'INTERNAL')) throw orderError('测试用途入口无效', 'TEST_ORDER_CREATE_FORBIDDEN', 403)
+  if (testPurpose) cleanReason(testReason)
   const normalized = normalizeReplenishmentSubmission(body, createdByType)
   const partnerId = createdByType === REPLENISHMENT_CREATED_BY_TYPES.PARTNER ? String(principalPartnerId || '') : normalized.partnerId
   if (!partnerId) throw orderError('合作商身份不正确', 'REPLENISHMENT_PARTNER_INVALID')
   const by = { id: String(actor?.id || ''), name: String(actor?.name || '') }
   if (!by.id) throw orderError('创建人身份不正确', 'REPLENISHMENT_ACTOR_INVALID', 403)
   const key = normalizeIdempotencyKey(idempotencyKey)
-  const digest = replenishmentPayloadDigest({ ...normalized, partnerId })
-  const scope = idempotencyScope({ createdByType, actorId: by.id, partnerId })
+  const ordinaryDigest = replenishmentPayloadDigest({ ...normalized, partnerId })
+  const digest = testPurpose ? crypto.createHash('sha256').update(`${testPurpose}\0${ordinaryDigest}`).digest('hex') : ordinaryDigest
+  const scope = idempotencyScope({ createdByType, actorId: by.id, partnerId }) + (testPurpose ? ':TEST_ENTRY' : '')
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await db.$transaction(async (tx) => {
+        const testActor = testPurpose ? await assertPurposeActor(tx, by.id) : null
+        const replayHash = crypto.createHash('sha256').update(`${scope}\0${key}`).digest('hex')
+        if (await tx.orderPurposeAudit.findFirst({ where: { orderType: 'partner', action: 'DELETE_TEST', snapshot: { path: ['creationReplayHash'], equals: replayHash } } })) {
+          throw orderError('该请求对应的测试订单已删除', 'ORDER_NOT_FOUND_OR_DELETED', 410)
+        }
         const existing = await findByIdempotency(tx, scope, key)
         if (existing) return replay(existing, digest)
         const partner = await tx.partner.findUnique({ where: { id: partnerId } })
@@ -205,6 +215,7 @@ export async function createReplenishmentOrder({ db, createdByType, actor, princ
         const order = await tx.replenishmentOrder.create({
           data: {
             id: `rpl-${crypto.randomUUID()}`,
+            purpose: testPurpose || 'REAL',
             orderNo: orderNumber(submittedAt),
             partnerId,
             partnerStoreId: store.id,
@@ -230,6 +241,7 @@ export async function createReplenishmentOrder({ db, createdByType, actor, princ
           include: orderInclude,
         })
         await appendOrderAudit(tx, { order, action: 'REPLENISHMENT_ORDER_CREATED', actor: actualActor })
+        if (testActor) await appendPurposeAudit(tx, { actor: testActor, type: 'partner', order, action: 'CREATE_TEST', reason: testReason, afterPurpose: testPurpose })
         return { order, reused: false }
       }, { isolationLevel: 'Serializable', maxWait: 5000, timeout: 15000 })
     } catch (error) {
@@ -258,6 +270,7 @@ export function serializeReplenishmentOrder(order, { internal = false } = {}) {
     id: order.id,
     orderNo: order.orderNo,
     status: order.status,
+    purpose: order.purpose,
     createdByType: order.createdByType,
     partnerStore: {
       id: order.partnerStoreId,

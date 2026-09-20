@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
+import { appendPurposeAudit, assertPurposeActor, cleanReason, purposeError } from './order-purpose-service.js'
+import { isTestOrderPurpose } from '../shared/orderPurpose.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
 import { broadcast, notify } from './notification-center.js'
 import { listUsers } from './user-store.js'
@@ -241,6 +243,7 @@ function serializeTransfer(r) {
   return {
     id: r.id,
     type: 'transfer',
+    purpose: r.purpose,
     storeKey: r.toStoreKey,
     fromStoreKey: r.fromStoreKey,
     storeName: r.toStore ? resolveStoreName(r.toStore.key, r.toStore.name) : r.toLocationName || '',
@@ -906,8 +909,30 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
   res.json({ ok: true, item: serializeTransferMasterItem(row) })
 }))
 
-v2Router.post('/transfer-requests', wrap(async (req, res) => {
+async function createTransferRequest(req, res, testMode = false) {
   if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!testMode && Object.hasOwn(req.body || {}, 'purpose')) throw bad('普通业务入口不能指定订单用途', 400)
+  const testActor = testMode ? await assertPurposeActor(prisma, req.user?.id) : null
+  let testKey
+  if (testMode) {
+    if (!isTestOrderPurpose(req.body?.purpose)) throw bad('请选择测试用途', 400)
+    cleanReason(req.body.reason)
+    if (!/^[A-Za-z0-9._:-]{8,100}$/.test(req.get('Idempotency-Key') || '')) throw bad('请提供有效的幂等请求标识', 400)
+    testKey = `test-transfer:${testActor.id}:${req.get('Idempotency-Key')}`
+    const source = await prisma.transferRequest.findUnique({ where: { id: String(req.body.sourceId || '') }, include: { items: { include: { item: true } }, fromStore: true, toStore: true } })
+    if (!source) throw bad('模板订单不存在', 404)
+    const template = serializeTransfer(source)
+    req.body = { ...req.body, fromStoreKey: source.fromStoreKey, toStoreKey: source.toStoreKey,
+      items: template.items.map(i => ({ itemId: i.itemId, name: i.productName, category: i.category,
+        ...(i.quantity != null ? { quantity: i.quantity } : { boxQuantity: i.boxQuantity || 0, pieceQuantity: i.pieceQuantity || 0 }) })) }
+    const previous = await prisma.orderPurposeAudit.findUnique({ where: { operationKey: testKey } })
+    if (previous) {
+      if (previous.afterPurpose !== req.body.purpose || previous.safety?.sourceId !== req.body.sourceId) throw bad('相同请求标识的测试用途或模板不一致', 409)
+      const row = await prisma.transferRequest.findUnique({ where: { id: previous.orderId }, include: { items: { include: { item: true } }, fromStore: true, toStore: true } })
+      if (!row) throw purposeError('ORDER_NOT_FOUND_OR_DELETED', '该请求对应的测试订单已删除', 410)
+      return res.json({ ok: true, reused: true, request: serializeTransfer(row) })
+    }
+  }
   const { items, note } = req.body || {}
   const fromStoreKey = String((req.body || {}).fromStoreKey || '').trim()
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '').trim()
@@ -926,9 +951,10 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
       createItems.push({ id: uid('ti'), ...data })
     }
   }
-  const created = await prisma.transferRequest.create({
+  const creation = {
     data: {
       id: `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      purpose: testMode ? req.body.purpose : 'REAL',
       fromStoreKey,
       toStoreKey,
       fromLocationName: '',
@@ -940,8 +966,18 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
       },
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
-  })
+  }
+  const created = testMode ? await prisma.$transaction(async tx => {
+    const actor = await assertPurposeActor(tx, req.user.id)
+    const row = await tx.transferRequest.create(creation)
+    await appendPurposeAudit(tx, { actor, type: 'transfer', order: row, action: 'CREATE_TEST', reason: req.body.reason, afterPurpose: req.body.purpose, operationKey: testKey, safety: { sourceId: req.body.sourceId, externalNotifications: 'SUPPRESSED' } })
+    return row
+  }, { isolationLevel: 'Serializable' }).catch(error => {
+    if (['P2002','P2034'].includes(error.code)) throw bad('测试创建请求正在并发处理，请使用相同请求标识重试', 409)
+    throw error
+  }) : await prisma.transferRequest.create(creation)
   const serialized = serializeTransfer(created)
+  if (testMode) return res.status(201).json({ ok: true, request: serialized })
   const notificationResult = await deliverTransferRequestNotification({ transfer: serialized }).catch((error) => ({
     ok: false,
     status: 'failed',
@@ -951,7 +987,9 @@ v2Router.post('/transfer-requests', wrap(async (req, res) => {
     console.error('[transfer-notification]', created.id, notificationResult.status, notificationResult.reason || '')
   }
   res.json({ ok: true, request: serialized })
-}))
+}
+v2Router.post('/transfer-requests', wrap((req,res) => createTransferRequest(req,res)))
+v2Router.post('/order-purpose/test-transfer', wrap((req,res) => createTransferRequest(req,res,true)))
 
 v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
@@ -1024,6 +1062,7 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
     })
   })
   const serialized = serializeTransfer(final)
+  if (isTestOrderPurpose(final.purpose)) return res.json({ ok: true, request: serialized })
   await notify({
     username: t.createdBy,
     templateKey: 'transfer_shipped',

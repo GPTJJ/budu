@@ -147,6 +147,7 @@ export async function deliverTransferRequestNotification({
   transfer,
   sendGroup = sendWechatMarkdownResult,
 }) {
+  if (['TEST','ACCEPTANCE_TEST'].includes(transfer?.purpose)) return { ok: true, status: 'skipped', reason: 'TEST_ORDER_NO_EXTERNAL_NOTIFICATION' }
   if (!transfer?.id || !transfer?.fromStoreKey || !transfer?.createdAt) {
     return { ok: false, status: 'skipped', reason: 'INVALID_TRANSFER_EVENT' }
   }
@@ -175,6 +176,7 @@ export async function deliverPartnerReplenishmentStockingNotification({
   order,
   sendGroup = sendWechatMarkdownResult,
 }) {
+  if (['TEST','ACCEPTANCE_TEST'].includes(order?.purpose)) return { ok: true, status: 'skipped', reason: 'TEST_ORDER_NO_EXTERNAL_NOTIFICATION' }
   if (!order?.id || order?.status !== 'APPROVED' || !order?.reviewedAt) {
     return { ok: false, status: 'skipped', reason: 'INVALID_PARTNER_APPROVAL_EVENT' }
   }

@@ -508,6 +508,7 @@ model PartnerAuditLog {
 
 model ReplenishmentOrder {
   id                        String                           @id
+  purpose                   OrderPurpose                     @default(REAL)
   orderNo                   String                           @unique
   partnerId                 String
   partnerStoreId            String
@@ -1009,6 +1010,7 @@ model StockLedger {
 
 model TransferRequest {
   id               String         @id
+  purpose          OrderPurpose   @default(REAL)
   fromStoreKey     String?
   toStoreKey       String?
   fromLocationName String         @default("")
@@ -1360,6 +1362,35 @@ model SensitiveRecordAudit {
   @@index([recordType, recordId, createdAt])
   @@index([actorUserId, createdAt])
   @@map("sensitive_record_audits")
+}
+
+enum OrderPurpose {
+  REAL
+  TEST
+  ACCEPTANCE_TEST
+  LEGACY_UNCLASSIFIED
+}
+
+// Independent, append-only audit/tombstone. Deliberately no order FK/cascade.
+model OrderPurposeAudit {
+  id             String       @id
+  operationKey   String       @unique
+  action         String
+  orderType      String
+  orderId        String
+  orderNo        String
+  actorId        String
+  actorRole      String
+  reason         String
+  beforePurpose  OrderPurpose?
+  afterPurpose   OrderPurpose?
+  snapshot       Json
+  safety         Json
+  deletedCounts  Json
+  transactionId  BigInt       @default(dbgenerated("txid_current()"))
+  createdAt      DateTime     @default(now())
+
+  @@index([orderType, orderId, createdAt])
 }
 
 /**

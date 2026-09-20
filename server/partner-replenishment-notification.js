@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { isTestOrderPurpose } from '../shared/orderPurpose.js'
 import { prisma } from './pg.js'
 import {
   developerWecomRecipientBinding,
@@ -71,6 +72,7 @@ export async function deliverPartnerReplenishmentReviewRequired({
   personalConfig = wechatPersonalConfig(),
   sendPersonal = sendWechatPersonal,
 }) {
+  if (isTestOrderPurpose(order?.purpose)) return { ok: true, status: 'skipped', reason: 'TEST_ORDER_NO_EXTERNAL_NOTIFICATION' }
   if (!order?.id || order?.status !== 'SUBMITTED' || !order?.submittedAt) {
     return { ok: false, status: 'skipped', reason: 'INVALID_PARTNER_SUBMITTED_EVENT' }
   }
