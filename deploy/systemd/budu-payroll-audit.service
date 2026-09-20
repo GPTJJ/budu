@@ -1,0 +1,13 @@
+[Unit]
+Description=budu payroll audit scheduler
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/budu/payroll-audit.env
+ExecStart=/opt/budu/bin/run-payroll-audit-scheduler
+User=root
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Bell,
   Bug,
+  CalendarClock,
   Database,
   Info,
   Lock,
@@ -18,6 +19,7 @@ import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { DeletedRecordsCenter } from './DeveloperSafeDelete'
 import OrderPurposeCenter from './OrderPurposeCenter'
+import PayrollAuditSchedulerCenter from './PayrollAuditSchedulerCenter'
 import { canManageOrderPurpose } from '../../shared/orderPurpose'
 import {
   SettingsConfirmDialog,
@@ -80,6 +82,7 @@ export default function SettingsPage({ user, onBack }) {
   const [systemHealth, setSystemHealth] = useState(null)
   const isElevated = ['developer', 'finance', 'admin'].includes(user?.role)
   const isDeveloper = user?.role === 'developer'
+  const canManagePayrollAudit = ['developer', 'admin'].includes(user?.role) && user?.status === 'active'
 
   const activeBindings = useMemo(
     () => (wxBindings?.rows || []).filter((row) => row.status === 'active'),
@@ -402,6 +405,10 @@ export default function SettingsPage({ user, onBack }) {
     return <SettingsDetailPage title="订单用途与测试清理" subtitle="历史用途确认、测试创建与受控删除" onBack={closePanel}><OrderPurposeCenter user={user} /></SettingsDetailPage>
   }
 
+  if (activePanel === 'payroll-audit' && canManagePayrollAudit) {
+    return <SettingsDetailPage title="薪酬审查任务" subtitle="兼职周审、全职月审与邮件历史" onBack={closePanel}><PayrollAuditSchedulerCenter /></SettingsDetailPage>
+  }
+
   if (activePanel === 'developer') {
     return (
       <SettingsDetailPage title="开发者工具" subtitle="审计、已删除记录与系统诊断" onBack={closePanel}>
@@ -476,6 +483,7 @@ export default function SettingsPage({ user, onBack }) {
 
           <SettingsSection title="开发者与系统">
             {canManageOrderPurpose(user) && <SettingsRow icon={Database} iconTone="violet" title="订单用途与测试清理" subtitle="逐单确认用途，保留永久审计" onClick={() => openPanel('order-purpose')} />}
+            {canManagePayrollAudit && <SettingsRow icon={CalendarClock} iconTone="green" title="薪酬审查任务" subtitle="兼职周审、全职月审与邮件状态" onClick={() => openPanel('payroll-audit')} />}
             {isDeveloper && <SettingsRow testId="settings-row-developer" icon={Bug} iconTone="violet" title="开发者工具" subtitle="审计、已删除记录与系统诊断" status={<SettingsStatus tone="brand">开发者专用</SettingsStatus>} onClick={() => openPanel('developer')} />}
             <SettingsRow testId="settings-row-system" icon={Server} iconTone="slate" title="系统信息" subtitle={`budu Operating System ${APP_VERSION}`} status={<SettingsStatus tone={systemHealth?.ok && systemHealth?.dbOk ? 'success' : 'neutral'}>{systemHealth?.ok && systemHealth?.dbOk ? '运行中' : '检查中'}</SettingsStatus>} onClick={() => openPanel('system')} last />
           </SettingsSection>

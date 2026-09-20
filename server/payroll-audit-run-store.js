@@ -7,8 +7,9 @@ function hashFile(filePath) {
 }
 
 export function auditArtifactPaths(root, model) {
-  const month = model.metadata.requestedPeriod.start.slice(0, 7)
-  const base = `budu_${month}_薪酬审查报告`
+  const period = `${model.metadata.requestedPeriod.start}_${model.metadata.requestedPeriod.end}`
+  const kind = model.metadata.reportType === 'WEEKLY_PART_TIME' ? '兼职周' : '全职月度'
+  const base = `budu_${period}_${kind}薪酬审查报告`
   const directory = path.join(root, model.runId)
   return {
     directory,
@@ -28,8 +29,12 @@ export async function withAuditRunLock(lockPath, fn) {
   try {
     descriptor = fs.openSync(lockPath, 'wx', 0o600)
   } catch (error) {
-    if (error.code === 'EEXIST') throw Object.assign(new Error('Payroll audit run is already active'), { code: 'AUDIT_RUN_LOCKED' })
-    throw error
+    if (error.code === 'EEXIST') {
+      const age = Date.now() - fs.statSync(lockPath).mtimeMs
+      if (age <= 60 * 60 * 1000) throw Object.assign(new Error('Payroll audit run is already active'), { code: 'AUDIT_RUN_LOCKED' })
+      fs.rmSync(lockPath)
+      descriptor = fs.openSync(lockPath, 'wx', 0o600)
+    } else throw error
   }
   try { return await fn() } finally { fs.closeSync(descriptor); fs.rmSync(lockPath, { force: true }) }
 }
@@ -49,7 +54,7 @@ export function writeAuditManifest(paths, model, emailPayload) {
       markdown: { path: paths.markdown, sha256: hashFile(paths.markdown) },
       pdf: { path: paths.pdf, sha256: hashFile(paths.pdf) },
     },
-    email: { recipient: emailPayload.recipient, subject: emailPayload.subject, status: 'PENDING', attempts: [] },
+    email: { recipient: emailPayload.recipient, recipients: emailPayload.recipients || [emailPayload.recipient], subject: emailPayload.subject, status: 'PENDING', attempts: [] },
     createdAt: new Date().toISOString(),
   }
   fs.writeFileSync(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })
@@ -58,8 +63,8 @@ export function writeAuditManifest(paths, model, emailPayload) {
 
 export function markEmailDelivery(manifestPath, update) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-  if (manifest.email.status === 'SENT' && update.status === 'SENT') return manifest
-  manifest.email.attempts.push({ at: new Date().toISOString(), status: update.status, messageId: update.messageId || '', errorCode: update.errorCode || '' })
+  if (manifest.email.status === 'SENT' && update.status === 'SENT' && !update.resend) return manifest
+  manifest.email.attempts.push({ at: new Date().toISOString(), status: update.status, messageId: update.messageId || '', errorCode: update.errorCode || '', resend: update.resend === true, actorId: update.actorId || '' })
   manifest.email.status = update.status
   if (update.messageId) manifest.email.messageId = update.messageId
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })

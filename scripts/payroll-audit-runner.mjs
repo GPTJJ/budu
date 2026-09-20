@@ -50,6 +50,11 @@ export async function runPayrollAuditFromSnapshot(options) {
     authorityDigest: snapshot.authorityDigest,
     auditMode: options.mode || 'FINAL',
     scope: options.scope || 'ALL',
+    scopeEmployeeIds: options.scopeEmployeeIds,
+    reportType: options.reportType,
+    employeeType: options.employeeType,
+    employmentTypeAuthority: options.employmentTypeAuthority,
+    employmentTypeHistoryAvailable: options.employmentTypeHistoryAvailable,
   })
   const paths = auditArtifactPaths(options.outputRoot, model)
   fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 })

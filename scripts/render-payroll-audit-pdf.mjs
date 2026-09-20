@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { chromium } from '@playwright/test'
+import { chromium } from 'playwright-core'
 
 export async function renderPayrollAuditPdf(html, outputPath) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 })
-  const browser = await chromium.launch({ headless: true })
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) })
   try {
     const page = await browser.newPage({ viewport: { width: 820, height: 1180 }, deviceScaleFactor: 1 })
     await page.setContent(html, { waitUntil: 'load' })

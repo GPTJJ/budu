@@ -76,6 +76,18 @@ test('canonical model supports PASS, REVIEW_REQUIRED, BLOCKED and one-cent misma
   assert.equal(model.employeeResults.find((row) => row.employeeId === 'emp-review').differenceCents, '1')
 })
 
+test('an explicitly empty employment-type scope never falls back to all payroll subjects', () => {
+  const model = buildPayrollAuditReportModel({
+    period: { periodStart: '2026-09-14', periodEnd: '2026-09-20' },
+    authority: snapshotFixture().authority,
+    scopeEmployeeIds: [],
+    reportType: 'WEEKLY_PART_TIME',
+    employeeType: 'parttime',
+  })
+  assert.equal(model.summary.employeeCount, 0)
+  assert.deepEqual(model.employeeResults, [])
+})
+
 test('Cardbara is normal authority subject and Schedule mismatch does not fail payroll', () => {
   const capybara = build().employeeResults.find((row) => row.employeeId === 'emp-capybara')
   assert.equal(capybara.businessRole, '老板替班')
@@ -116,7 +128,8 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   assert.match(markdown, new RegExp(model.canonicalHash))
   assert.equal(email.canonicalHash, model.canonicalHash)
   assert.equal(email.recipient, 'yuegu1995@gmail.com')
-  assert.equal(email.subject, 'budu｜2026年08月薪酬审查报告｜BLOCKED')
+  assert.deepEqual(email.recipients, ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com'])
+  assert.equal(email.subject, 'budu 全职员工薪酬审查报告｜2026年08月｜BLOCKED')
   assert.equal(model.schemaVersion, 3)
   assert.equal(model.metadata.brand.name, 'budu')
   assert.doesNotMatch(`${markdown}\n${html}\n${email.body}`, /password|webhook|token|credential/i)

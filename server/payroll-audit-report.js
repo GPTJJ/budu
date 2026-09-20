@@ -64,6 +64,18 @@ export function previousMonthPeriod(now = new Date(), timeZone = 'Asia/Shanghai'
   return { periodStart: `${y}-${m}-01`, periodEnd: `${y}-${m}-${String(last).padStart(2, '0')}` }
 }
 
+export function previousWeekPeriod(now = new Date(), timeZone = 'Asia/Shanghai') {
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now)
+  const today = new Date(`${date}T00:00:00.000Z`)
+  const mondayOffset = (today.getUTCDay() + 6) % 7
+  const currentMonday = new Date(today.getTime() - mondayOffset * 86400000)
+  const previousMonday = new Date(currentMonday.getTime() - 7 * 86400000)
+  const previousSunday = new Date(currentMonday.getTime() - 86400000)
+  return { periodStart: previousMonday.toISOString().slice(0, 10), periodEnd: previousSunday.toISOString().slice(0, 10) }
+}
+
 function enumerateDates(start, end) {
   const rows = []
   let current = new Date(`${start}T00:00:00.000Z`)
@@ -176,7 +188,7 @@ export function buildPayrollAuditReportModel(input = {}) {
   const employeeById = new Map((input.authority?.employees || []).map((employee) => [employee.id, employee]))
   const readinessById = new Map((result.readiness?.employees || []).map((row) => [row.employeeId, row]))
   const payrollById = new Map(payrollRows.map((row) => [row.employeeId, row]))
-  const requested = input.scopeEmployeeIds?.length
+  const requested = Array.isArray(input.scopeEmployeeIds)
     ? [...new Set(input.scopeEmployeeIds)]
     : [...new Set([...payrollById.keys(), ...readinessById.keys()])]
   const scheduleIndex = buildScheduleIndex(input.schedules || [])
@@ -263,12 +275,24 @@ export function buildPayrollAuditReportModel(input = {}) {
         risk: '直接修改工资事实会掩盖展示层错误。', requiredConfirmation: '确认员工卡片请求周期与当前审计周期一致。', actionExecuted: false,
       })
     }
-    const status = blockers.length ? 'BLOCKED' : differenceCents !== '0' ? 'REVIEW_REQUIRED' : 'PASS'
+    if (input.employmentTypeHistoryAvailable === false) {
+      issues.push({
+        id: `ISSUE-${String(issues.length + 1).padStart(3, '0')}`,
+        type: 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', employeeId, employeeName, date: '', store: '',
+        evidence: `当前 Employee.employmentType=${text(directory.type || directory.employmentType)}；系统没有有效期历史，无法独立证明该类型覆盖整个审查期间。`,
+        rootCause: 'Employment type is current-state only.', errorLayer: 'Employee authority', payrollImpact: 'UNKNOWN', amountImpactCents: null,
+        options: [{ label: '方案 A', detail: '由负责人核对该员工在本期内的实际用工类型；本报告不自动改写身份。' }],
+        recommendation: '确认历史用工类型后再据此使用审查结论。', risk: '把当前类型当作历史类型可能造成周报/月报归属错误。',
+        requiredConfirmation: '需要负责人确认该员工在完整审查期间的用工类型。', actionExecuted: false,
+      })
+    }
+    const status = blockers.length ? 'BLOCKED' : (differenceCents !== '0' || input.employmentTypeHistoryAvailable === false) ? 'REVIEW_REQUIRED' : 'PASS'
     const scheduleStatus = dailyReconciliation.some((row) => row.scheduleResult !== 'MATCH') ? 'REVIEW' : 'PASS'
     return {
       employeeId,
       employeeNo: text(directory.employeeNo),
       employeeName,
+      employmentType: text(directory.type || directory.employmentType),
       businessRole: employeeName === '卡皮巴拉' ? '老板替班' : text(directory.position || ''),
       status,
       scheduleStatus,
@@ -298,6 +322,8 @@ export function buildPayrollAuditReportModel(input = {}) {
   const identityInput = {
     periodStart: period.periodStart, periodEnd: period.periodEnd,
     auditMode: input.auditMode || 'FINAL', scope: requested,
+    reportType: input.reportType || 'MONTHLY_FULL_TIME',
+    employeeType: input.employeeType || '',
     productionSha: input.productionSha, authorityDigest: input.authorityDigest,
     reportContractVersion: 3,
     brandAssetSha256: WORDMARK_SHA256,
@@ -315,6 +341,10 @@ export function buildPayrollAuditReportModel(input = {}) {
       effectivePeriod: { start: period.periodStart, end: period.periodEnd },
       auditMode: input.auditMode || 'FINAL',
       scope: input.scope || 'ALL',
+      reportType: input.reportType || 'MONTHLY_FULL_TIME',
+      employeeType: input.employeeType || '',
+      employmentTypeAuthority: input.employmentTypeAuthority || 'Employee.employmentType',
+      employmentTypeHistoryAvailable: input.employmentTypeHistoryAvailable !== false,
       timeZone: input.timeZone || 'Asia/Shanghai',
       authorityDigest: text(input.authorityDigest),
     },
@@ -333,9 +363,11 @@ export function renderPayrollAuditMarkdown(model) {
   const m = model.metadata
   const s = model.summary
   const lines = [
-    '# budu 薪酬审查报告', '',
+    `# ${m.reportType === 'WEEKLY_PART_TIME' ? 'budu 兼职员工周薪酬审查报告' : 'budu 全职员工月度薪酬审查报告'}`, '',
     `Run ID: ${model.runId}`,
     `Scope: ${m.scope}`,
+    `Employee type: ${m.employeeType}`,
+    `Employment type authority: ${m.employmentTypeAuthority}${m.employmentTypeHistoryAvailable ? '' : '（无历史有效期能力）'}`,
     `Requested period: ${m.requestedPeriod.start} → ${m.requestedPeriod.end}`,
     `Effective audit period: ${m.effectivePeriod.start} → ${m.effectivePeriod.end}`,
     `Audit mode: ${m.auditMode}`,
@@ -397,18 +429,21 @@ export function renderPayrollAuditMarkdown(model) {
 
 export function renderPayrollAuditEmail(model) {
   const { summary: s, metadata: m } = model
-  const period = m.requestedPeriod.start.slice(0, 7)
-  const [year, month] = period.split('-')
+  const [year, month] = m.requestedPeriod.start.slice(0, 7).split('-')
+  const weekly = m.reportType === 'WEEKLY_PART_TIME'
+  const title = weekly ? 'budu 兼职员工薪酬审查报告' : 'budu 全职员工薪酬审查报告'
+  const periodLabel = weekly ? `${m.requestedPeriod.start} ～ ${m.requestedPeriod.end}` : `${year}年${month}月`
   const priority = model.employeeResults.flatMap((row) => row.issues.map((issue) => `${row.employeeName}：${issue.type}`)).slice(0, 3)
-  const subject = `budu｜${year}年${month}月薪酬审查报告｜${s.finalResult.replace('_', ' ')}`
+  const subject = `${title}｜${periodLabel}｜${s.finalResult.replace('_', ' ')}`
   const body = [
-    `budu｜${year}年${month}月薪酬审查`, '', `结果：${s.finalResult.replace('_', ' ')}`, '',
+    title, periodLabel, '', `结果：${s.finalResult.replace('_', ' ')}`, '',
     `审查员工：${s.employeeCount} 人`, `PASS：${s.passCount}`, `REVIEW_REQUIRED：${s.reviewRequiredCount}`, `BLOCKED：${s.blockedCount}`, '',
     `权威工资：${formatCents(s.authoritativePayrollCents)}`, `员工卡片：${formatCents(s.employeeCardCents)}`, `差额：${formatCents(s.differenceCents)}`, '',
-    `本月发现：${s.issueCount} 项需关注问题`, ...(priority.length ? ['', '重点问题：', ...priority.map((item, index) => `${index + 1}. ${item}`)] : []), '',
+    `本期发现：${s.issueCount} 项需关注问题`, ...(priority.length ? ['', '重点问题：', ...priority.map((item, index) => `${index + 1}. ${item}`)] : []), '',
     `建议：${s.settlementRecommendation}`, '', '未修改任何生产数据。', '完整证据、逐日明细和解决方案见附件。', '', `Run ID: ${model.runId}`,
   ].join('\n')
-  return { subject, body, recipient: 'yuegu1995@gmail.com', runId: model.runId, canonicalHash: model.canonicalHash }
+  const recipients = ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com']
+  return { subject, body, recipient: recipients[0], recipients, runId: model.runId, canonicalHash: model.canonicalHash }
 }
 
 function escapeHtml(value) {
