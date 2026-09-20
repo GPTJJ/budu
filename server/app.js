@@ -811,6 +811,10 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
     }
+    if (user.role === 'partner' && user.status === 'active') {
+      // Keep the internal session boundary; the Partner endpoint validates the binding.
+      return res.status(403).json({ error: '请使用合作商入口登录', code: 'PARTNER_LOGIN_REQUIRED' })
+    }
     if (!resolveInternalPrincipal(user)) {
       return res.status(403).json({ error: '账号已停用，请联系开发者' })
     }

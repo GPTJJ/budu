@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Eye, EyeOff, Loader2, Lock, LogIn, User } from 'lucide-react'
-import { api } from '../utils/api'
+import { loginAccount } from '../utils/loginAccount.js'
 import { t } from '../utils/text'
 import PwaInstallPrompt from './PwaInstallPrompt'
 import ComplianceFooter from './ComplianceFooter'
@@ -19,10 +19,11 @@ export default function LoginPage({ onLogin }) {
     setError('')
     setBusy(true)
     try {
-      const data = await api('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username: username.trim(), password }),
-      })
+      const data = await loginAccount({ username, password })
+      if (data.principal?.type === 'PARTNER') {
+        window.location.assign('/partner')
+        return
+      }
       onLogin(data.user)
     } catch (err) {
       setError(t(err.message))

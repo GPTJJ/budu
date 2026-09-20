@@ -60,7 +60,19 @@ try {
   assert.equal(internalLogin.status, 200)
   const internalCookie = internalLogin.headers.get('set-cookie').split(';')[0]
 
-  assert.equal((await request('/api/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: '123456' } })).status, 403)
+  const partnerHint = await request('/api/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: '123456' } })
+  assert.equal(partnerHint.status, 403)
+  assert.equal((await partnerHint.json()).code, 'PARTNER_LOGIN_REQUIRED')
+  assert.equal(partnerHint.headers.get('set-cookie'), null)
+  const wrongPassword = await request('/api/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: 'WRONG' } })
+  assert.equal(wrongPassword.status, 401)
+  assert.equal((await wrongPassword.json()).code, undefined)
+  await prisma.user.update({ where: { id: ids.partner }, data: { status: 'disabled' } })
+  const disabledUser = await request('/api/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: '123456' } })
+  assert.equal(disabledUser.status, 403)
+  assert.equal((await disabledUser.json()).code, undefined)
+  assert.equal((await request('/api/partner/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: '123456' } })).status, 401)
+  await prisma.user.update({ where: { id: ids.partner }, data: { status: 'active' } })
   assert.equal((await request('/api/auth/login', { method: 'POST', body: { username: `gate1_customer_${suffix}`, password: '123456' } })).status, 403)
   assert.equal((await request('/api/partner/auth/login', { method: 'POST', body: { username: `gate1_internal_${suffix}`, password: '123456' } })).status, 401)
 
@@ -89,6 +101,12 @@ try {
 
   await prisma.partnerUser.update({ where: { id: ids.binding }, data: { status: 'disabled', disabledAt: new Date() } })
   assert.equal((await request('/api/partner/auth/me', { cookie: partnerCookie })).status, 401)
+  assert.equal((await request('/api/partner/auth/login', { method: 'POST', body: { username: `gate1_partner_${suffix}`, password: '123456' } })).status, 401)
+  const management = await request(`/api/v2/partner-management/partners/${ids.tenant}`, { cookie: internalCookie })
+  assert.equal(management.status, 200)
+  const disabledBinding = (await management.json()).partner.users.find(x => x.id === ids.binding)
+  assert.equal(disabledBinding.userStatus, 'active')
+  assert.equal(disabledBinding.status, 'disabled')
   await prisma.partnerUser.update({ where: { id: ids.binding }, data: { status: 'active', disabledAt: null } })
   assert.equal((await request('/api/partner/auth/me', { cookie: partnerCookie })).status, 401)
 
@@ -103,6 +121,11 @@ try {
 
   console.log(JSON.stringify({
     result: 'PARTNER_PRINCIPAL_HTTP_PASS',
+    loginEntryHandoff: true,
+    wrongPasswordRejected: true,
+    disabledUserRejected: true,
+    disabledBindingLoginRejected: true,
+    managementAuthorityConsistent: true,
     internalPartnerCustomerIsolated: true,
     partnerCannotCallInternal: true,
     simultaneousCookieNamespaces: true,
