@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 
 const catalogue = [
-  { productId: 'kg', name: 'KG 糖', sku: 'KG-1', spec: '', orderUnit: 'KG', basePriceCents: '18000', basePriceUnit: 'KG', discountBps: 6500, referencePriceCents: '11700', minimumOrderBaseQty: 1, orderStepBaseQty: 1, shortcutIncrementBaseQty: 100, quantityAuthority: 'INTEGER_GRAMS' },
-  { productId: 'pcs', name: '颗糖', sku: 'PCS-1', spec: '', orderUnit: 'PCS', basePriceCents: '500', basePriceUnit: 'PCS', discountBps: 6500, referencePriceCents: '325', minimumOrderBaseQty: 1, orderStepBaseQty: 1, shortcutIncrementBaseQty: 10, quantityAuthority: 'INTEGER_PIECES' },
+  { productId: 'kg', name: 'KG 糖', sku: 'KG-1', spec: '', productCategory: { id: 'cat-candy', name: '糖果', sortOrder: 1 }, orderUnit: 'KG', basePriceCents: '18000', basePriceUnit: 'KG', discountBps: 6500, referencePriceCents: '11700', minimumOrderBaseQty: 1, orderStepBaseQty: 1, shortcutIncrementBaseQty: 100, quantityAuthority: 'INTEGER_GRAMS' },
+  { productId: 'pcs', name: '颗糖', sku: 'PCS-1', spec: '', productCategory: { id: 'cat-candy', name: '糖果', sortOrder: 1 }, orderUnit: 'PCS', basePriceCents: '500', basePriceUnit: 'PCS', discountBps: 6500, referencePriceCents: '325', minimumOrderBaseQty: 1, orderStepBaseQty: 1, shortcutIncrementBaseQty: 10, quantityAuthority: 'INTEGER_PIECES' },
   { productId: 'native', name: '礼盒', sku: 'BOX-1', spec: '', orderUnit: 'NATIVE', nativeUnit: '盒', basePriceCents: '8800', basePriceUnit: 'NATIVE', discountBps: 6500, referencePriceCents: '5720', minimumOrderBaseQty: 1, orderStepBaseQty: 1, shortcutIncrementBaseQty: 1, quantityAuthority: 'INTEGER_NATIVE_UNITS' },
 ]
 
@@ -18,7 +18,7 @@ const partialOrder = {
 
 const submittedOrder = { ...partialOrder, id: 'order-2', orderNo: 'RPL-PORTAL-002', status: 'SUBMITTED', approvedTotalAmountCents: null, shipments: [], items: [partialOrder.items[0]] }
 
-async function mockPortal(page, { quoteFailures = 0, submitDelayMs = 0 } = {}) {
+async function mockPortal(page, { quoteFailures = 0, submitDelayMs = 0, catalogueRows = catalogue } = {}) {
   const requests = []
   let remainingQuoteFailures = quoteFailures
   await page.route('**/api/partner/**', async (route) => {
@@ -30,7 +30,7 @@ async function mockPortal(page, { quoteFailures = 0, submitDelayMs = 0 } = {}) {
     if (path === '/api/partner/auth/me') return json({ principal: { type: 'PARTNER', partner: { id: 'partner-1', name: '秦皇岛合作商', status: 'ACTIVE' }, account: { username: 'partner_qhd' } } })
     if (path === '/api/partner/profile') return json({ partner: { id: 'partner-1', name: '秦皇岛合作商', companyName: '秦皇岛合作公司', contactName: '王女士', contactPhone: '13800000000', status: 'ACTIVE', defaultDiscountBps: 6500 } })
     if (path === '/api/partner/stores') return json({ rows: [{ id: 'store-1', name: '秦皇岛一店', province: '河北省', city: '秦皇岛市', district: '海港区', addressLine: '河北大街88号', contactName: '李女士', phone: '13900000000', status: 'ACTIVE' }] })
-    if (path === '/api/partner/catalogue' && method === 'GET') return json({ rows: catalogue })
+    if (path === '/api/partner/catalogue' && method === 'GET') return json({ rows: catalogueRows })
     if (path === '/api/partner/after-sales' && method === 'GET') return json({ rows: [] })
     if (path === '/api/partner/after-sales' && method === 'POST') {
       requests.push({ type: 'after-sales', body: request.postDataJSON() })
@@ -222,6 +222,32 @@ test('我的仅展示 Partner 基础信息、门店、账号与退出', async ({
   await expect(page.getByText('partner_qhd')).toBeVisible()
   await expect(page.getByText('暂不支持自行创建子账号')).toBeVisible()
   await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
+})
+
+test('目录复用商品中心分类顺序并在全部视图分组，空分类不出现', async ({ page }) => {
+  await mockPortal(page)
+  await page.getByRole('button', { name: '我要补货' }).click()
+  const filters = page.getByRole('region', { name: '我要补货' }).getByLabel('商品分类')
+  await expect(filters.getByRole('button')).toHaveText(['全部', '糖果', '其他'])
+  await expect(filters.getByRole('button', { name: '空分类' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '糖果' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '其他' })).toBeVisible()
+})
+
+test('分类与名称/SKU 搜索可组合，分别显示明确空状态', async ({ page }) => {
+  await mockPortal(page)
+  await page.getByRole('button', { name: '我要补货' }).click()
+  await page.getByRole('button', { name: '糖果', exact: true }).click()
+  await expect(page.getByTestId('partner-catalogue-card-kg')).toBeVisible()
+  await expect(page.getByTestId('partner-catalogue-card-native')).toHaveCount(0)
+  await page.getByLabel('搜索商品').fill('PCS-1')
+  await expect(page.getByTestId('partner-catalogue-card-pcs')).toBeVisible()
+  await expect(page.getByTestId('partner-catalogue-card-kg')).toHaveCount(0)
+  await page.getByLabel('搜索商品').fill('不存在')
+  await expect(page.getByText('未找到相关商品')).toBeVisible()
+  await page.getByLabel('搜索商品').fill('')
+  await page.getByRole('button', { name: '其他', exact: true }).click()
+  await expect(page.getByTestId('partner-catalogue-card-native')).toBeVisible()
 })
 
 for (const width of [320, 340, 375, 390, 430]) {

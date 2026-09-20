@@ -31,6 +31,15 @@ test('旧供货 OFF / Partner 人工 ON 进入目录，旧业务保存不得覆�
   assert.equal(rows[0].referencePriceCents, '325')
 })
 
+test('Partner 目录直接返回商品中心分类权威，未分类商品保持 null', async () => {
+  const enabled = productData({ ...product, partnerSupplyEnabled: false, partnerReplenishmentEnabled: true })
+  const category = { id: 'category-a', name: '统一分类', sortOrder: 7 }
+  const [classified] = await listPartnerCatalogue({ db: db([{ ...product, ...enabled, productCategory: category }]), principal })
+  const [uncategorized] = await listPartnerCatalogue({ db: db([{ ...product, ...enabled, productCategory: null }]), principal })
+  assert.deepEqual(classified.productCategory, category)
+  assert.equal(uncategorized.productCategory, null)
+})
+
 test('商品保存接口拒绝 Partner 和无商品管理权限账号', async () => {
   // dbReady only checks configuration; the denied requests must never reach a DB call.
   const previous = process.env.DATABASE_URL

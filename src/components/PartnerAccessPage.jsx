@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight, ClipboardList, Home, Loader2, Lock, LogIn, LogOut,
-  Minus, PackagePlus, Plus, RefreshCw, RotateCcw, Store, Truck, User, UserRound, X,
+  Minus, PackagePlus, Plus, RefreshCw, RotateCcw, Search, Store, Truck, User, UserRound, X,
 } from 'lucide-react'
 import wordmarkUrl from '../../brand/web/budu-wordmark.svg'
 import {
@@ -268,6 +268,33 @@ function HomeView({ profile, principal, orders, stats, navigate, openOrder, setO
 }
 
 function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCatalogue, activeStores, selectedStoreId, setSelectedStoreId, selected, quantityInputs, updateQuantity, quotes, quoted, quoteTotal, messages, busy, hasInvalidQuantityInput, onQuote, onSubmit }) {
+  const uncategorizedId = '__partner_uncategorized__'
+  const [categoryId, setCategoryId] = useState('all')
+  const [search, setSearch] = useState('')
+  const categories = useMemo(() => {
+    const byId = new Map()
+    let hasUncategorized = false
+    catalogue.forEach((product) => {
+      if (product.productCategory?.id) byId.set(product.productCategory.id, product.productCategory)
+      else hasUncategorized = true
+    })
+    const rows = [...byId.values()].sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || a.name.localeCompare(b.name, 'zh-CN') || a.id.localeCompare(b.id))
+    if (hasUncategorized) rows.push({ id: uncategorizedId, name: '其他', sortOrder: Number.MAX_SAFE_INTEGER })
+    return rows
+  }, [catalogue])
+  useEffect(() => {
+    if (categoryId !== 'all' && !categories.some((category) => category.id === categoryId)) setCategoryId('all')
+  }, [categories, categoryId])
+  const normalizedSearch = search.trim().toLocaleLowerCase('zh-CN')
+  const filteredCatalogue = catalogue.filter((product) => {
+    const productCategoryId = product.productCategory?.id || uncategorizedId
+    const inCategory = categoryId === 'all' || productCategoryId === categoryId
+    const matchesSearch = !normalizedSearch || `${product.name} ${product.sku || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch)
+    return inCategory && matchesSearch
+  })
+  const groupedCatalogue = categories
+    .map((category) => ({ category, products: filteredCatalogue.filter((product) => (product.productCategory?.id || uncategorizedId) === category.id) }))
+    .filter((group) => group.products.length > 0)
   const selectedProducts = catalogue.filter((product) => Number(selected[product.productId]) > 0)
   return (
     <section className="space-y-4" aria-label="我要补货">
@@ -289,8 +316,20 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
           <p>{catalogueError}</p><button type="button" onClick={onReloadCatalogue} className="btn-secondary min-h-12">重试加载商品</button>
         </div>
       ) : (
-        <div className="space-y-3">
-          {catalogue.map((product) => {
+        <div className="space-y-4">
+          {catalogue.length > 0 && <div className="space-y-3 rounded-2xl bg-white p-3 shadow-sm">
+            <label className="relative block">
+              <span className="sr-only">搜索商品</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input type="search" aria-label="搜索商品" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索商品名称或 SKU" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3 text-base text-slate-800 outline-none focus:border-budu-300 focus:bg-white focus:ring-2 focus:ring-budu-100" />
+            </label>
+            <div data-testid="partner-category-strip" className="flex w-full gap-2 overflow-x-auto overscroll-x-contain pb-1" aria-label="商品分类">
+              {[{ id: 'all', name: '全部' }, ...categories].map((category) => <button key={category.id} type="button" aria-pressed={categoryId === category.id} onClick={() => setCategoryId(category.id)} className={`min-h-11 shrink-0 rounded-xl px-4 text-sm font-bold ${categoryId === category.id ? 'bg-budu-500 text-white' : 'bg-slate-50 text-slate-600'}`}>{category.name}</button>)}
+            </div>
+          </div>}
+          {groupedCatalogue.map(({ category, products }) => <section key={category.id} className="space-y-3" aria-labelledby={`partner-category-${category.id}`}>
+            {categoryId === 'all' && <h2 id={`partner-category-${category.id}`} className="px-1 text-sm font-black text-slate-700">{category.name}</h2>}
+            {products.map((product) => {
             const value = Number(selected[product.productId] || 0)
             const raw = quantityInputs[product.productId] ?? ''
             const invalidRaw = raw.trim() !== '' && !parseDisplayQuantity(raw, product.orderUnit)
@@ -323,7 +362,9 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
               </article>
             )
           })}
+          </section>)}
           {catalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">暂无可补货商品<button type="button" onClick={onReloadCatalogue} className="btn-secondary mx-auto mt-3 min-h-12">刷新商品目录</button></div>}
+          {catalogue.length > 0 && filteredCatalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">{normalizedSearch ? '未找到相关商品' : '该分类暂无可补货商品'}</div>}
         </div>
       )}
       {messages.length > 0 && <div role="alert" className="space-y-1 rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800">{messages.map((message) => <p key={message}>{message}</p>)}</div>}
