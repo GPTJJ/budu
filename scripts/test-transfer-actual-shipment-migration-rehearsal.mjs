@@ -7,12 +7,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createDisposablePgDatabase, dropDisposablePgDatabase } from './helpers/test-pg-schema.mjs'
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const adminUrl = process.env.TEST_DATABASE_URL || 'postgresql://budu:budu_local_dev@localhost:5432/budu'
-const schemaName = `transfer_actual_migration_${process.pid}`
-const testUrl = (() => { const url = new URL(adminUrl); url.searchParams.set('schema', schemaName); return url.toString() })()
 const migrationName = '20260830130000_transfer_actual_shipment'
+let testUrl = ''
 
 function migrate(schemaPath) {
   execFileSync(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy', '--schema', schemaPath], {
@@ -24,13 +23,11 @@ function migrate(schemaPath) {
 }
 
 test('Target-prefix additive migration preserves every requested transfer fact and leaves actual shipment unknown', async () => {
+  testUrl = await createDisposablePgDatabase('transfer_actual_migration', { applyMigrations: false })
   const { PrismaClient } = await import('@prisma/client')
-  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } })
   const client = new PrismaClient({ datasources: { db: { url: testUrl } } })
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-transfer-actual-migration-'))
   try {
-    await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)
-    await admin.$executeRawUnsafe(`CREATE SCHEMA "${schemaName}"`)
     fs.copyFileSync(path.join(root, 'prisma', 'schema.prisma'), path.join(temp, 'schema.prisma'))
     fs.mkdirSync(path.join(temp, 'migrations'))
     copyBeforeMigration(root, temp, migrationName)
@@ -63,8 +60,7 @@ test('Target-prefix additive migration preserves every requested transfer fact a
     await assertMigrationHistory(client, migrationNames(root).filter(name => name <= migrationName))
   } finally {
     await client.$disconnect()
-    await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)
-    await admin.$disconnect()
+    await dropDisposablePgDatabase(testUrl)
     fs.rmSync(temp, { recursive: true, force: true })
   }
 })

@@ -133,6 +133,8 @@ test('开发者固定全权限，管理员财务默认全权限但可以被开�
   const finance = { role: 'finance', permissions: { modules: { ...Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, true])), finance: false } } }
   assert.equal(hasModuleAccess(finance, MODULE_KEYS.FINANCE), false)
   assert.equal(hasModuleAccess(finance, MODULE_KEYS.OVERVIEW), true)
+  assert.equal(hasModuleAccess(finance, MODULE_KEYS.PARTNER_MANAGEMENT), false)
+  assert.equal(hasModuleAccess({ ...finance, permissions: { modules: { [MODULE_KEYS.PARTNER_MANAGEMENT]: true } } }, MODULE_KEYS.PARTNER_MANAGEMENT), false)
 })
 
 test('收银账号无论保存何种权限都固定仅开放 POS', () => {

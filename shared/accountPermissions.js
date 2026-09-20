@@ -22,6 +22,8 @@ export const MODULE_KEYS = Object.freeze({
   INVENTORY_TRANSFER: 'inventory-transfer',
   INVENTORY_PURCHASE: 'inventory-purchase',
   PARTNER_SUPPLY: 'partner-supply',
+  PARTNER_MANAGEMENT: 'partner-management',
+  PARTNER_REPLENISHMENT_REVIEW: 'partner-replenishment-review',
   PRODUCT_MATERIAL_MANAGEMENT: 'product-material-management',
   FINANCE: 'finance',
   FINANCE_INVOICE: 'finance-invoice',
@@ -54,6 +56,9 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
     { key: MODULE_KEYS.PARTNER_SUPPLY, label: '合作商供货' },
     { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '物料管理' },
+  ] },
+  { key: 'partner', label: '合作商管理', modules: [
+    { key: MODULE_KEYS.PARTNER_MANAGEMENT, label: '合作商档案' },
   ] },
   { key: 'finance', label: '财务管理', modules: [
     { key: MODULE_KEYS.FINANCE, label: '报表中心' },
@@ -169,13 +174,16 @@ function normalizeModules(value, role, legacyAssetCenter) {
   if (role === 'cashier') return Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, key === MODULE_KEYS.STORE_POS]))
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null
   const defaults = new Set(defaultModuleKeys(role, legacyAssetCenter))
-  return Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key,
-    source
-      ? ([MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.PARTNER_SUPPLY].includes(key) && !Object.prototype.hasOwnProperty.call(source, key)
-          ? defaults.has(key)
-          : source[key] === true)
-      : defaults.has(key),
-  ]))
+  return Object.fromEntries(ALL_MODULE_KEYS.map((key) => {
+    if (key === MODULE_KEYS.PARTNER_MANAGEMENT) return [key, role === 'developer' || role === 'admin']
+    return [key,
+      source
+        ? ([MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.PARTNER_SUPPLY].includes(key) && !Object.prototype.hasOwnProperty.call(source, key)
+            ? defaults.has(key)
+            : source[key] === true)
+        : defaults.has(key),
+    ]
+  }))
 }
 
 export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCenter = false) {
@@ -231,10 +239,22 @@ export function hasDeveloperSensitiveRecordDelete(user) {
 }
 
 export function hasModuleAccess(user, moduleKey) {
-  if (!user || user.status === 'disabled' || user.role === 'public' || !ALL_MODULE_KEYS.includes(moduleKey)) return false
+  if (!user || user.status === 'disabled' || user.role === 'public') return false
+  // Candidate shell access only. The server re-evaluates the dynamic Guanshe
+  // on-duty schedule authority for every queue/read/review request.
+  if (moduleKey === MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW) {
+    return ['developer', 'admin', 'manager', 'staff'].includes(user.role)
+  }
+  if (!ALL_MODULE_KEYS.includes(moduleKey)) return false
+  if (moduleKey === MODULE_KEYS.PARTNER_MANAGEMENT) return user.role === 'developer' || user.role === 'admin'
   if (user.role === 'developer') return true
   if (user.role === 'cashier') return moduleKey === MODULE_KEYS.STORE_POS
   return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).modules[moduleKey] === true
+}
+
+/** Partner master data/provisioning is restricted to Developer and Admin. */
+export function canManagePartnerDomain(user) {
+  return Boolean(user && user.status !== 'disabled' && (user.role === 'developer' || user.role === 'admin'))
 }
 
 export function hasDailyEntryCapability(user, capability) {
@@ -376,6 +396,7 @@ export function canManageAccounts(user) {
 /** 页面访问判定：账号治理是开发者保留能力，不属于可授权业务版块。 */
 export function hasPageAccess(user, pageKey) {
   if (pageKey === 'account-admin') return canManageAccounts(user)
+  if (pageKey === 'partner-after-sales') return hasModuleAccess(user, MODULE_KEYS.PARTNER_MANAGEMENT)
   if (pageKey === MODULE_KEYS.STORE_ENTRY) {
     return hasModuleAccess(user, pageKey) && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.VIEW)
   }
@@ -409,7 +430,9 @@ export function canConfirmPartnerSupply(user, storeKey) {
 }
 
 export function canManagePartnerSupplyPartners(user) {
-  return Boolean(isSuperUser(user) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
+  // Legacy Partner Supply may remain usable by its existing operational roles,
+  // but Partner master-data mutation follows the Gate 2 authority boundary.
+  return Boolean(canManagePartnerDomain(user) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
 }
 
 export function canOverridePartnerSupplyPrice(user) {

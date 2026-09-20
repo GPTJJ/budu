@@ -147,6 +147,7 @@ model Store {
   customerServiceRequests      CustomerServiceRequest[]
   partnerDefaults              Partner[]                @relation("PartnerDefaultStore")
   partnerSupplyOrders          PartnerSupplyOrder[]     @relation("PartnerSupplyStore")
+  replenishmentShipments       ReplenishmentShipment[]
   rentHistories                StoreRentHistory[]
   utilityCosts                 StoreUtilityCost[]
   laborCostPeriods             StoreLaborCostPeriod[]
@@ -158,7 +159,7 @@ model User {
   id                              String    @id
   username                        String    @unique
   passwordHash                    String
-  role                            String    @default("staff") // developer | admin | finance | manager | staff | cashier | public
+  role                            String    @default("staff") // internal roles | public(disabled legacy) | customer | partner
   displayName                     String    @default("") @map("display_name")
   avatar                          String    @default("")
   storeKeys                       Json      @default("[]") @map("store_keys") // 绑定门店 key 列表
@@ -183,6 +184,7 @@ model User {
   customerServiceRequests       CustomerServiceRequest[]
   weChatAuthIdentities          WeChatAuthIdentity[]
   customerSessions              CustomerSession[]
+  partnerMemberships            PartnerUser[]
   sweetCardClaimTokensCreated   SweetCardClaimToken[]    @relation("SweetCardClaimTokenCreator")
   sweetCardClaims               SweetCardClaim[]
   sweetCardBindings             SweetCardBinding[]
@@ -211,15 +213,17 @@ model WeChatAuthIdentity {
 }
 
 model CustomerSession {
-  id        String    @id
-  tokenHash String    @unique @map("token_hash")
-  userId    String    @map("user_id")
-  expiresAt DateTime  @map("expires_at")
-  revokedAt DateTime? @map("revoked_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id            String    @id
+  tokenHash     String    @unique @map("token_hash")
+  userId        String    @map("user_id")
+  principalType String    @default("CUSTOMER") @map("principal_type")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId, expiresAt])
+  @@index([principalType, userId, expiresAt])
   @@map("customer_sessions")
 }
 
@@ -353,10 +357,17 @@ model InventoryItem {
   productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
   sweetCardAllocations     SweetCardRedemptionItem[]
   onlinePolicies           OnlineProductPolicy[]
+  partnerReplenishmentEnabled Boolean                    @default(false)
+  partnerOrderUnit            String?
+  partnerKgBasePriceCents     BigInt?
+  partnerMinOrderBaseQty      Int?
+  partnerOrderStepBaseQty     Int?
+  replenishmentItems          ReplenishmentOrderItem[]
 
   @@index([productCategoryId])
   @@index([productGroupId])
   @@index([category, partnerSupplyEnabled])
+  @@index([category, partnerReplenishmentEnabled, isActive])
 }
 
 model InventoryItemCostHistory {
@@ -404,23 +415,264 @@ model ProductGroup {
 }
 
 model Partner {
-  id                 String               @id
-  name               String               @unique
-  contactName        String               @default("")
-  contactPhone       String               @default("")
-  defaultStoreKey    String
-  defaultDiscountBps Int                  @default(6500)
-  isActive           Boolean              @default(true)
-  note               String               @default("")
-  version            Int                  @default(1)
-  createdBy          String               @default("")
-  updatedBy          String               @default("")
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @default(now()) @updatedAt
-  defaultStore       Store                @relation("PartnerDefaultStore", fields: [defaultStoreKey], references: [key], onDelete: Restrict)
-  supplyOrders       PartnerSupplyOrder[]
+  id                      String                           @id
+  name                    String                           @unique
+  companyName             String                           @default("")
+  contactName             String                           @default("")
+  contactPhone            String                           @default("")
+  cooperationStartDate    DateTime?                        @db.Date
+  status                  String                           @default("ACTIVE")
+  invoiceTitle            String                           @default("")
+  taxpayerId              String                           @default("")
+  contractReference       String                           @default("")
+  defaultStoreKey         String
+  defaultDiscountBps      Int                              @default(6500)
+  // Legacy Partner Supply compatibility mirror. Gate 2 lifecycle authority is status.
+  isActive                Boolean                          @default(true)
+  note                    String                           @default("")
+  version                 Int                              @default(1)
+  createdBy               String                           @default("")
+  updatedBy               String                           @default("")
+  createdAt               DateTime                         @default(now())
+  updatedAt               DateTime                         @default(now()) @updatedAt
+  defaultStore            Store                            @relation("PartnerDefaultStore", fields: [defaultStoreKey], references: [key], onDelete: Restrict)
+  supplyOrders            PartnerSupplyOrder[]
+  partnerUsers            PartnerUser[]
+  partnerStores           PartnerStore[]
+  auditLogs               PartnerAuditLog[]
+  replenishmentOrders     ReplenishmentOrder[]
+  replenishmentAfterSales ReplenishmentAfterSalesRequest[]
 
+  @@index([status, name])
   @@index([isActive, name])
+}
+
+model PartnerUser {
+  id           String    @id
+  partnerId    String    @map("partner_id")
+  userId       String    @unique @map("user_id")
+  status       String    @default("active")
+  createdById  String    @default("") @map("created_by_id")
+  disabledAt   DateTime? @map("disabled_at")
+  disabledById String    @default("") @map("disabled_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+  partner      Partner   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([partnerId, userId])
+  @@index([partnerId, status])
+  @@map("partner_users")
+}
+
+model PartnerStore {
+  id                  String               @id
+  partnerId           String
+  name                String
+  contactName         String               @default("")
+  phone               String               @default("")
+  province            String               @default("")
+  city                String               @default("")
+  district            String               @default("")
+  addressLine         String               @default("")
+  status              String               @default("ACTIVE")
+  version             Int                  @default(1)
+  createdById         String               @default("")
+  updatedById         String               @default("")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @default(now()) @updatedAt
+  partner             Partner              @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  replenishmentOrders ReplenishmentOrder[]
+
+  @@unique([partnerId, name])
+  @@unique([partnerId, id])
+  @@index([partnerId, status, name])
+}
+
+model PartnerAuditLog {
+  id            String   @id
+  partnerId     String
+  entityType    String
+  entityId      String
+  action        String
+  before        Json?
+  after         Json?
+  actorUserId   String
+  actorUsername String   @default("")
+  createdAt     DateTime @default(now())
+  partner       Partner  @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}
+
+model ReplenishmentOrder {
+  id                        String                           @id
+  orderNo                   String                           @unique
+  partnerId                 String
+  partnerStoreId            String
+  partnerNameSnapshot       String
+  partnerStoreNameSnapshot  String
+  contactNameSnapshot       String                           @default("")
+  phoneSnapshot             String                           @default("")
+  provinceSnapshot          String                           @default("")
+  citySnapshot              String                           @default("")
+  districtSnapshot          String                           @default("")
+  addressLineSnapshot       String                           @default("")
+  status                    String                           @default("SUBMITTED")
+  createdByType             String
+  createdByActorId          String
+  createdByActorName        String                           @default("")
+  submittedAt               DateTime                         @default(now())
+  cancelledAt               DateTime?
+  cancelledByType           String?
+  cancelledByActorId        String                           @default("")
+  cancelledByActorName      String                           @default("")
+  requestedTotalAmountCents BigInt
+  approvedTotalAmountCents  BigInt?
+  reviewAction              String?
+  reviewReason              String                           @default("")
+  reviewedAt                DateTime?
+  reviewedByActorId         String                           @default("")
+  reviewedByActorName       String                           @default("")
+  reviewIdempotencyScope    String?
+  reviewIdempotencyKey      String?
+  reviewPayloadDigest       String?
+  idempotencyScope          String
+  idempotencyKey            String
+  idempotencyPayloadDigest  String
+  version                   Int                              @default(1)
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @default(now()) @updatedAt
+  partner                   Partner                          @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  partnerStore              PartnerStore                     @relation(fields: [partnerId, partnerStoreId], references: [partnerId, id], onDelete: Restrict)
+  items                     ReplenishmentOrderItem[]
+  shipments                 ReplenishmentShipment[]
+  afterSalesRequests        ReplenishmentAfterSalesRequest[]
+
+  @@unique([idempotencyScope, idempotencyKey])
+  @@unique([reviewIdempotencyScope, reviewIdempotencyKey])
+  @@index([partnerId, submittedAt])
+  @@index([partnerId, status, submittedAt])
+  @@index([partnerStoreId, createdAt])
+  @@index([status, submittedAt])
+}
+
+model ReplenishmentOrderItem {
+  id                          String                      @id
+  replenishmentOrderId        String
+  inventoryItemId             String
+  productNameSnapshot         String
+  skuSnapshot                 String                      @default("")
+  productCodeSnapshot         String                      @default("")
+  orderUnitSnapshot           String
+  nativeUnitSnapshot          String                      @default("")
+  requestedQuantityBase       Int
+  basePriceSnapshotCents      BigInt
+  discountBpsSnapshot         Int
+  requestedLineAmountCents    BigInt
+  minimumOrderBaseQtySnapshot Int
+  orderStepBaseQtySnapshot    Int
+  approvedQuantityBase        Int?
+  approvedLineAmountCents     BigInt?
+  reviewReason                String                      @default("")
+  createdAt                   DateTime                    @default(now())
+  replenishmentOrder          ReplenishmentOrder          @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  inventoryItem               InventoryItem               @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  shipmentItems               ReplenishmentShipmentItem[]
+
+  @@unique([replenishmentOrderId, inventoryItemId])
+  @@index([inventoryItemId])
+}
+
+model ReplenishmentShipment {
+  id                       String                      @id
+  shipmentNo               String                      @unique
+  replenishmentOrderId     String
+  fulfillmentStoreKey      String
+  fulfillmentStoreSnapshot String
+  carrier                  String
+  trackingNumber           String
+  freightType              String
+  shippedAt                DateTime
+  createdByActorId         String
+  createdByActorName       String                      @default("")
+  idempotencyScope         String
+  idempotencyKey           String
+  idempotencyPayloadDigest String
+  createdAt                DateTime                    @default(now())
+  replenishmentOrder       ReplenishmentOrder          @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  fulfillmentStore         Store                       @relation(fields: [fulfillmentStoreKey], references: [key], onDelete: Restrict)
+  items                    ReplenishmentShipmentItem[]
+
+  @@unique([idempotencyScope, idempotencyKey])
+  @@index([replenishmentOrderId, shippedAt])
+  @@index([fulfillmentStoreKey, shippedAt])
+}
+
+model ReplenishmentShipmentItem {
+  id                       String                           @id
+  replenishmentShipmentId  String
+  replenishmentOrderItemId String
+  productNameSnapshot      String
+  orderUnitSnapshot        String
+  nativeUnitSnapshot       String                           @default("")
+  shippedQuantityBase      Int
+  createdAt                DateTime                         @default(now())
+  replenishmentShipment    ReplenishmentShipment            @relation(fields: [replenishmentShipmentId], references: [id], onDelete: Restrict)
+  replenishmentOrderItem   ReplenishmentOrderItem           @relation(fields: [replenishmentOrderItemId], references: [id], onDelete: Restrict)
+  afterSalesRequests       ReplenishmentAfterSalesRequest[]
+
+  @@unique([replenishmentShipmentId, replenishmentOrderItemId])
+  @@index([replenishmentOrderItemId, createdAt])
+}
+
+model ReplenishmentAfterSalesRequest {
+  id                          String                              @id
+  requestNo                   String                              @unique
+  partnerId                   String
+  replenishmentOrderId        String
+  replenishmentShipmentItemId String
+  type                        String
+  quantityBase                Int
+  description                 String
+  status                      String                              @default("PENDING")
+  resultNote                  String                              @default("")
+  createdByActorId            String
+  createdByActorName          String                              @default("")
+  handledByActorId            String                              @default("")
+  handledByActorName          String                              @default("")
+  handledAt                   DateTime?
+  version                     Int                                 @default(1)
+  createdAt                   DateTime                            @default(now())
+  updatedAt                   DateTime                            @default(now()) @updatedAt
+  partner                     Partner                             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  replenishmentOrder          ReplenishmentOrder                  @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  replenishmentShipmentItem   ReplenishmentShipmentItem           @relation(fields: [replenishmentShipmentItemId], references: [id], onDelete: Restrict)
+  attachments                 ReplenishmentAfterSalesAttachment[]
+
+  @@unique([partnerId, id])
+  @@index([partnerId, createdAt])
+  @@index([status, createdAt])
+  @@index([replenishmentOrderId, createdAt])
+  @@index([replenishmentShipmentItemId, status])
+}
+
+model ReplenishmentAfterSalesAttachment {
+  id              String                         @id
+  requestId       String
+  partnerId       String
+  name            String
+  fileType        String
+  fileSize        Int
+  dataUrl         String                         @db.Text
+  storageProvider String                         @default("local")
+  storageKey      String                         @default("")
+  createdAt       DateTime                       @default(now())
+  request         ReplenishmentAfterSalesRequest @relation(fields: [partnerId, requestId], references: [partnerId, id], onDelete: Restrict)
+
+  @@index([requestId])
+  @@index([partnerId, createdAt])
 }
 
 model PartnerSupplyOrder {

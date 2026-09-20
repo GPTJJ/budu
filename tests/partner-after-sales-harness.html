@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Partner After Sales</title></head><body class="m-0"><div id="root"></div><script type="module">
+import React from 'react'; import { createRoot } from 'react-dom/client'; import PartnerAfterSalesPage from '/src/components/PartnerAfterSalesPage.jsx'; import '/src/index.css';
+let row = { id:'as-1', requestNo:'AS-20260907-001', partnerName:'秦皇岛合作商', orderNo:'RPL-1', productName:'KG 糖', orderUnit:'KG', type:'DAMAGED', quantityBase:1000, description:'运输破损', status:'PENDING', resultNote:'', version:1 };
+const requests=[]; window.__afterSalesTest={requests}; const json=(data,status=200)=>Promise.resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}));
+window.fetch=async(url,options={})=>{ const path=new URL(url,location.origin).pathname; const method=options.method||'GET'; if(path==='/api/v2/partner-management/after-sales'&&method==='GET') return json({rows:[row]}); if(path.endsWith('/process')&&method==='POST'){const body=JSON.parse(options.body); requests.push(body); row={...row,status:body.status,resultNote:body.reason,version:2}; return json({ok:true,request:row});} return json({message:'NOT_MOCKED'},404); };
+createRoot(document.getElementById('root')).render(React.createElement('div',{className:'min-h-screen bg-canvas p-3'},React.createElement(PartnerAfterSalesPage,{onBack:()=>{}})));
+</script></body></html>

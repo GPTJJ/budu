@@ -33,6 +33,9 @@ const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
 const ProductMaterialManagementPage = lazy(() => import('./ProductMaterialManagementPage'))
 const PartnerSupplyPage = lazy(() => import('./PartnerSupplyPage'))
+const PartnerManagementPage = lazy(() => import('./PartnerManagementPage'))
+const PartnerReplenishmentReviewPage = lazy(() => import('./PartnerReplenishmentReviewPage'))
+const PartnerAfterSalesPage = lazy(() => import('./PartnerAfterSalesPage'))
 const ReportCenterPage = lazy(() => import('./ReportCenterPage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
 const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
@@ -53,6 +56,9 @@ const pageTitles = {
   'inventory-transfer': '门店调拨',
   'inventory-purchase': '申请采购',
   'partner-supply': '合作商供货',
+  'partner-management': '合作商档案',
+  'partner-replenishment-review': '补货订单',
+  'partner-after-sales': '售后处理',
   'product-material-management': '物料管理',
   finance: '报表中心',
   'finance-invoice': '发票开具',
@@ -149,6 +155,9 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
   const isPartnerSupplyView = view === 'partner-supply'
+  const isPartnerManagementView = view === 'partner-management'
+  const isPartnerReplenishmentReviewView = view === 'partner-replenishment-review'
+  const isPartnerAfterSalesView = view === 'partner-after-sales'
   const isProductMaterialManagementView = view === 'product-material-management'
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
@@ -398,6 +407,12 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                 />
               ) : isPartnerSupplyView && hasModuleAccess(user, 'partner-supply') ? (
                 <PartnerSupplyPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerManagementView && hasModuleAccess(user, 'partner-management') ? (
+                <PartnerManagementPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerReplenishmentReviewView && hasModuleAccess(user, 'partner-replenishment-review') ? (
+                <PartnerReplenishmentReviewPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerAfterSalesView && hasModuleAccess(user, 'partner-management') ? (
+                <PartnerAfterSalesPage onBack={returnToOverview} />
               ) : isProductMaterialManagementView && hasModuleAccess(user, 'product-material-management') ? (
                 <ProductMaterialManagementPage onBack={returnToOverview} />
               ) : isFinanceView && hasModuleAccess(user, 'finance') ? (

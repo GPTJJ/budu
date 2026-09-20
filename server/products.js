@@ -56,7 +56,14 @@ function optionalPositiveGrams(value, label) {
   return grams
 }
 
-function productData(body, existingImage = '') {
+function optionalPartnerOrderUnit(value) {
+  if (value === '' || value === null || value === undefined) return null
+  const unit = String(value).trim().toUpperCase()
+  if (!['KG', 'PCS', 'NATIVE'].includes(unit)) throw httpError('合作商补货方式只能是现有商品单位、KG 或 PCS')
+  return unit
+}
+
+export function productData(body, existingImage = '', existing = null) {
   const sku = normalizeSku(body.sku)
   if (sku.length > 64) throw httpError('SKU 不能超过 64 个字符')
   const sortOrder = Number(body.sortOrder ?? 0)
@@ -73,6 +80,14 @@ function productData(body, existingImage = '') {
   const transferPieceEnabled = body.transferPieceEnabled === true
   const transferPieceWeightGrams = optionalPositiveGrams(body.transferPieceWeightGrams, '标准单颗重量')
   const partnerSupplyEnabled = body.partnerSupplyEnabled === true
+  const partnerReplenishmentEnabled = Object.hasOwn(body, 'partnerReplenishmentEnabled')
+    ? body.partnerReplenishmentEnabled === true
+    : existing?.partnerReplenishmentEnabled === true
+  const partnerOrderUnit = optionalPartnerOrderUnit(Object.hasOwn(body, 'partnerOrderUnit') ? body.partnerOrderUnit : existing?.partnerOrderUnit)
+  const rawPartnerKgBasePriceCents = optionalCents(Object.hasOwn(body, 'partnerKgBasePriceCents') ? body.partnerKgBasePriceCents : existing?.partnerKgBasePriceCents, 'KG 标准合作商补货价')
+  const partnerKgBasePriceCents = partnerOrderUnit === 'KG' ? rawPartnerKgBasePriceCents : null
+  const partnerMinOrderBaseQty = partnerOrderUnit ? 1 : null
+  const partnerOrderStepBaseQty = partnerOrderUnit ? 1 : null
   const productGroupId = text(body.productGroupId, 120, '商品组') || null
   const variantName = productGroupId ? text(body.variantName, 30, '款式名称', true) : ''
   const transferCodeInput = text(body.transferCode, 40, '商品编号')
@@ -82,6 +97,14 @@ function productData(body, existingImage = '') {
   if (transferBoxEnabled && transferBoxWeightGrams === null) throw httpError('允许整箱调拨时请填写整箱净重')
   if (transferPieceEnabled && transferPieceWeightGrams === null) throw httpError('允许散颗调拨时请填写标准单颗重量')
   if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
+  if (partnerKgBasePriceCents !== null && partnerKgBasePriceCents <= 0n) throw httpError('KG 标准合作商补货价必须大于 0')
+  if (partnerReplenishmentEnabled) {
+    if (!sku) throw httpError('启用合作商补货前请填写稳定 SKU')
+    if (!partnerOrderUnit) throw httpError('启用合作商补货前请选择使用现有商品单位、KG 或单颗')
+    if (partnerOrderUnit === 'KG' && partnerKgBasePriceCents === null) throw httpError('KG 补货必须设置有效的 KG 标准合作商补货价')
+    if (partnerOrderUnit === 'PCS' && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('PCS 补货必须存在有效的商品单颗售价')
+    if (partnerOrderUnit === 'NATIVE' && (!unit || salePriceCents === null || salePriceCents <= 0n)) throw httpError('使用现有商品单位补货必须存在有效单位和商品标准售价')
+  }
   return {
     name: text(body.name, 50, '商品名称', true),
     sku: sku || null,
@@ -102,6 +125,11 @@ function productData(body, existingImage = '') {
     transferPieceEnabled,
     transferPieceWeightGrams,
     partnerSupplyEnabled,
+    partnerReplenishmentEnabled,
+    partnerOrderUnit,
+    partnerKgBasePriceCents,
+    partnerMinOrderBaseQty,
+    partnerOrderStepBaseQty,
     productCategoryId: text(body.productCategoryId, 120, '商品分类') || null,
     productGroupId,
     variantName,
@@ -141,6 +169,11 @@ export const productListSelect = {
   transferPieceEnabled: true,
   transferPieceWeightGrams: true,
   partnerSupplyEnabled: true,
+  partnerReplenishmentEnabled: true,
+  partnerOrderUnit: true,
+  partnerKgBasePriceCents: true,
+  partnerMinOrderBaseQty: true,
+  partnerOrderStepBaseQty: true,
   productCategoryId: true,
   productGroupId: true,
   variantName: true,
@@ -174,6 +207,11 @@ export function serializeProduct(product, { includeCost = false } = {}) {
     transferPieceEnabled: product.transferPieceEnabled,
     transferPieceWeightGrams: product.transferPieceWeightGrams,
     partnerSupplyEnabled: product.partnerSupplyEnabled,
+    partnerReplenishmentEnabled: product.partnerReplenishmentEnabled,
+    partnerOrderUnit: product.partnerOrderUnit || '',
+    partnerKgBasePriceCents: product.partnerKgBasePriceCents == null ? null : product.partnerKgBasePriceCents.toString(),
+    partnerMinOrderBaseQty: product.partnerMinOrderBaseQty,
+    partnerOrderStepBaseQty: product.partnerOrderStepBaseQty,
     productCategoryId: product.productCategoryId || '',
     productCategory: product.productCategory ? {
       id: product.productCategory.id,
@@ -213,6 +251,7 @@ productsRouter.get('/products', wrap(async (req, res) => {
       ...(purpose === 'pos' ? { isActive: active ?? true } : {}),
       ...(purpose === 'transfer' ? { transferEnabled: active ?? true } : {}),
       ...(purpose === 'partner' ? { partnerSupplyEnabled: active ?? true } : {}),
+      ...(purpose === 'replenishment' ? { partnerReplenishmentEnabled: active ?? true } : {}),
       ...(q ? { OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { sku: { contains: normalizeSku(q), mode: 'insensitive' } },
@@ -269,9 +308,13 @@ productsRouter.post('/products', wrap(async (req, res) => {
   const data = productData(req.body || {})
   await requireProductCategory(data.productCategoryId)
   await requireProductGroup(data.productGroupId)
-  const row = await prisma.inventoryItem.create({
-    data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
-    include: { productCategory: true, productGroup: true },
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.inventoryItem.create({
+      data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
+      include: { productCategory: true, productGroup: true },
+    })
+    if (data.partnerKgBasePriceCents != null) await appendPartnerKgPriceAudit(tx, req.user, created.id, null, data.partnerKgBasePriceCents)
+    return created
   })
   res.status(201).json({ ok: true, product: serializeProduct(row, { includeCost: hasReportCostView(req.user) }) })
 }))
@@ -360,6 +403,11 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         transferPieceEnabled: existing.transferPieceEnabled,
         transferPieceWeightGrams: existing.transferPieceWeightGrams,
         partnerSupplyEnabled: existing.partnerSupplyEnabled,
+        partnerReplenishmentEnabled: existing.partnerReplenishmentEnabled,
+        partnerOrderUnit: existing.partnerOrderUnit,
+        partnerKgBasePriceCents: existing.partnerKgBasePriceCents,
+        partnerMinOrderBaseQty: existing.partnerMinOrderBaseQty,
+        partnerOrderStepBaseQty: existing.partnerOrderStepBaseQty,
         productCategoryId: existing.productCategoryId,
         productGroupId: existing.productGroupId,
         variantName: existing.variantName,
@@ -436,6 +484,28 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
   res.json({ ok: true, updated: saved.length, rows: saved.map((row) => serializeProduct(row, { includeCost: hasReportCostView(req.user) })) })
 }))
 
+function kgPriceAuditValue(value) {
+  return value == null ? null : BigInt(value).toString()
+}
+
+export async function appendPartnerKgPriceAudit(tx, user, productId, before, after) {
+  await tx.sensitiveRecordAudit.create({
+    data: buildPartnerKgPriceAuditData(user, productId, before, after),
+  })
+}
+
+export function buildPartnerKgPriceAuditData(user, productId, before, after) {
+  return {
+    id: `audit-${crypto.randomUUID()}`,
+    action: 'partner_replenishment.kg_base_price.change',
+    recordType: 'InventoryItem',
+    recordId: productId,
+    actorUserId: String(user?.id || ''),
+    actorUsername: String(user?.username || user?.name || ''),
+    reason: JSON.stringify({ field: 'partnerKgBasePriceCents', before: kgPriceAuditValue(before), after: kgPriceAuditValue(after), unit: 'CENTS_PER_KG' }),
+  }
+}
+
 productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
@@ -446,12 +516,17 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'costPriceCents') && BigInt(existing.costPriceCents ?? -1) !== BigInt(optionalCents(req.body.costPriceCents, '成本价') ?? -1)) {
     throw httpError('商品成本已纳入历史权威，请使用“更新成本”并填写生效日期与原因', 409)
   }
-  const data = productData({ ...(req.body || {}), costPriceCents: existing.costPriceCents?.toString() ?? '' }, existing.image || '')
+  const data = productData({ ...(req.body || {}), costPriceCents: existing.costPriceCents?.toString() ?? '' }, existing.image || '', existing)
   await requireProductCategory(data.productCategoryId, existing.productCategoryId || '')
   await requireProductGroup(data.productGroupId, existing.productGroupId || '')
-  const result = await prisma.inventoryItem.updateMany({
-    where: { id: req.params.productId, category: 'product', version },
-    data: { ...data, version: { increment: 1 } },
+  const kgPriceChanged = kgPriceAuditValue(existing.partnerKgBasePriceCents) !== kgPriceAuditValue(data.partnerKgBasePriceCents)
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.inventoryItem.updateMany({
+      where: { id: req.params.productId, category: 'product', version },
+      data: { ...data, version: { increment: 1 } },
+    })
+    if (updated.count === 1 && kgPriceChanged) await appendPartnerKgPriceAudit(tx, req.user, existing.id, existing.partnerKgBasePriceCents, data.partnerKgBasePriceCents)
+    return updated
   })
   if (result.count !== 1) {
     const latest = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })

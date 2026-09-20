@@ -28,6 +28,9 @@ const emptyForm = {
   transferPieceEnabled: false,
   transferPieceWeightGrams: '',
   partnerSupplyEnabled: false,
+  partnerReplenishmentEnabled: false,
+  partnerOrderUnit: '',
+  partnerKgBasePrice: '',
   productGroupId: '',
   variantName: '',
   trackInventory: false,
@@ -38,11 +41,14 @@ const emptyForm = {
 const inputClass = 'mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 
 function toForm(product) {
+  const partnerOrderUnit = product.partnerOrderUnit || ''
   return {
     ...emptyForm,
     ...product,
     salePrice: centsToYuan(product.salePriceCents),
     costPrice: centsToYuan(product.costPriceCents),
+    partnerOrderUnit,
+    partnerKgBasePrice: centsToYuan(product.partnerKgBasePriceCents),
     image: '',
     imageDirty: false,
   }
@@ -72,6 +78,7 @@ function purposeEnabled(product, purpose) {
   if (purpose === 'pos') return product.isActive
   if (purpose === 'transfer') return product.transferEnabled
   if (purpose === 'partner') return product.partnerSupplyEnabled
+  if (purpose === 'replenishment') return product.partnerReplenishmentEnabled
   return product.isActive || product.transferEnabled || product.partnerSupplyEnabled
 }
 
@@ -362,6 +369,11 @@ export default function ProductCenterPage({ onBack, user }) {
         transferPieceEnabled: form.transferPieceEnabled,
         transferPieceWeightGrams: form.transferPieceEnabled ? form.transferPieceWeightGrams : '',
         partnerSupplyEnabled: form.partnerSupplyEnabled,
+        partnerReplenishmentEnabled: form.partnerReplenishmentEnabled,
+        partnerOrderUnit: form.partnerOrderUnit,
+        partnerKgBasePriceCents: form.partnerOrderUnit === 'KG' && form.partnerKgBasePrice !== '' ? yuanToCents(form.partnerKgBasePrice) : '',
+        partnerMinOrderBaseQty: form.partnerOrderUnit ? 1 : '',
+        partnerOrderStepBaseQty: form.partnerOrderUnit ? 1 : '',
         trackInventory: form.trackInventory,
         sortOrder: Number(form.sortOrder),
         ...(form.productId ? { version: form.version } : {}),
@@ -460,7 +472,7 @@ export default function ProductCenterPage({ onBack, user }) {
             <option value="inactive">停用</option>
           </select>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1" aria-label="业务用途筛选">{[['all', '全部'], ['pos', 'POS'], ['transfer', '门店调拨'], ['partner', '合作商供货']].map(([key, label]) => <button key={key} type="button" onClick={() => setPurpose(key)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold ${purpose === key ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{label}</button>)}</div>
+        <div className="flex gap-2 overflow-x-auto pb-1" aria-label="业务用途筛选">{[['all', '全部'], ['pos', 'POS'], ['transfer', '门店调拨'], ['partner', '合作商供货'], ['replenishment', '合作商补货']].map(([key, label]) => <button key={key} type="button" onClick={() => setPurpose(key)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold ${purpose === key ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{label}</button>)}</div>
       </section>
 
       {selectedIds.length > 0 && <section className="sticky top-2 z-20 space-y-2 rounded-2xl border border-budu-100 bg-white/95 p-3 shadow-lg backdrop-blur" data-testid="product-bulk-bar"><div className="flex flex-wrap items-center gap-2"><span className="mr-auto text-sm font-black text-budu-700">已选择 {selectedIds.length} 项</span><button onClick={() => setSelectedIds([])} className="text-xs font-bold text-slate-400">取消选择</button></div><div className="flex flex-wrap gap-2"><select aria-label="批量目标分类" value={bulkCategoryId} onChange={(event) => setBulkCategoryId(event.target.value)} className="min-h-10 min-w-36 flex-1 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-600"><option value="">未分类</option>{productCategories.filter((item) => item.isActive).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button disabled={bulkBusy} onClick={() => applyBulk({ operation: 'category' })} className="btn-secondary min-h-10 px-3 text-xs">修改分类</button>{[['pos', 'POS'], ['transfer', '调拨'], ['partner', '合作商']].flatMap(([key, label]) => [<button key={`${key}-on`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: true })} className="min-h-10 rounded-xl bg-emerald-50 px-3 text-xs font-bold text-emerald-700">启用{label}</button>, <button key={`${key}-off`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: false })} className="min-h-10 rounded-xl bg-slate-100 px-3 text-xs font-bold text-slate-500">停用{label}</button>])}</div></section>}
@@ -478,7 +490,7 @@ export default function ProductCenterPage({ onBack, user }) {
                     <h3 data-testid="product-title" className="product-mobile-title font-black text-slate-800">{item.name}</h3>
                     <span data-testid="product-price" className="mt-1 block shrink-0 text-sm font-black text-budu-700">{item.salePriceCents == null ? '未设零售价' : formatCents(item.salePriceCents)}</span>
                   </div>
-                  <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['合作商', item.partnerSupplyEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
+                  <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['合作商', item.partnerSupplyEnabled], ['补货', item.partnerReplenishmentEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
                   <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>
@@ -564,8 +576,9 @@ export default function ProductCenterPage({ onBack, user }) {
                 <label className="text-xs font-semibold text-slate-500">POS 成本价（元）<input inputMode="decimal" disabled={Boolean(form.productId)} value={form.costPrice} onChange={(e) => update('costPrice', e.target.value)} placeholder="0.00" className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`} />{form.productId && <span className="mt-1 block text-[10px] text-slate-400">已有商品请通过“成本历史”追加新版本</span>}</label>
                 <label className="text-xs font-semibold text-slate-500">商品条码（可空）<input value={form.barcode} onChange={(e) => update('barcode', e.target.value)} className={inputClass} /></label>
                 <label className="text-xs font-semibold text-slate-500">排序<input type="number" value={form.sortOrder} onChange={(e) => update('sortOrder', e.target.value)} className={inputClass} /></label>
-                <div className="space-y-2 rounded-2xl bg-budu-50 p-3 sm:col-span-2"><p className="text-xs font-black text-budu-800">业务用途（相互独立）</p><div className="grid gap-2 sm:grid-cols-3"><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="POS 销售" type="checkbox" checked={form.isActive} onChange={(e) => update('isActive', e.target.checked)} className="h-4 w-4 accent-budu-500" />POS 销售</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="门店调拨" type="checkbox" checked={form.transferEnabled} onChange={(e) => update('transferEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />门店调拨</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="合作商供货" type="checkbox" checked={form.partnerSupplyEnabled} onChange={(e) => update('partnerSupplyEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />合作商供货</label></div></div>
+                <div className="space-y-2 rounded-2xl bg-budu-50 p-3 sm:col-span-2"><p className="text-xs font-black text-budu-800">业务用途（相互独立）</p><div className="grid gap-2 sm:grid-cols-2"><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="POS 销售" type="checkbox" checked={form.isActive} onChange={(e) => update('isActive', e.target.checked)} className="h-4 w-4 accent-budu-500" />POS 销售</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="门店调拨" type="checkbox" checked={form.transferEnabled} onChange={(e) => update('transferEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />门店调拨</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="合作商供货（旧业务）" type="checkbox" checked={form.partnerSupplyEnabled} onChange={(e) => update('partnerSupplyEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />合作商供货（旧业务）</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-600"><input aria-label="合作商补货" type="checkbox" checked={form.partnerReplenishmentEnabled} onChange={(e) => update('partnerReplenishmentEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />合作商补货</label></div></div>
                 {form.transferEnabled && <div className="space-y-3 rounded-2xl border border-budu-100 bg-white p-4 sm:col-span-2"><div><p className="text-sm font-black text-slate-800">调拨规格</p><p className="mt-0.5 text-xs text-slate-400">箱和颗分别保存；重量只用于“约”估算</p></div><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm font-bold text-slate-700"><input aria-label="允许整箱调拨" type="checkbox" checked={form.transferBoxEnabled} onChange={(e) => update('transferBoxEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />允许整箱调拨</label>{form.transferBoxEnabled && <label className="mt-3 block text-xs font-semibold text-slate-500">整箱净重（g）<input required aria-label="整箱净重" type="number" min="1" max="9999999" inputMode="numeric" value={form.transferBoxWeightGrams ?? ''} onChange={(e) => update('transferBoxWeightGrams', e.target.value)} placeholder="2500" className={inputClass} /></label>}</div><div className="rounded-xl bg-slate-50 p-3"><label className="flex items-center gap-2 text-sm font-bold text-slate-700"><input aria-label="允许散颗调拨" type="checkbox" checked={form.transferPieceEnabled} onChange={(e) => update('transferPieceEnabled', e.target.checked)} className="h-4 w-4 accent-budu-500" />允许散颗调拨</label>{form.transferPieceEnabled && <label className="mt-3 block text-xs font-semibold text-slate-500">标准单颗重量（g）<input required aria-label="标准单颗重量" type="number" min="1" max="9999999" inputMode="numeric" value={form.transferPieceWeightGrams ?? ''} onChange={(e) => update('transferPieceWeightGrams', e.target.value)} placeholder="6" className={inputClass} /></label>}</div></div></div>}
+                {form.partnerReplenishmentEnabled && <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 sm:col-span-2" data-testid="partner-replenishment-config"><div><p className="text-sm font-black text-slate-800">合作商补货设置</p><p className="mt-0.5 text-xs text-slate-500">商品中心是唯一配置权威；KG/单颗仅用于糖果特殊补货，其他商品复用现有单位与标准售价。</p></div><fieldset className="grid gap-2 sm:grid-cols-3"><legend className="mb-1 text-xs font-bold text-slate-600">补货方式</legend><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-700"><input aria-label="补货方式现有商品单位" type="radio" name="partner-order-unit" checked={form.partnerOrderUnit === 'NATIVE'} onChange={() => { update('partnerOrderUnit', 'NATIVE'); update('partnerKgBasePrice', '') }} className="h-4 w-4 accent-budu-500" />现有单位（{form.unit || '未设置'}）</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-700"><input aria-label="补货单位 KG" type="radio" name="partner-order-unit" checked={form.partnerOrderUnit === 'KG'} onChange={() => update('partnerOrderUnit', 'KG')} className="h-4 w-4 accent-budu-500" />糖果 KG</label><label className="flex items-center gap-2 rounded-xl bg-white p-3 text-sm font-bold text-slate-700"><input aria-label="补货单位单颗" type="radio" name="partner-order-unit" checked={form.partnerOrderUnit === 'PCS'} onChange={() => { update('partnerOrderUnit', 'PCS'); update('partnerKgBasePrice', '') }} className="h-4 w-4 accent-budu-500" />糖果单颗</label></fieldset>{!form.partnerOrderUnit ? <p role="alert" className="rounded-xl bg-amber-100 p-3 text-xs font-bold text-amber-800">请明确选择补货方式；系统不会按商品名、重量或旧业务猜测。</p> : form.partnerOrderUnit === 'KG' ? <label className="block text-xs font-semibold text-slate-600">标准合作商补货价（元/kg）<input required aria-label="KG 标准合作商补货价" inputMode="decimal" value={form.partnerKgBasePrice} onChange={(e) => update('partnerKgBasePrice', e.target.value)} placeholder="180.00" className={inputClass} /><span className="mt-1 block text-[10px] text-slate-400">人工维护；不使用单颗售价或重量推导</span></label> : <div className="rounded-xl bg-white p-3 text-xs text-slate-600"><span className="font-bold">现有权威价格：</span>{form.salePrice === '' ? '未设置' : `¥${form.salePrice} / ${form.partnerOrderUnit === 'PCS' ? '颗' : form.unit || '单位'}`}<span className="mt-1 block text-[10px] text-slate-400">不建立 Partner 专用价格；数量只要求大于 0，快捷加减不构成服务端步长约束。</span></div>}</div>}
                 <label className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm font-medium text-slate-600 sm:col-span-2"><input type="checkbox" checked={form.trackInventory} onChange={(e) => update('trackInventory', e.target.checked)} className="h-4 w-4 accent-budu-500" />参与库存（本阶段不扣减）</label>
               </div>
             </div>

@@ -6,6 +6,8 @@ import { notify } from './notification-center.js'
 import { listUsers } from './user-store.js'
 import { resolveStoreName } from './store-names.js'
 import { isFixedStoreKey } from '../shared/storeDirectory.js'
+import { writePartnerAudit } from './partner-domain.js'
+import { legacyPartnerLifecycleFields } from './partner-domain-policy.js'
 import {
   MODULE_KEYS,
   canAccessPartnerSupplyStore,
@@ -84,7 +86,6 @@ function partnerData(body, user) {
     contactPhone: text(body?.contactPhone, 60, '联系方式'),
     defaultStoreKey,
     defaultDiscountBps: discountBps(body?.defaultDiscountBps),
-    isActive: body?.isActive !== false,
     note: text(body?.note, 500, '备注'),
     updatedBy: who.name,
   }
@@ -244,9 +245,10 @@ partnerSupplyRouter.post('/partners', wrap(async (req, res) => {
   const store = await prisma.store.findUnique({ where: { key: data.defaultStoreKey } })
   if (!store?.active) throw bad('默认发货门店不存在或已停用', 409)
   const who = actor(req.user)
-  const row = await prisma.partner.create({
-    data: { id: uid('partner'), ...data, createdBy: who.name },
-    include: { defaultStore: true, _count: { select: { supplyOrders: true } } },
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.partner.create({ data: { id: uid('partner'), ...data, ...legacyPartnerLifecycleFields(req.body), createdBy: who.name } })
+    await writePartnerAudit(tx, { partnerId: created.id, entityType: 'PARTNER', entityId: created.id, action: 'LEGACY_PARTNER_CREATED', after: created, user: req.user })
+    return tx.partner.findUnique({ where: { id: created.id }, include: { defaultStore: true, _count: { select: { supplyOrders: true } } } })
   })
   res.status(201).json({ ok: true, partner: serializePartner(row) })
 }))
@@ -261,9 +263,22 @@ partnerSupplyRouter.put('/partners/:id', wrap(async (req, res) => {
   if (duplicate) throw bad('合作商名称已存在', 409)
   const store = await prisma.store.findUnique({ where: { key: data.defaultStoreKey } })
   if (!store?.active) throw bad('默认发货门店不存在或已停用', 409)
-  const updated = await prisma.partner.updateMany({ where: { id: req.params.id, version }, data: { ...data, version: { increment: 1 } } })
-  if (updated.count !== 1) throw bad('合作商已被其他人修改，请刷新后重试', 409)
-  const row = await prisma.partner.findUnique({ where: { id: req.params.id }, include: { defaultStore: true, _count: { select: { supplyOrders: true } } } })
+  const row = await prisma.$transaction(async (tx) => {
+    const before = await tx.partner.findUnique({ where: { id: req.params.id } })
+    if (!before) throw bad('合作商不存在', 404)
+    const lifecycle = legacyPartnerLifecycleFields(req.body, before)
+    const updated = await tx.partner.updateMany({ where: { id: req.params.id, version }, data: { ...data, ...lifecycle, version: { increment: 1 } } })
+    if (updated.count !== 1) throw bad('合作商已被其他人修改，请刷新后重试', 409)
+    const after = await tx.partner.findUnique({ where: { id: req.params.id } })
+    await writePartnerAudit(tx, { partnerId: after.id, entityType: 'PARTNER', entityId: after.id, action: 'LEGACY_PARTNER_UPDATED', before, after, user: req.user })
+    if (before.defaultDiscountBps !== after.defaultDiscountBps) {
+      await writePartnerAudit(tx, { partnerId: after.id, entityType: 'PARTNER', entityId: after.id, action: 'PARTNER_DISCOUNT_CHANGED', before, after, user: req.user })
+    }
+    if (before.status !== after.status) {
+      await writePartnerAudit(tx, { partnerId: after.id, entityType: 'PARTNER', entityId: after.id, action: 'PARTNER_STATUS_CHANGED', before, after, user: req.user })
+    }
+    return tx.partner.findUnique({ where: { id: req.params.id }, include: { defaultStore: true, _count: { select: { supplyOrders: true } } } })
+  })
   res.json({ ok: true, partner: serializePartner(row) })
 }))
 

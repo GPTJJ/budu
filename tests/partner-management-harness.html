@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>BUDU Partner Management Test</title></head><body class="m-0"><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import PartnerManagementPage from '/src/components/PartnerManagementPage.jsx'
+import { seedCachedDataForTest } from '/src/utils/userData.js'
+import '/src/index.css'
+
+seedCachedDataForTest({ stores: [{ key: 'guanshe', name: '北京官舍店' }, { key: 'tongying', name: '北京通盈中心店' }] })
+
+const audit = (id, action) => ({ id, entityType: 'PARTNER', entityId: 'partner-qhd', action, actorUserId: 'dev-1', actorUsername: 'developer-test', createdAt: '2026-09-06T10:00:00.000Z' })
+const partners = [{
+  id: 'partner-qhd', name: '秦皇岛合作商', companyName: '秦皇岛布都商贸有限公司', contactName: '王女士', contactPhone: '13800000000',
+  cooperationStartDate: '2026-01-01', status: 'ACTIVE', defaultDiscountBps: 6500, defaultStoreKey: 'guanshe', defaultStoreName: '北京官舍店',
+  invoiceTitle: '秦皇岛布都商贸有限公司', taxpayerId: '91130300TEST', contractReference: 'CONTRACT-QHD-001', internalNote: '内部风险备注',
+  version: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-09-06T10:00:00.000Z',
+  stores: [{ id: 'store-qhd-1', name: '秦皇岛一店', contactName: '李女士', phone: '13900000000', province: '河北省', city: '秦皇岛市', district: '海港区', addressLine: '河北大街88号', status: 'ACTIVE', version: 1 }],
+  users: [{ id: 'binding-qhd-1', userId: 'user-qhd-1', username: 'qhd-partner', userStatus: 'active', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' }],
+  audits: [audit('audit-1', 'PARTNER_CREATED')], legacySupplyOrderCount: 2,
+}]
+
+const requests = []
+const refreshCounts = row => ({ ...row, storeCount: row.stores.length, userCount: row.users.length })
+const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+const parseBody = options => JSON.parse(options.body || '{}')
+window.__partnerManagementTest = { partners, requests }
+
+window.fetch = async (url, options = {}) => {
+  const path = new URL(url, location.origin).pathname
+  const method = options.method || 'GET'
+  if (path === '/api/v2/partner-management/partners' && method === 'GET') return json({ rows: partners.map(refreshCounts) })
+  if (path === '/api/v2/partner-management/partners' && method === 'POST') {
+    const body = parseBody(options); requests.push({ type: 'partner-create', body })
+    const row = { id: `partner-${partners.length + 1}`, ...body, internalNote: body.internalNote || '', version: 1, stores: [{ id: 'store-new-1', ...body.store, version: 1 }], users: [{ id: 'binding-new-1', userId: 'user-new-1', username: body.account.username, userStatus: 'active', status: 'active' }], audits: [audit('audit-new-1', 'PARTNER_CREATED')], legacySupplyOrderCount: 0 }
+    delete row.store; delete row.account; partners.push(row)
+    return json({ ok: true, partner: row }, 201)
+  }
+  const detail = path.match(/^\/api\/v2\/partner-management\/partners\/([^/]+)$/)
+  if (detail && method === 'GET') return json({ partner: partners.find(row => row.id === detail[1]) })
+  if (detail && method === 'PUT') {
+    const body = parseBody(options); const row = partners.find(item => item.id === detail[1]); Object.assign(row, body, { version: row.version + 1 }); row.audits.unshift(audit(`audit-${row.audits.length + 1}`, 'PARTNER_DISCOUNT_CHANGED')); requests.push({ type: 'partner-update', body }); return json({ ok: true, partner: row })
+  }
+  const lifecycle = path.match(/^\/api\/v2\/partner-management\/partners\/([^/]+)\/status$/)
+  if (lifecycle && method === 'PUT') { const body = parseBody(options); const row = partners.find(item => item.id === lifecycle[1]); row.status = body.status; row.version += 1; row.audits.unshift(audit(`audit-${row.audits.length + 1}`, 'PARTNER_STATUS_CHANGED')); requests.push({ type: 'partner-status', body }); return json({ ok: true, partner: row }) }
+  const stores = path.match(/^\/api\/v2\/partner-management\/partners\/([^/]+)\/stores(?:\/([^/]+))?$/)
+  if (stores && method === 'POST') { const body = parseBody(options); const row = partners.find(item => item.id === stores[1]); row.stores.push({ id: `store-${row.stores.length + 1}`, ...body, version: 1 }); requests.push({ type: 'store-create', body }); return json({ ok: true, store: row.stores.at(-1) }, 201) }
+  if (stores && method === 'PUT') { const body = parseBody(options); const row = partners.find(item => item.id === stores[1]); const store = row.stores.find(item => item.id === stores[2]); Object.assign(store, body, { version: store.version + 1 }); requests.push({ type: 'store-update', body }); return json({ ok: true, store }) }
+  const users = path.match(/^\/api\/v2\/partner-management\/partners\/([^/]+)\/users(?:\/([^/]+)\/status)?$/)
+  if (users && method === 'POST') { const body = parseBody(options); const row = partners.find(item => item.id === users[1]); row.users.push({ id: `binding-${row.users.length + 1}`, userId: `user-${row.users.length + 1}`, username: body.username, userStatus: 'active', status: 'active' }); requests.push({ type: 'user-create', body: { username: body.username, passwordWasSubmitted: Boolean(body.password) } }); return json({ ok: true }, 201) }
+  if (users && method === 'PUT') { const body = parseBody(options); const row = partners.find(item => item.id === users[1]); row.users.find(item => item.id === users[2]).status = body.status; requests.push({ type: 'user-status', body }); return json({ ok: true }) }
+  return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+}
+
+createRoot(document.getElementById('root')).render(React.createElement('div', { className: 'min-h-screen bg-canvas p-3 sm:p-6' }, React.createElement(PartnerManagementPage, { onBack: () => {} })))
+</script></body></html>

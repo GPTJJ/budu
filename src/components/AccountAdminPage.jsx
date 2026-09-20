@@ -195,7 +195,7 @@ function CreateUserModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label={t('创建账号')} className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">

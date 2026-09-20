@@ -11,9 +11,21 @@ import { OverlayStackManager } from './components/overlay/OverlayPrimitives'
 const loadDashboard = () => import('./components/Dashboard')
 const Dashboard = lazyRetry(loadDashboard)
 const CustomerRequestPage = lazyRetry(() => import('./components/CustomerRequestPage'))
+const PartnerAccessPage = lazyRetry(() => import('./components/PartnerAccessPage'))
 
 export default function App() {
-  if (window.location.pathname.replace(/\/+$/, '') === '/customer-request') {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
+  if (pathname === '/partner' || pathname.startsWith('/partner/')) {
+    return (
+      <>
+        <OverlayStackManager />
+        <Suspense fallback={<AppLoading />}>
+          <PartnerAccessPage />
+        </Suspense>
+      </>
+    )
+  }
+  if (pathname === '/customer-request') {
     return (
       <>
         <OverlayStackManager />

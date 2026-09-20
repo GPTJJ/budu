@@ -6,7 +6,7 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { loadDb, persist } from './store.js'
 import { getUserById, getUserByUsername, listUsers, createUser, updateUser, deleteUser } from './user-store.js'
-import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
+import { hashPassword, verifyPassword, signToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
 import { partnerSupplyRouter } from './partner-supply.js'
@@ -30,6 +30,10 @@ import { sweetCardRouter } from './sweet-card.js'
 import { sweetCardAvailabilityRouter } from './sweet-card-availability.js'
 import { wechatTestLoginRouter } from './wechat-test-login.js'
 import { sweetCardClaimRouter } from './sweet-card-claim.js'
+import { createPartnerAuthRouter } from './partner-auth.js'
+import { createPartnerDomainRouter } from './partner-domain.js'
+import { authenticateInternalToken } from './internal-auth.js'
+import { isInternalUser, resolveInternalPrincipal } from './principals.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
@@ -252,7 +256,7 @@ function normalizeInventory(raw) {
   return out
 }
 
-export function createApp({ onlineCheckoutRuntime = null } = {}) {
+export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers } = {}) {
   const app = express()
   onlineCheckoutRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
@@ -314,15 +318,18 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
   }
 
   async function requireAuth(req, res, next) {
-    const token = req.cookies[COOKIE]
-    const payload = token ? verifyToken(token, await getSecret()) : null
-    if (!payload || !payload.sub) return res.status(401).json({ error: '未登录或登录已过期' })
-    // Data Authority DA-2：账号权威 = PostgreSQL
-    const user = await getUserById(payload.sub)
-    if (!user) return res.status(401).json({ error: '账号不存在' })
-    if (user.status === 'disabled' || user.role === 'public' || user.role === 'customer') return res.status(403).json({ error: '账号已停用，请联系开发者' })
-    req.user = user
-    next()
+    try {
+      const authenticated = await authenticateInternalToken({
+        token: req.cookies[COOKIE],
+        secret: await getSecret(),
+        getUserById,
+      })
+      req.user = authenticated.user
+      req.principal = authenticated.principal
+      return next()
+    } catch (error) {
+      return res.status(Number(error?.status) || 401).json({ error: error?.message || '未登录或登录已过期' })
+    }
   }
 
   function requireDeveloper(req, res, next) {
@@ -368,6 +375,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
   }
 
   const ROLES = [...ACTIVE_ROLES]
+  const findInternalUser = (users, id) => users.find((user) => user.id === id && isInternalUser(user))
 
   /** 收银角色约束：仅绑定一家门店、不绑定员工 */
   function validateCashierRole(role, storeKeys, staffKey) {
@@ -651,6 +659,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
   // gateway. These mounts must remain before the authenticated employee v2 API.
   app.use('/api/v2/customer/auth/wechat', wechatTestLoginRouter)
   app.use('/api/v2/customer/sweet-card', sweetCardClaimRouter)
+  app.use('/api/partner', createPartnerAuthRouter({ secretLoader: getSecret }))
   // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
   app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
@@ -679,6 +688,8 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
       (/^\/transfer-master-items(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/(?:partners|partner-supply|partner-receipts)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_SUPPLY]) ||
+      (/^\/partner-management\/(?:replenishment-orders|fulfillment-stores)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW]) ||
+      (/^\/partner-management(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_MANAGEMENT]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:stock|items|waste-records)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:expenses|profit|export\/profit)(?:\/|$)/.test(pathname) && [MODULE_KEYS.FINANCE]) ||
@@ -695,7 +706,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
   app.use('/api/v2', posRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
+  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -800,7 +811,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
     }
-    if (user.status === 'disabled' || user.role === 'public' || user.role === 'customer') {
+    if (!resolveInternalPrincipal(user)) {
       return res.status(403).json({ error: '账号已停用，请联系开发者' })
     }
     setAuthCookie(res, signToken(user, await getSecret()))
@@ -933,7 +944,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
   // ---------- 账号管理（最高权限） ----------
   app.get('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    res.json({ users: users.filter(user => user.role !== 'customer').map(userPublic) })
+    res.json({ users: users.filter(isInternalUser).map(userPublic) })
   })
 
   app.put('/api/admin/users/:id/role', requireAuth, requireAccountAdmin, async (req, res) => {
@@ -955,7 +966,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
     }
     // Data Authority DA-2：账号权威 = PostgreSQL
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能修改自己的权限' })
@@ -1004,7 +1015,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
 
   app.put('/api/admin/users/:id/permissions', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.role === 'developer') return res.status(400).json({ error: '开发者固定拥有全部权限' })
     if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
@@ -1027,7 +1038,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
       return res.status(400).json({ error: '运营身份类型不正确' })
     }
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (operationalIdentityType === 'NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE' && target.employeeId) {
       return res.status(409).json({ error: '已绑定员工的账号不能标记为非员工运营替代账号' })
@@ -1044,7 +1055,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
 
   app.put('/api/admin/users/:id/name', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     const displayName = String(req.body.name || '').trim().slice(0, 20)
     const updated = await updateUser(target.id, { displayName })
@@ -1057,7 +1068,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
       return res.status(400).json({ error: '密码至少 6 位' })
     }
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     await updateUser(target.id, { passwordHash: hashPassword(newPassword) })
     res.json({ ok: true })
@@ -1065,7 +1076,7 @@ export function createApp({ onlineCheckoutRuntime = null } = {}) {
 
   app.delete('/api/admin/users/:id', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能删除自己' })

@@ -10,6 +10,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
 const app = read('server/app.js')
 const userStore = read('server/user-store.js')
+const internalAuth = read('server/internal-auth.js')
 
 test('DA-2: 登录走 PostgreSQL（getUserByUsername），不读 KV users', () => {
   assert.match(app, /app\.post\('\/api\/auth\/login'[\s\S]*?getUserByUsername\(username\)/, 'login 使用 PG 账号查询')
@@ -17,7 +18,8 @@ test('DA-2: 登录走 PostgreSQL（getUserByUsername），不读 KV users', () =
 })
 
 test('DA-2: 鉴权中间件从 PostgreSQL 取号（getUserById）', () => {
-  assert.match(app, /requireAuth[\s\S]*?getUserById\(payload\.sub\)/, 'requireAuth 使用 PG')
+  assert.match(app, /requireAuth[\s\S]*?authenticateInternalToken\([\s\S]*?getUserById/, 'requireAuth 注入 PG 账号查询')
+  assert.match(internalAuth, /getUserById\(payload\.sub\)/, 'internal auth 按 JWT subject 从 PG 重载账号')
 })
 
 test('DA-2: 账号管理路由全部走 user-store（PG 权威 + KV 镜像）', () => {

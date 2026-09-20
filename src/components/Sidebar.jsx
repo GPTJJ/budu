@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   Gift,
+  Handshake,
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
@@ -25,6 +26,7 @@ const menus = [
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
+  { key: 'partner-management', label: '合作商管理', icon: Handshake },
   { key: 'finance', label: '报表中心', icon: Wallet },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
@@ -52,6 +54,11 @@ const subMenus = {
     { key: 'partner-supply', label: '合作商供货' },
     { key: 'product-material-management', label: '物料管理' },
   ],
+  'partner-management': [
+    { key: 'partner-management', label: '合作商档案' },
+    { key: 'partner-replenishment-review', label: '补货订单' },
+    { key: 'partner-after-sales', label: '售后处理', moduleKey: 'partner-management' },
+  ],
 }
 
 export default function Sidebar({ open, onClose, view, onNavigate, user, onUserChange, onLogout }) {
@@ -60,6 +67,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
     staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.EMPLOYEE_PROFILE],
     store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER],
     inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE, MODULE_KEYS.PARTNER_SUPPLY, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT],
+    'partner-management': [MODULE_KEYS.PARTNER_MANAGEMENT, MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW],
   }
   const visibleMenus = menus.filter((item) => {
     if (item.key === MODULE_KEYS.SWEET_CARD) return hasModuleAccess(user, item.key) && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW)
@@ -97,7 +105,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         {visibleMenus.map((item) => {
           const Icon = item.icon
           // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
-          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.key))
+          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.moduleKey || sub.key))
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 

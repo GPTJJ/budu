@@ -89,10 +89,10 @@ export async function listUsers() {
   return rows.map(toAppUser)
 }
 
-export async function createUser(user) {
+export async function createUser(user, { client = prisma, mirror = true } = {}) {
   const data = toPgData(user)
-  const row = await prisma.user.create({ data })
-  await mirrorUsersToKv()
+  const row = await client.user.create({ data })
+  if (mirror) await mirrorUsersToKv()
   return toAppUser(row)
 }
 

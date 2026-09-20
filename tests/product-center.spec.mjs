@@ -14,7 +14,7 @@ test('统一商品中心按独立业务用途、状态、分类与搜索筛选',
   await expect(page.getByText(/NO\.2柠檬/)).toBeVisible()
 })
 
-test('编辑商品可独立控制三个业务开关并复用正式分类', async ({ page }) => {
+test('编辑商品可独立控制各业务开关并复用正式分类', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
   await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
   await page.getByLabel('商品分类', { exact: true }).selectOption('c-candy')
@@ -42,6 +42,48 @@ test('商品编辑可人工配置箱颗调拨规格', async ({ page }) => {
   await page.getByRole('button', { name: '保存商品' }).click()
   const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/products/p-pos'))
   expect(request.body).toMatchObject({ transferBoxEnabled: true, transferBoxWeightGrams: '2500', transferPieceEnabled: true, transferPieceWeightGrams: '6' })
+})
+
+test('商品中心配置糖果 KG 补货价且快捷步长不是交易配置', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByRole('checkbox', { name: '合作商补货', exact: true }).check()
+  await page.getByLabel('补货单位 KG').check()
+  await page.getByLabel('KG 标准合作商补货价').fill('180.00')
+  await expect(page.getByLabel('合作商补货最低起订')).toHaveCount(0)
+  await expect(page.getByLabel('合作商补货递增单位')).toHaveCount(0)
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const request = await page.evaluate(() => window.__productCenterTest.requests.findLast((item) => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({
+    partnerReplenishmentEnabled: true,
+    partnerOrderUnit: 'KG',
+    partnerKgBasePriceCents: '18000',
+    partnerMinOrderBaseQty: 1,
+    partnerOrderStepBaseQty: 1,
+  })
+  expect(request.body.transferBoxEnabled).toBe(false)
+})
+
+test('糖果 PCS 补货只读展示现有单颗价格', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByRole('checkbox', { name: '合作商补货', exact: true }).check()
+  await page.getByLabel('补货单位单颗').check()
+  await expect(page.getByText('¥72.00 / 颗')).toBeVisible()
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const request = await page.evaluate(() => window.__productCenterTest.requests.findLast((item) => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ partnerOrderUnit: 'PCS', partnerKgBasePriceCents: '', partnerMinOrderBaseQty: 1, partnerOrderStepBaseQty: 1 })
+})
+
+test('非糖果补货复用现有商品单位与标准价格', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByRole('checkbox', { name: '合作商补货', exact: true }).check()
+  await page.getByLabel('补货方式现有商品单位').check()
+  await expect(page.getByText('¥72.00 / 份')).toBeVisible()
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const request = await page.evaluate(() => window.__productCenterTest.requests.findLast((item) => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ partnerOrderUnit: 'NATIVE', partnerKgBasePriceCents: '', unit: '份' })
 })
 
 test('商品中心列表只使用版本化 WebP 缩略图并延迟加载', async ({ page }) => {

@@ -46,7 +46,7 @@ test('合作商供货操作权限区分查看、发货、收款、合作商与�
   assert.equal(canManagePartnerSupplyPartners(manager), false)
   assert.equal(canRegisterPartnerReceipt(finance), true)
   assert.equal(canOverridePartnerSupplyPrice(finance), true)
-  assert.equal(canManagePartnerSupplyPartners(finance), true)
+  assert.equal(canManagePartnerSupplyPartners(finance), false)
   assert.equal(normalizeAccountPermissions({}, 'staff').modules[MODULE_KEYS.PARTNER_SUPPLY], true)
 })
 

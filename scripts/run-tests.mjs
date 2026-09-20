@@ -24,6 +24,20 @@ const NODE_TEST_SUITE = [
   'test-wechat-logistics.mjs', // 传运单客户端：无 trans_id 不上报、错误分类、token 不泄漏、不伪造 waybill_token
   'test-online-logistics.mjs', // 物流上报状态：发货前不注册、幂等、自提不进入、失败不阻断发货、upsert 后不重复上报
   'test-legacy-waybill-register.mjs', // 旧链运单注册：网关签名、商家身份、参数边界、无 trans_id 不上报、失败不造 token
+  'test-transaction-conflict.mjs',
+  'test-partner-replenishment-gate9a.mjs',
+  'test-partner-replenishment-gate3.mjs',
+  'test-partner-replenishment-gate4.mjs',
+  'test-partner-replenishment-gate5.mjs',
+  'test-partner-replenishment-gate6.mjs',
+  'test-partner-replenishment-gate7.mjs',
+  'test-partner-replenishment-gate8.mjs',
+  'test-partner-domain-policy.mjs', // Partner lifecycle、discount、admin role 与 1:N schema contract
+  'test-partner-domain-migration.mjs', // Gate 2 additive lifecycle/store migration rehearsal
+  'test-partner-provisioning-atomicity.mjs', // Partner + Store + User + PartnerUser all-or-nothing
+  'test-partner-principal-boundary.mjs', // Partner/internal/customer principal、session 与 tenant fail-closed 边界
+  'test-partner-principal-migration.mjs', // PartnerUser 与 external session discriminator additive migration rehearsal
+  'test-partner-route-shell-boundary.mjs', // /partner 独立壳层与内部账号管理隔离静态合同
   'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
   'test-budu-sweet-card-skill.mjs', // Sweet Card 业务 Skill、路由与核心合同
   'test-sweet-card-core.mjs', // Sweet Card 金额、credential、权限、分配与结算合同
@@ -103,6 +117,10 @@ const NODE_TEST_SUITE = [
 ]
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [
+  'test-partner-review-version-http.mjs', // GET DTO → review expected version, stale/retry/race and fulfillment
+  'test-pg-ephemeral-database-isolation.mjs', // disposable database、完整migration、双run隔离与exact cleanup
+  'test-partner-domain-http.mjs', // Gate 2 real Prisma + Express domain/tenant/provisioning integration
+  'test-partner-principal-http.mjs', // Partner/Internal/Customer real Prisma + Express boundary
   'test-role-module-api.mjs',       // Auth / 角色 / 模块权限 API（本地起服务）→ critical
   'test-pg-account-load-db-isolation.mjs', // Gate 4：PG 账号路由不受 legacy loadDb 故障阻塞 → critical
   'test-daily-store-staff-employee-identity.mjs', // Gate 6：DailyStoreStaff 稳定 Employee.id + legacy 兼容 → critical
@@ -143,6 +161,10 @@ const DIRECT_SUITE = [
 ]
 // critical 子集（关键业务域：Auth/Account/Permission、DailyEntry、POS、Inventory、Payroll、Approval、Homepage）
 const CRITICAL_DIRECT = [
+  'test-partner-review-version-http.mjs',
+  'test-pg-ephemeral-database-isolation.mjs',
+  'test-partner-domain-http.mjs',
+  'test-partner-principal-http.mjs',
   'test-role-module-api.mjs',
   'test-pg-account-load-db-isolation.mjs',
   'test-daily-store-staff-employee-identity.mjs',
@@ -182,6 +204,20 @@ const CRITICAL_DIRECT = [
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-transaction-conflict.mjs',
+  'test-partner-replenishment-gate9a.mjs',
+  'test-partner-replenishment-gate3.mjs',
+  'test-partner-replenishment-gate4.mjs',
+  'test-partner-replenishment-gate5.mjs',
+  'test-partner-replenishment-gate6.mjs',
+  'test-partner-replenishment-gate7.mjs',
+  'test-partner-replenishment-gate8.mjs',
+  'test-partner-domain-policy.mjs',
+  'test-partner-domain-migration.mjs',
+  'test-partner-provisioning-atomicity.mjs',
+  'test-partner-principal-boundary.mjs',
+  'test-partner-principal-migration.mjs',
+  'test-partner-route-shell-boundary.mjs',
   'test-budu-brand-system.mjs',
   'test-budu-sweet-card-skill.mjs',
   'test-sweet-card-core.mjs',
@@ -294,13 +330,17 @@ function isolatedTestDatabaseUrl(parentEnv) {
 
 const testEnv = createTestEnv()
 const testDatabaseUrl = isolatedTestDatabaseUrl(process.env)
+let suiteDatabaseUrl = ''
+let dropSuiteDatabase = null
 if (process.env.TEST_DATABASE_URL && !testDatabaseUrl) {
   console.error('TEST_DATABASE_URL 必须指向 loopback 隔离测试数据库')
   process.exit(1)
 }
 if (testDatabaseUrl) {
-  testEnv.TEST_DATABASE_URL = testDatabaseUrl
-  testEnv.DATABASE_URL = testDatabaseUrl
+  const helper = await import('./helpers/test-pg-schema.mjs')
+  suiteDatabaseUrl = await helper.createDisposablePgSchema(`${mode}_suite`)
+  dropSuiteDatabase = helper.dropDisposablePgDatabase
+  testEnv.TEST_DATABASE_URL = suiteDatabaseUrl
 }
 
 /** 文件存在性预检（node --test 对缺失文件静默返回 0，需显式拦截） */
@@ -356,8 +396,10 @@ console.log(`\n===== 结果：PASS ${pass} / FAIL ${fail} =====`)
 if (failures.length) {
   console.log('失败项：')
   for (const f of failures) console.log(`  - ${f}`)
+  if (suiteDatabaseUrl) await dropSuiteDatabase(suiteDatabaseUrl)
   process.exit(1)
 }
+if (suiteDatabaseUrl) await dropSuiteDatabase(suiteDatabaseUrl)
 process.exit(0)
 
 /** 环境隔离自验证：
