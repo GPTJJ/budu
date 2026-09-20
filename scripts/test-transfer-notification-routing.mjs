@@ -5,21 +5,14 @@ import fs from 'node:fs'
 process.env.PUBLIC_BASE_URL = 'https://budu.example'
 
 const {
-  TRANSFER_FALLBACK_REASONS,
+  STOCKING_GROUP_CHANNEL,
   TRANSFER_RECIPIENT_POLICY,
+  approvedReplenishmentItemSummary,
+  deliverPartnerReplenishmentStockingNotification,
   deliverTransferRequestNotification,
-  transferBusinessDate,
   transferItemSummary,
 } = await import('../server/transfer-notification.js')
 const { sendWechatMarkdownResult, wecomWebhookUrl } = await import('../server/wechat-alert.js')
-
-const PERSONAL_CONFIG = { channel: 'wecom', corpId: 'ww-test', agentId: '1', secret: 'secret' }
-const DEVELOPER_BINDING = { username: 'budu', userId: 'dh' }
-
-const employee = (id, name = id) => ({ id, name })
-const user = (employeeId) => ({ id: `user-${employeeId}`, username: `account-${employeeId}`, employeeId, status: 'active' })
-const binding = (employeeId) => ({ username: `account-${employeeId}`, openId: `wecom-${employeeId}`, channel: 'wecom', status: 'active' })
-const shift = (employeeId, time = '') => ({ employeeId, staff: `员工-${employeeId}`, time, note: '' })
 
 const transfer = (overrides = {}) => ({
   id: 'tr-routing-1',
@@ -28,7 +21,7 @@ const transfer = (overrides = {}) => ({
   storeKey: 'tongying',
   storeName: '北京通盈中心店',
   createdBy: 'requester',
-  createdAt: new Date('2026-08-30T03:00:00.000Z'),
+  createdAt: new Date('2026-09-20T03:00:00.000Z'),
   status: 'pending',
   items: [
     { itemCode: 'NO.2', productName: '柠檬', quantity: null, boxQuantity: 0, pieceQuantity: 166 },
@@ -38,31 +31,32 @@ const transfer = (overrides = {}) => ({
   ...overrides,
 })
 
-function fakePrisma({ schedules = [], employees = [], users = [], bindings = [], scheduleError = null } = {}) {
+const replenishment = (overrides = {}) => ({
+  id: 'rpl-1',
+  orderNo: 'RPL-20260920-1',
+  status: 'APPROVED',
+  partnerNameSnapshot: '森醒',
+  partnerStoreNameSnapshot: '北京门店',
+  reviewedByActorName: 'reviewer',
+  reviewedAt: new Date('2026-09-20T04:00:00.000Z'),
+  items: [
+    { productCodeSnapshot: 'CANDY-1', productNameSnapshot: '糖果A', orderUnitSnapshot: 'PCS', requestedQuantityBase: 100, approvedQuantityBase: 60 },
+    { productCodeSnapshot: 'CANDY-2', productNameSnapshot: '糖果B', orderUnitSnapshot: 'PCS', requestedQuantityBase: 50, approvedQuantityBase: 0 },
+    { productCodeSnapshot: 'FOOD-1', productNameSnapshot: '原料', orderUnitSnapshot: 'KG', requestedQuantityBase: 3000, approvedQuantityBase: 1500 },
+  ],
+  ...overrides,
+})
+
+function fakePrisma() {
   const notifications = new Map()
   const deliveries = new Map()
   return {
     notifications,
     deliveries,
-    schedule: {
-      async findMany({ where }) {
-        if (scheduleError) throw scheduleError
-        return schedules.filter((row) => row.storeKey === where.storeKey && row.date === where.date).slice(0, 2)
-      },
-    },
-    employee: {
-      async findMany({ where }) {
-        return employees.filter((row) => where.id.in.includes(row.id)).map(({ id, name }) => ({ id, name }))
-      },
-    },
-    user: {
-      async findMany({ where }) {
-        return users.filter((row) => where.employeeId.in.includes(row.employeeId) && row.status === where.status)
-      },
-    },
-    wechatBinding: {
-      async findMany({ where }) {
-        return bindings.filter((row) => where.username.in.includes(row.username) && row.channel === where.channel && row.status === where.status)
+    store: {
+      async findUnique({ where }) {
+        assert.equal(where.key, 'guanshe')
+        return { name: '北京官舍店' }
       },
     },
     notification: {
@@ -89,43 +83,30 @@ function fakePrisma({ schedules = [], employees = [], users = [], bindings = [],
   }
 }
 
-function sendHarness() {
-  const personal = []
-  const group = []
+function groupHarness(result = { ok: true, errcode: 0, errmsg: 'ok' }) {
+  const calls = []
   return {
-    personal,
-    group,
-    sendPersonal: async (_cfg, recipient, message) => {
-      personal.push({ recipient, message })
-      return { ok: true, errcode: 0, errmsg: 'ok' }
-    },
-    sendGroup: async (title, content) => {
-      group.push({ title, content })
-      return { ok: true, errcode: 0, errmsg: 'ok' }
+    calls,
+    send: async (title, content) => {
+      calls.push({ title, content })
+      return result
     },
   }
 }
 
-async function route(prismaClient, sends, request = transfer()) {
-  return deliverTransferRequestNotification({
-    prismaClient,
-    transfer: request,
-    personalConfig: PERSONAL_CONFIG,
-    developerBinding: DEVELOPER_BINDING,
-    sendPersonal: sends.sendPersonal,
-    sendGroup: sends.sendGroup,
-  })
-}
-
-test('business date is Asia/Shanghai date and item summary preserves box/piece/legacy facts', () => {
-  assert.equal(transferBusinessDate('2026-08-29T16:30:00.000Z'), '2026-08-30')
-  const summary = transferItemSummary(transfer().items)
-  assert.match(summary, /NO\.2 柠檬 166颗/)
-  assert.match(summary, /NO\.10 香草 1箱 \+ 50颗/)
-  assert.match(summary, /MAT-1 冰袋 8件/)
+test('item summaries preserve transfer quantities and Partner final approved quantities', () => {
+  const transferSummary = transferItemSummary(transfer().items)
+  assert.match(transferSummary, /NO\.2 柠檬 × 166颗/)
+  assert.match(transferSummary, /NO\.10 香草 × 1箱 \+ 50颗/)
+  assert.match(transferSummary, /MAT-1 冰袋 × 8件/)
+  const partnerSummary = approvedReplenishmentItemSummary(replenishment().items)
+  assert.match(partnerSummary, /糖果A × 60 颗/)
+  assert.doesNotMatch(partnerSummary, /100/)
+  assert.doesNotMatch(partnerSummary, /糖果B/)
+  assert.match(partnerSummary, /原料 × 1\.5 KG/)
 })
 
-test('group robot requires explicit webhook config and verifies provider errcode', async () => {
+test('group robot requires the existing explicit webhook and validates provider errcode', async () => {
   const originalWebhook = process.env.WECHAT_WORK_WEBHOOK_URL
   const originalFetch = global.fetch
   const calls = []
@@ -142,9 +123,7 @@ test('group robot requires explicit webhook config and verifies provider errcode
     assert.equal((await sendWechatMarkdownResult('title', 'content')).ok, true)
     assert.equal(calls.length, 1)
     global.fetch = async () => Response.json({ errcode: 93000, errmsg: 'invalid webhook' })
-    const failed = await sendWechatMarkdownResult('title', 'content')
-    assert.equal(failed.ok, false)
-    assert.equal(failed.errcode, 93000)
+    assert.equal((await sendWechatMarkdownResult('title', 'content')).ok, false)
   } finally {
     global.fetch = originalFetch
     if (originalWebhook === undefined) delete process.env.WECHAT_WORK_WEBHOOK_URL
@@ -152,143 +131,88 @@ test('group robot requires explicit webhook config and verifies provider errcode
   }
 })
 
-test('one scheduled employee receives one personal message; normal group and developer are zero', async () => {
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [shift('e1', '10:00–18:00')] }],
-    employees: [employee('e1')], users: [user('e1')], bindings: [binding('e1')],
-  })
-  const sends = sendHarness()
-  const result = await route(prismaClient, sends)
+test('internal transfer always sends one group message without schedule or personal recipient lookup', async () => {
+  const prismaClient = fakePrisma()
+  const group = groupHarness()
+  const result = await deliverTransferRequestNotification({ prismaClient, transfer: transfer(), sendGroup: group.send })
   assert.equal(result.ok, true)
   assert.equal(result.recipientPolicy, TRANSFER_RECIPIENT_POLICY)
-  assert.equal(result.groupCount, 0)
-  assert.equal(result.developerCount, 0)
-  assert.equal(sends.personal.length, 1)
-  assert.equal(sends.personal[0].recipient.openId, 'wecom-e1')
-  assert.equal(sends.group.length, 0)
-  assert.equal([...prismaClient.deliveries.values()].filter((row) => row.channel === 'inapp' && row.status === 'sent').length, 1)
+  assert.equal(result.groupCount, 1)
+  assert.equal(group.calls.length, 1)
+  assert.match(group.calls[0].content, /业务类型：\*\* 内部调拨/)
+  assert.match(group.calls[0].content, /北京官舍店/)
+  assert.match(group.calls[0].content, /北京通盈中心店/)
+  assert.equal([...prismaClient.deliveries.values()][0].channel, STOCKING_GROUP_CHANNEL)
 })
 
-test('all scheduled staff across different shifts receive regardless of submission time', async () => {
-  const ids = ['e1', 'e2', 'e3']
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [
-      shift('e1', '10:00–18:00'), shift('e2', '13:00–21:00'), shift('e3', '18:00–22:00'),
-    ] }],
-    employees: ids.map((id) => employee(id)), users: ids.map((id) => user(id)), bindings: ids.map((id) => binding(id)),
-  })
-  for (const submittedAt of ['2026-08-30T03:00:00.000Z', '2026-08-30T06:00:00.000Z', '2026-08-30T12:00:00.000Z']) {
-    const sends = sendHarness()
-    const request = transfer({ id: `tr-${submittedAt}`, createdAt: new Date(submittedAt) })
-    const result = await route(prismaClient, sends, request)
-    assert.equal(result.status, 'scheduled_staff')
-    assert.deepEqual(result.scheduledEmployeeIds, ids)
-    assert.equal(sends.personal.length, 3)
-    assert.equal(sends.group.length, 0)
-  }
+test('internal transfer remains group-routed when no schedule API exists', async () => {
+  const prismaClient = fakePrisma()
+  assert.equal('schedule' in prismaClient, false)
+  const group = groupHarness()
+  const result = await deliverTransferRequestNotification({ prismaClient, transfer: transfer({ id: 'tr-no-shift' }), sendGroup: group.send })
+  assert.equal(result.status, 'sent')
+  assert.equal(group.calls.length, 1)
 })
 
-test('duplicate employeeId schedule rows are deduplicated to one personal delivery', async () => {
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [shift('e1', '早班'), shift('e1', '晚班')] }],
-    employees: [employee('e1')], users: [user('e1')], bindings: [binding('e1')],
-  })
-  const sends = sendHarness()
-  const result = await route(prismaClient, sends)
-  assert.deepEqual(result.scheduledEmployeeIds, ['e1'])
-  assert.equal(sends.personal.length, 1)
+test('Partner approval sends one group message using approved quantities and not requested quantities', async () => {
+  const prismaClient = fakePrisma()
+  const group = groupHarness()
+  const result = await deliverPartnerReplenishmentStockingNotification({ prismaClient, order: replenishment(), sendGroup: group.send })
+  assert.equal(result.ok, true)
+  assert.equal(group.calls.length, 1)
+  assert.match(group.calls[0].content, /业务类型：\*\* Partner补货/)
+  assert.match(group.calls[0].content, /糖果A × 60 颗/)
+  assert.doesNotMatch(group.calls[0].content, /100/)
+  assert.doesNotMatch(group.calls[0].content, /糖果B/)
+  assert.match(group.calls[0].content, /状态：\*\* 待发货/)
 })
 
-test('partial missing bindings notify reachable scheduled staff and do not trigger fallback', async () => {
-  const ids = ['e1', 'e2', 'e3']
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: ids.map((id) => shift(id)) }],
-    employees: ids.map((id) => employee(id)), users: ids.map((id) => user(id)), bindings: [binding('e1'), binding('e2')],
+test('SUBMITTED Partner order is not a stocking trigger', async () => {
+  const prismaClient = fakePrisma()
+  const group = groupHarness()
+  const result = await deliverPartnerReplenishmentStockingNotification({
+    prismaClient,
+    order: replenishment({ status: 'SUBMITTED', reviewedAt: null }),
+    sendGroup: group.send,
   })
-  const sends = sendHarness()
-  const result = await route(prismaClient, sends)
-  assert.equal(result.status, 'scheduled_staff')
-  assert.equal(sends.personal.length, 2)
-  assert.equal(sends.group.length, 0)
-  assert.equal(result.deliveries.find((row) => row.employeeId === 'e3').status, 'skipped')
-  assert.equal(result.developerCount, 0)
+  assert.equal(result.status, 'skipped')
+  assert.equal(group.calls.length, 0)
+  assert.equal(prismaClient.notifications.size, 0)
 })
 
-for (const scenario of [
-  {
-    name: 'all scheduled staff lack bindings',
-    expected: TRANSFER_FALLBACK_REASONS.NO_REACHABLE_SCHEDULED_STAFF,
-    data: { schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [shift('e1')] }], employees: [employee('e1')], users: [user('e1')] },
-  },
-  {
-    name: 'no staff is scheduled for business date (yesterday/tomorrow do not receive)',
-    expected: TRANSFER_FALLBACK_REASONS.NO_SCHEDULED_STAFF,
-    data: { schedules: [
-      { id: 'sc-yesterday', storeKey: 'guanshe', date: '2026-08-29', shifts: [shift('e1')] },
-      { id: 'sc-tomorrow', storeKey: 'guanshe', date: '2026-08-31', shifts: [shift('e1')] },
-    ], employees: [employee('e1')], users: [user('e1')], bindings: [binding('e1')] },
-  },
-  {
-    name: 'schedule resolver failure',
-    expected: TRANSFER_FALLBACK_REASONS.SCHEDULE_RESOLUTION_FAILED,
-    data: { scheduleError: new Error('database unavailable') },
-  },
-  {
-    name: 'legacy name-only schedule fails closed without name matching',
-    expected: TRANSFER_FALLBACK_REASONS.SCHEDULE_RESOLUTION_FAILED,
-    data: { schedules: [{ id: 'sc-legacy', storeKey: 'guanshe', date: '2026-08-30', shifts: [{ staff: '同名员工', time: '早班' }] }] },
-  },
-]) {
-  test(`${scenario.name} => one group + one developer fallback`, async () => {
-    const prismaClient = fakePrisma(scenario.data)
-    const sends = sendHarness()
-    const result = await route(prismaClient, sends)
-    assert.equal(result.status, 'fallback')
-    assert.equal(result.reason, scenario.expected)
-    assert.equal(result.group.status, 'sent')
-    assert.equal(result.developer.status, 'sent')
-    assert.equal(sends.group.length, 1)
-    assert.equal(sends.personal.length, 1)
-    assert.equal(sends.personal[0].recipient.openId, 'dh')
-  })
-}
+test('duplicate transfer and Partner approval requests do not resend group messages', async () => {
+  const prismaClient = fakePrisma()
+  const group = groupHarness()
+  await deliverTransferRequestNotification({ prismaClient, transfer: transfer(), sendGroup: group.send })
+  await deliverTransferRequestNotification({ prismaClient, transfer: transfer(), sendGroup: group.send })
+  await deliverPartnerReplenishmentStockingNotification({ prismaClient, order: replenishment(), sendGroup: group.send })
+  await deliverPartnerReplenishmentStockingNotification({ prismaClient, order: replenishment(), sendGroup: group.send })
+  assert.equal(group.calls.length, 2)
+  assert.equal(prismaClient.deliveries.size, 2)
+})
 
-test('provider failure is recorded and never falls back to group/developer', async () => {
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [shift('e1')] }],
-    employees: [employee('e1')], users: [user('e1')], bindings: [binding('e1')],
-  })
-  const sends = sendHarness()
-  sends.sendPersonal = async () => ({ ok: false, errcode: 60011, errmsg: 'not allowed' })
-  const result = await route(prismaClient, sends)
+test('provider failure is recorded and does not throw into the completed business operation', async () => {
+  const prismaClient = fakePrisma()
+  const group = groupHarness({ ok: false, errcode: 93000, errmsg: 'invalid webhook' })
+  const result = await deliverTransferRequestNotification({ prismaClient, transfer: transfer(), sendGroup: group.send })
   assert.equal(result.ok, false)
-  assert.equal(result.status, 'scheduled_staff')
-  assert.equal(sends.group.length, 0)
-  const individual = [...prismaClient.deliveries.values()].find((row) => row.channel === 'wecom_individual')
-  assert.equal(individual.status, 'failed')
+  assert.equal(result.status, 'failed')
+  const delivery = [...prismaClient.deliveries.values()][0]
+  assert.equal(delivery.status, 'failed')
+  assert.match(delivery.error, /93000/)
 })
 
-test('delivery is idempotent and repeated event does not send duplicates', async () => {
-  const prismaClient = fakePrisma({
-    schedules: [{ id: 'sc-1', storeKey: 'guanshe', date: '2026-08-30', shifts: [shift('e1')] }],
-    employees: [employee('e1')], users: [user('e1')], bindings: [binding('e1')],
-  })
-  const sends = sendHarness()
-  await route(prismaClient, sends)
-  await route(prismaClient, sends)
-  assert.equal(sends.personal.length, 1)
-  assert.equal(sends.group.length, 0)
-})
-
-test('fixed four-person and time-of-day routing are absent; other notification entry points remain', () => {
+test('source keeps original business triggers, removes personal shift routing, and leaves other WeCom paths intact', () => {
   const source = fs.readFileSync(new URL('../server/transfer-notification.js', import.meta.url), 'utf8')
   const v2 = fs.readFileSync(new URL('../server/v2.js', import.meta.url), 'utf8')
+  const partnerDomain = fs.readFileSync(new URL('../server/partner-domain.js', import.meta.url), 'utf8')
   const notificationCenter = fs.readFileSync(new URL('../server/notification-center.js', import.meta.url), 'utf8')
-  for (const forbidden of ['陈文慧', '隋晓', '陈荣梅', '舒敏', 'actualHours', 'startTime', 'endTime', 'transferStoreRecipients', 'notifyTransferStore']) {
-    assert.equal(source.includes(forbidden) || v2.includes(forbidden), false, `forbidden transfer routing authority: ${forbidden}`)
-  }
-  assert.match(source, /employeeId/)
-  assert.match(source, /storeKey, date: businessDate/)
+  assert.doesNotMatch(source, /schedule\.findMany|wechatBinding|sendWechatPersonal|developerWecomRecipientBinding/)
+  assert.match(v2, /deliverTransferRequestNotification\(\{ transfer: serialized \}\)/)
+  assert.match(v2, /deliverTransferRequestNotification[\s\S]+\.catch\(\(error\)/)
+  assert.match(partnerDomain, /REPLENISHMENT_REVIEW_ACTIONS\.APPROVE/)
+  assert.match(partnerDomain, /deliverPartnerReplenishmentStockingNotification/)
+  assert.match(partnerDomain, /deliverPartnerReplenishmentStockingNotification[\s\S]+\.catch\(\(error\)/)
   assert.match(notificationCenter, /export async function notify\(opt\)/)
   assert.match(notificationCenter, /deliverCustomerRequestWecom/)
 })

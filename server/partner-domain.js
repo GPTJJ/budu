@@ -31,6 +31,7 @@ import {
   previewReplenishmentApproval,
   reviewReplenishmentOrder,
 } from './replenishment-review-service.js'
+import { deliverPartnerReplenishmentStockingNotification } from './transfer-notification.js'
 import {
   createReplenishmentShipment,
   listFulfillmentStores,
@@ -494,6 +495,9 @@ export function createPartnerDomainRouter({ db = prisma, mirrorUsers = mirrorUse
       action: REPLENISHMENT_REVIEW_ACTIONS.APPROVE,
       body: req.body,
       idempotencyKey: req.get('Idempotency-Key'),
+    })
+    await deliverPartnerReplenishmentStockingNotification({ prismaClient: db, order: result.order }).catch((error) => {
+      console.error('[partner-stocking-notification]', String(error?.message || 'notification delivery failed').slice(0, 200))
     })
     res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, order: serializeReplenishmentOrder(result.order, { internal: true }) })
   }))

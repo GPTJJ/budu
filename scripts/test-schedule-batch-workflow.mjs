@@ -10,7 +10,6 @@ process.env.DATABASE_URL = await createDisposablePgSchema('schedule_batch')
 
 const { PrismaClient } = await import('@prisma/client')
 const { replaceScheduleStoresAtomic, scheduleVersion } = await import('../server/schedule.js')
-const { resolveTransferScheduledRecipients } = await import('../server/transfer-notification.js')
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } })
 
 const weekStart = '2026-08-24'
@@ -113,14 +112,6 @@ try {
   )
   assert.equal(JSON.stringify(await readRows('tongying')), beforeInvalid, '员工校验失败不得改写排班')
 
-  const beforeResolver = await resolveTransferScheduledRecipients({
-    prismaClient: prisma,
-    storeKey: 'tongying',
-    businessDate: monday,
-    personalConfig: { channel: 'wecom' },
-  })
-  assert.deepEqual(beforeResolver.scheduledEmployeeIds, ['emp-a'])
-
   const currentTongying = await readRows('tongying')
   await replaceScheduleStoresAtomic(prisma, {
     weekStart,
@@ -132,13 +123,7 @@ try {
       ] },
     }],
   })
-  const afterResolver = await resolveTransferScheduledRecipients({
-    prismaClient: prisma,
-    storeKey: 'tongying',
-    businessDate: monday,
-    personalConfig: { channel: 'wecom' },
-  })
-  assert.deepEqual(afterResolver.scheduledEmployeeIds, ['emp-a', 'emp-c'], '调拨 resolver 必须读取最终保存后的最新 PG 排班')
+  assert.deepEqual((await readRows('tongying'))[0].shifts.map((shift) => shift.employeeId), ['emp-a', 'emp-c'])
 
   console.log('SCHEDULE BATCH WORKFLOW TEST OK')
 } finally {
