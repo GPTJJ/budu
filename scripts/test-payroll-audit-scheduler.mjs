@@ -23,6 +23,8 @@ function snapshot() {
       ] }, readiness: { employees: [{ employeeId: 'part', blockers: [] }, { employeeId: 'full', blockers: [] }] }, blockers: [] } } }
 }
 
+const executionMetadata = { actualModel: 'GPT-5.6 Sol', actualReasoning: 'Medium' }
+
 test('natural week and Shanghai Monday/month-first scheduling are exact and independent', () => {
   assert.deepEqual(previousWeekPeriod(new Date('2026-09-21T00:15:00+08:00')), { periodStart: '2026-09-14', periodEnd: '2026-09-20' })
   assert.deepEqual(duePayrollAuditJobs(new Date('2026-05-31T16:15:00.000Z')), [
@@ -50,7 +52,7 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
     if (sends === 1) throw Object.assign(new Error('test failure'), { code: 'TEST_TRANSPORT' })
     return { messageId: `message-${sends}` }
   }
-  const input = { reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20', email: true, allowNonProduction: true }
+  const input = { reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20', email: true, allowNonProduction: true, ...executionMetadata }
   try {
     const first = await runPayrollAuditJob(input, { snapshot: async () => snapshot(), send })
     assert.equal(first.job.emailStatus, 'FAILED')
@@ -62,6 +64,8 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
     assert.ok(model.employeeResults[0].components.some((row) => row.key === 'overtimePay'))
     assert.ok(model.employeeResults[0].components.some((row) => row.key === 'commission'))
     assert.equal(model.summary.finalResult, 'REVIEW_REQUIRED')
+    assert.equal(model.metadata.actualModel, 'GPT-5.6 Sol')
+    assert.equal(model.metadata.actualReasoning, 'Medium')
     const second = await runPayrollAuditJob(input, { snapshot: async () => { throw new Error('must reuse report') }, send })
     assert.equal(second.job.emailStatus, 'SENT')
     assert.equal(second.job.retryCount, 2)
@@ -88,13 +92,34 @@ test('monthly isolates FULL_TIME and server RBAC only permits active developer/a
   const old = process.env.PAYROLL_AUDIT_DATA_DIR
   process.env.PAYROLL_AUDIT_DATA_DIR = root
   try {
-    const result = await runPayrollAuditJob({ reportType: 'MONTHLY_FULL_TIME', periodStart: '2026-09-01', periodEnd: '2026-09-30', email: false, allowNonProduction: true }, { snapshot: async () => snapshot() })
+    const result = await runPayrollAuditJob({ reportType: 'MONTHLY_FULL_TIME', periodStart: '2026-09-01', periodEnd: '2026-09-30', email: false, allowNonProduction: true, ...executionMetadata }, { snapshot: async () => snapshot() })
     const model = JSON.parse(fs.readFileSync(path.join(root, 'runs', result.job.runId, 'canonical-report-model.json'), 'utf8'))
     assert.deepEqual(model.employeeResults.map((row) => row.employeeId), ['full'])
     assert.equal(model.metadata.employeeType, 'fulltime')
     for (const role of ['developer', 'admin']) assert.equal(canManagePayrollAudit({ id: role, role, status: 'active' }), true)
     for (const role of ['finance', 'hr', 'manager', 'staff', 'partner', 'customer']) assert.equal(canManagePayrollAudit({ id: role, role, status: 'active' }), false)
     assert.equal(canManagePayrollAudit({ id: 'admin', role: 'admin', status: 'disabled' }), false)
+  } finally {
+    if (old === undefined) delete process.env.PAYROLL_AUDIT_DATA_DIR; else process.env.PAYROLL_AUDIT_DATA_DIR = old
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('model mismatch fails before snapshot or report artifacts are created', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-payroll-model-mismatch-'))
+  const old = process.env.PAYROLL_AUDIT_DATA_DIR
+  process.env.PAYROLL_AUDIT_DATA_DIR = root
+  let snapshotCalled = false
+  try {
+    await assert.rejects(
+      runPayrollAuditJob({
+        reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20',
+        email: false, allowNonProduction: true, actualModel: 'GPT-6 Astra', actualReasoning: 'High',
+      }, { snapshot: async () => { snapshotCalled = true; return snapshot() } }),
+      (error) => error.code === 'MODEL_CONFIGURATION_MISMATCH',
+    )
+    assert.equal(snapshotCalled, false)
+    assert.deepEqual(fs.readdirSync(root), [])
   } finally {
     if (old === undefined) delete process.env.PAYROLL_AUDIT_DATA_DIR; else process.env.PAYROLL_AUDIT_DATA_DIR = old
     fs.rmSync(root, { recursive: true, force: true })

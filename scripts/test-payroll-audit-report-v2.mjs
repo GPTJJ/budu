@@ -7,14 +7,41 @@ import test from 'node:test'
 import {
   buildPayrollAuditReportModel,
   previousMonthPeriod,
+  payrollAuditSourceMark,
   renderPayrollAuditEmail,
   renderPayrollAuditHtml,
   renderPayrollAuditMarkdown,
 } from '../server/payroll-audit-report.js'
 import { markEmailDelivery } from '../server/payroll-audit-run-store.js'
 import { runPayrollAuditFromSnapshot } from './payroll-audit-runner.mjs'
+import { renderPayrollAuditPdf } from './render-payroll-audit-pdf.mjs'
 
 const period = { periodStart: '2026-08-01', periodEnd: '2026-08-31' }
+const executionMetadata = { actualModel: 'GPT-5.6 Sol', actualReasoning: 'Medium' }
+const sourceMarkText = '由 budu Payroll Audit Automation 生成 · 来源：budu OS Payroll Audit · 模型：GPT-5.6 Sol / Medium'
+
+function extractPdfPages(pdf, firstPage, lastPage, temporaryRoot) {
+  const poppler = spawnSync('pdftotext', ['-f', String(firstPage), '-l', String(lastPage), pdf, '-'], { encoding: 'utf8' })
+  if (!poppler.error && poppler.status === 0) return poppler.stdout
+  if (process.platform !== 'darwin') throw poppler.error || new Error(poppler.stderr || 'pdftotext failed')
+  const swiftFile = path.join(temporaryRoot, 'extract-pdf-pages.swift')
+  fs.writeFileSync(swiftFile, `import Foundation\nimport PDFKit\nlet document = PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[1]))!\nlet first = Int(CommandLine.arguments[2])! - 1\nlet last = Int(CommandLine.arguments[3])! - 1\nfor index in first...last { print(document.page(at: index)?.string ?? "") }\n`)
+  const result = spawnSync('swift', [swiftFile, pdf, String(firstPage), String(lastPage)], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  assert.equal(result.status, 0, result.stderr)
+  return result.stdout
+}
+
+function assertSourceMarkPlacement(pdf, temporaryRoot) {
+  const info = spawnSync('pdfinfo', [pdf], { encoding: 'utf8' })
+  assert.equal(info.status, 0)
+  const pages = Number((info.stdout.match(/^Pages:\s+(\d+)/m) || [])[1])
+  assert.ok(pages >= 2, `expected multi-page PDF, got ${pages}`)
+  const firstPageText = extractPdfPages(pdf, 1, 1, temporaryRoot)
+  const laterPagesText = extractPdfPages(pdf, 2, pages, temporaryRoot)
+  assert.equal((firstPageText.match(/budu Payroll Audit Automation/g) || []).length, 1)
+  assert.equal((laterPagesText.match(/budu Payroll Audit Automation/g) || []).length, 0)
+  return pages
+}
 
 function snapshotFixture() {
   return {
@@ -63,7 +90,7 @@ function build(options = {}) {
     attendanceRows: snapshot.attendanceRows, cardAmountCentsById: snapshot.cardAmountCentsById,
     generatedAt: snapshot.generatedAt, productionSha: snapshot.productionSha,
     authorityDigest: snapshot.authorityDigest, auditMode: options.mode || 'FINAL', scope: options.scope || 'ALL',
-    scopeEmployeeIds: options.ids,
+    scopeEmployeeIds: options.ids, ...executionMetadata,
   })
 }
 
@@ -83,6 +110,7 @@ test('an explicitly empty employment-type scope never falls back to all payroll 
     scopeEmployeeIds: [],
     reportType: 'WEEKLY_PART_TIME',
     employeeType: 'parttime',
+    ...executionMetadata,
   })
   assert.equal(model.summary.employeeCount, 0)
   assert.deepEqual(model.employeeResults, [])
@@ -104,7 +132,7 @@ test('dynamic Payroll components and every period day are preserved', () => {
 })
 
 test('PREVIEW and FINAL metadata retain the caller-resolved effective range', () => {
-  const preview = buildPayrollAuditReportModel({ ...snapshotFixture(), period: { periodStart: '2026-09-01', periodEnd: '2026-09-14' }, auditMode: 'PREVIEW', scopeEmployeeIds: ['emp-capybara'] })
+  const preview = buildPayrollAuditReportModel({ ...snapshotFixture(), period: { periodStart: '2026-09-01', periodEnd: '2026-09-14' }, auditMode: 'PREVIEW', scopeEmployeeIds: ['emp-capybara'], ...executionMetadata })
   const final = build({ mode: 'FINAL', ids: ['emp-capybara'] })
   assert.equal(preview.metadata.auditMode, 'PREVIEW')
   assert.equal(preview.metadata.effectivePeriod.end, '2026-09-14')
@@ -130,7 +158,10 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   assert.equal(email.recipient, 'yuegu1995@gmail.com')
   assert.deepEqual(email.recipients, ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com'])
   assert.equal(email.subject, 'budu 全职员工薪酬审查报告｜2026年08月｜BLOCKED')
-  assert.equal(model.schemaVersion, 3)
+  assert.equal(model.schemaVersion, 4)
+  assert.equal(model.metadata.actualModel, 'GPT-5.6 Sol')
+  assert.equal(model.metadata.actualReasoning, 'Medium')
+  assert.equal(payrollAuditSourceMark(model), sourceMarkText)
   assert.equal(model.metadata.brand.name, 'budu')
   assert.doesNotMatch(`${markdown}\n${html}\n${email.body}`, /password|webhook|token|credential/i)
 })
@@ -139,7 +170,7 @@ test('headless run writes protected MD/PDF/email artifacts and duplicate trigger
   const outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-payroll-report-test-'))
   try {
     const snapshot = snapshotFixture()
-    const options = { snapshot, periodStart: period.periodStart, periodEnd: period.periodEnd, mode: 'FINAL', scope: 'ALL', outputRoot, email: true, allowNonProduction: true }
+    const options = { snapshot, periodStart: period.periodStart, periodEnd: period.periodEnd, mode: 'FINAL', scope: 'ALL', outputRoot, email: true, allowNonProduction: true, ...executionMetadata }
     const first = await runPayrollAuditFromSnapshot(options)
     const second = await runPayrollAuditFromSnapshot(options)
     assert.equal(first.reused, false)
@@ -156,16 +187,38 @@ test('headless run writes protected MD/PDF/email artifacts and duplicate trigger
     assert.equal(sent.email.status, 'SENT')
     assert.equal(sent.email.attempts.length, 2)
     assert.equal((await runPayrollAuditFromSnapshot(options)).reused, true)
-    const info = spawnSync('pdfinfo', [first.paths.pdf], { encoding: 'utf8' })
-    assert.equal(info.status, 0)
-    const pages = Number((info.stdout.match(/^Pages:\s+(\d+)/m) || [])[1])
+    const pages = assertSourceMarkPlacement(first.paths.pdf, outputRoot)
     assert.ok(pages >= 4, `expected multi-page PDF, got ${pages}`)
+    const weekly = await runPayrollAuditFromSnapshot({
+      ...options,
+      periodStart: '2026-09-14',
+      periodEnd: '2026-09-20',
+      reportType: 'WEEKLY_PART_TIME',
+      employeeType: 'parttime',
+    })
+    assert.equal(weekly.model.metadata.reportType, 'WEEKLY_PART_TIME')
+    assertSourceMarkPlacement(weekly.paths.pdf, outputRoot)
     const html = renderPayrollAuditHtml(first.model)
     assert.match(html, /brand-wordmark/)
     assert.doesNotMatch(html, />BUDU 薪酬审查报告</)
     assert.match(html, /卡皮巴拉/)
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true })
+  }
+})
+
+test('one-page PDF renders the source mark exactly once', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-payroll-one-page-'))
+  const pdf = path.join(root, 'one-page.pdf')
+  try {
+    const mark = payrollAuditSourceMark({ metadata: executionMetadata })
+    await renderPayrollAuditPdf(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><p>${mark}</p></body></html>`, pdf)
+    const info = spawnSync('pdfinfo', [pdf], { encoding: 'utf8' })
+    assert.match(info.stdout, /^Pages:\s+1$/m)
+    const extracted = extractPdfPages(pdf, 1, 1, root)
+    assert.equal((extracted.match(/budu Payroll Audit Automation/g) || []).length, 1)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })
 

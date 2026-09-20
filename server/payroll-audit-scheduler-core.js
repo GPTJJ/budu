@@ -11,10 +11,22 @@ import { runPayrollAuditFromSnapshot } from '../scripts/payroll-audit-runner.mjs
 const exec = promisify(execFile)
 const TIME_ZONE = 'Asia/Shanghai'
 const MAX_EMAIL_ATTEMPTS = 3
+export const PAYROLL_AUDIT_AUTOMATION_MODEL = 'GPT-5.6 Sol'
+export const PAYROLL_AUDIT_AUTOMATION_REASONING = 'Medium'
 const TYPES = Object.freeze({
   WEEKLY_PART_TIME: { employmentType: 'parttime', identity: 'PAYROLL_AUDIT_WEEKLY_PART_TIME' },
   MONTHLY_FULL_TIME: { employmentType: 'fulltime', identity: 'PAYROLL_AUDIT_MONTHLY_FULL_TIME' },
 })
+
+export function validatePayrollAuditModelConfiguration(actualModel, actualReasoning) {
+  if (actualModel !== PAYROLL_AUDIT_AUTOMATION_MODEL || actualReasoning !== PAYROLL_AUDIT_AUTOMATION_REASONING) {
+    throw Object.assign(new Error('Payroll audit automation model configuration mismatch'), {
+      code: 'MODEL_CONFIGURATION_MISMATCH',
+      expectedModel: PAYROLL_AUDIT_AUTOMATION_MODEL,
+      expectedReasoning: PAYROLL_AUDIT_AUTOMATION_REASONING,
+    })
+  }
+}
 
 const dateParts = (now) => Object.fromEntries(new Intl.DateTimeFormat('en-US', {
   timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
@@ -83,6 +95,7 @@ async function deliver(job, { resend = false, actorId = '', send = sendPayrollAu
 }
 
 export async function runPayrollAuditJob(input, dependencies = {}) {
+  validatePayrollAuditModelConfiguration(input.actualModel, input.actualReasoning)
   const config = TYPES[input.reportType]
   const jobKey = payrollAuditJobKey(input)
   return withPayrollAuditJobLock(jobKey, async () => {
@@ -97,6 +110,7 @@ export async function runPayrollAuditJob(input, dependencies = {}) {
       mode: 'FINAL', scope: config.employmentType.toUpperCase(), scopeEmployeeIds: subjects,
       reportType: input.reportType, employeeType: config.employmentType,
       employmentTypeAuthority: 'Employee.employmentType', employmentTypeHistoryAvailable: false,
+      actualModel: input.actualModel, actualReasoning: input.actualReasoning,
       outputRoot: path.join(payrollAuditDataRoot(), 'runs'), allowNonProduction: input.allowNonProduction === true,
     })
     const now = new Date().toISOString()
@@ -124,8 +138,13 @@ export async function resendPayrollAuditJob(jobKey, actorId, dependencies = {}) 
 }
 
 export async function runDuePayrollAuditJobs(now = new Date(), dependencies = {}) {
+  validatePayrollAuditModelConfiguration(dependencies.actualModel, dependencies.actualReasoning)
   const results = []
-  for (const input of recoverablePayrollAuditJobs(now)) results.push(await runPayrollAuditJob({ ...input, email: true }, dependencies))
+  for (const input of recoverablePayrollAuditJobs(now)) results.push(await runPayrollAuditJob({
+    ...input, email: true,
+    actualModel: dependencies.actualModel,
+    actualReasoning: dependencies.actualReasoning,
+  }, dependencies))
   for (const job of listPayrollAuditJobs().filter((row) => row.emailStatus === 'FAILED' && row.retryCount < MAX_EMAIL_ATTEMPTS && !row.test)) {
     if (results.some((row) => row.job.jobKey === job.jobKey)) continue
     results.push({ job: await withPayrollAuditJobLock(job.jobKey, () => deliver(job, { send: dependencies.send })), reused: true })

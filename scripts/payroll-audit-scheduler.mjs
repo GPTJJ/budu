@@ -12,13 +12,15 @@ function args(argv) {
 }
 
 const options = args(process.argv.slice(2))
+const actualModel = options.actualModel || process.env.PAYROLL_AUDIT_ACTUAL_MODEL
+const actualReasoning = options.actualReasoning || process.env.PAYROLL_AUDIT_ACTUAL_REASONING
 let result
-if (options.scheduled) result = await runDuePayrollAuditJobs(options.at ? new Date(options.at) : new Date())
+if (options.scheduled) result = await runDuePayrollAuditJobs(options.at ? new Date(options.at) : new Date(), { actualModel, actualReasoning })
 else if (options.resend) result = await resendPayrollAuditJob(options.resend, options.actorId || 'manual:developer')
 else {
   const input = { reportType: options.reportType, periodStart: options.periodStart, periodEnd: options.periodEnd,
     actorId: options.actorId || 'manual:developer', email: options.dryRun ? false : true, test: options.testEmail === true,
-    allowNonProduction: options.allowNonProduction === 'true' }
+    allowNonProduction: options.allowNonProduction === 'true', actualModel, actualReasoning }
   result = await runPayrollAuditJob(input)
 }
 process.stdout.write(`${JSON.stringify(result)}\n`)
