@@ -263,3 +263,54 @@ for (const width of [320, 340, 375, 390, 430]) {
     expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(navBox.y + 1)
   })
 }
+
+for (const width of [320, 340, 375, 390, 430, 1024]) {
+  test(`空目录完成一次加载，允许人工刷新且无横向溢出 ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await mockPortal(page)
+    let calls = 0
+    await page.route('**/api/partner/catalogue', route => {
+      calls += 1
+      return route.fulfill({ json: { rows: [] } })
+    })
+    await page.getByRole('button', { name: '我要补货', exact: true }).click()
+    await expect(page.getByText('暂无可补货商品')).toBeVisible()
+    await expect(page.getByRole('status', { name: '正在加载商品目录' })).toHaveCount(0)
+    // Observation window detects the original successful-empty-response render loop.
+    await page.waitForTimeout(400)
+    expect(calls).toBe(1)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await expect(page.getByRole('button', { name: '获取预计金额' })).toBeDisabled()
+    await page.getByRole('button', { name: '刷新商品目录' }).click()
+    await expect.poll(() => calls).toBe(2)
+    await expect(page.getByText('暂无可补货商品')).toBeVisible()
+  })
+}
+
+test('目录 API 失败结束 loading，明确报错并能重试恢复', async ({ page }) => {
+  await mockPortal(page)
+  let calls = 0
+  await page.route('**/api/partner/catalogue', route => {
+    calls += 1
+    return calls === 1 ? route.fulfill({ status: 503, json: { message: '目录服务暂不可用' } }) : route.fulfill({ json: { rows: catalogue } })
+  })
+  await page.getByRole('button', { name: '我要补货', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('目录服务暂不可用')
+  await expect(page.getByRole('status', { name: '正在加载商品目录' })).toHaveCount(0)
+  await expect(page.getByText('暂无可补货商品')).toHaveCount(0)
+  await page.getByRole('button', { name: '重试加载商品' }).click()
+  await expect(page.getByLabel('KG 糖补货数量')).toBeVisible()
+  expect(calls).toBe(2)
+})
+
+test('目录超时结束 loading 并提供重试', async ({ page }) => {
+  await page.clock.install()
+  await mockPortal(page)
+  await page.route('**/api/partner/catalogue', () => {})
+  await page.getByRole('button', { name: '我要补货', exact: true }).click()
+  await expect(page.getByRole('status', { name: '正在加载商品目录' })).toBeVisible()
+  await page.clock.fastForward(30001)
+  await expect(page.getByRole('alert')).toContainText('商品目录加载超时，请重试')
+  await expect(page.getByRole('status', { name: '正在加载商品目录' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '重试加载商品' })).toBeVisible()
+})

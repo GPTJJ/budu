@@ -136,6 +136,7 @@ export default function PartnerAccessPage() {
   const [afterSales, setAfterSales] = useState([])
   const [catalogue, setCatalogue] = useState([])
   const [catalogueLoading, setCatalogueLoading] = useState(false)
+  const [catalogueError, setCatalogueError] = useState('')
   const [view, setView] = useState(tabFromPath)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [afterSalesOrder, setAfterSalesOrder] = useState(null)
@@ -158,15 +159,26 @@ export default function PartnerAccessPage() {
     } catch (nextError) { setDataError(nextError.message) } finally { setDataLoading(false) }
   }, [])
 
-  const loadCatalogue = useCallback(async ({ refresh = false } = {}) => {
-    if (!refresh && catalogue.length > 0) return catalogue
-    setCatalogueLoading(true)
-    try { const data = await partnerApi('/catalogue'); setCatalogue(data.rows || []); return data.rows || [] } finally { setCatalogueLoading(false) }
-  }, [catalogue])
+  // Keep the callback independent of its result: an empty directory is a completed load.
+  const loadCatalogue = useCallback(async () => {
+    setCatalogueLoading(true); setCatalogueError('')
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
+    try {
+      const data = await partnerApi('/catalogue', { signal: controller.signal })
+      if (!Array.isArray(data?.rows)) throw new Error('商品目录响应异常，请重试')
+      setCatalogue(data.rows)
+      return data.rows
+    } catch (error) {
+      const message = error.name === 'AbortError' ? '商品目录加载超时，请重试' : error.message
+      setCatalogueError(message)
+      throw new Error(message)
+    } finally { clearTimeout(timeout); setCatalogueLoading(false) }
+  }, [])
 
   useEffect(() => { partnerApi('/auth/me').then((data) => setPrincipal(data.principal)).catch(() => setPrincipal(null)).finally(() => setAuthLoading(false)) }, [])
-  useEffect(() => { if (principal) loadPortal(); else { setProfile(null); setStores([]); setOrders([]); setAfterSales([]); setCatalogue([]) } }, [principal, loadPortal])
-  useEffect(() => { if (principal && view === 'replenish') loadCatalogue().catch((nextError) => setDraftMessages([nextError.message])) }, [principal, view, loadCatalogue])
+  useEffect(() => { if (principal) loadPortal(); else { setProfile(null); setStores([]); setOrders([]); setAfterSales([]); setCatalogue([]); setCatalogueError('') } }, [principal, loadPortal])
+  useEffect(() => { if (principal && view === 'replenish') loadCatalogue().catch(() => {}) }, [principal, view, loadCatalogue])
   useEffect(() => { const back = () => setView(tabFromPath()); window.addEventListener('popstate', back); return () => window.removeEventListener('popstate', back) }, [])
 
   const navigate = (nextView) => { setView(nextView); window.history.pushState({}, '', pathForTab(nextView)); window.scrollTo({ top: 0, behavior: 'smooth' }) }
@@ -213,7 +225,7 @@ export default function PartnerAccessPage() {
   const reorder = async (order) => {
     setBusy(true)
     try {
-      const currentCatalogue = await loadCatalogue({ refresh: true })
+      const currentCatalogue = await loadCatalogue()
       const draft = buildReorderDraft(order, currentCatalogue)
       setSelected(Object.fromEntries(draft.items.map((item) => [item.productId, item.quantityBase])))
       setQuantityInputs(Object.fromEntries(draft.items.map((item) => {
@@ -239,7 +251,7 @@ export default function PartnerAccessPage() {
         {dataError && <div role="alert" className="rounded-2xl bg-rose-50 p-4 text-sm font-semibold text-rose-700"><p>{dataError}</p><button type="button" onClick={loadPortal} className="mt-3 min-h-11 rounded-xl bg-white px-4">重试</button></div>}
         {dataLoading && !profile ? <div className="grid min-h-64 place-items-center"><Loader2 className="h-7 w-7 animate-spin text-budu-500" /></div> : <>
           {view === 'home' && <HomeView profile={profile} principal={principal} orders={orders} stats={stats} navigate={navigate} openOrder={setSelectedOrder} setOrderGroup={setOrderGroup} />}
-          {view === 'replenish' && <ReplenishView catalogue={catalogue} catalogueLoading={catalogueLoading} activeStores={activeStores} selectedStoreId={selectedStoreId} setSelectedStoreId={(id) => { setSelectedStoreId(id); setQuotedSignature(''); setQuotes({}) }} selected={selected} quantityInputs={quantityInputs} updateQuantity={updateQuantity} quotes={quotes} quoted={quotedSignature === selectionSignature} quoteTotal={quoteTotal} messages={draftMessages} busy={busy} hasInvalidQuantityInput={hasInvalidQuantityInput} onQuote={quote} onSubmit={submit} />}
+          {view === 'replenish' && <ReplenishView catalogue={catalogue} catalogueLoading={catalogueLoading} catalogueError={catalogueError} onReloadCatalogue={() => loadCatalogue().catch(() => {})} activeStores={activeStores} selectedStoreId={selectedStoreId} setSelectedStoreId={(id) => { setSelectedStoreId(id); setQuotedSignature(''); setQuotes({}) }} selected={selected} quantityInputs={quantityInputs} updateQuantity={updateQuantity} quotes={quotes} quoted={quotedSignature === selectionSignature} quoteTotal={quoteTotal} messages={draftMessages} busy={busy} hasInvalidQuantityInput={hasInvalidQuantityInput} onQuote={quote} onSubmit={submit} />}
           {view === 'orders' && <OrdersView orders={filteredOrders} orderGroup={orderGroup} setOrderGroup={setOrderGroup} openOrder={setSelectedOrder} />}
           {view === 'profile' && <ProfileView profile={profile} stores={stores} principal={principal} busy={busy} logout={logout} />}
         </>}
@@ -255,7 +267,7 @@ function HomeView({ profile, principal, orders, stats, navigate, openOrder, setO
   return <section className="space-y-4" aria-label="合作伙伴首页"><div className="rounded-3xl bg-gradient-to-br from-budu-500 to-budu-700 p-5 text-white shadow-card"><p className="text-sm text-white/75">欢迎回来</p><h1 className="mt-1 text-2xl font-black">{profile?.name || principal.partner?.name}</h1><button type="button" onClick={() => navigate('replenish')} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-black text-budu-700"><PackagePlus className="h-5 w-5" />发起补货</button></div><div className="grid grid-cols-3 gap-2"><button type="button" onClick={() => { setOrderGroup('pending'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-amber-600">{stats.pending}</p><p className="mt-1 text-xs text-slate-500">待审核</p></button><button type="button" onClick={() => { setOrderGroup('fulfillment'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-emerald-600">{stats.approved}</p><p className="mt-1 text-xs text-slate-500">待发货</p></button><button type="button" onClick={() => { setOrderGroup('fulfillment'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-sky-600">{stats.moving}</p><p className="mt-1 text-xs leading-4 text-slate-500">部分发货<br />运输中</p></button></div><section><div className="mb-3 flex items-center justify-between"><h2 className="font-black text-slate-800">最近补货单</h2><button type="button" onClick={() => navigate('orders')} className="text-sm font-bold text-budu-600">查看全部</button></div><div className="space-y-3">{orders.slice(0, 3).map((order) => <button key={order.id} type="button" onClick={() => openOrder(order)} className="flex min-h-20 w-full items-center justify-between gap-3 rounded-2xl bg-white p-4 text-left shadow-sm"><div className="min-w-0"><p className="truncate font-black text-slate-800">{order.orderNo}</p><p className="mt-1 text-xs text-slate-400">{order.partnerStore.name} · {money(order.requestedTotalAmountCents)}</p></div><StatusPill status={order.status} /></button>)}{orders.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">还没有补货单，点击上方按钮开始。</div>}</div></section></section>
 }
 
-function ReplenishView({ catalogue, catalogueLoading, activeStores, selectedStoreId, setSelectedStoreId, selected, quantityInputs, updateQuantity, quotes, quoted, quoteTotal, messages, busy, hasInvalidQuantityInput, onQuote, onSubmit }) {
+function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCatalogue, activeStores, selectedStoreId, setSelectedStoreId, selected, quantityInputs, updateQuantity, quotes, quoted, quoteTotal, messages, busy, hasInvalidQuantityInput, onQuote, onSubmit }) {
   const selectedProducts = catalogue.filter((product) => Number(selected[product.productId]) > 0)
   return (
     <section className="space-y-4" aria-label="我要补货">
@@ -271,7 +283,11 @@ function ReplenishView({ catalogue, catalogueLoading, activeStores, selectedStor
         </select>
       </label>
       {catalogueLoading ? (
-        <div className="grid min-h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-budu-500" /></div>
+        <div role="status" aria-label="正在加载商品目录" className="grid min-h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-budu-500" /></div>
+      ) : catalogueError ? (
+        <div role="alert" className="space-y-3 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
+          <p>{catalogueError}</p><button type="button" onClick={onReloadCatalogue} className="btn-secondary min-h-12">重试加载商品</button>
+        </div>
       ) : (
         <div className="space-y-3">
           {catalogue.map((product) => {
@@ -307,7 +323,7 @@ function ReplenishView({ catalogue, catalogueLoading, activeStores, selectedStor
               </article>
             )
           })}
-          {catalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">当前没有可补货商品</div>}
+          {catalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">暂无可补货商品<button type="button" onClick={onReloadCatalogue} className="btn-secondary mx-auto mt-3 min-h-12">刷新商品目录</button></div>}
         </div>
       )}
       {messages.length > 0 && <div role="alert" className="space-y-1 rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800">{messages.map((message) => <p key={message}>{message}</p>)}</div>}
@@ -315,8 +331,8 @@ function ReplenishView({ catalogue, catalogueLoading, activeStores, selectedStor
         <div className="mx-auto max-w-3xl space-y-3 rounded-2xl border border-slate-100 bg-white/95 p-4 shadow-xl backdrop-blur">
           <div className="flex items-end justify-between"><p className="text-xs text-slate-400">当前预计商品金额</p><p className="text-2xl font-black text-slate-900">{quoted ? money(quoteTotal) : '待重新计算'}</p></div>
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={onQuote} disabled={busy || hasInvalidQuantityInput || selectedProducts.length === 0} className="btn-secondary min-h-12 disabled:opacity-40">获取预计金额</button>
-            <button type="button" onClick={onSubmit} disabled={busy || hasInvalidQuantityInput || !quoted || selectedProducts.length === 0} className="btn-primary min-h-12 disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}提交补货</button>
+            <button type="button" onClick={onQuote} disabled={busy || catalogueLoading || Boolean(catalogueError) || hasInvalidQuantityInput || selectedProducts.length === 0} className="btn-secondary min-h-12 disabled:opacity-40">获取预计金额</button>
+            <button type="button" onClick={onSubmit} disabled={busy || catalogueLoading || Boolean(catalogueError) || hasInvalidQuantityInput || !quoted || selectedProducts.length === 0} className="btn-primary min-h-12 disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}提交补货</button>
           </div>
         </div>
       </div>
