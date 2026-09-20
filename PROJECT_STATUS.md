@@ -12,6 +12,18 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新可信快照（2026-09-20：Legacy Waybill Register — 旧链官方物流端点）
+
+- 状态：**DELIVERED — LIVE**（后端已上生产；小程序前端 1.0.30 待微信审核）
+- Production runtime SHA：`ac6d7cbba630568251a92f3eecd3e2a016706e14`；容器 `budu-prod-ac6d7cb-legacy-waybill` — healthy，`dbOk:true`
+- 发布分支：`codex/legacy-waybill-register`；`/opt/budu/.current-sha` 已更新
+- 新增端点：`POST /api/v2/merchant/online-checkout/legacy-waybill`（生产网关 HMAC 验签 + actor 身份复核 → 复用 OS 唯一 access_token 权威上报微信传运单）
+- **无状态**：不写生产库；DB schema / migration / 支付 / 退款 / 订单资金事实**均未变更**
+- 单写者：仍为 1（旧 runtime 容器保持 Exited 且重启策略已降为 `no`）
+- 回滚资产：`/opt/budu/.rollback-assets/legacy-waybill-ac6d7cb-20260920T090701Z/rollback-app.sh`
+- 测试：`tests/test-legacy-waybill-register.mjs` 7/7；既有物流回归 21/21
+- 完整 checkpoint：`docs/checkpoints/2026-09-20-legacy-waybill-register.md`
+
 ## 最新可信快照（2026-09-05：Sweet Card Xidan Commercial Live）
 
 - 状态：**XIDAN_COMMERCIAL_LIVE**；go-live `2026-09-05T04:17:04.700Z`，actor `daa77021…`，scope xidan。
