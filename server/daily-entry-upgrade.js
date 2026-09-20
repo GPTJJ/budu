@@ -927,6 +927,11 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   const normalized = normalizeDailyStaffSubmission(req.body?.items)
   const parsed = await resolveDailyStaffSubmission(prisma, normalized, storeKey)
   const rows = await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${storeKey}:${dateStr}`)
+    const current = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+    if (current?.status === 'confirmed' || current?.id !== existingEntry?.id || current?.version !== existingEntry?.version) {
+      throw httpError('记录已变化或已确认，请重新读取；历史事实需通过更正记录处理', 409)
+    }
     const saved = await replaceDailyStaff(tx, {
       storeKey, dateStr, parsed,
       actor: req.user,

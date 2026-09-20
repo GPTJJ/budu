@@ -622,6 +622,11 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   }
   const base = { incCents: BigInt(cents), ord: orderCount, staffNames: names, updatedBy: req.user.username }
   const saved = await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${storeKey}:${date}`)
+    const current = await tx.dailyEntry.findUnique({ where: { storeKey_date: composite } })
+    if (current?.status === 'confirmed' || current?.id !== existing?.id || current?.version !== existing?.version) {
+      throw bad('记录已变化或已确认，请重新读取；历史事实需通过更正记录处理', 409)
+    }
     const row = await tx.dailyEntry.upsert({
       where: { storeKey_date: composite },
       update: { ...base, version: { increment: 1 }, updatedAt: new Date() },

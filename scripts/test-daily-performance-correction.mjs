@@ -11,6 +11,7 @@ const { resolveDailySalesAuthority, DAILY_SALES_AUTHORITIES, ReportQueryService 
 const { default: express } = await import('express')
 const { dailyCorrectionRouter } = await import('../server/daily-performance-correction.js')
 const { dailyEntryUpgradeRouter } = await import('../server/daily-entry-upgrade.js')
+const { v2Router } = await import('../server/v2.js')
 const { prisma: routerDb } = await import('../server/pg.js')
 let httpServer
 const date = new Date('2026-09-15T00:00:00Z')
@@ -101,7 +102,7 @@ try {
   assert.equal(await allFacts(), retryBefore)
   console.log('Idempotent retry PASS')
   const app = express(); app.use(express.json()); app.use((req, res, next) => { req.user = { ...actor, role: req.headers['x-test-role'] || 'developer' }; next() })
-  app.use('/api/v2', dailyCorrectionRouter, dailyEntryUpgradeRouter)
+  app.use('/api/v2', dailyCorrectionRouter, dailyEntryUpgradeRouter, v2Router)
   httpServer = app.listen(0); await new Promise((resolve) => httpServer.once('listening', resolve))
   const base = `http://127.0.0.1:${httpServer.address().port}/api/v2`
   for (const role of ['finance', 'manager', 'staff', 'cashier', 'partner']) {
@@ -116,6 +117,28 @@ try {
   const apiContext = await (await fetch(`${base}/daily-entry/correction?store=xidan&date=2026-09-15`)).json()
   const saved = await fetch(`${base}/daily-entry/correction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(await command('xidan')), token: apiContext.token }) })
   assert.equal(saved.status, 200, await saved.text())
+  for (const [path, raceDay] of [['/daily-staff','2026-09-14'], ['/daily-entries','2026-09-13']]) {
+    const d = new Date(raceDay + 'T00:00:00Z')
+    await db.dailyEntry.create({ data: { id: 'race-' + raceDay, storeKey: 'tongying', date: d, status: 'draft', version: 1 } })
+    const token = (await getDailyCorrectionContext(db, { actor, storeKey: 'tongying', date: raceDay })).token
+    let pending
+    await db.$transaction(async tx => {
+      await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:tongying:${raceDay}`)
+      pending = fetch(base + path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storeKey: 'tongying', date: raceDay, version: 1, incCents: 999, ord: 1, staffNames: ['stale'], items: [{ employeeId: 'emp-a', actualHours: 1 }] }) })
+      let parked = false
+      for (let n = 0; n < 100; n++) {
+        const rows = await db.$queryRawUnsafe("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'")
+        if (rows.length) { parked = true; break }
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      assert.ok(parked, 'legacy request must reach the shared store-day lock')
+      await correctDailyPerformance({ $transaction: work => work(tx) }, { actor, storeKey: 'tongying', date: raceDay, token, requestKey: crypto.randomUUID(), reason: '并发旧入口保护', incCents: 123400, ord: 12, items: [{ employeeId: 'emp-b', actualHours: 8 }] })
+    }, { timeout: 10000 })
+    assert.equal((await pending).status, 409)
+    assert.equal((await db.dailyEntry.findUnique({ where: { id: 'race-' + raceDay } })).incCents, 123400n)
+    assert.equal((await db.dailyStoreStaff.findMany({ where: { storeId: 'tongying', date: d } }))[0].employeeId, 'emp-b')
+  }
+  console.log('In-flight legacy entry/staff writers cannot overwrite a committed correction PASS')
   console.log('HTTP RBAC, correction, canonical overview/report PASS')
   console.log('DAILY_PERFORMANCE_CORRECTION_TARGETED_PASS')
 } finally { if (httpServer) await new Promise((resolve) => httpServer.close(resolve)); await routerDb.$disconnect(); await db.$disconnect(); await dropDisposablePgDatabase(process.env.DATABASE_URL) }
