@@ -3,12 +3,13 @@ import { verifyProductionGatewayRequest } from './production-cloudbase-gateway.j
 import { createOnlineRefund } from './online-refund.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
 import { onlineFinancialEnvelope } from './online-financial-transaction.js'
+import { createLegacyWaybillRegister } from './legacy-waybill-register.js'
 import { httpError } from './pos-core.js'
 
 // Dedicated merchant-function key, never the customer gateway key. The
 // CloudBase merchant function authenticates its runtime OPENID against its
 // canonical merchant allowlist before it signs this narrowly scoped request.
-export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null }) {
+export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null, wechatLogistics = null }) {
   const router = express.Router()
   async function activeActor(tx, actor){
     if(!actor?.id)throw httpError('商家身份已停用',403)
@@ -63,5 +64,9 @@ export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null
     return logistics.register({ settlementId: s.id, receiverPhone: body.receiverPhone,
       goodsName: body.goodsName, goodsImgUrl: body.goodsImgUrl, orderDetailPath: body.orderDetailPath })
   }))
+  // Legacy payOrder-chain waybill registration. Stateless: order facts arrive
+  // from the merchant function's guarded order document, nothing is persisted
+  // here, and WeChat's own trans_id+waybill_id identity makes repeats safe.
+  if (wechatLogistics) router.post('/legacy-waybill', createLegacyWaybillRegister({ db, gatewayConfig, wechatLogistics }))
   return router
 }

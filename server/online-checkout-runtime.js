@@ -23,8 +23,8 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
   const notify=createOnlineWechatNotifyRouter({db,configuration:paymentConfig})
   // WeChat logistics reporting. It reuses the single MiniProgram access_token
   // authority, so it must not grow a token cache of its own.
-  const logistics=createOnlineLogistics(db,{appId:gatewayConfig.appId,
-    logistics:createWechatLogistics({config:{appId:gatewayConfig.appId,appSecret:gatewayConfig.appSecret},...(fetchImpl?{fetchImpl}:{})})})
+  const wechatLogisticsClient=createWechatLogistics({config:{appId:gatewayConfig.appId,appSecret:gatewayConfig.appSecret},...(fetchImpl?{fetchImpl}:{})})
+  const logistics=createOnlineLogistics(db,{appId:gatewayConfig.appId,logistics:wechatLogisticsClient})
   const customer=createOnlineCheckoutRouter({db,gatewayConfig,paymentService:payment,wechat:paymentConfig,env,logistics})
   const deliver=createOnlineMirrorTransport(mirrorConfig,fetchImpl?{fetchImpl}:{})
   const recovery=createOnlinePaymentRecovery(db,payment)
@@ -38,7 +38,7 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
       // Must precede the host's general JSON parser and employee auth routes.
       app.use('/api/online-checkout/wechat',notify)
       app.use('/api/v2/customer/online-checkout',express.json({limit:'256kb'}),customer)
-      if(merchantGatewayConfig)app.use('/api/v2/merchant/online-checkout',express.json({limit:'256kb'}),createOnlineMerchantRouter({db,gatewayConfig:merchantGatewayConfig,logistics}))
+      if(merchantGatewayConfig)app.use('/api/v2/merchant/online-checkout',express.json({limit:'256kb'}),createOnlineMerchantRouter({db,gatewayConfig:merchantGatewayConfig,logistics,wechatLogistics:wechatLogisticsClient}))
       app.use(['/api/online-checkout/wechat','/api/v2/customer/online-checkout','/api/v2/merchant/online-checkout'],(error,req,res,next)=>{
         res.status(error?.type==='entity.too.large'?413:400).json({ok:false,error:'ONLINE_REQUEST_INVALID'})
       })
