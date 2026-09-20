@@ -255,3 +255,21 @@ test('合作商可补货开关与旧供货独立，保存后显示服务端状�
   request = await page.evaluate(() => window.__productCenterTest.requests.findLast(item => item.path === '/api/v2/products/p-pos'))
   expect(request.body).toMatchObject({ partnerSupplyEnabled: true, partnerReplenishmentEnabled: false })
 })
+
+test('商品中心按 canonical 分类固定糖果 PCS，不提供 KG/NATIVE 选择', async ({ page }) => {
+  await page.goto('/tests/product-center-harness.html')
+  await page.evaluate(() => {
+    const c = { id: 'pc-mtd9xjer-sfcmx2', name: '太妃糖12口味', isActive: true, sortOrder: 5, version: 1 }
+    window.__productCenterTest.categories.push(c)
+    const p = window.__productCenterTest.products.find(p => p.productId === 'p-pos')
+    p.productCategoryId = c.id; p.productCategory = c
+  })
+  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
+  await page.getByRole('checkbox', { name: '合作商可补货', exact: true }).check()
+  await expect(page.getByTestId('partner-candy-pcs-only')).toContainText('PCS / 单颗')
+  await expect(page.getByLabel('补货单位 KG')).toHaveCount(0)
+  await expect(page.getByLabel('补货方式现有商品单位')).toHaveCount(0)
+  await page.getByRole('button', { name: '保存商品' }).click()
+  const request = await page.evaluate(() => window.__productCenterTest.requests.findLast(x => x.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ partnerOrderUnit: 'PCS', partnerReplenishmentEnabled: true, unit: '份', salePriceCents: '7200' })
+})

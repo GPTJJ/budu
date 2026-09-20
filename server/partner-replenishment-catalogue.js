@@ -1,3 +1,4 @@
+import { isPartnerUnitAllowed } from '../shared/partnerProductUnits.js'
 import { assertPartnerCanCreateBusiness } from './partner-domain-policy.js'
 import {
   PARTNER_ORDER_UNITS,
@@ -14,6 +15,7 @@ export const partnerCatalogueSelect = Object.freeze({
   unit: true,
   isActive: true,
   category: true,
+  productCategoryId: true,
   salePriceCents: true,
   partnerReplenishmentEnabled: true,
   partnerOrderUnit: true,
@@ -44,6 +46,7 @@ export function assertNoQuoteAuthorityInput(body) {
 
 export function isCatalogueEligible(product) {
   if (!product || product.category !== 'product' || product.partnerReplenishmentEnabled !== true || !product.sku) return false
+  if (!isPartnerUnitAllowed(product)) return false
   if (product.partnerOrderUnit === PARTNER_ORDER_UNITS.KG) return product.partnerKgBasePriceCents != null && BigInt(product.partnerKgBasePriceCents) > 0n
   if (product.partnerOrderUnit === PARTNER_ORDER_UNITS.PCS) return product.salePriceCents != null && BigInt(product.salePriceCents) > 0n
   if (product.partnerOrderUnit === PARTNER_ORDER_UNITS.NATIVE) return Boolean(String(product.unit || '').trim()) && product.salePriceCents != null && BigInt(product.salePriceCents) > 0n
@@ -107,6 +110,7 @@ export async function quotePartnerCatalogueItem({ db, principal, body }) {
   ])
   if (!partner) throw quoteError('合作商不存在', 'PARTNER_NOT_FOUND', 404)
   assertPartnerCanCreateBusiness(partner)
+  if (product && !isPartnerUnitAllowed(product, requestedUnit)) throw quoteError('糖果合作商补货仅支持单颗 PCS', 'PARTNER_CANDY_PCS_ONLY', 409)
   if (!isCatalogueEligible(product)) throw quoteError('商品当前不可补货', 'PARTNER_QUOTE_PRODUCT_UNAVAILABLE', 409)
   if (requestedUnit !== product.partnerOrderUnit) throw quoteError('请求单位与商品补货单位不一致', 'PARTNER_QUOTE_UNIT_MISMATCH', 409)
   const quantityKey = product.partnerOrderUnit === PARTNER_ORDER_UNITS.KG ? 'quantityGrams' : product.partnerOrderUnit === PARTNER_ORDER_UNITS.PCS ? 'quantityPieces' : 'quantityUnits'

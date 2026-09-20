@@ -33,7 +33,8 @@ try {
     await db.partnerStore.create({ data: { id: `${tag}-store-${name}`, partnerId: `${tag}-${name}`, name: 'Test partner store' } })
     await db.partnerUser.create({ data: { id: `${tag}-binding-${name}`, partnerId: `${tag}-${name}`, userId: users['partner' + name].id } })
   }
-  await db.inventoryItem.create({ data: { id: tag, name: tag, sku: tag, category: 'product', unit: '颗', salePriceCents: 500n, isActive: true, partnerReplenishmentEnabled: true, partnerOrderUnit: 'PCS', partnerMinOrderBaseQty: 1, partnerOrderStepBaseQty: 1 } })
+  await db.productCategory.create({ data: { id: 'pc-mtd9xjer-sfcmx2', name: 'Canonical candy fixture' } })
+  await db.inventoryItem.create({ data: { id: tag, name: tag, sku: tag, productCategoryId: 'pc-mtd9xjer-sfcmx2', category: 'product', unit: '颗', salePriceCents: 500n, isActive: true, partnerReplenishmentEnabled: true, partnerOrderUnit: 'PCS', partnerMinOrderBaseQty: 1, partnerOrderStepBaseQty: 1 } })
   const inventoryBefore = { balances: await db.stockBalance.count(), ledger: await db.stockLedger.count() }
   server = createApp({ partnerDomainMirrorUsers: async () => {} }).listen(0, '127.0.0.1')
   await new Promise(resolve => server.once('listening', resolve))
@@ -47,6 +48,13 @@ try {
     assert.equal(login.status, 200)
     cookies['partner' + name] = login.cookie
   }
+  const pcsQuote = await request('/api/partner/catalogue/quote', { method: 'POST', cookie: cookies.partnerA, body: { productId: tag, orderUnit: 'PCS', quantityPieces: 10 } })
+  assert.equal(pcsQuote.status, 200)
+  assert.equal(pcsQuote.body.quote.finalAmountCents, '3250')
+  const kgQuote = await request('/api/partner/catalogue/quote', { method: 'POST', cookie: cookies.partnerA, body: { productId: tag, orderUnit: 'KG', quantityGrams: 60 } })
+  assert.equal(kgQuote.status, 409)
+  assert.equal(kgQuote.body.error, 'PARTNER_CANDY_PCS_ONLY')
+  evidence.cases.push({ case: 'canonical-candy-pcs-only', pcsQuote: 200, kgQuote: 409, quantity: 10, amountCents: '3250' })
   async function submit(key) {
     const response = await request('/api/partner/replenishment-orders', { method: 'POST', cookie: cookies.partnerA, key, body: { partnerStoreId: `${tag}-store-A`, items: [{ inventoryItemId: tag, quantity: 10, orderUnit: 'PCS' }] } })
     assert.equal(response.status, 201)

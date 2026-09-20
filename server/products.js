@@ -1,3 +1,4 @@
+import { isPartnerUnitAllowed } from '../shared/partnerProductUnits.js'
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { Prisma } from '@prisma/client'
@@ -99,6 +100,7 @@ export function productData(body, existingImage = '', existing = null) {
   if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
   if (partnerKgBasePriceCents !== null && partnerKgBasePriceCents <= 0n) throw httpError('KG 标准合作商补货价必须大于 0')
   if (partnerReplenishmentEnabled) {
+    if (!isPartnerUnitAllowed({ productCategoryId: Object.hasOwn(body, 'productCategoryId') ? body.productCategoryId : existing?.productCategoryId }, partnerOrderUnit)) throw httpError('糖果合作商补货仅支持单颗 PCS')
     if (!sku) throw httpError('启用合作商补货前请填写稳定 SKU')
     if (!partnerOrderUnit) throw httpError('启用合作商补货前请选择使用现有商品单位、KG 或单颗')
     if (partnerOrderUnit === 'KG' && partnerKgBasePriceCents === null) throw httpError('KG 补货必须设置有效的 KG 标准合作商补货价')
