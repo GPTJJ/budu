@@ -210,7 +210,9 @@ export function buildPayrollAuditReportModel(input = {}) {
       const date = isoDate(day.date)
       const storeKey = day.storeKey || ''
       const key = `${payroll.employeeId}|${date}`
-      payrollDayByEmployeeDate.set(key, day)
+      const payrollDays = payrollDayByEmployeeDate.get(key) || []
+      payrollDays.push(day)
+      payrollDayByEmployeeDate.set(key, payrollDays)
       if (day.explanation?.state === 'ADJUSTMENT_ONLY') continue
       const raw = rawAttendanceIndex.get(`${payroll.employeeId}|${date}|${storeKey}`) || {}
       const rows = actualByEmployeeDate.get(key) || []
@@ -236,6 +238,8 @@ export function buildPayrollAuditReportModel(input = {}) {
     const readiness = readinessById.get(employeeId) || {}
     const employeeName = text(directory.name || payroll?.displayName || employeeId)
     const employee = { employeeId, employeeName }
+    const components = payroll ? discoverComponents(payroll) : []
+    const dailyComponentKeys = components.map((component) => component.key)
     const blockers = [
       ...(readiness.blockers || []).filter((blocker) => blocker.type === 'CALCULATION_BLOCKER'),
       ...globalBlockers,
@@ -250,8 +254,13 @@ export function buildPayrollAuditReportModel(input = {}) {
     const dailyReconciliation = dates.map((date) => {
       const actual = actualByEmployeeDate.get(`${employeeId}|${date}`) || []
       const planned = scheduleIndex.stable.get(`${employeeId}|${date}`) || []
-      const payrollDay = payrollDayByEmployeeDate.get(`${employeeId}|${date}`)
+      const payrollDays = payrollDayByEmployeeDate.get(`${employeeId}|${date}`) || []
       const classification = classifySchedule(actual, planned)
+      const payrollComponents = Object.fromEntries(dailyComponentKeys.map((component) => [
+        component,
+        addCents(payrollDays.filter((day) => typeof day?.[component] === 'number').map((day) => toCents(day[component]))),
+      ]))
+      const dailyTotalComplete = payrollDays.every((day) => typeof day?.finalPay === 'number')
       return {
         date,
         stores: [...new Set(actual.map((row) => row.storeName || input.authority?.storeNames?.[row.storeKey || row.storeId] || row.storeKey || row.storeId))],
@@ -261,7 +270,13 @@ export function buildPayrollAuditReportModel(input = {}) {
         authority: actual.length ? [...new Set(actual.map((row) => row.payableHoursSource || ''))].filter(Boolean).join(', ') : '',
         scheduleResult: classification,
         payrollImpact: classification === 'UNRESOLVED' ? 'UNKNOWN' : 'NO',
-        result: payrollDay?.explanation?.state === 'ADJUSTMENT_ONLY' ? 'ADJUSTMENT_ONLY' : actual.length ? 'AUDITED' : 'NO_ACTUAL_ATTENDANCE',
+        result: payrollDays.some((day) => day?.explanation?.state === 'ADJUSTMENT_ONLY') ? 'ADJUSTMENT_ONLY' : actual.length ? 'AUDITED' : 'NO_ACTUAL_ATTENDANCE',
+        payroll: {
+          source: 'Payroll authority dailyExplanations',
+          complete: dailyTotalComplete,
+          totalCents: dailyTotalComplete ? addCents(payrollDays.map((day) => toCents(day.finalPay))) : null,
+          components: payrollComponents,
+        },
       }
     })
     const issues = blockers.map((blocker, index) => issueFromBlocker(blocker, employee, index))
@@ -293,6 +308,18 @@ export function buildPayrollAuditReportModel(input = {}) {
     }
     const status = blockers.length ? 'BLOCKED' : (differenceCents !== '0' || input.employmentTypeHistoryAvailable === false) ? 'REVIEW_REQUIRED' : 'PASS'
     const scheduleStatus = dailyReconciliation.some((row) => row.scheduleResult !== 'MATCH') ? 'REVIEW' : 'PASS'
+    const dailyPayrollTotalCents = addCents(dailyReconciliation.map((day) => day.payroll?.totalCents).filter((value) => value != null))
+    const dailyComponentTotals = Object.fromEntries(dailyComponentKeys.map((component) => [
+      component,
+      addCents(dailyReconciliation.map((day) => day.payroll?.components?.[component]).filter((value) => value != null)),
+    ]))
+    const componentTotalsMatch = components.every((component) => (
+      dailyComponentTotals[component.key] === component.amountCents
+    ))
+    const dailyPayrollBreakdownComplete = Boolean(payroll)
+      && dailyReconciliation.every((day) => day.payroll?.complete === true)
+      && dailyPayrollTotalCents === authoritativePayrollCents
+      && componentTotalsMatch
     return {
       employeeId,
       employeeNo: text(directory.employeeNo),
@@ -305,8 +332,10 @@ export function buildPayrollAuditReportModel(input = {}) {
       authoritativePayrollCents,
       employeeCardCents,
       differenceCents,
-      components: payroll ? discoverComponents(payroll) : [],
+      components,
       dailyReconciliation,
+      dailyPayrollBreakdownComplete,
+      dailyPayrollBreakdownReason: dailyPayrollBreakdownComplete ? '' : 'MONTH_BOUNDARY_SOURCE_INSUFFICIENT',
       issues,
     }
   })
@@ -331,12 +360,12 @@ export function buildPayrollAuditReportModel(input = {}) {
     employeeType: input.employeeType || '',
     productionSha: input.productionSha, authorityDigest: input.authorityDigest,
     actualModel, actualReasoning,
-    reportContractVersion: 4,
+    reportContractVersion: 5,
     brandAssetSha256: WORDMARK_SHA256,
   }
   const runId = input.runId || auditHash(identityInput).slice(0, 24)
   const model = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     runId,
     metadata: {
       generatedAt: input.generatedAt || new Date().toISOString(),

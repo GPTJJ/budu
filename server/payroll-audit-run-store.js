@@ -8,8 +8,12 @@ function hashFile(filePath) {
 
 export function auditArtifactPaths(root, model) {
   const period = `${model.metadata.requestedPeriod.start}_${model.metadata.requestedPeriod.end}`
-  const kind = model.metadata.reportType === 'WEEKLY_PART_TIME' ? '兼职周' : '全职月度'
-  const base = `budu_${period}_${kind}薪酬审查报告`
+  const kind = model.metadata.reportType === 'WEEKLY_PART_TIME'
+    ? '兼职周'
+    : model.metadata.reportType === 'MONTHLY_UNIFIED_SUMMARY' ? '统一月度薪酬总览' : '全职月度'
+  const base = model.metadata.reportType === 'MONTHLY_UNIFIED_SUMMARY'
+    ? `budu_${period}_${kind}`
+    : `budu_${period}_${kind}薪酬审查报告`
   const directory = path.join(root, model.runId)
   return {
     directory,

@@ -131,6 +131,33 @@ test('dynamic Payroll components and every period day are preserved', () => {
   assert.equal(employee.dailyReconciliation[0].result, 'NO_ACTUAL_ATTENDANCE')
 })
 
+test('daily payroll breakdown persists exact component and final-pay cents for month slicing', () => {
+  const snapshot = snapshotFixture()
+  snapshot.authority.employees = snapshot.authority.employees.filter((row) => row.id === 'emp-capybara')
+  snapshot.authority.result.readiness.employees = snapshot.authority.result.readiness.employees.filter((row) => row.employeeId === 'emp-capybara')
+  snapshot.authority.result.blockers = []
+  snapshot.authority.result.payroll.employees = [{
+    employeeId: 'emp-capybara', displayName: '卡皮巴拉', payableHours: 8,
+    basePay: 260, commission: 20, bigBonus: 5, salary: 285,
+    dailyExplanations: [{
+      date: '2026-08-03', storeKey: 'tongying', storeName: '北京通盈中心店', payableHours: 8,
+      payableHoursSource: 'ACTUAL_HOURS', basePay: 260, commission: 20, bigBonus: 5,
+      transferSubsidy: 0, salaryAdjustment: 0, finalPay: 285, explanation: { state: 'NORMAL' },
+    }],
+  }]
+  const model = buildPayrollAuditReportModel({
+    period, authority: snapshot.authority, schedules: snapshot.schedules, attendanceRows: snapshot.attendanceRows,
+    cardAmountCentsById: { 'emp-capybara': '28500' }, scopeEmployeeIds: ['emp-capybara'], ...executionMetadata,
+  })
+  const employee = model.employeeResults[0]
+  const payrollDay = employee.dailyReconciliation.find((row) => row.date === '2026-08-03')
+  assert.equal(employee.dailyPayrollBreakdownComplete, true)
+  assert.equal(payrollDay.payroll.totalCents, '28500')
+  assert.equal(payrollDay.payroll.components.basePay, '26000')
+  assert.equal(payrollDay.payroll.components.commission, '2000')
+  assert.equal(payrollDay.payroll.components.bigBonus, '500')
+})
+
 test('PREVIEW and FINAL metadata retain the caller-resolved effective range', () => {
   const preview = buildPayrollAuditReportModel({ ...snapshotFixture(), period: { periodStart: '2026-09-01', periodEnd: '2026-09-14' }, auditMode: 'PREVIEW', scopeEmployeeIds: ['emp-capybara'], ...executionMetadata })
   const final = build({ mode: 'FINAL', ids: ['emp-capybara'] })
@@ -158,7 +185,7 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   assert.equal(email.recipient, 'yuegu1995@gmail.com')
   assert.deepEqual(email.recipients, ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com'])
   assert.equal(email.subject, 'budu 全职员工薪酬审查报告｜2026年08月｜BLOCKED')
-  assert.equal(model.schemaVersion, 4)
+  assert.equal(model.schemaVersion, 5)
   assert.equal(model.metadata.actualModel, 'GPT-5.6 Sol')
   assert.equal(model.metadata.actualReasoning, 'Medium')
   assert.equal(payrollAuditSourceMark(model), sourceMarkText)

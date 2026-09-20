@@ -3,10 +3,11 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { previousMonthPeriod, previousWeekPeriod } from './payroll-audit-report.js'
-import { markEmailDelivery } from './payroll-audit-run-store.js'
+import { loadReusableAuditRun, markEmailDelivery } from './payroll-audit-run-store.js'
 import { PAYROLL_AUDIT_RECIPIENTS, sendPayrollAuditEmail } from './payroll-audit-email.js'
 import { listPayrollAuditJobs, payrollAuditDataRoot, readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
 import { runPayrollAuditFromSnapshot } from '../scripts/payroll-audit-runner.mjs'
+import { runUnifiedSummaryFromSources } from '../scripts/payroll-audit-unified-runner.mjs'
 
 const exec = promisify(execFile)
 const TIME_ZONE = 'Asia/Shanghai'
@@ -16,6 +17,7 @@ export const PAYROLL_AUDIT_AUTOMATION_REASONING = 'Medium'
 const TYPES = Object.freeze({
   WEEKLY_PART_TIME: { employmentType: 'parttime', identity: 'PAYROLL_AUDIT_WEEKLY_PART_TIME' },
   MONTHLY_FULL_TIME: { employmentType: 'fulltime', identity: 'PAYROLL_AUDIT_MONTHLY_FULL_TIME' },
+  MONTHLY_UNIFIED_SUMMARY: { employmentType: '', identity: 'PAYROLL_AUDIT_MONTHLY_UNIFIED_SUMMARY' },
 })
 
 export function validatePayrollAuditModelConfiguration(actualModel, actualReasoning) {
@@ -59,7 +61,7 @@ export function validatePayrollAuditPeriod(reportType, periodStart, periodEnd) {
   const start = new Date(`${periodStart}T00:00:00.000Z`)
   const end = new Date(`${periodEnd}T00:00:00.000Z`)
   if (reportType === 'WEEKLY_PART_TIME' && (start.getUTCDay() !== 1 || end.getUTCDay() !== 0 || end - start !== 6 * 86400000)) throw Object.assign(new Error('Weekly audit must be Monday through Sunday'), { code: 'PAYROLL_AUDIT_PERIOD_INVALID' })
-  if (reportType === 'MONTHLY_FULL_TIME') {
+  if (reportType === 'MONTHLY_FULL_TIME' || reportType === 'MONTHLY_UNIFIED_SUMMARY') {
     const expectedEnd = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0))
     if (start.getUTCDate() !== 1 || expectedEnd.toISOString().slice(0, 10) !== periodEnd) throw Object.assign(new Error('Monthly audit must be a complete natural month'), { code: 'PAYROLL_AUDIT_PERIOD_INVALID' })
   }
@@ -94,7 +96,62 @@ async function deliver(job, { resend = false, actorId = '', send = sendPayrollAu
   return job
 }
 
+function loadUnifiedSourceReports(periodStart, periodEnd) {
+  const jobs = listPayrollAuditJobs().filter((job) => job.test !== true && job.artifacts?.manifest && fs.existsSync(job.artifacts.manifest))
+  const source = (job) => {
+    const manifest = JSON.parse(fs.readFileSync(job.artifacts.manifest, 'utf8'))
+    const modelPath = job.artifacts.model || manifest.artifacts?.model?.path
+    if (!modelPath || !fs.existsSync(modelPath)) return null
+    const model = JSON.parse(fs.readFileSync(modelPath, 'utf8'))
+    if (!loadReusableAuditRun(job.artifacts.manifest, model.canonicalHash)) return null
+    return { job, model }
+  }
+  const fullTimeJob = jobs.find((job) => job.reportType === 'MONTHLY_FULL_TIME' && job.periodStart === periodStart && job.periodEnd === periodEnd)
+  const partTimeSources = jobs
+    .filter((job) => job.reportType === 'WEEKLY_PART_TIME' && job.periodStart <= periodEnd && job.periodEnd >= periodStart)
+    .map(source)
+    .filter(Boolean)
+  return { fullTimeSource: fullTimeJob ? source(fullTimeJob) : null, partTimeSources }
+}
+
+export async function runUnifiedMonthlySummaryJob(input, dependencies = {}) {
+  validatePayrollAuditModelConfiguration(input.actualModel, input.actualReasoning)
+  const jobKey = payrollAuditJobKey(input)
+  return withPayrollAuditJobLock(jobKey, async () => {
+    const existing = readPayrollAuditJob(jobKey)
+    if (existing?.emailStatus === 'SENT') return { job: existing, reused: true }
+    if (existing?.artifacts && input.email === false) return { job: existing, reused: true }
+    if (existing?.artifacts && existing.retryCount < MAX_EMAIL_ATTEMPTS && input.email !== false) return { job: await deliver(existing, { send: dependencies.send }), reused: true }
+    if (existing?.retryCount >= MAX_EMAIL_ATTEMPTS) return { job: existing, reused: true }
+    const sources = dependencies.loadSources
+      ? await dependencies.loadSources(input.periodStart, input.periodEnd)
+      : loadUnifiedSourceReports(input.periodStart, input.periodEnd)
+    const result = await runUnifiedSummaryFromSources({
+      periodStart: input.periodStart, periodEnd: input.periodEnd,
+      actualModel: input.actualModel, actualReasoning: input.actualReasoning,
+      generatedAt: input.generatedAt,
+      fullTimeSource: sources.fullTimeSource, partTimeSources: sources.partTimeSources,
+      outputRoot: path.join(payrollAuditDataRoot(), 'runs'),
+    })
+    const now = new Date().toISOString()
+    const job = writePayrollAuditJob({
+      jobKey, reportType: 'MONTHLY_UNIFIED_SUMMARY', employeeType: 'fulltime+parttime',
+      periodStart: input.periodStart, periodEnd: input.periodEnd, test: input.test === true,
+      runId: result.model.runId, canonicalHash: result.model.canonicalHash,
+      runStatus: result.model.summary.finalResult, anomalyCount: result.model.summary.issueCount,
+      employeeCount: result.model.summary.employeeCount, emailStatus: input.email === false ? 'NOT_SENT' : 'PENDING',
+      recipients: [...PAYROLL_AUDIT_RECIPIENTS], retryCount: 0, emailAttempts: [],
+      sourceReferences: result.model.sourceReferences,
+      executionEvidence: result.model.executionEvidence,
+      artifacts: { model: result.paths.model, markdown: result.paths.markdown, pdf: result.paths.pdf, email: result.paths.email, manifest: result.paths.manifest },
+      actorId: input.actorId || 'system:scheduler', createdAt: now, updatedAt: now,
+    })
+    return { job: input.email === false ? job : await deliver(job, { send: dependencies.send }), reused: result.reused }
+  })
+}
+
 export async function runPayrollAuditJob(input, dependencies = {}) {
+  if (input.reportType === 'MONTHLY_UNIFIED_SUMMARY') return runUnifiedMonthlySummaryJob(input, dependencies)
   validatePayrollAuditModelConfiguration(input.actualModel, input.actualReasoning)
   const config = TYPES[input.reportType]
   const jobKey = payrollAuditJobKey(input)
@@ -121,7 +178,7 @@ export async function runPayrollAuditJob(input, dependencies = {}) {
       runStatus: result.model.summary.finalResult, anomalyCount: result.model.summary.issueCount,
       employeeCount: result.model.summary.employeeCount, emailStatus: input.email === false ? 'NOT_SENT' : 'PENDING',
       recipients: [...PAYROLL_AUDIT_RECIPIENTS], retryCount: 0, emailAttempts: [],
-      artifacts: { markdown: result.paths.markdown, pdf: result.paths.pdf, email: result.paths.email, manifest: result.paths.manifest },
+      artifacts: { model: result.paths.model, markdown: result.paths.markdown, pdf: result.paths.pdf, email: result.paths.email, manifest: result.paths.manifest },
       employmentTypeLimitation: 'No effective-dated employment type history; current Employee.employmentType is recorded and every subject is REVIEW_REQUIRED.',
       actorId: input.actorId || 'system:scheduler', createdAt: now, updatedAt: now,
     })
