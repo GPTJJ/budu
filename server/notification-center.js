@@ -67,7 +67,7 @@ export function notificationDeepLink(target, refType = '', refId = '') {
   if (!baseUrl) return ''
   const nav = String(target || '').trim()
   const recordId = String(refId || '').trim()
-  if (!['store-mailing', 'finance-invoice', 'inventory-transfer', 'partner-supply'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
+  if (!['store-mailing', 'finance-invoice', 'inventory-transfer', 'partner-supply', 'partner-replenishment-review'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
   const url = new URL('/', baseUrl)
   url.searchParams.set('nav', nav)
   url.searchParams.set('refType', String(refType || '').slice(0, 40))

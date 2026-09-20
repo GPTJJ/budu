@@ -32,6 +32,7 @@ import {
   listPartnerReplenishmentOrders,
   serializeReplenishmentOrder,
 } from './replenishment-order-service.js'
+import { deliverPartnerReplenishmentReviewRequired } from './partner-replenishment-notification.js'
 import {
   afterSalesDto,
   createPartnerAfterSales,
@@ -274,6 +275,9 @@ export function createPartnerAuthRouter({
       principalPartnerId: req.principal.partnerId,
       body: req.body,
       idempotencyKey: req.get('Idempotency-Key'),
+    })
+    await deliverPartnerReplenishmentReviewRequired({ prismaClient: db, order: result.order }).catch((error) => {
+      console.error('[partner-review-required-notification]', String(error?.message || 'notification delivery failed').slice(0, 200))
     })
     return res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, order: serializeReplenishmentOrder(result.order) })
   }))
