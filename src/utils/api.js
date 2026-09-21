@@ -1,9 +1,10 @@
 /** 与后端 API 的统一封装（同源请求，自动携带 httpOnly 登录 Cookie） */
 export async function api(path, options = {}) {
+  const { headers, ...requestOptions } = options
   const res = await fetch(`/api${path}`, {
     credentials: 'same-origin',
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...options,
+    ...requestOptions,
+    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...headers },
   })
   let data = null
   try {
