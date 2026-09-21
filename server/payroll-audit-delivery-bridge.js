@@ -3,6 +3,7 @@ import fs from 'node:fs'
 
 import { PAYROLL_AUDIT_RECIPIENTS } from './payroll-audit-email.js'
 import { readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
+import { PAYROLL_AUDIT_SOURCE } from './payroll-audit-report.js'
 import { loadReusableAuditRun } from './payroll-audit-run-store.js'
 
 const TEST_RECIPIENTS = Object.freeze(['yuegu1995@gmail.com'])
@@ -52,6 +53,7 @@ export async function preparePayrollConnectedDelivery(input) {
     const expectedRecipients = mode === 'TEST' ? TEST_RECIPIENTS : PAYROLL_AUDIT_RECIPIENTS
     if (!sameSet(recipients, expectedRecipients)) throw Object.assign(new Error('Delivery recipients do not match the locked recipient set'), { code: 'PAYROLL_DELIVERY_RECIPIENTS_MISMATCH' })
     if (model.metadata?.actualModel !== input.expectedModel || model.metadata?.actualReasoning !== input.expectedReasoning) throw Object.assign(new Error('Canonical report model contract mismatch'), { code: 'MODEL_CONFIGURATION_MISMATCH' })
+    if (Number(model.schemaVersion || 0) < 6 || model.metadata?.source !== PAYROLL_AUDIT_SOURCE) throw Object.assign(new Error('Canonical report source contract mismatch'), { code: 'PAYROLL_DELIVERY_SOURCE_MISMATCH' })
     if (model.runId !== job.runId || model.metadata?.requestedPeriod?.start !== job.periodStart || model.metadata?.requestedPeriod?.end !== job.periodEnd || model.metadata?.employeeType !== job.employeeType) throw Object.assign(new Error('Canonical report identity mismatch'), { code: 'PAYROLL_DELIVERY_REPORT_IDENTITY_MISMATCH' })
     const deliveryId = hash({ reportId: model.runId, canonicalHash: model.canonicalHash, recipients: [...recipients].sort(), mode }).slice(0, 24)
     manifest.deliveryBridge ||= { schemaVersion: 1, deliveries: {} }

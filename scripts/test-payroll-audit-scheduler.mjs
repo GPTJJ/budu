@@ -69,6 +69,7 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
     assert.equal(model.summary.finalResult, 'REVIEW_REQUIRED')
     assert.equal(model.metadata.actualModel, 'GPT-5.6 Sol')
     assert.equal(model.metadata.actualReasoning, 'Medium')
+    assert.equal(model.metadata.source, 'budu OS Payroll Audit')
     const second = await runPayrollAuditJob(input, { snapshot: async () => { throw new Error('must reuse report') }, send })
     assert.equal(second.job.emailStatus, 'SENT')
     assert.equal(second.job.retryCount, 2)

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { previousMonthPeriod, previousWeekPeriod } from './payroll-audit-report.js'
+import { PAYROLL_AUDIT_SOURCE, previousMonthPeriod, previousWeekPeriod } from './payroll-audit-report.js'
 import { loadReusableAuditRun, markEmailDelivery } from './payroll-audit-run-store.js'
 import { PAYROLL_AUDIT_RECIPIENTS, payrollAuditEmailFailureDiagnostic, sendPayrollAuditEmail } from './payroll-audit-email.js'
 import { archivePayrollAuditJob, listPayrollAuditJobs, payrollAuditDataRoot, readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
@@ -106,7 +106,8 @@ function existingJobContract(job, input) {
     if (!modelPath || !fs.existsSync(modelPath)) return { sendable: false, reason: 'CANONICAL_MODEL_MISSING' }
     const model = JSON.parse(fs.readFileSync(modelPath, 'utf8'))
     if (!loadReusableAuditRun(manifestPath, model.canonicalHash)) return { sendable: false, reason: 'ARTIFACT_INTEGRITY_FAILED' }
-    if (Number(model.schemaVersion || 0) < 5) return { sendable: false, reason: 'STALE_SCHEMA' }
+    if (Number(model.schemaVersion || 0) < 6) return { sendable: false, reason: 'STALE_SCHEMA' }
+    if (model.metadata?.source !== PAYROLL_AUDIT_SOURCE) return { sendable: false, reason: 'REPORT_SOURCE_MISSING' }
     if (model.metadata?.actualModel !== input.actualModel || model.metadata?.actualReasoning !== input.actualReasoning) return { sendable: false, reason: 'MODEL_CONFIGURATION_MISMATCH' }
     return { sendable: true, model }
   } catch {

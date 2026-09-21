@@ -4,6 +4,7 @@ import fs from 'node:fs'
 const WORDMARK_SVG = fs.readFileSync(new URL('../brand/web/budu-wordmark.svg', import.meta.url), 'utf8')
 const WORDMARK_SHA256 = crypto.createHash('sha256').update(WORDMARK_SVG).digest('hex')
 const WORDMARK_DATA_URI = `data:image/svg+xml;base64,${Buffer.from(WORDMARK_SVG).toString('base64')}`
+export const PAYROLL_AUDIT_SOURCE = 'budu OS Payroll Audit'
 
 const RESULT_RANK = { PASS: 0, REVIEW_REQUIRED: 1, BLOCKED: 2 }
 const COMPONENT_LABELS = {
@@ -360,17 +361,19 @@ export function buildPayrollAuditReportModel(input = {}) {
     employeeType: input.employeeType || '',
     productionSha: input.productionSha, authorityDigest: input.authorityDigest,
     actualModel, actualReasoning,
-    reportContractVersion: 5,
+    source: PAYROLL_AUDIT_SOURCE,
+    reportContractVersion: 6,
     brandAssetSha256: WORDMARK_SHA256,
   }
   const runId = input.runId || auditHash(identityInput).slice(0, 24)
   const model = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     runId,
     metadata: {
       generatedAt: input.generatedAt || new Date().toISOString(),
       actualModel,
       actualReasoning,
+      source: PAYROLL_AUDIT_SOURCE,
       productionSha: text(input.productionSha),
       authority: input.authorityName || 'budu Payroll authority',
       brand: { name: 'budu', wordmarkSha256: WORDMARK_SHA256 },
@@ -489,7 +492,7 @@ function escapeHtml(value) {
 }
 
 export function payrollAuditSourceMark(model) {
-  return `由 budu Payroll Audit Automation 生成 · 来源：budu OS Payroll Audit · 模型：${text(model?.metadata?.actualModel)} / ${text(model?.metadata?.actualReasoning)}`
+  return `由 budu Payroll Audit Automation 生成 · 来源：${PAYROLL_AUDIT_SOURCE} · 模型：${text(model?.metadata?.actualModel)} / ${text(model?.metadata?.actualReasoning)}`
 }
 
 export function renderPayrollAuditHtml(model) {
