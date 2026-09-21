@@ -147,6 +147,7 @@ export default function PartnerAccessPage() {
   const [quotes, setQuotes] = useState({})
   const [quotedSignature, setQuotedSignature] = useState('')
   const [draftMessages, setDraftMessages] = useState([])
+  const [draftNotice, setDraftNotice] = useState('')
   const [orderKey, setOrderKey] = useState(newOrderKey)
 
   const loadPortal = useCallback(async () => {
@@ -196,10 +197,19 @@ export default function PartnerAccessPage() {
     const quantityBase = parseDisplayQuantity(raw, product.orderUnit)
     setQuantityInputs((value) => ({ ...value, [product.productId]: raw }))
     setSelected((value) => ({ ...value, [product.productId]: quantityBase || 0 }))
-    setQuotedSignature(''); setQuotes({}); setDraftMessages([])
+    setQuotedSignature(''); setQuotes({}); setDraftMessages([]); setDraftNotice('')
+  }
+  const resetReplenishmentDraft = () => {
+    setSelected({})
+    setQuantityInputs({})
+    setQuotes({})
+    setQuotedSignature('')
+    setDraftMessages([])
+    setDraftNotice('当前补货内容已清空')
+    setOrderKey(newOrderKey())
   }
   const quote = async () => {
-    setBusy(true); setDraftMessages([])
+    setBusy(true); setDraftMessages([]); setDraftNotice('')
     try {
       if (hasInvalidQuantityInput) throw new Error('请先修正无效的补货数量')
       buildPartnerSubmission({ partnerStoreId: selectedStoreId, selected, catalogue })
@@ -215,7 +225,7 @@ export default function PartnerAccessPage() {
   }
   const submit = async () => {
     if (quotedSignature !== selectionSignature) { setDraftMessages(['数量或门店已变化，请重新获取预计金额']); return }
-    setBusy(true); setDraftMessages([])
+    setBusy(true); setDraftMessages([]); setDraftNotice('')
     try {
       const body = buildPartnerSubmission({ partnerStoreId: selectedStoreId, selected, catalogue })
       await partnerApi('/replenishment-orders', { method: 'POST', headers: { 'Idempotency-Key': orderKey }, body: JSON.stringify(body) })
@@ -233,7 +243,7 @@ export default function PartnerAccessPage() {
         return [item.productId, displayQuantity(item.quantityBase, product?.orderUnit)]
       })))
       setSelectedStoreId(activeStores.some((store) => store.id === draft.storeId) ? draft.storeId : activeStores[0]?.id || '')
-      setDraftMessages(draft.issues); setQuotes({}); setQuotedSignature(''); setSelectedOrder(null); navigate('replenish')
+      setDraftMessages(draft.issues); setDraftNotice(''); setQuotes({}); setQuotedSignature(''); setSelectedOrder(null); navigate('replenish')
     } catch (nextError) { setDraftMessages([nextError.message]) } finally { setBusy(false) }
   }
   const cancel = async (order) => { setBusy(true); try { await partnerApi(`/replenishment-orders/${order.id}/cancel`, { method: 'POST' }); setSelectedOrder(null); await loadPortal() } catch (nextError) { setDataError(nextError.message) } finally { setBusy(false) } }
@@ -246,12 +256,12 @@ export default function PartnerAccessPage() {
 
   return (
     <main className={`min-h-screen min-h-[100dvh] overflow-x-hidden bg-canvas ${view === 'replenish' ? 'pb-[calc(13rem+env(safe-area-inset-bottom))]' : 'pb-24'}`} style={{ paddingTop: 'env(safe-area-inset-top)' }} data-testid="partner-portal">
-      <header className="sticky top-0 z-30 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-3xl items-center justify-between"><div><img src={wordmarkUrl} alt="budu" className="h-auto w-20" /><p className="mt-1 text-[10px] font-black tracking-[0.12em] text-budu-500">budu Partner · 合作伙伴中心</p></div><button type="button" onClick={loadPortal} aria-label="刷新合作伙伴中心" className="grid h-11 w-11 place-items-center rounded-xl bg-budu-50 text-budu-600"><RefreshCw className={`h-4 w-4 ${dataLoading ? 'animate-spin' : ''}`} /></button></div></header>
+      <header className="sticky top-0 z-30 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-3xl items-center justify-between"><div><img src={wordmarkUrl} alt="budu" className="h-auto w-20" /><p className="mt-1 text-[10px] font-black tracking-[0.12em] text-budu-500">budu Partner · 合作伙伴中心</p></div>{view === 'replenish' ? <button type="button" onClick={resetReplenishmentDraft} disabled={busy} aria-label="清空当前补货内容" className="flex min-h-11 items-center gap-1.5 rounded-xl bg-budu-50 px-3 text-sm font-bold text-budu-700 disabled:opacity-40"><RotateCcw className="h-4 w-4" />清空</button> : <button type="button" onClick={loadPortal} aria-label="刷新合作伙伴中心" className="grid h-11 w-11 place-items-center rounded-xl bg-budu-50 text-budu-600"><RefreshCw className={`h-4 w-4 ${dataLoading ? 'animate-spin' : ''}`} /></button>}</div></header>
       <div className="mx-auto w-full max-w-3xl space-y-4 px-3 py-4 sm:px-4">
         {dataError && <div role="alert" className="rounded-2xl bg-rose-50 p-4 text-sm font-semibold text-rose-700"><p>{dataError}</p><button type="button" onClick={loadPortal} className="mt-3 min-h-11 rounded-xl bg-white px-4">重试</button></div>}
         {dataLoading && !profile ? <div className="grid min-h-64 place-items-center"><Loader2 className="h-7 w-7 animate-spin text-budu-500" /></div> : <>
           {view === 'home' && <HomeView profile={profile} principal={principal} orders={orders} stats={stats} navigate={navigate} openOrder={setSelectedOrder} setOrderGroup={setOrderGroup} />}
-          {view === 'replenish' && <ReplenishView catalogue={catalogue} catalogueLoading={catalogueLoading} catalogueError={catalogueError} onReloadCatalogue={() => loadCatalogue().catch(() => {})} activeStores={activeStores} selectedStoreId={selectedStoreId} setSelectedStoreId={(id) => { setSelectedStoreId(id); setQuotedSignature(''); setQuotes({}) }} selected={selected} quantityInputs={quantityInputs} updateQuantity={updateQuantity} quotes={quotes} quoted={quotedSignature === selectionSignature} quoteTotal={quoteTotal} messages={draftMessages} busy={busy} hasInvalidQuantityInput={hasInvalidQuantityInput} onQuote={quote} onSubmit={submit} />}
+          {view === 'replenish' && <ReplenishView catalogue={catalogue} catalogueLoading={catalogueLoading} catalogueError={catalogueError} onReloadCatalogue={() => loadCatalogue().catch(() => {})} activeStores={activeStores} selectedStoreId={selectedStoreId} setSelectedStoreId={(id) => { setSelectedStoreId(id); setQuotedSignature(''); setQuotes({}); setDraftNotice('') }} selected={selected} quantityInputs={quantityInputs} updateQuantity={updateQuantity} quotes={quotes} quoted={quotedSignature === selectionSignature} quoteTotal={quoteTotal} messages={draftMessages} notice={draftNotice} busy={busy} hasInvalidQuantityInput={hasInvalidQuantityInput} onQuote={quote} onSubmit={submit} />}
           {view === 'orders' && <OrdersView orders={filteredOrders} orderGroup={orderGroup} setOrderGroup={setOrderGroup} openOrder={setSelectedOrder} />}
           {view === 'profile' && <ProfileView profile={profile} stores={stores} principal={principal} busy={busy} logout={logout} />}
         </>}
@@ -267,7 +277,7 @@ function HomeView({ profile, principal, orders, stats, navigate, openOrder, setO
   return <section className="space-y-4" aria-label="合作伙伴首页"><div className="rounded-3xl bg-gradient-to-br from-budu-500 to-budu-700 p-5 text-white shadow-card"><p className="text-sm text-white/75">欢迎回来</p><h1 className="mt-1 text-2xl font-black">{profile?.name || principal.partner?.name}</h1><button type="button" onClick={() => navigate('replenish')} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-white font-black text-budu-700"><PackagePlus className="h-5 w-5" />发起补货</button></div><div className="grid grid-cols-3 gap-2"><button type="button" onClick={() => { setOrderGroup('pending'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-amber-600">{stats.pending}</p><p className="mt-1 text-xs text-slate-500">待审核</p></button><button type="button" onClick={() => { setOrderGroup('fulfillment'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-emerald-600">{stats.approved}</p><p className="mt-1 text-xs text-slate-500">待发货</p></button><button type="button" onClick={() => { setOrderGroup('fulfillment'); navigate('orders') }} className="rounded-2xl bg-white p-3 text-left shadow-sm"><p className="text-2xl font-black text-sky-600">{stats.moving}</p><p className="mt-1 text-xs leading-4 text-slate-500">部分发货<br />运输中</p></button></div><section><div className="mb-3 flex items-center justify-between"><h2 className="font-black text-slate-800">最近补货单</h2><button type="button" onClick={() => navigate('orders')} className="text-sm font-bold text-budu-600">查看全部</button></div><div className="space-y-3">{orders.slice(0, 3).map((order) => <button key={order.id} type="button" onClick={() => openOrder(order)} className="flex min-h-20 w-full items-center justify-between gap-3 rounded-2xl bg-white p-4 text-left shadow-sm"><div className="min-w-0"><p className="truncate font-black text-slate-800">{order.orderNo}</p><p className="mt-1 text-xs text-slate-400">{order.partnerStore.name} · {money(order.requestedTotalAmountCents)}</p></div><StatusPill status={order.status} /></button>)}{orders.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">还没有补货单，点击上方按钮开始。</div>}</div></section></section>
 }
 
-function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCatalogue, activeStores, selectedStoreId, setSelectedStoreId, selected, quantityInputs, updateQuantity, quotes, quoted, quoteTotal, messages, busy, hasInvalidQuantityInput, onQuote, onSubmit }) {
+function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCatalogue, activeStores, selectedStoreId, setSelectedStoreId, selected, quantityInputs, updateQuantity, quotes, quoted, quoteTotal, messages, notice, busy, hasInvalidQuantityInput, onQuote, onSubmit }) {
   const uncategorizedId = '__partner_uncategorized__'
   const [categoryId, setCategoryId] = useState('all')
   const [search, setSearch] = useState('')
@@ -329,7 +339,7 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
           </div>}
           {groupedCatalogue.map(({ category, products }) => <section key={category.id} className="space-y-3" aria-labelledby={`partner-category-${category.id}`}>
             {categoryId === 'all' && <h2 id={`partner-category-${category.id}`} className="px-1 text-sm font-black text-slate-700">{category.name}</h2>}
-            {products.map((product) => {
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[700px]:grid-cols-4" data-testid={`partner-category-grid-${category.id}`}>{products.map((product) => {
             const value = Number(selected[product.productId] || 0)
             const raw = quantityInputs[product.productId] ?? ''
             const invalidRaw = raw.trim() !== '' && !parseDisplayQuantity(raw, product.orderUnit)
@@ -361,12 +371,13 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
                 {quotes[product.productId] && <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-black text-emerald-700">本行预计 {money(quotes[product.productId].finalAmountCents)}</p>}
               </article>
             )
-          })}
+          })}</div>
           </section>)}
           {catalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">暂无可补货商品<button type="button" onClick={onReloadCatalogue} className="btn-secondary mx-auto mt-3 min-h-12">刷新商品目录</button></div>}
           {catalogue.length > 0 && filteredCatalogue.length === 0 && <div className="rounded-2xl bg-white p-8 text-center text-sm text-slate-400">{normalizedSearch ? '未找到相关商品' : '该分类暂无可补货商品'}</div>}
         </div>
       )}
+      {notice && <p role="status" className="rounded-2xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{notice}</p>}
       {messages.length > 0 && <div role="alert" className="space-y-1 rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800">{messages.map((message) => <p key={message}>{message}</p>)}</div>}
       <div data-testid="partner-replenishment-actions" className="fixed inset-x-0 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-30 px-3 sm:px-4">
         <div className="mx-auto max-w-3xl space-y-3 rounded-2xl border border-slate-100 bg-white/95 p-4 shadow-xl backdrop-blur">

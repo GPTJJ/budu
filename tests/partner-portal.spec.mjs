@@ -250,6 +250,65 @@ test('分类与名称/SKU 搜索可组合，分别显示明确空状态', async 
   await expect(page.getByTestId('partner-catalogue-card-native')).toBeVisible()
 })
 
+test('清空当前草稿会清除数量和旧报价，同时保留门店、分类与搜索条件', async ({ page }) => {
+  const requests = await mockPortal(page)
+  await page.getByRole('button', { name: '我要补货' }).click()
+  await page.getByRole('button', { name: '糖果', exact: true }).click()
+  await page.getByLabel('搜索商品').fill('糖')
+  const store = page.getByLabel('收货门店')
+  await expect(store).toHaveValue('store-1')
+  await page.getByLabel('KG 糖补货数量').fill('1')
+  await page.getByLabel('颗糖补货数量').fill('10')
+  await page.getByRole('button', { name: '获取预计金额' }).click()
+  await expect(page.getByText('¥149.50')).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交补货' })).toBeEnabled()
+
+  await page.getByRole('button', { name: '清空当前补货内容' }).click()
+  await expect(page.getByRole('status')).toHaveText('当前补货内容已清空')
+  await expect(page.getByLabel('KG 糖补货数量')).toHaveValue('')
+  await expect(page.getByLabel('颗糖补货数量')).toHaveValue('')
+  await expect(page.getByText('本行预计')).toHaveCount(0)
+  await expect(page.getByText('待重新计算')).toBeVisible()
+  await expect(page.getByRole('button', { name: '获取预计金额' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '提交补货' })).toBeDisabled()
+  await expect(store).toHaveValue('store-1')
+  await expect(page.getByRole('button', { name: '糖果', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('搜索商品')).toHaveValue('糖')
+  expect(requests.filter((row) => row.type === 'submit')).toHaveLength(0)
+
+  await page.getByLabel('颗糖补货数量').fill('20')
+  await page.getByRole('button', { name: '获取预计金额' }).click()
+  await expect(page.getByRole('button', { name: '提交补货' })).toBeEnabled()
+})
+
+test('空草稿可稳定清空且不会产生报价或提交请求', async ({ page }) => {
+  const requests = await mockPortal(page)
+  await page.getByRole('button', { name: '我要补货' }).click()
+  await page.getByRole('button', { name: '清空当前补货内容' }).click()
+  await expect(page.getByRole('status')).toHaveText('当前补货内容已清空')
+  expect(requests).toHaveLength(0)
+})
+
+for (const width of [768, 1024, 1440]) {
+  test(`${width}px 宽屏同一分类商品稳定显示四列`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const rows = [
+      ...catalogue.slice(0, 2),
+      { ...catalogue[1], productId: 'pcs-2', name: '颗糖二', sku: 'PCS-2' },
+      { ...catalogue[1], productId: 'pcs-3', name: '颗糖三', sku: 'PCS-3' },
+    ]
+    await mockPortal(page, { catalogueRows: rows })
+    await page.getByRole('button', { name: '我要补货' }).click()
+    await page.getByRole('button', { name: '糖果', exact: true }).click()
+    const cards = page.locator('[data-testid^="partner-catalogue-card-"]')
+    await expect(cards).toHaveCount(4)
+    const boxes = await Promise.all([0, 1, 2, 3].map((index) => cards.nth(index).boundingBox()))
+    expect(new Set(boxes.map((box) => Math.round(box.y))).size).toBe(1)
+    expect(boxes.map((box) => box.x)).toEqual([...boxes.map((box) => box.x)].sort((a, b) => a - b))
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
 for (const width of [320, 340, 375, 390, 430]) {
   test(`${width}px Portal、底部导航和订单 Bottom Sheet 无横向溢出`, async ({ page }) => {
     await page.setViewportSize({ width, height: 820 })
