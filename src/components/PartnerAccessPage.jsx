@@ -256,8 +256,8 @@ export default function PartnerAccessPage() {
 
   return (
     <main className={`min-h-screen min-h-[100dvh] overflow-x-hidden bg-canvas ${view === 'replenish' ? 'pb-[calc(13rem+env(safe-area-inset-bottom))]' : 'pb-24'}`} style={{ paddingTop: 'env(safe-area-inset-top)' }} data-testid="partner-portal">
-      <header className="sticky top-0 z-30 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-3xl items-center justify-between"><div><img src={wordmarkUrl} alt="budu" className="h-auto w-20" /><p className="mt-1 text-[10px] font-black tracking-[0.12em] text-budu-500">budu Partner · 合作伙伴中心</p></div>{view === 'replenish' ? <button type="button" onClick={resetReplenishmentDraft} disabled={busy} aria-label="清空当前补货内容" className="flex min-h-11 items-center gap-1.5 rounded-xl bg-budu-50 px-3 text-sm font-bold text-budu-700 disabled:opacity-40"><RotateCcw className="h-4 w-4" />清空</button> : <button type="button" onClick={loadPortal} aria-label="刷新合作伙伴中心" className="grid h-11 w-11 place-items-center rounded-xl bg-budu-50 text-budu-600"><RefreshCw className={`h-4 w-4 ${dataLoading ? 'animate-spin' : ''}`} /></button>}</div></header>
-      <div className="mx-auto w-full max-w-3xl space-y-4 px-3 py-4 sm:px-4">
+      <header className="sticky top-0 z-30 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur"><div className={`mx-auto flex items-center justify-between ${view === 'replenish' ? 'max-w-6xl' : 'max-w-3xl'}`}><div><img src={wordmarkUrl} alt="budu" className="h-auto w-20" /><p className="mt-1 text-[10px] font-black tracking-[0.12em] text-budu-500">budu Partner · 合作伙伴中心</p></div>{view === 'replenish' ? <button type="button" onClick={resetReplenishmentDraft} disabled={busy} aria-label="清空当前补货内容" className="flex min-h-11 items-center gap-1.5 rounded-xl bg-budu-50 px-3 text-sm font-bold text-budu-700 disabled:opacity-40"><RotateCcw className="h-4 w-4" />清空</button> : <button type="button" onClick={loadPortal} aria-label="刷新合作伙伴中心" className="grid h-11 w-11 place-items-center rounded-xl bg-budu-50 text-budu-600"><RefreshCw className={`h-4 w-4 ${dataLoading ? 'animate-spin' : ''}`} /></button>}</div></header>
+      <div className={`mx-auto w-full space-y-4 px-3 py-4 sm:px-4 ${view === 'replenish' ? 'max-w-6xl' : 'max-w-3xl'}`}>
         {dataError && <div role="alert" className="rounded-2xl bg-rose-50 p-4 text-sm font-semibold text-rose-700"><p>{dataError}</p><button type="button" onClick={loadPortal} className="mt-3 min-h-11 rounded-xl bg-white px-4">重试</button></div>}
         {dataLoading && !profile ? <div className="grid min-h-64 place-items-center"><Loader2 className="h-7 w-7 animate-spin text-budu-500" /></div> : <>
           {view === 'home' && <HomeView profile={profile} principal={principal} orders={orders} stats={stats} navigate={navigate} openOrder={setSelectedOrder} setOrderGroup={setOrderGroup} />}
@@ -339,7 +339,7 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
           </div>}
           {groupedCatalogue.map(({ category, products }) => <section key={category.id} className="space-y-3" aria-labelledby={`partner-category-${category.id}`}>
             {categoryId === 'all' && <h2 id={`partner-category-${category.id}`} className="px-1 text-sm font-black text-slate-700">{category.name}</h2>}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[700px]:grid-cols-4" data-testid={`partner-category-grid-${category.id}`}>{products.map((product) => {
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[900px]:grid-cols-3 min-[1280px]:grid-cols-4" data-testid={`partner-category-grid-${category.id}`}>{products.map((product) => {
             const value = Number(selected[product.productId] || 0)
             const raw = quantityInputs[product.productId] ?? ''
             const invalidRaw = raw.trim() !== '' && !parseDisplayQuantity(raw, product.orderUnit)
@@ -349,26 +349,21 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
             const unit = partnerUnitLabel(product.orderUnit, product.nativeUnit)
             const adjust = (direction) => updateQuantity(product, displayQuantity(adjustShortcutQuantity(value, product.orderUnit, direction), product.orderUnit))
             return (
-              <article data-testid={`partner-catalogue-card-${product.productId}`} key={product.productId} className={`rounded-2xl border bg-white p-4 shadow-sm ${value > 0 ? 'border-budu-200' : 'border-slate-100'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0"><p className="font-black text-slate-800">{product.name}</p><p className="mt-1 text-xs text-slate-400">{product.sku} · 按 {unit} 补货</p></div>
-                  <span className="shrink-0 rounded-full bg-budu-50 px-2.5 py-1 text-xs font-black text-budu-700">{money(product.referencePriceCents)}/{unit}</span>
+              <article data-testid={`partner-catalogue-card-${product.productId}`} key={product.productId} className={`flex min-h-52 flex-col rounded-2xl border bg-white p-4 shadow-sm transition-colors ${value > 0 ? 'border-budu-200' : 'border-slate-100'}`}>
+                <div className="flex min-h-12 items-start justify-between gap-3">
+                  <p className="min-w-0 text-lg font-black leading-6 text-slate-900">{product.name}</p>
+                  <span className="shrink-0 whitespace-nowrap text-sm font-black text-budu-700">{money(product.referencePriceCents)} / {unit}</span>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
-                  <p>标准价 <strong className="block text-slate-700">{money(product.basePriceCents)}/{unit}</strong></p>
-                  <p>合作折扣 <strong className="block text-slate-700">{(product.discountBps / 100).toFixed(2)}%</strong></p>
-                  <p className="col-span-2">数量规则 <strong className="block text-slate-700">大于 0；可手动输入，快捷按钮每次 {quantityLabel(product.shortcutIncrementBaseQty, product.orderUnit, product.nativeUnit)}</strong></p>
-                </div>
-                <label className="mt-3 block text-xs font-bold text-slate-500">
-                  补货数量（{unit}）
-                  <div className="mt-1 grid grid-cols-[3rem_1fr_3rem] gap-2">
-                    <button type="button" aria-label={`${product.name}减少数量`} onClick={() => adjust(-1)} className="grid min-h-12 place-items-center rounded-xl bg-slate-100 text-slate-600"><Minus className="h-4 w-4" /></button>
-                    <input aria-label={`${product.name}补货数量`} type="text" inputMode={product.orderUnit === 'KG' ? 'decimal' : 'numeric'} value={raw} onChange={(event) => updateQuantity(product, event.target.value)} placeholder="0" aria-invalid={invalidRaw || undefined} className="min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-budu-300 focus:ring-2 focus:ring-budu-100" />
-                    <button type="button" aria-label={`${product.name}增加数量`} onClick={() => adjust(1)} className="grid min-h-12 place-items-center rounded-xl bg-budu-50 text-budu-700"><Plus className="h-4 w-4" /></button>
+                <label className="mt-4 block text-xs font-bold text-slate-500">
+                  数量（{unit}）
+                  <div className="mt-2 grid grid-cols-[3rem_minmax(5rem,1fr)_3rem] gap-2">
+                    <button type="button" aria-label={`${product.name}减少数量`} onClick={() => adjust(-1)} className="grid min-h-12 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 active:bg-slate-100"><Minus className="h-5 w-5" /></button>
+                    <input aria-label={`${product.name}补货数量`} type="text" inputMode={product.orderUnit === 'KG' ? 'decimal' : 'numeric'} value={raw} onChange={(event) => updateQuantity(product, event.target.value)} placeholder="0" aria-invalid={invalidRaw || undefined} className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 text-center text-xl font-black tabular-nums text-slate-900 outline-none focus:border-budu-300 focus:bg-white focus:ring-2 focus:ring-budu-100" />
+                    <button type="button" aria-label={`${product.name}增加数量`} onClick={() => adjust(1)} className="grid min-h-12 place-items-center rounded-xl bg-budu-500 text-white shadow-sm transition-colors hover:bg-budu-600 active:bg-budu-700"><Plus className="h-5 w-5" /></button>
                   </div>
                 </label>
                 {validation && <p className="mt-2 text-xs font-semibold text-rose-600">{validation}</p>}
-                {quotes[product.productId] && <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-black text-emerald-700">本行预计 {money(quotes[product.productId].finalAmountCents)}</p>}
+                {quotes[product.productId] && <p className="mt-auto pt-3 text-sm font-bold text-emerald-700">预计 {money(quotes[product.productId].finalAmountCents)}</p>}
               </article>
             )
           })}</div>

@@ -29,9 +29,12 @@ async function open(page) {
 }
 
 for (const [name, width, height, columns] of [
+  ['mobile-320', 320, 760, 1],
+  ['mobile-375', 375, 812, 1],
   ['mobile-390', 390, 844, 1],
-  ['ipad-portrait-768', 768, 1024, 4],
-  ['ipad-landscape-1024', 1024, 768, 4],
+  ['mobile-430', 430, 860, 1],
+  ['ipad-portrait-768', 768, 1024, 2],
+  ['ipad-landscape-1024', 1024, 768, 3],
   ['desktop-1440', 1440, 1000, 4],
 ]) {
   test(`${name} visual layout`, async ({ page }) => {
@@ -41,7 +44,14 @@ for (const [name, width, height, columns] of [
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
     const cards = page.locator('[data-testid^="partner-catalogue-card-"]')
     const boxes = await Promise.all(Array.from({ length: columns }, (_, index) => cards.nth(index).boundingBox()))
-    if (columns === 4) expect(new Set(boxes.map(box => Math.round(box.y))).size).toBe(1)
+    expect(new Set(boxes.map(box => Math.round(box.y))).size).toBe(1)
+    const input = page.getByLabel('Partner 糖果商品 1补货数量')
+    const inputBox = await input.boundingBox()
+    expect(inputBox.width).toBeGreaterThanOrEqual(80)
+    await input.fill('100')
+    await expect(input).toHaveValue('100')
+    await page.getByRole('button', { name: '获取预计金额' }).click()
+    await expect(page.getByTestId('partner-catalogue-card-pcs-1')).toContainText('预计')
     if (out) {
       await fs.mkdir(out, { recursive: true })
       await page.screenshot({ path: path.join(out, `${name}.png`), fullPage: true })
