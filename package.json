@@ -41,6 +41,7 @@
     "test:skill:payroll-audit": "node --test scripts/test-budu-payroll-audit-skill.mjs",
     "test:payroll-audit-report": "node --test scripts/test-payroll-audit-report-v2.mjs",
     "test:payroll-audit-scheduler": "node --test scripts/test-payroll-audit-scheduler.mjs",
+    "test:payroll-audit-delivery": "node --test scripts/test-payroll-audit-delivery-bridge.mjs",
     "test:payroll-audit-unified": "node --test scripts/test-payroll-audit-unified-summary.mjs",
     "test:skill:brand": "node --test scripts/test-budu-brand-system.mjs",
     "test:sweet-card": "node --test scripts/test-budu-sweet-card-skill.mjs scripts/test-sweet-card-core.mjs scripts/test-sweet-card-migration.mjs scripts/test-sweet-card-batch-purpose.mjs scripts/test-sweet-card-rollout.mjs scripts/test-sweet-card-settlement.mjs scripts/test-sweet-card-a6-a7-unit.mjs scripts/test-sweet-card-a7-5-unit.mjs scripts/test-sweet-card-pos-presentation.mjs scripts/test-sweet-card-commercial-eligibility.mjs scripts/test-sweet-card-official-code.mjs scripts/test-sweet-card-issue-idempotency.mjs",
