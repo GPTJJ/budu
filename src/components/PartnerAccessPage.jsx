@@ -34,6 +34,14 @@ const tabFromPath = () => ({ replenish: 'replenish', orders: 'orders', profile: 
 const pathForTab = (tab) => tab === 'home' ? '/partner' : `/partner/${tab}`
 const money = (value) => `¥${(Number(value || 0) / 100).toFixed(2)}`
 const newOrderKey = () => `partner-order-${globalThis.crypto.randomUUID()}`
+const isZeroQuantityInput = (raw, orderUnit) => {
+  const text = String(raw ?? '').trim()
+  return orderUnit === 'KG' ? /^0+(?:\.0{1,3})?$/.test(text) : /^0+$/.test(text)
+}
+const isInvalidQuantityInput = (raw, orderUnit) => {
+  const text = String(raw ?? '').trim()
+  return text !== '' && !isZeroQuantityInput(text, orderUnit) && !parseDisplayQuantity(text, orderUnit)
+}
 
 function StatusPill({ status }) {
   const tone = ({ SUBMITTED: 'bg-amber-50 text-amber-700', APPROVED: 'bg-emerald-50 text-emerald-700', PARTIALLY_SHIPPED: 'bg-sky-50 text-sky-700', SHIPPED: 'bg-blue-50 text-blue-700', REJECTED: 'bg-rose-50 text-rose-700', CANCELLED: 'bg-slate-100 text-slate-600' })[status] || 'bg-slate-100 text-slate-600'
@@ -191,7 +199,7 @@ export default function PartnerAccessPage() {
   const selectedProducts = catalogue.filter((product) => Number(selected[product.productId]) > 0)
   const hasInvalidQuantityInput = catalogue.some((product) => {
     const raw = quantityInputs[product.productId]
-    return typeof raw === 'string' && raw.trim() !== '' && !parseDisplayQuantity(raw, product.orderUnit)
+    return typeof raw === 'string' && isInvalidQuantityInput(raw, product.orderUnit)
   })
   const updateQuantity = (product, raw) => {
     const quantityBase = parseDisplayQuantity(raw, product.orderUnit)
@@ -342,7 +350,7 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[900px]:grid-cols-3 min-[1280px]:grid-cols-4" data-testid={`partner-category-grid-${category.id}`}>{products.map((product) => {
             const value = Number(selected[product.productId] || 0)
             const raw = quantityInputs[product.productId] ?? ''
-            const invalidRaw = raw.trim() !== '' && !parseDisplayQuantity(raw, product.orderUnit)
+            const invalidRaw = isInvalidQuantityInput(raw, product.orderUnit)
             const validation = invalidRaw
               ? (product.orderUnit === 'KG' ? '请输入大于 0、最多 3 位小数的 kg 数量' : '请输入大于 0 的整数数量')
               : (value > 0 ? quantityValidationMessage(product, value) : '')
@@ -358,7 +366,7 @@ function ReplenishView({ catalogue, catalogueLoading, catalogueError, onReloadCa
                   数量（{unit}）
                   <div className="mt-2 grid grid-cols-[3rem_minmax(5rem,1fr)_3rem] gap-2">
                     <button type="button" aria-label={`${product.name}减少数量`} onClick={() => adjust(-1)} className="grid min-h-12 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 active:bg-slate-100"><Minus className="h-5 w-5" /></button>
-                    <input aria-label={`${product.name}补货数量`} type="text" inputMode={product.orderUnit === 'KG' ? 'decimal' : 'numeric'} value={raw} onChange={(event) => updateQuantity(product, event.target.value)} placeholder="0" aria-invalid={invalidRaw || undefined} className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 text-center text-xl font-black tabular-nums text-slate-900 outline-none focus:border-budu-300 focus:bg-white focus:ring-2 focus:ring-budu-100" />
+                    <input aria-label={`${product.name}补货数量`} type="text" inputMode={product.orderUnit === 'KG' ? 'decimal' : 'numeric'} value={raw} onChange={(event) => updateQuantity(product, event.target.value)} onBlur={() => { if (raw.trim() === '') updateQuantity(product, '0') }} placeholder="0" aria-invalid={invalidRaw || undefined} className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 text-center text-xl font-black tabular-nums text-slate-900 outline-none focus:border-budu-300 focus:bg-white focus:ring-2 focus:ring-budu-100" />
                     <button type="button" aria-label={`${product.name}增加数量`} onClick={() => adjust(1)} className="grid min-h-12 place-items-center rounded-xl bg-budu-500 text-white shadow-sm transition-colors hover:bg-budu-600 active:bg-budu-700"><Plus className="h-5 w-5" /></button>
                   </div>
                 </label>

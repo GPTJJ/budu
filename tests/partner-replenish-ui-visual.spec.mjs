@@ -41,6 +41,7 @@ for (const [name, width, height, columns] of [
     await page.setViewportSize({ width, height })
     await open(page)
     await expect(page.getByRole('button', { name: '清空当前补货内容' })).toBeVisible()
+    await expect(page.getByText('请输入大于 0 的整数数量')).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
     const cards = page.locator('[data-testid^="partner-catalogue-card-"]')
     const boxes = await Promise.all(Array.from({ length: columns }, (_, index) => cards.nth(index).boundingBox()))

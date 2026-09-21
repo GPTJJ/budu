@@ -274,6 +274,51 @@ test('商品卡片聚焦名称、实际价格与清晰数量控件，隐藏辅�
   await expect(page.getByTestId('partner-catalogue-card-native')).toContainText('数量（盒）')
 })
 
+test('零数量是正常未选择态，仅真实非法 PCS 输入显示商品级错误', async ({ page }) => {
+  const requests = await mockPortal(page)
+  await page.getByRole('button', { name: '我要补货' }).click()
+  const card = page.getByTestId('partner-catalogue-card-pcs')
+  const input = page.getByLabel('颗糖补货数量')
+  const error = card.getByText('请输入大于 0 的整数数量')
+
+  await expect(error).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '获取预计金额' })).toBeDisabled()
+  await page.getByLabel('颗糖减少数量').click()
+  await expect(input).toHaveValue('0')
+  await expect(error).toHaveCount(0)
+  await page.getByLabel('颗糖增加数量').click()
+  await expect(input).toHaveValue('10')
+  await expect(error).toHaveCount(0)
+  await input.fill('1')
+  await page.getByLabel('颗糖减少数量').click()
+  await expect(input).toHaveValue('0')
+  await expect(error).toHaveCount(0)
+
+  await input.fill('0')
+  await expect(error).toHaveCount(0)
+  await input.fill('')
+  await expect(error).toHaveCount(0)
+  await input.blur()
+  await expect(input).toHaveValue('0')
+  await expect(error).toHaveCount(0)
+
+  for (const invalid of ['-1', '1.5', 'abc']) {
+    await input.fill(invalid)
+    await expect(error).toBeVisible()
+    await expect(page.getByRole('button', { name: '获取预计金额' })).toBeDisabled()
+  }
+
+  await page.getByRole('button', { name: '清空当前补货内容' }).click()
+  await expect(page.getByText('请输入大于 0 的整数数量')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '获取预计金额' })).toBeDisabled()
+  expect(requests.filter((row) => row.type === 'quote')).toHaveLength(0)
+
+  await input.fill('1')
+  await expect(page.getByRole('button', { name: '获取预计金额' })).toBeEnabled()
+  await page.getByRole('button', { name: '获取预计金额' }).click()
+  await expect.poll(() => requests.filter((row) => row.type === 'quote')).toHaveLength(1)
+})
+
 test('清空当前草稿会清除数量和旧报价，同时保留门店、分类与搜索条件', async ({ page }) => {
   const requests = await mockPortal(page)
   await page.getByRole('button', { name: '我要补货' }).click()
