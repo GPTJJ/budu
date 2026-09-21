@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import {
   buildPayrollAuditReportModel,
+  payrollAuditDisplayLabel,
   previousMonthPeriod,
   payrollAuditSourceMark,
   renderPayrollAuditEmail,
@@ -177,14 +178,14 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   const html = renderPayrollAuditHtml(model)
   const email = renderPayrollAuditEmail(model)
   for (const output of [markdown, html, email.body]) {
-    assert.match(output, /BLOCKED/)
+    assert.match(output, /暂不建议结算|审查阻断/)
     assert.match(output, /3/)
   }
   assert.match(markdown, new RegExp(model.canonicalHash))
   assert.equal(email.canonicalHash, model.canonicalHash)
   assert.equal(email.recipient, 'yuegu1995@gmail.com')
   assert.deepEqual(email.recipients, ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com'])
-  assert.equal(email.subject, 'budu 全职员工薪酬审查报告｜2026年08月｜BLOCKED')
+  assert.equal(email.subject, 'budu 全职员工薪酬审查报告｜2026年08月｜暂不建议结算')
   assert.equal(model.schemaVersion, 6)
   assert.equal(model.metadata.actualModel, 'GPT-5.6 Sol')
   assert.equal(model.metadata.actualReasoning, 'Medium')
@@ -192,6 +193,40 @@ test('Markdown, PDF HTML and email share the canonical model', () => {
   assert.equal(payrollAuditSourceMark(model), sourceMarkText)
   assert.equal(model.metadata.brand.name, 'budu')
   assert.doesNotMatch(`${markdown}\n${html}\n${email.body}`, /password|webhook|token|credential/i)
+})
+
+test('Chinese-first presentation keeps technical codes only as trace labels', () => {
+  const model = build()
+  const html = renderPayrollAuditHtml(model)
+  const markdown = renderPayrollAuditMarkdown(model)
+  assert.equal(payrollAuditDisplayLabel('PASS'), '通过')
+  assert.equal(payrollAuditDisplayLabel('FAIL'), '未通过')
+  assert.equal(payrollAuditDisplayLabel('MATCH'), '一致')
+  assert.equal(payrollAuditDisplayLabel('REVIEW_REQUIRED'), '需人工复核')
+  assert.equal(payrollAuditDisplayLabel('BLOCKED', 'cover'), '暂不建议结算')
+  assert.equal(payrollAuditDisplayLabel('SCHEDULE_ONLY'), '仅有排班记录')
+  assert.equal(payrollAuditDisplayLabel('NO_ACTUAL_ATTENDANCE'), '无实际出勤')
+  assert.equal(payrollAuditDisplayLabel('UNKNOWN'), '待确认')
+  for (const label of ['管理层总览', '员工薪酬审查', '最终审查结论', '本次未自动处理', '薪酬权威', '员工薪酬卡片']) assert.match(html, new RegExp(label))
+  assert.match(html, /缺少实际工时/)
+  assert.match(html, /本周期缺少薪酬权威结果/)
+  assert.match(html, /class="technical-code">技术追溯：MISSING_ACTUAL_HOURS/)
+  assert.doesNotMatch(html, />MANAGEMENT SUMMARY<|>EMPLOYEE AUDIT<|>FINAL AUDIT CONCLUSION<|>NO ACTION EXECUTED</)
+  assert.match(markdown, /北京官舍店 10:00-18:00/)
+  assert.match(markdown, /北京通盈中心店 8小时/)
+})
+
+test('presentation-only rendering does not mutate canonical payroll values', () => {
+  const model = build()
+  const before = JSON.stringify(model)
+  renderPayrollAuditMarkdown(model)
+  renderPayrollAuditHtml(model)
+  renderPayrollAuditEmail(model)
+  assert.equal(JSON.stringify(model), before)
+  assert.equal(model.summary.employeeCount, 3)
+  assert.equal(model.summary.issueCount, 3)
+  assert.equal(model.summary.authoritativePayrollCents, '48300')
+  assert.equal(model.summary.employeeCardCents, '48301')
 })
 
 test('headless run writes protected MD/PDF/email artifacts and duplicate trigger reuses run', async () => {

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { fixedStoreName } from '../shared/storeDirectory.js'
 
 const WORDMARK_SVG = fs.readFileSync(new URL('../brand/web/budu-wordmark.svg', import.meta.url), 'utf8')
 const WORDMARK_SHA256 = crypto.createHash('sha256').update(WORDMARK_SVG).digest('hex')
@@ -20,11 +21,87 @@ const NON_COMPONENT_NUMERIC = new Set([
   'workedRevenueCents', 'adjustmentCount', 'salary',
 ])
 
+const DISPLAY_LABELS = {
+  PASS: '通过', FAIL: '未通过', MATCH: '一致', MISMATCH: '不一致',
+  REVIEW: '需人工复核', REVIEW_REQUIRED: '需人工复核', BLOCKED: '审查阻断',
+  SCHEDULE_ONLY: '仅有排班记录', NO_ACTUAL_ATTENDANCE: '无实际出勤', ACTUAL_ONLY: '仅有实际出勤',
+  STORE_CHANGED: '排班与实际门店不同', HOURS_DIFFERENCE: '排班与实际工时不同',
+  SHIFT_CHANGED: '排班与实际班次不同', ADJUSTMENT_ONLY: '仅有薪酬调整', AUDITED: '已审查',
+  UNKNOWN: '待确认', YES: '有影响', NO: '无影响',
+}
+
+const ISSUE_TITLES = {
+  EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE: '缺少用工类型历史记录',
+  PAYROLL_SUBJECT_OUTSIDE_RANGE: '本周期缺少薪酬权威结果',
+  EMPLOYEE_CARD_PROJECTION_ERROR: '员工薪酬卡片与权威结果不一致',
+  MISSING_ACTUAL_HOURS: '缺少实际工时',
+}
+
 const text = (value) => String(value == null ? '' : value)
 const isoDate = (value) => text(value).slice(0, 10)
 const toCents = (yuan) => String(Math.round(Number(yuan || 0) * 100))
 const centsBigInt = (value) => BigInt(text(value || '0'))
 const addCents = (values) => values.reduce((sum, value) => sum + centsBigInt(value), 0n).toString()
+
+export function payrollAuditDisplayLabel(code, context = '') {
+  if (code === 'BLOCKED' && context === 'cover') return '暂不建议结算'
+  return DISPLAY_LABELS[text(code)] || '待确认'
+}
+
+function employmentTypeLabel(value) {
+  const normalized = text(value).toLowerCase()
+  if (normalized === 'parttime' || normalized === 'part_time') return '兼职'
+  if (normalized === 'fulltime' || normalized === 'full_time') return '全职'
+  return text(value) || '待确认'
+}
+
+function issuePresentation(issue, employee) {
+  const type = text(issue.type).trim()
+  if (type === 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE') {
+    return {
+      title: ISSUE_TITLES[type],
+      problem: `当前系统只能确认该员工目前为“${employmentTypeLabel(employee.employmentType)}”，但缺少有效期历史，无法独立证明该身份覆盖本次完整审查周期。`,
+      basis: `当前员工用工类型：${employmentTypeLabel(employee.employmentType)}`,
+    }
+  }
+  if (type === 'PAYROLL_SUBJECT_OUTSIDE_RANGE') {
+    return {
+      title: ISSUE_TITLES[type],
+      problem: '本审查周期内未取得该员工的薪酬权威计算结果。',
+      basis: '薪酬权威未返回本周期结果。',
+    }
+  }
+  if (type === 'MISSING_ACTUAL_HOURS') {
+    return {
+      title: ISSUE_TITLES[type],
+      problem: '薪酬权威计算所需的实际工时缺失，当前无法完成本周期薪酬复核。',
+      basis: '实际工时权威记录缺失',
+    }
+  }
+  if (type === 'EMPLOYEE_CARD_PROJECTION_ERROR') {
+    return {
+      title: ISSUE_TITLES[type],
+      problem: `员工薪酬卡片与薪酬权威结果相差 ${formatCents(issue.amountImpactCents)}。`,
+      basis: '薪酬权威与员工薪酬卡片的同周期对照',
+    }
+  }
+  return {
+    title: ISSUE_TITLES[type] || '需要人工核对的薪酬数据异常',
+    problem: issue.evidence || '当前证据不足，需要人工核对。',
+    basis: issue.errorLayer || '薪酬审查数据',
+  }
+}
+
+function displayAuthority(value) {
+  const raw = text(value)
+  if (/payroll authority/i.test(raw)) return '薪酬权威'
+  if (/employee card projection/i.test(raw)) return '员工薪酬卡片'
+  return raw || '待确认'
+}
+
+function displayStoreName(row = {}) {
+  return text(row.storeName) || fixedStoreName(text(row.storeKey), text(row.storeKey)) || '未知门店'
+}
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue)
@@ -404,67 +481,57 @@ export function renderPayrollAuditMarkdown(model) {
   const s = model.summary
   const lines = [
     `# ${m.reportType === 'WEEKLY_PART_TIME' ? 'budu 兼职员工周薪酬审查报告' : 'budu 全职员工月度薪酬审查报告'}`, '',
-    `Run ID: ${model.runId}`,
-    `Scope: ${m.scope}`,
-    `Employee type: ${m.employeeType}`,
-    `Employment type authority: ${m.employmentTypeAuthority}${m.employmentTypeHistoryAvailable ? '' : '（无历史有效期能力）'}`,
-    `Requested period: ${m.requestedPeriod.start} → ${m.requestedPeriod.end}`,
-    `Effective audit period: ${m.effectivePeriod.start} → ${m.effectivePeriod.end}`,
-    `Audit mode: ${m.auditMode}`,
-    `Production SHA: ${m.productionSha}`,
-    `Canonical hash: ${model.canonicalHash}`,
-    `Authority: ${m.authority}`,
-    `Execution model: ${m.actualModel} / ${m.actualReasoning}`,
-    `Generated at: ${m.generatedAt}`, '',
-    '## Management Summary', '',
-    `Final result: ${s.finalResult}`,
-    `Employees: ${s.employeeCount}`,
-    `PASS / REVIEW_REQUIRED / BLOCKED: ${s.passCount} / ${s.reviewRequiredCount} / ${s.blockedCount}`,
-    `Authoritative payroll: ${formatCents(s.authoritativePayrollCents)}`,
-    `Employee card: ${formatCents(s.employeeCardCents)}`,
-    `Difference (Employee card - Authority): ${formatCents(s.differenceCents)}`,
-    `Issues: ${s.issueCount}`,
-    `Recommendation: ${s.settlementRecommendation}`,
-    `Data modified: NO`, '',
+    `审查周期：${m.requestedPeriod.start} ～ ${m.requestedPeriod.end}`,
+    `审查结果：${payrollAuditDisplayLabel(s.finalResult, 'cover')}`,
+    `审查员工：${s.employeeCount} 人`,
+    `通过 / 需人工复核 / 审查阻断：${s.passCount} / ${s.reviewRequiredCount} / ${s.blockedCount}`,
+    `薪酬权威合计：${formatCents(s.authoritativePayrollCents)}`,
+    `员工薪酬卡片合计：${formatCents(s.employeeCardCents)}`,
+    `总差额：${formatCents(s.differenceCents)}`,
+    `需关注问题：${s.issueCount} 项`,
+    `结算建议：${s.settlementRecommendation}`, '',
     model.safetyStatement, '',
-    '## Employee Overview', '',
+    '## 管理层总览', '',
     '| 员工 | 业务角色 | 实际工时 | 权威工资 | 卡片金额 | 差额 | 结果 |',
     '|---|---|---:|---:|---:|---:|---|',
-    ...model.employeeResults.map((row) => `| ${row.employeeName} | ${row.businessRole || '—'} | ${row.payableHours ?? '—'} | ${formatCents(row.authoritativePayrollCents)} | ${formatCents(row.employeeCardCents)} | ${formatCents(row.differenceCents)} | ${row.status} |`),
+    ...model.employeeResults.map((row) => `| ${row.employeeName} | ${row.businessRole || '—'} | ${row.payableHours ?? '—'} | ${formatCents(row.authoritativePayrollCents)} | ${formatCents(row.employeeCardCents)} | ${formatCents(row.differenceCents)} | ${payrollAuditDisplayLabel(row.status)} |`),
   ]
   for (const employee of model.employeeResults) {
-    lines.push('', `## ${employee.employeeName}`, '',
-      `Employee ID: ${employee.employeeId}`,
-      `Business role: ${employee.businessRole || '—'}`,
-      `Payroll calculation: ${employee.status === 'BLOCKED' ? 'BLOCKED' : employee.differenceCents === '0' ? 'PASS' : 'MISMATCH'}`,
-      `Schedule reconciliation: ${employee.scheduleStatus}`,
-      `Final audit result: ${employee.status}`, '',
-      '### Payroll Components', '',
-      '| Component | Amount | Authority |', '|---|---:|---|')
-    for (const component of employee.components) lines.push(`| ${component.label} | ${formatCents(component.amountCents)} | ${component.authority} |`)
-    lines.push(`| Total | ${formatCents(employee.authoritativePayrollCents)} | Payroll authority |`, '',
-      '### Daily Reconciliation', '',
-      '| 日期 | 门店 | 计划排班 | 实际值班 | actualHours | Authority | 结果 |', '|---|---|---|---|---:|---|---|')
+    lines.push('', `## 员工薪酬审查：${employee.employeeName}`, '',
+      `业务角色：${employee.businessRole || '—'}`,
+      `薪酬计算：${payrollAuditDisplayLabel(employee.status === 'BLOCKED' ? 'BLOCKED' : employee.differenceCents === '0' ? 'PASS' : 'MISMATCH')}`,
+      `排班对照：${payrollAuditDisplayLabel(employee.scheduleStatus)}`,
+      `最终审查：${payrollAuditDisplayLabel(employee.status)}`, '',
+      '### 薪酬组成', '',
+      '| 项目 | 金额 | 权威来源 |', '|---|---:|---|')
+    for (const component of employee.components) lines.push(`| ${component.label} | ${formatCents(component.amountCents)} | ${displayAuthority(component.authority)} |`)
+    lines.push(`| 最终应发 | ${formatCents(employee.authoritativePayrollCents)} | 薪酬权威 |`, '',
+      '### 逐日事实与排班对照', '',
+      '| 日期 | 计划排班 | 实际出勤 | 对照结果 |', '|---|---|---|---|')
     for (const day of employee.dailyReconciliation) {
-      const planned = day.planned.length ? day.planned.map((row) => `${row.storeKey} ${row.time}`.trim()).join('；') : '—'
-      const actual = day.actual.length ? day.actual.map((row) => `${row.storeKey} ${row.payableHours ?? row.actualHours ?? 0}h`).join('；') : 'NO_ACTUAL_ATTENDANCE'
-      lines.push(`| ${day.date} | ${day.stores.join('、') || '—'} | ${planned} | ${actual} | ${day.payableHours} | ${day.authority || '—'} | ${day.scheduleResult}${day.scheduleResult !== 'MATCH' ? '（Payroll impact: NO）' : ''} |`)
+      const planned = day.planned.length ? day.planned.map((row) => `${displayStoreName(row)} ${row.time}`.trim()).join('；') : '无排班'
+      const actual = day.actual.length ? day.actual.map((row) => `${displayStoreName(row)} ${row.payableHours ?? row.actualHours ?? 0}小时`).join('；') : '无实际出勤'
+      lines.push(`| ${day.date} | ${planned} | ${actual} | ${payrollAuditDisplayLabel(day.scheduleResult)} |`)
     }
-    lines.push('', '### Issues', '')
-    if (!employee.issues.length) lines.push('NONE')
+    lines.push('', '### 异常与处理建议', '')
+    if (!employee.issues.length) lines.push('未发现异常。')
     for (const issue of employee.issues) {
-      lines.push(`#### ${issue.id}`, '', `Type: ${issue.type}`, `Evidence: ${issue.evidence}`, `Root cause: ${issue.rootCause}`,
-        `Error layer: ${issue.errorLayer}`, `Payroll impact: ${issue.payrollImpact}`, `Amount impact: ${formatCents(issue.amountImpactCents)}`, '',
-        '### Resolution Options', '', ...issue.options.map((option) => `- ${option.label}: ${option.detail}`),
-        `- Recommended: ${issue.recommendation}`, `- Risk: ${issue.risk}`, `- Required confirmation: ${issue.requiredConfirmation}`, '- NO ACTION EXECUTED')
+      const presented = issuePresentation(issue, employee)
+      lines.push(`#### 异常 ${issue.id.replace('ISSUE-', '')}：${presented.title}`, '',
+        `- 问题：${presented.problem}`, `- 系统依据：${presented.basis}`,
+        `- 对薪酬的影响：${payrollAuditDisplayLabel(issue.payrollImpact)}${issue.amountImpactCents == null ? '' : ` · ${formatCents(issue.amountImpactCents)}`}`,
+        ...issue.options.map((option) => `- ${option.label}：${option.detail}`),
+        `- 建议：${issue.recommendation}`, `- 风险：${issue.risk}`, `- 需要确认：${issue.requiredConfirmation}`, '- 本次未自动处理',
+        `- 技术追溯：${issue.type}`)
     }
   }
-  lines.push('', '## FINAL AUDIT CONCLUSION', '',
-    `Payroll Authority: ${s.blockedCount ? 'FAIL' : 'PASS'}`,
-    `Employee Card: ${s.reviewRequiredCount ? 'MISMATCH' : 'PASS'}`,
-    `Schedule Reconciliation: ${model.employeeResults.some((row) => row.scheduleStatus === 'REVIEW') ? 'REVIEW' : 'PASS'}`,
-    `Issues: ${s.issueCount}`, `Final Result: ${s.finalResult}`, `Recommendation: ${model.finalRecommendation}`, '',
-    '**NO ACTION EXECUTED**', '', model.safetyStatement, '')
+  lines.push('', '## 最终审查结论', '',
+    `薪酬权威：${payrollAuditDisplayLabel(s.blockedCount ? 'FAIL' : 'PASS')}`,
+    `员工薪酬卡片：${payrollAuditDisplayLabel(s.reviewRequiredCount ? 'MISMATCH' : 'PASS')}`,
+    `排班对照：${payrollAuditDisplayLabel(model.employeeResults.some((row) => row.scheduleStatus === 'REVIEW') ? 'REVIEW' : 'PASS')}`,
+    `需关注问题：${s.issueCount} 项`, `最终审查：${payrollAuditDisplayLabel(s.finalResult, 'cover')}`, `建议：${model.finalRecommendation}`, '',
+    '**本次未自动处理**', '', model.safetyStatement, '',
+    `技术追溯：Run ID ${model.runId} · Canonical hash ${model.canonicalHash} · Production SHA ${m.productionSha}`)
   return lines.join('\n')
 }
 
@@ -474,11 +541,11 @@ export function renderPayrollAuditEmail(model) {
   const weekly = m.reportType === 'WEEKLY_PART_TIME'
   const title = weekly ? 'budu 兼职员工薪酬审查报告' : 'budu 全职员工薪酬审查报告'
   const periodLabel = weekly ? `${m.requestedPeriod.start} ～ ${m.requestedPeriod.end}` : `${year}年${month}月`
-  const priority = model.employeeResults.flatMap((row) => row.issues.map((issue) => `${row.employeeName}：${issue.type}`)).slice(0, 3)
-  const subject = `${title}｜${periodLabel}｜${s.finalResult.replace('_', ' ')}`
+  const priority = model.employeeResults.flatMap((row) => row.issues.map((issue) => `${row.employeeName}：${issuePresentation(issue, row).title}`)).slice(0, 3)
+  const subject = `${title}｜${periodLabel}｜${payrollAuditDisplayLabel(s.finalResult, 'cover')}`
   const body = [
-    title, periodLabel, '', `结果：${s.finalResult.replace('_', ' ')}`, '',
-    `审查员工：${s.employeeCount} 人`, `PASS：${s.passCount}`, `REVIEW_REQUIRED：${s.reviewRequiredCount}`, `BLOCKED：${s.blockedCount}`, '',
+    title, periodLabel, '', `结果：${payrollAuditDisplayLabel(s.finalResult, 'cover')}`, '',
+    `审查员工：${s.employeeCount} 人`, `通过：${s.passCount}`, `需人工复核：${s.reviewRequiredCount}`, `审查阻断：${s.blockedCount}`, '',
     `权威工资：${formatCents(s.authoritativePayrollCents)}`, `员工卡片：${formatCents(s.employeeCardCents)}`, `差额：${formatCents(s.differenceCents)}`, '',
     `本期发现：${s.issueCount} 项需关注问题`, ...(priority.length ? ['', '重点问题：', ...priority.map((item, index) => `${index + 1}. ${item}`)] : []), '',
     `建议：${s.settlementRecommendation}`, '', '未修改任何生产数据。', '完整证据、逐日明细和解决方案见附件。', '', `Run ID: ${model.runId}`,
@@ -499,11 +566,19 @@ export function renderPayrollAuditHtml(model) {
   const s = model.summary
   const statusClass = s.finalResult.toLowerCase().replace('_', '-')
   const employeeSections = model.employeeResults.map((employee) => {
-    const dayCards = employee.dailyReconciliation.map((day) => `<div class="day-row"><div><b>${escapeHtml(day.date)}</b><span>${escapeHtml(day.stores.join('、') || '无实际出勤')}</span></div><div><span>计划 ${escapeHtml(day.planned.map((row) => `${row.storeKey} ${row.time}`).join('；') || '—')}</span><span>实际 ${escapeHtml(day.actual.map((row) => `${row.storeKey} ${row.payableHours ?? row.actualHours ?? 0}h`).join('；') || 'NO_ACTUAL_ATTENDANCE')}</span></div><strong class="tag ${day.scheduleResult === 'MATCH' ? 'pass' : 'review-required'}">${escapeHtml(day.scheduleResult)}</strong></div>`).join('')
-    const issues = employee.issues.length ? employee.issues.map((issue) => `<article class="issue"><h4>${escapeHtml(issue.id)} · ${escapeHtml(issue.type)}</h4><p><b>证据</b> ${escapeHtml(issue.evidence)}</p><p><b>错误层</b> ${escapeHtml(issue.errorLayer)}</p><p><b>工资影响</b> ${escapeHtml(issue.payrollImpact)} · ${escapeHtml(formatCents(issue.amountImpactCents))}</p>${issue.options.map((option) => `<p><b>${escapeHtml(option.label)}</b> ${escapeHtml(option.detail)}</p>`).join('')}<p><b>建议</b> ${escapeHtml(issue.recommendation)}</p><p><b>风险</b> ${escapeHtml(issue.risk)}</p><p class="no-action">NO ACTION EXECUTED</p></article>`).join('') : '<p class="empty">无异常。</p>'
-    return `<section class="employee page-break"><header class="section-head"><div><p class="eyebrow">EMPLOYEE AUDIT</p><h2>${escapeHtml(employee.employeeName)}</h2><p>${escapeHtml(employee.employeeId)}${employee.businessRole ? ` · ${escapeHtml(employee.businessRole)}` : ''}</p></div><span class="status ${employee.status.toLowerCase().replace('_', '-')}">${escapeHtml(employee.status)}</span></header><div class="kpis"><div><span>实际工时</span><b>${employee.payableHours ?? '—'}h</b></div><div><span>权威工资</span><b>${escapeHtml(formatCents(employee.authoritativePayrollCents))}</b></div><div><span>卡片金额</span><b>${escapeHtml(formatCents(employee.employeeCardCents))}</b></div><div><span>差额</span><b>${escapeHtml(formatCents(employee.differenceCents))}</b></div></div><h3>工资组成</h3><div class="component-list">${employee.components.map((component) => `<div><span>${escapeHtml(component.label)}</span><b>${escapeHtml(formatCents(component.amountCents))}</b><small>${escapeHtml(component.authority)}</small></div>`).join('')}<div class="total"><span>最终应发</span><b>${escapeHtml(formatCents(employee.authoritativePayrollCents))}</b><small>Payroll authority</small></div></div><h3>逐日事实与排班对照</h3><div class="day-list">${dayCards}</div><h3>异常与解决方案</h3>${issues}</section>`
+    const dayCards = employee.dailyReconciliation.map((day) => {
+      const planned = day.planned.length ? day.planned.map((row) => `${displayStoreName(row)} ${row.time}`.trim()).join('；') : '无排班'
+      const actual = day.actual.length ? day.actual.map((row) => `${displayStoreName(row)} ${row.payableHours ?? row.actualHours ?? 0}小时`).join('；') : '无实际出勤'
+      const technical = day.scheduleResult === 'MATCH' ? '' : `<small class="technical-code">${escapeHtml(day.scheduleResult)}</small>`
+      return `<div class="day-row"><div><b>${escapeHtml(day.date)}</b><span>${escapeHtml(day.stores.join('、') || payrollAuditDisplayLabel(day.result))}</span></div><div><span><b>计划排班</b> ${escapeHtml(planned)}</span><span><b>实际出勤</b> ${escapeHtml(actual)}</span></div><div class="day-result"><strong class="tag ${day.scheduleResult === 'MATCH' ? 'pass' : 'review-required'}">${escapeHtml(payrollAuditDisplayLabel(day.scheduleResult))}</strong>${technical}</div></div>`
+    }).join('')
+    const issues = employee.issues.length ? employee.issues.map((issue) => {
+      const presented = issuePresentation(issue, employee)
+      return `<article class="issue"><h4><span>异常 ${escapeHtml(issue.id.replace('ISSUE-', ''))}</span>${escapeHtml(presented.title)}</h4><p><b>问题</b>${escapeHtml(presented.problem)}</p><p><b>系统依据</b>${escapeHtml(presented.basis)}</p><p><b>对薪酬的影响</b>${escapeHtml(payrollAuditDisplayLabel(issue.payrollImpact))}${issue.amountImpactCents == null ? '' : ` · ${escapeHtml(formatCents(issue.amountImpactCents))}`}</p><div class="options"><b>可选处理方案</b>${issue.options.map((option) => `<p>${escapeHtml(option.label)}：${escapeHtml(option.detail)}</p>`).join('')}</div><p><b>建议</b>${escapeHtml(issue.recommendation)}</p><p><b>风险</b>${escapeHtml(issue.risk)}</p><p><b>需要确认</b>${escapeHtml(issue.requiredConfirmation)}</p><p class="no-action">本次未自动处理</p><p class="technical-code">技术追溯：${escapeHtml(issue.type)}</p></article>`
+    }).join('') : '<p class="empty">未发现异常。</p>'
+    return `<section class="employee page-break"><header class="section-head"><div><p class="eyebrow">员工薪酬审查</p><h2>${escapeHtml(employee.employeeName)}</h2><p>${employee.businessRole ? escapeHtml(employee.businessRole) : '本周期薪酬审查'}</p></div><span class="status ${employee.status.toLowerCase().replace('_', '-')}">${escapeHtml(payrollAuditDisplayLabel(employee.status))}</span></header><div class="kpis"><div><span>实际工时</span><b>${employee.payableHours ?? '—'}小时</b></div><div><span>薪酬权威</span><b>${escapeHtml(formatCents(employee.authoritativePayrollCents))}</b></div><div><span>员工薪酬卡片</span><b>${escapeHtml(formatCents(employee.employeeCardCents))}</b></div><div><span>差额</span><b>${escapeHtml(formatCents(employee.differenceCents))}</b></div></div><h3>薪酬组成</h3><div class="component-list">${employee.components.map((component) => `<div><span>${escapeHtml(component.label)}</span><b>${escapeHtml(formatCents(component.amountCents))}</b><small>${escapeHtml(displayAuthority(component.authority))}</small></div>`).join('')}<div class="total"><span>最终应发</span><b>${escapeHtml(formatCents(employee.authoritativePayrollCents))}</b><small>薪酬权威</small></div></div><h3>逐日事实与排班对照</h3><div class="day-list">${dayCards}</div><h3>异常与处理建议</h3>${issues}</section>`
   }).join('')
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
-  @page{size:A4 portrait;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{margin:0;background:#f5f5f7;color:#1d2733;font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif}main{max-width:184mm;margin:auto}.cover{min-height:260mm;display:flex;flex-direction:column;justify-content:space-between;padding:18mm 12mm;background:#fff;border-radius:18px}.brand-wordmark{display:block;width:42mm;height:auto}.cover h1{font-size:30px;margin:20px 0 4px}.cover .period{font-size:20px;color:#536273}.source-mark{max-width:150mm;margin:12px 0 0;color:#7a8695;font-size:9px;line-height:1.45}.status{display:inline-flex;border-radius:999px;padding:7px 12px;font-weight:700;font-size:11px}.status.pass,.tag.pass{background:#e8f7ee;color:#187a43}.status.review-required,.tag.review-required{background:#fff3de;color:#a15c00}.status.blocked,.tag.blocked{background:#ffe8e8;color:#b42318}.hero-status{font-size:38px;font-weight:700;letter-spacing:-.04em}.hero-status.pass{color:#187a43}.hero-status.review-required{color:#b56b08}.hero-status.blocked{color:#b42318}.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.kpis>div,.card{background:#fff;border:1px solid #e6e8ec;border-radius:14px;padding:13px}.kpis span{display:block;color:#697586;font-size:11px}.kpis b{display:block;margin-top:4px;font-size:18px;color:#243140}.safety{border-left:3px solid #d84f86;padding:10px 12px;background:#fff5f8;border-radius:8px;color:#693246}.page-break{break-before:page}.section-head{display:flex;justify-content:space-between;align-items:flex-start;margin:4px 0 16px}.section-head h2{font-size:26px;margin:2px 0}.section-head p{margin:0;color:#697586}.eyebrow{color:#d84f86!important;font-size:10px;font-weight:700;letter-spacing:.16em}h3{font-size:16px;margin:20px 0 9px}.overview{background:#fff;border-radius:16px;padding:16px;margin-top:14px}.overview-row{display:grid;grid-template-columns:1.4fr .8fr 1fr 1fr .8fr .8fr;gap:7px;padding:9px 0;border-bottom:1px solid #eceef1;align-items:center}.overview-row:last-child{border:0}.overview-row.head{font-size:10px;color:#697586;font-weight:700}.component-list>div{display:grid;grid-template-columns:1.4fr .8fr 1fr;gap:8px;background:#fff;border-bottom:1px solid #eceef1;padding:9px 11px}.component-list>div:first-child{border-radius:12px 12px 0 0}.component-list>div:last-child{border-radius:0 0 12px 12px;border-bottom:0}.component-list small{color:#7a8695}.component-list .total{background:#fff4f8}.day-row{display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:center;background:#fff;border-bottom:1px solid #eceef1;padding:9px 11px;break-inside:avoid}.day-row:first-child{border-radius:12px 12px 0 0}.day-row:last-child{border-radius:0 0 12px 12px;border:0}.day-row span{display:block;color:#667384;font-size:11px}.tag{border-radius:999px;padding:4px 7px;font-size:9px}.issue{background:#fff8ed;border:1px solid #f2d6a7;border-radius:14px;padding:13px;margin-bottom:10px;break-inside:avoid}.issue h4{margin:0 0 8px;color:#965b0a}.issue p{margin:5px 0}.no-action{font-weight:700;color:#b42318}.empty{color:#667384}.conclusion{min-height:250mm;display:flex;flex-direction:column;justify-content:center}.conclusion h2{font-size:28px}.footer-note{margin-top:22px;padding:16px;border-radius:14px;background:#fff5f8;border:1px solid #f3cfdd;color:#693246;font-weight:700}
-  </style></head><body><main><section class="cover"><div><img class="brand-wordmark" src="${WORDMARK_DATA_URI}" alt="budu"><h1>薪酬审查报告</h1><p class="period">${escapeHtml(model.metadata.requestedPeriod.start.slice(0, 7))} · ${escapeHtml(model.metadata.auditMode)} AUDIT</p><p class="source-mark" data-payroll-source-mark="true">${escapeHtml(payrollAuditSourceMark(model))}</p></div><div><p>最终结果</p><div class="hero-status ${statusClass}">${escapeHtml(s.finalResult.replace('_', ' '))}</div><div class="kpis"><div><span>审查员工</span><b>${s.employeeCount} 人</b></div><div><span>权威工资</span><b>${escapeHtml(formatCents(s.authoritativePayrollCents))}</b></div><div><span>员工卡片</span><b>${escapeHtml(formatCents(s.employeeCardCents))}</b></div><div><span>总差额</span><b>${escapeHtml(formatCents(s.differenceCents))}</b></div><div><span>异常数量</span><b>${s.issueCount}</b></div><div><span>结算建议</span><b>${escapeHtml(s.settlementRecommendation)}</b></div></div></div><p class="safety">${escapeHtml(model.safetyStatement)}</p></section><section class="page-break"><p class="eyebrow">MANAGEMENT SUMMARY</p><h2>管理层总览</h2><div class="overview"><div class="overview-row head"><span>员工</span><span>工时</span><span>权威工资</span><span>卡片金额</span><span>差额</span><span>结果</span></div>${model.employeeResults.map((row) => `<div class="overview-row"><span><b>${escapeHtml(row.employeeName)}</b>${row.businessRole ? `<small> · ${escapeHtml(row.businessRole)}</small>` : ''}</span><span>${row.payableHours ?? '—'}h</span><span>${escapeHtml(formatCents(row.authoritativePayrollCents))}</span><span>${escapeHtml(formatCents(row.employeeCardCents))}</span><span>${escapeHtml(formatCents(row.differenceCents))}</span><span class="tag ${row.status.toLowerCase().replace('_', '-')}">${escapeHtml(row.status)}</span></div>`).join('')}</div></section>${employeeSections}<section class="conclusion page-break"><p class="eyebrow">FINAL AUDIT CONCLUSION</p><h2>最终审查结论</h2><div class="component-list"><div><span>Payroll Authority</span><b>${s.blockedCount ? 'FAIL' : 'PASS'}</b><small>${escapeHtml(model.metadata.authority)}</small></div><div><span>Employee Card</span><b>${s.reviewRequiredCount ? 'MISMATCH' : 'PASS'}</b><small>Personnel projection</small></div><div><span>Schedule Reconciliation</span><b>${model.employeeResults.some((row) => row.scheduleStatus === 'REVIEW') ? 'REVIEW' : 'PASS'}</b><small>计划对照，不作为工资事实</small></div><div><span>Issues</span><b>${s.issueCount}</b><small>需关注问题</small></div><div class="total"><span>Final Result</span><b>${escapeHtml(s.finalResult)}</b><small>${escapeHtml(model.finalRecommendation)}</small></div></div><div class="footer-note">本报告仅做薪酬审查。系统未修改任何历史或生产数据。</div></section></main></body></html>`
+  @page{size:A4 portrait;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{margin:0;background:#f5f5f7;color:#1d2733;font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif}main{max-width:184mm;margin:auto}.cover{min-height:260mm;display:flex;flex-direction:column;justify-content:space-between;padding:18mm 12mm;background:#fff;border-radius:18px}.brand-wordmark{display:block;width:42mm;height:auto}.cover h1{font-size:30px;margin:20px 0 4px}.cover .period{font-size:18px;color:#536273}.source-mark{max-width:150mm;margin:12px 0 0;color:#7a8695;font-size:9px;line-height:1.45}.status{display:inline-flex;border-radius:999px;padding:7px 12px;font-weight:700;font-size:11px}.status.pass,.tag.pass{background:#e8f7ee;color:#187a43}.status.review-required,.tag.review-required{background:#fff3de;color:#a15c00}.status.blocked,.tag.blocked{background:#ffe8e8;color:#b42318}.hero-status{font-size:34px;font-weight:700;letter-spacing:-.04em}.hero-status.pass{color:#187a43}.hero-status.review-required{color:#b56b08}.hero-status.blocked{color:#b42318}.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.kpis>div{background:#fff;border:1px solid #e6e8ec;border-radius:14px;padding:13px}.kpis span{display:block;color:#697586;font-size:11px}.kpis b{display:block;margin-top:4px;font-size:18px;color:#243140}.safety{border-left:3px solid #d84f86;padding:10px 12px;background:#fff5f8;border-radius:8px;color:#693246}.page-break{break-before:page}.section-head{display:flex;justify-content:space-between;align-items:flex-start;margin:4px 0 16px}.section-head h2{font-size:26px;margin:2px 0}.section-head p{margin:0;color:#697586}.eyebrow{color:#d84f86!important;font-size:10px;font-weight:700;letter-spacing:.12em}h3{font-size:16px;margin:20px 0 9px}.overview{background:#fff;border-radius:16px;padding:16px;margin-top:14px}.overview-row{display:grid;grid-template-columns:1.4fr .8fr 1fr 1fr .8fr .9fr;gap:7px;padding:9px 0;border-bottom:1px solid #eceef1;align-items:center}.overview-row:last-child{border:0}.overview-row.head{font-size:10px;color:#697586;font-weight:700}.component-list>div{display:grid;grid-template-columns:1.4fr .8fr 1fr;gap:8px;background:#fff;border-bottom:1px solid #eceef1;padding:9px 11px}.component-list>div:first-child{border-radius:12px 12px 0 0}.component-list>div:last-child{border-radius:0 0 12px 12px;border-bottom:0}.component-list small{color:#7a8695}.component-list .total{background:#fff4f8}.day-row{display:grid;grid-template-columns:1fr 2.15fr 1fr;gap:10px;align-items:center;background:#fff;border-bottom:1px solid #eceef1;padding:9px 11px;break-inside:avoid}.day-row:first-child{border-radius:12px 12px 0 0}.day-row:last-child{border-radius:0 0 12px 12px;border:0}.day-row span{display:block;color:#667384;font-size:11px}.day-row span b{display:inline;color:#3c4858;margin-right:4px}.day-result{text-align:right}.day-result .technical-code{display:block;margin-top:3px}.tag{display:inline-block;border-radius:999px;padding:4px 7px;font-size:9px}.issue{background:#fff8ed;border:1px solid #f2d6a7;border-radius:14px;padding:13px;margin-bottom:10px;break-inside:avoid}.issue h4{margin:0 0 10px;color:#6f4308;font-size:15px}.issue h4 span{display:block;color:#a56b19;font-size:9px;letter-spacing:.08em;margin-bottom:2px}.issue p{margin:6px 0}.issue p b{display:block;color:#566273;font-size:10px}.options{margin:8px 0;padding:9px 10px;background:#fff;border-radius:9px}.options>b{font-size:10px;color:#566273}.options p{margin:3px 0}.no-action{font-weight:700;color:#8b3c18}.technical-code{color:#929aa6!important;font:8px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.empty{color:#667384}.conclusion{min-height:250mm;display:flex;flex-direction:column;justify-content:center}.conclusion h2{font-size:28px}.footer-note{margin-top:22px;padding:16px;border-radius:14px;background:#fff5f8;border:1px solid #f3cfdd;color:#693246;font-weight:700}
+  </style></head><body><main><section class="cover"><div><img class="brand-wordmark" src="${WORDMARK_DATA_URI}" alt="budu"><h1>薪酬审查报告</h1><p class="period">审查周期：${escapeHtml(model.metadata.requestedPeriod.start)} ～ ${escapeHtml(model.metadata.requestedPeriod.end)}</p><p class="source-mark" data-payroll-source-mark="true">${escapeHtml(payrollAuditSourceMark(model))}</p></div><div><p>最终审查</p><div class="hero-status ${statusClass}">${escapeHtml(payrollAuditDisplayLabel(s.finalResult, 'cover'))}</div><div class="kpis"><div><span>审查员工</span><b>${s.employeeCount} 人</b></div><div><span>薪酬权威</span><b>${escapeHtml(formatCents(s.authoritativePayrollCents))}</b></div><div><span>员工薪酬卡片</span><b>${escapeHtml(formatCents(s.employeeCardCents))}</b></div><div><span>总差额</span><b>${escapeHtml(formatCents(s.differenceCents))}</b></div><div><span>需关注问题</span><b>${s.issueCount} 项</b></div><div><span>结算建议</span><b>${escapeHtml(s.settlementRecommendation)}</b></div></div></div><p class="safety">${escapeHtml(model.safetyStatement)}</p></section><section class="page-break"><p class="eyebrow">管理层总览</p><h2>管理层总览</h2><div class="overview"><div class="overview-row head"><span>员工</span><span>工时</span><span>薪酬权威</span><span>薪酬卡片</span><span>差额</span><span>结果</span></div>${model.employeeResults.map((row) => `<div class="overview-row"><span><b>${escapeHtml(row.employeeName)}</b>${row.businessRole ? `<small> · ${escapeHtml(row.businessRole)}</small>` : ''}</span><span>${row.payableHours ?? '—'}小时</span><span>${escapeHtml(formatCents(row.authoritativePayrollCents))}</span><span>${escapeHtml(formatCents(row.employeeCardCents))}</span><span>${escapeHtml(formatCents(row.differenceCents))}</span><span class="tag ${row.status.toLowerCase().replace('_', '-')}">${escapeHtml(payrollAuditDisplayLabel(row.status))}</span></div>`).join('')}</div></section>${employeeSections}<section class="conclusion page-break"><p class="eyebrow">最终审查结论</p><h2>最终审查结论</h2><div class="component-list"><div><span>薪酬权威</span><b>${payrollAuditDisplayLabel(s.blockedCount ? 'FAIL' : 'PASS')}</b><small>${escapeHtml(displayAuthority(model.metadata.authority))}</small></div><div><span>员工薪酬卡片</span><b>${payrollAuditDisplayLabel(s.reviewRequiredCount ? 'MISMATCH' : 'PASS')}</b><small>员工薪酬卡片</small></div><div><span>排班对照</span><b>${payrollAuditDisplayLabel(model.employeeResults.some((row) => row.scheduleStatus === 'REVIEW') ? 'REVIEW' : 'PASS')}</b><small>计划对照，不作为工资事实</small></div><div><span>需关注问题</span><b>${s.issueCount} 项</b><small>请按员工明细逐项核对</small></div><div class="total"><span>最终审查</span><b>${escapeHtml(payrollAuditDisplayLabel(s.finalResult, 'cover'))}</b><small>${escapeHtml(model.finalRecommendation)}</small></div></div><div class="footer-note">本报告仅做薪酬审查。本次未自动处理，也未修改任何历史或生产数据。</div></section></main></body></html>`
 }
