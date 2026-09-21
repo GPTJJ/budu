@@ -4,8 +4,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { previousMonthPeriod, previousWeekPeriod } from './payroll-audit-report.js'
 import { loadReusableAuditRun, markEmailDelivery } from './payroll-audit-run-store.js'
-import { PAYROLL_AUDIT_RECIPIENTS, sendPayrollAuditEmail } from './payroll-audit-email.js'
-import { listPayrollAuditJobs, payrollAuditDataRoot, readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
+import { PAYROLL_AUDIT_RECIPIENTS, payrollAuditEmailFailureDiagnostic, sendPayrollAuditEmail } from './payroll-audit-email.js'
+import { archivePayrollAuditJob, listPayrollAuditJobs, payrollAuditDataRoot, readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
 import { runPayrollAuditFromSnapshot } from '../scripts/payroll-audit-runner.mjs'
 import { runUnifiedSummaryFromSources } from '../scripts/payroll-audit-unified-runner.mjs'
 
@@ -88,12 +88,30 @@ async function deliver(job, { resend = false, actorId = '', send = sendPayrollAu
     job.emailAttempts = manifest.email.attempts
   } catch (error) {
     const errorCode = String(error.code || 'PAYROLL_AUDIT_EMAIL_FAILED')
-    const manifest = markEmailDelivery(job.artifacts.manifest, { status: 'FAILED', errorCode, resend, actorId })
-    job.emailStatus = 'FAILED'; job.retryCount = manifest.email.attempts.length; job.emailAttempts = manifest.email.attempts; job.lastErrorCode = errorCode
+    const diagnostic = payrollAuditEmailFailureDiagnostic(error)
+    const manifest = markEmailDelivery(job.artifacts.manifest, { status: 'FAILED', errorCode, diagnostic, resend, actorId })
+    job.emailStatus = 'FAILED'; job.retryCount = manifest.email.attempts.length; job.emailAttempts = manifest.email.attempts; job.lastErrorCode = errorCode; job.lastEmailDiagnostic = diagnostic
   }
   job.updatedAt = new Date().toISOString()
   writePayrollAuditJob(job)
   return job
+}
+
+function existingJobContract(job, input) {
+  const manifestPath = job?.artifacts?.manifest
+  if (!manifestPath || !fs.existsSync(manifestPath)) return { sendable: false, reason: 'ARTIFACT_MANIFEST_MISSING' }
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    const modelPath = job.artifacts.model || manifest.artifacts?.model?.path
+    if (!modelPath || !fs.existsSync(modelPath)) return { sendable: false, reason: 'CANONICAL_MODEL_MISSING' }
+    const model = JSON.parse(fs.readFileSync(modelPath, 'utf8'))
+    if (!loadReusableAuditRun(manifestPath, model.canonicalHash)) return { sendable: false, reason: 'ARTIFACT_INTEGRITY_FAILED' }
+    if (Number(model.schemaVersion || 0) < 5) return { sendable: false, reason: 'STALE_SCHEMA' }
+    if (model.metadata?.actualModel !== input.actualModel || model.metadata?.actualReasoning !== input.actualReasoning) return { sendable: false, reason: 'MODEL_CONFIGURATION_MISMATCH' }
+    return { sendable: true, model }
+  } catch {
+    return { sendable: false, reason: 'ARTIFACT_READ_FAILED' }
+  }
 }
 
 function loadUnifiedSourceReports(periodStart, periodEnd) {
@@ -158,6 +176,14 @@ export async function runPayrollAuditJob(input, dependencies = {}) {
   return withPayrollAuditJobLock(jobKey, async () => {
     let existing = readPayrollAuditJob(jobKey)
     if (existing?.emailStatus === 'SENT') return { job: existing, reused: true }
+    if (existing?.artifacts) {
+      const contract = existingJobContract(existing, input)
+      if (!contract.sendable) {
+        const archived = archivePayrollAuditJob(existing, `${contract.reason}/NON_CANONICAL/NOT_SENDABLE`)
+        existing = null
+        dependencies.onArchivedStaleJob?.(archived)
+      }
+    }
     if (existing?.artifacts && existing.retryCount < MAX_EMAIL_ATTEMPTS && input.email !== false) return { job: await deliver(existing, { send: dependencies.send }), reused: true }
     if (existing?.retryCount >= MAX_EMAIL_ATTEMPTS) return { job: existing, reused: true }
     const captured = dependencies.snapshot ? await dependencies.snapshot(input.periodStart, input.periodEnd) : await snapshot(input.periodStart, input.periodEnd)

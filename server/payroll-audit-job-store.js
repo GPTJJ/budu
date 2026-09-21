@@ -24,6 +24,16 @@ export function writePayrollAuditJob(job) {
   return job
 }
 
+export function archivePayrollAuditJob(job, classification) {
+  const directory = path.join(payrollAuditDataRoot(), 'jobs', 'history')
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const archivedAt = new Date().toISOString()
+  const filePath = path.join(directory, `${keyHash(job.jobKey)}-${archivedAt.replace(/[:.]/g, '-')}.json`)
+  const archived = { ...job, archival: { classification, archivedAt, sendable: false } }
+  fs.writeFileSync(filePath, `${JSON.stringify(archived, null, 2)}\n`, { mode: 0o600 })
+  return { archived, filePath }
+}
+
 export function listPayrollAuditJobs() {
   const directory = path.join(payrollAuditDataRoot(), 'jobs')
   if (!fs.existsSync(directory)) return []

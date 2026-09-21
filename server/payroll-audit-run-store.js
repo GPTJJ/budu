@@ -68,7 +68,7 @@ export function writeAuditManifest(paths, model, emailPayload) {
 export function markEmailDelivery(manifestPath, update) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
   if (manifest.email.status === 'SENT' && update.status === 'SENT' && !update.resend) return manifest
-  manifest.email.attempts.push({ at: new Date().toISOString(), status: update.status, messageId: update.messageId || '', errorCode: update.errorCode || '', resend: update.resend === true, actorId: update.actorId || '' })
+  manifest.email.attempts.push({ at: new Date().toISOString(), status: update.status, messageId: update.messageId || '', errorCode: update.errorCode || '', diagnostic: update.diagnostic || null, resend: update.resend === true, actorId: update.actorId || '' })
   manifest.email.status = update.status
   if (update.messageId) manifest.email.messageId = update.messageId
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })

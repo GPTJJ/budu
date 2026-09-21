@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,8 @@ import test from 'node:test'
 import { duePayrollAuditJobs, payrollAuditJobKey, recoverablePayrollAuditJobs, resendPayrollAuditJob, runPayrollAuditJob } from '../server/payroll-audit-scheduler-core.js'
 import { previousWeekPeriod } from '../server/payroll-audit-report.js'
 import { canManagePayrollAudit } from '../server/payroll-audit-admin.js'
-import { sendPayrollAuditEmail } from '../server/payroll-audit-email.js'
+import { checkPayrollAuditEmailTransport, payrollAuditEmailFailureDiagnostic, sendPayrollAuditEmail } from '../server/payroll-audit-email.js'
+import { writePayrollAuditJob } from '../server/payroll-audit-job-store.js'
 
 function snapshot() {
   const period = { periodStart: '2026-09-14', periodEnd: '2026-09-20' }
@@ -56,6 +58,7 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
   try {
     const first = await runPayrollAuditJob(input, { snapshot: async () => snapshot(), send })
     assert.equal(first.job.emailStatus, 'FAILED')
+    assert.equal(first.job.lastEmailDiagnostic.safeErrorCode, 'TEST_TRANSPORT')
     assert.equal(first.job.employeeCount, 1)
     const model = JSON.parse(fs.readFileSync(path.join(root, 'runs', first.job.runId, 'canonical-report-model.json'), 'utf8'))
     assert.deepEqual(model.employeeResults.map((row) => row.employeeId), ['part'])
@@ -73,6 +76,38 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
     assert.equal(resent.emailAttempts.at(-1).resend, true)
     assert.equal(resent.emailAttempts.at(-1).actorId, 'developer-1')
     assert.equal(sends, 3)
+  } finally {
+    if (old === undefined) delete process.env.PAYROLL_AUDIT_DATA_DIR; else process.env.PAYROLL_AUDIT_DATA_DIR = old
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('stale non-canonical weekly artifact is archived and replaced instead of retried', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-payroll-stale-'))
+  const old = process.env.PAYROLL_AUDIT_DATA_DIR
+  process.env.PAYROLL_AUDIT_DATA_DIR = root
+  const jobKey = payrollAuditJobKey({ reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20' })
+  try {
+    const runDir = path.join(root, 'runs', 'old-run')
+    fs.mkdirSync(runDir, { recursive: true })
+    const files = { model: path.join(runDir, 'canonical-report-model.json'), markdown: path.join(runDir, 'old.md'), pdf: path.join(runDir, 'old.pdf') }
+    const staleModel = { schemaVersion: 4, runId: 'old-run', canonicalHash: 'old-hash', metadata: { reportType: 'WEEKLY_PART_TIME', requestedPeriod: { start: '2026-09-14', end: '2026-09-20' }, productionSha: 'old-sha' }, summary: { finalResult: 'BLOCKED' } }
+    fs.writeFileSync(files.model, JSON.stringify(staleModel)); fs.writeFileSync(files.markdown, 'old'); fs.writeFileSync(files.pdf, 'old')
+    const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+    const manifest = path.join(runDir, 'manifest.json')
+    fs.writeFileSync(manifest, JSON.stringify({ canonicalHash: 'old-hash', artifacts: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, { path: file, sha256: sha(file) }])), email: { status: 'FAILED', attempts: [{ status: 'FAILED' }] } }))
+    const email = path.join(runDir, 'email-payload.json'); fs.writeFileSync(email, JSON.stringify({ subject: 'old', body: 'old', attachments: [] }))
+    writePayrollAuditJob({ jobKey, reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20', runId: 'old-run', emailStatus: 'FAILED', retryCount: 1, artifacts: { ...files, email, manifest } })
+    let sends = 0
+    const result = await runPayrollAuditJob({ reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20', email: true, allowNonProduction: true, ...executionMetadata }, { snapshot: async () => snapshot(), send: async () => { sends += 1; return { messageId: 'new-message' } } })
+    assert.notEqual(result.job.runId, 'old-run')
+    assert.equal(result.job.emailStatus, 'SENT')
+    assert.equal(sends, 1)
+    const archivedFiles = fs.readdirSync(path.join(root, 'jobs', 'history'))
+    assert.equal(archivedFiles.length, 1)
+    const archived = JSON.parse(fs.readFileSync(path.join(root, 'jobs', 'history', archivedFiles[0]), 'utf8'))
+    assert.equal(archived.archival.classification, 'STALE_SCHEMA/NON_CANONICAL/NOT_SENDABLE')
+    assert.equal(archived.emailStatus, 'FAILED')
   } finally {
     if (old === undefined) delete process.env.PAYROLL_AUDIT_DATA_DIR; else process.env.PAYROLL_AUDIT_DATA_DIR = old
     fs.rmSync(root, { recursive: true, force: true })
@@ -143,6 +178,26 @@ test('Gmail transport addresses exactly the three fixed recipients without exter
     assert.deepEqual(result.recipients, ['yuegu1995@gmail.com', '970701330@qq.com', 'korea_jing@163.com'])
     assert.doesNotMatch(mime, /secret|refresh|ephemeral-test-token/)
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Gmail health is non-sending and failures expose only structured safe diagnostics', async () => {
+  let sends = 0
+  const healthyFetch = async (url) => {
+    if (String(url).includes('/token')) return { ok: true, status: 200, json: async () => ({ access_token: 'ephemeral-test-token' }) }
+    sends += 1
+    assert.match(String(url), /\/profile$/)
+    return { ok: true, status: 200, json: async () => ({ emailAddress: 'sender@example.com' }) }
+  }
+  const options = { credentials: { clientId: 'id', clientSecret: 'secret', refreshToken: 'refresh', from: 'sender@example.com' }, fetch: healthyFetch }
+  const health = await checkPayrollAuditEmailTransport(options)
+  assert.equal(health.authenticated, true)
+  assert.equal(sends, 1)
+  await assert.rejects(checkPayrollAuditEmailTransport({ ...options, fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) }), (error) => {
+    const diagnostic = payrollAuditEmailFailureDiagnostic(error)
+    assert.deepEqual({ stage: diagnostic.stage, phase: diagnostic.phase, status: diagnostic.httpStatus, retryable: diagnostic.retryable }, { stage: 'OAUTH_TOKEN_REFRESH', phase: 'AUTH', status: 401, retryable: false })
+    assert.doesNotMatch(JSON.stringify(diagnostic), /ephemeral-test-token|clientSecret|refreshToken/)
+    return true
+  })
 })
 
 test('scheduler runtime path has no Codex, ChatGPT, OpenAI or agent dependency', () => {
