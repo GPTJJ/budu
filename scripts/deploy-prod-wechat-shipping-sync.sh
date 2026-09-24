@@ -261,10 +261,13 @@ echo "clone binding reproduced from existing runtime env (no new configuration)"
 # ============================ 2. RELEASE 身份校验 ==========================
 phase "PHASE 2 — release identity"
 
-RELEASE_SHA="$(git -C "$BUNDLE_PATH" rev-parse HEAD)"
+BUNDLE_TMP="${WORK_ROOT}/release"
+git clone -q "$BUNDLE_PATH" "$BUNDLE_TMP" || { echo "release bundle is not clonable: ${BUNDLE_PATH}" >&2; exit 1; }
+RELEASE_SHA="$(git -C "$BUNDLE_TMP" rev-parse HEAD)"
 [ "$RELEASE_SHA" != "$RUNTIME_SHA" ] || { echo "release bundle has no release-engineering commit" >&2; exit 1; }
-[ "$(git -C "$BUNDLE_PATH" rev-parse "${RELEASE_SHA}^")" = "$RUNTIME_SHA" ] || { echo "release is not a single commit above the runtime SHA" >&2; exit 1; }
-DIFF_FILES="$(git -C "$BUNDLE_PATH" diff --name-only "${RUNTIME_SHA}" "${RELEASE_SHA}")"
+git -C "$BUNDLE_TMP" merge-base --is-ancestor "$RUNTIME_SHA" "$RELEASE_SHA" \
+  || { echo "runtime SHA is not an ancestor of the release" >&2; exit 1; }
+DIFF_FILES="$(git -C "$BUNDLE_TMP" diff --name-only "${RUNTIME_SHA}" "${RELEASE_SHA}")"
 [ "$DIFF_FILES" = "$SELF_REL" ] || { echo "release diff is not limited to ${SELF_REL}: ${DIFF_FILES}" >&2; exit 1; }
 SHORT_SHA="${RELEASE_SHA:0:7}"
 CANDIDATE="budu-prod-${SHORT_SHA}-${RELEASE_TAG}"
@@ -336,9 +339,8 @@ echo "backup integrity PASS (pg_restore --list); protected rollback copy created
 # ============================ 4. 构建 RELEASE image ========================
 phase "PHASE 4 — build release image"
 
-git clone -q "$BUNDLE_PATH" "${WORK_ROOT}/release"
-[ "$(git -C "${WORK_ROOT}/release" rev-parse HEAD)" = "$RELEASE_SHA" ] || { echo "release bundle SHA mismatch" >&2; exit 1; }
-docker build --label "org.opencontainers.image.revision=${RELEASE_SHA}" -t "$IMAGE" "${WORK_ROOT}/release" >/dev/null
+[ "$(git -C "$BUNDLE_TMP" rev-parse HEAD)" = "$RELEASE_SHA" ] || { echo "release bundle SHA mismatch" >&2; exit 1; }
+docker build --label "org.opencontainers.image.revision=${RELEASE_SHA}" -t "$IMAGE" "$BUNDLE_TMP" >/dev/null
 IMAGE_REV="$(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 [ "$IMAGE_REV" = "$RELEASE_SHA" ] || { echo "image revision label mismatch" >&2; exit 1; }
 echo "image=${IMAGE} revision_label=${IMAGE_REV}"
