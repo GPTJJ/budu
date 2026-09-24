@@ -26,11 +26,13 @@ set -Eeuo pipefail
 EXPECTED_OLD_SHA="076e6e0de4527777e633c67033d2da1888d91f1b"
 RUNTIME_SHA="f454fd637055fb2fccf625b9451a4b411079bfe9"
 EXPECTED_DB="budu_bj006"
-BASELINE_MIGRATIONS=84
+CURRENT_MIGRATIONS=85
 TARGET_MIGRATIONS=85
 MIGRATION="20260924140000_online_wechat_shipping_sync"
 RELEASE_TAG="wechat-shipping-sync"
-SELF_REL="scripts/deploy-prod-wechat-shipping-sync.sh"
+# 相对 RUNTIME_SHA 允许且**只允许**出现的 release-engineering 文件（已排序，精确匹配）。
+RELEASE_ALLOWLIST="scripts/clone-production-container.py
+scripts/deploy-prod-wechat-shipping-sync.sh"
 
 BUNDLE_PATH="${1:-}"
 APP_DIR="${2:-/opt/budu}"
@@ -230,13 +232,45 @@ OLD_ROUTE_COUNT="$(grep -Ec "proxy_pass[[:space:]]+http://${OLD_CONTAINER}:3000"
 [ "$(docker inspect --format '{{.State.Running}}' "$OLD_CONTAINER")" = "true" ] || { echo "routed API is not running" >&2; exit 1; }
 
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-verify_database_authority "$OLD_CONTAINER" "$BASELINE_MIGRATIONS"
+verify_database_authority "$OLD_CONTAINER" "$CURRENT_MIGRATIONS"
+# 本轮生产已经**处于 migration 85**（上一轮 PHASE 6 已成功执行）：断言目标态确实已达成，
+# 而不是期待它尚未发生。candidate migration 已落盘完成、sync 表存在且 0 行、schema 符合候选定义。
+TARGET_STATE="$(docker exec -i "$OLD_CONTAINER" env EXPECTED_MIGRATION="$MIGRATION" node --input-type=module - <<'NODE'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+const q = sql => prisma.$queryRawUnsafe(sql)
+try {
+  const ledger = await q(`SELECT finished_at, rolled_back_at FROM _prisma_migrations WHERE migration_name = '${process.env.EXPECTED_MIGRATION}'`)
+  const row = ledger[0]
+  if (!row || !row.finished_at || row.rolled_back_at) throw new Error('CANDIDATE_MIGRATION_NOT_APPLIED')
+  const table = await q(`SELECT to_regclass('public.online_wechat_shipping_sync')::text AS t`)
+  if (!table[0] || !table[0].t) throw new Error('SYNC_TABLE_ABSENT')
+  const rows = await q(`SELECT count(*)::int AS n FROM online_wechat_shipping_sync`)
+  if (Number(rows[0].n) !== 0) throw new Error('SYNC_TABLE_NOT_EMPTY')
+  const cols = await q(`SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'online_wechat_shipping_sync'`)
+  const byName = Object.fromEntries(cols.map(c => [c.column_name, c.is_nullable]))
+  const required = { method: 'NO', logistics_type: 'NO', delivery_id: 'YES', tracking_no: 'YES', reupload_count: 'NO' }
+  for (const [name, nullable] of Object.entries(required)) {
+    if (byName[name] !== nullable) throw new Error('SYNC_COLUMN_MISMATCH_' + name)
+  }
+  const checks = await q(`SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'public.online_wechat_shipping_sync'::regclass AND contype = 'c'`)
+  const idx = await q(`SELECT count(*)::int AS n FROM pg_indexes WHERE tablename = 'online_wechat_shipping_sync'`)
+  const fn = await q(`SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'online_wechat_shipping_payload_immutable'`)
+  const trg = await q(`SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'online_wechat_shipping_no_payload_rewrite'`)
+  if (Number(fn[0].n) !== 1 || Number(trg[0].n) !== 1) throw new Error('SYNC_FUNCTION_OR_TRIGGER_MISSING')
+  console.log(`CURRENT_STATE migration_finished_at=${row.finished_at.toISOString()} table=EXISTS rows=0 checks=${checks[0].n} idx=${idx[0].n} fn=${fn[0].n} trg=${trg[0].n}`)
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+)"
+printf '%s\n' "$TARGET_STATE"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "production does not have exactly one database writer" >&2; exit 1; }
 AVAIL_KB="$(df -Pk / | awk 'NR==2{print $4}')"
 [ "$AVAIL_KB" -ge 10485760 ] || { echo "available disk below 10G" >&2; exit 1; }
 MEM_AVAIL_MB="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)"
 [ "$MEM_AVAIL_MB" -ge 1024 ] || { echo "available memory below 1G" >&2; exit 1; }
-echo "authority PASS: routed=${OLD_CONTAINER} revision=${EXPECTED_OLD_SHA:0:12} DB=${EXPECTED_DB} migrations=${BASELINE_MIGRATIONS} writer=1 disk=${AVAIL_KB}KB mem=${MEM_AVAIL_MB}MB"
+echo "authority PASS: routed=${OLD_CONTAINER} revision=${EXPECTED_OLD_SHA:0:12} DB=${EXPECTED_DB} migrations=${CURRENT_MIGRATIONS} writer=1 disk=${AVAIL_KB}KB mem=${MEM_AVAIL_MB}MB"
 
 # 绑定文件：clone helper 需要它。其两个值必须与现有生产 env 完全一致，
 # 否则就是「改变生产 env」。这里只从现有容器读取并校验，不发明新值。
@@ -268,8 +302,13 @@ RELEASE_SHA="$(git -C "$BUNDLE_TMP" rev-parse HEAD)"
 [ "$RELEASE_SHA" != "$RUNTIME_SHA" ] || { echo "release bundle has no release-engineering commit" >&2; exit 1; }
 git -C "$BUNDLE_TMP" merge-base --is-ancestor "$RUNTIME_SHA" "$RELEASE_SHA" \
   || { echo "runtime SHA is not an ancestor of the release" >&2; exit 1; }
-DIFF_FILES="$(git -C "$BUNDLE_TMP" diff --name-only "${RUNTIME_SHA}" "${RELEASE_SHA}")"
-[ "$DIFF_FILES" = "$SELF_REL" ] || { echo "release diff is not limited to ${SELF_REL}: ${DIFF_FILES}" >&2; exit 1; }
+DIFF_FILES="$(git -C "$BUNDLE_TMP" diff --name-only "${RUNTIME_SHA}" "${RELEASE_SHA}" | LC_ALL=C sort)"
+[ "$DIFF_FILES" = "$RELEASE_ALLOWLIST" ] || {
+  echo "release diff is not exactly the release-engineering allowlist:" >&2
+  printf '  got:      %s\n' "$(printf '%s' "$DIFF_FILES" | tr '\n' ' ')" >&2
+  printf '  expected: %s\n' "$(printf '%s' "$RELEASE_ALLOWLIST" | tr '\n' ' ')" >&2
+  exit 1
+}
 SHORT_SHA="${RELEASE_SHA:0:7}"
 CANDIDATE="budu-prod-${SHORT_SHA}-${RELEASE_TAG}"
 MIGRATOR="budu-migrate-${SHORT_SHA}-${RELEASE_TAG}"
@@ -313,7 +352,7 @@ path = pathlib.Path(os.environ['DB_ENV_FILE'])
 path.write_text(f'PGURI={safe_uri}\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-BACKUP_NAME="${EXPECTED_DB}-migration${BASELINE_MIGRATIONS}-pre-${RELEASE_TAG}-${SHORT_SHA}.dump"
+BACKUP_NAME="${EXPECTED_DB}-migration${CURRENT_MIGRATIONS}-at-${RELEASE_TAG}-${SHORT_SHA}.dump"
 docker create --name "$BACKUP_CONTAINER" --user "$(id -u):$(id -g)" --network "$COMMON_NETWORK" \
   --env-file "$DB_ENV_FILE" -e BACKUP_NAME="$BACKUP_NAME" -v "${ROLLBACK_ROOT}:/backup" postgres:16-alpine \
   sh -c 'pg_dump "$PGURI" --format=custom --no-owner --file="/backup/$BACKUP_NAME"' >/dev/null
@@ -332,7 +371,7 @@ chmod 400 "${ROLLBACK_ROOT}/${BACKUP_NAME}" "${ROLLBACK_ROOT}/${BACKUP_NAME}.pro
 echo "backup=${ROLLBACK_ROOT}/${BACKUP_NAME}"
 echo "backup_sha256=${BACKUP_SHA256}"
 echo "$BACKUP_SHA256" > "${ROLLBACK_ROOT}/backup.sha256"
-printf '%s\n' "revision=${EXPECTED_OLD_SHA}" "migration_baseline=${BASELINE_MIGRATIONS}" \
+printf '%s\n' "revision=${EXPECTED_OLD_SHA}" "migrations_at_backup=${CURRENT_MIGRATIONS}" \
   "backup=${BACKUP_NAME}" "backup_sha256=${BACKUP_SHA256}" > "${ROLLBACK_ROOT}/manifest.txt"
 chmod 600 "${ROLLBACK_ROOT}/backup.sha256" "${ROLLBACK_ROOT}/manifest.txt"
 echo "backup integrity PASS (pg_restore --list); protected rollback copy created"
@@ -350,7 +389,7 @@ BEFORE_DIGEST="$(feature_digest "$OLD_CONTAINER")"
 echo "pre-migration feature digest (7 tables): ${BEFORE_DIGEST}"
 
 # ============================ 5. Clone migration rehearsal =================
-phase "PHASE 5 — isolated clone migration rehearsal"
+phase "PHASE 5 — isolated clone schema-convergence rehearsal ${CURRENT_MIGRATIONS}→${TARGET_MIGRATIONS}"
 
 docker run -d --name "$REHEARSAL_PG" --network "$COMMON_NETWORK" \
   -e POSTGRES_USER="$EXPECTED_DB" -e POSTGRES_DB="$EXPECTED_DB" -e POSTGRES_HOST_AUTH_METHOD=trust \
@@ -364,14 +403,23 @@ docker exec -i "$REHEARSAL_PG" pg_restore -U "$EXPECTED_DB" -d "$EXPECTED_DB" --
   < "${ROLLBACK_ROOT}/${BACKUP_NAME}"
 CLONE_BEFORE_MIGRATIONS="$(docker exec "$REHEARSAL_PG" psql -U "$EXPECTED_DB" -d "$EXPECTED_DB" -tAc \
   "SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d ' ')"
-[ "$CLONE_BEFORE_MIGRATIONS" = "$BASELINE_MIGRATIONS" ] || { echo "restored clone migration baseline is ${CLONE_BEFORE_MIGRATIONS}, expected ${BASELINE_MIGRATIONS}" >&2; exit 1; }
+[ "$CLONE_BEFORE_MIGRATIONS" = "$CURRENT_MIGRATIONS" ] || { echo "restored clone migration baseline is ${CLONE_BEFORE_MIGRATIONS}, expected ${CURRENT_MIGRATIONS}" >&2; exit 1; }
 CLONE_DIGEST_BEFORE="$(docker exec "$REHEARSAL_PG" psql -U "$EXPECTED_DB" -d "$EXPECTED_DB" -tAc \
   "SELECT (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM online_settlements x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM online_tenders x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM online_refunds x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM online_fulfillment_authorizations x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM online_logistics_traces x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM sweet_card_accounts x) || (SELECT md5(string_agg(x::text,'|' ORDER BY x::text)) FROM sweet_card_ledger x)" | tr -d ' ')"
 
-# 只连 isolated clone；绝不连生产
+# 只连 isolated clone；绝不连生产。本轮是 85→85 收敛演练：migrate deploy 必须是 no-op。
 printf 'DATABASE_URL=postgresql://%s@%s:5432/%s\n' "$EXPECTED_DB" "$REHEARSAL_PG" "$EXPECTED_DB" > "$REHEARSE_ENV_FILE"
 chmod 600 "$REHEARSE_ENV_FILE"
-docker run --rm --network "$COMMON_NETWORK" --env-file "$REHEARSE_ENV_FILE" "$IMAGE" npx prisma migrate deploy
+set +e
+REHEARSE_OUT="$(docker run --rm --network "$COMMON_NETWORK" --env-file "$REHEARSE_ENV_FILE" "$IMAGE" npx prisma migrate deploy 2>&1)"
+REHEARSE_RC=$?
+set -e
+printf '%s\n' "$REHEARSE_OUT"
+[ "$REHEARSE_RC" -eq 0 ] || { echo "schema-convergence rehearsal migrate failed (rc=${REHEARSE_RC})" >&2; exit 1; }
+if printf '%s' "$REHEARSE_OUT" | grep -q "Applying migration"; then
+  echo "schema-convergence rehearsal unexpectedly applied a migration" >&2
+  exit 1
+fi
 CLONE_AFTER_MIGRATIONS="$(docker exec "$REHEARSAL_PG" psql -U "$EXPECTED_DB" -d "$EXPECTED_DB" -tAc \
   "SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d ' ')"
 [ "$CLONE_AFTER_MIGRATIONS" = "$TARGET_MIGRATIONS" ] || { echo "clone migration count ${CLONE_AFTER_MIGRATIONS} != ${TARGET_MIGRATIONS}" >&2; exit 1; }
@@ -399,10 +447,10 @@ case "$CLONE_SCHEMA" in
   *) echo "rehearsal schema assertion failed" >&2; exit 1 ;;
 esac
 docker rm -f "$REHEARSAL_PG" >/dev/null; REHEARSAL_PG=""
-echo "rehearsal PASS: ${BASELINE_MIGRATIONS}→${TARGET_MIGRATIONS}, schema matches candidate, financial digests unchanged; isolated clone deleted"
+echo "rehearsal PASS: ${CURRENT_MIGRATIONS}→${TARGET_MIGRATIONS}, schema matches candidate, financial digests unchanged; isolated clone deleted"
 
 # ============================ 6. Production migration 84→85 ================
-phase "PHASE 6 — production migration ${BASELINE_MIGRATIONS}→${TARGET_MIGRATIONS}"
+phase "PHASE 6 — production convergence ${CURRENT_MIGRATIONS}→${TARGET_MIGRATIONS} (must be a no-op)"
 
 OLD_CONTAINER="$OLD_CONTAINER" MIGRATE_ENV_FILE="$MIGRATE_ENV_FILE" EXPECTED_DB="$EXPECTED_DB" python3 - <<'PY'
 import json, os, pathlib, subprocess, urllib.parse
@@ -444,7 +492,7 @@ try {
   const migrations = Number(mig[0]?.c ?? -1)
   console.log(`PREFLIGHT database=${database} migrations=${migrations} lock_timeout=${Object.values(lock[0] ?? {})[0]}`)
   if (database !== process.env.EXPECTED_DB) throw new Error('PREFLIGHT_DB_MISMATCH')
-  if (migrations !== Number(process.env.EXPECTED_BASELINE)) throw new Error('PREFLIGHT_MIGRATION_COUNT_MISMATCH')
+  if (migrations !== Number(process.env.EXPECTED_MIGRATIONS)) throw new Error('PREFLIGHT_MIGRATION_COUNT_MISMATCH')
 } finally {
   await prisma.$disconnect()
 }
@@ -454,7 +502,7 @@ chmod 644 "$MIGRATE_PREFLIGHT_FILE"
 
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 docker create --name "$MIGRATOR" --network "$COMMON_NETWORK" \
-  --env-file "$MIGRATE_ENV_FILE" -e EXPECTED_DB="$EXPECTED_DB" -e EXPECTED_BASELINE="$BASELINE_MIGRATIONS" \
+  --env-file "$MIGRATE_ENV_FILE" -e EXPECTED_DB="$EXPECTED_DB" -e EXPECTED_MIGRATIONS="$CURRENT_MIGRATIONS" \
   "$IMAGE" sh -c 'node /app/migrate-preflight.mjs && npx prisma migrate deploy' >/dev/null
 docker cp "$MIGRATE_PREFLIGHT_FILE" "${MIGRATOR}:/app/migrate-preflight.mjs" >/dev/null
 while IFS= read -r migrate_network; do
@@ -477,9 +525,15 @@ echo "migrator networks inherited from production authority: $(printf '%s' "$MIG
 
 docker start "$MIGRATOR" >/dev/null
 MIGRATOR_RC="$(docker wait "$MIGRATOR")"
+MIGRATOR_LOGS="$(docker logs "$MIGRATOR" 2>&1 || true)"
+printf '%s\n' "$MIGRATOR_LOGS"
 if [ "$MIGRATOR_RC" != "0" ]; then
   echo "migrator failed (exit ${MIGRATOR_RC}); safe log follows" >&2
-  docker logs --tail 80 "$MIGRATOR" >&2 || true
+  exit 1
+fi
+# 生产已经处于 85：这里必须是 no-op。若出现任何新应用的 migration ⇒ 立刻停止。
+if printf '%s' "$MIGRATOR_LOGS" | grep -q "Applying migration"; then
+  echo "production migrate deploy was NOT a no-op; a migration was applied" >&2
   exit 1
 fi
 docker rm "$MIGRATOR" >/dev/null
@@ -504,7 +558,7 @@ AFTER_DIGEST="$(feature_digest "$OLD_CONTAINER")"
 [ "$AFTER_DIGEST" = "$BEFORE_DIGEST" ] || { echo "existing financial facts changed during additive migration" >&2; exit 1; }
 [ "$(sync_row_count "$OLD_CONTAINER")" = "0" ] || { echo "new sync table is not empty at deploy time" >&2; exit 1; }
 require_health "$OLD_CONTAINER" "${EXPECTED_OLD_SHA:0:12}"
-echo "production migrated ${BASELINE_MIGRATIONS}→${TARGET_MIGRATIONS}; 7-table digest unchanged; online_wechat_shipping_sync rows=0; old runtime still healthy"
+echo "production convergence ${CURRENT_MIGRATIONS}→${TARGET_MIGRATIONS} verified (no-op); 7-table digest unchanged; online_wechat_shipping_sync rows=0; old runtime still healthy"
 
 # ============================ 7. Unrouted readonly smoke ===================
 phase "PHASE 7 — unrouted read-only candidate smoke"
@@ -522,12 +576,29 @@ CLONER="${SCRIPT_DIR}/clone-production-container.py"
 [ -f "$CLONER" ] || { echo "clone helper missing next to this script: ${CLONER}" >&2; exit 1; }
 
 python3 "$CLONER" "$OLD_CONTAINER" "$CANDIDATE" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
+# A9：必须精确继承生产运行身份，否则读不到 440 root:root 的 secret（本轮修复的正是这一点）。
+OLD_USER="$(docker inspect "$OLD_CONTAINER" --format '{{.Config.User}}')"
+CAND_USER="$(docker inspect "$CANDIDATE" --format '{{.Config.User}}')"
+[ "$CAND_USER" = "$OLD_USER" ] || { echo "candidate Config.User mismatch: ${CAND_USER} != ${OLD_USER}" >&2; exit 1; }
+OLD_GROUPS="$(docker inspect "$OLD_CONTAINER" --format '{{join .HostConfig.GroupAdd ","}}')"
+CAND_GROUPS="$(docker inspect "$CANDIDATE" --format '{{join .HostConfig.GroupAdd ","}}')"
+[ "$CAND_GROUPS" = "$OLD_GROUPS" ] || { echo "candidate HostConfig.GroupAdd mismatch: ${CAND_GROUPS} != ${OLD_GROUPS}" >&2; exit 1; }
+echo "identity parity: Config.User=${CAND_USER} HostConfig.GroupAdd=[${CAND_GROUPS}]"
+SECRET_PROBE="$(docker exec "$CANDIDATE" sh -c '
+  for f in /run/secrets/sweet-card/production-wechat.appsecret /run/secrets/sweet-card/production-gateway-hmac.key; do
+    if [ -r "$f" ]; then echo "    READABLE $f"; else echo "    NOT_READABLE $f"; fi
+  done')"
+printf '%s\n' "$SECRET_PROBE"
+if printf '%s' "$SECRET_PROBE" | grep -q NOT_READABLE; then
+  echo "candidate cannot read a production secret file" >&2
+  exit 1
+fi
 require_health "$CANDIDATE" "${RELEASE_SHA:0:12}"
 verify_database_authority "$CANDIDATE" "$TARGET_MIGRATIONS"
 [ "$(count_database_writers "$OLD_CONTAINER")" -eq 1 ] || { echo "readonly candidate changed writer ownership" >&2; exit 1; }
 docker stop -t 20 "$CANDIDATE" >/dev/null
 docker rm "$CANDIDATE" >/dev/null
-echo "readonly smoke PASS (start/imports/prisma/health/gitSha/db); writer count still 1; smoke container removed"
+echo "readonly smoke PASS (identity parity / secrets READABLE / health / gitSha / db / migrations); writer count still 1; smoke container removed"
 
 # ============================ 8. Writer cutover ============================
 phase "PHASE 8 — writer cutover (exactly one writer)"

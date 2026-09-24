@@ -8,9 +8,14 @@ payment-worker mode, name, image, and network are changed.
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
+
+
+# docker 接受的 --group-add 取值：数字 GID，或合法组名。任何其它形态一律拒绝。
+_GROUP_ADD_RE = re.compile(r"^(?:[0-9]{1,10}|[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$")
 
 
 if len(sys.argv) not in {8, 9}:
@@ -56,6 +61,19 @@ args = [
     "--label", "budu.production-role=candidate",
     "--label", f"org.opencontainers.image.revision={release_sha}",
 ]
+
+# 补充组成员资格必须从 source container 动态继承：生产 secret 文件是
+# mode 440 owner root:root，只有 supplementary group 0 才读得到；丢了这个，
+# candidate 会在启动时以「secret file is unavailable」退出。
+# 严格逐项校验后原样转发，绝不 hardcode、绝不自行新增任何 group。
+# 只复制已证明缺失的 GroupAdd —— 不扩大为复制整个 HostConfig。
+source_group_add = (source.get("HostConfig") or {}).get("GroupAdd") or []
+if not isinstance(source_group_add, list):
+    raise SystemExit("SOURCE_GROUP_ADD_INVALID")
+for group in source_group_add:
+    if not isinstance(group, str) or not _GROUP_ADD_RE.fullmatch(group):
+        raise SystemExit("SOURCE_GROUP_ADD_ENTRY_INVALID")
+    args.extend(["--group-add", group])
 
 for mount in source.get("Mounts") or []:
     mount_type = mount.get("Type")
@@ -124,6 +142,7 @@ print(json.dumps({
     "created": True,
     "containerIdPrefix": container_id[:12],
     "networkCount": len(source_networks),
+    "groupAddCount": len(source_group_add),
     "paymentMode": payment_mode,
     "runtimeMode": runtime_mode,
 }))
