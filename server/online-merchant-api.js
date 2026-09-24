@@ -9,7 +9,7 @@ import { httpError } from './pos-core.js'
 // Dedicated merchant-function key, never the customer gateway key. The
 // CloudBase merchant function authenticates its runtime OPENID against its
 // canonical merchant allowlist before it signs this narrowly scoped request.
-export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null, wechatLogistics = null }) {
+export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null, wechatLogistics = null, shippingSync = null }) {
   const router = express.Router()
   async function activeActor(tx, actor){
     if(!actor?.id)throw httpError('商家身份已停用',403)
@@ -52,6 +52,18 @@ export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null
   router.post('/fulfill', handle(async (body, actor, s) => {
     const receipt = await fulfillment.authorize({ settlementId: s.id, actor, requestKey: body.requestKey,
       method: body.method, carrierCode: body.carrierCode, trackingNo: body.trackingNo })
+    // 微信「发货信息管理」同步的接入点：发货事实已经 durable，这里只做一次幂等
+    // 登记（一行 INSERT），真正的微信调用交给后台 worker。
+    // 绝不 gate、绝不抛出、绝不改返回：微信同步失败不得变成商家眼里的「发货失败」。
+    if (shippingSync) {
+      try {
+        await shippingSync.register({ settlementId: s.id })
+      } catch (error) {
+        // 只记录安全分类，不打印任何密钥/隐私字段。
+        console.error('[wechat-shipping-sync] SHIPPING_REGISTER_FAILED', receipt.id,
+          String((error && error.message) || error).slice(0, 80))
+      }
+    }
     return { authorizationId: receipt.id, settlementId: s.id, requestKey: receipt.requestKey,
       status: receipt.method === 'DELIVERY' ? 'SHIPPED' : 'PICKED_UP', carrier: receipt.carrierCode,
       trackingNo: receipt.trackingNo, shippedAt: receipt.authorizedAt.toISOString() }

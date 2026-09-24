@@ -2494,6 +2494,7 @@ model OnlineSettlement {
   @@map("online_settlements")
   fulfillmentAuthorization OnlineFulfillmentAuthorization?
   logisticsTrace           OnlineLogisticsTrace?
+  wechatShippingSync       OnlineWechatShippingSync?
 }
 
 model SweetCardReservation {
@@ -2652,4 +2653,41 @@ model OnlineLogisticsTrace {
   settlement      OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
   @@index([status, availableAt])
   @@map("online_logistics_traces")
+}
+
+/// 微信小程序「发货信息管理」（upload_shipping_info）的同步状态。
+///
+/// 与 OnlineLogisticsTrace 是**两个互不相干的微信能力**，状态必须独立：
+/// trace_waybill 管物流轨迹/waybill_token，upload_shipping_info 管平台侧发货
+/// 信息录入与资金结算。两者可以共用 access_token authority、发货事实、
+/// transaction_id、openid 和 worker 基础设施，但不共用状态。
+///
+/// 同样不是第二套发货权威：发货事实永远是 OnlineFulfillmentAuthorization。
+/// 微信同步失败不得撤销发货、不得让商家看到「发货失败」、不得改支付/退款/
+/// 甜意卡任何状态，也不得改写 canonical fulfillment。
+model OnlineWechatShippingSync {
+  id                 String    @id
+  settlementId       String    @unique @map("settlement_id")
+  authorizationId    String    @map("authorization_id")
+  /// PENDING_UPLOAD | PENDING_VERIFY | SYNCED | UNSUPPORTED | FAILED
+  status             String    @default("PENDING_UPLOAD")
+  /// 微信官方 delivery_id（不是 BUDU 页面码；韵达是 YD 而非 YUNDA）
+  deliveryId         String    @map("delivery_id")
+  trackingNo         String    @map("tracking_no")
+  uploadTime         DateTime  @map("upload_time")
+  /// 防止同一 settlement 被不同的物流数据覆盖
+  payloadFingerprint String    @map("payload_fingerprint")
+  attempts           Int       @default(0)
+  verifyAttempts     Int       @default(0) @map("verify_attempts")
+  availableAt        DateTime  @default(now()) @map("available_at")
+  leaseUntil         DateTime? @map("lease_until")
+  leaseOwner         String?   @map("lease_owner")
+  lastError          String?   @map("last_error")
+  uploadAcceptedAt   DateTime? @map("upload_accepted_at")
+  verifiedAt         DateTime? @map("verified_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+  settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt])
+  @@map("online_wechat_shipping_sync")
 }
