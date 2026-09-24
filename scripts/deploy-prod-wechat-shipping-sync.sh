@@ -427,8 +427,12 @@ PY
 # COMMON_NETWORK 是「旧容器 ∩ nginx」的前端网络，**数据库并不在它上面**，
 # 所以只挂单网络必然 P1001 —— 这正是上一轮 PHASE 6 失败的原因。
 cat > "$MIGRATE_PREFLIGHT_FILE" <<'PREFLIGHT'
-import { PrismaClient } from '@prisma/client'
 // 只读 preflight：必须在任何写操作之前证明 connectivity 与 authority。
+// 用 createRequire 锚定 /app，使模块解析与**本文件位置无关**
+// （裸 ESM 说明符是按文件所在目录解析的，放在 /tmp 会找不到 /app/node_modules）。
+import { createRequire } from 'node:module'
+const require = createRequire('/app/package.json')
+const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 try {
   const [db, mig, lock] = await Promise.all([
@@ -451,8 +455,8 @@ chmod 644 "$MIGRATE_PREFLIGHT_FILE"
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 docker create --name "$MIGRATOR" --network "$COMMON_NETWORK" \
   --env-file "$MIGRATE_ENV_FILE" -e EXPECTED_DB="$EXPECTED_DB" -e EXPECTED_BASELINE="$BASELINE_MIGRATIONS" \
-  "$IMAGE" sh -c 'node /tmp/migrate-preflight.mjs && npx prisma migrate deploy' >/dev/null
-docker cp "$MIGRATE_PREFLIGHT_FILE" "${MIGRATOR}:/tmp/migrate-preflight.mjs" >/dev/null
+  "$IMAGE" sh -c 'node /app/migrate-preflight.mjs && npx prisma migrate deploy' >/dev/null
+docker cp "$MIGRATE_PREFLIGHT_FILE" "${MIGRATOR}:/app/migrate-preflight.mjs" >/dev/null
 while IFS= read -r migrate_network; do
   [ -n "$migrate_network" ] || continue
   [ "$migrate_network" = "$COMMON_NETWORK" ] && continue
