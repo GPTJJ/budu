@@ -445,7 +445,8 @@ try {
   await prisma.$disconnect()
 }
 PREFLIGHT
-chmod 600 "$MIGRATE_PREFLIGHT_FILE"
+# 容器以 `node` 用户运行，docker cp 会保留宿主权限 ⇒ 必须让目标可读（文件不含任何密钥）。
+chmod 644 "$MIGRATE_PREFLIGHT_FILE"
 
 docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
 docker create --name "$MIGRATOR" --network "$COMMON_NETWORK" \
