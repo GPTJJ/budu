@@ -26,6 +26,18 @@
 import { miniprogramAccessToken, invalidateMiniprogramToken } from './wechat-access-token.js'
 import { shippingCarrierRequiresContact } from './wechat-delivery-codes.js'
 
+/**
+ * 微信官方 `logistics_type` 枚举（upload_shipping_info 文档原文）：
+ *   1、实体物流配送采用快递公司进行实体物流配送形式
+ *   2、同城配送
+ *   3、虚拟商品，例如话费充值、点卡等，无实体配送形式
+ *   4、用户自提
+ *
+ * 我们只用 1 与 4；2/3 不在 BUDU 的业务里。这是该枚举的**唯一**权威定义处。
+ */
+export const LOGISTICS_TYPE_EXPRESS = 1
+export const LOGISTICS_TYPE_SELF_PICKUP = 4
+
 const UPLOAD_ENDPOINT = 'https://api.weixin.qq.com/wxa/sec/order/upload_shipping_info'
 const GET_ORDER_ENDPOINT = 'https://api.weixin.qq.com/wxa/sec/order/get_order'
 
@@ -45,7 +57,6 @@ const ALREADY_ACCEPTED_CODES = new Set([10060002, 10060003, 10060023])
 const ORDER_STATE_SHIPPED = new Set([2, 3, 4, 6])
 const ORDER_STATE_REFUNDED = 5
 
-const LOGISTICS_TYPE_EXPRESS = 1
 const DELIVERY_MODE_UNIFIED = 1
 
 function text(value, max) {
@@ -173,19 +184,51 @@ export function createWechatShippingInfo({ config, fetchImpl = fetch, now = Date
     return { kind: 'transport' }
   }
 
+  /**
+   * 按微信官方契约组装 upload_shipping_info 的 payload。
+   *
+   * 两种履约的字段需求**不对称**，所以必须分别构造，绝不用 sentinel 填空：
+   *
+   *   DELIVERY（logistics_type=1）
+   *     shipping_list[0] 需要 tracking_no + express_company（官方：「物流快递发货时必填」），
+   *     顺丰还需要掩码后的 contact。
+   *
+   *   PICKUP（logistics_type=4 用户自提）
+   *     tracking_no / express_company / contact 一律**省略** —— 官方对这三者都标注
+   *     「物流快递发货时必填」，自提既没有承运商也没有运单号，伪造任何一个都是在
+   *     往微信写假物流事实。
+   *     item_desc 仍然是必填（官方标「是」，且 10060008/10060020 都会因此拒绝）。
+   *     delivery_mode 只能是 1：官方注意事项 5 明确「分拆发货仅支持使用物流快递发货」。
+   */
   function buildUpload(input) {
+    const method = input?.method === 'PICKUP' ? 'PICKUP' : 'DELIVERY'
     const transactionId = text(input?.transactionId, 64)
     const openid = text(input?.openid, 128)
-    const deliveryId = text(input?.deliveryId, 128)
-    const trackingNo = text(input?.trackingNo, 128)
     const itemDesc = text(input?.itemDesc, 120)
     const uploadTime = toWechatUploadTime(input?.uploadTime)
+
+    // Every one of these is a WeChat-mandatory field for BOTH modes. Refusing locally
+    // is better than letting WeChat reject the shipment and burn the one re-ship chance.
+    if (!transactionId || !openid || !itemDesc || !uploadTime) return null
+
+    if (method === 'PICKUP') {
+      return {
+        order_key: { order_number_type: 2, transaction_id: transactionId },
+        logistics_type: LOGISTICS_TYPE_SELF_PICKUP,
+        delivery_mode: DELIVERY_MODE_UNIFIED,
+        // 自提也必须有 shipping_list（官方：必填，多重性 [1,15]），但条目里只有商品描述。
+        shipping_list: [{ item_desc: itemDesc }],
+        upload_time: uploadTime,
+        payer: { openid },
+      }
+    }
+
+    const deliveryId = text(input?.deliveryId, 128)
+    const trackingNo = text(input?.trackingNo, 128)
+    // 快递缺承运商编码或运单号就本地拒绝（官方 268485226/268485227）。
+    if (!deliveryId || !trackingNo) return null
     // 只接受本模块能证明是官方掩码形态的值；原值不做任何形式的拼接或补位。
     const receiverContact = toWechatReceiverContact(input?.receiverContact)
-
-    // Every one of these is a WeChat-mandatory field. Refusing locally is better
-    // than letting WeChat reject the shipment and burn the one re-ship chance.
-    if (!transactionId || !openid || !deliveryId || !trackingNo || !itemDesc || !uploadTime) return null
     // 顺丰必填 contact（官方原文），缺失或不可掩码时本地拒绝，绝不上传半成品。
     if (shippingCarrierRequiresContact(deliveryId) && !receiverContact) return null
 
@@ -247,10 +290,14 @@ export function createWechatShippingInfo({ config, fetchImpl = fetch, now = Date
      *   `SHIPPED` is the only value that may drive the sync to SYNCED: it means
      *   WeChat itself lists this tracking number for this order.
      */
-    async verify({ transactionId, trackingNo, deliveryId }) {
+    async verify({ transactionId, method, trackingNo, deliveryId }) {
       const txn = text(transactionId, 64)
-      const waybill = text(trackingNo, 128)
-      if (!txn || !waybill) return { status: 'FAILED', code: 0 }
+      const mode = method === 'PICKUP' ? 'PICKUP' : 'DELIVERY'
+      const waybill = mode === 'DELIVERY' ? text(trackingNo, 128) : ''
+      // 快递没有运单号就谈不上核实；自提不看运单号。
+      if (!txn) return { status: 'FAILED', code: 0 }
+      if (mode === 'DELIVERY' && !waybill) return { status: 'FAILED', code: 0 }
+
       const result = await authenticated(GET_ORDER_ENDPOINT, { transaction_id: txn })
       if (result.kind === 'transport') return { status: 'PENDING', code: 0 }
       if (result.kind === 'unavailable') return { status: 'PENDING', code: result.code }
@@ -260,15 +307,39 @@ export function createWechatShippingInfo({ config, fetchImpl = fetch, now = Date
         if (RETRYABLE_CODES.has(errcode)) return { status: 'PENDING', code: errcode }
         return { status: 'FAILED', code: errcode }
       }
+
       const order = result.body.order || {}
-      const list = order.shipping?.shipping_list
-      const ours = Array.isArray(list)
-        ? list.find(entry => entry && entry.tracking_no === waybill
-          && (!deliveryId || !entry.express_company || entry.express_company === deliveryId))
-        : null
-      if (ours) return { status: 'SHIPPED', code: 0 }
+      // 官方按 transaction_id 查询；响应带该字段时必须就是这一笔，否则绝不认领。
+      if (order.transaction_id && order.transaction_id !== txn) return { status: 'MISMATCH', code: 0 }
       const state = Number(order.order_state)
       if (state === ORDER_STATE_REFUNDED) return { status: 'REFUNDED', code: 0 }
+      const shipping = order.shipping || {}
+      const logisticsType = Number(shipping.logistics_type)
+      const list = Array.isArray(shipping.shipping_list) ? shipping.shipping_list : []
+
+      if (mode === 'PICKUP') {
+        // 自提无法用运单号判断，只能按官方 get_order 契约确认：
+        //   1. 微信记录的 logistics_type 确实 = 4（用户自提）
+        //   2. order_state 已进入发货后的合法状态
+        //   3. 官方 finish_shipping（是否已完成全部发货）为 true
+        if (logisticsType !== LOGISTICS_TYPE_SELF_PICKUP) {
+          // 微信已发货，但不是「用户自提」—— 绝不声称 SYNCED。
+          return ORDER_STATE_SHIPPED.has(state) ? { status: 'MISMATCH', code: 0 } : { status: 'PENDING', code: 0 }
+        }
+        if (!ORDER_STATE_SHIPPED.has(state)) return { status: 'PENDING', code: 0 }
+        if (shipping.finish_shipping !== true) return { status: 'PENDING', code: 0 }
+        return { status: 'SHIPPED', code: 0 }
+      }
+
+      const ours = list.find(entry => entry && entry.tracking_no === waybill
+        && (!deliveryId || !entry.express_company || entry.express_company === deliveryId))
+      if (ours) {
+        // 运单是我们的，但微信若把这一单记成了非快递模式，说明模式被改写 ⇒ 不认领。
+        if (Number.isFinite(logisticsType) && logisticsType !== LOGISTICS_TYPE_EXPRESS) {
+          return { status: 'MISMATCH', code: 0 }
+        }
+        return { status: 'SHIPPED', code: 0 }
+      }
       // WeChat shows a shipped order that is not ours. Someone else's waybill (or
       // a manual后台 entry) owns this payment order — never claim it as synced.
       if (ORDER_STATE_SHIPPED.has(state)) return { status: 'MISMATCH', code: 0 }

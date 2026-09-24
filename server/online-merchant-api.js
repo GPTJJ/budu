@@ -52,12 +52,12 @@ export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null
   router.post('/fulfill', handle(async (body, actor, s) => {
     const receipt = await fulfillment.authorize({ settlementId: s.id, actor, requestKey: body.requestKey,
       method: body.method, carrierCode: body.carrierCode, trackingNo: body.trackingNo })
-    // 微信「发货信息管理」同步的接入点：发货事实已经 durable，这里只做一次幂等
+    // 微信「发货信息管理」同步的接入点：履约事实已经 durable，这里只做一次幂等
     // 登记（一行 INSERT），真正的微信调用交给后台 worker。
-    // 只对 DELIVERY 生效：自提没有承运商/运单号，upload_shipping_info 无对应事件，
-    // 登记它只会得到一条必然 409 的噪音。PICKUP 既不建行、不调微信、也不打日志。
-    // 绝不 gate、绝不抛出、绝不改返回：微信同步失败不得变成商家眼里的「发货失败」。
-    if (shippingSync && receipt.method === 'DELIVERY') {
+    // DELIVERY 与 PICKUP 都登记：官方支持 logistics_type=4「用户自提」，
+    // 商家「确认取货」同样需要在微信侧录入发货信息，否则这笔资金永远不能结算。
+    // 绝不 gate、绝不抛出、绝不改返回：微信同步失败不得变成商家眼里的「发货/取货失败」。
+    if (shippingSync) {
       try {
         await shippingSync.register({ settlementId: s.id })
       } catch (error) {

@@ -21,6 +21,7 @@ import { createWechatShippingInfo } from '../server/wechat-shipping-info.js'
 import { createOnlineWechatShippingSync } from '../server/online-wechat-shipping-sync.js'
 import { createOnlineMerchantRouter } from '../server/online-merchant-api.js'
 import { signProductionGatewayRequest, gatewayBodyHash } from '../server/production-cloudbase-gateway.js'
+import { _resetMiniprogramTokenAuthority } from '../server/wechat-access-token.js'
 
 const RAW_URL = process.env.BUDU_SHIPPING_NATIVE_URL
 if (!RAW_URL) throw Error('ISOLATED_NATIVE_URL_REQUIRED')
@@ -54,11 +55,14 @@ const fp = (...parts) => crypto.createHash('sha256').update(parts.join('|')).dig
 function wechatStub() {
   const calls = { token: 0, upload: [], verify: 0 }
   let uploadResults = [], verifyResults = []
+  // 默认健康；A1/A2 会先把它置为不可用，再恢复。
+  const state = { tokenHealthy: true }
   const impl = async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null
     const ok = payload => Promise.resolve({ ok: true, status: 200, json: async () => payload })
     if (url.includes('/cgi-bin/stable_token')) {
       calls.token += 1
+      if (!state.tokenHealthy) return ok({ errcode: 40013, errmsg: 'invalid appid' })
       return ok({ errcode: 0, access_token: 'TOK-native', expires_in: 7200 })
     }
     if (url.includes('/wxa/sec/order/upload_shipping_info')) {
@@ -74,13 +78,19 @@ function wechatStub() {
     throw new Error('UNEXPECTED_URL ' + url)
   }
   return {
-    calls, impl,
+    calls, impl, state,
     queueUpload: (...r) => { uploadResults = r },
     queueVerify: (...r) => { verifyResults = r },
+    tokenDown: () => { state.tokenHealthy = false },
+    tokenUp: () => { state.tokenHealthy = true },
   }
 }
 
 function serviceFor(stub) {
+  // token 权威是**模块级缓存**（keyed by appId）。跨用例必须清掉，否则上一个用例
+  // 缓存的好 token 会让「token 不可用」的用例拿到旧 token 而失去意义 —— 这同时也
+  // 是「新进程 / 无缓存」的真实起点。
+  _resetMiniprogramTokenAuthority()
   const shipping = createWechatShippingInfo({ config: CONFIG, fetchImpl: stub.impl, now: () => Date.now() })
   return createOnlineWechatShippingSync(prisma, { shipping, appId: APP_ID })
 }
@@ -145,6 +155,8 @@ async function fixture({ carrierCode = 'SF', withTrace = true, receiverPhone = '
 }
 
 const row = id => prisma.onlineWechatShippingSync.findUnique({ where: { settlementId: id } })
+const merchantOpenIdFor = async userId =>
+  (await prisma.weChatAuthIdentity.findFirst({ where: { userId, appId: APP_ID } })).openId
 /** 退避会把 available_at 推到未来；测试里显式放行以推进状态机（不改业务语义）。 */
 const release = id => prisma.$executeRaw`
   UPDATE online_wechat_shipping_sync SET available_at = clock_timestamp() - interval '1 second'
@@ -401,17 +413,13 @@ test('B-FIX2: 韵达 uses YD, not the merchant page code YUNDA', async () => {
   assert.equal(stub.calls.upload[0].shipping_list[0].contact, undefined)
 })
 
-test('B-FIX4: PICKUP /fulfill 不注册 shipping sync、不调微信、返回结构不变', async () => {
+test('P6/FIX4: 真实 /fulfill HTTP PICKUP 成功注册 shipping sync，且返回结构完全不变', async () => {
   const f = await fixture({ fulfillment: 'PICKUP', withTrace: false, withAuthorization: false })
   const merchantUserId = f.userId
   const merchantOpenId = (await prisma.weChatAuthIdentity.findFirst({ where: { userId: merchantUserId } })).openId
 
-  const registered = []
-  const shippingSync = {
-    register: async input => { registered.push(input); return { status: 'PENDING_UPLOAD' } },
-    tick: async () => ({ scanned: 0 }),
-  }
   const stub = wechatStub()
+  const shippingSync = serviceFor(stub)
   const app = express()
   app.use('/api/v2/merchant/online-checkout', express.json({ limit: '256kb' }),
     createOnlineMerchantRouter({ db: prisma, gatewayConfig: GATEWAY, logistics: null,
@@ -436,9 +444,259 @@ test('B-FIX4: PICKUP /fulfill 不注册 shipping sync、不调微信、返回结
   const payload = await res.json()
   await new Promise(r => server.close(r))
 
+  // canonical fulfillment 成功，返回结构与语义一字未改
   assert.equal(res.status, 200, JSON.stringify(payload))
-  assert.equal(payload.result.status, 'PICKED_UP', '返回结构与语义不变')
-  assert.deepEqual(registered, [], 'PICKUP 绝不调用 shippingSync.register')
-  assert.equal(await row(f.settlementId), null, 'PICKUP 不创建 sync row')
+  assert.deepEqual(Object.keys(payload.result).sort(),
+    ['authorizationId', 'carrier', 'requestKey', 'settlementId', 'shippedAt', 'status', 'trackingNo'])
+  assert.equal(payload.result.status, 'PICKED_UP')
+  assert.equal(payload.result.method, undefined, '返回结构不得因本轮改动而变化')
+  const auth = await prisma.onlineFulfillmentAuthorization.findUnique({ where: { settlementId: f.settlementId } })
+  assert.equal(auth.method, 'PICKUP')
+
+  // shipping sync row 已创建，且数据满足 PICKUP 约束
+  const stored = await row(f.settlementId)
+  assert.notEqual(stored, null, 'PICKUP 也必须登记')
+  assert.equal(stored.method, 'PICKUP')
+  assert.equal(stored.logisticsType, 4)
+  assert.equal(stored.deliveryId, null)
+  assert.equal(stored.trackingNo, null)
+  assert.equal(stored.status, 'PENDING_UPLOAD')
+
+  // worker 真正上传时用官方自提模式，且不伪造任何物流事实
+  await release(f.settlementId)
+  await shippingSync.tick()
+  assert.equal(stub.calls.upload.length, 1)
+  const sent = stub.calls.upload[0]
+  assert.equal(sent.logistics_type, 4)
+  assert.equal(sent.delivery_mode, 1)
+  assert.deepEqual(sent.shipping_list, [{ item_desc: '92%生巧克力*1' }])
+})
+
+test('P5: PICKUP 不依赖 OnlineLogisticsTrace —— 即使完全没有 trace 行也能同步', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const traces = await prisma.onlineLogisticsTrace.count({ where: { settlementId: f.settlementId } })
+  assert.equal(traces, 0, '此用例本来就没有 trace 行')
+
+  const stub = wechatStub()
+  stub.queueVerify({ errcode: 0, order: { transaction_id: f.txn, order_state: 2,
+    shipping: { logistics_type: 4, delivery_mode: 1, finish_shipping: true, shipping_list: [] } } })
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+  await release(f.settlementId)
+  const summary = await sync.tick()
+  assert.equal(summary.synced, 1, '没有 trace 也必须能核验通过')
+  assert.equal((await row(f.settlementId)).status, 'SYNCED')
+})
+
+// ===========================================================================
+// 第三轮 FIX A —— PENDING 必须区分 ambiguous（真实 PG）
+// ===========================================================================
+
+test('A1: token unavailable ⇒ 未上传，留在 PENDING_UPLOAD，预算与核实计数都为 0', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.tokenDown()
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const summary = await sync.tick()
+  assert.equal(summary.pending, 1)
+
+  // 微信 upload endpoint 一次都没被调用
   assert.equal(stub.calls.upload.length, 0)
+  assert.equal(stub.calls.verify, 0, '更不应进入核实路径')
+  assert.ok(stub.calls.token >= 1, '确实尝试过换取 token')
+
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'PENDING_UPLOAD')
+  assert.equal(stored.reuploadCount, 0)
+  assert.equal(stored.verifyAttempts, 0)
+  assert.equal(stored.uploadAcceptedAt, null)
+})
+
+test('A2: token 恢复后发生第一次正常 upload，且仍不算 reupload', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.tokenDown()
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+  assert.equal((await row(f.settlementId)).status, 'PENDING_UPLOAD')
+
+  stub.tokenUp()
+  await release(f.settlementId)
+  await sync.tick()
+  assert.equal(stub.calls.upload.length, 1, '正常发生第一次 upload')
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'PENDING_VERIFY')
+  assert.equal(stored.reuploadCount, 0, '第一次 upload 绝不算 reupload')
+  assert.equal(stored.verifyAttempts, 0)
+})
+
+test('A2b: 微信明确 retryable response 也留在 PENDING_UPLOAD，不提前消耗唯一重传预算', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueUpload({ errcode: -1, errmsg: 'system error' })
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'PENDING_UPLOAD')
+  assert.equal(stored.reuploadCount, 0)
+  assert.equal(stored.verifyAttempts, 0)
+  assert.equal(stored.uploadAcceptedAt, null)
+  assert.equal(stub.calls.verify, 0)
+  assert.match(stored.lastError, /SHIPPING_UPLOAD_RETRY_-1/)
+
+  // 后续可正常 retry（并成功）
+  await release(f.settlementId)
+  await sync.tick()
+  assert.equal(stub.calls.upload.length, 2, 'retry 仍然是「首次上传」性质的尝试')
+  assert.equal((await row(f.settlementId)).status, 'PENDING_VERIFY')
+  assert.equal((await row(f.settlementId)).reuploadCount, 0, '仍未消耗受控重传预算')
+})
+
+test('A3: transport ambiguous ⇒ PENDING_VERIFY，下一轮先核实而不是盲目重传', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  let explode = true
+  const original = stub.impl
+  const sync = serviceFor({ ...stub, impl: async (url, options) => {
+    if (explode && url.includes('upload_shipping_info')) {
+      explode = false
+      // 关键：请求**确实已经发出**，只是结果不可知。先记录再抛，才能断言「没有盲目重传」。
+      stub.calls.upload.push(JSON.parse(options.body))
+      throw new Error('ECONNRESET')
+    }
+    return original(url, options)
+  } })
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'PENDING_VERIFY', '请求已发出但结果不确定 ⇒ 可能已收下 ⇒ 必须核实')
+  assert.equal(stored.lastError, 'SHIPPING_UPLOAD_AMBIGUOUS')
+  assert.equal(stored.reuploadCount, 0)
+  assert.equal(stored.verifyAttempts, 0)
+
+  await release(f.settlementId)
+  await sync.tick()
+  assert.equal(stub.calls.verify, 1, '下一轮必须 get_order')
+  assert.equal(stub.calls.upload.length, 1, '不得盲目重传')
+})
+
+test('A4: 核实 ×3 之后最多一次受控重传，upload 总数恒 ≤ 2', async () => {
+  const f = await fixture()
+  const stub = wechatStub()   // verify 默认 order_state=1
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  for (let i = 0; i < 10; i++) { await release(f.settlementId); await sync.tick() }
+  assert.equal(stub.calls.upload.length, 2, '首次 + 一次受控重传')
+  const stored = await row(f.settlementId)
+  assert.equal(stored.reuploadCount, 1)
+  assert.equal(stored.status, 'PENDING_VERIFY')
+})
+
+// ===========================================================================
+// 第三轮 FIX B —— PICKUP 接入微信官方「用户自提」（真实 PG）
+// ===========================================================================
+
+test('P1: PICKUP register 落库且满足 PICKUP 约束（无 sentinel）', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const stub = wechatStub()
+  const sync = serviceFor(stub)
+  const registered = await sync.register({ settlementId: f.settlementId })
+  assert.equal(registered.status, 'PENDING_UPLOAD')
+  assert.equal(registered.method, 'PICKUP')
+  assert.equal(registered.logisticsType, 4)
+
+  const stored = await row(f.settlementId)
+  assert.equal(stored.method, 'PICKUP')
+  assert.equal(stored.logisticsType, 4)
+  assert.equal(stored.deliveryId, null, '不得写 PICKUP/NONE/SELF 之类的 sentinel')
+  assert.equal(stored.trackingNo, null, '不得写空运单号占位')
+  assert.equal(stored.lastError, null)
+
+  // 直接违反约束的写法必须被数据库拒绝
+  await assert.rejects(() => prisma.$executeRaw`
+    UPDATE online_wechat_shipping_sync SET tracking_no = 'FAKE'
+    WHERE settlement_id = ${f.settlementId}`, /online_wechat_shipping_sync_check/)
+  await assert.rejects(() => prisma.$executeRaw`
+    UPDATE online_wechat_shipping_sync SET logistics_type = 1
+    WHERE settlement_id = ${f.settlementId}`, /online_wechat_shipping_sync_check/)
+})
+
+test('P2: PICKUP upload 用官方自提模式，且不伪造运单/快递公司/联系方式', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const stub = wechatStub()
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+
+  assert.equal(stub.calls.upload.length, 1)
+  const sent = stub.calls.upload[0]
+  assert.equal(sent.logistics_type, 4, '官方 4 = 用户自提')
+  assert.equal(sent.delivery_mode, 1, '分拆发货仅支持物流快递 ⇒ 自提只能统一发货')
+  assert.equal(sent.order_key.order_number_type, 2)
+  assert.equal(sent.order_key.transaction_id, f.txn, '真实 WECHAT tender')
+  assert.equal(sent.payer.openid, await merchantOpenIdFor(f.userId),
+    'openid 必须来自 WeChatAuthIdentity 的真实值')
+  assert.equal(sent.shipping_list.length, 1)
+  assert.deepEqual(sent.shipping_list[0], { item_desc: '92%生巧克力*1' })
+  assert.equal(sent.is_all_delivered, undefined)
+
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'PENDING_VERIFY')
+  assert.equal(stored.uploadAcceptedAt !== null, true)
+})
+
+test('P3: PICKUP 核验通过（微信记录 logistics_type=4 且已完成发货）⇒ SYNCED', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const stub = wechatStub()
+  stub.queueVerify({ errcode: 0, order: { transaction_id: f.txn, order_state: 2,
+    shipping: { logistics_type: 4, delivery_mode: 1, finish_shipping: true, shipping_list: [] } } })
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()
+  await release(f.settlementId)
+  const summary = await sync.tick()
+  assert.equal(summary.synced, 1)
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'SYNCED')
+  assert.equal(stored.verifiedAt !== null, true)
+  assert.equal(stored.deliveryId, null, 'SYNCED 的自提行仍然不带任何运单事实')
+})
+
+test('P4: PICKUP 但微信记的是别的 logistics_type ⇒ MISMATCH，绝不 SYNCED', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const stub = wechatStub()
+  // 让每一次核实都返回「记成了快递」：连续 MISMATCH 达到阈值后必须判死
+  const wrongMode = { errcode: 0, order: { transaction_id: f.txn, order_state: 2,
+    shipping: { logistics_type: 1, delivery_mode: 1, finish_shipping: true,
+      shipping_list: [{ tracking_no: 'SF-OTHER', express_company: 'SF' }] } } }
+  stub.queueVerify(...Array(9).fill(wrongMode))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  for (let i = 0; i < 8; i++) { await release(f.settlementId); await sync.tick() }
+  const stored = await row(f.settlementId)
+  assert.notEqual(stored.status, 'SYNCED', '微信记的是快递，不是我们的自提履约')
+  assert.equal(stored.status, 'FAILED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
+})
+
+test('P4b: transaction_id 不属于我们 ⇒ MISMATCH', async () => {
+  const f = await fixture({ fulfillment: 'PICKUP', withTrace: false })
+  const stub = wechatStub()
+  const foreign = { errcode: 0, order: { transaction_id: '4200-SOMEONE-ELSE', order_state: 2,
+    shipping: { logistics_type: 4, finish_shipping: true } } }
+  stub.queueVerify(...Array(9).fill(foreign))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await sync.tick()                       // 首次 upload
+  await release(f.settlementId)
+  await sync.tick()                       // 核实 → 订单不属于我们
+  const stored = await row(f.settlementId)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
 })

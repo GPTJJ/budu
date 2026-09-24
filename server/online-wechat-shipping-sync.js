@@ -33,7 +33,7 @@
 import crypto from 'node:crypto'
 import { httpError } from './pos-core.js'
 import { resolveShippingDeliveryId, shippingCarrierRequiresContact } from './wechat-delivery-codes.js'
-import { toWechatReceiverContact } from './wechat-shipping-info.js'
+import { toWechatReceiverContact, LOGISTICS_TYPE_EXPRESS, LOGISTICS_TYPE_SELF_PICKUP } from './wechat-shipping-info.js'
 
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const MAX_ATTEMPTS = 12
@@ -82,8 +82,13 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
   if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) throw Error('ONLINE_SHIPPING_CONFIG_INVALID')
 
   /**
-   * 幂等注册。由 merchant /fulfill 在发货事实已落库之后调用；同一 settlement
-   * 重复调用返回同一状态。未知承运商不猜编码，而是落一条 FAILED 记录把问题显式化。
+   * 幂等注册。由 merchant /fulfill 在履约事实已落库之后调用；同一 settlement
+   * 重复调用返回同一状态。两种履约都支持：
+   *
+   *   DELIVERY → 走承运商映射；映射不到官方编码时**没有微信侧身份**，不写占位串，
+   *              而是落一条 FAILED 让问题显式可见（fail closed）。
+   *   PICKUP   → 不需要承运商、不需要运单号，也不查 OnlineLogisticsTrace；
+   *              delivery_id / tracking_no 保持 NULL，由 DB CHECK 保证。
    */
   async function register(input) {
     const settlementId = cleanText(input?.settlementId, 160)
@@ -94,17 +99,29 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       if (!settlement) throw httpError('订单不存在', 404)
       const authorization = await tx.onlineFulfillmentAuthorization.findUnique({ where: { settlementId } })
       if (!authorization) throw httpError('订单尚未发货', 409)
-      if (authorization.method !== 'DELIVERY' || !authorization.trackingNo) throw httpError('该订单不是配送订单', 409)
 
-      const tracked = resolveShippingDeliveryId(authorization.carrierCode)
+      const method = authorization.method
+      if (method !== 'DELIVERY' && method !== 'PICKUP') throw httpError('履约方式无效', 409)
+
       const uploadTime = authorization.createdAt instanceof Date
         ? authorization.createdAt
         : new Date(authorization.createdAt)
-      const fingerprint = hash({
-        deliveryId: tracked ? tracked.deliveryId : `UNMAPPED:${String(authorization.carrierCode)}`,
-        trackingNo: authorization.trackingNo,
-        uploadTime: uploadTime.toISOString(),
-      })
+
+      let logisticsType = LOGISTICS_TYPE_SELF_PICKUP
+      let deliveryId = null
+      let trackingNo = null
+      if (method === 'DELIVERY') {
+        logisticsType = LOGISTICS_TYPE_EXPRESS
+        trackingNo = cleanText(authorization.trackingNo, 128)
+        if (!trackingNo) throw httpError('该订单缺少运单号', 409)
+        const tracked = resolveShippingDeliveryId(authorization.carrierCode)
+        // 映射不到就保持 null；绝不用 'UNMAPPED_…' 这类串冒充微信 delivery_id。
+        deliveryId = tracked ? tracked.deliveryId : null
+      }
+
+      // 指纹含 method：DELIVERY 与 PICKUP 是两份不同的发货信息，绝不能被当成同一个
+      // payload 互相覆盖。
+      const fingerprint = hash({ method, logisticsType, deliveryId, trackingNo, uploadTime: uploadTime.toISOString() })
 
       const existing = await tx.onlineWechatShippingSync.findUnique({ where: { settlementId } })
       if (existing) {
@@ -114,16 +131,19 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
         return presentation(existing)
       }
 
+      const unmapped = method === 'DELIVERY' && deliveryId === null
       const created = await tx.onlineWechatShippingSync.create({ data: {
         id: 'owss-' + hash(settlementId),
         settlementId,
         authorizationId: authorization.id,
-        status: tracked ? 'PENDING_UPLOAD' : 'FAILED',
-        deliveryId: tracked ? tracked.deliveryId : `UNMAPPED_${cleanText(authorization.carrierCode, 40) || 'EMPTY'}`,
-        trackingNo: cleanText(authorization.trackingNo, 128) || 'UNKNOWN',
+        status: unmapped ? 'FAILED' : 'PENDING_UPLOAD',
+        method,
+        logisticsType,
+        deliveryId,
+        trackingNo,
         uploadTime,
         payloadFingerprint: fingerprint,
-        lastError: tracked ? null : 'SHIPPING_CARRIER_UNSUPPORTED',
+        lastError: unmapped ? 'SHIPPING_CARRIER_UNSUPPORTED' : null,
       } })
       return presentation(created)
     }, { isolationLevel: 'Serializable' })
@@ -133,7 +153,10 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
     return {
       status: row.status,
       synced: row.status === 'SYNCED',
+      method: row.method,
+      logisticsType: row.logisticsType,
       deliveryId: row.deliveryId,
+      trackingNo: row.trackingNo,
       verifiedAt: row.verifiedAt || null,
     }
   }
@@ -157,7 +180,8 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       UPDATE online_wechat_shipping_sync AS t SET lease_owner = ${owner},
         lease_until = clock_timestamp() + (${LEASE_MS} * interval '1 millisecond'), attempts = t.attempts + 1
       FROM candidate WHERE t.id = candidate.id
-      RETURNING t.id, t.settlement_id, t.authorization_id, t.status, t.delivery_id, t.tracking_no,
+      RETURNING t.id, t.settlement_id, t.authorization_id, t.status, t.method, t.logistics_type,
+        t.delivery_id, t.tracking_no,
         t.upload_time, t.payload_fingerprint, t.attempts, t.verify_attempts, t.lease_owner,
         t.upload_accepted_at, t.reupload_count`
     return rows[0] || null
@@ -275,7 +299,12 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       select: { id: true, method: true, trackingNo: true },
     })
     if (!authorization || authorization.id !== row.authorization_id
-      || authorization.method !== 'DELIVERY' || !authorization.trackingNo) {
+      || authorization.method !== row.method) {
+      await settle(row, { status: 'FAILED', error: 'SHIPPING_AUTHORIZATION_MISMATCH' })
+      return { status: 'FAILED' }
+    }
+    // 只有快递才需要运单号；自提没有也不需要。
+    if (row.method === 'DELIVERY' && !authorization.trackingNo) {
       await settle(row, { status: 'FAILED', error: 'SHIPPING_AUTHORIZATION_MISMATCH' })
       return { status: 'FAILED' }
     }
@@ -295,8 +324,10 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
     // 两种情况必须区分开：
     //   - 号码还没到（空）      → 可重试，等它出现，绝不编造
     //   - 号码存在但不可掩码    → 永久性数据问题，fail closed 且不调用微信
+    // 只有快递 + 顺丰才需要联系方式，而且它来自与 trace_waybill 共享的既有边缘事实。
+    // 自提一律**不读** OnlineLogisticsTrace（显式按 method 短路，不依赖 delivery_id 的取值）。
     let receiverContact = ''
-    if (shippingCarrierRequiresContact(row.delivery_id)) {
+    if (row.method === 'DELIVERY' && shippingCarrierRequiresContact(row.delivery_id)) {
       const trace = await prisma.onlineLogisticsTrace.findUnique({
         where: { settlementId: row.settlement_id }, select: { receiverPhone: true },
       })
@@ -318,7 +349,8 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
 
     const verifyNow = async () => {
       const outcome = await shipping.verify({
-        transactionId: tender.providerTransactionId, trackingNo: row.tracking_no, deliveryId: row.delivery_id,
+        method: row.method, transactionId: tender.providerTransactionId,
+        trackingNo: row.tracking_no, deliveryId: row.delivery_id,
       })
       if (outcome.status === 'SHIPPED') { await settle(row, { status: 'SYNCED' }); return { status: 'SYNCED' } }
       if (outcome.status === 'REFUNDED') {
@@ -357,6 +389,7 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
     }
 
     const outcome = await shipping.upload({
+      method: row.method,
       transactionId: tender.providerTransactionId,
       openid: identity.openId,
       deliveryId: row.delivery_id,
@@ -378,12 +411,22 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       await settle(row, { status: 'FAILED', error: `SHIPPING_UPLOAD_REJECTED_${outcome.code}` })
       return { status: 'FAILED' }
     }
-    // 歧义失败（微信可能已收下）→ 转核实，绝不直接重传。
-    await settle(row, {
-      status: 'PENDING_VERIFY',
-      error: outcome.ambiguous ? 'SHIPPING_UPLOAD_AMBIGUOUS' : `SHIPPING_UPLOAD_RETRY_${outcome.code}`,
-      fresh: true,
-    })
+    // FIX A —— 两种 PENDING 的语义必须分开，不能都推进核实路径：
+    //
+    //   ambiguous = true   请求已经发出但结果不确定（超时 / 连接被重置 / 非 JSON 响应），
+    //                      微信可能已经收下 ⇒ 转 PENDING_VERIFY，**先 get_order 核实**。
+    //                      这是唯一值得走核实路径的情形。
+    //
+    //   ambiguous = false  可以确认这次并未成功上传（access_token 根本拿不到，所以压根没
+    //                      调用 upload_shipping_info；或微信明确返回了可重试错误且没接受）
+    //                      ⇒ 留在 PENDING_UPLOAD，下一轮正常重试「首次上传」。
+    //                      不进入只核实不重传的路径、不增加 verify_attempts、
+    //                      也**不消耗**那唯一一次受控重传预算。
+    if (outcome.ambiguous) {
+      await settle(row, { status: 'PENDING_VERIFY', error: 'SHIPPING_UPLOAD_AMBIGUOUS', fresh: true })
+      return { status: 'PENDING' }
+    }
+    await settle(row, { status: 'PENDING', error: `SHIPPING_UPLOAD_RETRY_${outcome.code}` })
     return { status: 'PENDING' }
   }
 

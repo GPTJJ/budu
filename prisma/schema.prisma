@@ -2671,9 +2671,14 @@ model OnlineWechatShippingSync {
   authorizationId    String    @map("authorization_id")
   /// PENDING_UPLOAD | PENDING_VERIFY | SYNCED | UNSUPPORTED | FAILED
   status             String    @default("PENDING_UPLOAD")
-  /// 微信官方 delivery_id（不是 BUDU 页面码；韵达是 YD 而非 YUNDA）
-  deliveryId         String    @map("delivery_id")
-  trackingNo         String    @map("tracking_no")
+  /// 履约方式：DELIVERY | PICKUP。两种履约的物流事实不对称，必须真实表达
+  method             String
+  /// 微信官方 logistics_type：1 = 快递，4 = 用户自提
+  logisticsType      Int       @map("logistics_type")
+  /// 微信官方 delivery_id（不是 BUDU 页面码；韵达是 YD 而非 YUNDA）。PICKUP 为 NULL
+  deliveryId         String?   @map("delivery_id")
+  /// PICKUP 为 NULL（由 DB CHECK 强制，不许用 sentinel 冒充运单）
+  trackingNo         String?   @map("tracking_no")
   uploadTime         DateTime  @map("upload_time")
   /// 防止同一 settlement 被不同的物流数据覆盖
   payloadFingerprint String    @map("payload_fingerprint")

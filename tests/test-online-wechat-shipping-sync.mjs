@@ -31,7 +31,10 @@ function stubFetch(handlers = {}) {
     const body = options.body ? JSON.parse(options.body) : null
     calls.push({ url, body, options })
     const token = url.includes('/cgi-bin/stable_token')
-    if (token) return reply(handlers.token ?? { errcode: 0, access_token: 'TOK-primary', expires_in: 7200 })
+    if (token) {
+      const next = handlers.token
+      return reply(next ? (typeof next === 'function' ? next(calls) : next) : { errcode: 0, access_token: 'TOK-primary', expires_in: 7200 })
+    }
     if (url.includes('/wxa/sec/order/upload_shipping_info')) {
       const next = handlers.upload
       return reply(next ? (typeof next === 'function' ? next(calls) : next) : { errcode: 0, errmsg: 'ok' })
@@ -242,7 +245,6 @@ const AUTHORIZATION = {
   id: 'ofa-' + 'c'.repeat(8), settlementId: SETTLEMENT, method: 'DELIVERY',
   carrierCode: 'SF', trackingNo: TRACKING, createdAt: SHIPPED_AT,
 }
-
 function store(overrides = {}) {
   const tender = overrides.tender === undefined
     ? { type: 'WECHAT', status: 'SUCCEEDED', providerTransactionId: TRANSACTION }
@@ -252,6 +254,7 @@ function store(overrides = {}) {
     row: null,
     claimable: true,
     statements: [],
+    traceLookups: 0,
     settlement: 'settlement' in overrides
       ? overrides.settlement
       : { id: SETTLEMENT, userId: 'u1', quoteId: 'q1', tenders: tender ? [tender] : [] },
@@ -265,13 +268,14 @@ function store(overrides = {}) {
     onlineFulfillmentAuthorization: { findUnique: async () => state.authorization },
     weChatAuthIdentity: { findFirst: async () => state.identity },
     onlineCheckoutQuote: { findUnique: async () => state.quote },
-    onlineLogisticsTrace: { findUnique: async () => state.trace },
+    onlineLogisticsTrace: { findUnique: async () => { state.traceLookups += 1; return state.trace } },
     onlineWechatShippingSync: {
       findUnique: async ({ where }) => state.rows.get(where.settlementId) || null,
       create: async ({ data }) => {
         if (state.rows.has(data.settlementId)) throw Object.assign(Error('unique'), { code: 'P2002' })
         const row = {
-          status: 'PENDING_UPLOAD', attempts: 0, verifyAttempts: 0, reuploadCount: 0, lastError: null,
+          status: 'PENDING_UPLOAD', method: 'DELIVERY', logisticsType: 1,
+          attempts: 0, verifyAttempts: 0, reuploadCount: 0, lastError: null,
           uploadAcceptedAt: null, verifiedAt: null, ...data,
         }
         state.rows.set(data.settlementId, row)
@@ -306,6 +310,7 @@ function store(overrides = {}) {
       row.leaseOwner = 'lease-owner-1'
       return [{
         id: row.id, settlement_id: row.settlementId, authorization_id: row.authorizationId, status: row.status,
+        method: row.method, logistics_type: row.logisticsType,
         delivery_id: row.deliveryId, tracking_no: row.trackingNo, upload_time: row.uploadTime,
         payload_fingerprint: row.payloadFingerprint, attempts: row.attempts, verify_attempts: row.verifyAttempts,
         lease_owner: row.leaseOwner, upload_accepted_at: row.uploadAcceptedAt, reupload_count: row.reuploadCount,
@@ -379,13 +384,24 @@ test('REG-02: logistics facts that changed under the same settlement are refused
   await assert.rejects(() => sync.register({ settlementId: SETTLEMENT }), /冲突/)
 })
 
-test('REG-03: nothing can be registered before the merchant actually shipped, and pickup never enters', async () => {
+test('REG-03: nothing can be registered before the merchant actually shipped', async () => {
   await assert.rejects(
     () => service({ authorization: null }).sync.register({ settlementId: SETTLEMENT }), /尚未发货/)
-  await assert.rejects(
-    () => service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', trackingNo: null } })
-      .sync.register({ settlementId: SETTLEMENT }), /不是配送订单/)
   await assert.rejects(() => service({ settlement: null }).sync.register({ settlementId: SETTLEMENT }), /订单不存在/)
+  await assert.rejects(
+    () => service({ authorization: { ...AUTHORIZATION, method: 'SOMETHING' } })
+      .sync.register({ settlementId: SETTLEMENT }), /履约方式无效/)
+})
+
+test('REG-04: a PICKUP fulfillment registers with NULL carrier/waybill — no sentinel values', async () => {
+  const { sync, state } = service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null } })
+  const registered = await sync.register({ settlementId: SETTLEMENT })
+  assert.equal(registered.status, 'PENDING_UPLOAD')
+  assert.equal(registered.method, 'PICKUP')
+  assert.equal(registered.logisticsType, 4, '官方 4 = 用户自提')
+  assert.equal(registered.deliveryId, null, '自提不得伪造承运商编码')
+  assert.equal(registered.trackingNo, null, '自提不得伪造运单号')
+  assert.equal(state.row.lastError, null)
 })
 
 test('MAP-03: an unmapped carrier is recorded as FAILED, never uploaded with a guessed code', async () => {
@@ -757,15 +773,207 @@ test('FIX3-04: a concurrent second claim of the budget is refused', async () => 
   assert.equal(state.row.reuploadCount, 1)
 })
 
-test('FIX4-01: the merchant /fulfill only registers DELIVERY, never PICKUP', async () => {
-  const source = await import('node:fs').then(fs => fs.readFileSync(
-    new URL('../server/online-merchant-api.js', import.meta.url), 'utf8'))
-  // 结构性回归：注册调用必须被 receipt.method === 'DELIVERY' 守卫包住
-  const guard = source.indexOf("if (shippingSync && receipt.method === 'DELIVERY')")
+test('FIX4-01: the merchant /fulfill registers both DELIVERY and PICKUP without gating the response', async () => {
+  const fs = await import('node:fs')
+  const source = fs.readFileSync(new URL('../server/online-merchant-api.js', import.meta.url), 'utf8')
+  // 官方支持 logistics_type=4「用户自提」，商家「确认取货」同样要录入发货信息。
+  assert.equal(source.includes("receipt.method === 'DELIVERY') {\n      try {"), false,
+    '不得再按 method 限制登记')
+  assert.ok(source.includes('if (shippingSync) {'), '登记必须无条件进行（两种履约都登记）')
+  assert.ok(source.includes('await shippingSync.register({ settlementId: s.id })'))
+  // 登记必须被 try/catch 包住，绝不 gate、绝不抛出、绝不改返回
   const call = source.indexOf('await shippingSync.register(')
-  assert.ok(guard > 0, '缺少 DELIVERY 守卫')
-  assert.ok(guard < call, '守卫必须出现在 register 调用之前')
-  assert.equal(source.includes('if (shippingSync) {\n        await shippingSync.register('), false,
-    '不得保留无条件注册')
+  const guard = source.lastIndexOf('try {', call)
+  assert.ok(guard > 0 && call - guard < 60, 'register 必须紧跟在 try 内')
+  assert.ok(source.indexOf('catch (error) {', call) > call)
 })
 
+
+// ===========================================================================
+// E. 第三轮 FIX — Fix A（PENDING 必须区分 ambiguous）/ Fix B（PICKUP 接入官方自提）
+// ===========================================================================
+
+test('FIXA-01: a token that could never be obtained keeps the row on PENDING_UPLOAD', async () => {
+  // 根本没拿到 access_token ⇒ 压根没调用 upload_shipping_info ⇒ 绝不是「可能已收下」
+  const { sync, state, calls } = service({}, { token: { errcode: 40013, errmsg: 'invalid appid' } })
+  await sync.register({ settlementId: SETTLEMENT })
+  assert.equal((await sync.tick()).pending, 1)
+  assert.equal(state.row.status, 'PENDING_UPLOAD', '未上传成功必须留在首次上传路径')
+  assert.equal(state.row.verifyAttempts, 0, '不得增加 verify_attempts')
+  assert.equal(state.row.reuploadCount, 0, '不得消耗唯一一次受控重传预算')
+  assert.equal(uploadCalls(calls).length, 0, '不应调用 upload endpoint')
+  assert.equal(verifyCalls(calls).length, 0, '更不应进入核实路径')
+  assert.match(state.row.lastError, /SHIPPING_UPLOAD_RETRY_/)
+})
+
+test('FIXA-02: once the token recovers the FIRST upload happens and still is not a re-upload', async () => {
+  let healthy = false
+  const { sync, state, calls } = service({}, {
+    token: () => (healthy ? { errcode: 0, access_token: 'TOK-recovered', expires_in: 7200 } : { errcode: 40013 }),
+  })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  assert.equal(state.row.status, 'PENDING_UPLOAD')
+
+  healthy = true
+  state.claimable = true
+  await sync.tick()
+  assert.equal(uploadCalls(calls).length, 1, 'token 恢复后正常发生第一次上传')
+  assert.equal(state.row.status, 'PENDING_VERIFY')
+  assert.equal(state.row.reuploadCount, 0, '第一次上传不算 reupload')
+  assert.equal(state.row.verifyAttempts, 0)
+})
+
+test('FIXA-03: an explicit retryable rejection stays on PENDING_UPLOAD and does not burn the budget', async () => {
+  for (const code of [-1, 10060012, 10060019, 10060001]) {
+    const { sync, state, calls } = service({}, { upload: { errcode: code } })
+    await sync.register({ settlementId: SETTLEMENT })
+    assert.equal((await sync.tick()).pending, 1)
+    assert.equal(state.row.status, 'PENDING_UPLOAD', `errcode ${code} 是「未接受」，必须留在首次上传路径`)
+    assert.equal(state.row.verifyAttempts, 0)
+    assert.equal(state.row.reuploadCount, 0, '重试首次上传不得消耗受控重传预算')
+    assert.equal(verifyCalls(calls).length, 0)
+    assert.equal(state.row.lastError, `SHIPPING_UPLOAD_RETRY_${code}`)
+
+    // 之后再试仍然按「首次上传」处理
+    state.claimable = true
+    await sync.tick()
+    assert.equal(uploadCalls(calls).length, 2, '可以正常重试首次上传')
+    assert.equal(state.row.reuploadCount, 0)
+  }
+})
+
+test('FIXA-04: only a transport-ambiguous failure enters PENDING_VERIFY', async () => {
+  const { sync, state, calls } = service({}, { upload: { __transport: true } })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  assert.equal(state.row.status, 'PENDING_VERIFY', '超时/重置 ⇒ 微信可能已收下 ⇒ 先核实')
+  assert.equal(state.row.lastError, 'SHIPPING_UPLOAD_AMBIGUOUS')
+  assert.equal(state.row.verifyAttempts, 0)
+  assert.equal(state.row.reuploadCount, 0)
+
+  // 下一轮必须先 get_order，不得直接重传
+  state.claimable = true
+  await sync.tick()
+  assert.equal(uploadCalls(calls).length, 1)
+  assert.equal(verifyCalls(calls).length, 1)
+})
+
+test('FIXA-05: the three PENDING outcomes are actually distinguishable end to end', async () => {
+  const tokenGone = service({}, { token: { errcode: 40013 } })
+  const retryable = service({}, { upload: { errcode: -1 } })
+  const ambiguous = service({}, { upload: { __transport: true } })
+  for (const s of [tokenGone, retryable, ambiguous]) {
+    await s.sync.register({ settlementId: SETTLEMENT })
+    await s.sync.tick()
+  }
+  assert.equal(tokenGone.state.row.status, 'PENDING_UPLOAD')
+  assert.equal(retryable.state.row.status, 'PENDING_UPLOAD')
+  assert.equal(ambiguous.state.row.status, 'PENDING_VERIFY')
+})
+
+test('FIXB-01: the PICKUP payload uses the official self-pickup mode and fabricates nothing', async () => {
+  const { sync, calls } = service({
+    authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null },
+  })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  assert.equal(uploadCalls(calls).length, 1)
+  const sent = uploadCalls(calls)[0].body
+  assert.equal(sent.logistics_type, 4, '官方 4 = 用户自提')
+  assert.equal(sent.delivery_mode, 1, '官方：分拆发货仅支持物流快递 ⇒ 自提只能统一发货')
+  assert.equal(sent.is_all_delivered, undefined)
+  assert.equal(sent.order_key.transaction_id, TRANSACTION, '真实 WECHAT tender')
+  assert.equal(sent.payer.openid, 'oPENID-buyer', '真实 identity')
+  assert.equal(sent.shipping_list.length, 1)
+  assert.deepEqual(sent.shipping_list[0], { item_desc: '92%生巧克力*1' })
+  assert.equal('tracking_no' in sent.shipping_list[0], false, '不得伪造运单号')
+  assert.equal('express_company' in sent.shipping_list[0], false, '不得伪造快递公司')
+  assert.equal('contact' in sent.shipping_list[0], false, '不得伪造联系方式')
+  assert.equal(sent.upload_time, '2026-09-24T10:05:06.789+08:00')
+})
+
+test('FIXB-02: PICKUP never reads OnlineLogisticsTrace', async () => {
+  const pickup = service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null }, trace: null })
+  await pickup.sync.register({ settlementId: SETTLEMENT })
+  await pickup.sync.tick()
+  assert.equal(pickup.state.traceLookups, 0, '自提既不需要运单也不需要收件人联系方式')
+
+  const delivery = service({ trace: null })
+  await delivery.sync.register({ settlementId: SETTLEMENT })
+  await delivery.sync.tick()
+  assert.equal(delivery.state.traceLookups, 1, '顺丰快递仍然需要读边缘事实')
+})
+
+test('FIXB-03: PICKUP verify confirms WeChat actually recorded self-pickup', async () => {
+  const shipped = {
+    errcode: 0,
+    order: { transaction_id: TRANSACTION, order_state: 2,
+      shipping: { logistics_type: 4, delivery_mode: 1, finish_shipping: true, shipping_list: [] } },
+  }
+  const ok = service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null } }, { verify: shipped })
+  await ok.sync.register({ settlementId: SETTLEMENT })
+  await ok.sync.tick()
+  ok.state.claimable = true
+  assert.equal((await ok.sync.tick()).synced, 1)
+  assert.equal(ok.state.row.status, 'SYNCED')
+
+  // 微信已发货，但记成的是快递而不是自提 ⇒ 绝不 SYNCED
+  const wrongMode = service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null } },
+    { verify: { errcode: 0, order: { order_state: 2, shipping: { logistics_type: 1, finish_shipping: true } } } })
+  await wrongMode.sync.register({ settlementId: SETTLEMENT })
+  await wrongMode.sync.tick()
+  wrongMode.state.claimable = true
+  await wrongMode.sync.tick()
+  assert.notEqual(wrongMode.state.row.status, 'SYNCED')
+  assert.equal(wrongMode.state.row.lastError, 'SHIPPING_VERIFY_MISMATCH')
+
+  // 还没进入发货状态 / finish_shipping 未完成 ⇒ 继续等
+  const notYet = service({ authorization: { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null } },
+    { verify: { errcode: 0, order: { order_state: 1, shipping: { logistics_type: 4, finish_shipping: false } } } })
+  await notYet.sync.register({ settlementId: SETTLEMENT })
+  await notYet.sync.tick()
+  notYet.state.claimable = true
+  await notYet.sync.tick()
+  assert.equal(notYet.state.row.status, 'PENDING_VERIFY')
+})
+
+test('FIXB-04: a DELIVERY payload is unaffected by the mode-aware builder', async () => {
+  const { sync, calls } = service({}, { verify: VERIFY_SHIPPED })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  const sent = uploadCalls(calls)[0].body
+  assert.equal(sent.logistics_type, 1)
+  assert.equal(sent.delivery_mode, 1)
+  assert.equal(sent.shipping_list[0].tracking_no, TRACKING)
+  assert.equal(sent.shipping_list[0].express_company, 'SF')
+  assert.deepEqual(sent.shipping_list[0].contact, { receiver_contact: '138****0000' })
+})
+
+test('FIXB-05: a DELIVERY verify that WeChat records as self-pickup is a MISMATCH', async () => {
+  const { sync, state } = service({}, {
+    verify: { errcode: 0, order: { order_state: 2, shipping: { logistics_type: 4, finish_shipping: true,
+      shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }] } } },
+  })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  state.claimable = true
+  await sync.tick()
+  assert.notEqual(state.row.status, 'SYNCED', '微信记的是自提，不是我们的快递')
+  assert.equal(state.row.lastError, 'SHIPPING_VERIFY_MISMATCH')
+})
+
+test('FIXB-06: the fingerprint separates DELIVERY from PICKUP for the same settlement', async () => {
+  const { state, prisma } = store()
+  const { impl } = stubFetch({})
+  _resetMiniprogramTokenAuthority()
+  const sync = createOnlineWechatShippingSync(prisma, {
+    appId: APP_ID, shipping: createWechatShippingInfo({ config: CONFIG, fetchImpl: impl, now: () => 1 }),
+  })
+  await sync.register({ settlementId: SETTLEMENT })
+  const deliveryFingerprint = state.row.payloadFingerprint
+  // 同一 settlement 上换成自提履约事实 ⇒ 指纹必须不同，且必须被拒绝覆盖
+  state.authorization = { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null }
+  await assert.rejects(() => sync.register({ settlementId: SETTLEMENT }), /冲突/)
+  assert.equal(state.row.payloadFingerprint, deliveryFingerprint, '既成指纹不得被改写')
+})
