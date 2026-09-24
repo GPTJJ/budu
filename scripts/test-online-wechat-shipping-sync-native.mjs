@@ -330,11 +330,14 @@ test('B-FIX3/atomic: the conditional UPDATE that grants the budget lets exactly 
   assert.equal((await row(f.settlementId)).reuploadCount, 1)
 })
 
-test('B-08/#8: the SYNCED path requires WeChat to actually list our waybill', async () => {
+test('B-08/#8: the SYNCED path requires WeChat to confirm the shipped state', async () => {
   const f = await fixture()
   const stub = wechatStub()
-  stub.queueVerify({ errcode: 0, order: { order_state: 2, shipping: { finish_shipping: true,
-    shipping_list: [{ tracking_no: f.trackingNo, express_company: 'SF' }] } } })
+  // 严格终态判据：transaction 归属 + logistics_type=1 + 运单/快递公司严格命中 +
+  // post-shipment order_state + finish_shipping=true，五条同时成立才 SHIPPED。
+  stub.queueVerify({ errcode: 0, order: { transaction_id: f.txn, order_state: 2,
+    shipping: { logistics_type: 1, delivery_mode: 1, finish_shipping: true,
+      shipping_list: [{ tracking_no: f.trackingNo, express_company: 'SF' }] } } })
   const sync = serviceFor(stub)
   await sync.register({ settlementId: f.settlementId })
   await sync.tick()                                     // upload
@@ -697,6 +700,129 @@ test('P4b: transaction_id 不属于我们 ⇒ MISMATCH', async () => {
   await release(f.settlementId)
   await sync.tick()                       // 核实 → 订单不属于我们
   const stored = await row(f.settlementId)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
+})
+
+// ===========================================================================
+// 第四轮 FIX — DELIVERY 严格终态判据 D1–D7（真实 PostgreSQL）
+// ===========================================================================
+
+/** 快递事实完全正确的 get_order 响应；各用例只覆盖自己关心的那一个字段。 */
+const orderOk = (txn, trackingNo, over = {}) => ({
+  errcode: 0,
+  order: {
+    transaction_id: txn,
+    order_state: 2,
+    ...over,
+    shipping: { logistics_type: 1, delivery_mode: 1, finish_shipping: true,
+      shipping_list: [{ tracking_no: trackingNo, express_company: 'SF' }], ...(over.shipping || {}) },
+  },
+})
+
+/** 跑 6 轮，返回结算后的行。 */
+async function settleRounds(sync, settlementId, rounds = 6) {
+  for (let i = 0; i < rounds; i++) { await release(settlementId); await sync.tick() }
+  return row(settlementId)
+}
+
+test('D1-PG: 运单已出现但 order_state 仍是待发货 ⇒ PENDING，不 SYNCED', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo, { order_state: 1 })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 3)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_PENDING_0')
+})
+
+test('D2-PG: 已发货、运单正确，但 finish_shipping=false ⇒ PENDING，不 SYNCED', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo, { shipping: { finish_shipping: false } })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 3)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_PENDING_0')
+})
+
+test('D3-PG: 微信记成自提，即使运单看似正确 ⇒ MISMATCH，不 SYNCED', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo, { shipping: { logistics_type: 4 } })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 5)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
+})
+
+test('D4-PG: 运单号正确但快递公司不是我们的 ⇒ MISMATCH', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo,
+    { shipping: { shipping_list: [{ tracking_no: f.trackingNo, express_company: 'YTO' }] } })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 5)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
+})
+
+test('D5-PG: 快递公司字段缺失 ⇒ PENDING，绝不 SYNCED', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo,
+    { shipping: { shipping_list: [{ tracking_no: f.trackingNo }] } })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 3)
+  assert.notEqual(stored.status, 'SYNCED')
+  assert.equal(stored.lastError, 'SHIPPING_VERIFY_PENDING_0')
+})
+
+test('D6-PG: 五条同时成立 ⇒ SHIPPED → SYNCED', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(3).fill(orderOk(f.txn, f.trackingNo)))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  await release(f.settlementId)
+  await sync.tick()
+  await release(f.settlementId)
+  const summary = await sync.tick()
+  assert.equal(summary.synced, 1)
+  const stored = await row(f.settlementId)
+  assert.equal(stored.status, 'SYNCED')
+  assert.equal(stored.verifiedAt !== null, true)
+})
+
+test('D7-PG: 更后续的合法状态（确认收货/交易完成/资金待结算）仍能 SYNCED', async () => {
+  for (const order_state of [3, 4, 6]) {
+    const f = await fixture()
+    const stub = wechatStub()
+    stub.queueVerify(orderOk(f.txn, f.trackingNo, { order_state }))
+    const sync = serviceFor(stub)
+    await sync.register({ settlementId: f.settlementId })
+    await release(f.settlementId)
+    await sync.tick()
+    await release(f.settlementId)
+    const summary = await sync.tick()
+    assert.equal(summary.synced, 1, `order_state=${order_state} 必须能 SYNCED`)
+    assert.equal((await row(f.settlementId)).status, 'SYNCED')
+  }
+})
+
+test('D8-PG/E: 别人的运单占用了这笔支付单 ⇒ MISMATCH', async () => {
+  const f = await fixture()
+  const stub = wechatStub()
+  stub.queueVerify(...Array(9).fill(orderOk(f.txn, f.trackingNo,
+    { shipping: { shipping_list: [{ tracking_no: 'YTO-OTHER', express_company: 'YTO' }] } })))
+  const sync = serviceFor(stub)
+  await sync.register({ settlementId: f.settlementId })
+  const stored = await settleRounds(sync, f.settlementId, 5)
   assert.notEqual(stored.status, 'SYNCED')
   assert.equal(stored.lastError, 'SHIPPING_VERIFY_MISMATCH')
 })

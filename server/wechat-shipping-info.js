@@ -331,19 +331,51 @@ export function createWechatShippingInfo({ config, fetchImpl = fetch, now = Date
         return { status: 'SHIPPED', code: 0 }
       }
 
-      const ours = list.find(entry => entry && entry.tracking_no === waybill
-        && (!deliveryId || !entry.express_company || entry.express_company === deliveryId))
-      if (ours) {
-        // 运单是我们的，但微信若把这一单记成了非快递模式，说明模式被改写 ⇒ 不认领。
-        if (Number.isFinite(logisticsType) && logisticsType !== LOGISTICS_TYPE_EXPRESS) {
-          return { status: 'MISMATCH', code: 0 }
-        }
+      // ---- DELIVERY：严格终态判据 ----
+      //
+      // 上层把 `SHIPPED` 当作「微信已确认这笔订单处于正确的已发货状态」，不是
+      // 「get_order 此刻能查到一条运单」。两者差别是真实存在的：微信是最终一致的，
+      // 运单条目可能先出现、`order_state` 还没推进；`finish_shipping` 也可能还没置位。
+      // 因此下面五条必须**同时**成立才返回 SHIPPED：
+      //   1. transaction_id 属于我们（上面已判）
+      //   2. shipping.logistics_type === 1（快递；字段还没回全则继续等）
+      //   3. shipping_list 中明确命中 tracking_no === 我们的运单
+      //      且 express_company === 我们的 deliveryId（严格相等，不接受字段缺失）
+      //   4. order_state 已进入 post-shipment 合法状态
+      //   5. shipping.finish_shipping === true（官方「是否已完成全部发货」）
+      //
+      // 任何一条不满足都不得 SYNCED；区分 PENDING（还会好转，继续等）与
+      // MISMATCH（微信记的是别人的事实，绝不可能变成我们的）。
+
+      // 字段还没回全 ⇒ 继续等，不要因为「缺字段」提前认定成功。
+      if (!deliveryId) return { status: 'FAILED', code: 0 }
+      if (!Number.isFinite(logisticsType)) return { status: 'PENDING', code: 0 }
+      if (logisticsType !== LOGISTICS_TYPE_EXPRESS) {
+        // 微信把这一单记成了非快递模式：已发货就是别人的事实，否则只是状态未到。
+        return ORDER_STATE_SHIPPED.has(state) ? { status: 'MISMATCH', code: 0 } : { status: 'PENDING', code: 0 }
+      }
+      // 案例 A：运单可能先于发货态出现 ⇒ 状态没到就继续等（eventual consistency）。
+      if (!ORDER_STATE_SHIPPED.has(state)) return { status: 'PENDING', code: 0 }
+      // 案例 B：官方「是否已完成全部发货」必须为 true。
+      if (shipping.finish_shipping !== true) return { status: 'PENDING', code: 0 }
+
+      const entries = list.filter(entry => entry && typeof entry === 'object')
+      const sameWaybill = entries.filter(entry => entry.tracking_no === waybill)
+      // 案例 D / D7：运单号与快递公司都明确等于我们上报的那一份。
+      if (sameWaybill.some(entry => entry.express_company === deliveryId)) {
         return { status: 'SHIPPED', code: 0 }
       }
-      // WeChat shows a shipped order that is not ours. Someone else's waybill (or
-      // a manual后台 entry) owns this payment order — never claim it as synced.
-      if (ORDER_STATE_SHIPPED.has(state)) return { status: 'MISMATCH', code: 0 }
-      return { status: 'PENDING', code: 0 }
+      if (!sameWaybill.length) {
+        // 一条运单条目都没有 ⇒ 只是字段还没回全，别急着判死。
+        if (!entries.length) return { status: 'PENDING', code: 0 }
+        // 案例 E：有运单，但不是我们的 ⇒ 这笔支付单被别人占用，不可能变成我们的。
+        return { status: 'MISMATCH', code: 0 }
+      }
+      // 运单是我们的，但快递公司字段：缺失（案例 D5）⇒ 继续等；
+      // 明确返回了别的快递公司（案例 D4）⇒ MISMATCH。
+      const carrierReturned = sameWaybill.some(
+        entry => typeof entry.express_company === 'string' && entry.express_company)
+      return carrierReturned ? { status: 'MISMATCH', code: 0 } : { status: 'PENDING', code: 0 }
     },
   }
 }

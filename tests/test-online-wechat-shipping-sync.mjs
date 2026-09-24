@@ -155,14 +155,14 @@ test('CLI-06: incomplete inputs are refused locally instead of burning the re-sh
 
 test('CLI-07: verify reports SHIPPED only when WeChat lists OUR waybill', async () => {
   const shipped = {
-    errcode: 0, order: { order_state: 2, shipping: { finish_shipping: true, shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }] } },
+    errcode: 0, order: { order_state: 2, shipping: { logistics_type: 1, finish_shipping: true, shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }] } },
   }
   const ok = client({ verify: shipped })
   assert.deepEqual(await ok.shipping.verify({ transactionId: TRANSACTION, trackingNo: TRACKING, deliveryId: 'SF' }),
     { status: 'SHIPPED', code: 0 })
 
   // 微信已发货，但记录的是别人的运单 —— 绝不能算我们的
-  const someoneElse = { errcode: 0, order: { order_state: 2, shipping: { shipping_list: [{ tracking_no: 'YTO9999', express_company: 'YTO' }] } } }
+  const someoneElse = { errcode: 0, order: { order_state: 2, shipping: { logistics_type: 1, finish_shipping: true, shipping_list: [{ tracking_no: 'YTO9999', express_company: 'YTO' }] } } }
   const mismatch = client({ verify: someoneElse })
   assert.deepEqual(await mismatch.shipping.verify({ transactionId: TRANSACTION, trackingNo: TRACKING, deliveryId: 'SF' }),
     { status: 'MISMATCH', code: 0 })
@@ -357,7 +357,7 @@ function service(overrides = {}, handlers = {}) {
 
 const VERIFY_SHIPPED = {
   errcode: 0,
-  order: { order_state: 2, shipping: { finish_shipping: true, shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }] } },
+  order: { order_state: 2, shipping: { logistics_type: 1, finish_shipping: true, shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }] } },
 }
 
 test('REG-01: registering the same shipment twice is idempotent', async () => {
@@ -577,7 +577,7 @@ test('SVC-11: REFUNDED at WeChat becomes UNSUPPORTED, and MISMATCH never becomes
   assert.equal(refunded.state.row.lastError, 'SHIPPING_ORDER_STATE_REFUNDED')
 
   const mismatch = service({}, {
-    verify: { errcode: 0, order: { order_state: 2, shipping: { shipping_list: [{ tracking_no: 'YTO9999' }] } } },
+    verify: { errcode: 0, order: { order_state: 2, shipping: { logistics_type: 1, finish_shipping: true, shipping_list: [{ tracking_no: 'YTO9999' }] } } },
   })
   await mismatch.sync.register({ settlementId: SETTLEMENT })
   for (let i = 0; i < 5; i++) { mismatch.state.claimable = true; await mismatch.sync.tick() }
@@ -976,4 +976,113 @@ test('FIXB-06: the fingerprint separates DELIVERY from PICKUP for the same settl
   state.authorization = { ...AUTHORIZATION, method: 'PICKUP', carrierCode: null, trackingNo: null }
   await assert.rejects(() => sync.register({ settlementId: SETTLEMENT }), /冲突/)
   assert.equal(state.row.payloadFingerprint, deliveryFingerprint, '既成指纹不得被改写')
+})
+
+// ===========================================================================
+// F. 第四轮 FIX — DELIVERY verify 不得过早 SYNCED（严格终态判据 D1–D7）
+// ===========================================================================
+
+/** 一条「快递事实完全正确」的 get_order 响应；各用例只覆盖自己关心的那一个字段。 */
+const ORDER_OK = (over = {}) => ({
+  errcode: 0,
+  order: {
+    transaction_id: TRANSACTION,
+    order_state: 2,
+    ...over,
+    shipping: { logistics_type: 1, delivery_mode: 1, finish_shipping: true,
+      shipping_list: [{ tracking_no: TRACKING, express_company: 'SF' }], ...(over.shipping || {}) },
+  },
+})
+
+const verifyOnce = async outcome =>
+  client({ verify: outcome }).shipping.verify({ transactionId: TRANSACTION, method: 'DELIVERY',
+    trackingNo: TRACKING, deliveryId: 'SF' })
+
+test('D1: 运单已出现但 order_state 还没到发货态 ⇒ PENDING（eventual consistency）', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK({ order_state: 1 })), { status: 'PENDING', code: 0 })
+})
+
+test('D2: 已发货、运单正确，但 finish_shipping=false ⇒ PENDING', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK({ shipping: { finish_shipping: false } })),
+    { status: 'PENDING', code: 0 })
+  // 字段缺失同样只是「还没回全」，不得当作已完成
+  const absent = ORDER_OK({ shipping: {} })
+  delete absent.order.shipping.finish_shipping
+  assert.deepEqual(await verifyOnce(absent), { status: 'PENDING', code: 0 })
+})
+
+test('D3: 微信把这一单记成自提，即使运单看似正确 ⇒ MISMATCH', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK({ shipping: { logistics_type: 4 } })),
+    { status: 'MISMATCH', code: 0 })
+})
+
+test('D4: 运单号正确但快递公司不是我们的 ⇒ MISMATCH', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK({
+    shipping: { shipping_list: [{ tracking_no: TRACKING, express_company: 'YTO' }] },
+  })), { status: 'MISMATCH', code: 0 })
+})
+
+test('D5: 快递公司字段缺失 ⇒ PENDING，绝不 SYNCED', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK({
+    shipping: { shipping_list: [{ tracking_no: TRACKING }] },
+  })), { status: 'PENDING', code: 0 })
+  assert.deepEqual(await verifyOnce(ORDER_OK({
+    shipping: { shipping_list: [{ tracking_no: TRACKING, express_company: '' }] },
+  })), { status: 'PENDING', code: 0 })
+})
+
+test('D6: 五条同时成立 ⇒ SHIPPED', async () => {
+  assert.deepEqual(await verifyOnce(ORDER_OK()), { status: 'SHIPPED', code: 0 })
+})
+
+test('D7: 更后续的合法状态（确认收货/交易完成/资金待结算）仍可 SHIPPED', async () => {
+  for (const order_state of [3, 4, 6]) {
+    assert.deepEqual(await verifyOnce(ORDER_OK({ order_state })), { status: 'SHIPPED', code: 0 },
+      `order_state=${order_state} 属于 post-shipment 集合`)
+  }
+})
+
+test('D8/E: 已发货但没有我们的运单 ⇒ MISMATCH；连运单条目都没有 ⇒ PENDING', async () => {
+  // 别人的运单占用了这笔支付单
+  assert.deepEqual(await verifyOnce(ORDER_OK({
+    shipping: { shipping_list: [{ tracking_no: 'YTO9999', express_company: 'YTO' }] },
+  })), { status: 'MISMATCH', code: 0 })
+  // 一条都没有 ⇒ 字段还没回全，继续等而不是判死
+  assert.deepEqual(await verifyOnce(ORDER_OK({ shipping: { shipping_list: [] } })),
+    { status: 'PENDING', code: 0 })
+  const noList = ORDER_OK({ shipping: {} })
+  delete noList.order.shipping.shipping_list
+  assert.deepEqual(await verifyOnce(noList), { status: 'PENDING', code: 0 })
+})
+
+test('D9: 字段还没回全（没有 logistics_type）⇒ PENDING，不得因为缺失而认定成功', async () => {
+  const noMode = ORDER_OK({ shipping: {} })
+  delete noMode.order.shipping.logistics_type
+  assert.deepEqual(await verifyOnce(noMode), { status: 'PENDING', code: 0 })
+})
+
+test('D10: 宽松匹配已彻底移除 —— 字段缺失绝不再算命中', async () => {
+  const fs = await import('node:fs')
+  const source = fs.readFileSync(new URL('../server/wechat-shipping-info.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('!entry.express_company'), false,
+    '旧的宽松判断 (… || !entry.express_company || …) 必须已被删除')
+  assert.ok(source.includes('entry.express_company === deliveryId'), '必须是严格相等')
+  assert.ok(source.includes('shipping.finish_shipping !== true'), 'finish_shipping 必须被强制校验')
+})
+
+test('D11: 上面的判据在状态机层面同样成立 —— D1/D5 都到不了 SYNCED', async () => {
+  for (const label of ['D1', 'D5']) {
+    const outcome = label === 'D1'
+      ? ORDER_OK({ order_state: 1 })
+      : ORDER_OK({ shipping: { shipping_list: [{ tracking_no: TRACKING }] } })
+    const { sync, state } = service({}, { verify: outcome })
+    await sync.register({ settlementId: SETTLEMENT })
+    for (let i = 0; i < 6; i++) { state.claimable = true; await sync.tick() }
+    assert.notEqual(state.row.status, 'SYNCED', `${label} 不得 SYNCED`)
+  }
+  // 对照组：完全正确时必须真的能 SYNCED
+  const ok = service({}, { verify: ORDER_OK() })
+  await ok.sync.register({ settlementId: SETTLEMENT })
+  for (let i = 0; i < 3; i++) { ok.state.claimable = true; await ok.sync.tick() }
+  assert.equal(ok.state.row.status, 'SYNCED')
 })
