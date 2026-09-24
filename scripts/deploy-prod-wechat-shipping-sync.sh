@@ -640,15 +640,22 @@ docker exec "$NGINX_CONTAINER" nginx -s reload
 [ "$(docker exec "$NGINX_CONTAINER" grep -Ec "proxy_pass[[:space:]]+http://${CANDIDATE}:3000" "$ACTIVE_CONFIG")" -eq 3 ] || { echo "active nginx route swap incomplete" >&2; exit 1; }
 [ "$(docker exec "$NGINX_CONTAINER" grep -Ec "proxy_pass[[:space:]]+http://${OLD_CONTAINER}:3000" "$ACTIVE_CONFIG")" -eq 0 ] || { echo "old route still active" >&2; exit 1; }
 
-PUBLIC_BASE_URL="https://buducandy.cn" docker exec -i "$CANDIDATE" env EXPECTED_SHA_PREFIX="$RELEASE_SHA" node --input-type=module - <<'NODE'
+# 注意：`/api/health` 的 gitSha 是**截断 12 位**，因此必须传 12 位前缀，且比较时再归一化到 12 位。
+# 另外 `env` 必须显式带上 PUBLIC_BASE_URL —— 写在 docker CLI 前面只会设置 CLI 进程自己的环境，
+# 不会进入容器。
+docker exec -i "$CANDIDATE" env EXPECTED_SHA_PREFIX="${RELEASE_SHA:0:12}" PUBLIC_BASE_URL="https://buducandy.cn" \
+  node --input-type=module - <<'NODE'
 const origin = String(process.env.PUBLIC_BASE_URL || '')
 if (!origin.startsWith('https://')) throw new Error('PUBLIC_ORIGIN_NOT_HTTPS')
 const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(10000) })
 const health = await response.json()
-if (!response.ok || health.ok !== true || health.dbOk !== true || !String(health.gitSha || '').startsWith(process.env.EXPECTED_SHA_PREFIX)) {
-  throw new Error('PUBLIC_HEALTH_AUTHORITY_MISMATCH')
+const actual = String(health.gitSha || '')
+const expected = String(process.env.EXPECTED_SHA_PREFIX || '').slice(0, 12)
+if (!response.ok || health.ok !== true || health.dbOk !== true || !actual.startsWith(expected)) {
+  console.error('PUBLIC_HEALTH_AUTHORITY_MISMATCH actual=' + actual + ' expected=' + expected)
+  process.exit(1)
 }
-console.log(JSON.stringify({ publicHealth: 'PASS', gitSha: health.gitSha }))
+console.log(JSON.stringify({ publicHealth: 'PASS', gitSha: actual }))
 NODE
 [ "$(count_database_writers "$CANDIDATE")" -eq 1 ] || { echo "writer count after nginx cutover is not one" >&2; exit 1; }
 [ "$(feature_digest "$CANDIDATE")" = "$BEFORE_DIGEST" ] || { echo "existing financial facts changed after cutover" >&2; exit 1; }
