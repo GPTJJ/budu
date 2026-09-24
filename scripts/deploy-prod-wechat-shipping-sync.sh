@@ -49,6 +49,7 @@ WORK_ROOT="$(mktemp -d /dev/shm/budu-${RELEASE_TAG}.XXXXXX)"
 BINDING_FILE="${WORK_ROOT}/binding.json"
 DB_ENV_FILE="${WORK_ROOT}/database.env"
 MIGRATE_ENV_FILE="${WORK_ROOT}/migrate.env"
+MIGRATE_PREFLIGHT_FILE="${WORK_ROOT}/migrate-preflight.mjs"
 REHEARSE_ENV_FILE="${WORK_ROOT}/rehearse.env"
 ROLLBACK_ROOT="${APP_DIR}/.rollback-assets/${RELEASE_TAG}-$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -70,7 +71,7 @@ safe_cleanup() {
   if [ -n "$REHEARSAL_PG" ] && docker inspect "$REHEARSAL_PG" >/dev/null 2>&1; then
     docker rm -f "$REHEARSAL_PG" >/dev/null 2>&1 || true
   fi
-  rm -f "$BINDING_FILE" "$DB_ENV_FILE" "$MIGRATE_ENV_FILE" "$REHEARSE_ENV_FILE"
+  rm -f "$BINDING_FILE" "$DB_ENV_FILE" "$MIGRATE_ENV_FILE" "$MIGRATE_PREFLIGHT_FILE" "$REHEARSE_ENV_FILE"
   rm -rf "$WORK_ROOT"
 }
 
@@ -419,9 +420,81 @@ path.write_text(f'DATABASE_URL={database_url}{separator}options={options}\n'
                 f'PGOPTIONS=-c lock_timeout=5s -c statement_timeout=60s\n', encoding='utf-8')
 path.chmod(0o600)
 PY
-docker run --rm --network "$COMMON_NETWORK" --env-file "$MIGRATE_ENV_FILE" "$IMAGE" \
-  sh -c 'npx prisma migrate deploy && node -e "const{PrismaClient}=require(\"@prisma/client\");const p=new PrismaClient();p.\$queryRawUnsafe(\"SHOW lock_timeout\").then(r=>{console.log(\"lock_timeout=\"+Object.values(r[0])[0]);return p.\$disconnect()}).catch(e=>{console.error(e.message);process.exit(1)})"'
+# R2/R3 —— 与 BACKUP_CONTAINER 完全相同的网络 authority 模式：
+#   先建具名 migrator（只挂 COMMON_NETWORK），再把 OLD_CONTAINER 的**全部**网络逐个连上，
+#   全部连接完成后才启动。绝不 hardcode 数据库网络名、不 hardcode DB IP、
+#   不改 DATABASE_URL 的 hostname、不用 host network、不暴露数据库端口。
+# COMMON_NETWORK 是「旧容器 ∩ nginx」的前端网络，**数据库并不在它上面**，
+# 所以只挂单网络必然 P1001 —— 这正是上一轮 PHASE 6 失败的原因。
+cat > "$MIGRATE_PREFLIGHT_FILE" <<'PREFLIGHT'
+import { PrismaClient } from '@prisma/client'
+// 只读 preflight：必须在任何写操作之前证明 connectivity 与 authority。
+const prisma = new PrismaClient()
+try {
+  const [db, mig, lock] = await Promise.all([
+    prisma.$queryRawUnsafe('SELECT current_database() AS n'),
+    prisma.$queryRawUnsafe('SELECT COUNT(*)::int AS c FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'),
+    prisma.$queryRawUnsafe('SHOW lock_timeout'),
+  ])
+  const database = String(db[0]?.n ?? '')
+  const migrations = Number(mig[0]?.c ?? -1)
+  console.log(`PREFLIGHT database=${database} migrations=${migrations} lock_timeout=${Object.values(lock[0] ?? {})[0]}`)
+  if (database !== process.env.EXPECTED_DB) throw new Error('PREFLIGHT_DB_MISMATCH')
+  if (migrations !== Number(process.env.EXPECTED_BASELINE)) throw new Error('PREFLIGHT_MIGRATION_COUNT_MISMATCH')
+} finally {
+  await prisma.$disconnect()
+}
+PREFLIGHT
+chmod 600 "$MIGRATE_PREFLIGHT_FILE"
+
+docker inspect "$MIGRATOR" >/dev/null 2>&1 && { echo "migration container name already exists" >&2; exit 1; }
+docker create --name "$MIGRATOR" --network "$COMMON_NETWORK" \
+  --env-file "$MIGRATE_ENV_FILE" -e EXPECTED_DB="$EXPECTED_DB" -e EXPECTED_BASELINE="$BASELINE_MIGRATIONS" \
+  "$IMAGE" sh -c 'node /tmp/migrate-preflight.mjs && npx prisma migrate deploy' >/dev/null
+docker cp "$MIGRATE_PREFLIGHT_FILE" "${MIGRATOR}:/tmp/migrate-preflight.mjs" >/dev/null
+while IFS= read -r migrate_network; do
+  [ -n "$migrate_network" ] || continue
+  [ "$migrate_network" = "$COMMON_NETWORK" ] && continue
+  docker network connect "$migrate_network" "$MIGRATOR"
+done < <(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$OLD_CONTAINER")
+
+# R9 —— 动态确认 migrator 已继承旧生产的**全部**网络（不 hardcode 任何网络名）
+MIGRATOR_NETS="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$MIGRATOR" | sort)"
+OLD_NETS="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$OLD_CONTAINER" | sort)"
+[ -n "$MIGRATOR_NETS" ] || { echo "migrator has no network" >&2; exit 1; }
+MISSING_NETS=0
+while IFS= read -r required_network; do
+  [ -n "$required_network" ] || continue
+  printf '%s\n' "$MIGRATOR_NETS" | grep -qxF "$required_network" || MISSING_NETS=1
+done <<< "$OLD_NETS"
+[ "$MISSING_NETS" -eq 0 ] || { echo "migrator did not inherit all production networks" >&2; exit 1; }
+echo "migrator networks inherited from production authority: $(printf '%s' "$MIGRATOR_NETS" | tr '\n' ' ')"
+
+docker start "$MIGRATOR" >/dev/null
+MIGRATOR_RC="$(docker wait "$MIGRATOR")"
+if [ "$MIGRATOR_RC" != "0" ]; then
+  echo "migrator failed (exit ${MIGRATOR_RC}); safe log follows" >&2
+  docker logs --tail 80 "$MIGRATOR" >&2 || true
+  exit 1
+fi
+docker rm "$MIGRATOR" >/dev/null
 verify_database_authority "$OLD_CONTAINER" "$TARGET_MIGRATIONS"
+# 显式确认这一条 migration 真已落盘完成（finished_at NOT NULL），而不只是总数对了。
+MIGRATION_LEDGER="$(docker exec -i "$OLD_CONTAINER" env EXPECTED_MIGRATION="$MIGRATION" node --input-type=module - <<'NODE'
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
+try {
+  const rows = await prisma.$queryRawUnsafe(
+    'SELECT finished_at, rolled_back_at FROM _prisma_migrations WHERE migration_name = $1', process.env.EXPECTED_MIGRATION)
+  const row = rows[0]
+  if (!row || !row.finished_at || row.rolled_back_at) throw new Error('MIGRATION_LEDGER_NOT_FINISHED')
+  console.log('migration ledger: finished_at=' + row.finished_at.toISOString())
+} finally {
+  await prisma.$disconnect()
+}
+NODE
+)"
+printf '%s\n' "$MIGRATION_LEDGER"
 AFTER_DIGEST="$(feature_digest "$OLD_CONTAINER")"
 [ "$AFTER_DIGEST" = "$BEFORE_DIGEST" ] || { echo "existing financial facts changed during additive migration" >&2; exit 1; }
 [ "$(sync_row_count "$OLD_CONTAINER")" = "0" ] || { echo "new sync table is not empty at deploy time" >&2; exit 1; }
