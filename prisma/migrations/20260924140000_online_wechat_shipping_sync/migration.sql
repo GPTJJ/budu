@@ -25,6 +25,11 @@ CREATE TABLE online_wechat_shipping_sync (
  payload_fingerprint TEXT NOT NULL,
  attempts INTEGER NOT NULL DEFAULT 0,
  verify_attempts INTEGER NOT NULL DEFAULT 0,
+ -- 「唯一一次受控重传」的持久化预算。微信规定每笔支付单仅有一次重新发货机会，
+ -- 所以这里由数据库兜住上限：即使 worker 重启、换实例、并发 claim，也不会出现第二次
+ -- 重传（服务端用 `AND reupload_count = 0` 的条件 UPDATE 原子赢取许可）。
+ -- 首次 upload 不计入，保持 0。
+ reupload_count INTEGER NOT NULL DEFAULT 0,
  available_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
  lease_until TIMESTAMP(3),
  lease_owner TEXT,
@@ -36,6 +41,8 @@ CREATE TABLE online_wechat_shipping_sync (
  CHECK (status IN ('PENDING_UPLOAD','PENDING_VERIFY','SYNCED','UNSUPPORTED','FAILED')),
  CHECK (attempts >= 0),
  CHECK (verify_attempts >= 0),
+ -- 每笔支付单最多一次受控重传；数据库层不可绕过。
+ CHECK (reupload_count BETWEEN 0 AND 1),
  CHECK (length(delivery_id) BETWEEN 1 AND 128),
  CHECK (length(tracking_no) BETWEEN 1 AND 128),
  -- SYNCED 只能由 get_order 核实产生，因此必然带 verified_at；反过来，没有核实

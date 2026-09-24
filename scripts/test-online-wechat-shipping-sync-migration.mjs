@@ -52,13 +52,15 @@ test('MIG-01: the forward migration applies on a real PostgreSQL catalog and is 
     ORDER BY ordinal_position`)
   const names = columns.rows.map(r => r.column_name)
   for (const expected of ['id', 'settlement_id', 'authorization_id', 'status', 'delivery_id', 'tracking_no',
-    'upload_time', 'payload_fingerprint', 'attempts', 'verify_attempts', 'available_at', 'lease_until',
-    'lease_owner', 'last_error', 'upload_accepted_at', 'verified_at', 'created_at', 'updated_at']) {
+    'upload_time', 'payload_fingerprint', 'attempts', 'verify_attempts', 'reupload_count', 'available_at',
+    'lease_until', 'lease_owner', 'last_error', 'upload_accepted_at', 'verified_at', 'created_at', 'updated_at']) {
     assert.ok(names.includes(expected), `缺列 ${expected}`)
   }
   assert.equal(columns.rows.find(r => r.column_name === 'status').column_default, "'PENDING_UPLOAD'::text")
   assert.equal(columns.rows.find(r => r.column_name === 'attempts').column_default, '0')
   assert.equal(columns.rows.find(r => r.column_name === 'verify_attempts').column_default, '0')
+  assert.equal(columns.rows.find(r => r.column_name === 'reupload_count').column_default, '0',
+    '重传预算必须默认 0（首次 upload 不计入）')
 
   // 加法式：既有表一列未动
   const legacy = await db.query(`
@@ -78,6 +80,7 @@ test('MIG-02: a valid shipment is accepted with the documented defaults', async 
   assert.equal(row.rows[0].status, 'PENDING_UPLOAD')
   assert.equal(row.rows[0].attempts, 0)
   assert.equal(row.rows[0].verify_attempts, 0)
+  assert.equal(row.rows[0].reupload_count, 0)
   assert.equal(row.rows[0].verified_at, null)
   assert.equal(row.rows[0].upload_accepted_at, null)
   assert.equal(row.rows[0].delivery_id, 'YD', '必须是微信官方编码，不是页面码 YUNDA')
@@ -88,19 +91,23 @@ test('MIG-03: the status enum, counters and length guards are enforced by the da
   const db = await freshDb()
   const INSERT_SQL = `INSERT INTO online_wechat_shipping_sync
     (id, settlement_id, authorization_id, status, delivery_id, tracking_no, upload_time,
-     payload_fingerprint, attempts, verify_attempts)
-    VALUES ($1, $2, 'ofa-1', $3, $4, $5, '2026-09-24T02:05:06.789Z', 'fp', $6, $7)`
+     payload_fingerprint, attempts, verify_attempts, reupload_count)
+    VALUES ($1, $2, 'ofa-1', $3, $4, $5, '2026-09-24T02:05:06.789Z', 'fp', $6, $7, $8)`
   const insert = over => {
     const v = {
       id: 'x', settlementId: SETTLEMENT, status: 'PENDING_UPLOAD', deliveryId: 'SF',
-      trackingNo: 'SF1', attempts: 0, verifyAttempts: 0, ...over,
+      trackingNo: 'SF1', attempts: 0, verifyAttempts: 0, reuploadCount: 0, ...over,
     }
-    return db.query(INSERT_SQL, [v.id, v.settlementId, v.status, v.deliveryId, v.trackingNo, v.attempts, v.verifyAttempts])
+    return db.query(INSERT_SQL, [v.id, v.settlementId, v.status, v.deliveryId, v.trackingNo,
+      v.attempts, v.verifyAttempts, v.reuploadCount])
   }
 
   await assert.rejects(() => insert({ status: 'NOPE' }), /online_wechat_shipping_sync_status_check/)
   await assert.rejects(() => insert({ attempts: -1 }), /attempts/)
   await assert.rejects(() => insert({ verifyAttempts: -1 }), /verify_attempts/)
+  // 重传预算的数据库上限：只能 0 或 1
+  await assert.rejects(() => insert({ reuploadCount: 2 }), /reupload_count/)
+  await assert.rejects(() => insert({ reuploadCount: -1 }), /reupload_count/)
   await assert.rejects(() => insert({ deliveryId: '' }), /delivery_id/)
   await assert.rejects(() => insert({ trackingNo: 'x'.repeat(129) }), /tracking_no/)
   // 唯一：一个 settlement 只能有一行
@@ -144,8 +151,14 @@ test('MIG-05: once WeChat accepted the upload the payload can never be rewritten
       () => db.exec(`UPDATE online_wechat_shipping_sync ${mutation} WHERE id='owss-1'`),
       /ONLINE_WECHAT_SHIPPING_PAYLOAD_IMMUTABLE/, `${mutation} 必须被触发器拦下`)
   }
-  // 租约/状态/错误码仍可推进 —— 触发器只钉 payload 本身
+  // 租约/状态/错误码/重传预算仍可推进 —— 触发器只钉 payload 本身
   await db.exec(`UPDATE online_wechat_shipping_sync SET lease_owner='w1', lease_until=now(), last_error=NULL WHERE id='owss-1'`)
+  await db.exec(`UPDATE online_wechat_shipping_sync SET reupload_count=1 WHERE id='owss-1'`)
+  const budget = await db.query(`SELECT reupload_count FROM online_wechat_shipping_sync WHERE id='owss-1'`)
+  assert.equal(budget.rows[0].reupload_count, 1, 'payload 不可改写，但重传预算必须还能记')
+  await assert.rejects(
+    () => db.exec(`UPDATE online_wechat_shipping_sync SET reupload_count=2 WHERE id='owss-1'`),
+    /reupload_count/, '重传预算的上限由数据库兜住')
   await db.exec(`UPDATE online_wechat_shipping_sync SET status='SYNCED', verified_at=now(), lease_owner=NULL WHERE id='owss-1'`)
   const row = await db.query(`SELECT status, tracking_no, delivery_id FROM online_wechat_shipping_sync WHERE id='owss-1'`)
   assert.deepEqual(row.rows[0], { status: 'SYNCED', tracking_no: 'YD1234567890', delivery_id: 'YD' })

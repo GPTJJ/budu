@@ -54,8 +54,10 @@ export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null
       method: body.method, carrierCode: body.carrierCode, trackingNo: body.trackingNo })
     // 微信「发货信息管理」同步的接入点：发货事实已经 durable，这里只做一次幂等
     // 登记（一行 INSERT），真正的微信调用交给后台 worker。
+    // 只对 DELIVERY 生效：自提没有承运商/运单号，upload_shipping_info 无对应事件，
+    // 登记它只会得到一条必然 409 的噪音。PICKUP 既不建行、不调微信、也不打日志。
     // 绝不 gate、绝不抛出、绝不改返回：微信同步失败不得变成商家眼里的「发货失败」。
-    if (shippingSync) {
+    if (shippingSync && receipt.method === 'DELIVERY') {
       try {
         await shippingSync.register({ settlementId: s.id })
       } catch (error) {

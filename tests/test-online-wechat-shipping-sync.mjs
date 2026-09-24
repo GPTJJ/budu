@@ -89,12 +89,14 @@ test('CLI-01: the payload matches the official upload_shipping_info contract exa
   assert.equal(sent.shipping_list.length, 1, '统一发货 shipping_list 长度必须为 1')
   assert.deepEqual(sent.shipping_list[0], {
     tracking_no: TRACKING, express_company: 'SF', item_desc: '92%生巧克力*1',
-    contact: { receiver_contact: '13800000000' },
+    // 官方要求掩码传输；完整号码绝不外发
+    contact: { receiver_contact: '138****0000' },
   })
   assert.equal(sent.is_all_delivered, undefined, '统一发货不带 is_all_delivered')
   // access_token 走查询串，且绝不放进 body
   assert.match(uploadCalls(calls)[0].url, /\?access_token=/)
   assert.equal(JSON.stringify(sent).includes('access_token'), false)
+  assert.equal(JSON.stringify(sent).includes('13800000000'), false, '完整手机号不得出现在 payload')
 })
 
 test('CLI-02: upload_time is RFC 3339 with milliseconds and an explicit +08:00 offset', () => {
@@ -269,7 +271,7 @@ function store(overrides = {}) {
       create: async ({ data }) => {
         if (state.rows.has(data.settlementId)) throw Object.assign(Error('unique'), { code: 'P2002' })
         const row = {
-          status: 'PENDING_UPLOAD', attempts: 0, verifyAttempts: 0, lastError: null,
+          status: 'PENDING_UPLOAD', attempts: 0, verifyAttempts: 0, reuploadCount: 0, lastError: null,
           uploadAcceptedAt: null, verifiedAt: null, ...data,
         }
         state.rows.set(data.settlementId, row)
@@ -281,8 +283,21 @@ function store(overrides = {}) {
       state.txOptions = options
       return fn(prisma)
     },
-    $queryRaw: async () => {
+    $queryRaw: async (strings, ...values) => {
+      const sql = Array.isArray(strings) ? strings.join('§') : String(strings)
       const row = state.row
+      if (sql.includes('SET reupload_count = reupload_count + 1')) {
+        state.statements.push({ sql, values, kind: 'claimReupload' })
+        // 真实 SQL 的条件是 status='PENDING_VERIFY' AND reupload_count = 0 AND lease_owner 相符；
+        // 命中才返回一行，否则 0 行 —— 这就是「最多一次」的原子许可。
+        // 归属校验用 includes：真实语句里 lease_owner 既出现在 SET 也出现在 WHERE，
+        // 绑定参数位置随写法变化，这里只模拟「必须是本行当前租约持有人」。
+        if (!row || row.status !== 'PENDING_VERIFY' || row.reuploadCount >= 1
+          || !values.includes(row.leaseOwner)) return []
+        row.reuploadCount += 1
+        row.verifyAttempts = 0
+        return [{ reupload_count: row.reuploadCount }]
+      }
       if (!row || !state.claimable) return []
       if (!['PENDING_UPLOAD', 'PENDING_VERIFY'].includes(row.status)) return []
       if (row.attempts >= 12) return []
@@ -293,7 +308,7 @@ function store(overrides = {}) {
         id: row.id, settlement_id: row.settlementId, authorization_id: row.authorizationId, status: row.status,
         delivery_id: row.deliveryId, tracking_no: row.trackingNo, upload_time: row.uploadTime,
         payload_fingerprint: row.payloadFingerprint, attempts: row.attempts, verify_attempts: row.verifyAttempts,
-        lease_owner: row.leaseOwner, upload_accepted_at: row.uploadAcceptedAt,
+        lease_owner: row.leaseOwner, upload_accepted_at: row.uploadAcceptedAt, reupload_count: row.reuploadCount,
       }]
     },
     $executeRaw: async (strings, ...values) => {
@@ -308,9 +323,14 @@ function store(overrides = {}) {
         row.verifyAttempts = 0; row.lastError = null; row.availableAt = 'deferred'
       } else if (sql.includes('SET status = §')) {
         row.status = values[0]; row.lastError = values[1]; row.availableAt = null
+      } else if (sql.includes('verify_attempts = verify_attempts + 1')) {
+        // Fix 1：非 fresh 分支是**字面 SQL 表达式**，不是绑定参数。
+        row.status = 'PENDING_VERIFY'; row.lastError = values[0]; row.availableAt = 'deferred'
+        row.verifyAttempts += 1
       } else if (sql.includes("status = 'PENDING_VERIFY'")) {
-        row.status = 'PENDING_VERIFY'; row.lastError = values[1]; row.availableAt = 'deferred'
-        row.verifyAttempts = values[0] === 0 ? 0 : row.verifyAttempts + 1
+        // fresh 分支：verify_attempts = 0
+        row.status = 'PENDING_VERIFY'; row.lastError = values[0]; row.availableAt = 'deferred'
+        row.verifyAttempts = 0
       } else {
         row.lastError = values[0]; row.availableAt = 'deferred'
       }
@@ -327,7 +347,7 @@ function service(overrides = {}, handlers = {}) {
   _resetMiniprogramTokenAuthority()
   const shipping = createWechatShippingInfo({ config: CONFIG, fetchImpl: impl, now: () => 1_700_000_000_000 })
   const sync = createOnlineWechatShippingSync(prisma, { shipping, appId: APP_ID })
-  return { sync, state, calls }
+  return { sync, state, calls, prisma }
 }
 
 const VERIFY_SHIPPED = {
@@ -512,9 +532,18 @@ test('SVC-10: 顺丰 requires a contact; a missing one stays PENDING instead of 
   const { sync, state, calls } = service({ trace: null })
   await sync.register({ settlementId: SETTLEMENT })
   assert.equal((await sync.tick()).pending, 1)
-  assert.equal(state.row.status, 'PENDING_VERIFY')
+  // 尚未上传过，所以必须留在 PENDING_UPLOAD（可重试上传），而不是 PENDING_VERIFY
+  assert.equal(state.row.status, 'PENDING_UPLOAD')
   assert.equal(state.row.lastError, 'SHIPPING_CONTACT_PENDING_SF')
   assert.equal(calls.length, 0, '没有联系方式就不调用微信')
+
+  // 号码后到 → 正常上传（说明它没有被打进「只核实不重传」的路径）
+  state.claimable = true
+  const late = service({ trace: { receiverPhone: '13911112222' } }, { verify: VERIFY_SHIPPED })
+  await late.sync.register({ settlementId: SETTLEMENT })
+  await late.sync.tick()
+  assert.equal(uploadCalls(late.calls).length, 1)
+  assert.equal(uploadCalls(late.calls)[0].body.shipping_list[0].contact.receiver_contact, '139****2222')
 
   // 非顺丰承运商不需要联系方式
   const other = service({ authorization: { ...AUTHORIZATION, carrierCode: 'YTO' }, trace: null }, { verify: VERIFY_SHIPPED })
@@ -613,3 +642,130 @@ test('SAFE-03: a row that reached a terminal state is never claimed again', asyn
     assert.equal((await sync.tick()).scanned, 0, `${terminal} 行不可被 claim`)
   }
 })
+
+// ===========================================================================
+// D. FIX 轮次回归（对应 Review 的 4 个问题）
+// ===========================================================================
+
+test('FIX1-01: the verify counter is advanced by real SQL, never by a bound expression string', async () => {
+  const { sync, state } = service({}, { verify: { errcode: 0, order: { order_state: 1 } } })
+  await sync.register({ settlementId: SETTLEMENT })
+  for (let i = 0; i < 4; i++) { state.claimable = true; await sync.tick() }
+
+  const settles = state.statements.filter(s => s.sql.includes("SET status = 'PENDING_VERIFY'"))
+  assert.ok(settles.length >= 3, '应当发生过多次转入 PENDING_VERIFY 的结算')
+  const fresh = settles.filter(s => s.sql.includes('verify_attempts = 0'))
+  const increments = settles.filter(s => s.sql.includes('verify_attempts = verify_attempts + 1'))
+  assert.equal(fresh.length, 1, '恰好一次「刚从上传转入核实」')
+  assert.ok(increments.length >= 2, '其余都必须是自增分支')
+  // 关键：没有任何一次把表达式当绑定参数
+  for (const s of settles) {
+    assert.equal(s.sql.includes('verify_attempts = §'), false, '不得把表达式留成绑定占位符')
+    for (const v of s.values) {
+      assert.equal(typeof v === 'string' && v.includes('verify_attempts'), false,
+        `绑定参数里不得出现 SQL 表达式：${String(v)}`)
+    }
+  }
+})
+
+test('FIX2-01: toWechatReceiverContact masks a mainland mobile and is idempotent, else fails closed', async () => {
+  const { toWechatReceiverContact } = await import('../server/wechat-shipping-info.js')
+  assert.equal(toWechatReceiverContact('13800000000'), '138****0000', '官方示例形态：前 3 + 后 4')
+  assert.equal(toWechatReceiverContact(' 18612345678 '), '186****5678')
+  assert.equal(toWechatReceiverContact('138****0000'), '138****0000', '已是掩码必须幂等')
+  for (const bad of ['', '   ', null, undefined, '12345', '021-12345678', '1380000000', '138000000000',
+    '23800000000', '+8613800000000', '138-0000-0000', '****0000', '1380000****']) {
+    assert.equal(toWechatReceiverContact(bad), '', `${String(bad)} 必须 fail closed`)
+  }
+})
+
+test('FIX2-02: the raw phone never leaves the process, the masked one is what WeChat receives', async () => {
+  const { sync, calls } = service({}, { verify: VERIFY_SHIPPED })
+  await sync.register({ settlementId: SETTLEMENT })
+  await sync.tick()
+  const sent = uploadCalls(calls)[0].body
+  assert.equal(sent.shipping_list[0].contact.receiver_contact, '138****0000')
+  assert.equal(JSON.stringify(sent).includes('13800000000'), false)
+})
+
+test('FIX2-03: an unmaskable 顺丰 contact fails closed without ever calling WeChat', async () => {
+  const { sync, state, calls } = service({ trace: { receiverPhone: '021-12345678' } })
+  await sync.register({ settlementId: SETTLEMENT })
+  assert.equal((await sync.tick()).failed, 1)
+  assert.equal(state.row.status, 'FAILED')
+  assert.equal(state.row.lastError, 'SHIPPING_CONTACT_INVALID_FORMAT')
+  assert.equal(calls.length, 0)
+  assert.equal(JSON.stringify(state.row).includes('021-12345678'), false, '完整号码不得进错误信息')
+})
+
+test('FIX3-01: the re-upload budget is claimed atomically and consumed at most once', async () => {
+  const { sync, state, calls } = service({}, { verify: { errcode: 0, order: { order_state: 1 } } })
+  await sync.register({ settlementId: SETTLEMENT })
+  for (let i = 0; i < 12; i++) { state.claimable = true; await sync.tick() }
+
+  const claims = state.statements.filter(s => s.kind === 'claimReupload')
+  assert.ok(claims.length >= 1, '核实预算用尽后应当尝试赢取重传许可')
+  for (const c of claims) {
+    assert.match(c.sql, /AND reupload_count = 0/, '许可必须带 reupload_count = 0 条件')
+    assert.match(c.sql, /RETURNING reupload_count/)
+  }
+  assert.equal(calls.filter(c => c.url.includes('upload_shipping_info')).length, 2, '首次 + 一次重传')
+  assert.equal(state.row.reuploadCount, 1, '预算不可回退、不可重复消费')
+})
+
+test('FIX3-02: after the budget is spent only verification continues (no third upload)', async () => {
+  const { sync, state, calls } = service({}, { verify: { errcode: 0, order: { order_state: 1 } } })
+  await sync.register({ settlementId: SETTLEMENT })
+  for (let i = 0; i < 12; i++) { state.claimable = true; await sync.tick() }
+  const uploads = calls.filter(c => c.url.includes('upload_shipping_info')).length
+  for (let i = 0; i < 6; i++) { state.claimable = true; await sync.tick() }
+  assert.equal(calls.filter(c => c.url.includes('upload_shipping_info')).length, uploads,
+    '预算用尽后 upload 次数必须冻结')
+  assert.equal(state.row.reuploadCount, 1)
+})
+
+test('FIX3-03: a second worker instance over the same row cannot re-upload', async () => {
+  const { state, prisma } = store()
+  const { impl, calls } = stubFetch({ verify: { errcode: 0, order: { order_state: 1 } } })
+  _resetMiniprogramTokenAuthority()
+  const shipping = createWechatShippingInfo({ config: CONFIG, fetchImpl: impl, now: () => 1 })
+  const a = createOnlineWechatShippingSync(prisma, { shipping, appId: APP_ID })
+  await a.register({ settlementId: SETTLEMENT })
+  for (let i = 0; i < 12; i++) { state.claimable = true; await a.tick() }
+  const uploads = calls.filter(c => c.url.includes('upload_shipping_info')).length
+  assert.equal(uploads, 2)
+
+  // 「换实例」：同一张表上的全新 service
+  const b = createOnlineWechatShippingSync(prisma, { shipping, appId: APP_ID })
+  for (let i = 0; i < 6; i++) { state.claimable = true; await b.tick() }
+  assert.equal(calls.filter(c => c.url.includes('upload_shipping_info')).length, uploads)
+  assert.equal(state.row.reuploadCount, 1)
+})
+
+test('FIX3-04: a concurrent second claim of the budget is refused', async () => {
+  const { sync, state, prisma } = service()
+  await sync.register({ settlementId: SETTLEMENT })
+  state.row.status = 'PENDING_VERIFY'
+  state.row.leaseOwner = 'lease-owner-1'
+  const grant = () => prisma.$queryRaw`
+    UPDATE online_wechat_shipping_sync SET reupload_count = reupload_count + 1
+    WHERE id = ${state.row.id} AND lease_owner = ${'lease-owner-1'}
+      AND status = 'PENDING_VERIFY' AND reupload_count = 0
+    RETURNING reupload_count`
+  const [first, second] = await Promise.all([grant(), grant()])
+  assert.equal([first, second].filter(r => r.length > 0).length, 1, '并发许可只能有一个成功')
+  assert.equal(state.row.reuploadCount, 1)
+})
+
+test('FIX4-01: the merchant /fulfill only registers DELIVERY, never PICKUP', async () => {
+  const source = await import('node:fs').then(fs => fs.readFileSync(
+    new URL('../server/online-merchant-api.js', import.meta.url), 'utf8'))
+  // 结构性回归：注册调用必须被 receipt.method === 'DELIVERY' 守卫包住
+  const guard = source.indexOf("if (shippingSync && receipt.method === 'DELIVERY')")
+  const call = source.indexOf('await shippingSync.register(')
+  assert.ok(guard > 0, '缺少 DELIVERY 守卫')
+  assert.ok(guard < call, '守卫必须出现在 register 调用之前')
+  assert.equal(source.includes('if (shippingSync) {\n        await shippingSync.register('), false,
+    '不得保留无条件注册')
+})
+

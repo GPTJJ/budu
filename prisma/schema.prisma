@@ -2679,6 +2679,8 @@ model OnlineWechatShippingSync {
   payloadFingerprint String    @map("payload_fingerprint")
   attempts           Int       @default(0)
   verifyAttempts     Int       @default(0) @map("verify_attempts")
+  /// 「唯一一次受控重传」的持久化预算，DB 侧 CHECK 0..1，服务端原子赢取
+  reuploadCount      Int       @default(0) @map("reupload_count")
   availableAt        DateTime  @default(now()) @map("available_at")
   leaseUntil         DateTime? @map("lease_until")
   leaseOwner         String?   @map("lease_owner")

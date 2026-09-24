@@ -33,6 +33,7 @@
 import crypto from 'node:crypto'
 import { httpError } from './pos-core.js'
 import { resolveShippingDeliveryId, shippingCarrierRequiresContact } from './wechat-delivery-codes.js'
+import { toWechatReceiverContact } from './wechat-shipping-info.js'
 
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const MAX_ATTEMPTS = 12
@@ -158,7 +159,7 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       FROM candidate WHERE t.id = candidate.id
       RETURNING t.id, t.settlement_id, t.authorization_id, t.status, t.delivery_id, t.tracking_no,
         t.upload_time, t.payload_fingerprint, t.attempts, t.verify_attempts, t.lease_owner,
-        t.upload_accepted_at`
+        t.upload_accepted_at, t.reupload_count`
     return rows[0] || null
   }
 
@@ -193,13 +194,27 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
     }
     if (outcome.status === 'PENDING_VERIFY') {
       // fresh=true 表示「刚从上传阶段转入核实」：这次不是核实失败，计数归零。
-      const nextVerify = outcome.fresh ? 0 : 'verify_attempts + 1'
-      await prisma.$executeRaw`
-        UPDATE online_wechat_shipping_sync SET status = 'PENDING_VERIFY',
-          verify_attempts = ${nextVerify}, lease_owner = NULL, lease_until = NULL,
-          last_error = ${outcome.error},
-          available_at = clock_timestamp() + (${backoff(row)} * interval '1 millisecond')
-        WHERE id = ${row.id} AND lease_owner = ${row.lease_owner} AND status <> 'SYNCED'`
+      //
+      // ⚠️ 必须写成两条**各自完整**的 SQL。Prisma tagged $executeRaw 会把每个 `${...}`
+      // 变成绑定参数，所以把 `'verify_attempts + 1'` 这样的表达式字符串塞进参数，
+      // 真实 PostgreSQL 会尝试把该字符串写进 INTEGER 列并报类型错误 —— 上一版正是
+      // 这个写法，且被 fake Prisma 的字符串匹配掩盖了。
+      // 禁止用字符串插值拼 SQL 表达式，也禁止 $executeRawUnsafe。
+      if (outcome.fresh) {
+        await prisma.$executeRaw`
+          UPDATE online_wechat_shipping_sync SET status = 'PENDING_VERIFY',
+            verify_attempts = 0, lease_owner = NULL, lease_until = NULL,
+            last_error = ${outcome.error},
+            available_at = clock_timestamp() + (${backoff(row)} * interval '1 millisecond')
+          WHERE id = ${row.id} AND lease_owner = ${row.lease_owner} AND status <> 'SYNCED'`
+      } else {
+        await prisma.$executeRaw`
+          UPDATE online_wechat_shipping_sync SET status = 'PENDING_VERIFY',
+            verify_attempts = verify_attempts + 1, lease_owner = NULL, lease_until = NULL,
+            last_error = ${outcome.error},
+            available_at = clock_timestamp() + (${backoff(row)} * interval '1 millisecond')
+          WHERE id = ${row.id} AND lease_owner = ${row.lease_owner} AND status <> 'SYNCED'`
+      }
       return
     }
     // PENDING_UPLOAD：微信明确没接受，重传是安全的。
@@ -208,6 +223,28 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
         last_error = ${outcome.error},
         available_at = clock_timestamp() + (${backoff(row)} * interval '1 millisecond')
       WHERE id = ${row.id} AND lease_owner = ${row.lease_owner} AND status <> 'SYNCED'`
+  }
+
+  /**
+   * 原子地赢取「唯一一次受控重传」的预算。
+   *
+   * 这是本模块里**唯一**允许增加 upload 次数的许可点，因此把判定与置位放在同一条
+   * 条件 UPDATE 里：`AND reupload_count = 0` 保证两个并发 worker 里最多只有一个拿到
+   * 这一行（另一个 UPDATE 影响 0 行）；DB 侧 `CHECK (reupload_count BETWEEN 0 AND 1)`
+   * 是第二道防线。预算是**持久化列**，进程重启、换实例、重新 claim 都不会重置。
+   *
+   * @returns {Promise<boolean>} true = 本次调用拿到了重传许可，可以上传
+   */
+  async function claimReuploadBudget(row) {
+    const rows = await prisma.$queryRaw`
+      UPDATE online_wechat_shipping_sync
+      SET reupload_count = reupload_count + 1, verify_attempts = 0,
+        lease_owner = ${row.lease_owner},
+        lease_until = clock_timestamp() + (${LEASE_MS} * interval '1 millisecond')
+      WHERE id = ${row.id} AND lease_owner = ${row.lease_owner}
+        AND status = 'PENDING_VERIFY' AND reupload_count = 0
+      RETURNING reupload_count`
+    return Array.isArray(rows) && rows.length > 0
   }
 
   async function syncClaimed(row) {
@@ -252,17 +289,30 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       return { status: 'FAILED' }
     }
 
-    // 顺丰要求联系方式。这是与 trace_waybill 共享的既有边缘事实（同一笔发货），
-    // 只读、不写；缺失时保持 PENDING 等它出现，绝不编造号码。
+    // 顺丰要求联系方式（官方：「当发货的物流公司为顺丰时，联系方式为必填」）。
+    // 来源是与 trace_waybill 共享的既有边缘事实（同一笔发货），**只读、不写**，
+    // 数据库里的 receiverPhone 保持原值；掩码只在发给微信的 payload 构建阶段发生。
+    // 两种情况必须区分开：
+    //   - 号码还没到（空）      → 可重试，等它出现，绝不编造
+    //   - 号码存在但不可掩码    → 永久性数据问题，fail closed 且不调用微信
     let receiverContact = ''
     if (shippingCarrierRequiresContact(row.delivery_id)) {
       const trace = await prisma.onlineLogisticsTrace.findUnique({
         where: { settlementId: row.settlement_id }, select: { receiverPhone: true },
       })
-      receiverContact = cleanText(trace?.receiverPhone, 1024)
-      if (!receiverContact) {
-        await settle(row, { status: 'PENDING_VERIFY', error: 'SHIPPING_CONTACT_PENDING_SF', fresh: true })
+      const raw = cleanText(trace?.receiverPhone, 1024)
+      if (!raw) {
+        // 号码还没到 —— 此时**尚未上传**，所以必须留在 PENDING_UPLOAD 等它出现再试，
+        // 绝不能进 PENDING_VERIFY（那代表「微信已收下、只待核实」，会把这一行推进
+        // 只核实不重传的路径，号码后到也永远补不上）。
+        await settle(row, { status: 'PENDING', error: 'SHIPPING_CONTACT_PENDING_SF' })
         return { status: 'PENDING' }
+      }
+      receiverContact = toWechatReceiverContact(raw)
+      if (!receiverContact) {
+        // 不把完整手机号写进任何错误信息或日志。
+        await settle(row, { status: 'FAILED', error: 'SHIPPING_CONTACT_INVALID_FORMAT' })
+        return { status: 'FAILED' }
       }
     }
 
@@ -290,12 +340,20 @@ export function createOnlineWechatShippingSync(prisma, { shipping, appId, batchS
       return { status: 'PENDING' }
     }
 
-    // 已进入核实阶段：先核实，绝不无脑重传。只有在核实连续失败达到上限、且总尝试
-    // 次数仍有余量时，才做一次受控重传（内容不变 ⇒ 微信判定「未更新」）。
+    // 已进入核实阶段：先核实，绝不无脑重传。核实预算用完之前只核实。
+    //
     // 注意这里不看 upload_accepted_at：传输歧义（我们不知道微信是否收下）同样必须先
     // 核实，否则一次无脑重传就可能撞上「每笔支付单仅一次重新发货机会」。
-    if (row.status === 'PENDING_VERIFY' && Number(row.verify_attempts) < VERIFY_RETRIES_BEFORE_REUPLOAD) {
+    const verifiedTimes = Number(row.verify_attempts) || 0
+    if (row.status === 'PENDING_VERIFY' && verifiedTimes < VERIFY_RETRIES_BEFORE_REUPLOAD) {
       return verifyNow()
+    }
+    // 核实预算已用完。此时**只**在还没用过受控重传时才允许再上传一次；许可是从数据库
+    // 原子赢取的（见 claimReuploadBudget），因此进程重启、换实例、并发 worker 都不会
+    // 让它发生第二次。拿不到许可就继续核实，直到 SYNCED / 永久失败 / 总尝试预算耗尽。
+    if (row.status === 'PENDING_VERIFY') {
+      const granted = await claimReuploadBudget(row)
+      if (!granted) return verifyNow()
     }
 
     const outcome = await shipping.upload({

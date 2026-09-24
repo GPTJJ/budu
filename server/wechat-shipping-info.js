@@ -24,6 +24,7 @@
  *   POST /wxa/sec/order/get_order
  */
 import { miniprogramAccessToken, invalidateMiniprogramToken } from './wechat-access-token.js'
+import { shippingCarrierRequiresContact } from './wechat-delivery-codes.js'
 
 const UPLOAD_ENDPOINT = 'https://api.weixin.qq.com/wxa/sec/order/upload_shipping_info'
 const GET_ORDER_ENDPOINT = 'https://api.weixin.qq.com/wxa/sec/order/get_order'
@@ -88,6 +89,39 @@ export function toWechatUploadTime(value) {
 }
 
 /**
+ * 微信要求 contact 走**掩码传输**，且「最后 4 位数字不能打掩码」。
+ *
+ * 官方原文（upload_shipping_info，2026-05-09 版）：
+ *   receiver_contact「收件人联系方式，采用掩码传输，最后4位数字不能打掩码」
+ *   示例值：`189****1234, 021-****1234, ****1234, 0**2-***1234, 0**2-******23-10, ****123-8008`
+ *   值限制：0 ≤ value ≤ 1024
+ *   contact 为「否（选填）」，但「当发货的物流公司为顺丰时，联系方式为必填」
+ *
+ * 因此这里只接受两种输入，其余一律 fail closed（返回 ''）：
+ *   1. 中国大陆手机号 11 位 `1[3-9]xxxxxxxxx` → 官方主示例形态 `1XX****XXXX`
+ *      （保留前 3 位与后 4 位，中间 4 位打星号）
+ *   2. 已经是该掩码形态 → 幂等原样返回
+ *
+ * 刻意**不**处理器号码（如 `021-****1234`）与其它形态：官方示例里它们存在，但各自的
+ * 区号/分机规则没有明确文档，自行发明掩码规则正是本任务禁止的「猜」。遇到这类值一律
+ * fail closed 并留下明确错误码，由上层的运维补数据，而不是编一个可能被微信静默接受的串。
+ *
+ * 纯函数：数据库里的 receiverPhone 保持原值，只在发给微信的 payload 构建阶段调用。
+ *
+ * @returns {string} 可发送的掩码值；'' 表示缺失、不可掩码或非法 ⇒ 调用方必须 fail closed
+ */
+export function toWechatReceiverContact(value) {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  // 1) 完整大陆手机号 → 掩码
+  if (/^1[3-9]\d{9}$/.test(trimmed)) return `${trimmed.slice(0, 3)}****${trimmed.slice(7)}`
+  // 2) 已是本函数产出的掩码形态（前 3 位是 1[3-9]，中间恰好 4 个星号，后 4 位数字）→ 幂等
+  if (/^1[3-9]\d\*{4}\d{4}$/.test(trimmed)) return trimmed
+  return ''
+}
+
+/**
  * @param {object}   options.config    `{ appId, appSecret }` for the MiniProgram
  * @param {Function} options.fetchImpl injectable for tests
  * @param {Function} options.now       injectable clock
@@ -146,11 +180,14 @@ export function createWechatShippingInfo({ config, fetchImpl = fetch, now = Date
     const trackingNo = text(input?.trackingNo, 128)
     const itemDesc = text(input?.itemDesc, 120)
     const uploadTime = toWechatUploadTime(input?.uploadTime)
-    const receiverContact = text(input?.receiverContact, 1024)
+    // 只接受本模块能证明是官方掩码形态的值；原值不做任何形式的拼接或补位。
+    const receiverContact = toWechatReceiverContact(input?.receiverContact)
 
     // Every one of these is a WeChat-mandatory field. Refusing locally is better
     // than letting WeChat reject the shipment and burn the one re-ship chance.
     if (!transactionId || !openid || !deliveryId || !trackingNo || !itemDesc || !uploadTime) return null
+    // 顺丰必填 contact（官方原文），缺失或不可掩码时本地拒绝，绝不上传半成品。
+    if (shippingCarrierRequiresContact(deliveryId) && !receiverContact) return null
 
     const shipping = { tracking_no: trackingNo, express_company: deliveryId, item_desc: itemDesc }
     if (receiverContact) shipping.contact = { receiver_contact: receiverContact }
