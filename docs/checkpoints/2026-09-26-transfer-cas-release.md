@@ -1,3 +1,42 @@
+# Transfer CAS Final Artifact Gate Revision — authorized production release
+
+2026-09-27。当前用户附件 `20695ca5-2f21-42d9-9e4f-d30989eaa3b8` 明确授权本轮 release engineering 修改、测试、普通 commit/push、dispatch 现有 deploy-prod.yml、生产导入/单writer切换及失败自动回滚。以下是当前合同；后续所有 MEASURE ONLY、4GiB 固定总峰值及旧父提交说明均为历史，不再控制本次发布。
+
+## Verified baseline and exact identity
+
+- Worktree `/Users/apple/.codex/worktrees/transfer-cas-existing-workflow/budu OS`；branch `codex/transfer-cas-existing-workflow`；remote `https://github.com/GPTJJ/budu.git`。
+- CURRENT_RELEASE_HEAD/唯一直接父提交 `99739014c067ebae777c62aff36ae6da5af4b216`；fetch 后远端相同。FINAL_RELEASE_SHA 为本节所在新 commit，不 amend。business `8381959e9c1d527c1f14c234338b14d117ae46f5` 必须仍为 ancestor。
+- 相对8381959的原精确7文件累计allowlist保持；本轮只改controller、CI wrapper、两份release tests及本checkpoint。server/src/prisma/cloudfunctions/MiniProgram/shared/Dockerfile/workflow及Transfer业务均不变。
+- 2026-09-27 02:42 CST实时production：`fc57da5a6e6611c66ed1db286336dc0e1752d69c`；internal/public PASS；budu_bj006；85 applied/0 failed；writer1；路由及runtime source与基线一致。
+- 当前磁盘 used=43357216768 bytes，available=17231982592 bytes，df=72%；总filesystem=63290032128 bytes。Gate0满足usage≤75%、available≥15GiB。发布导入前必须重新读取，不能以此快照替代。
+- 回滚容器/image仍存在；全部既有volume/回滚资产保留。无schema/migration变更，因此不运行pg_dump、迁移、DB clone或DB rollback。
+
+## Evidence-based admission and retained safeguards
+
+- Model A = archive + content blobs + expanded physical layers + largest expanded staging layer + 512MiB reserve。
+- 必须同时满足：**Model A ≤6GiB AND projected df usage ≤85% AND projected available ≥10GiB**。任何一项失败报ARTIFACT_DISK_GATE_FAIL，不得导入/切换。
+- 6GiB只是异常制品sanity ceiling。清理后available16.049GiB，既有实测A=4.582396366GiB，预计79.68%/11.467GiB，超过最低10GiB约1.467GiB。新制品仍须重新逐层测量并使用现场磁盘，不继承旧制品PASS。
+- 百分比按(used+increment)/(used+available)并向上取整，匹配df排除保留块的保守口径；连续百分比作为辅助metrics保留。
+- 原MAX_ARCHIVE=768MiB、单层展开stream=4GiB、loaded image inspect size=4GiB、MAX_MEMBERS=150000、512MiB reserve保持；不将新6GiB总峰值上限套到单层约束。
+- 平台linux/amd64、revision、全部Git runtime payload、server/v2.js hash、唯一直接父提交、business ancestry、workflow历史、release allowlist、85个migration checksum、clone/env/secret mounts/GroupAdd/networks/parity及fc57回滚身份全部保留。
+- MEASURE_ONLY=False仅恢复正常路径，不能替代exact release SHA授权。wrapper只允许既有GitHub workflow_dispatch、指定branch、Linux/X64、run_attempt1，构建exact FINAL_RELEASE_SHA，然后inspect-artifact → preflight → deploy --authorize-release-sha。
+- 逐层metrics、A/B/C及shared-ingest校验模型保留；只读containerd复用信息仅供比较，**部署准入永远使用不扣共享层的Model A**。不启动历史隔离测量daemon。
+- 导入仍为runner压缩layer Docker archive → SSH stdin → docker load；Production不落image.tar、不build/pull/prune。导入后额外保留512MiB reserve的85%/10GiB门通过才允许stop旧writer。
+- 单一生产controller执行old stop → writer0/连接退出 → candidate start →内部health、85/0、writer1、clone parity → nginx -t/reload → publichealth。任一步失败回滚fc57，禁止双writer；无生产Transfer竞争/写入测试。
+- 导入前、导入后、cutover后输出磁盘证据；最终85%/10GiB门失败也触发应用回滚。未知SSH/导入状态保持锁，不盲目重试。
+
+## Validation and handoff
+
+- 本轮release suite 62/62，existing-workflow suite10/10；覆盖4.58GiB当前基线PASS、>6GiB FAIL、85%/10GiB边界、旧81%基线FAIL、真实历史artifact尺寸、wrongSHA/DB/migration/writer/schema/allowlist/rollback、导入后停止旧writer前磁盘拒绝、cutover后磁盘失败回滚，以及原失败矩阵。
+- bash-n、Python compile、diff whitespace、业务/Prisma/workflow不变校验必须PASS后commit；NEW_FAILURES=0。未重新运行无关全仓测试，保留之前CAS60/60、browser20/20和原基线10项失败记录。
+- 最终构建和生产证据不能预先宣称PASS；真实run ID、FINAL_RELEASE_SHA、部署状态及只读验收写本机 `/Users/apple/.codex/artifacts/transfer-cas-final-deploy-20260927/`，以及GitHub run日志/summary。
+- 主checkout未知修改保留且排除；本轮只普通push指定分支，不修改workflow、不force。未提交/未推送内容无法从其它设备经Git恢复；最终报告明确远端同步状态，本机证据不会自动上传。
+- 完成本次成功/失败结果后STOP，不继续清理、云扩容或NEXT_FIX_2。
+
+---
+
+## Historical measurement record (superseded)
+
 # Transfer CAS Artifact Disk Feasibility Audit — MEASURE ONLY
 
 2026-09-27。本轮任务撤销继续部署路径，仅授权测量、普通release-engineering commit/push和dispatch现有workflow。即使SAFE也STOP，不导入Production、不cutover、不调阈值、不扩盘、不清理image/container/cache。下面所有旧部署授权/固定父提交说明仅为历史。

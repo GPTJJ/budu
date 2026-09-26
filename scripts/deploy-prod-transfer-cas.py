@@ -25,8 +25,8 @@ from urllib.parse import urlsplit, unquote
 
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
-RELEASE_BASE = 'cfba0240764e0c8205354d7d79e46f37843ba289'
-MEASURE_ONLY = True  # Locked for this release; there is no CLI override.
+RELEASE_BASE = '99739014c067ebae777c62aff36ae6da5af4b216'
+MEASURE_ONLY = False  # Deployment still requires exact-SHA explicit authorization.
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
 MIGRATION_REQUIRED = 'NO'
@@ -51,7 +51,11 @@ HOST_DEFAULTS = {'Memory': 0, 'MemoryReservation': 0, 'MemorySwap': 0, 'MemorySw
 GIB = 1024 ** 3
 # Admission bounds, not an assertion that an unbuilt image has these sizes.
 MAX_ARCHIVE = 768 * 1024 ** 2
-MAX_PEAK = 4 * GIB
+ABSOLUTE_MAX_PEAK = 6 * GIB
+MAX_LAYER_STREAM = 4 * GIB  # Existing independent expansion bound is unchanged.
+MAX_IMAGE_SIZE = 4 * GIB
+MAX_PROJECTED_USAGE = 85
+MIN_PROJECTED_AVAILABLE = 10 * GIB
 RESERVE = 512 * 1024 ** 2
 MAX_MEMBERS = 150000
 REVISION = 'org.opencontainers.image.revision'
@@ -125,7 +129,7 @@ def validate_loaded_image(image, art):
             and image['Architecture'] == 'amd64'
             and image['Config'].get('Labels', {}).get(REVISION) == art['release'], 'LOADED_ARTIFACT_MISMATCH')
     require(all(image['Config'].get(k) == art['config'].get(k) for k in IDENTITY_KEYS), 'LOADED_CONFIG_MISMATCH')
-    require(0 < image['Size'] <= MAX_PEAK, 'LOADED_IMAGE_SIZE_INVALID')
+    require(0 < image['Size'] <= MAX_IMAGE_SIZE, 'LOADED_IMAGE_SIZE_INVALID')
 
 def disk_budget(used, available, archive, blobs, expanded, largest_layer):
     # containerd import: incoming archive allowance + content blobs + snapshots +
@@ -133,10 +137,11 @@ def disk_budget(used, available, archive, blobs, expanded, largest_layer):
     peak = archive + blobs + expanded + largest_layer + RESERVE
     require(0 < archive <= MAX_ARCHIVE and min(blobs, expanded, largest_layer) > 0,
             'ARTIFACT_SIZE_INVALID')
-    require(peak <= MAX_PEAK, 'ARTIFACT_PEAK_EXCEEDS_CONTRACT')
+    require(peak <= ABSOLUTE_MAX_PEAK, 'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK')
     projected = math.ceil(100 * (used + peak) / (used + available))
     minimum = available - peak
-    require(projected < 90 and minimum >= 5 * GIB, 'DEPLOYMENT_DISK_UNSAFE')
+    require(projected <= MAX_PROJECTED_USAGE and minimum >= MIN_PROJECTED_AVAILABLE,
+            'ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM')
     return dict(peakIncrement=peak, finalIncrement=blobs + expanded,
                 tempIncrement=archive + largest_layer + RESERVE,
                 projectedUsage=projected, projectedAvailable=minimum)
@@ -152,7 +157,7 @@ class HashReader:
     def read(self, n=-1):
         b = self.source.read(n)
         self.total += len(b)
-        require(self.total <= MAX_PEAK, 'LAYER_STREAM_TOO_LARGE')
+        require(self.total <= MAX_LAYER_STREAM, 'LAYER_STREAM_TOO_LARGE')
         self.h.update(b)
         return b
 
@@ -416,7 +421,8 @@ def preflight(remote, art, ledger, imported=False):
     df_h = remote.run(['df','-h','/']).decode()
     docker_df = remote.run(['docker','system','df']).decode()
     budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest']) if not imported else {'projectedUsage':math.ceil(100*(used+RESERVE)/(used+available)), 'projectedAvailable':available-RESERVE}
-    require(budget['projectedUsage'] < 90 and budget['projectedAvailable'] >= 5*GIB, 'DEPLOYMENT_DISK_UNSAFE')
+    require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
+            'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM')
     remote.inspect(old['Image'], image=True)  # rollback image exists
     return dict(old=old, name=name, template=template, active=active, budget=budget,
                 diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df)
@@ -568,12 +574,14 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         settle_writers(remote, ledger, [name])
         runtime_checks(remote, name, art['runtimeHash'])
         used, available = remote.disk()
-        require(math.ceil(100*used/(used+available)) < 90 and available >= 5*GIB, 'POST_DEPLOY_DISK_UNSAFE')
+        require(math.ceil(100*used/(used+available)) <= MAX_PROJECTED_USAGE
+                and available >= MIN_PROJECTED_AVAILABLE, 'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM')
         state['pointer_touched'] = True
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
         require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
         print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1,
-                          'diskAfterUsed':used,'diskAfterAvailable':available,'transferCodePresent':True}))
+                          'diskAfterUsed':used,'diskAfterAvailable':available,
+                          'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True}))
     except BaseException:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -592,6 +600,9 @@ def deploy(remote, repo, path, art, ledger, authorize):
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     require(authorize == art['release'], 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
     state = preflight(remote, art, ledger)
+    print(json.dumps({'stage':'PRE_IMPORT_ADMISSION','releaseSha':art['release'],
+                      'diskBefore':{'used':state['diskUsed'],'available':state['diskAvailable']},
+                      'budget':state['budget'],'metrics':artifact_metrics(art)}), flush=True)
     release = art['release']
     name = 'budu-prod-' + release[:12] + '-transfer-cas'
     remote.py('import os; os.mkdir(%r,0o700)' % LOCK)
@@ -614,6 +625,8 @@ def deploy(remote, repo, path, art, ledger, authorize):
         # environment or credential-bearing inspect output is printed.
         used, available = remote.disk()
         print(json.dumps({'stage':'POST_IMPORT_DISK','used':used,'available':available,
+                          'IMAGE_SIZE_GIB':image['Size']/GIB,
+                          'dfPk':remote.run(['df','-Pk','/']).decode(),
                           'dfHuman':remote.run(['df','-h','/']).decode(),
                           'dockerSystemDf':remote.run(['docker','system','df']).decode()}), flush=True)
         payload = {'art':art,'ledger':ledger,
@@ -641,9 +654,9 @@ def artifact_metrics(art):
               'RESERVE':RESERVE,'CURRENT_FORMULA_PEAK':art['archive']+art['blobs']+art['expanded']+art['largest']+RESERVE}
     result = {key+suffix:(value if suffix == '_BYTES' else value/GIB)
               for key,value in values.items() for suffix in ('_BYTES','_GIB')}
-    result.update(CURRENT_GATE_MAX_GIB=MAX_PEAK/GIB,
-                  EXCESS_OVER_4GIB_BYTES=max(0,values['CURRENT_FORMULA_PEAK']-MAX_PEAK),
-                  EXCESS_OVER_4GIB=max(0,values['CURRENT_FORMULA_PEAK']-MAX_PEAK)/GIB,
+    result.update(CURRENT_GATE_MAX_GIB=ABSOLUTE_MAX_PEAK/GIB,
+                  EXCESS_OVER_4GIB_BYTES=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB),
+                  EXCESS_OVER_4GIB=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB)/GIB,
                   IMAGE_PLATFORM='linux',IMAGE_ARCH='amd64',IMAGE_ID=art['imageId'],LAYERS=art['layers'])
     return result
 
@@ -766,7 +779,9 @@ def disk_models(art, production):
         pct=math.ceil(100*used/(production['diskUsed']+production['diskAvailable']))
         models[name]={'PEAK_INCREMENT_BYTES':peak,'PEAK_INCREMENT_GIB':peak/GIB,
                       'PROJECTED_USED_GIB':used/GIB,'PROJECTED_AVAILABLE_GIB':available/GIB,
-                      'PROJECTED_USAGE_PERCENT':pct,'WITHIN_90_PERCENT_AND_5_GIB':pct<90 and available>=5*GIB}
+                      'PROJECTED_USAGE_PERCENT':pct,
+                      'PROJECTED_USAGE_CONTINUOUS_PERCENT':100*used/(production['diskUsed']+production['diskAvailable']),
+                      'WITHIN_85_PERCENT_AND_10_GIB':pct<=MAX_PROJECTED_USAGE and available>=MIN_PROJECTED_AVAILABLE}
     return {'layers':inventory,'CANDIDATE_LAYER_COUNT':len(inventory),'SHARED_LAYER_COUNT':shared_count,
             'UNIQUE_CANDIDATE_LAYER_COUNT':len(inventory)-shared_count,'REUSABLE_SNAPSHOT_LAYER_COUNT':reused_count,
             'SHARED_EXPANDED_BYTES':shared_expanded,'UNIQUE_CANDIDATE_EXPANDED_BYTES':unique_expanded,
@@ -855,8 +870,8 @@ def measure_release(repo,path,art,ledger,key):
                         and production['storage'].get('Driver') == 'overlayfs'
                         and ['driver-type','io.containerd.snapshotter.v1'] in production['storage'].get('DriverStatus',[])
                         and production.get('containerdVersion') == '2.2.1')
-    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE']['WITHIN_90_PERCENT_AND_5_GIB']
-    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK']['WITHIN_90_PERCENT_AND_5_GIB']
+    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE']['WITHIN_85_PERCENT_AND_10_GIB']
+    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK']['WITHIN_85_PERCENT_AND_10_GIB']
     feasibility=('SAFE' if streaming_evidence and (model_b_safe or model_c_safe)
                  else 'UNSAFE' if streaming_evidence and production['metadata']['metadataAvailable'] and not model_c_safe
                  else 'INCONCLUSIVE')
@@ -866,9 +881,9 @@ def measure_release(repo,path,art,ledger,key):
             'PRODUCTION_ARCHIVE_RESIDENT_BYTES':0 if streaming_evidence else 'UNKNOWN',
             'archiveEvidence':'SSH stdin / containerd streaming ImportIndex; no complete archive file in the audited path',
             'PRODUCTION_OPERATIONAL_CHANGES':0,'BUSINESS_DATA_WRITE_OPERATIONS':0,'PRODUCTION_DEPLOYED':False,
-            'DISK_FEASIBILITY':feasibility,'MAX_PEAK_UNCHANGED':MAX_PEAK,
+            'DISK_FEASIBILITY':feasibility,'ABSOLUTE_MAX_PEAK':ABSOLUTE_MAX_PEAK,
             'RECOMMENDED_PEAK_FORMULA':'unique blobs + unique chain snapshots + max(largest unique expanded layer, largest shared blob ingest) + 512MiB; unknown counted unique',
-            'RECOMMENDED_MAX_ARTIFACT_POLICY':'Keep current 4GiB cap unchanged; separately review admission against conservative streaming peak, projected usage <90% and available >=5GiB with 512MiB reserve and fresh reuse proof',
+            'RECOMMENDED_MAX_ARTIFACT_POLICY':'Model A <=6GiB AND projected usage <=85% AND available >=10GiB; 512MiB reserve retained; B/C metrics cannot authorize deployment',
             'RECOMMENDED_NEXT_ACTION':('Review a future disk-admission policy separately; deployment still forbidden'
                                        if feasibility=='SAFE' else 'EXPAND_PRODUCTION_SYSTEM_DISK'),
             'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
@@ -908,6 +923,7 @@ def main():
             deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
         return
     art = artifact(args.archive, release, args.repo)
+    print(json.dumps({'stage':'ARTIFACT_METRICS','metrics':artifact_metrics(art)},sort_keys=True),flush=True)
     if args.mode in ('measure-artifact','measure'):
         require(MEASURE_ONLY, 'MEASUREMENT_RELEASE_REQUIRED')
         metrics = artifact_metrics(art)
@@ -928,6 +944,10 @@ def main():
         require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
         remote = Remote(args.ssh_key)
         state = preflight(remote,art,ledger)
+        # Preserve measured layers and fresh reuse evidence as diagnostics only.
+        # Admission always uses full Model A, without reuse discounts.
+        measured = production_measurement(MeasurementRemote(args.ssh_key),art,ledger)
+        summary['models'] = disk_models(art,measured)
         summary['budget'] = state['budget']
         summary['diskBefore'] = {'used':state['diskUsed'],'available':state['diskAvailable']}
         summary['dfHuman'] = state['dfHuman']

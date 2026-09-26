@@ -2,8 +2,6 @@
 # Adapter for the existing deploy-prod.yml workflow; no alternative cutover.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
-readonly MEASURE_ONLY=TRUE
-export MEASURE_ONLY
 
 test "$#" -eq 4
 DEPLOY_HOST="$1"
@@ -42,7 +40,7 @@ root=Path(os.environ['TRANSFER_CAS_RUN_DIR'])
 summary=os.environ.get('GITHUB_STEP_SUMMARY')
 if summary:
     with open(summary,'a') as out:
-        for name in ('measurement',):
+        for name in ('artifact','preflight','deployment'):
             p=root/(name+'.json')
             if p.exists():
                 out.write('### Transfer CAS '+name+'\n\n```json\n'+p.read_text()+'\n```\n\n')
@@ -78,7 +76,11 @@ timeout 35m docker buildx build --builder transfer-cas --platform linux/amd64 \
   --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUN_DIR/image.tar" \
   "$RUN_DIR/source"
 
-# This measurement release has no production import/cutover invocation.
-bash scripts/deploy-prod-transfer-cas.sh measure --repo "$PWD" --archive "$RUN_DIR/image.tar" \
-  --ssh-key "$HOME/.ssh/id_ed25519" | tee "$RUN_DIR/measurement.json"
-printf 'MEASURE_ONLY=TRUE PRODUCTION_DEPLOYED=NO STOP\n'
+# Explicitly authorized exact release; each command fails closed under pipefail.
+bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+  | tee "$RUN_DIR/artifact.json"
+bash scripts/deploy-prod-transfer-cas.sh preflight --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+  --ssh-key "$HOME/.ssh/id_ed25519" | tee "$RUN_DIR/preflight.json"
+timeout 15m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+  --ssh-key "$HOME/.ssh/id_ed25519" --authorize-release-sha "$RELEASE_SHA" \
+  | tee "$RUN_DIR/deployment.json"

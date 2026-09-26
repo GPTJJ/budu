@@ -59,7 +59,7 @@ class Fake:
         return copy.deepcopy(self.old if name in (OLD_NAME,self.old['Id']) else self.new)
     def containers(self):return copy.deepcopy(self.running)
     def routes(self):return self.template,self.active
-    def disk(self):return 47584356*1024,11584784*1024
+    def disk(self):return 43356397568,17232801792
     def db(self):
         return {'database':r.EXPECTED_DB,'applied':85,'failed':0,'ledger':LEDGER,
                 'clients':[c['NetworkSettings']['Networks']['net']['IPAddress'] for c in self.running],**self.db_override}
@@ -130,7 +130,7 @@ class Gates(unittest.TestCase):
     def fail(self,code,fn,*args,**kwargs):
         with self.assertRaisesRegex(r.GateError,code):fn(*args,**kwargs)
     def test_correct_preflight(self):
-        f=Fake();v=r.preflight(f,art(),LEDGER);self.assertEqual(v['name'],OLD_NAME);self.assertLess(v['budget']['projectedUsage'],90)
+        f=Fake();v=r.preflight(f,art(),LEDGER);self.assertEqual(v['name'],OLD_NAME);self.assertLessEqual(v['budget']['projectedUsage'],85)
         self.assertFalse(any(e[0]=='create-start' for e in f.events))
     def test_wrong_production_sha(self):
         f=Fake();f.old['Config']['Labels'][r.REVISION]=NEW
@@ -144,11 +144,11 @@ class Gates(unittest.TestCase):
     def test_wrong_checksum(self):
         f=Fake();f.db_override['ledger']={};self.fail('MIGRATION_CHECKSUM',r.preflight,f,art(),LEDGER)
     def test_disk_low(self):
-        f=Fake();f.disk=lambda:(50*r.GIB,5*r.GIB);self.fail('DISK_UNSAFE',r.preflight,f,art(),LEDGER)
+        f=Fake();f.disk=lambda:(50*r.GIB,5*r.GIB);self.fail('ARTIFACT_DISK_GATE_FAIL',r.preflight,f,art(),LEDGER)
     def test_disk_percent_threshold(self):
-        f=Fake();f.disk=lambda:(50*r.GIB,8*r.GIB);self.fail('DISK_UNSAFE',r.preflight,f,art(),LEDGER)
+        f=Fake();f.disk=lambda:(50*r.GIB,8*r.GIB);self.fail('ARTIFACT_DISK_GATE_FAIL',r.preflight,f,art(),LEDGER)
     def test_artifact_peak_cap(self):
-        a=art();a['expanded']=4*r.GIB;self.fail('PEAK_EXCEEDS',r.preflight,Fake(),a,LEDGER)
+        a=art();a['expanded']=4*r.GIB;self.fail('ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK',r.preflight,Fake(),a,LEDGER)
     def test_exact_allowlist_pass(self):
         r.validate_identity(NEW,r.RELEASE_BASE,True,r.ALLOWLIST,[],True)
     def test_wrong_ancestry(self):
@@ -208,6 +208,12 @@ class Gates(unittest.TestCase):
                 with self.assertRaises(r.GateError):r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
                 self.assertEqual(f.running,[f.old]);self.assertEqual(f.routes(),(ROUTES,ROUTES));self.assertEqual(f.maxwriters,1)
                 self.assertIn(('health',OLD_NAME,r.EXPECTED_OLD_SHA,True),f.events)
+    def test_post_cutover_disk_failure_restores_old(self):
+        f=Fake()
+        with patch.object(f,'disk',side_effect=[(40*r.GIB,16*r.GIB),(50*r.GIB,8*r.GIB)]):
+            self.fail('POST_DEPLOY_HEADROOM',r.execute_loaded,f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        self.assertEqual(f.running,[f.old]);self.assertEqual(f.routes(),(ROUTES,ROUTES))
+        self.assertEqual(f.pointer,r.EXPECTED_OLD_SHA);self.assertEqual(f.maxwriters,1)
     def test_rollback_cannot_start_old_until_candidate_stopped(self):
         f=Fake();f.running=[];f.py('',{'helper':'fixture'});f.fail='candidate-stop'
         self.fail('STOP_FAILED',r.rollback,f,{'candidate_attempted':True,'old_stop_attempted':True,'candidate':NAME,'name':OLD_NAME},LEDGER)
@@ -310,8 +316,8 @@ class MeasurementTests(unittest.TestCase):
            'metadata':{'metadataAvailable':True,'snapshotProof':{},'contentProof':{}}}
         return a,p
     def test_measurement_locked_and_deploy_rejected_before_io(self):
-        self.assertTrue(r.MEASURE_ONLY)
-        with patch.object(r,'command',side_effect=AssertionError('IO_FORBIDDEN')):
+        self.assertFalse(r.MEASURE_ONLY)
+        with patch.object(r,'MEASURE_ONLY',True), patch.object(r,'command',side_effect=AssertionError('IO_FORBIDDEN')):
             with self.assertRaisesRegex(r.GateError,'MEASURE_ONLY_DEPLOY_FORBIDDEN'):
                 r.deploy(None,None,None,None,None,None)
             with self.assertRaisesRegex(r.GateError,'MEASURE_ONLY_DEPLOY_FORBIDDEN'):
@@ -331,8 +337,10 @@ class MeasurementTests(unittest.TestCase):
         a,_=self.fixture();m=r.artifact_metrics(a)
         self.assertEqual(m['CURRENT_FORMULA_PEAK_BYTES'],5212*1024**2)
         self.assertEqual(m['EXCESS_OVER_4GIB_BYTES'],1116*1024**2)
-        self.assertEqual(r.MAX_PEAK,4*r.GIB);self.assertEqual(r.RESERVE,512*1024**2)
-        with self.assertRaisesRegex(r.GateError,'PEAK_EXCEEDS_CONTRACT'):
+        self.assertEqual(r.ABSOLUTE_MAX_PEAK,6*r.GIB);self.assertEqual(r.RESERVE,512*1024**2)
+        a['expanded']=4*r.GIB
+        self.assertGreater(r.artifact_metrics(a)['CURRENT_FORMULA_PEAK_BYTES'],r.ABSOLUTE_MAX_PEAK)
+        with self.assertRaisesRegex(r.GateError,'ARTIFACT_DISK_GATE_FAIL'):
             r.disk_budget(0,100*r.GIB,a['archive'],a['blobs'],a['expanded'],a['largest'])
     def test_same_diff_without_chain_proof_is_not_snapshot_reuse(self):
         a,p=self.fixture();m=r.disk_models(a,p)
@@ -363,7 +371,7 @@ class MeasurementTests(unittest.TestCase):
     def test_measurement_pipeline_never_calls_deploy_or_cap_gate(self):
         a,p=self.fixture()
         ci={'CI_IMAGE_SIZE':5*r.GIB,'storage':{'ServerVersion':'28.0.4','Driver':'overlay2'}}
-        with patch.object(r,'ci_import_measurement',return_value=ci),patch.object(r,'production_measurement',return_value=p),\
+        with patch.object(r,'MEASURE_ONLY',True),patch.object(r,'ci_import_measurement',return_value=ci),patch.object(r,'production_measurement',return_value=p),\
              patch.object(r,'deploy',side_effect=AssertionError('DEPLOY_FORBIDDEN')),\
              patch.object(r,'disk_budget',side_effect=AssertionError('CAP_MUST_NOT_HIDE_METRICS')):
             result=r.measure_release(None,None,a,None,'fixture-key')
@@ -372,6 +380,52 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(result['artifactMetrics']['DOCKER_IMAGE_INSPECT_SIZE_GIB'],5)
         self.assertEqual(result['ciImport']['REPRESENTATIVENESS'],'NOT_DIRECTLY_REPRESENTATIVE')
 
+
+
+class DynamicDiskTests(unittest.TestCase):
+    # Exact measured archive from the previous hosted-runner audit; final build
+    # must still be independently measured and admitted against fresh disk.
+    MEASURED = (566605824, 566585075, 2094616576, 1155629056)
+    def budget(self, used=43356397568, available=17232801792, peak=None):
+        values=list(self.MEASURED)
+        if peak is not None:values[2]=peak-values[0]-values[1]-values[3]-r.RESERVE
+        return r.disk_budget(used,available,*values)
+    def test_exact_measured_artifact_and_cleaned_baseline_pass(self):
+        b=self.budget()
+        self.assertAlmostEqual(b['peakIncrement']/r.GIB,4.582393396,places=8)
+        self.assertEqual(b['projectedUsage'],80)
+        self.assertGreater(b['projectedAvailable']/r.GIB,11.46)
+    def test_rounded_4_58_peak_passes_current_baseline(self):
+        self.assertEqual(self.budget(peak=round(4.58*r.GIB))['projectedUsage'],80)
+    def test_absolute_six_gib_boundary(self):
+        self.budget(used=30*r.GIB,available=30*r.GIB,peak=6*r.GIB)
+        with self.assertRaisesRegex(r.GateError,'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK'):
+            self.budget(used=30*r.GIB,available=30*r.GIB,peak=6*r.GIB+1)
+    def test_usage_alone_fails_even_with_ten_gib_available(self):
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            self.budget(used=90*r.GIB,available=15*r.GIB)
+    def test_available_alone_fails_even_with_low_usage(self):
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            self.budget(used=10*r.GIB,available=14*r.GIB)
+    def test_exact_dynamic_boundaries(self):
+        b=self.budget(used=80*r.GIB,available=20*r.GIB,peak=5*r.GIB)
+        self.assertEqual(b['projectedUsage'],85)
+        self.assertEqual(self.budget(used=20*r.GIB,available=15*r.GIB,peak=5*r.GIB)['projectedAvailable'],10*r.GIB)
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            self.budget(used=20*r.GIB,available=15*r.GIB-1,peak=5*r.GIB)
+    def test_old_eighty_one_percent_baseline_fails(self):
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            self.budget(used=48656379904,available=11932819456)
+    def test_other_artifact_bounds_remain_unchanged(self):
+        self.assertEqual(r.MAX_ARCHIVE,768*1024**2)
+        self.assertEqual(r.MAX_LAYER_STREAM,4*r.GIB)
+        self.assertEqual(r.MAX_IMAGE_SIZE,4*r.GIB)
+        self.assertEqual(r.MAX_MEMBERS,150000)
+    def test_post_import_gate_fails_before_old_writer_stop(self):
+        f=Fake();f.disk=lambda:(40*r.GIB,10*r.GIB)
+        with patch.object(r.signal,'signal'),self.assertRaisesRegex(r.GateError,'POST_IMPORT_HEADROOM'):
+            r.execute_loaded(f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+        self.assertFalse(any(e[:2]==('docker','stop') for e in f.events))
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
