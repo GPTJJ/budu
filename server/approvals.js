@@ -655,7 +655,11 @@ approvalRouter.post('/approvals/requests/:id/withdraw', wrap(async (req, res) =>
   if (!request) throw httpError('审批单不存在', 404)
   if (!canWithdraw(req.user, request)) throw httpError('仅提交人可在待审批时撤回', 403)
   await prisma.$transaction(async (tx) => {
-    await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'withdrawn' } })
+    const claimed = await tx.approvalRequest.updateMany({
+      where: { id: request.id, status: 'pending' },
+      data: { status: 'withdrawn' },
+    })
+    if (claimed.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
     await tx.approvalLog.create({ data: { id: `al-${crypto.randomUUID()}`, requestId: request.id, action: 'withdraw', username: req.user.username, detail: '撤回申请' } })
   })
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })

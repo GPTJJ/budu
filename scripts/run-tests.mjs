@@ -69,6 +69,7 @@ const NODE_TEST_SUITE = [
   'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
   'test-customer-request-wecom-unit.mjs', // CustomerRequest 固定 UserID 企微投递/幂等/隐私/深链
   'test-approval-ui-regressions.mjs', // 工资提交成功动画与移动端通知层级回归
+  'test-approval-withdraw-race.mjs', // Approval 撤回与审批 CAS 竞争（隔离 PGlite + 确定性 HTTP）
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
   'test-wechat-config.mjs',         // 微信配置 fail-closed 校验（单元）
   'test-wechat-pay-provider.mjs',   // 微信付款码 Provider（假传输，不连真实接口）
@@ -205,6 +206,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-approval-withdraw-race.mjs',
   'test-transfer-lifecycle-cas.mjs',
   'test-transaction-conflict.mjs',
   'test-partner-replenishment-gate9a.mjs',
