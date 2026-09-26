@@ -46,16 +46,28 @@ def original():
 
 def art():
     return {'release':NEW,'archive':500*1024**2,'blobs':500*1024**2,
-            'expanded':1600*1024**2,'largest':700*1024**2,'imageId':'sha256:new-image',
+            'expanded':1600*1024**2,'largest':700*1024**2,
+            'archiveConfigDigest':'sha256:'+'c'*64,'imageReference':r.image_reference(NEW),
+            'loadedDockerImageId':'sha256:'+'e'*64,'rootfsDiffIds':['sha256:'+'d'*64],
             'config':copy.deepcopy(original()['Config']),'runtimeHash':r.OLD_V2_HASH}
+
+
+def loaded_image(image_id=None):
+    a=art();config=copy.deepcopy(a['config']);config['Labels'][r.REVISION]=NEW
+    return {'Id':image_id or a['loadedDockerImageId'],'Os':'linux','Architecture':'amd64',
+            'RepoTags':[a['imageReference']],'RootFS':{'Type':'layers','Layers':a['rootfsDiffIds']},
+            'Size':2*r.GIB,'Config':config}
 
 
 class Fake:
     def __init__(self):
         self.old=original();self.new=None;self.running=[self.old];self.template=ROUTES;self.active=ROUTES
         self.fail=None;self.events=[];self.maxwriters=1;self.db_override={};self.pointer=r.EXPECTED_OLD_SHA
+        self.manifests=[];self.cloneImages=[]
     def inspect(self,name,image=False):
-        if image:return {'Id':name}
+        if image:
+            if name==r.image_reference(NEW):return loaded_image()
+            return {'Id':name}
         return copy.deepcopy(self.old if name in (OLD_NAME,self.old['Id']) else self.new)
     def containers(self):return copy.deepcopy(self.running)
     def routes(self):return self.template,self.active
@@ -101,7 +113,8 @@ class Fake:
             self.events.append(('create-start',NAME))
             assert not self.running, 'candidate started while old writer running'
             self.new=copy.deepcopy(self.old)
-            self.new['Name']='/'+NAME;self.new['Id']='new-id';self.new['Image']='sha256:new-image'
+            self.new['Name']='/'+NAME;self.new['Id']='new-id';self.new['Image']=art()['loadedDockerImageId']
+            self.new['Config']['Image']=value['image'];self.cloneImages.append(value['image'])
             self.new['Config']['Env']=[x if not x.startswith('GIT_SHA=') else 'GIT_SHA='+NEW for x in self.new['Config']['Env']]
             self.new['Config']['Labels'][r.REVISION]=NEW
             self.new['HostConfig']['RestartPolicy']={'Name':'no','MaximumRetryCount':0}
@@ -109,6 +122,8 @@ class Fake:
             self.running.append(self.new);self.maxwriters=max(self.maxwriters,len(self.running))
             if self.fail=='helper-after-start':
                 self.fail=None;raise r.GateError('HELPER_FAILED')
+        elif value and 'manifest' in value:
+            self.manifests.append(value['manifest'])
         elif value and value.get('path')==r.CURRENT_SHA_FILE:
             self.pointer=value['text'].strip()
             if self.fail=='pointer-after':
@@ -162,7 +177,7 @@ class Gates(unittest.TestCase):
     def test_old_release_parent_cannot_authorize_new_ci_release(self):
         self.fail('ANCESTRY',r.validate_identity,NEW,r.RUNTIME_SHA,True,r.ALLOWLIST,[],True)
     def test_loaded_image_identity_and_size(self):
-        a=art(); image={'Id':a['imageId'],'Os':'linux','Architecture':'amd64','Size':2*r.GIB,'Config':copy.deepcopy(a['config'])}
+        a=art(); image=loaded_image()
         image['Config']['Labels'][r.REVISION]=NEW
         r.validate_loaded_image(image,a)
         for field,value,code in [('Os','windows','ARTIFACT'),('Architecture','arm64','ARTIFACT'),('Id','wrong','ARTIFACT'),('Size',5*r.GIB,'SIZE')]:
@@ -200,6 +215,13 @@ class Gates(unittest.TestCase):
         with patch('sys.stdout',new=io.StringIO()):r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
         self.assertEqual(f.maxwriters,1);self.assertEqual(f.running[0]['Name'],'/'+NAME)
         self.assertEqual(f.active.count(NAME),3);self.assertIn('isolated-test',f.active);self.assertEqual(f.pointer,NEW)
+        self.assertEqual(f.cloneImages,[art()['imageReference']])
+        manifest=f.manifests[0]
+        self.assertEqual(manifest['candidateImageReference'],art()['imageReference'])
+        self.assertEqual(manifest['candidateLoadedImageId'],art()['loadedDockerImageId'])
+        self.assertEqual(manifest['candidateArchiveConfigDigest'],art()['archiveConfigDigest'])
+        self.assertEqual(manifest['oldSha'],r.EXPECTED_OLD_SHA)
+        self.assertNotIn('candidateImage',manifest)
         stop=f.events.index(('docker','stop','--time','30',OLD_NAME));start=f.events.index(('create-start',NAME));self.assertLess(stop,start)
     def test_cutover_failure_matrix_restores_old(self):
         for failure in ['helper-after-start','health','secret-read','critical-log','active-write','reload','public','pointer-after']:
@@ -215,7 +237,7 @@ class Gates(unittest.TestCase):
         self.assertEqual(f.running,[f.old]);self.assertEqual(f.routes(),(ROUTES,ROUTES))
         self.assertEqual(f.pointer,r.EXPECTED_OLD_SHA);self.assertEqual(f.maxwriters,1)
     def test_rollback_cannot_start_old_until_candidate_stopped(self):
-        f=Fake();f.running=[];f.py('',{'helper':'fixture'});f.fail='candidate-stop'
+        f=Fake();f.running=[];f.py('',{'helper':'fixture','image':r.image_reference(NEW)});f.fail='candidate-stop'
         self.fail('STOP_FAILED',r.rollback,f,{'candidate_attempted':True,'old_stop_attempted':True,'candidate':NAME,'name':OLD_NAME},LEDGER)
         self.assertNotIn(('docker','start',OLD_NAME),f.events)
     def test_rollback_target(self):
@@ -381,6 +403,81 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(result['ciImport']['REPRESENTATIVENESS'],'NOT_DIRECTLY_REPRESENTATIVE')
 
 
+
+
+class LoadedIdentityTests(unittest.TestCase):
+    def test_config_addressed_store_passes(self):
+        a=art();a['loadedDockerImageId']=a['archiveConfigDigest'];image=loaded_image(a['archiveConfigDigest'])
+        with patch.object(r.Remote,'inspect',return_value=image):
+            self.assertEqual(r.resolve_loaded_image(r.Remote('unused'),a)['Id'],a['archiveConfigDigest'])
+    def test_manifest_addressed_store_passes(self):
+        a=art();image=loaded_image();self.assertNotEqual(image['Id'],a['archiveConfigDigest'])
+        with patch.object(r.Remote,'run',return_value=json.dumps([image]).encode()) as call:
+            self.assertEqual(r.resolve_loaded_image(r.Remote('unused'),a),image)
+        call.assert_called_once_with(['docker','image','inspect',a['imageReference']])
+    def test_wrong_missing_and_multiple_repo_tags_fail(self):
+        for tags in ([],None,['budu-api:wrong'],[art()['imageReference'],'budu-api:other'],[art()['imageReference']]*2):
+            image=loaded_image();image['RepoTags']=tags
+            with self.subTest(tags=tags),self.assertRaisesRegex(r.GateError,'TAG_MISMATCH'):
+                r.validate_loaded_image(image,art())
+    def test_missing_or_ambiguous_inspect_result_fails(self):
+        for objects in ([],[loaded_image(),loaded_image()]):
+            with patch.object(r.Remote,'run',return_value=json.dumps(objects).encode()),self.assertRaisesRegex(r.GateError,'IDENTITY_NOT_UNIQUE'):
+                r.resolve_loaded_image(r.Remote('unused'),art())
+    def test_wrong_release_label_fails(self):
+        image=loaded_image();image['Config']['Labels'][r.REVISION]=r.EXPECTED_OLD_SHA
+        with self.assertRaisesRegex(r.GateError,'ARTIFACT_MISMATCH'):r.validate_loaded_image(image,art())
+    def test_wrong_architecture_or_platform_fails(self):
+        for key,value in [('Architecture','arm64'),('Os','windows')]:
+            image=loaded_image();image[key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(r.GateError,'ARTIFACT_MISMATCH'):
+                r.validate_loaded_image(image,art())
+    def test_rootfs_mismatch_or_missing_fails(self):
+        for fs in ({},{'Layers':[]},{'Layers':['sha256:'+'f'*64]}):
+            image=loaded_image();image['RootFS']=fs
+            with self.subTest(fs=fs),self.assertRaisesRegex(r.GateError,'ROOTFS_MISMATCH'):
+                r.validate_loaded_image(image,art())
+    def test_every_config_identity_field_enforced(self):
+        for key in r.IDENTITY_KEYS:
+            image=loaded_image();image['Config'][key]='wrong'
+            with self.subTest(key=key),self.assertRaisesRegex(r.GateError,'CONFIG_MISMATCH'):
+                r.validate_loaded_image(image,art())
+    def test_exact_reference_required_before_lookup(self):
+        for ref in (art()['archiveConfigDigest'],'budu-api:transfer-cas-aaaa','budu-api:other'):
+            a=art();a['imageReference']=ref
+            with patch.object(r.Remote,'run',side_effect=AssertionError('LOOKUP_FORBIDDEN')),self.assertRaisesRegex(r.GateError,'REFERENCE_INVALID'):
+                r.resolve_loaded_image(r.Remote('unused'),a)
+    def test_retag_after_load_is_rejected(self):
+        with patch.object(r.Remote,'inspect',return_value=loaded_image('sha256:'+'f'*64)),self.assertRaisesRegex(r.GateError,'LOADED_IMAGE_CHANGED'):
+            r.resolve_loaded_image(r.Remote('unused'),art())
+    def test_candidate_image_id_and_reference_enforced(self):
+        a=art();candidate={'Image':a['loadedDockerImageId'],'Config':{'Image':a['imageReference']}}
+        r.validate_candidate_image(candidate,a)
+        for bad in ({'Image':a['archiveConfigDigest'],'Config':candidate['Config']},
+                    {'Image':candidate['Image'],'Config':{'Image':a['archiveConfigDigest']}}):
+            with self.assertRaisesRegex(r.GateError,'CANDIDATE_IMAGE_IDENTITY'):r.validate_candidate_image(bad,a)
+    def test_no_config_digest_runtime_lookup_or_prefix_fallback(self):
+        source=Path(r.__file__).read_text()
+        self.assertNotIn("art['imageId']",source)
+        self.assertNotIn("inspect(art['archiveConfigDigest']",source)
+        self.assertNotIn("'image':art['archiveConfigDigest']",source)
+        self.assertIn("cli+['image','inspect',art['imageReference']]",source)
+    def test_archive_returns_separate_identity_evidence(self):
+        suite=ArchiveTests();suite.setUp()
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                root=Path(d);a=r.artifact(suite.make(root,oci=True),NEW,root)
+                self.assertEqual(a['imageReference'],r.image_reference(NEW))
+                self.assertRegex(a['archiveConfigDigest'],r'^sha256:[0-9a-f]{64}$')
+                self.assertEqual(a['rootfsDiffIds'],[x['diffId'] for x in a['layers']])
+                self.assertNotIn('imageId',a)
+        finally:suite.doCleanups()
+    def test_full_runtime_payload_mismatch_remains_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);path=ArchiveTests().make(root)
+            with patch.object(r,'runtime_payload',return_value={'app/server/v2.js':r.digest(b'CAS fixture'),'app/package.json':'missing'}):
+                with self.assertRaisesRegex(r.GateError,'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH'):
+                    r.artifact(path,NEW,root)
 
 class DynamicDiskTests(unittest.TestCase):
     # Exact measured archive from the previous hosted-runner audit; final build

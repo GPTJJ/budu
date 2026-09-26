@@ -62,7 +62,7 @@ class ExistingWorkflow(unittest.TestCase):
     def test_exact_business_and_rollback_constants(self):
         self.assertEqual(r.RUNTIME_SHA,'8381959e9c1d527c1f14c234338b14d117ae46f5')
         self.assertEqual(r.EXPECTED_OLD_SHA,'fc57da5a6e6611c66ed1db286336dc0e1752d69c')
-        self.assertEqual(r.RELEASE_BASE,'99739014c067ebae777c62aff36ae6da5af4b216')
+        self.assertEqual(r.RELEASE_BASE,'7324aae9ea3d0b3f8014e4ce6897ff257883a8be')
         self.assertEqual(r.MIGRATION_REQUIRED,'NO')
 
     def mock_git(self,ancestor=True,workflow_history=False,branch=BRANCH):

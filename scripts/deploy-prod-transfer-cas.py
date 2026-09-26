@@ -25,7 +25,7 @@ from urllib.parse import urlsplit, unquote
 
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
-RELEASE_BASE = '99739014c067ebae777c62aff36ae6da5af4b216'
+RELEASE_BASE = '7324aae9ea3d0b3f8014e4ce6897ff257883a8be'
 MEASURE_ONLY = False  # Deployment still requires exact-SHA explicit authorization.
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
@@ -124,12 +124,37 @@ def identity(repo):
     require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
     return release, migrations
 
+def image_reference(release):
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)), 'IMAGE_RELEASE_SHA_INVALID')
+    return 'budu-api:transfer-cas-' + release[:12]
+
+
 def validate_loaded_image(image, art):
-    require(image['Id'] == art['imageId'] and image['Os'] == 'linux'
+    require(art['imageReference'] == image_reference(art['release']), 'IMAGE_REFERENCE_INVALID')
+    require(image.get('RepoTags') == [art['imageReference']], 'LOADED_IMAGE_TAG_MISMATCH')
+    require(bool(re.fullmatch(r'sha256:[0-9a-f]{64}', image.get('Id', ''))), 'LOADED_ARTIFACT_MISMATCH')
+    require(image['Os'] == 'linux'
             and image['Architecture'] == 'amd64'
             and image['Config'].get('Labels', {}).get(REVISION) == art['release'], 'LOADED_ARTIFACT_MISMATCH')
     require(all(image['Config'].get(k) == art['config'].get(k) for k in IDENTITY_KEYS), 'LOADED_CONFIG_MISMATCH')
+    require(image.get('RootFS', {}).get('Layers') == art['rootfsDiffIds'], 'LOADED_ROOTFS_MISMATCH')
     require(0 < image['Size'] <= MAX_IMAGE_SIZE, 'LOADED_IMAGE_SIZE_INVALID')
+    return image['Id']
+
+
+def resolve_loaded_image(remote, art):
+    # Config digest authenticates archive content, not Docker's store-specific
+    # lookup identity. Never scan images or guess digest prefixes as fallback.
+    require(art['imageReference'] == image_reference(art['release']), 'IMAGE_REFERENCE_INVALID')
+    image = remote.inspect(art['imageReference'], image=True)
+    loaded = validate_loaded_image(image, art)
+    require(art.get('loadedDockerImageId', loaded) == loaded, 'LOADED_IMAGE_CHANGED')
+    return image
+
+
+def validate_candidate_image(candidate, art):
+    require(candidate['Image'] == art['loadedDockerImageId']
+            and candidate['Config'].get('Image') == art['imageReference'], 'CANDIDATE_IMAGE_IDENTITY_MISMATCH')
 
 def disk_budget(used, available, archive, blobs, expanded, largest_layer):
     # containerd import: incoming archive allowance + content blobs + snapshots +
@@ -188,7 +213,7 @@ No archive member is extracted to the host filesystem.
         manifest = json.loads(read('manifest.json', 65536))
         require(len(manifest) == 1, 'ARTIFACT_MUST_HAVE_ONE_IMAGE')
         item = manifest[0]
-        tag = 'budu-api:transfer-cas-' + release[:12]
+        tag = image_reference(release)
         # BuildKit normalizes names, while the Docker compatibility manifest may
         # use the familiar spelling. These name exactly the same repository/tag.
         exact_tags = [tag, 'docker.io/library/' + tag]
@@ -298,7 +323,8 @@ No archive member is extracted to the host filesystem.
                 'ARTIFACT_BUSINESS_CODE_MISMATCH')
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
         return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
-                    archiveHash=archive_hash, imageId='sha256:' + digest(config_bytes),
+                    archiveHash=archive_hash, archiveConfigDigest='sha256:' + digest(config_bytes),
+                    imageReference=tag, rootfsDiffIds=diffs,
                     config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics)
 
 class Remote:
@@ -314,7 +340,9 @@ class Remote:
         return self.run(['sudo', '-n', 'python3', '-c', code],
                         json.dumps(value).encode() if value is not None else None, timeout)
     def inspect(self, name, image=False):
-        return json.loads(self.run(['docker', 'image' if image else 'container', 'inspect', name]))[0]
+        objects = json.loads(self.run(['docker', 'image' if image else 'container', 'inspect', name]))
+        require(isinstance(objects, list) and len(objects) == 1, 'DOCKER_IDENTITY_NOT_UNIQUE')
+        return objects[0]
     def containers(self):
         ids = self.run(['docker', 'ps', '-q']).decode().split()
         return json.loads(self.run(['docker', 'container', 'inspect', *ids])) if ids else []
@@ -540,6 +568,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         state = preflight(remote, art, ledger, imported=True)
         require(state['old']['Id'] == expected_id and digest(state['template'].encode()) == expected_routes,
                 'AUTHORITY_CHANGED_DURING_IMPORT')
+        resolve_loaded_image(remote, art)  # Recheck exact tag before stopping old writer.
         release = art['release']
         name = 'budu-prod-' + release[:12] + '-transfer-cas'
         state['candidate'] = name
@@ -549,7 +578,10 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                   {'root':root,'template':state['template'],'active':state['active'],
                    'manifest':{'oldSha':EXPECTED_OLD_SHA,'runtimeSha':RUNTIME_SHA,'releaseSha':release,
                                'oldContainer':state['name'],'oldImage':state['old']['Image'],
-                               'candidate':name,'candidateImage':art['imageId'],'templateHash':digest(state['template'].encode()),'migrations':85}})
+                               'candidate':name,'candidateImageReference':art['imageReference'],
+                               'candidateLoadedImageId':art['loadedDockerImageId'],
+                               'candidateArchiveConfigDigest':art['archiveConfigDigest'],
+                               'templateHash':digest(state['template'].encode()),'migrations':85}})
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_STOP')
         state['old_stop_attempted'] = True
         remote.run(['docker','stop','--time','30',state['name']])
@@ -557,14 +589,16 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         state['candidate_attempted'] = True
         # Existing cloner is sent via stdin; binding comes only from existing env.
         # It is held in tmpfs and removed even on failure. No env values printed.
-        payload = {'helper':helper,'old':state['name'],'candidate':name,'image':art['imageId'],
+        payload = {'helper':helper,'old':state['name'],'candidate':name,'image':art['imageReference'],
                    'sha':release,'network':state['old']['HostConfig']['NetworkMode']}
         remote.py("import json,sys,subprocess,tempfile,pathlib,os; v=json.load(sys.stdin); c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]; e=dict(x.split('=',1) for x in c['Config']['Env']); f,p=tempfile.mkstemp(dir='/dev/shm'); os.fchmod(f,0o600); os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode()); os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['candidate'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE); result=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(result)", payload)
         remote.run(['docker','update','--restart','unless-stopped',name])
+        validate_candidate_image(remote.inspect(name), art)
         clone_parity(state['old'], remote.inspect(name), release)
         settle_writers(remote, ledger, [name])
         remote.health(name, release)
         runtime_checks(remote, name, art['runtimeHash'])
+        validate_candidate_image(remote.inspect(name), art)
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_CUTOVER')
         new = state['template'].replace('http://' + state['name'] + ':3000', 'http://' + name + ':3000')
         require(new.count('http://' + name + ':3000') == 3, 'CUTOVER_ROUTE_COUNT_INVALID')
@@ -580,6 +614,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
         require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
         print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1,
+                          'imageReference':art['imageReference'],'archiveConfigDigest':art['archiveConfigDigest'],
+                          'loadedDockerImageId':art['loadedDockerImageId'],'rootfsIdentityMatch':True,
                           'diskAfterUsed':used,'diskAfterAvailable':available,
                           'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True}))
     except BaseException:
@@ -610,7 +646,7 @@ def deploy(remote, repo, path, art, ledger, authorize):
     import_started = import_complete = False
     try:
         require(not remote.run(['docker','ps','-aq','--filter','name=^/' + name + '$']).strip(), 'CANDIDATE_NAME_EXISTS')
-        require(not remote.run(['docker','images','-q','budu-api:transfer-cas-' + release[:12]]).strip(), 'CANDIDATE_TAG_EXISTS')
+        require(not remote.run(['docker','images','-q',art['imageReference']]).strip(), 'CANDIDATE_TAG_EXISTS')
         with open(path, 'rb') as stream:
             require(file_hash(stream) == art['archiveHash'], 'ARTIFACT_CHANGED')
             stream.seek(0)
@@ -619,13 +655,15 @@ def deploy(remote, repo, path, art, ledger, authorize):
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=240)
             require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
             import_complete = True
-        image = remote.inspect(art['imageId'], image=True)
-        validate_loaded_image(image, art)
+        image = resolve_loaded_image(remote, art)
+        art['loadedDockerImageId'] = image['Id']
         # Record post-import storage before any writer is stopped; no raw
         # environment or credential-bearing inspect output is printed.
         used, available = remote.disk()
         print(json.dumps({'stage':'POST_IMPORT_DISK','used':used,'available':available,
                           'IMAGE_SIZE_GIB':image['Size']/GIB,
+                          'IMAGE_REFERENCE':art['imageReference'],'ARCHIVE_CONFIG_DIGEST':art['archiveConfigDigest'],
+                          'LOADED_DOCKER_IMAGE_ID':art['loadedDockerImageId'],'ROOTFS_IDENTITY_MATCH':True,
                           'dfPk':remote.run(['df','-Pk','/']).decode(),
                           'dfHuman':remote.run(['df','-h','/']).decode(),
                           'dockerSystemDf':remote.run(['docker','system','df']).decode()}), flush=True)
@@ -657,7 +695,9 @@ def artifact_metrics(art):
     result.update(CURRENT_GATE_MAX_GIB=ABSOLUTE_MAX_PEAK/GIB,
                   EXCESS_OVER_4GIB_BYTES=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB),
                   EXCESS_OVER_4GIB=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB)/GIB,
-                  IMAGE_PLATFORM='linux',IMAGE_ARCH='amd64',IMAGE_ID=art['imageId'],LAYERS=art['layers'])
+                  IMAGE_PLATFORM='linux',IMAGE_ARCH='amd64',
+                  IMAGE_REFERENCE=art['imageReference'],ARCHIVE_CONFIG_DIGEST=art['archiveConfigDigest'],
+                  LOADED_DOCKER_IMAGE_ID=art.get('loadedDockerImageId'),LAYERS=art['layers'])
     return result
 
 
@@ -834,9 +874,11 @@ def ci_import_measurement(path, art):
                 stdout,stderr=process.communicate(timeout=10)
                 require(process.returncode == 0,'CI_IMPORT_FAILED')
             after=allocated();peak=max(peak,after)
-            image=json.loads(command(cli+['image','inspect',art['imageId']]))[0]
+            images=json.loads(command(cli+['image','inspect',art['imageReference']]))
+            require(isinstance(images,list) and len(images)==1,'DOCKER_IDENTITY_NOT_UNIQUE')
+            image=images[0]
             # Measure first even when the deployment size cap would reject it.
-            require(image['Id']==art['imageId'] and image['Os']=='linux' and image['Architecture']=='amd64', 'CI_IMAGE_IDENTITY_MISMATCH')
+            validate_loaded_image(image,art)
             return {'status':'PASS','CI_IMPORT_BEFORE_BYTES':before,'CI_IMPORT_AFTER_BYTES':after,
                     'CI_IMPORT_DISK_DELTA':after-before,'CI_IMPORT_SAMPLED_PEAK_DELTA':peak-before,
                     'CI_IMAGE_SIZE':image['Size'],
@@ -935,7 +977,7 @@ def main():
         print('TRANSFER_CAS_MEASUREMENT_JSON='+json.dumps(result,sort_keys=True),flush=True)
         return
     summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
-               'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageId','archiveHash']},
+               'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
                'migrationRequired':MIGRATION_REQUIRED}
     if args.mode == 'inspect-artifact':
         # Offline validation still rejects artifacts over the absolute peak cap.

@@ -1,3 +1,57 @@
+# Transfer CAS Docker image identity correction — authorized release
+
+2026-09-27。用户附件 `2013abe5-d706-45ec-bc72-426a422ad96a` 明确授权身份适配修复、上一失败artifact的单一exact tag清理、普通commit/push、既有workflow dispatch及production deploy，无需再次申请许可。本节覆盖下方历史合同的父提交/镜像身份说明。动态磁盘6GiB / ≤85% / ≥10GiB不变。
+
+## Gate 0–1: direct evidence
+
+- branch `codex/transfer-cas-existing-workflow`；起始HEAD及fetch后的远端均为 `7324aae9ea3d0b3f8014e4ce6897ff257883a8be`，初始worktree clean，business `8381959e9c1d527c1f14c234338b14d117ae46f5` 为ancestor。
+- 实时production仍为 `fc57da5a6e6611c66ed1db286336dc0e1752d69c`；internal/public PASS；budu_bj006；85 applied/0 failed及checksum匹配；writer1；routes不变。初始disk75%，available15165878272 bytes。
+- 不只复用旧报告：本轮对保留的exact loaded tag做流式`docker image save`并直接读tar metadata；未创建Production archive文件、未解包任何成员。原GitHub runner archive已随runner结束不可用，因此这是保留image的新stream export，并与上一CI记录的原archive config digest交叉核验，不声称archive字节完全相同。
+- Docker manifest Config指向对象的SHA256为 `sha256:fcbfd56537f5b21a42c1492611ccb3644ed2e340bae45de11c4fe0c22f817f35`；OCI manifest引用同一config，其digest为 `sha256:16978d97ddf0040aae93c524e49da29ac39a316bdf6c4c5652dcbf7848387c48`。Loaded image Id等于后者。
+- Production Docker29.1.3，overlayfs，io.containerd.snapshotter.v1；exact tag `budu-api:transfer-cas-7324aae9ea3d`解析为唯一image，revision/platform/RootFS全部对应；按config digest查询返回1/No such image。前次docker load已成功，错误发生在后续lookup。
+
+## IMAGE_IDENTITY_USAGE_MAP and corrected contract
+
+| Site | Previous conflation | Current authority |
+|---|---|---|
+| artifact parser | imageId=config digest | archiveConfigDigest + imageReference + rootfsDiffIds |
+| Production post-load inspect | config digest lookup | only deterministic exact imageReference |
+| Loaded identity validator | Id==config digest | one inspect result; exact sole RepoTag; full Id shape; linux/amd64; revision; all six Config identity fields; ordered complete RootFS diff IDs; existing size bound |
+| Before old writer stop | no store identity recheck | resolve exact tag again; loaded Id must remain the previously validated Id |
+| Candidate clone argument | config digest | exact imageReference |
+| Candidate metadata | implicit image equality | Config.Image==exact reference AND Image==loadedDockerImageId |
+| Rollback manifest | ambiguous candidateImage | candidateImageReference / candidateLoadedImageId / candidateArchiveConfigDigest + releaseSha/runtimeSha |
+| CLI/CI metrics and summaries | ambiguous IMAGE_ID/imageId | three explicitly named fields; loaded Id null until actually resolved |
+| Historical isolated CI measurement | inspect config digest | inspect exact reference, unique result, same strong validation |
+| Rollback | preserved old container/image | unchanged fc57 old container; no DB rollback |
+| Exact failed cleanup | none in deployment code | this task's separately audited single old tag; not a general cleanup path |
+| production_measurement.imageId / Docker df metadata | actual current production image Id | retained for storage accounting; never candidate config digest |
+
+- No image scanning, digest-prefix guessing or alternate-identity fallback in resolution. Missing/multiple results, extra/wrong RepoTags, retag drift, rootfs/config/platform/revision mismatch fail closed.
+- Archive config/blob/diffID verification and complete Git runtime payload/server-v2 hashes remain enforced. Single-layer4GiB/archive768MiB/member150000/image-size4GiB and512MiB reserve unchanged.
+- RELEASE_BASE exact parent lock updated to full7324aae; new release must be its unique direct child. Original cumulative7-file allowlist and workflow-history guard unchanged. No business/schema/workflow/cloner edits.
+
+## Gate 8–9: exact failed image cleanup verified
+
+- 16 containers scanned (all states): Image / Config.Image references=0. 962 rollback/route metadata files: no protected reference. Image not in512-image protected set, not current/fc57 rollback/PostgreSQL/nginx.
+- Executed exactly `docker image rm budu-api:transfer-cas-7324aae9ea3d`, no force/prune. Removed image16978d97 only; no other image identity removed; all512 protected images and64 volumes remained.
+- Immediate reclaim2062602240 bytes. Post-cleanup independent production verification: fc57 / internal-public PASS /85/0 /writer1 /same routes.
+- Post-cleanup used43361714176 bytes, available17227485184 bytes, df72%. KnownA4.582392GiB projects79.6875% (dfceil80%) and11.461954GiB available: PASS.
+- No additional cleanup, image/rollback deletion or Lighthouse changes authorized beyond this one failed tag.
+
+## Validation, deployment and handoff
+
+- Release tests76/76 PASS; workflow compatibility10/10 PASS; NEW_FAILURES=0. Existing CAS60/60 PostgreSQL deterministic evidence reused; browser20/20 and original10 unrelated baseline failures remain historical records, not silently changed.
+- New deterministic cases cover config-addressed and manifest-addressed stores, missing/wrong/duplicate tags, ambiguous inspect, wrong revision/platform/architecture/RootFS/all Config identity fields, runtime payload mismatch, exact reference before IO, tag drift, candidate identity, clone exact ref, manifest's three identities, absence of config-digest lookup/prefix fallback. Captured real Production store shape also passed new validator locally.
+- Before commit: syntax/embedded Python/baseline scope/diff whitespace checks PASS. Existing hosted workflow remains the sole production dispatch path. Exact new SHA is built; full Model A admission remeasures fresh artifact and production disk.
+- Authorized process remains stream load → exact-tag resolve/strong validate → post-import disk → old writer stop/connection drain → candidate clone/start → parity/health/DB/writer1 → nginx test/reload/public health; failure rolls back fc57 without DB rollback.
+- Evidence and final run/SHA/state: `/Users/apple/.codex/artifacts/transfer-cas-image-identity-20260927/`. Local artifact evidence is not uploaded by Git. Source/checkpoint recovery requires the normal push; unknown primary-checkout work is preserved/excluded. No production business writes, Transfer test, migration or pg_dump.
+- After success/failure final report STOP; no NEXT_FIX_2 or adjacent business fixes.
+
+---
+
+## Historical prior release (superseded identity model)
+
 # Transfer CAS Final Artifact Gate Revision — authorized production release
 
 2026-09-27。当前用户附件 `20695ca5-2f21-42d9-9e4f-d30989eaa3b8` 明确授权本轮 release engineering 修改、测试、普通 commit/push、dispatch 现有 deploy-prod.yml、生产导入/单writer切换及失败自动回滚。以下是当前合同；后续所有 MEASURE ONLY、4GiB 固定总峰值及旧父提交说明均为历史，不再控制本次发布。
