@@ -1,3 +1,46 @@
+# Transfer CAS Runtime Mount Guard Parity — authorized successor release
+
+2026-09-27 CST. Current authority: user attachment `a1c5fd27-08ed-4b05-9beb-4532c3c48f1f`. Explicit end-to-end authorization covers release tooling/tests, exact failed candidate/image cleanup, normal commit/push, existing workflow dispatch, production cutover and automatic rollback. No additional approval required. Older sections below are historical evidence.
+
+## Verified authority and root cause
+
+- Release branch `codex/transfer-cas-existing-workflow`; starting HEAD and required sole direct parent `90cba06afb176d002b9b924f167cd79c8268460f`; fetched origin matched; clean before changes. Final release identity is the commit containing this section; no amend.
+- Business ancestor `8381959e9c1d527c1f14c234338b14d117ae46f5`. Live rollback authority `fc57da5a6e6611c66ed1db286336dc0e1752d69c`; internal/public health PASS; DB budu_bj006, 85 applied/0 failed with all checksum identities, one writer, three unchanged fc57 routes.
+- Fresh direct `docker exec <old> test -r <destination>`: 17 RO mounts, 12 readable, 5 unreadable. All five unreadable mounts root:root/0600. Production was healthy. Only anonymous destination hashes, RW, readability and owner/mode were recorded; no secret content/path output.
+- Failed90cba candidate was stopped. Full clone parity, Type/actual Source/Destination/RW, GroupAdd and Config.User matched production. Candidate health had passed in the previous run before the all-RO-readable guard failed. No candidate restart used to prove this.
+
+## Correct invariant and retained guards
+
+- Snapshot every inherited mount's readability while old authority is still running, before stopping its writer; persist only hashed identities and booleans in the fresh rollback manifest.
+- Candidate must preserve Type, volume Name, actual Source, Destination, RW and exact old readability. Both readable→unreadable and unreadable→readable fail. Identical unreadable outcomes pass. RW mounts are checked too.
+- Fixed stdout tokens distinguish test-r false from Docker/transport failure. A probe failure blocks release. Reinspect confirms same running container, StartedAt and full mount metadata.
+- Initial read-only self-check revealed Docker changes Mounts array order across inspect calls. Three read-only comparisons proved sorted full fields identical. Corrected ordering only; added permutation-pass and real-mutation-fail tests. This self-check stopped before any deletion or production mutation.
+- Strict existing env/Config/labels/RestartPolicy/GroupAdd/mount/network/resource clone parity retained. Startup validate-runtime-config command identity, internal/public health, DB connection/ledger/writer, live server hash, critical-log guard and fc57 rollback retained.
+- Fixed stage/code allowlists return controller failures across SSH after rollback. Raw stderr, arbitrary exception text, environment values and secret paths are suppressed. Caller rejects malformed/extra failure fields; no runner-side retry or competing rollback.
+- Image identity remains exact tag + independently verified loaded ID + archive config digest + complete RootFS/config/revision/platform/payload. Model A <=6 GiB AND projected df usage<=85% AND available>=10 GiB unchanged; all per-layer/archive/image bounds unchanged.
+
+## Exact cleanup and disk gate — VERIFIED
+
+- Removed only stopped/unrouted `budu-prod-90cba06afb17-transfer-cas`, then only `budu-api:transfer-cas-90cba06afb17` after all-container references reached zero. Image ID `sha256:3f253b4b61785f819f26d430eb8b7f94e5131ee831422c3ff2a68cd43db7c848`; revision90cba verified. No force/prune.
+- Scanned17 containers. fc57 runtime was not stopped/restarted by cleanup; nginx/PG/other containers preserved. All512 protected image IDs, all64 volumes and 17526 existing rollback asset file hashes preserved, including failed90cba route snapshot. Exactly one container and one image identity removed.
+- DISK_BEFORE used=45490511872 bytes / available=15098687488 bytes / df76%.
+- DISK_AFTER_FAILED_CANDIDATE_CLEANUP used=43429462016 bytes / available=17159737344 bytes / df72%.
+- Prior measured Model A4.582396366GiB projects 79.799326% (conservative df80%) with 11.398854GiB available. PASS. Hosted workflow must remeasure the actual new artifact and current disk before import.
+- Cleanup rechecked fc57 / both health PASS /85/0 /writer1 /routes unchanged. No secret permission/content changes, business write, migration, backup, production test Transfer or Lighthouse operation.
+
+## Tests, diff, workflow and handoff
+
+- Release deterministic suite **100/100 PASS**, existing-workflow compatibility **10/10 PASS**, NEW_FAILURES=0. Covers all14 requested scenarios plus RW mounts, volume Source drift, probe transport errors, stable identity, pre-stop capture, rollback and safe cross-controller attribution.
+- Original business CAS PostgreSQL60/60 and browser20/20 evidence reused; original10 unrelated baseline regression failures retained in lifecycle checkpoint. No business source changed. Live target server/v2.js hash `064b1d7ca71be61e2353340012af6ce76eaf720b643ef93c97d176fb0cc716d4`.
+- Only controller, release tests, compatibility parent expectation and this checkpoint change in this successor. Cumulative exact7-file release allowlist preserved. No server/src/prisma/.github/workflows/cloner/Dockerfile changes.
+- Existing deploy-prod.yml SHA256 `3679213363b298664d93f484b66ea474aace978d08422ec0f944fdeb5852a68e` remains unchanged. Normal push then dispatch existing workflow; no force, no alternate deployment channel. One build/deploy attempt; any actual workflow failure is reported and STOP after rollback verification.
+- Evidence and eventual final SHA/workflow/production state: `/Users/apple/.codex/artifacts/transfer-cas-mount-parity-20260927/`. Local audit files are not available on another device through Git. Source/checkpoint are recoverable after normal push. Unknown primary-checkout changes preserved/excluded. Upstream config lock is not modified; explicit remote/ref push is used.
+- No new business P0/P1/P2 introduced by this tooling change. Production CAS fix remains pending until final live verification. Final report records actual result; older deploy/rollback statements below must not be used as current state.
+
+---
+
+## Historical previous release — superseded mount guard
+
 # Transfer CAS Docker image identity correction — authorized release
 
 2026-09-27。用户附件 `2013abe5-d706-45ec-bc72-426a422ad96a` 明确授权身份适配修复、上一失败artifact的单一exact tag清理、普通commit/push、既有workflow dispatch及production deploy，无需再次申请许可。本节覆盖下方历史合同的父提交/镜像身份说明。动态磁盘6GiB / ≤85% / ≥10GiB不变。

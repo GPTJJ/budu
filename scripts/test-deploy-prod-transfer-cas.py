@@ -64,6 +64,7 @@ class Fake:
         self.old=original();self.new=None;self.running=[self.old];self.template=ROUTES;self.active=ROUTES
         self.fail=None;self.events=[];self.maxwriters=1;self.db_override={};self.pointer=r.EXPECTED_OLD_SHA
         self.manifests=[];self.cloneImages=[]
+        self.readability={}
     def inspect(self,name,image=False):
         if image:
             if name==r.image_reference(NEW):return loaded_image()
@@ -87,8 +88,11 @@ class Fake:
         if args[-2:]==['sha256sum','/app/server/v2.js']:return (r.OLD_V2_HASH+'  /app/server/v2.js').encode()
         if args[:2]==['sh','-c'] and 'docker logs --tail' in args[2] and self.fail=='critical-log' and NAME in args[2]:
             self.fail=None;return b'FATAL fixture startup failure'
-        if args[:3]==['docker','exec',NAME] and 'test' in args and self.fail=='secret-read':
-            self.fail=None;raise r.GateError('SECRET_READ_FAILED')
+        if args[:2]==['docker','exec'] and 'mount-readability' in args:
+            assert any(c['Name'].lstrip('/')==args[2] for c in self.running), 'PROBED_STOPPED_CONTAINER'
+            if args[2]==NAME and self.fail=='secret-read':
+                self.fail=None;return b'UNREADABLE'
+            return b'READABLE' if self.readability.get((args[2],args[-1]),True) else b'UNREADABLE'
         if args[:2]==['docker','info']:
             return json.dumps({'ServerVersion':'29.1.3','Driver':'overlayfs','DockerRootDir':'/var/lib/docker',
                                'DriverStatus':[['driver-type','io.containerd.snapshotter.v1']]}).encode()
@@ -523,6 +527,108 @@ class DynamicDiskTests(unittest.TestCase):
         with patch.object(r.signal,'signal'),self.assertRaisesRegex(r.GateError,'POST_IMPORT_HEADROOM'):
             r.execute_loaded(f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
         self.assertFalse(any(e[:2]==('docker','stop') for e in f.events))
+
+class MountParityTests(unittest.TestCase):
+    setUp = Gates.setUp
+    fail = Gates.fail
+
+    def candidate(self, old_readable=True, new_readable=True):
+        f=Fake();destination=f.old['Mounts'][0]['Destination']
+        f.readability[(OLD_NAME,destination)]=old_readable
+        baseline=r.mount_readability(f,OLD_NAME)
+        f.running=[];f.py('',{'helper':'fixture','image':r.image_reference(NEW)})
+        f.new['HostConfig']['RestartPolicy']=copy.deepcopy(f.old['HostConfig']['RestartPolicy'])
+        f.readability[(NAME,destination)]=new_readable
+        return f,baseline
+
+    def check(self,f,baseline):r.runtime_checks(f,NAME,r.OLD_V2_HASH,baseline)
+    def test_readable_to_readable(self):self.check(*self.candidate(True,True))
+    def test_readable_to_unreadable(self):self.fail('READABILITY_PARITY',self.check,*self.candidate(True,False))
+    def test_unreadable_to_unreadable(self):self.check(*self.candidate(False,False))
+    def test_unreadable_to_readable_expansion(self):self.fail('READABILITY_PARITY',self.check,*self.candidate(False,True))
+    def test_missing_mount(self):
+        f,b=self.candidate();f.new['Mounts'].pop();self.fail('IDENTITY_PARITY',self.check,f,b)
+    def test_source_changed(self):
+        f,b=self.candidate();f.new['Mounts'][0]['Source']='/different';self.fail('IDENTITY_PARITY',self.check,f,b)
+    def test_volume_source_changed_same_name(self):
+        f,b=self.candidate();f.new['Mounts'][1]['Source']='/different';self.fail('IDENTITY_PARITY',self.check,f,b)
+    def test_destination_changed(self):
+        f,b=self.candidate();f.new['Mounts'][0]['Destination']='/different';self.fail('IDENTITY_PARITY',self.check,f,b)
+    def test_rw_changed(self):
+        f,b=self.candidate();f.new['Mounts'][0]['RW']=True;self.fail('IDENTITY_PARITY',self.check,f,b)
+    def test_group_changed(self):
+        f,b=self.candidate();f.new['HostConfig']['GroupAdd']=[];self.fail('CLONE_HOST_CONFIG',r.clone_parity,f.old,f.new,NEW)
+    def test_user_changed(self):
+        f,b=self.candidate();f.new['Config']['User']='root';self.fail('CLONE_CONFIG',r.clone_parity,f.old,f.new,NEW)
+    def test_health_failure_rolls_back(self):
+        f=Fake();f.fail='health'
+        self.fail('MOCK_HEALTH_FAILURE',r.execute_loaded,f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+        self.assertEqual(f.running,[f.old])
+    def test_live_code_hash_mismatch(self):
+        f,b=self.candidate();self.fail('LIVE_TRANSFER_CODE_MISMATCH',r.runtime_checks,f,NAME,'0'*64,b)
+    def test_critical_startup_log(self):
+        f,b=self.candidate();f.fail='critical-log';self.fail('CRITICAL_STARTUP_LOG',self.check,f,b)
+    def test_production_like_five_root_0600_unreadable_with_health(self):
+        f=Fake()
+        # Model the verified test-r outcomes under node + GroupAdd 0. Ownership
+        # metadata documents the fixture; no secret content or chmod is involved.
+        fixture=[{'uid':0,'gid':0,'mode':0o600,'readable':False} for _ in range(5)]
+        for i,permission in enumerate(fixture):
+            dest='/fixture/ro-'+str(i)
+            f.old['Mounts'].append({'Type':'bind','Source':dest,'Destination':dest,'RW':False})
+            for name in (OLD_NAME,NAME):f.readability[(name,dest)]=permission['readable']
+        with patch('sys.stdout',new=io.StringIO()):r.execute_loaded(f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+        self.assertEqual(f.pointer,NEW);self.assertEqual(f.maxwriters,1)
+        self.assertIn(('health',NAME,NEW,False),f.events)
+        baseline=f.manifests[0]['authorityMountReadability']
+        self.assertEqual(sum(not x['readable'] for x in baseline),5)
+        self.assertNotIn('/fixture/',json.dumps(baseline))
+        stop=f.events.index(('docker','stop','--time','30',OLD_NAME))
+        probes=[i for i,e in enumerate(f.events) if e[:3]==('docker','exec',OLD_NAME) and 'mount-readability' in e]
+        self.assertTrue(probes);self.assertTrue(all(i<stop for i in probes))
+    def test_probe_transport_error_not_unreadable(self):
+        f=Fake()
+        with patch.object(f,'run',side_effect=r.GateError('COMMAND_FAILED')):
+            self.fail('RUNTIME_MOUNT_PROBE_FAILED',r.mount_readability,f,OLD_NAME)
+    def test_probe_invalid_output_not_unreadable(self):
+        f=Fake()
+        with patch.object(f,'run',return_value=b''):
+            self.fail('RUNTIME_MOUNT_PROBE_FAILED',r.mount_readability,f,OLD_NAME)
+    def test_docker_mount_order_variation_preserves_identity(self):
+        f=Fake();a=copy.deepcopy(f.old);b=copy.deepcopy(a);b['Mounts'].reverse()
+        with patch.object(f,'inspect',side_effect=[a,b]):snapshot=r.mount_readability(f,OLD_NAME)
+        self.assertEqual(len(snapshot),2)
+    def test_mount_changes_during_probe_fail(self):
+        f=Fake();a=copy.deepcopy(f.old);b=copy.deepcopy(a);b['Mounts'][0]['RW']=True
+        with patch.object(f,'inspect',side_effect=[a,b]):self.fail('PROBE_FAILED',r.mount_readability,f,OLD_NAME)
+    def test_rw_mount_readability_also_enforced(self):
+        f,b=self.candidate();f.readability[(NAME,f.new['Mounts'][1]['Destination'])]=False
+        self.fail('READABILITY_PARITY',self.check,f,b)
+    def test_authority_probe_failure_prevents_stop(self):
+        f=Fake()
+        with patch.object(r,'mount_readability',side_effect=r.GateError('RUNTIME_MOUNT_PROBE_FAILED')):
+            self.fail('RUNTIME_MOUNT_PROBE_FAILED',r.execute_loaded,f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+        self.assertFalse(any(e[:2]==('docker','stop') for e in f.events))
+    def test_failure_code_survives_controller_boundary_after_rollback(self):
+        f=Fake();f.fail='secret-read';output=io.StringIO()
+        v={'art':art(),'ledger':LEDGER,'helper':'fixture','oldId':'old-id','routeHash':r.digest(ROUTES.encode())}
+        with patch.object(r,'LocalRemote',return_value=f),patch('sys.stdout',new=output):r.run_loaded_controller(v)
+        result=json.loads(output.getvalue())
+        self.assertEqual(result,{'result':'DEPLOY_ROLLED_BACK','failureGate':'CANDIDATE_RUNTIME_CHECKS','code':'RUNTIME_MOUNT_READABILITY_PARITY_FAILED'})
+        self.assertEqual(f.running,[f.old]);self.assertEqual(f.routes(),(ROUTES,ROUTES))
+        with patch('sys.stdout',new=io.StringIO()):self.fail('READABILITY_PARITY',r.check_controller_result,output.getvalue())
+    def test_arbitrary_exception_text_suppressed(self):
+        out=io.StringIO()
+        with patch.object(r,'execute_loaded',side_effect=r.GateError('SENSITIVE_FIXTURE_TEXT')),patch('sys.stdout',new=out):r.run_loaded_controller({k:None for k in ('art','ledger','helper','oldId','routeHash')})
+        self.assertNotIn('SENSITIVE_FIXTURE_TEXT',out.getvalue())
+        self.assertEqual(json.loads(out.getvalue())['code'],'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED')
+    def test_received_unknown_code_or_extra_fields_rejected(self):
+        for payload in ({'result':'DEPLOY_ROLLED_BACK','failureGate':'CANDIDATE_RUNTIME_CHECKS','code':'SENSITIVE_FIXTURE_TEXT'},
+                        {'result':'DEPLOY_ROLLED_BACK','failureGate':'CANDIDATE_RUNTIME_CHECKS','code':'HEALTH_FAILED','stderr':'SENSITIVE_FIXTURE_TEXT'}):
+            out=io.StringIO()
+            with patch('sys.stdout',new=out):self.fail('RESULT_INVALID',r.check_controller_result,json.dumps(payload))
+            self.assertEqual(out.getvalue(),'')
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

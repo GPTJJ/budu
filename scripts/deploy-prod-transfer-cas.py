@@ -25,7 +25,7 @@ from urllib.parse import urlsplit, unquote
 
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
-RELEASE_BASE = '7324aae9ea3d0b3f8014e4ce6897ff257883a8be'
+RELEASE_BASE = '90cba06afb176d002b9b924f167cd79c8268460f'
 MEASURE_ONLY = False  # Deployment still requires exact-SHA explicit authorization.
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
@@ -456,14 +456,52 @@ def preflight(remote, art, ledger, imported=False):
                 diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df)
 
 
-def runtime_checks(remote, name, runtime_hash):
+def mount_identity(mount):
+    # Hash BOTH the volume name and actual source; never persist secret paths.
+    return digest(json.dumps([mount['Type'],mount.get('Name'),mount['Source'],
+                              mount['Destination'],mount['RW']], separators=(',', ':')).encode())
+
+
+def mount_readability(remote, name):
+    current = remote.inspect(name)
+    require(current['State']['Running'], 'RUNTIME_MOUNT_PROBE_FAILED')
+    snapshot = []
+    for mount in sorted(current['Mounts'], key=lambda m: m['Destination']):
+        # test exits 1 for unreadable. The shell returns a fixed token and exits
+        # zero, so a failed docker exec/transport cannot masquerade as unreadable.
+        try:
+            result = remote.run(['docker','exec',name,'sh','-c',
+                                 'if test -r "$1"; then printf READABLE; else printf UNREADABLE; fi',
+                                 'mount-readability',mount['Destination']], timeout=15)
+        except GateError:
+            raise GateError('RUNTIME_MOUNT_PROBE_FAILED') from None
+        require(result in (b'READABLE', b'UNREADABLE'), 'RUNTIME_MOUNT_PROBE_FAILED')
+        snapshot.append({'identityHash':mount_identity(mount),
+                         'destinationHash':digest(mount['Destination'].encode()),
+                         'RW':mount['RW'],'readable':result == b'READABLE'})
+    after = remote.inspect(name)
+    require(after['State']['Running'] and after['Id'] == current['Id']
+            and after['State'].get('StartedAt') == current['State'].get('StartedAt')
+            and sorted(after['Mounts'], key=lambda m: m['Destination'])
+            == sorted(current['Mounts'], key=lambda m: m['Destination']), 'RUNTIME_MOUNT_PROBE_FAILED')
+    return snapshot
+
+
+def mount_readability_parity(authority, candidate):
+    require([{k:v for k,v in row.items() if k != 'readable'} for row in authority]
+            == [{k:v for k,v in row.items() if k != 'readable'} for row in candidate],
+            'RUNTIME_MOUNT_IDENTITY_PARITY_FAILED')
+    require(all(type(row.get('readable')) is bool for row in authority + candidate)
+            and [row['readable'] for row in authority] == [row['readable'] for row in candidate],
+            'RUNTIME_MOUNT_READABILITY_PARITY_FAILED')
+
+
+def runtime_checks(remote, name, runtime_hash, authority_mounts):
     current = remote.inspect(name)
     require(current['State']['Running'] and current.get('RestartCount', 0) == 0, 'RUNTIME_CRASH_DETECTED')
     require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == runtime_hash,
             'LIVE_TRANSFER_CODE_MISMATCH')
-    for mount in current['Mounts']:
-        if not mount['RW']:
-            remote.run(['docker','exec',name,'test','-r',mount['Destination']])
+    mount_readability_parity(authority_mounts, mount_readability(remote, name))
     # Never publish raw logs: they can contain sensitive values. Only a fixed
     # failure code leaves this process. The tail is bounded even on failure.
     logs = remote.run(['sh','-c','docker logs --tail 100 '+shlex.quote(name)+' 2>&1']).decode(errors='replace')
@@ -560,6 +598,7 @@ class LocalRemote(Remote):
 def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     state = None
+    stage = 'PREFLIGHT'
     def interrupted(*_):
         raise GateError('INTERRUPTED')
     for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -572,6 +611,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         release = art['release']
         name = 'budu-prod-' + release[:12] + '-transfer-cas'
         state['candidate'] = name
+        stage = 'AUTHORITY_MOUNT_SNAPSHOT'
+        authority_mounts = mount_readability(remote, state['name'])
         # Fresh route snapshots, not any previous feature's rollback directory.
         root = '/opt/budu/.rollback-assets/transfer-cas-' + release
         remote.py("import json,pathlib,sys,os; v=json.load(sys.stdin); p=pathlib.Path(v['root']); p.mkdir(mode=0o700); os.umask(0o077); (p/'template').write_text(v['template']); (p/'active').write_text(v['active']); (p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",
@@ -581,44 +622,56 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                                'candidate':name,'candidateImageReference':art['imageReference'],
                                'candidateLoadedImageId':art['loadedDockerImageId'],
                                'candidateArchiveConfigDigest':art['archiveConfigDigest'],
-                               'templateHash':digest(state['template'].encode()),'migrations':85}})
+                               'templateHash':digest(state['template'].encode()),'migrations':85,
+                               'authorityMountReadability':authority_mounts}})
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_STOP')
         state['old_stop_attempted'] = True
+        stage = 'OLD_WRITER_DRAIN'
         remote.run(['docker','stop','--time','30',state['name']])
         settle_writers(remote, ledger, [])
         state['candidate_attempted'] = True
+        stage = 'CANDIDATE_CREATE'
         # Existing cloner is sent via stdin; binding comes only from existing env.
         # It is held in tmpfs and removed even on failure. No env values printed.
         payload = {'helper':helper,'old':state['name'],'candidate':name,'image':art['imageReference'],
                    'sha':release,'network':state['old']['HostConfig']['NetworkMode']}
         remote.py("import json,sys,subprocess,tempfile,pathlib,os; v=json.load(sys.stdin); c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]; e=dict(x.split('=',1) for x in c['Config']['Env']); f,p=tempfile.mkstemp(dir='/dev/shm'); os.fchmod(f,0o600); os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode()); os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['candidate'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE); result=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(result)", payload)
         remote.run(['docker','update','--restart','unless-stopped',name])
+        stage = 'CANDIDATE_CLONE_PARITY'
         validate_candidate_image(remote.inspect(name), art)
         clone_parity(state['old'], remote.inspect(name), release)
         settle_writers(remote, ledger, [name])
+        stage = 'CANDIDATE_INTERNAL_HEALTH'
         remote.health(name, release)
-        runtime_checks(remote, name, art['runtimeHash'])
+        stage = 'CANDIDATE_RUNTIME_CHECKS'
+        runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
         validate_candidate_image(remote.inspect(name), art)
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_CUTOVER')
         new = state['template'].replace('http://' + state['name'] + ':3000', 'http://' + name + ':3000')
         require(new.count('http://' + name + ':3000') == 3, 'CUTOVER_ROUTE_COUNT_INVALID')
         state['routes_touched'] = True
+        stage = 'NGINX_CUTOVER'
         replace_routes(remote, new, new)
+        stage = 'PUBLIC_HEALTH'
         remote.health(name, release, public=True)
         settle_writers(remote, ledger, [name])
-        runtime_checks(remote, name, art['runtimeHash'])
+        stage = 'FINAL_RUNTIME_CHECKS'
+        runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
+        stage = 'FINAL_DISK'
         used, available = remote.disk()
         require(math.ceil(100*used/(used+available)) <= MAX_PROJECTED_USAGE
                 and available >= MIN_PROJECTED_AVAILABLE, 'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM')
         state['pointer_touched'] = True
+        stage = 'SHA_POINTER'
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
         require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
         print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1,
                           'imageReference':art['imageReference'],'archiveConfigDigest':art['archiveConfigDigest'],
                           'loadedDockerImageId':art['loadedDockerImageId'],'rootfsIdentityMatch':True,
+                          'mountReadabilityParity':'PASS','authorityMountReadability':authority_mounts,
                           'diskAfterUsed':used,'diskAfterAvailable':available,
                           'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True}))
-    except BaseException:
+    except BaseException as error:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)
@@ -627,9 +680,59 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                 rollback(remote, state, ledger)
             except BaseException:
                 raise GateError('ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED') from None
+        error.failure_stage = stage
+        error.deployment_result = 'DEPLOY_ROLLED_BACK' if state and state.get('old_stop_attempted') else 'DEPLOY_BLOCKED'
         raise
     finally:
         remote.py('import os; os.rmdir(%r)' % LOCK)
+
+
+SAFE_CONTROLLER_CODES = frozenset({
+    'RUNTIME_MOUNT_PROBE_FAILED','RUNTIME_MOUNT_IDENTITY_PARITY_FAILED',
+    'RUNTIME_MOUNT_READABILITY_PARITY_FAILED','RUNTIME_CRASH_DETECTED',
+    'LIVE_TRANSFER_CODE_MISMATCH','CRITICAL_STARTUP_LOG','HEALTH_FAILED',
+    'CLONE_ENV_MISMATCH','CLONE_CONFIG_MISMATCH','CLONE_LABELS_MISMATCH',
+    'CLONE_HOST_CONFIG_MISMATCH','CLONE_RESOURCE_PROFILE_MISMATCH',
+    'CLONE_MOUNTS_MISMATCH','CLONE_NETWORKS_MISMATCH','WRITER_TRANSITION_FAILED',
+    'DATABASE_AUTHORITY_MISMATCH','MIGRATION_LEDGER_INVALID','MIGRATION_CHECKSUM_MISMATCH',
+    'COMMAND_FAILED','COMMAND_UNAVAILABLE_OR_TIMEOUT','INTERRUPTED',
+    'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED',
+    'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED',
+})
+SAFE_CONTROLLER_STAGES = frozenset({
+    'PREFLIGHT','AUTHORITY_MOUNT_SNAPSHOT','OLD_WRITER_DRAIN','CANDIDATE_CREATE',
+    'CANDIDATE_CLONE_PARITY','CANDIDATE_INTERNAL_HEALTH','CANDIDATE_RUNTIME_CHECKS',
+    'NGINX_CUTOVER','PUBLIC_HEALTH','FINAL_RUNTIME_CHECKS','FINAL_DISK','SHA_POINTER','UNKNOWN',
+})
+
+
+def run_loaded_controller(value):
+    try:
+        execute_loaded(LocalRemote(),value['art'],value['ledger'],value['helper'],value['oldId'],value['routeHash'])
+    except BaseException as error:
+        code = str(error) if isinstance(error, GateError) else ''
+        stage = getattr(error, 'failure_stage', 'UNKNOWN')
+        result = getattr(error, 'deployment_result', 'DEPLOY_BLOCKED')
+        # No stderr or exception text crosses SSH unless it is an exact fixed code.
+        print(json.dumps({'result':result if result in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK') else 'DEPLOY_BLOCKED',
+                          'failureGate':stage if stage in SAFE_CONTROLLER_STAGES else 'UNKNOWN',
+                          'code':code if code in SAFE_CONTROLLER_CODES else 'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}))
+
+
+def check_controller_result(raw):
+    try:
+        result = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise GateError('REMOTE_CONTROLLER_RESULT_INVALID') from None
+    require(isinstance(result, dict), 'REMOTE_CONTROLLER_RESULT_INVALID')
+    if result.get('result') in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK'):
+        require(result.get('code') in SAFE_CONTROLLER_CODES
+                and result.get('failureGate') in SAFE_CONTROLLER_STAGES
+                and set(result) == {'result','failureGate','code'}, 'REMOTE_CONTROLLER_RESULT_INVALID')
+        print(json.dumps(result), flush=True)
+        raise GateError(result['code'])
+    require(result.get('result') == 'DEPLOY_COMPLETE', 'REMOTE_CONTROLLER_RESULT_INVALID')
+    print(json.dumps(result), flush=True)
 
 
 def deploy(remote, repo, path, art, ledger, authorize):
@@ -673,10 +776,10 @@ def deploy(remote, repo, path, art, ledger, authorize):
         # Entire cutover/rollback runs in one remote process, no source/env file is
         # copied to production. Only the allowlisted summary is returned.
         code = Path(__file__).read_text().rsplit("\nif __name__ == '__main__':", 1)[0]
-        code += "\nv=json.load(sys.stdin)\nexecute_loaded(LocalRemote(),v['art'],v['ledger'],v['helper'],v['oldId'],v['routeHash'])\n"
+        code += "\nrun_loaded_controller(json.load(sys.stdin))\n"
         handed_off = True
         result = remote.py(code, payload, timeout=480)
-        print(result.decode().strip())
+        check_controller_result(result)
     finally:
         # A transport failure after handoff is UNKNOWN, never start the old writer
         # from this process while the remote transaction might still be running.
