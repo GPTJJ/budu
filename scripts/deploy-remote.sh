@@ -22,6 +22,16 @@ run_remote() {
   "${SSH_ARGS[@]}" "$USER@$HOST" "cd '$APP_DIR' && $1"
 }
 
+# Transfer CAS has one exact release contract. An intended Transfer ref or any
+# checkout containing its business commit must validate in the dedicated runner;
+# validation failure never falls through into a historical feature deploy.
+if [ "$ENV" = "prod" ] && {
+  [ "${GITHUB_REF:-}" = "refs/heads/codex/transfer-cas-existing-workflow" ] ||
+  git merge-base --is-ancestor 8381959e9c1d527c1f14c234338b14d117ae46f5 HEAD;
+}; then
+  exec bash scripts/release-prod-transfer-cas-ci.sh "$HOST" "$USER" "$APP_DIR" "$SHA"
+fi
+
 # Sweet Card data organization has a dedicated STRICT release gate. The
 # candidate branch carries this additive-migration runner; other releases keep
 # using the established paths below.

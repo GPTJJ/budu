@@ -1,3 +1,60 @@
+# Transfer CAS — existing GitHub workflow release adapter
+
+2026-09-27。当前用户已授权创建普通scripts/docs release commit、normal push新分支、自动dispatch现有deploy-prod.yml以及通过所有Gate后生产发布。本节是当前合同；下面2026-09-26记录作为历史证据保留，原“父8381959 / 4文件 / 不push / 尚未部署授权”已被本轮明确指令取代。
+
+## Identity and clean history
+
+- BUSINESS_RUNTIME_SHA = `8381959e9c1d527c1f14c234338b14d117ae46f5`。
+- Clean release base = `7ebfcd74ca97aec92a38b8eaa29f11343ca0864a`。
+- Branch = `codex/transfer-cas-existing-workflow`；独立worktree从7eb建立，未cherry-pick含workflow改动的commit。
+- `cc4ef612203e5c2d8167e8984414b5166090c9e9`保留在旧本地分支作证据，未改写、不推送它的历史。
+- FINAL_RELEASE_SHA是本扩展单个commit HEAD，唯一直接父提交必须为7eb；8381959必须ancestor，worktree clean，Prisma相对fc57不变。
+- `git log --name-only origin/main..7eb -- .github/workflows`为空；merge-base为d3ca1e6bbbdfc46a736894734ce786ffd28d9d24。提交后与push前再次检查完整待推送历史。
+- 最终image revision/container GIT_SHA=FINAL_RELEASE_SHA，health允许完整值或前12位。完整runtime payload校验保证业务8381959实际位于制品，不能靠分支名推断。
+
+精确累计allowlist（相对8381959）：原4文件 `deploy-prod-transfer-cas.sh/.py`、`test-deploy-prod-transfer-cas.py`、本checkpoint，加 `scripts/deploy-remote.sh`、`scripts/release-prod-transfer-cas-ci.sh`、`scripts/test-transfer-cas-existing-workflow.py`，共7个文件。仅deploy-remote为修改，其余相对838均为新增。禁止workflow、业务、schema改动；额外检查提交历史中的workflow改动，即使最终diff已删除也拒绝。
+
+## Existing workflow authority and dispatch
+
+- Remote workflow ID `335715337`，名称 `Deploy to Beijing Prod`，path `.github/workflows/deploy-prod.yml`，state active；默认分支main。
+- 远端内容与本地workflow一致，SHA256=`3679213363b298664d93f484b66ea474aace978d08422ec0f944fdeb5852a68e`。workflow仅workflow_dispatch，checkout@v4/fetch-depth0选择dispatch ref，调用deploy-remote参数包含GITHUB_SHA与prod，共用deploy-bj-prod并发组且不取消进行中的发布。
+- workflow文件完全不改；保留其已有SSH准备和失败通知行为，不新增通知逻辑。
+- 现有gh认证可读取Actions/workflow/run，repo权限含push/admin；scope为gist/read:org/repo。metadata不能保证dispatch成功，因此不做虚假生产试跑；真实commit/push通过后仅dispatch一次本分支。
+- 不改token、repository settings或secrets；只复用BJ_SSH_KEY/BJ_HOST/BJ_USER/BJ_APP_DIR现有合同。
+
+## Adapter and fail-closed entry
+
+- deploy-remote仅增加legacy分支前10行：指定Transfer ref或含业务8381959的checkout必须exec专用wrapper。不是凭文件存在直接部署；wrapper继续验证唯一父提交、祖先、精确allowlist、clean、workflow历史、生产fc57/DB/ledger/writer/disk。
+- 验证失败不fall through；其它无Transfer身份的既有分支保持原路径，本轮不执行这些旧路径。
+- wrapper仅允许GitHub Actions、GPTJJ/budu、workflow_dispatch、现有workflow名称、精确新branch ref、run_attempt1；参数SHA=GITHUB_SHA=HEAD，endpoint固定北京生产。
+- Ubuntu runner OS/arch/uname必须Linux/X64/x86_64；只用已有Docker/Buildx，标准docker-container driver，不安装builder或软件。
+- 构建前移除继承的SSH endpoint/DB环境变量；pure git archive作为context；不注入production credentials、build args或build secrets。现有workflow创建的SSH key不在context中，exit trap仅删除本次runner临时credential。
+- SSH使用已通过本地可信连接验证的公开ed25519 host key，专用UserKnownHostsFile和StrictHostKeyChecking=yes，不依赖现有workflow的未认证keyscan结果。
+- build timeout35分钟，deploy timeout15分钟；不自动重试build、dispatch、load或deployment。
+
+## Unchanged production architecture and gates
+
+- 复用7eb及上一轮已测的专用控制器；追加必要CI身份适配、BuildKit规范化同一tag支持、真实image inspect核验、public preflight、runtime源码/secret可读性/bounded logs检查。原GroupAdd/env/mount/network/单writer/回滚合同保留。
+- gzip-layer Docker archive只保存在runner，SSH stdin docker load；生产无额外tar、无build/pull/cache/prune。
+- 制品逐layer测量A+B+U+L+512MiB，archive≤768MiB、保守peak≤4GiB；image inspect大小也必须≤4GiB。不得用压缩体积替代解包测量。
+- Production projected usage<90%、available≥5GiB；preflight/import后/切换后重查磁盘，导入后不满足条件不停止旧writer。
+- expectedProduction/rollback=`fc57da5a6e6611c66ed1db286336dc0e1752d69c`；DB=budu_bj006；85applied/0failed且ledger checksum相同。
+- 一台production-side controller负责old stop→writer0/旧连接退出→candidate start→parity/health/writer1→3条route切换/nginx-t/reload/public health；失败按原合同自动rollback，不能从runner另起旧writer与remote控制器竞争。
+- 保留old image/container和本次route snapshot；不migration、pg_dump、DB clone、业务写入或生产Transfer测试。真实用户/worker仍可正常业务活动。
+- 发布后以独立SSH只读检查验证实际runtime源码hash（覆盖reject/withdraw CAS）、health、DB/ledger、writer、route、disk、bounded logs与rollback资产。
+
+## Offline validation / handoff
+
+- 专用发布tests43/43 PASS；existing workflow tests10/10 PASS；覆盖wrong business ancestor/branch、workflow改动/历史、allowlist越界、wrong SHA/DB/migrations、90%磁盘线、4GiB上限、rollback target、8项失败回滚、合法release及无禁止步骤。
+- Ruby/Psych解析原workflow；Shell bash-n与嵌入Python compile PASS；未安装linter。业务源码不变，复用CAS60/60、browser20/20、build PASS；保留原10项既有基线失败。
+- NEW_FAILURES=0才commit/push；真实artifact、runner、CI secret认证和production部署门在dispatch后执行，不把静态检查声称为实际部署通过。
+- 当前任务证据与最终完整SHA/run ID/生产结果记录在 `/private/tmp/budu-transfer-existing-ci-20260927/`；最终交接区分本地/已推送/实际生产状态。
+- 不继续Approval/POS/Legacy/NEXT_FIX_2或磁盘清理。
+
+---
+
+## Historical 2026-09-26 review
+
 # Transfer CAS Release Engineering Gate
 
 2026-09-26，RELEASE ENGINEERING ONLY。本次新增专用发布工具、离线测试和本checkpoint；未执行生产发布。本文件的提交为 RELEASE_ENGINEERING_SHA，可用 `git log -1 --format=%H -- docs/checkpoints/2026-09-26-transfer-cas-release.md` 取得完整值，最终交接另记录完整SHA，避免自引用。

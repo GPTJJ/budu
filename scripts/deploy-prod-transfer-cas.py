@@ -25,6 +25,7 @@ from urllib.parse import urlsplit, unquote
 
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
+RELEASE_BASE = '7ebfcd74ca97aec92a38b8eaa29f11343ca0864a'
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
 MIGRATION_REQUIRED = 'NO'
@@ -40,6 +41,9 @@ ALLOWLIST = {
     'scripts/deploy-prod-transfer-cas.py',
     'scripts/test-deploy-prod-transfer-cas.py',
     'docs/checkpoints/2026-09-26-transfer-cas-release.md',
+    'scripts/deploy-remote.sh',
+    'scripts/release-prod-transfer-cas-ci.sh',
+    'scripts/test-transfer-cas-existing-workflow.py',
 }
 CURRENT_SHA_FILE = '/opt/budu/.current-sha'
 HOST_DEFAULTS = {'Memory': 0, 'MemoryReservation': 0, 'MemorySwap': 0, 'MemorySwappiness': None, 'NanoCpus': 0, 'CpuShares': 0, 'CpuPeriod': 0, 'CpuQuota': 0, 'CpusetCpus': '', 'CpusetMems': '', 'PidsLimit': None, 'Ulimits': [], 'ShmSize': 67108864, 'IpcMode': 'private', 'PidMode': '', 'UTSMode': '', 'CgroupnsMode': 'private', 'ExtraHosts': None, 'Dns': None, 'DnsOptions': [], 'DnsSearch': [], 'Devices': [], 'DeviceRequests': None, 'Sysctls': None, 'OomKillDisable': None, 'AutoRemove': False}
@@ -90,7 +94,7 @@ def git(repo, *args):
 
 def validate_identity(release, parent, ancestor, files, schema_files, clean):
     require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != RUNTIME_SHA, 'RELEASE_SHA_INVALID')
-    require(parent == RUNTIME_SHA and ancestor, 'RELEASE_ANCESTRY_INVALID')
+    require(parent == RELEASE_BASE and ancestor, 'RELEASE_ANCESTRY_INVALID')
     require(set(files) == ALLOWLIST, 'RELEASE_DIFF_OUTSIDE_ALLOWLIST')
     require(not schema_files, 'SCHEMA_CHANGED')
     require(clean, 'WORKTREE_NOT_CLEAN')
@@ -98,6 +102,7 @@ def validate_identity(release, parent, ancestor, files, schema_files, clean):
 def identity(repo):
     require(Path(__file__).resolve() == (Path(repo)/'scripts/deploy-prod-transfer-cas.py').resolve(), 'RUNNER_REPO_MISMATCH')
     release = git(repo, 'rev-parse', 'HEAD')
+    require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
     parents = git(repo, 'rev-list', '--parents', '-n', '1', release).split()
     files = git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines()
     schemas = git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma').splitlines()
@@ -105,12 +110,21 @@ def identity(repo):
                       git(repo, 'merge-base', RUNTIME_SHA, release) == RUNTIME_SHA,
                       files, schemas, not git(repo, 'status', '--porcelain', '--untracked-files=all'))
     command(['git', '-C', str(repo), 'diff', '--check', RUNTIME_SHA, release])
+    require(not git(repo, 'log', '--format=', '--name-only', EXPECTED_OLD_SHA+'..'+release, '--', '.github/workflows'), 'WORKFLOW_HISTORY_CHANGED')
     for f in files:
-        require(git(repo, 'diff', '--diff-filter=A', '--name-only', RUNTIME_SHA, release, '--', f) == f,
-                'RELEASE_FILES_MUST_BE_ADDITIONS')
+        change = 'M' if f == 'scripts/deploy-remote.sh' else 'A'
+        require(git(repo, 'diff', '--diff-filter='+change, '--name-only', RUNTIME_SHA, release, '--', f) == f,
+                'RELEASE_FILE_CHANGE_TYPE_INVALID')
     migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
     require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
     return release, migrations
+
+def validate_loaded_image(image, art):
+    require(image['Id'] == art['imageId'] and image['Os'] == 'linux'
+            and image['Architecture'] == 'amd64'
+            and image['Config'].get('Labels', {}).get(REVISION) == art['release'], 'LOADED_ARTIFACT_MISMATCH')
+    require(all(image['Config'].get(k) == art['config'].get(k) for k in IDENTITY_KEYS), 'LOADED_CONFIG_MISMATCH')
+    require(0 < image['Size'] <= MAX_PEAK, 'LOADED_IMAGE_SIZE_INVALID')
 
 def disk_budget(used, available, archive, blobs, expanded, largest_layer):
     # containerd import: incoming archive allowance + content blobs + snapshots +
@@ -168,7 +182,11 @@ No archive member is extracted to the host filesystem.
         manifest = json.loads(read('manifest.json', 65536))
         require(len(manifest) == 1, 'ARTIFACT_MUST_HAVE_ONE_IMAGE')
         item = manifest[0]
-        require(item.get('RepoTags') == ['budu-api:transfer-cas-' + release[:12]], 'ARTIFACT_TAG_INVALID')
+        tag = 'budu-api:transfer-cas-' + release[:12]
+        # BuildKit normalizes names, while the Docker compatibility manifest may
+        # use the familiar spelling. These name exactly the same repository/tag.
+        exact_tags = [tag, 'docker.io/library/' + tag]
+        require(item.get('RepoTags') in [[t] for t in exact_tags], 'ARTIFACT_TAG_INVALID')
         config_bytes = read(safe_name(item['Config']), 4 * 1024 ** 2)
         config = json.loads(config_bytes)
         require(config.get('os') == 'linux' and config.get('architecture') == 'amd64', 'ARTIFACT_PLATFORM_INVALID')
@@ -193,7 +211,7 @@ No archive member is extracted to the host filesystem.
             require(['blobs/sha256/'+x['digest'].removeprefix('sha256:') for x in image_manifest['layers']] == layers, 'OCI_LAYER_LIST_MISMATCH')
             for key,value in descriptor.get('annotations',{}).items():
                 if key in ('io.containerd.image.name','org.opencontainers.image.ref.name'):
-                    require(value in item['RepoTags']+['transfer-cas-'+release[:12]], 'OCI_TAG_MISMATCH')
+                    require(value in exact_tags+['transfer-cas-'+release[:12]], 'OCI_TAG_MISMATCH')
             require(json.loads(read('oci-layout',65536)).get('imageLayoutVersion') == '1.0.0', 'OCI_LAYOUT_INVALID')
             allowed_members.update({'index.json','oci-layout',index_name})
         require({n for n,m in by_name.items() if m.isfile()} <= allowed_members, 'UNREVIEWED_ARCHIVE_CONTENT')
@@ -255,12 +273,15 @@ No archive member is extracted to the host filesystem.
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
         return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
                     archiveHash=archive_hash, imageId='sha256:' + digest(config_bytes),
-                    config=config['config'], release=release)
+                    config=config['config'], release=release, runtimeHash=v2_bytes)
 
 class Remote:
     def __init__(self, key):
         self.ssh = ['ssh', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-                    '-o', 'ConnectTimeout=12', HOST]
+                    '-o', 'ConnectTimeout=12']
+        if os.environ.get('TRANSFER_CAS_KNOWN_HOSTS'):
+            self.ssh += ['-o', 'UserKnownHostsFile='+os.environ['TRANSFER_CAS_KNOWN_HOSTS'], '-o', 'HostKeyAlgorithms=ssh-ed25519']
+        self.ssh += [HOST]
     def run(self, args, data=None, timeout=60):
         return command(self.ssh + [shlex.join(args)], data, timeout)
     def py(self, code, value=None, timeout=60):
@@ -359,6 +380,7 @@ def preflight(remote, art, ledger, imported=False):
     require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == EXPECTED_OLD_SHA, 'CURRENT_SHA_POINTER_MISMATCH')
     require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == OLD_V2_HASH, 'OLD_RUNTIME_SOURCE_MISMATCH')
     remote.health(name, EXPECTED_OLD_SHA)
+    remote.health(name, EXPECTED_OLD_SHA, public=True)
     db = remote.db()
     validate_database(db, ledger)
     writer_check(remote.containers(), db, [name])
@@ -370,10 +392,28 @@ def preflight(remote, art, ledger, imported=False):
     same_fs = json.loads(remote.py("import os,json; print(json.dumps(all(os.stat(p).st_dev==os.stat('/').st_dev for p in ['/var/lib/docker','/var/lib/containerd'] if os.path.exists(p))))"))
     require(same_fs is True, 'DOCKER_FILESYSTEM_MODEL_CHANGED')
     used, available = remote.disk()
+    df_h = remote.run(['df','-h','/']).decode()
+    docker_df = remote.run(['docker','system','df']).decode()
     budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest']) if not imported else {'projectedUsage':math.ceil(100*(used+RESERVE)/(used+available)), 'projectedAvailable':available-RESERVE}
     require(budget['projectedUsage'] < 90 and budget['projectedAvailable'] >= 5*GIB, 'DEPLOYMENT_DISK_UNSAFE')
     remote.inspect(old['Image'], image=True)  # rollback image exists
-    return dict(old=old, name=name, template=template, active=active, budget=budget)
+    return dict(old=old, name=name, template=template, active=active, budget=budget,
+                diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df)
+
+
+def runtime_checks(remote, name, runtime_hash):
+    current = remote.inspect(name)
+    require(current['State']['Running'] and current.get('RestartCount', 0) == 0, 'RUNTIME_CRASH_DETECTED')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == runtime_hash,
+            'LIVE_TRANSFER_CODE_MISMATCH')
+    for mount in current['Mounts']:
+        if not mount['RW']:
+            remote.run(['docker','exec',name,'test','-r',mount['Destination']])
+    # Never publish raw logs: they can contain sensitive values. Only a fixed
+    # failure code leaves this process. The tail is bounded even on failure.
+    logs = remote.run(['sh','-c','docker logs --tail 100 '+shlex.quote(name)+' 2>&1']).decode(errors='replace')
+    require(not re.search(r'(?i)\b(fatal|panic|uncaughtexception|unhandledrejection|PrismaClientInitializationError|ECONNREFUSED)\b', logs),
+            'CRITICAL_STARTUP_LOG')
 
 
 def clone_parity(old, new, release):
@@ -496,6 +536,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         clone_parity(state['old'], remote.inspect(name), release)
         settle_writers(remote, ledger, [name])
         remote.health(name, release)
+        runtime_checks(remote, name, art['runtimeHash'])
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_CUTOVER')
         new = state['template'].replace('http://' + state['name'] + ':3000', 'http://' + name + ':3000')
         require(new.count('http://' + name + ':3000') == 3, 'CUTOVER_ROUTE_COUNT_INVALID')
@@ -503,12 +544,14 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         replace_routes(remote, new, new)
         remote.health(name, release, public=True)
         settle_writers(remote, ledger, [name])
+        runtime_checks(remote, name, art['runtimeHash'])
         used, available = remote.disk()
         require(math.ceil(100*used/(used+available)) < 90 and available >= 5*GIB, 'POST_DEPLOY_DISK_UNSAFE')
         state['pointer_touched'] = True
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
         require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
-        print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1}))
+        print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1,
+                          'diskAfterUsed':used,'diskAfterAvailable':available,'transferCodePresent':True}))
     except BaseException:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -543,8 +586,13 @@ def deploy(remote, repo, path, art, ledger, authorize):
             require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
             import_complete = True
         image = remote.inspect(art['imageId'], image=True)
-        require(image['Id'] == art['imageId'] and image['Architecture'] == 'amd64'
-                and image['Config']['Labels'][REVISION] == release, 'LOADED_ARTIFACT_MISMATCH')
+        validate_loaded_image(image, art)
+        # Record post-import storage before any writer is stopped; no raw
+        # environment or credential-bearing inspect output is printed.
+        used, available = remote.disk()
+        print(json.dumps({'stage':'POST_IMPORT_DISK','used':used,'available':available,
+                          'dfHuman':remote.run(['df','-h','/']).decode(),
+                          'dockerSystemDf':remote.run(['docker','system','df']).decode()}), flush=True)
         payload = {'art':art,'ledger':ledger,
                    'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
                    'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
@@ -566,13 +614,17 @@ def deploy(remote, repo, path, art, ledger, authorize):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=['inspect-artifact','preflight','deploy'])
+    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy'])
     p.add_argument('--repo', type=Path, required=True)
-    p.add_argument('--archive', type=Path, required=True)
+    p.add_argument('--archive', type=Path)
     p.add_argument('--ssh-key', type=Path)
     p.add_argument('--authorize-release-sha')
     args = p.parse_args()
     release, ledger = identity(args.repo)
+    if args.mode == 'identity':
+        print(json.dumps({'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}))
+        return
+    require(args.archive is not None, 'ARCHIVE_REQUIRED')
     if args.mode == 'deploy':
         require(args.authorize_release_sha == release, 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
         require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
@@ -602,7 +654,11 @@ def main():
     else:
         require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
         remote = Remote(args.ssh_key)
-        summary['budget'] = preflight(remote,art,ledger)['budget']
+        state = preflight(remote,art,ledger)
+        summary['budget'] = state['budget']
+        summary['diskBefore'] = {'used':state['diskUsed'],'available':state['diskAvailable']}
+        summary['dfHuman'] = state['dfHuman']
+        summary['dockerSystemDf'] = state['dockerSystemDf']
     summary['result'] = 'PREFLIGHT_PASS'
     print(json.dumps(summary,sort_keys=True))
 

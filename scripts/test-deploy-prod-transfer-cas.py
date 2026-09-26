@@ -47,7 +47,7 @@ def original():
 def art():
     return {'release':NEW,'archive':500*1024**2,'blobs':500*1024**2,
             'expanded':1600*1024**2,'largest':700*1024**2,'imageId':'sha256:new-image',
-            'config':copy.deepcopy(original()['Config'])}
+            'config':copy.deepcopy(original()['Config']),'runtimeHash':r.OLD_V2_HASH}
 
 
 class Fake:
@@ -73,6 +73,10 @@ class Fake:
         self.events.append(tuple(args))
         if args==['cat',r.CURRENT_SHA_FILE]:return self.pointer.encode()
         if args[-2:]==['sha256sum','/app/server/v2.js']:return (r.OLD_V2_HASH+'  /app/server/v2.js').encode()
+        if args[:2]==['sh','-c'] and 'docker logs --tail' in args[2] and self.fail=='critical-log' and NAME in args[2]:
+            self.fail=None;return b'FATAL fixture startup failure'
+        if args[:3]==['docker','exec',NAME] and 'test' in args and self.fail=='secret-read':
+            self.fail=None;raise r.GateError('SECRET_READ_FAILED')
         if args[:2]==['docker','info']:
             return json.dumps({'ServerVersion':'29.1.3','Driver':'overlayfs','DockerRootDir':'/var/lib/docker',
                                'DriverStatus':[['driver-type','io.containerd.snapshotter.v1']]}).encode()
@@ -145,15 +149,27 @@ class Gates(unittest.TestCase):
     def test_artifact_peak_cap(self):
         a=art();a['expanded']=4*r.GIB;self.fail('PEAK_EXCEEDS',r.preflight,Fake(),a,LEDGER)
     def test_exact_allowlist_pass(self):
-        r.validate_identity(NEW,r.RUNTIME_SHA,True,r.ALLOWLIST,[],True)
+        r.validate_identity(NEW,r.RELEASE_BASE,True,r.ALLOWLIST,[],True)
     def test_wrong_ancestry(self):
         self.fail('ANCESTRY',r.validate_identity,NEW,r.EXPECTED_OLD_SHA,False,r.ALLOWLIST,[],True)
     def test_outside_allowlist(self):
-        self.fail('ALLOWLIST',r.validate_identity,NEW,r.RUNTIME_SHA,True,r.ALLOWLIST|{'server/v2.js'},[],True)
+        self.fail('ALLOWLIST',r.validate_identity,NEW,r.RELEASE_BASE,True,r.ALLOWLIST|{'server/v2.js'},[],True)
     def test_schema_changed(self):
-        self.fail('SCHEMA_CHANGED',r.validate_identity,NEW,r.RUNTIME_SHA,True,r.ALLOWLIST,['prisma/schema.prisma'],True)
+        self.fail('SCHEMA_CHANGED',r.validate_identity,NEW,r.RELEASE_BASE,True,r.ALLOWLIST,['prisma/schema.prisma'],True)
     def test_dirty_tree(self):
-        self.fail('WORKTREE_NOT_CLEAN',r.validate_identity,NEW,r.RUNTIME_SHA,True,r.ALLOWLIST,[],False)
+        self.fail('WORKTREE_NOT_CLEAN',r.validate_identity,NEW,r.RELEASE_BASE,True,r.ALLOWLIST,[],False)
+    def test_old_release_parent_cannot_authorize_new_ci_release(self):
+        self.fail('ANCESTRY',r.validate_identity,NEW,r.RUNTIME_SHA,True,r.ALLOWLIST,[],True)
+    def test_loaded_image_identity_and_size(self):
+        a=art(); image={'Id':a['imageId'],'Os':'linux','Architecture':'amd64','Size':2*r.GIB,'Config':copy.deepcopy(a['config'])}
+        image['Config']['Labels'][r.REVISION]=NEW
+        r.validate_loaded_image(image,a)
+        for field,value,code in [('Os','windows','ARTIFACT'),('Architecture','arm64','ARTIFACT'),('Id','wrong','ARTIFACT'),('Size',5*r.GIB,'SIZE')]:
+            with self.subTest(field=field):
+                wrong=copy.deepcopy(image);wrong[field]=value
+                self.fail(code,r.validate_loaded_image,wrong,a)
+        wrong=copy.deepcopy(image);wrong['Config']['WorkingDir']='/wrong'
+        self.fail('CONFIG',r.validate_loaded_image,wrong,a)
     def test_two_writers(self):
         f=Fake();other=copy.deepcopy(f.old);other['Name']='/other';f.running.append(other)
         self.fail('WRITER_COUNT',r.preflight,f,art(),LEDGER)
@@ -185,7 +201,7 @@ class Gates(unittest.TestCase):
         self.assertEqual(f.active.count(NAME),3);self.assertIn('isolated-test',f.active);self.assertEqual(f.pointer,NEW)
         stop=f.events.index(('docker','stop','--time','30',OLD_NAME));start=f.events.index(('create-start',NAME));self.assertLess(stop,start)
     def test_cutover_failure_matrix_restores_old(self):
-        for failure in ['helper-after-start','health','active-write','reload','public','pointer-after']:
+        for failure in ['helper-after-start','health','secret-read','critical-log','active-write','reload','public','pointer-after']:
             with self.subTest(failure=failure):
                 f=Fake();f.fail=failure
                 with self.assertRaises(r.GateError):r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
@@ -226,13 +242,13 @@ class ArchiveTests(unittest.TestCase):
         config={'os':'linux','architecture':kw.get('arch','amd64'),'config':{'Labels':{r.REVISION:NEW}},
                 'rootfs':{'diff_ids':['sha256:'+hashlib.sha256(raw).hexdigest()]}}
         if kw.get('bad_hash'):config['rootfs']['diff_ids']=['sha256:'+'0'*64]
-        cb=json.dumps(config).encode();manifest=[{'Config':'config.json','RepoTags':['budu-api:transfer-cas-'+NEW[:12]],'Layers':['layer.tar']}]
+        cb=json.dumps(config).encode();manifest=[{'Config':'config.json','RepoTags':[kw.get('tag','budu-api:transfer-cas-'+NEW[:12])],'Layers':['layer.tar']}]
         files=[('config.json',cb),('layer.tar',blob)]
         if kw.get('oci'):
             cp='blobs/sha256/'+r.digest(cb);lp='blobs/sha256/'+r.digest(blob)
             manifest[0]['Config']=cp;manifest[0]['Layers']=[lp]
             im=json.dumps({'schemaVersion':2,'config':{'digest':'sha256:'+r.digest(cb)},'layers':[{'digest':'sha256:'+r.digest(blob)}]}).encode()
-            index=json.dumps({'schemaVersion':2,'manifests':[{'digest':'sha256:'+r.digest(im)}]}).encode()
+            index=json.dumps({'schemaVersion':2,'manifests':[{'digest':'sha256:'+r.digest(im),'annotations':{'io.containerd.image.name':kw.get('annotation','budu-api:transfer-cas-'+NEW[:12])}}]}).encode()
             files=[(cp,cb),(lp,blob),('blobs/sha256/'+r.digest(im),im),('index.json',index),('oci-layout',b'{"imageLayoutVersion":"1.0.0"}')]
         if kw.get('extra'):files.append(('unreviewed-layer.tar',blob))
         files.append(('manifest.json',json.dumps(manifest).encode()))
@@ -248,6 +264,20 @@ class ArchiveTests(unittest.TestCase):
     def test_oci_and_docker_manifests_agree(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);r.artifact(self.make(root,oci=True),NEW,root)
+    def test_buildkit_normalized_tag_names(self):
+        for full_manifest in (False, True):
+            with tempfile.TemporaryDirectory() as d:
+                root=Path(d);tag='budu-api:transfer-cas-'+NEW[:12]
+                r.artifact(self.make(root,oci=True,tag=('docker.io/library/' if full_manifest else '')+tag,
+                                    annotation='docker.io/library/'+tag),NEW,root)
+    def test_different_registry_or_tag_rejected(self):
+        for kw in ({'tag':'other/budu-api:transfer-cas-'+NEW[:12]},
+                   {'oci':True,'annotation':'evil.example/budu-api:transfer-cas-'+NEW[:12]},
+                   {'tag':'budu-api:transfer-cas-'+r.EXPECTED_OLD_SHA[:12]}):
+            with tempfile.TemporaryDirectory() as d:
+                root=Path(d)
+                with self.assertRaisesRegex(r.GateError,'TAG'):
+                    r.artifact(self.make(root,**kw),NEW,root)
     def test_unreviewed_archive_member_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);p=self.make(root,extra=True)
