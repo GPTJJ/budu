@@ -192,7 +192,7 @@ try {
   if (shippedProduct.quantity !== 2 || shippedProduct.shippedQuantity !== 1 || shippedMaterial.quantity !== 3 || shippedMaterial.shippedQuantity !== 2) throw new Error('申请数量被覆盖或实发数量未保存')
 
   const shippedDelete = await fetch(`${base}/v2/transfer-requests/${created.id}`, { method: 'DELETE', headers: { Cookie: cookie } })
-  if (shippedDelete.status !== 400) throw new Error('已发货调拨不应允许撤回')
+  if (shippedDelete.status !== 409) throw new Error('已发货调拨不应允许撤回')
 
   const withdrawCreate = await fetch(`${base}/v2/transfer-requests`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },

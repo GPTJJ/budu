@@ -1019,10 +1019,14 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   if (t.deletedAt) throw bad('已删除调拨不可继续操作', 409)
   const transferAdmin = hasInventoryTransferAll(req.user)
   if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('仅待备货调拨可撤回')
-  const updated = await prisma.transferRequest.update({
-    where: { id: t.id },
+  if (t.status !== 'pending') throw bad('仅待备货调拨可撤回', 409)
+  const claimed = await prisma.transferRequest.updateMany({
+    where: { id: t.id, status: 'pending', deletedAt: null },
     data: { status: 'canceled', withdrawnBy: req.user.username, withdrawnAt: new Date(), updatedAt: new Date() },
+  })
+  if (claimed.count !== 1) throw bad('当前状态不可撤回', 409)
+  const updated = await prisma.transferRequest.findUnique({
+    where: { id: t.id },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
   res.json({ ok: true, request: serializeTransfer(updated) })
@@ -1040,7 +1044,7 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('调拨不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('当前状态不可发货')
+  if (t.status !== 'pending') throw bad('当前状态不可发货', 409)
   const shipmentUpdates = transferShipmentUpdates(req.body?.items, t.items)
   const shippedAt = new Date()
   const final = await prisma.$transaction(async (tx) => {
@@ -1081,10 +1085,14 @@ v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('申请不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('当前状态不可驳回')
-  const updated = await prisma.transferRequest.update({
-    where: { id: t.id },
+  if (t.status !== 'pending') throw bad('当前状态不可驳回', 409)
+  const claimed = await prisma.transferRequest.updateMany({
+    where: { id: t.id, status: 'pending', deletedAt: null },
     data: { status: 'rejected', updatedAt: new Date() },
+  })
+  if (claimed.count !== 1) throw bad('当前状态不可驳回', 409)
+  const updated = await prisma.transferRequest.findUnique({
+    where: { id: t.id },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
   res.json({ ok: true, request: serializeTransfer(updated) })

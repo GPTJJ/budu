@@ -20,6 +20,7 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-transfer-lifecycle-cas.mjs', // Transfer生命周期：真实PG + 确定性HTTP并发，终态/删除/权限保护
   'test-wechat-access-token.mjs', // 微信小程序 access_token 唯一权威：单 cache、过期重取、失效重取、失败不抛
   'test-wechat-logistics.mjs', // 传运单客户端：无 trans_id 不上报、错误分类、token 不泄漏、不伪造 waybill_token
   'test-online-logistics.mjs', // 物流上报状态：发货前不注册、幂等、自提不进入、失败不阻断发货、upsert 后不重复上报
@@ -204,6 +205,7 @@ const CRITICAL_DIRECT = [
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-transfer-lifecycle-cas.mjs',
   'test-transaction-conflict.mjs',
   'test-partner-replenishment-gate9a.mjs',
   'test-partner-replenishment-gate3.mjs',
