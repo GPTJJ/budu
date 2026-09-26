@@ -47,17 +47,20 @@ class ExistingWorkflow(unittest.TestCase):
                          '"${RUNNER_ARCH:-}" = X64','"$(uname -m)" = x86_64',
                          'unset SSH_HOST SSH_USER APP_DIR SSH_KEY DATABASE_URL','git archive "$RELEASE_SHA"',
                          '--platform linux/amd64','compression=gzip,compression-level=9,force-compression=true',
-                         '--authorize-release-sha "$RELEASE_SHA"','trap finish EXIT'):
+                         'readonly MEASURE_ONLY=TRUE','trap finish EXIT'):
             self.assertIn(required,s)
         for forbidden in ('set -x','--build-arg','--secret','docker prune','system prune','docker compose','pg_dump','prisma migrate','apt install','curl '):
             self.assertNotIn(forbidden,s)
-        self.assertLess(s.index('inspect-artifact --repo'),s.index('docker load --input'))
-        self.assertLess(s.index('preflight --repo'),s.index(' deploy --repo'))
+        self.assertIn(' measure --repo',s)
+        self.assertNotIn(' deploy --repo',s)
+        self.assertNotIn('--authorize-release-sha',s)
+        self.assertNotIn('docker load',s)
+        self.assertIn('PRODUCTION_DEPLOYED=NO STOP',s)
 
     def test_exact_business_and_rollback_constants(self):
         self.assertEqual(r.RUNTIME_SHA,'8381959e9c1d527c1f14c234338b14d117ae46f5')
         self.assertEqual(r.EXPECTED_OLD_SHA,'fc57da5a6e6611c66ed1db286336dc0e1752d69c')
-        self.assertEqual(r.RELEASE_BASE,'7ebfcd74ca97aec92a38b8eaa29f11343ca0864a')
+        self.assertEqual(r.RELEASE_BASE,'cfba0240764e0c8205354d7d79e46f37843ba289')
         self.assertEqual(r.MIGRATION_REQUIRED,'NO')
 
     def mock_git(self,ancestor=True,workflow_history=False,branch=BRANCH):

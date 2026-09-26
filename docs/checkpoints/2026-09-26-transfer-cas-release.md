@@ -1,3 +1,59 @@
+# Transfer CAS Artifact Disk Feasibility Audit — MEASURE ONLY
+
+2026-09-27。本轮任务撤销继续部署路径，仅授权测量、普通release-engineering commit/push和dispatch现有workflow。即使SAFE也STOP，不导入Production、不cutover、不调阈值、不扩盘、不清理image/container/cache。下面所有旧部署授权/固定父提交说明仅为历史。
+
+## Frozen input and measurement identity
+
+- 起始branch `codex/transfer-cas-existing-workflow`，HEAD=cfba0240764e0c8205354d7d79e46f37843ba289，worktree clean，已与remote ref核对；business8381959 ancestor。
+- 本次MEASUREMENT_RELEASE_SHA必须为cfba024的唯一直接child。RELEASE_BASE仅更新为完整cfba024，不放宽为任意ancestor。
+- 原精确7文件累计allowlist保持，workflow文件和历史无修改；server/src/prisma/shared/Dockerfile/.dockerignore/旧cloner及其它业务不变。
+- Dockerfile、linux/amd64、gzip level9/force-compression、单平台无attestation与上次run36255944849相同。标签绑定measurement SHA；只新增测量工具内容，不声称mutable base tags产生bit-identical旧image。
+
+## Hard separation from deployment
+
+- Python MEASURE_ONLY=True，无CLI覆盖参数；main(deploy)、deploy()、execute_loaded()在任何生产IO前均拒绝。
+- CI wrapper readonly MEASURE_ONLY=TRUE，build后只调用measure，不再含deploy/preflight/cutover调用。
+- MeasurementRemote只接收枚举的只读命令；生产Python代码仅强制READ ONLY SQL或固定metadata脚本。测试确认load/create/start/stop/nginx reload/arbitrary shell/Python写入均拒绝。
+- 原MAX_PEAK=4GiB、RESERVE=512MiB、disk_budget及其它安全阈值不变；生产deploy的原安全门保留。测量路径先打印所有artifact metrics，不调用拒绝后丢失数据的admission门。
+- 没有Production build/pull/save/load/import、container操作、nginx更新、migration、backup、业务API或DB写入。CI独立daemon允许load作实验，但不运行image、不删除其image/cache。
+
+## Measured metrics and reuse rules
+
+- 原archive/blob/expanded/largest/reserve/peak每项输出bytes+GiB；额外输出EXCESS_OVER_4GIB和current max=4。
+- 逐层：压缩blob字节、tar展开流字节、4KiB extent取整+每entry4KiB保守physical字节、diffID、content digest、chainID、entry count、history分类与有限目录逻辑字节统计。没有文件内容输出。
+- Expanded physical是基于真实tar entries测得尺寸的保守分配模型，不冒充Production du实测。CI独立data-root另做真实du before/after和采样peak。
+- 现有Production imageInspect Size=567431118 bytes、18个rootfs diffIDs；Docker system/df读出total Size=2175901646、SharedSize=1479770112 bytes。不同storage接口口径不混用。
+- Production Docker29.1.3-0ubuntu3~24.04.2、containerd2.2.1、overlayfs/io.containerd.snapshotter.v1；ctr只读metadata可用（观测2885 content entries、816 snapshots）。
+- SHARED_LAYER_COUNT指与当前Production diffID相同的层；解包复用必须chainID对应Committed snapshot真实存在。只相同diffID但不同父链不抵扣expanded。
+- 压缩content复用必须candidate digest在moby namespace元数据中存在，且已存在content文件stat.size与candidate blob大小一致。UNKNOWN全部按新增；metadata blobs不抵扣。
+
+## Import path evidence and conservative models
+
+- 实际发布实现是压缩layer的Docker archive经SSH stdin→docker load；runner保存archive，Production没有archive文件路径。
+- [Docker CLI29.1.3](https://github.com/docker/cli/blob/v29.1.3/cli/command/image/load.go)直接将stdin reader交给ImageLoad。
+- [Moby docker-v29.1.3 LoadImage](https://github.com/moby/moby/blob/docker-v29.1.3/daemon/containerd/image_exporter.go)解压输入流后调用containerd.Import，再逐image unpack。
+- [containerd2.2.1 ImportIndex](https://github.com/containerd/containerd/blob/v2.2.1/core/images/archive/importer.go)按tar entry读取并写content；不将完整archive另落盘。因此匹配该实现时PRODUCTION_ARCHIVE_RESIDENT_BYTES=0。
+- [content writer](https://github.com/containerd/containerd/blob/v2.2.1/plugins/content/local/writer.go)以ingest临时文件写入，完成后rename到content位置；已存在blob也可能先产生临时ingest再去重，不能把共享blob瞬时占用当0。
+- [rootfs apply](https://github.com/containerd/containerd/blob/v2.2.1/pkg/rootfs/apply.go)按chainID检查snapshot，Prepare/apply/Commit；已有chain跳过。不把单一diffID当完整snapshot。
+- A=archive+blobs+expanded+largest+reserve；B=blobs+expanded+largest+reserve；C=unique blobs+unique chain-expanded+largest unique expanded+reserve。
+- 另外计算C ingest校验模型：unique blobs+unique expanded+max(largest unique expanded, largest shared compressed ingest)+reserve，防止共享blob临时写入被低估。
+- 保留largest staging与512MiB reserve作为额外保守余量；不因snapshot Commit的实现去掉该余量。
+- 每模型用同一生产used/available计算ceil百分比，阈值仍严格<90%且available≥5GiB。
+- SAFE只在已核对存储实现和保守B或C+ingest模型通过时给出；否则UNSAFE/INCONCLUSIVE并建议后续独立评估扩盘，绝不执行。
+
+## Isolated CI measurement and validation
+
+- 仅GitHub Linux/X64 runner可启动隔离dockerd：独立socket、data-root、exec-root、pidfile、containerd namespaces；关闭bridge/iptables，验证empty image list和精确data-root后才load。
+- 使用runner已有Docker daemon binary，overlay2显式模式。不安装软件，不改主daemon配置，不创建/运行容器，不删除image/cache。结束仅停该专用daemon，保留数据文件至runner平台生命周期结束。
+- du -s -B1独立data-root before/after记录实际新增；加载中采样peak仅为观测值，不称严格上界。CI storage版本/driver与Production逐项比较，不一致时NOT_DIRECTLY_REPRESENTATIVE。
+- 离线release tests52/52 PASS（含测量阻断、未知复用、父链、共享blob ingest与超限指标）；workflow compatibility10/10 PASS。原有部署故障测试仅在内存fixture中模拟旧非测量模式。
+- 不安装linter；bash-n/Python compile、allowlist、业务与workflow不变检查在commit前执行。真实CI测量结果将写GitHub日志/step summary，最终JSON与报告保存在 `/private/tmp/budu-transfer-disk-audit-20260927/`。
+- 完成后STOP；推荐formula/policy仅为下一轮review材料，当前4GiB门不改。
+
+---
+
+## Historical deployment attempts (not current authorization)
+
 # Transfer CAS — existing GitHub workflow release adapter
 
 2026-09-27。当前用户已授权创建普通scripts/docs release commit、normal push新分支、自动dispatch现有deploy-prod.yml以及通过所有Gate后生产发布。本节是当前合同；下面2026-09-26记录作为历史证据保留，原“父8381959 / 4文件 / 不push / 尚未部署授权”已被本轮明确指令取代。

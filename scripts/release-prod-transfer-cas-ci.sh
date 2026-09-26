@@ -2,6 +2,8 @@
 # Adapter for the existing deploy-prod.yml workflow; no alternative cutover.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
+readonly MEASURE_ONLY=TRUE
+export MEASURE_ONLY
 
 test "$#" -eq 4
 DEPLOY_HOST="$1"
@@ -40,7 +42,7 @@ root=Path(os.environ['TRANSFER_CAS_RUN_DIR'])
 summary=os.environ.get('GITHUB_STEP_SUMMARY')
 if summary:
     with open(summary,'a') as out:
-        for name in ('artifact','image','preflight','deploy'):
+        for name in ('measurement',):
             p=root/(name+'.json')
             if p.exists():
                 out.write('### Transfer CAS '+name+'\n\n```json\n'+p.read_text()+'\n```\n\n')
@@ -76,22 +78,7 @@ timeout 35m docker buildx build --builder transfer-cas --platform linux/amd64 \
   --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUN_DIR/image.tar" \
   "$RUN_DIR/source"
 
-bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$RUN_DIR/image.tar" | tee "$RUN_DIR/artifact.json"
-docker load --input "$RUN_DIR/image.tar"
-python3 - <<'PY' | tee "$RUN_DIR/image.json"
-import importlib.util,json,os
-from pathlib import Path
-spec=importlib.util.spec_from_file_location('release','scripts/deploy-prod-transfer-cas.py')
-r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
-repo=Path.cwd();sha,_=r.identity(repo)
-a=r.artifact(Path(os.environ['TRANSFER_CAS_RUN_DIR'])/'image.tar',sha,repo)
-i=json.loads(r.command(['docker','image','inspect',a['imageId']]))[0]
-r.validate_loaded_image(i,a)
-print(json.dumps({'imageId':i['Id'],'platform':i['Os'],'architecture':i['Architecture'],
-                  'imageSize':i['Size'],'archiveSize':a['archive'],'releaseSha':sha,
-                  'businessRuntimeSha':r.RUNTIME_SHA,'artifactIdentity':'PASS'}))
-PY
-bash scripts/deploy-prod-transfer-cas.sh preflight --repo "$PWD" --archive "$RUN_DIR/image.tar" \
-  --ssh-key "$HOME/.ssh/id_ed25519" | tee "$RUN_DIR/preflight.json"
-timeout 15m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
-  --ssh-key "$HOME/.ssh/id_ed25519" --authorize-release-sha "$RELEASE_SHA" | tee "$RUN_DIR/deploy.json"
+# This measurement release has no production import/cutover invocation.
+bash scripts/deploy-prod-transfer-cas.sh measure --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+  --ssh-key "$HOME/.ssh/id_ed25519" | tee "$RUN_DIR/measurement.json"
+printf 'MEASURE_ONLY=TRUE PRODUCTION_DEPLOYED=NO STOP\n'

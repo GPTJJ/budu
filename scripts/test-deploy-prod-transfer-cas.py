@@ -121,6 +121,7 @@ class Fake:
 
 class Gates(unittest.TestCase):
     def setUp(self):
+        mode=patch.object(r,'MEASURE_ONLY',False);mode.start();self.addCleanup(mode.stop)
         # A stray call to actual process/network tooling fails the test immediately.
         self.no_process=patch.object(r.subprocess,'run',side_effect=AssertionError('REAL_PROCESS_FORBIDDEN'))
         self.no_process.start();self.addCleanup(self.no_process.stop)
@@ -297,6 +298,80 @@ class ArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);p=self.make(root,bad_hash=True)
             with self.assertRaisesRegex(r.GateError,'DIFF_ID'):r.artifact(p,NEW,root)
+
+class MeasurementTests(unittest.TestCase):
+    def fixture(self):
+        a=art()
+        a.update(archive=600*1024**2,blobs=600*1024**2,expanded=2400*1024**2,largest=1100*1024**2)
+        a['layers']=[{'index':0,'blobBytes':600*1024**2,'expandedPhysicalBytes':2400*1024**2,
+                      'diffId':'sha256:diff','contentDigest':'sha256:blob','chainId':'sha256:chain'}]
+        p={'rootfsDiffIds':['sha256:diff'],'diskUsed':45*r.GIB,'diskAvailable':12*r.GIB,
+           'storage':{'ServerVersion':'29.1.3','Driver':'overlayfs','DriverStatus':[]},
+           'metadata':{'metadataAvailable':True,'snapshotProof':{},'contentProof':{}}}
+        return a,p
+    def test_measurement_locked_and_deploy_rejected_before_io(self):
+        self.assertTrue(r.MEASURE_ONLY)
+        with patch.object(r,'command',side_effect=AssertionError('IO_FORBIDDEN')):
+            with self.assertRaisesRegex(r.GateError,'MEASURE_ONLY_DEPLOY_FORBIDDEN'):
+                r.deploy(None,None,None,None,None,None)
+            with self.assertRaisesRegex(r.GateError,'MEASURE_ONLY_DEPLOY_FORBIDDEN'):
+                r.execute_loaded(None,None,None,None,None,None)
+            with patch.object(sys,'argv',['release','deploy','--repo','.']):
+                with self.assertRaisesRegex(r.GateError,'MEASURE_ONLY_DEPLOY_FORBIDDEN'):r.main()
+    def test_production_read_adapter_rejects_mutations(self):
+        remote=r.MeasurementRemote('fixture-key')
+        mutations=[['docker','load'],['docker','create','image'],['docker','start','old'],
+                   ['docker','stop','old'],['docker','exec',r.NGINX,'nginx','-s','reload'],
+                   ['sudo','-n','python3','-c','open("/tmp/file","w")'],['sh','-c','touch /tmp/file']]
+        with patch.object(r,'command',side_effect=AssertionError('IO_FORBIDDEN')):
+            for args in mutations:
+                with self.subTest(args=args),self.assertRaisesRegex(r.GateError,'REMOTE_MUTATION_FORBIDDEN'):
+                    remote.run(args)
+    def test_full_metrics_survive_cap_failure(self):
+        a,_=self.fixture();m=r.artifact_metrics(a)
+        self.assertEqual(m['CURRENT_FORMULA_PEAK_BYTES'],5212*1024**2)
+        self.assertEqual(m['EXCESS_OVER_4GIB_BYTES'],1116*1024**2)
+        self.assertEqual(r.MAX_PEAK,4*r.GIB);self.assertEqual(r.RESERVE,512*1024**2)
+        with self.assertRaisesRegex(r.GateError,'PEAK_EXCEEDS_CONTRACT'):
+            r.disk_budget(0,100*r.GIB,a['archive'],a['blobs'],a['expanded'],a['largest'])
+    def test_same_diff_without_chain_proof_is_not_snapshot_reuse(self):
+        a,p=self.fixture();m=r.disk_models(a,p)
+        self.assertEqual(m['SHARED_LAYER_COUNT'],1)
+        self.assertEqual(m['REUSABLE_SNAPSHOT_LAYER_COUNT'],0)
+        self.assertEqual(m['UNIQUE_CANDIDATE_EXPANDED_BYTES'],a['expanded'])
+    def test_unknown_content_and_snapshot_never_discounted(self):
+        a,p=self.fixture();p['metadata']['metadataAvailable']=False
+        m=r.disk_models(a,p)
+        self.assertEqual(m['SHARED_COMPRESSED_BLOB_BYTES'],'UNKNOWN')
+        self.assertEqual(m['MODELED_UNIQUE_BLOB_BYTES'],a['blobs'])
+        self.assertEqual(m['UNIQUE_CANDIDATE_EXPANDED_BYTES'],a['expanded'])
+    def test_confirmed_reuse_retains_shared_blob_ingest_staging(self):
+        a,p=self.fixture();p['metadata']['snapshotProof']['sha256:chain']=True
+        p['metadata']['contentProof']['sha256:blob']={'present':True,'fileBytes':a['layers'][0]['blobBytes']}
+        m=r.disk_models(a,p)
+        self.assertEqual(m['UNIQUE_CANDIDATE_EXPANDED_BYTES'],0)
+        self.assertEqual(m['models']['MODEL_C_LAYER_REUSE_CONSERVATIVE']['PEAK_INCREMENT_BYTES'],r.RESERVE)
+        self.assertEqual(m['models']['MODEL_C_INGEST_STAGING_CHECK']['PEAK_INCREMENT_BYTES'],a['blobs']+r.RESERVE)
+    def test_ci_import_cannot_execute_on_local_or_production_host(self):
+        with patch.dict(r.os.environ,{},clear=True),patch.object(r.subprocess,'Popen',side_effect=AssertionError('PROCESS_FORBIDDEN')):
+            with self.assertRaisesRegex(r.GateError,'CI_MEASUREMENT_HOST_REQUIRED'):
+                r.ci_import_measurement(None,None)
+    def test_metadata_script_is_read_only_and_compiles(self):
+        compile(r.MEASUREMENT_METADATA_SCRIPT,'readonly-metadata','exec')
+        for forbidden in ('.write_', '.mkdir(', '.unlink(', "'load'", "'import'", "'delete'", "'remove'", "'pull'"):
+            self.assertNotIn(forbidden,r.MEASUREMENT_METADATA_SCRIPT)
+    def test_measurement_pipeline_never_calls_deploy_or_cap_gate(self):
+        a,p=self.fixture()
+        ci={'CI_IMAGE_SIZE':5*r.GIB,'storage':{'ServerVersion':'28.0.4','Driver':'overlay2'}}
+        with patch.object(r,'ci_import_measurement',return_value=ci),patch.object(r,'production_measurement',return_value=p),\
+             patch.object(r,'deploy',side_effect=AssertionError('DEPLOY_FORBIDDEN')),\
+             patch.object(r,'disk_budget',side_effect=AssertionError('CAP_MUST_NOT_HIDE_METRICS')):
+            result=r.measure_release(None,None,a,None,'fixture-key')
+        self.assertEqual(result['PRODUCTION_OPERATIONAL_CHANGES'],0)
+        self.assertFalse(result['PRODUCTION_DEPLOYED'])
+        self.assertEqual(result['artifactMetrics']['DOCKER_IMAGE_INSPECT_SIZE_GIB'],5)
+        self.assertEqual(result['ciImport']['REPRESENTATIVENESS'],'NOT_DIRECTLY_REPRESENTATIVE')
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

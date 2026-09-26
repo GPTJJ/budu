@@ -25,7 +25,8 @@ from urllib.parse import urlsplit, unquote
 
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
-RELEASE_BASE = '7ebfcd74ca97aec92a38b8eaa29f11343ca0864a'
+RELEASE_BASE = 'cfba0240764e0c8205354d7d79e46f37843ba289'
+MEASURE_ONLY = True  # Locked for this release; there is no CLI override.
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
 MIGRATION_REQUIRED = 'NO'
@@ -221,7 +222,10 @@ No archive member is extracted to the host filesystem.
         expected_payload = runtime_payload(repo)
         observed_payload = {}
         v2_bytes = None
-        for layer_name, expected in zip(layers, diffs):
+        layer_metrics = []
+        chain = None
+        histories = [h.get('created_by','') for h in config.get('history',[]) if not h.get('empty_layer')]
+        for index, (layer_name, expected) in enumerate(zip(layers, diffs)):
             m = by_name.get(safe_name(layer_name))
             require(m is not None and m.isfile(), 'LAYER_MISSING')
             if layer_name.startswith('blobs/sha256/'):
@@ -232,6 +236,7 @@ No archive member is extracted to the host filesystem.
             decoded = gzip.GzipFile(fileobj=raw) if header == b'\x1f\x8b' else raw
             stream = HashReader(decoded)
             physical = count = 0
+            categories = {}
             with tarfile.open(fileobj=stream, mode='r|') as layer:
                 for member in layer:
                     name = safe_name(member.name)
@@ -244,6 +249,10 @@ No archive member is extracted to the host filesystem.
                         extent = file_sizes[target]
                     file_sizes[name] = extent
                     physical += 4096 + math.ceil(extent / 4096) * 4096
+                    category = next((p for p in ('usr/lib/chromium','usr/share/fonts','app/node_modules',
+                                                'usr/local','app/server','app/scripts','app/dist','app/prisma')
+                                     if name == p or name.startswith(p+'/')), 'other')
+                    categories[category] = categories.get(category, 0) + extent
                     require(count <= MAX_MEMBERS and physical <= 2 * GIB, 'LAYER_EXPANSION_TOO_LARGE')
                     require(not member.issparse(), 'SPARSE_LAYER_UNSUPPORTED')
                     if member.issym() and any(k.startswith(name+'/') for k in expected_payload):
@@ -268,12 +277,24 @@ No archive member is extracted to the host filesystem.
             require('sha256:' + stream.h.hexdigest() == expected, 'LAYER_DIFF_ID_MISMATCH')
             expanded += physical
             largest = max(largest, physical)
+            chain = expected if chain is None else 'sha256:'+digest((chain+' '+expected).encode())
+            history = histories[index] if len(histories) == len(layers) else ''
+            history_kind = ('chromium_and_fonts_install' if 'apt-get install' in history and 'chromium' in history
+                            else 'node_modules_install' if 'npm ci' in history
+                            else 'prisma_client_generate' if 'prisma generate' in history
+                            else 'server_ownership_copyup' if 'chown -R' in history
+                            else 'application_copy' if history.startswith('COPY ')
+                            else 'base_or_other')
+            layer_metrics.append({'index':index,'blobBytes':m.size,'expandedPhysicalBytes':physical,
+                                  'diffId':expected,'contentDigest':'sha256:'+file_hash(outer.extractfile(m)),
+                                  'chainId':chain,'expandedTarBytes':stream.total,'entryCount':count,
+                                  'historyCategory':history_kind,'logicalBytesByDirectory':categories})
         require(v2_bytes is not None and v2_bytes == digest((Path(repo) / 'server/v2.js').read_bytes()),
                 'ARTIFACT_BUSINESS_CODE_MISMATCH')
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
         return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
                     archiveHash=archive_hash, imageId='sha256:' + digest(config_bytes),
-                    config=config['config'], release=release, runtimeHash=v2_bytes)
+                    config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics)
 
 class Remote:
     def __init__(self, key):
@@ -503,6 +524,7 @@ class LocalRemote(Remote):
 
 
 def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
+    require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     state = None
     def interrupted(*_):
         raise GateError('INTERRUPTED')
@@ -567,6 +589,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
 
 
 def deploy(remote, repo, path, art, ledger, authorize):
+    require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     require(authorize == art['release'], 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
     state = preflight(remote, art, ledger)
     release = art['release']
@@ -612,14 +635,254 @@ def deploy(remote, repo, path, art, ledger, authorize):
             remote.py('import os; os.rmdir(%r)' % LOCK)
 
 
+def artifact_metrics(art):
+    values = {'ARCHIVE':art['archive'],'TOTAL_BLOB':art['blobs'],
+              'TOTAL_EXPANDED_PHYSICAL':art['expanded'],'LARGEST_LAYER_EXPANDED':art['largest'],
+              'RESERVE':RESERVE,'CURRENT_FORMULA_PEAK':art['archive']+art['blobs']+art['expanded']+art['largest']+RESERVE}
+    result = {key+suffix:(value if suffix == '_BYTES' else value/GIB)
+              for key,value in values.items() for suffix in ('_BYTES','_GIB')}
+    result.update(CURRENT_GATE_MAX_GIB=MAX_PEAK/GIB,
+                  EXCESS_OVER_4GIB_BYTES=max(0,values['CURRENT_FORMULA_PEAK']-MAX_PEAK),
+                  EXCESS_OVER_4GIB=max(0,values['CURRENT_FORMULA_PEAK']-MAX_PEAK)/GIB,
+                  IMAGE_PLATFORM='linux',IMAGE_ARCH='amd64',IMAGE_ID=art['imageId'],LAYERS=art['layers'])
+    return result
+
+
+MEASUREMENT_METADATA_SCRIPT = r'''import json,sys,subprocess,pathlib
+v=json.load(sys.stdin)
+base=['ctr','--address','/run/containerd/containerd.sock','--namespace','moby']
+result={}
+try:
+ content=set(subprocess.check_output(base+['content','list','--quiet'],stderr=subprocess.DEVNULL).decode().split())
+ snapshots=subprocess.check_output(base+['snapshots','--snapshotter','overlayfs','list'],stderr=subprocess.DEVNULL).decode().splitlines()[1:]
+ committed={line.split()[0] for line in snapshots if line.split() and line.split()[-1]=='Committed'}
+ result['metadataAvailable']=True
+ result['existingContentCount']=len(content)
+ result['contentProof']={}
+ for d in v['digests']:
+  p=pathlib.Path('/var/lib/containerd/io.containerd.content.v1.content/blobs/sha256')/d.split(':')[1]
+  result['contentProof'][d]={'present':d in content,'fileBytes':p.stat().st_size if d in content and p.is_file() else None}
+ result['snapshotProof']={d:d in committed for d in v['chains']}
+except (OSError,subprocess.CalledProcessError):
+ result={'metadataAvailable':False,'contentProof':{},'snapshotProof':{}}
+df=json.loads(subprocess.check_output(['curl','--fail','--silent','--unix-socket','/var/run/docker.sock','http://localhost/system/df']))
+matches=[i for i in df.get('Images',[]) if i.get('Id')==v['imageId']]
+result['currentImageDf']={k:matches[0].get(k) for k in ('Id','Size','SharedSize','VirtualSize','Containers')} if len(matches)==1 else None
+print(json.dumps(result))
+'''
+
+
+class MeasurementRemote(Remote):
+    """Only the enumerated production reads are admitted in this audit."""
+    def db(self):
+        self._db_read = True
+        try:
+            return super().db()
+        finally:
+            self._db_read = False
+
+    def run(self, args, data=None, timeout=60):
+        allowed = (args in (['cat',TEMPLATE],['cat',CURRENT_SHA_FILE],
+                           ['df','-Pk','/'],['df','-h','/'],['docker','ps','-q'],
+                           ['docker','info','--format','{{json .}}'],['docker','system','df','-v'],
+                           ['docker','version','--format','{{json .Server}}'],
+                           ['curl','--fail','--silent','--max-time','10','https://buducandy.cn/api/health'])
+                   or args[:3] in (['docker','container','inspect'],['docker','image','inspect']))
+        if args[:2] == ['docker','exec']:
+            allowed = (args == ['docker','exec',NGINX,'cat',ACTIVE]
+                       or args[3:] in (['wget','-qO-','http://127.0.0.1:3000/api/health'],
+                                       ['sha256sum','/app/server/v2.js']))
+        if args[:4] == ['sudo','-n','python3','-c']:
+            allowed = (args[4] == MEASUREMENT_METADATA_SCRIPT
+                       or (getattr(self,'_db_read',False) and 'BEGIN READ ONLY;' in args[4]
+                           and 'default_transaction_read_only=on' in args[4]))
+        require(allowed, 'MEASUREMENT_REMOTE_MUTATION_FORBIDDEN')
+        return super().run(args,data,timeout)
+
+
+def production_measurement(remote, art, ledger):
+    template, active = remote.routes()
+    name = route_target(template,active)
+    old = remote.inspect(name)
+    require(old['State']['Running'] and env(old).get('GIT_SHA') == EXPECTED_OLD_SHA
+            and old['Config']['Labels'].get(REVISION) == EXPECTED_OLD_SHA, 'PRODUCTION_SHA_MISMATCH')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == EXPECTED_OLD_SHA, 'CURRENT_SHA_POINTER_MISMATCH')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == OLD_V2_HASH, 'OLD_RUNTIME_SOURCE_MISMATCH')
+    remote.health(name,EXPECTED_OLD_SHA);remote.health(name,EXPECTED_OLD_SHA,public=True)
+    db=remote.db();validate_database(db,ledger);writer_check(remote.containers(),db,[name])
+    image=remote.inspect(old['Image'],image=True)
+    info=json.loads(remote.run(['docker','info','--format','{{json .}}']))
+    version=json.loads(remote.run(['docker','version','--format','{{json .Server}}']))
+    used,available=remote.disk()
+    metadata=json.loads(remote.py(MEASUREMENT_METADATA_SCRIPT,{'imageId':old['Image'],
+                        'digests':[x['contentDigest'] for x in art['layers']],
+                        'chains':[x['chainId'] for x in art['layers']]}))
+    # The verbose report is read but never print unrelated image/container names.
+    remote.run(['docker','system','df','-v'])
+    df=metadata['currentImageDf']
+    shared=df.get('SharedSize') if df else None
+    unique=(df['Size']-shared) if df and isinstance(shared,int) and 0 <= shared <= df['Size'] else None
+    return {'sha':EXPECTED_OLD_SHA,'health':'PASS','database':EXPECTED_DB,'migrationsApplied':85,
+            'migrationsFailed':0,'writer':1,'imageId':old['Image'],'imageInspectSize':image['Size'],
+            'rootfsDiffIds':image['RootFS']['Layers'],'imageDf':df,'sharedSize':shared,'uniqueSize':unique,
+            'storage':{k:info.get(k) for k in ('ServerVersion','Driver','DriverStatus','DockerRootDir')},
+            'containerdVersion':next((c['Version'] for c in version.get('Components',[]) if c['Name']=='containerd'),None),
+            'diskUsed':used,'diskAvailable':available,'diskPercent':math.ceil(100*used/(used+available)),
+            'metadata':metadata}
+
+
+def disk_models(art, production):
+    old_diffs=set(production['rootfsDiffIds'])
+    proof=production['metadata']
+    inventory=[]
+    shared_blobs=shared_expanded=shared_count=reused_count=0
+    largest_unique=largest_shared_blob=0
+    for source in art['layers']:
+        layer=dict(source)
+        diff_shared=layer['diffId'] in old_diffs
+        snapshot_shared=proof.get('snapshotProof',{}).get(layer['chainId']) is True
+        blob_proof=proof.get('contentProof',{}).get(layer['contentDigest'])
+        blob_shared=bool(blob_proof and blob_proof.get('present') is True and blob_proof.get('fileBytes') == layer['blobBytes'])
+        layer.update(SHARED_WITH_CURRENT_PRODUCTION='YES' if diff_shared else 'NO',
+                     SNAPSHOT_REUSE_CONFIRMED='YES' if snapshot_shared else ('NO' if proof['metadataAvailable'] else 'UNKNOWN'),
+                     CONTENT_REUSE_CONFIRMED='YES' if blob_shared else ('NO' if proof['metadataAvailable'] else 'UNKNOWN'))
+        shared_count+=int(diff_shared);reused_count+=int(snapshot_shared)
+        if snapshot_shared:shared_expanded+=layer['expandedPhysicalBytes']
+        else:largest_unique=max(largest_unique,layer['expandedPhysicalBytes'])
+        if blob_shared:
+            shared_blobs+=layer['blobBytes'];largest_shared_blob=max(largest_shared_blob,layer['blobBytes'])
+        inventory.append(layer)
+    unique_blobs=art['blobs']-shared_blobs # Includes all metadata; no metadata reuse credit.
+    unique_expanded=art['expanded']-shared_expanded
+    increments={'MODEL_A_CURRENT':art['archive']+art['blobs']+art['expanded']+art['largest']+RESERVE,
+                'MODEL_B_STREAMING_NO_ARCHIVE_FILE':art['blobs']+art['expanded']+art['largest']+RESERVE,
+                'MODEL_C_LAYER_REUSE_CONSERVATIVE':unique_blobs+unique_expanded+largest_unique+RESERVE}
+    # containerd ingests blobs before their digest is known; even a shared blob
+    # may transiently occupy an ingest file. Do not silently discount this peak.
+    increments['MODEL_C_INGEST_STAGING_CHECK']=unique_blobs+unique_expanded+max(largest_unique,largest_shared_blob)+RESERVE
+    models={}
+    for name,peak in increments.items():
+        used=production['diskUsed']+peak;available=production['diskAvailable']-peak
+        pct=math.ceil(100*used/(production['diskUsed']+production['diskAvailable']))
+        models[name]={'PEAK_INCREMENT_BYTES':peak,'PEAK_INCREMENT_GIB':peak/GIB,
+                      'PROJECTED_USED_GIB':used/GIB,'PROJECTED_AVAILABLE_GIB':available/GIB,
+                      'PROJECTED_USAGE_PERCENT':pct,'WITHIN_90_PERCENT_AND_5_GIB':pct<90 and available>=5*GIB}
+    return {'layers':inventory,'CANDIDATE_LAYER_COUNT':len(inventory),'SHARED_LAYER_COUNT':shared_count,
+            'UNIQUE_CANDIDATE_LAYER_COUNT':len(inventory)-shared_count,'REUSABLE_SNAPSHOT_LAYER_COUNT':reused_count,
+            'SHARED_EXPANDED_BYTES':shared_expanded,'UNIQUE_CANDIDATE_EXPANDED_BYTES':unique_expanded,
+            'SHARED_COMPRESSED_BLOB_BYTES':shared_blobs if proof['metadataAvailable'] else 'UNKNOWN',
+            'UNIQUE_COMPRESSED_BLOB_BYTES':unique_blobs if proof['metadataAvailable'] else 'UNKNOWN',
+            'MODELED_UNIQUE_BLOB_BYTES':unique_blobs,'LARGEST_UNIQUE_LAYER_STAGING_BYTES':largest_unique,
+            'SHARED_BLOB_MAX_INGEST_BYTES':largest_shared_blob,'models':models}
+
+
+def ci_import_measurement(path, art):
+    """Load ONLY into a fresh, isolated hosted-runner daemon; never SSH."""
+    require(MEASURE_ONLY and os.environ.get('GITHUB_ACTIONS') == 'true'
+            and os.environ.get('RUNNER_OS') == 'Linux' and os.environ.get('RUNNER_ARCH') == 'X64', 'CI_MEASUREMENT_HOST_REQUIRED')
+    base=Path(os.environ['TRANSFER_CAS_RUN_DIR'])/'isolated-import'
+    require(Path(os.environ['RUNNER_TEMP']).resolve() in base.resolve().parents, 'CI_TEMP_PATH_REQUIRED')
+    base.mkdir()
+    (base/'daemon.json').write_text('{"features":{"containerd-snapshotter":false}}')
+    (base/'client').mkdir()
+    data_root=base/'data';socket=base/'docker.sock'
+    cli=['sudo','-n','docker','--config',str(base/'client'),'--host','unix://'+str(socket)]
+    daemon_args=['sudo','-n','dockerd','--config-file',str(base/'daemon.json'),
+                 '--data-root',str(data_root),'--exec-root',str(base/'exec'),'--pidfile',str(base/'daemon.pid'),
+                 '--host','unix://'+str(socket),'--storage-driver','overlay2',
+                 '--containerd-namespace=transfer-cas-measure-'+os.environ['GITHUB_RUN_ID'],
+                 '--containerd-plugins-namespace=transfer-cas-measure-plugins-'+os.environ['GITHUB_RUN_ID'],
+                 '--iptables=false','--ip6tables=false','--ip-forward=false','--ip-masq=false','--bridge=none']
+    with (base/'daemon.log').open('wb') as log:
+        daemon=subprocess.Popen(daemon_args,stdout=log,stderr=log)
+        try:
+            info=None
+            for _ in range(45):
+                try:
+                    info=json.loads(command(cli+['info','--format','{{json .}}'],timeout=5));break
+                except (GateError,ValueError):
+                    require(daemon.poll() is None,'CI_DAEMON_START_FAILED');time.sleep(1)
+            require(info and Path(info['DockerRootDir']).resolve() == data_root.resolve(),'CI_DAEMON_ISOLATION_FAILED')
+            require(not command(cli+['image','ls','-q']).strip(),'CI_DAEMON_NOT_EMPTY')
+            def allocated():
+                return int(command(['sudo','-n','du','-s','-B1',str(data_root)],timeout=30).split()[0])
+            before=allocated();peak=before
+            with path.open('rb') as source:
+                process=subprocess.Popen(cli+['load'],stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                started=time.monotonic()
+                while process.poll() is None:
+                    peak=max(peak,allocated())
+                    if time.monotonic()-started>300:
+                        process.terminate();process.wait(timeout=20)
+                        raise GateError('CI_IMPORT_TIMEOUT')
+                    time.sleep(.5)
+                stdout,stderr=process.communicate(timeout=10)
+                require(process.returncode == 0,'CI_IMPORT_FAILED')
+            after=allocated();peak=max(peak,after)
+            image=json.loads(command(cli+['image','inspect',art['imageId']]))[0]
+            # Measure first even when the deployment size cap would reject it.
+            require(image['Id']==art['imageId'] and image['Os']=='linux' and image['Architecture']=='amd64', 'CI_IMAGE_IDENTITY_MISMATCH')
+            return {'status':'PASS','CI_IMPORT_BEFORE_BYTES':before,'CI_IMPORT_AFTER_BYTES':after,
+                    'CI_IMPORT_DISK_DELTA':after-before,'CI_IMPORT_SAMPLED_PEAK_DELTA':peak-before,
+                    'CI_IMAGE_SIZE':image['Size'],
+                    'storage':{k:info.get(k) for k in ('ServerVersion','Driver','DriverStatus')},
+                    'SAMPLE_IS_UPPER_BOUND':False,'ISOLATED_DAEMON':True,'IMAGES_OR_CACHE_DELETED':False}
+        finally:
+            # Stop this dedicated CI daemon, keeping all image/data-root files.
+            # No production process or shared runner Docker daemon is targeted.
+            pidfile=base/'daemon.pid'
+            if pidfile.exists():
+                pid=command(['sudo','-n','cat',str(pidfile)]).decode().strip()
+                require(pid.isdigit(),'CI_DAEMON_PID_INVALID')
+                command(['sudo','-n','kill','-TERM',pid])
+            if daemon.poll() is None:
+                try:daemon.wait(timeout=30)
+                except subprocess.TimeoutExpired:raise GateError('CI_DAEMON_STOP_UNCONFIRMED') from None
+
+
+def measure_release(repo,path,art,ledger,key):
+    require(MEASURE_ONLY,'MEASUREMENT_RELEASE_REQUIRED')
+    production=production_measurement(MeasurementRemote(key),art,ledger)
+    reuse=disk_models(art,production)
+    print(json.dumps({'stage':'PRODUCTION_READ_ONLY_MODELS','production':production,'reuse':reuse},sort_keys=True),flush=True)
+    ci=ci_import_measurement(path,art)
+    metrics=artifact_metrics(art)
+    metrics.update(DOCKER_IMAGE_INSPECT_SIZE_BYTES=ci['CI_IMAGE_SIZE'],DOCKER_IMAGE_INSPECT_SIZE_GIB=ci['CI_IMAGE_SIZE']/GIB)
+    match=all(ci['storage'].get(k)==production['storage'].get(k) for k in ('ServerVersion','Driver','DriverStatus'))
+    ci['CI_STORAGE_MODEL_MATCHES_PRODUCTION']=match
+    ci['REPRESENTATIVENESS']='MATCHED_STORAGE_METADATA_ONLY' if match else 'NOT_DIRECTLY_REPRESENTATIVE'
+    streaming_evidence=(production['storage'].get('ServerVersion') == '29.1.3'
+                        and production['storage'].get('Driver') == 'overlayfs'
+                        and ['driver-type','io.containerd.snapshotter.v1'] in production['storage'].get('DriverStatus',[])
+                        and production.get('containerdVersion') == '2.2.1')
+    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE']['WITHIN_90_PERCENT_AND_5_GIB']
+    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK']['WITHIN_90_PERCENT_AND_5_GIB']
+    feasibility=('SAFE' if streaming_evidence and (model_b_safe or model_c_safe)
+                 else 'UNSAFE' if streaming_evidence and production['metadata']['metadataAvailable'] and not model_c_safe
+                 else 'INCONCLUSIVE')
+    return {'RESULT':'DISK_AUDIT_COMPLETE','MEASURE_ONLY':True,'BUSINESS_RUNTIME_SHA':RUNTIME_SHA,
+            'MEASUREMENT_RELEASE_SHA':art['release'],'GITHUB_RUN_ID':os.environ.get('GITHUB_RUN_ID'),
+            'artifactMetrics':metrics,'production':production,'reuse':reuse,'ciImport':ci,
+            'PRODUCTION_ARCHIVE_RESIDENT_BYTES':0 if streaming_evidence else 'UNKNOWN',
+            'archiveEvidence':'SSH stdin / containerd streaming ImportIndex; no complete archive file in the audited path',
+            'PRODUCTION_OPERATIONAL_CHANGES':0,'BUSINESS_DATA_WRITE_OPERATIONS':0,'PRODUCTION_DEPLOYED':False,
+            'DISK_FEASIBILITY':feasibility,'MAX_PEAK_UNCHANGED':MAX_PEAK,
+            'RECOMMENDED_PEAK_FORMULA':'unique blobs + unique chain snapshots + max(largest unique expanded layer, largest shared blob ingest) + 512MiB; unknown counted unique',
+            'RECOMMENDED_MAX_ARTIFACT_POLICY':'Keep current 4GiB cap unchanged; separately review admission against conservative streaming peak, projected usage <90% and available >=5GiB with 512MiB reserve and fresh reuse proof',
+            'RECOMMENDED_NEXT_ACTION':('Review a future disk-admission policy separately; deployment still forbidden'
+                                       if feasibility=='SAFE' else 'EXPAND_PRODUCTION_SYSTEM_DISK'),
+            'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy'])
+    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure'])
     p.add_argument('--repo', type=Path, required=True)
     p.add_argument('--archive', type=Path)
     p.add_argument('--ssh-key', type=Path)
     p.add_argument('--authorize-release-sha')
     args = p.parse_args()
+    require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     release, ledger = identity(args.repo)
     if args.mode == 'identity':
         print(json.dumps({'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}))
@@ -645,6 +908,16 @@ def main():
             deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
         return
     art = artifact(args.archive, release, args.repo)
+    if args.mode in ('measure-artifact','measure'):
+        require(MEASURE_ONLY, 'MEASUREMENT_RELEASE_REQUIRED')
+        metrics = artifact_metrics(art)
+        print(json.dumps({'stage':'ARTIFACT_METRICS','metrics':metrics},sort_keys=True),flush=True)
+        if args.mode == 'measure-artifact':
+            return
+        require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
+        result = measure_release(args.repo, args.archive, art, ledger, args.ssh_key)
+        print('TRANSFER_CAS_MEASUREMENT_JSON='+json.dumps(result,sort_keys=True),flush=True)
+        return
     summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
                'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageId','archiveHash']},
                'migrationRequired':MIGRATION_REQUIRED}
