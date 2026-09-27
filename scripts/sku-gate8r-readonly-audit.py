@@ -159,7 +159,10 @@ db_out = remote([
     "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c temp_file_limit=0",
     old, "node", "--input-type=module"
 ], data=db_probe_script.encode(), sudo=True, timeout=45)
-db_state = json.loads(db_out)
+db_json_lines = [line for line in db_out.splitlines() if line.lstrip().startswith("{")]
+if not db_json_lines:
+    raise RuntimeError("DATABASE_EVIDENCE_JSON_MISSING")
+db_state = json.loads(db_json_lines[-1])
 emit("database", db_state)
 
 writer_scan = remote(["python3", "-c", r'''
