@@ -105,49 +105,54 @@ emit("oldAppPrismaProbe", prisma_probe)
 
 db_probe_script = r"""
 import { prisma } from './server/pg.js'
-try {
-  const [{ database }] = await prisma.$queryRawUnsafe('SELECT current_database() AS database')
-  const [{ applied, failed }] = await prisma.$queryRawUnsafe(\`
+const safe = async (name, fn) => {
+  try { return { ok: true, value: await fn() } }
+  catch (error) { return { ok: false, errorName: error?.name || 'Error', errorCode: error?.code || '' } }
+}
+const result = {}
+result.database = await safe('database', async () => (await prisma.$queryRawUnsafe('SELECT current_database() AS database'))[0].database)
+result.ledger = await safe('ledger', async () => {
+  const [row] = await prisma.$queryRawUnsafe(\`
     SELECT
       count(*) FILTER (WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL)::int AS applied,
       count(*) FILTER (WHERE finished_at IS NULL AND rolled_back_at IS NULL)::int AS failed
     FROM _prisma_migrations
   \`)
-  const clients = await prisma.$queryRawUnsafe(\`
-    SELECT DISTINCT coalesce(host(client_addr),'LOCAL_SOCKET') AS client
-    FROM pg_stat_activity
-    WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()
-    ORDER BY 1
-  \`)
-  const [{ assignmentsTable, aliasesTable }] = await prisma.$queryRawUnsafe(\`
-    SELECT
-      to_regclass('public.product_sku_assignments') IS NOT NULL AS "assignmentsTable",
-      to_regclass('public.product_sku_aliases') IS NOT NULL AS "aliasesTable"
-  \`)
-  const products = await prisma.inventoryItem.count({ where: { category: 'product' } })
-  const online = await prisma.onlineProductPolicy.count()
-  let assignments = null, aliases = null, orphanProducts = null
-  if (assignmentsTable) {
-    ;[{ count: assignments }] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_assignments')
-    ;[{ count: orphanProducts }] = await prisma.$queryRawUnsafe(\`
-      SELECT count(*)::int AS count
-      FROM "InventoryItem" i
-      WHERE i.category='product'
-        AND NOT EXISTS (SELECT 1 FROM product_sku_assignments a WHERE a.item_id=i.id)
-    \`)
-  }
-  if (aliasesTable) {
-    ;[{ count: aliases }] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_aliases')
-  }
-  process.stdout.write(JSON.stringify({
-    database, applied, failed, clients: clients.map(x => x.client),
-    products, assignments, aliases, orphanProducts, online
-  }) + '\\n')
-} catch {
-  process.exitCode = 1
-} finally {
-  try { await prisma.$disconnect() } catch { process.exitCode = 1 }
+  return row
+})
+result.clients = await safe('clients', async () => (await prisma.$queryRawUnsafe(\`
+  SELECT DISTINCT coalesce(host(client_addr),'LOCAL_SOCKET') AS client
+  FROM pg_stat_activity
+  WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()
+  ORDER BY 1
+\`)).map(x => x.client))
+result.products = await safe('products', async () => prisma.inventoryItem.count({ where: { category: 'product' } }))
+result.online = await safe('online', async () => prisma.onlineProductPolicy.count())
+result.skuTables = await safe('skuTables', async () => (await prisma.$queryRawUnsafe(\`
+  SELECT
+    to_regclass('public.product_sku_assignments') IS NOT NULL AS "assignmentsTable",
+    to_regclass('public.product_sku_aliases') IS NOT NULL AS "aliasesTable"
+\`))[0])
+const tables = result.skuTables.ok ? result.skuTables.value : {}
+if (tables.assignmentsTable) {
+  result.assignments = await safe('assignments', async () => (await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_assignments'))[0].count)
+  result.orphanProducts = await safe('orphanProducts', async () => (await prisma.$queryRawUnsafe(\`
+    SELECT count(*)::int AS count
+    FROM "InventoryItem" i
+    WHERE i.category='product'
+      AND NOT EXISTS (SELECT 1 FROM product_sku_assignments a WHERE a.item_id=i.id)
+  \`))[0].count)
+} else {
+  result.assignments = { ok: true, value: null }
+  result.orphanProducts = { ok: true, value: null }
 }
+if (tables.aliasesTable) {
+  result.aliases = await safe('aliases', async () => (await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_aliases'))[0].count)
+} else {
+  result.aliases = { ok: true, value: null }
+}
+try { await prisma.$disconnect() } catch {}
+process.stdout.write(JSON.stringify(result) + '\\n')
 """
 db_out = remote([
     "docker", "exec", "-i", "-w", "/app",
