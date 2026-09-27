@@ -86,6 +86,7 @@ try {
       productNameSnapshot: legacy[0].name, skuSnapshot: 'LEGACY-A',
       unitPrice: 500n, costPriceSnapshot: 100n, quantity: 1, lineAmount: 500n }] } } })
   await db.transferRequest.create({ data: { id: makeId(), fromStoreKey: store.key,
+    toLocationName: 'SKU isolated destination',
     items: { create: [{ id: makeId(), itemId: legacy[0].id, quantity: 1,
       itemNameSnapshot: legacy[0].name, itemCodeSnapshot: 'LEGACY-A' }] } } })
   await db.purchaseRequest.create({ data: { id: makeId(), storeKey: store.key,
