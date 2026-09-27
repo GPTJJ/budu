@@ -220,6 +220,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
           : { storeKey: form.storeKey }),
         ...(isTransfer ? {} : { supplierId: supplierId || undefined, expectedAt: expectedAt || undefined }),
         items: picked.map((it) => ({
+          itemId: it.itemId || '',
           name: it.productName,
           quantity: it.quantity,
           note: it.note,
@@ -452,6 +453,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
       // 产品与物料可混合多选，按名称自动归类
       category: resolveItemCategory(name, itemsMap[name]?.category),
       productName: name,
+      itemId: itemsMap[name]?.id || '',
       quantity: Math.floor(qty),
       unit: itemsMap[name]?.unit || '',
       note: picker.note.trim(),

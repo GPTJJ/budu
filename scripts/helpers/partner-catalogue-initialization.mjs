@@ -1,8 +1,13 @@
 // One-time administrative planner only. Never imported by application startup,
 // product save hooks, catalogue reads or background workers.
-import { applyAutoSku } from '../../src/utils/productExcel.js'
 import { isPartnerCandy } from '../../shared/partnerProductUnits.js'
 import { isCatalogueEligible } from '../../server/partner-replenishment-catalogue.js'
+
+// Historical one-time planner format; deliberately not exported to application code.
+function applyAutoSku(rows, prefix) {
+  const width = rows.length >= 100 ? 3 : 2
+  return rows.map((row, index) => ({ ...row, sku: `${prefix}-${String(index + 1).padStart(width, '0')}` }))
+}
 
 export function planPartnerCatalogueInitialization(products) {
   const targets = products.filter(p => p.category === 'product' && p.partnerSupplyEnabled === true).sort((a, b) => a.id.localeCompare(b.id))

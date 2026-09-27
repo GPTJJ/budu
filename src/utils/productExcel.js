@@ -1,4 +1,5 @@
 const FIELD_ALIASES = {
+  productId: ['商品ID', '稳定商品ID', 'productId', 'inventoryItemId'],
   name: ['商品名称', '菜品名称', '菜品名', '品名', '名称', '商品', '菜品', 'productname', 'itemname', 'menuitem', 'name'],
   sku: ['sku', '商品sku', '菜品sku', '商品编码', '菜品编码', '商品编号', '菜品编号', '货号', '编码', 'productsku', 'itemsku'],
   posCategory: ['分类', '商品分类', '菜品分类', '品类', '类别', 'category', 'productcategory', 'menucategory'],
@@ -76,18 +77,8 @@ function truthyCell(value) {
   return ['1', 'true', '是', '参与', '启用', 'yes', 'y'].includes(text)
 }
 
-/**
- * 自动生成 SKU：{prefix}-{NN}（如 BUDU-12Y-01）；序号位数按行数自适应（<100 用 2 位，≥100 用 3 位）
- * 覆盖 Excel 中的 SKU（用于不想沿用源系统编码的场景）
- */
-export function applyAutoSku(rows, prefix = 'BUDU-12Y') {
-  const p = String(prefix || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'ITEM'
-  const width = rows.length >= 100 ? 3 : 2
-  return rows.map((row, index) => ({ ...row, sku: `${p}-${String(index + 1).padStart(width, '0')}` }))
-}
-
 export function analyzeProductMenuSheets(sheets, existingProducts = []) {
-  const existingBySku = new Map(existingProducts.map((item) => [String(item.sku || '').trim().toUpperCase(), item]).filter(([key]) => key))
+  const existingById = new Map(existingProducts.map((item) => [String(item.productId || '').trim(), item]).filter(([key]) => key))
   const existingByName = new Map(existingProducts.map((item) => [String(item.name || '').trim(), item]).filter(([key]) => key))
   const parsed = []
   const sheetErrors = []
@@ -105,6 +96,7 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
       const cells = rows[rowIndex] || []
       const cell = (field) => column[field] === undefined ? '' : cells[column[field]]
       const name = String(cell('name') ?? '').trim()
+      const productId = String(cell('productId') ?? '').trim()
       const rawSku = String(cell('sku') ?? '').trim()
       const rawSale = String(cell('salePriceCents') ?? '').trim()
       const rawCost = String(cell('costPriceCents') ?? '').trim()
@@ -125,16 +117,17 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
       const posCategory = (rowCategory || inheritedCategory).slice(0, 30)
       const errors = []
       if (!name) errors.push('缺少菜品名')
-      if (!sku) errors.push('缺少 SKU')
       if (!posCategory) errors.push('缺少分类')
       if (sale.error) errors.push(`售价${sale.error === '缺少金额' ? '为空' : sale.error}`)
       if (cost.error) errors.push(`成本价${cost.error === '缺少金额' ? '为空' : cost.error}`)
 
-      const skuMatch = existingBySku.get(sku)
+      const idMatch = productId ? existingById.get(productId) : null
       const nameMatch = existingByName.get(name)
-      if (skuMatch && nameMatch && skuMatch.productId !== nameMatch.productId) errors.push('SKU 与菜品名分别匹配到不同商品')
-      if (!skuMatch && nameMatch) errors.push('名称已存在；禁止按名称自动关联，请编辑现有商品')
-      const matched = skuMatch || null
+      if (productId && !idMatch) errors.push('商品 ID 不存在，请刷新商品清单')
+      if (idMatch && (idMatch.name !== name || (sku && String(idMatch.sku || '').toUpperCase() !== sku))) errors.push('商品 ID、名称或 SKU 不一致')
+      if (idMatch && nameMatch && idMatch.productId !== nameMatch.productId) errors.push('商品 ID 与名称对应不同商品')
+      if (!productId && nameMatch) errors.push('名称已存在；禁止按名称或 SKU 自动关联，请使用导出的商品 ID')
+      const matched = idMatch || null
       parsed.push({
         sourceSheet: sheet.name || '未命名工作表',
         sourceRow: rowIndex + 1,
@@ -150,6 +143,7 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
         isActive: true,
         action: matched ? 'update' : 'create',
         matchedProductId: matched?.productId || '',
+        matchedVersion: matched?.version || null,
         errors,
       })
     }

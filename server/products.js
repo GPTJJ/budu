@@ -7,6 +7,7 @@ import { httpError, normalizeSku, parseCents } from './pos-core.js'
 import { sendStoredImage } from './product-images.js'
 import { hasModuleAccess, hasReportCostManage, hasReportCostView, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { appendProductCostVersion, listProductCostHistory } from './product-cost-authority.js'
+import { appendProductSkuAudit, productSkuPrefix, recordProductSkuAssignment, reserveProductSku } from './product-sku-authority.js'
 
 export const productsRouter = Router()
 
@@ -92,9 +93,11 @@ export function productData(body, existingImage = '', existing = null) {
   const productGroupId = text(body.productGroupId, 120, '商品组') || null
   const variantName = productGroupId ? text(body.variantName, 30, '款式名称', true) : ''
   const transferCodeInput = text(body.transferCode, 40, '商品编号')
-  const transferCode = transferCodeInput || (transferEnabled ? sku || null : null)
+  if (existing && transferCodeInput !== (existing.transferCode || '')) throw httpError('调拨商品编号是历史兼容字段，不能作为新商品编码修改', 409)
+  if (!existing && transferCodeInput) throw httpError('新商品统一使用自动生成的 SKU，无需填写调拨商品编号', 409)
+  const transferCode = existing?.transferCode || null
   if (isActive && (!sku || salePriceCents === null || costPriceCents === null)) throw httpError('启用 POS 前请填写 SKU、售价和成本价')
-  if (transferEnabled && !transferCode) throw httpError('启用门店调拨前请填写 SKU 或商品编号')
+  if (transferEnabled && !sku) throw httpError('启用门店调拨前必须有当前 SKU')
   if (transferBoxEnabled && transferBoxWeightGrams === null) throw httpError('允许整箱调拨时请填写整箱净重')
   if (transferPieceEnabled && transferPieceWeightGrams === null) throw httpError('允许散颗调拨时请填写标准单颗重量')
   if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
@@ -158,6 +161,7 @@ export const productListSelect = {
   id: true,
   name: true,
   sku: true,
+  skuAliases: { select: { alias: true } },
   posCategory: true,
   transferCode: true,
   salePriceCents: true,
@@ -193,6 +197,7 @@ export function serializeProduct(product, { includeCost = false } = {}) {
     productId: product.id,
     name: product.name,
     sku: product.sku,
+    skuAliases: product.skuAliases?.map((row) => row.alias) || [],
     posCategory: product.posCategory,
     transferCode: product.transferCode || '',
     salePriceCents: product.salePriceCents == null ? null : product.salePriceCents.toString(),
@@ -257,6 +262,7 @@ productsRouter.get('/products', wrap(async (req, res) => {
       ...(q ? { OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { sku: { contains: normalizeSku(q), mode: 'insensitive' } },
+        { skuAliases: { some: { alias: { contains: q, mode: 'insensitive' } } } },
         { transferCode: { contains: q, mode: 'insensitive' } },
         { barcode: { contains: q, mode: 'insensitive' } },
       ] } : {}),
@@ -307,14 +313,22 @@ productsRouter.get('/products/:productId/thumbnail', wrap(async (req, res) => {
 productsRouter.post('/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireProductManager(req.user)
-  const data = productData(req.body || {})
-  await requireProductCategory(data.productCategoryId)
-  await requireProductGroup(data.productGroupId)
+  const source = productSkuPrefix(req.body?.skuSource)
+  if (String(req.body?.sku || '').trim()) throw httpError('新商品 SKU 由服务端生成；高级管理员请使用创建前指定入口', 409)
+  await requireProductCategory(text(req.body?.productCategoryId, 120, '商品分类') || null)
+  await requireProductGroup(text(req.body?.productGroupId, 120, '商品组') || null)
   const row = await prisma.$transaction(async (tx) => {
+    const override = String(req.body?.skuOverride || '').trim()
+    const reason = override ? text(req.body?.skuOverrideReason, 300, '指定 SKU 原因', true) : '商品首次创建'
+    const sku = await reserveProductSku(tx, { source, override, user: req.user, reason })
+    const data = productData({ ...(req.body || {}), sku })
+    const itemId = `it-${crypto.randomUUID()}`
     const created = await tx.inventoryItem.create({
-      data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...data },
+      data: { id: itemId, category: 'product', ...data },
       include: { productCategory: true, productGroup: true },
     })
+    await recordProductSkuAssignment(tx, { sku, itemId, user: req.user, reason })
+    await appendProductSkuAudit(tx, { sku, itemId, user: req.user, reason })
     if (data.partnerKgBasePriceCents != null) await appendPartnerKgPriceAudit(tx, req.user, created.id, null, data.partnerKgBasePriceCents)
     return created
   })
@@ -328,74 +342,56 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
   if (!Array.isArray(inputRows) || inputRows.length < 1 || inputRows.length > 1000) {
     throw httpError('每次请选择 1-1000 条有效商品导入')
   }
-
-  const seenSku = new Set()
   const seenName = new Set()
   const normalized = inputRows.map((body, index) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(`第 ${index + 1} 行格式不正确`)
-    const data = productData({
-      ...body,
-      unit: body.unit || '份',
-      image: '',
-      barcode: body.barcode || '',
-      isActive: true,
-      transferEnabled: false,
-      partnerSupplyEnabled: false,
-      trackInventory: body.trackInventory === true,
-      sortOrder: body.sortOrder === '' || body.sortOrder == null ? index : body.sortOrder,
-    })
-    if (seenSku.has(data.sku)) throw httpError(`Excel 内 SKU 重复：${data.sku}`)
-    if (seenName.has(data.name)) throw httpError(`Excel 内菜品名重复：${data.name}`)
-    seenSku.add(data.sku)
-    seenName.add(data.name)
-    return {
-      data,
-      provided: {
-        unit: Boolean(String(body.unit || '').trim()),
-        barcode: Boolean(String(body.barcode || '').trim()),
-        sortOrder: !(body.sortOrder === '' || body.sortOrder == null),
-        trackInventory: Object.prototype.hasOwnProperty.call(body, 'trackInventory'),
-      },
-    }
+    const name = text(body.name, 50, '商品名称', true)
+    if (seenName.has(name)) throw httpError(`Excel 内菜品名重复：${name}`)
+    seenName.add(name)
+    const productId = text(body.productId, 120, '商品 ID')
+    const source = productId ? null : productSkuPrefix(body.skuSource)
+    if (!productId && String(body.sku || '').trim()) throw httpError(`「${name}」是新商品；导入时不能以 Excel SKU 指定或匹配商品`, 409)
+    return { body, index, name, productId, source }
   })
 
   const result = await prisma.$transaction(async (tx) => {
-    const existingRows = await tx.inventoryItem.findMany({
-      where: { OR: [
-        { sku: { in: normalized.map((row) => row.data.sku) } },
-        { name: { in: normalized.map((row) => row.data.name) } },
-      ] },
-    })
-    const bySku = new Map(existingRows.map((row) => [row.sku, row]).filter(([sku]) => sku))
-    const byName = new Map(existingRows.map((row) => [row.name, row]))
     const saved = []
     let created = 0
     let updated = 0
-
     for (const row of normalized) {
-      const skuMatch = bySku.get(row.data.sku)
-      const nameMatch = byName.get(row.data.name)
-      if (skuMatch && nameMatch && skuMatch.id !== nameMatch.id) {
-        throw httpError(`「${row.data.name}」的 SKU 与菜品名匹配到不同商品，请先检查 Excel`, 409)
+      const existing = row.productId ? await tx.inventoryItem.findUnique({ where: { id: row.productId } }) : null
+      if (row.productId && (!existing || existing.category !== 'product')) throw httpError(`「${row.name}」的商品 ID 不存在`, 409)
+      if (existing && (existing.name !== row.name || (row.body.sku && normalizeSku(row.body.sku) !== existing.sku))) {
+        throw httpError(`「${row.name}」的名称或 SKU 与稳定商品 ID 不符`, 409)
       }
-      if (!skuMatch && nameMatch) throw httpError(`「${row.data.name}」名称已存在；禁止按名称自动关联，请在商品中心编辑现有商品`, 409)
-      const existing = skuMatch || null
       if (!existing) {
-        const createdRow = await tx.inventoryItem.create({ data: { id: `it-${crypto.randomUUID()}`, category: 'product', ...row.data }, include: { productCategory: true, productGroup: true } })
-        bySku.set(createdRow.sku, createdRow)
-        byName.set(createdRow.name, createdRow)
+        const nameTaken = await tx.inventoryItem.findUnique({ where: { name: row.name }, select: { id: true } })
+        if (nameTaken) throw httpError(`「${row.name}」名称已存在；请按商品 ID 恢复或更新`, 409)
+        const sku = await reserveProductSku(tx, { source: row.source, user: req.user })
+        const data = productData({ ...row.body, name: row.name, sku, unit: row.body.unit || '份', image: '',
+          isActive: true, transferEnabled: false, partnerSupplyEnabled: false,
+          sortOrder: row.body.sortOrder === '' || row.body.sortOrder == null ? row.index : row.body.sortOrder })
+        const itemId = `it-${crypto.randomUUID()}`
+        const createdRow = await tx.inventoryItem.create({ data: { id: itemId, category: 'product', ...data }, include: { productCategory: true, productGroup: true } })
+        await recordProductSkuAssignment(tx, { sku, itemId, user: req.user, reason: '菜单导入新商品' })
+        await appendProductSkuAudit(tx, { sku, itemId, user: req.user, reason: '菜单导入新商品' })
         saved.push(createdRow)
         created += 1
         continue
       }
-
+      const version = Number(row.body.version)
+      if (!Number.isInteger(version) || version < 1) throw httpError(`「${row.name}」缺少商品版本，请刷新后重试`, 409)
+      const parsed = productData({ ...row.body, name: existing.name, sku: existing.sku,
+        transferCode: existing.transferCode || '', unit: row.body.unit || '份', image: '', isActive: true,
+        transferEnabled: false, partnerSupplyEnabled: false,
+        sortOrder: row.body.sortOrder === '' || row.body.sortOrder == null ? row.index : row.body.sortOrder }, existing.image || '', existing)
       const data = {
-        ...row.data,
+        ...parsed,
         image: existing.image || '',
-        unit: row.provided.unit ? row.data.unit : existing.unit || '份',
-        barcode: row.provided.barcode ? row.data.barcode : existing.barcode || '',
-        sortOrder: row.provided.sortOrder ? row.data.sortOrder : existing.sortOrder,
-        trackInventory: row.provided.trackInventory ? row.data.trackInventory : existing.trackInventory,
+        unit: row.body.unit ? parsed.unit : existing.unit || '份',
+        barcode: row.body.barcode ? parsed.barcode : existing.barcode || '',
+        sortOrder: row.body.sortOrder !== '' && row.body.sortOrder != null ? parsed.sortOrder : existing.sortOrder,
+        trackInventory: Object.hasOwn(row.body, 'trackInventory') ? parsed.trackInventory : existing.trackInventory,
         isActive: true,
         transferCode: existing.transferCode,
         transferEnabled: existing.transferEnabled,
@@ -417,11 +413,9 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
       if (BigInt(existing.costPriceCents ?? -1) !== BigInt(data.costPriceCents ?? -1)) {
         throw httpError(`「${existing.name}」成本已纳入历史权威；请在商品中心使用“更新成本”`, 409)
       }
-      const updatedRow = await tx.inventoryItem.update({ where: { id: existing.id }, data: { ...data, version: { increment: 1 } }, include: { productCategory: true, productGroup: true } })
-      if (existing.sku) bySku.delete(existing.sku)
-      byName.delete(existing.name)
-      bySku.set(updatedRow.sku, updatedRow)
-      byName.set(updatedRow.name, updatedRow)
+      const changed = await tx.inventoryItem.updateMany({ where: { id: existing.id, version, category: 'product' }, data: { ...data, version: { increment: 1 } } })
+      if (changed.count !== 1) throw httpError(`「${row.name}」已被其他人修改，请刷新后重试`, 409)
+      const updatedRow = await tx.inventoryItem.findUnique({ where: { id: existing.id }, include: { productCategory: true, productGroup: true } })
       saved.push(updatedRow)
       updated += 1
     }
@@ -459,8 +453,8 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
     if (enabled && purpose === 'pos' && rows.some((row) => !row.sku || row.salePriceCents === null || row.costPriceCents === null)) {
       throw httpError('所选商品中存在缺少 SKU、售价或成本价的商品，不能批量启用 POS', 409)
     }
-    if (enabled && purpose === 'transfer' && rows.some((row) => !row.transferCode && !row.sku)) {
-      throw httpError('所选商品中存在缺少 SKU 和商品编号的商品，不能批量启用调拨', 409)
+    if (enabled && purpose === 'transfer' && rows.some((row) => !row.sku)) {
+      throw httpError('所选商品中存在缺少当前 SKU 的商品，不能批量启用调拨', 409)
     }
     if (enabled && purpose === 'partner' && rows.some((row) => row.salePriceCents === null || row.salePriceCents <= 0n)) {
       throw httpError('所选商品中存在未设置有效零售价的商品，不能批量启用合作商供货', 409)
@@ -470,7 +464,6 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
       where: { id: row.id },
       data: {
         [field]: enabled,
-        ...(purpose === 'transfer' && enabled && !row.transferCode ? { transferCode: row.sku } : {}),
         version: { increment: 1 },
       },
     })))
@@ -515,6 +508,8 @@ productsRouter.put('/products/:productId', wrap(async (req, res) => {
   if (!Number.isInteger(version) || version < 1) throw httpError('商品版本不正确，请刷新后重试')
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
   if (!existing || existing.category !== 'product') throw httpError('商品不存在', 404)
+  if (String(req.body?.name || '').trim() !== existing.name) throw httpError('正式商品名称不能原地修改；请停用旧商品并新建商品', 409)
+  if (normalizeSku(req.body?.sku) !== (existing.sku || '')) throw httpError('商品创建后 SKU 锁定，不能修改', 409)
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'costPriceCents') && BigInt(existing.costPriceCents ?? -1) !== BigInt(optionalCents(req.body.costPriceCents, '成本价') ?? -1)) {
     throw httpError('商品成本已纳入历史权威，请使用“更新成本”并填写生效日期与原因', 409)
   }

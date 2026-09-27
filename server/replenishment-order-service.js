@@ -145,7 +145,7 @@ function buildItemSnapshots(products, normalizedItems, discountBps) {
       inventoryItemId: product.id,
       productNameSnapshot: product.name,
       skuSnapshot: product.sku || '',
-      productCodeSnapshot: product.transferCode || product.sku || '',
+      productCodeSnapshot: product.sku || '',
       orderUnitSnapshot: product.partnerOrderUnit,
       nativeUnitSnapshot: product.partnerOrderUnit === PARTNER_ORDER_UNITS.NATIVE ? String(product.unit || '').trim() : '',
       requestedQuantityBase: quantity,

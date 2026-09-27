@@ -73,7 +73,7 @@ function beijingToday() {
 }
 
 function productCode(product) {
-  return String(product.transferCode || product.sku || product.barcode || product.id)
+  return String(product.sku || product.id)
 }
 
 function partnerData(body, user) {

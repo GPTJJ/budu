@@ -4,7 +4,7 @@ import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, FolderTree, Hist
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
-import { analyzeProductMenuSheets, applyAutoSku } from '../utils/productExcel'
+import { analyzeProductMenuSheets } from '../utils/productExcel'
 import LazyImage from './LazyImage'
 import { hasReportCostManage, hasReportCostView } from '../../shared/accountPermissions'
 
@@ -12,6 +12,9 @@ const emptyForm = {
   productId: '',
   name: '',
   sku: '',
+  skuSource: 'BD',
+  skuOverride: '',
+  skuOverrideReason: '',
   transferCode: '',
   posCategory: '',
   productCategoryId: '',
@@ -157,6 +160,7 @@ function ProductGroupManager({ groups, products, onClose, onSaved }) {
 
 export default function ProductCenterPage({ onBack, user }) {
   const canManage = Boolean(user && ['developer', 'admin', 'finance', 'manager'].includes(user.role))
+  const canOverrideSku = Boolean(user && user.status !== 'disabled' && ['developer', 'admin'].includes(user.role))
   const canViewCost = hasReportCostView(user)
   const canManageCost = hasReportCostManage(user)
   const [products, setProducts] = useState([])
@@ -179,20 +183,7 @@ export default function ProductCenterPage({ onBack, user }) {
   const [costEditor, setCostEditor] = useState(null)
   const [importPreview, setImportPreview] = useState(null)
   const [importing, setImporting] = useState(false)
-  const [autoSkuEnabled, setAutoSkuEnabled] = useState(false)
-  const [skuPrefix, setSkuPrefix] = useState('BUDU-12Y')
-  // 勾选自动生成 SKU 时，预览与提交均使用生成后的 SKU（覆盖 Excel 中的原 SKU）
-  const previewRows = useMemo(() => {
-    if (!importPreview) return []
-    const base = importPreview.validRows
-    return autoSkuEnabled ? applyAutoSku(base, skuPrefix) : base
-  }, [importPreview, autoSkuEnabled, skuPrefix])
-  // 表格按「工作表:行号」映射 SKU（有效行显示生成值，无效行保留原值便于排查）
-  const skuMap = useMemo(() => {
-    const m = {}
-    for (const r of previewRows) m[`${r.sourceSheet}:${r.sourceRow}`] = r.sku
-    return m
-  }, [previewRows])
+  const previewRows = importPreview?.validRows || []
   const fileInputRef = useRef(null)
 
   const loadProducts = async () => {
@@ -219,7 +210,7 @@ export default function ProductCenterPage({ onBack, user }) {
       if (!['all', 'uncategorized'].includes(category) && item.productCategoryId !== category) return false
       if (status === 'active' && !purposeEnabled(item, purpose)) return false
       if (status === 'inactive' && purposeEnabled(item, purpose)) return false
-      return !q || [item.name, item.sku, item.transferCode, item.barcode].some((value) => String(value || '').toLowerCase().includes(q))
+      return !q || [item.name, item.sku, item.transferCode, item.barcode, ...(item.skuAliases || [])].some((value) => String(value || '').toLowerCase().includes(q))
     })
   }, [products, search, category, purpose, status])
 
@@ -283,8 +274,9 @@ export default function ProductCenterPage({ onBack, user }) {
     setError('')
     try {
       const sheet = XLSX.utils.aoa_to_sheet([
-        ['商品名称', 'SKU', '商品编号', '正式分类', '售价（元）', '成本价（元）', '单位', '条码', 'POS', '门店调拨', '合作商供货', '排序'],
+        ['商品ID', '商品名称', 'SKU', '商品编号', '正式分类', '售价（元）', '成本价（元）', '单位', '条码', 'POS', '门店调拨', '合作商供货', '排序'],
         ...products.map((item) => [
+          item.productId,
           item.name,
           item.sku || '',
           item.transferCode || '',
@@ -299,8 +291,8 @@ export default function ProductCenterPage({ onBack, user }) {
           item.sortOrder,
         ]),
       ])
-      sheet['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 10 }]
-      sheet['!autofilter'] = { ref: `A1:L${Math.max(1, products.length + 1)}` }
+      sheet['!cols'] = [{ wch: 42 }, { wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 10 }]
+      sheet['!autofilter'] = { ref: `A1:M${Math.max(1, products.length + 1)}` }
       const workbook = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(workbook, sheet, '商品菜单')
       XLSX.writeFile(workbook, `budu商品菜单_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx`)
@@ -321,7 +313,7 @@ export default function ProductCenterPage({ onBack, user }) {
         body: JSON.stringify({
           rows: previewRows.map((row) => ({
             name: row.name,
-            sku: row.sku,
+            ...(row.matchedProductId ? { productId: row.matchedProductId, sku: row.sku, version: row.matchedVersion } : { skuSource: /森醒|12\s*样商店/.test(row.posCategory) ? 'TP' : 'BD' }),
             posCategory: row.posCategory,
             productCategoryId: productCategories.find((category) => category.name === row.posCategory)?.id || '',
             salePriceCents: row.salePriceCents,
@@ -360,7 +352,7 @@ export default function ProductCenterPage({ onBack, user }) {
     try {
       const body = {
         name: form.name,
-        sku: form.sku,
+        ...(form.productId ? { sku: form.sku } : { skuSource: form.skuSource, skuOverride: form.skuOverride, skuOverrideReason: form.skuOverrideReason }),
         transferCode: form.transferCode,
         posCategory: form.posCategory,
         productCategoryId: form.productCategoryId,
@@ -513,23 +505,11 @@ export default function ProductCenterPage({ onBack, user }) {
         <div className="fixed inset-0 z-[85] grid place-items-center overflow-y-auto bg-slate-900/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="菜单导入预览">
           <div className="my-6 flex max-h-[90dvh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
             <div className="flex shrink-0 items-center border-b border-slate-100 px-6 py-4">
-              <div><h3 className="text-lg font-bold text-slate-900">菜单导入预览</h3><p className="mt-0.5 text-xs text-slate-400">{importPreview.fileName} · 系统已自动匹配菜品名、SKU、分类、售价和成本价</p></div>
+              <div><h3 className="text-lg font-bold text-slate-900">菜单导入预览</h3><p className="mt-0.5 text-xs text-slate-400">{importPreview.fileName} · 既有商品按稳定 ID 更新；新商品由服务端分配 SKU</p></div>
               <button onClick={() => setImportPreview(null)} disabled={importing} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭"><X className="h-5 w-5" /></button>
             </div>
             <div className="shrink-0 border-b border-slate-100 px-6 py-4">
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
-                  <input type="checkbox" checked={autoSkuEnabled} onChange={(e) => setAutoSkuEnabled(e.target.checked)} className="h-4 w-4 accent-budu-500" />
-                  自动生成 SKU（忽略表格中的 SKU）
-                </label>
-                {autoSkuEnabled && (
-                  <label className="flex items-center gap-2 text-sm text-slate-500">
-                    前缀
-                    <input value={skuPrefix} onChange={(e) => setSkuPrefix(e.target.value)} className="w-36 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-budu-400" />
-                    <span className="text-xs text-slate-400">示例：{skuPrefix}-01</span>
-                  </label>
-                )}
-              </div>
+              <p className="mb-3 text-xs text-slate-500">新商品分类为森醒或 12 样商店时使用 TP，其余使用 BD；表格旧 SKU 仅供核对，不会成为新商品编码。</p>
               <div className="grid grid-cols-3 gap-3 text-center text-sm">
                 <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-400">识别菜品</p><p className="mt-1 text-xl font-black text-slate-800">{importPreview.rows.length}</p></div>
                 <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-emerald-500">可导入</p><p className="mt-1 text-xl font-black text-emerald-700">{importPreview.validRows.length}</p></div>
@@ -544,7 +524,7 @@ export default function ProductCenterPage({ onBack, user }) {
                   <tr key={`${row.sourceSheet}-${row.sourceRow}-${index}`} className={row.errors.length ? 'bg-rose-50/40' : ''}>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-400">{row.sourceSheet} · {row.sourceRow} 行</td>
                     <td className="px-4 py-3 font-semibold text-slate-700">{row.name || '—'}</td>
-                    <td className="px-4 py-3 font-mono text-slate-600">{skuMap[`${row.sourceSheet}:${row.sourceRow}`] || row.sku || '—'}</td>
+                    <td className="px-4 py-3 font-mono text-slate-600">{row.matchedProductId ? row.sku : `${/森醒|12\s*样商店/.test(row.posCategory) ? 'TP' : 'BD'} · 保存时生成`}</td>
                     <td className="px-4 py-3 text-slate-600">{row.posCategory || '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-700">{row.salePriceCents ? formatCents(row.salePriceCents) : '—'}</td>
                     <td className="px-4 py-3 text-right text-slate-500">{row.costPriceCents ? formatCents(row.costPriceCents) : '—'}</td>
@@ -555,7 +535,7 @@ export default function ProductCenterPage({ onBack, user }) {
               </table>
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-6 py-4">
-              <p className="text-xs text-slate-400">有问题的行会自动跳过；已存在商品仅按稳定 SKU 更新，绝不按名称自动关联，所有导入商品自动上架。</p>
+              <p className="text-xs text-slate-400">有问题的行会自动跳过；既有商品只按稳定 ID 更新，旧 SKU 和名称均不能作为写入身份。</p>
               <div className="flex gap-3"><button onClick={() => setImportPreview(null)} disabled={importing} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-500 disabled:opacity-50">取消</button><button onClick={importMenu} disabled={importing || importPreview.validRows.length === 0} className="rounded-xl bg-budu-500 px-6 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{importing ? '正在导入…' : `导入并上架 ${importPreview.validRows.length} 项`}</button></div>
             </div>
           </div>
@@ -573,9 +553,10 @@ export default function ProductCenterPage({ onBack, user }) {
                 {(form.image || (!form.imageDirty && form.hasImage)) && <button type="button" onClick={() => setForm((current) => ({ ...current, image: '', imageDirty: true, hasImage: false }))} className="mt-2 w-full text-xs text-slate-400 hover:text-rose-500">移除图片</button>}
               </div>
               <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-                <label className="text-xs font-semibold text-slate-500">商品名称<input required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} /></label>
-                <label className="text-xs font-semibold text-slate-500">SKU（POS）<input value={form.sku || ''} onChange={(e) => update('sku', e.target.value.toUpperCase().replace(/\s/g, ''))} placeholder="例如 BUDU-001" className={inputClass} /></label>
-                <label className="text-xs font-semibold text-slate-500">商品编号（调拨）<input value={form.transferCode || ''} onChange={(e) => update('transferCode', e.target.value.trim())} placeholder="例如 NO.1" className={inputClass} /></label>
+                <label className="text-xs font-semibold text-slate-500">商品名称<input required readOnly={Boolean(form.productId)} value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} /></label>
+                {form.productId ? <label className="text-xs font-semibold text-slate-500">SKU（创建后锁定）<input readOnly value={form.sku || ''} className={inputClass} /></label> : <label className="text-xs font-semibold text-slate-500">商品来源<select value={form.skuSource} onChange={(e) => update('skuSource', e.target.value)} className={inputClass}><option value="BD">budu 自有（BD）</option><option value="TP">第三方（TP）</option></select></label>}
+                {!form.productId && canOverrideSku && <><label className="text-xs font-semibold text-slate-500">创建前指定 SKU（可选）<input value={form.skuOverride || ''} onChange={(e) => update('skuOverride', e.target.value.toUpperCase().replace(/\s/g, ''))} placeholder={`${form.skuSource}-000001`} className={inputClass} /></label>{form.skuOverride && <label className="text-xs font-semibold text-slate-500">指定原因<input required value={form.skuOverrideReason || ''} onChange={(e) => update('skuOverrideReason', e.target.value)} className={inputClass} /></label>}</>}
+                {form.productId && <label className="text-xs font-semibold text-slate-500">商品编号（调拨兼容）<input readOnly value={form.transferCode || ''} className={inputClass} /></label>}
                 <label className="text-xs font-semibold text-slate-500">商品分类<select aria-label="商品分类" value={form.productCategoryId || ''} onChange={(e) => update('productCategoryId', e.target.value)} className={inputClass}><option value="">未分类</option>{productCategories.filter((item) => item.isActive || item.id === form.productCategoryId).map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : '（停用）'}</option>)}</select></label>
                 <label className="text-xs font-semibold text-slate-500">商品组<select aria-label="商品组" value={form.productGroupId || ''} onChange={(e) => { update('productGroupId', e.target.value); if (!e.target.value) update('variantName', '') }} className={inputClass}><option value="">未分组</option>{productGroups.filter((item) => item.isActive || item.id === form.productGroupId).map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : '（停用）'}</option>)}</select></label>
                 {form.productGroupId && <label className="text-xs font-semibold text-slate-500">款式名称<input required aria-label="款式名称" value={form.variantName || ''} onChange={(e) => update('variantName', e.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}

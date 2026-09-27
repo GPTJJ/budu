@@ -363,11 +363,48 @@ model InventoryItem {
   partnerMinOrderBaseQty      Int?
   partnerOrderStepBaseQty     Int?
   replenishmentItems          ReplenishmentOrderItem[]
+  skuAssignment               ProductSkuAssignment?
+  skuAliases                  ProductSkuAlias[]
 
   @@index([productCategoryId])
   @@index([productGroupId])
   @@index([category, partnerSupplyEnabled])
   @@index([category, partnerReplenishmentEnabled, isActive])
+}
+
+// One locked counter row per source prefix; nextValue is never decremented.
+model ProductSkuSequence {
+  prefix    String   @id
+  nextValue Int      @default(1) @map("next_value")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("product_sku_sequences")
+}
+
+// Append-only canonical allocation also reserves the SKU after deactivation.
+model ProductSkuAssignment {
+  sku         String        @id
+  itemId      String        @unique @map("item_id")
+  oldSku      String?       @map("old_sku")
+  actorUserId String        @map("actor_user_id")
+  reason      String
+  createdAt   DateTime      @default(now()) @map("created_at")
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@map("product_sku_assignments")
+}
+
+// Legacy codes are only a read-side lookup. They cannot allocate or update items.
+model ProductSkuAlias {
+  alias       String        @id
+  itemId      String        @map("item_id")
+  actorUserId String        @map("actor_user_id")
+  reason      String
+  createdAt   DateTime      @default(now()) @map("created_at")
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@index([itemId])
+  @@map("product_sku_aliases")
 }
 
 model InventoryItemCostHistory {

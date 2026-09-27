@@ -9,7 +9,6 @@ import { deliverTransferRequestNotification } from './transfer-notification.js'
 import { EMPTY_TRANSFER_DELIVERY_SUMMARY, loadTransferDeliverySummaries } from './transfer-delivery-recipients.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
 import { correlateOcrRequest } from './ocr-integrity.js'
-import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
@@ -107,6 +106,7 @@ export async function upsertItem(name, category = 'product') {
     }
     return existing
   }
+  if (norm === 'product') throw bad('新商品请在商品中心创建并取得稳定商品 ID', 409)
   return prisma.inventoryItem.create({
     data: { id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name: n, category: norm },
   })
@@ -143,6 +143,7 @@ export function itemRows(items) {
 }
 
 async function findActiveTransferItem(row) {
+  if (row.category === 'product' && !row.itemId) throw bad('商品调拨必须使用稳定商品 ID，请刷新商品目录', 409)
   const existing = await prisma.inventoryItem.findUnique({
     where: row.itemId ? { id: row.itemId } : { name: row.name },
     include: { productCategory: true },
@@ -154,7 +155,7 @@ async function findActiveTransferItem(row) {
 }
 
 function inventoryItemCode(item) {
-  return String(item?.transferCode || item?.sku || item?.barcode || item?.id || '')
+  return String(item?.category === 'product' ? (item?.sku || item?.id || '') : (item?.transferCode || item?.barcode || item?.id || ''))
 }
 
 function transferItemBase(row, item) {
@@ -697,7 +698,7 @@ function serializeTransferMasterItem(item) {
     category: item.category,
     name: item.name,
     sku: item.sku || '',
-    code: item.transferCode || '',
+    code: item.category === 'product' ? item.sku || '' : item.transferCode || '',
     enabled: item.transferEnabled,
     sortOrder: item.transferSortOrder,
     transferBoxEnabled: item.transferBoxEnabled,
@@ -821,6 +822,7 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const category = String(req.body?.category || '').trim()
   if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  if (category === 'product') throw bad('新商品请在商品中心创建，由服务端分配 SKU', 409)
   if (category === 'product') requireProductCategoryManager(req.user)
   else requireTransferMasterManager(req.user)
   const data = transferMasterData(req.body, category)
@@ -867,6 +869,7 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.id } })
   if (!existing || !['product', 'material'].includes(existing.category)) throw bad('产品或物料不存在', 404)
+  if (existing.category === 'product') throw bad('商品资料请在商品中心按稳定商品 ID 编辑', 409)
   if (existing.category === 'product') requireProductCategoryManager(req.user)
   else requireTransferMasterManager(req.user)
   const version = Number(req.body?.version)
@@ -942,6 +945,13 @@ async function createTransferRequest(req, res, testMode = false) {
   if (fromStoreKey === toStoreKey) throw bad('调出门店不能与调入门店相同')
   if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, toStoreKey)) throw bad('无权为所选调入门店创建调拨', 403)
   const rows = itemRows(items)
+  const productRows = rows.filter((row) => row.category === 'product')
+  if (productRows.some((row) => !row.itemId)) throw bad('调拨商品必须使用稳定商品 ID，请刷新商品目录', 409)
+  if (productRows.length) {
+    const existingProducts = await prisma.inventoryItem.findMany({ where: { id: { in: productRows.map((row) => row.itemId) }, category: 'product' }, select: { id: true, name: true } })
+    const names = new Map(existingProducts.map((row) => [row.id, row.name]))
+    if (productRows.some((row) => names.get(row.itemId) !== row.name)) throw bad('调拨商品身份已变化，请刷新商品目录', 409)
+  }
   await ensureStore(fromStoreKey)
   await ensureStore(toStoreKey)
   const createItems = []
@@ -1108,6 +1118,13 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
   const { storeKey, items, supplier, supplierId, expectedAt, note } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   const rows = itemRows(items)
+  const productRows = rows.filter((row) => row.category === 'product')
+  if (productRows.some((row) => !row.itemId)) throw bad('采购商品必须使用稳定商品 ID，请刷新商品目录', 409)
+  if (productRows.length) {
+    const existingProducts = await prisma.inventoryItem.findMany({ where: { id: { in: productRows.map((row) => row.itemId) }, category: 'product' }, select: { id: true, name: true } })
+    const names = new Map(existingProducts.map((row) => [row.id, row.name]))
+    if (productRows.some((row) => names.get(row.itemId) !== row.name)) throw bad('采购商品身份已变化，请刷新商品目录', 409)
+  }
   if (supplierId) {
     const s = await prisma.supplier.findUnique({ where: { id: supplierId } })
     if (!s) throw bad('供应商不存在')
@@ -1125,7 +1142,10 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
       items: {
         create: await Promise.all(
           rows.map(async (row) => {
-            const item = await upsertItem(row.name, row.category)
+            const item = row.category === 'product'
+              ? row.itemId ? await prisma.inventoryItem.findUnique({ where: { id: row.itemId } }) : null
+              : await upsertItem(row.name, row.category)
+            if (!item || item.category !== row.category || item.name !== row.name) throw bad('采购商品必须使用当前稳定商品 ID，请刷新商品目录', 409)
             return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note, itemNameSnapshot: item.name }
           }),
         ),
@@ -1243,13 +1263,8 @@ v2Router.post('/stock/adjust', wrap(async (req, res) => {
       const nextMin = it.minQty === undefined || it.minQty === null || it.minQty === ''
         ? undefined
         : Math.max(0, Math.min(999999, Number(it.minQty) || 0))
-      const item = it.itemId
-        ? await tx.inventoryItem.findUnique({ where: { id: it.itemId } })
-        : await tx.inventoryItem.upsert({
-            where: { name: String(it.name || '').trim() },
-            update: {},
-            create: { id: `it-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, name: String(it.name || '').trim() },
-          })
+      if (!it.itemId) throw bad('库存调整必须选择已有稳定货品 ID', 409)
+      const item = await tx.inventoryItem.findUnique({ where: { id: String(it.itemId) } })
       if (!item) throw bad('货品不存在')
       const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey, itemId: item.id } } })
       const cur = bal ? bal.quantity : 0
@@ -1309,16 +1324,6 @@ v2Router.get('/stock/ledger', wrap(async (req, res) => {
 // ---------- M3-1：货品档案 / 供应商 / 报损 / 缺货预警 ----------
 v2Router.get('/items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
-  // 开发者访问时自动为固定选项建档（幂等）
-  if (canWrite(req.user)) {
-    for (const name of FIXED_OPTION_NAMES) {
-      await prisma.inventoryItem.upsert({
-        where: { name },
-        update: {},
-        create: { id: uid('it'), name },
-      })
-    }
-  }
   const q = String(req.query.q || '').trim()
   const rows = await prisma.inventoryItem.findMany({
     where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
@@ -1332,6 +1337,7 @@ v2Router.post('/items', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const { name, unit, spec, barcode, category, image } = req.body || {}
+  if (!['material', 'other'].includes(category)) throw bad('商品请在商品中心创建，由服务端分配 SKU', 409)
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
   const exists = await prisma.inventoryItem.findUnique({ where: { name: n } })
@@ -1343,7 +1349,7 @@ v2Router.post('/items', wrap(async (req, res) => {
       unit: String(unit || '').trim().slice(0, 20),
       spec: String(spec || '').trim().slice(0, 50),
       barcode: String(barcode || '').trim().slice(0, 50),
-      category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+      category,
       image: String(image || '').slice(0, 600000),
     },
   })
@@ -1354,6 +1360,9 @@ v2Router.put('/items/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const { name, unit, spec, barcode, category, image } = req.body || {}
+  const existingItem = await prisma.inventoryItem.findUnique({ where: { id: req.params.id }, select: { category: true } })
+  if (!existingItem) throw bad('货品不存在', 404)
+  if (existingItem.category === 'product' || category === 'product') throw bad('商品请在商品中心按稳定商品 ID 编辑', 409)
   const n = String(name || '').trim()
   if (!n || n.length > 50) throw bad('货品名称不正确')
   const dup = await prisma.inventoryItem.findFirst({ where: { name: n, id: { not: req.params.id } } })
@@ -1365,7 +1374,7 @@ v2Router.put('/items/:id', wrap(async (req, res) => {
       unit: String(unit || '').trim().slice(0, 20),
       spec: String(spec || '').trim().slice(0, 50),
       barcode: String(barcode || '').trim().slice(0, 50),
-      category: ['product', 'material', 'other'].includes(category) ? category : 'product',
+      category: ['material', 'other'].includes(category) ? category : existingItem.category,
       image: String(image || '').slice(0, 600000),
     },
   })
@@ -1430,13 +1439,8 @@ v2Router.post('/stock/waste', wrap(async (req, res) => {
       const quantity = Number(it.quantity)
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('报损数量应为正整数')
       const reason = String(it.reason || '').trim().slice(0, 100)
-      const item = it.itemId
-        ? await tx.inventoryItem.findUnique({ where: { id: it.itemId } })
-        : await tx.inventoryItem.upsert({
-            where: { name: String(it.name || '').trim() },
-            update: {},
-            create: { id: uid('it'), name: String(it.name || '').trim() },
-          })
+      if (!it.itemId) throw bad('报损必须选择已有稳定货品 ID', 409)
+      const item = await tx.inventoryItem.findUnique({ where: { id: String(it.itemId) } })
       if (!item) throw bad('货品不存在')
       const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey, itemId: item.id } } })
       const cur = bal ? bal.quantity : 0

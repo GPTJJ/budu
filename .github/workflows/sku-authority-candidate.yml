@@ -1,0 +1,39 @@
+name: NON_PRODUCTION SKU Authority Candidate
+
+on:
+  push:
+    branches: [codex/sku-authority-1-0]
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sku_test
+          POSTGRES_PASSWORD: sku_test
+          POSTGRES_DB: sku_authority_test_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sku_test -d sku_authority_test_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sku_test:sku_test@127.0.0.1:5432/sku_authority_test_ci
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - run: node --test scripts/test-sku-authority-unit.mjs scripts/test-product-excel.mjs scripts/test-partner-candy-pcs.mjs scripts/test-product-material-contract.mjs
+      - run: node scripts/test-sku-authority-native.mjs
+      - run: npm run build
+      - run: git diff --check && test -z "$(git status --porcelain --untracked-files=all)"

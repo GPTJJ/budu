@@ -74,7 +74,7 @@ test('payroll report user-facing outputs use lowercase budu and canonical wordma
 })
 
 test('internal and historical identifiers remain untouched', () => {
-  assert.match(read('src/components/ProductCenterPage.jsx'), /BUDU-12Y/)
+  assert.match(read('scripts/helpers/partner-catalogue-initialization.mjs'), /BUDU-12Y/)
   assert.match(read('server/employee-profile.js'), /BUDU-/)
   assert.match(read('server/payments/providers/wechat-pay.js'), /body: 'BUDU'/)
 })

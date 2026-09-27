@@ -51,7 +51,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
   const [ledgerType, setLedgerType] = useState('')
   const [ledgerRows, setLedgerRows] = useState([])
   const [items, setItems] = useState([])
-  const [newItem, setNewItem] = useState({ name: '', unit: '', spec: '', barcode: '', category: 'product' })
+  const [newItem, setNewItem] = useState({ name: '', unit: '', spec: '', barcode: '', category: 'material' })
   const [form, setForm] = useState({ storeKey: stores[0]?.key || '', productName: '', quantity: '', minQty: '' })
   const [wasteForm, setWasteForm] = useState({ storeKey: stores[0]?.key || '', productName: '', quantity: '', reason: '' })
   const [error, setError] = useState('')
@@ -72,9 +72,9 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
   )
 
   useEffect(() => {
-    if (!itemOpen) return
+    if (!itemOpen && !open && !wasteOpen) return
     api('/v2/items').then((d) => setItems(d.rows || [])).catch(() => {})
-  }, [itemOpen])
+  }, [itemOpen, open, wasteOpen])
 
   useEffect(() => {
     if (!ledgerOpen) return
@@ -93,11 +93,13 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
     setError('')
     try {
       if (form.quantity === '') throw new Error('请填写盘点后的库存数量')
+      const selectedItem = items.find((item) => item.name === form.productName.trim())
+      if (!selectedItem) throw new Error('请选择已有货品；新商品请先在商品中心创建')
       await api('/v2/stock/adjust', {
         method: 'POST',
         body: JSON.stringify({
           storeKey: form.storeKey,
-          items: [{ name: form.productName.trim(), quantity: Number(form.quantity), minQty: form.minQty === '' ? undefined : Number(form.minQty) }],
+          items: [{ itemId: selectedItem.id, name: selectedItem.name, quantity: Number(form.quantity), minQty: form.minQty === '' ? undefined : Number(form.minQty) }],
         }),
       })
       await loadUserData()
@@ -116,11 +118,13 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
     setError('')
     try {
       if (!wasteForm.productName.trim() || wasteForm.quantity === '') throw new Error('请填写货品与数量')
+      const selectedItem = items.find((item) => item.name === wasteForm.productName.trim())
+      if (!selectedItem) throw new Error('请选择已有货品；新商品请先在商品中心创建')
       await api('/v2/stock/waste', {
         method: 'POST',
         body: JSON.stringify({
           storeKey: wasteForm.storeKey,
-          items: [{ name: wasteForm.productName.trim(), quantity: Number(wasteForm.quantity), reason: wasteForm.reason }],
+          items: [{ itemId: selectedItem.id, name: selectedItem.name, quantity: Number(wasteForm.quantity), reason: wasteForm.reason }],
         }),
       })
       await loadUserData()
@@ -136,7 +140,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
     setError('')
     try {
       await api('/v2/items', { method: 'POST', body: JSON.stringify(newItem) })
-      setNewItem({ name: '', unit: '', spec: '', barcode: '', category: 'product' })
+      setNewItem({ name: '', unit: '', spec: '', barcode: '', category: 'material' })
       const d = await api('/v2/items')
       setItems(d.rows || [])
       onChanged?.(t('货品已添加'))
@@ -310,7 +314,7 @@ export default function InventoryStockPanel({ currentUser, catalog = [], version
                 <input value={newItem.spec} onChange={(e) => setNewItem((v) => ({ ...v, spec: e.target.value }))} placeholder={t('规格')} className={inputCls} />
                 <input value={newItem.barcode} onChange={(e) => setNewItem((v) => ({ ...v, barcode: e.target.value }))} placeholder={t('条码')} className={inputCls} />
                 <select value={newItem.category} onChange={(e) => setNewItem((v) => ({ ...v, category: e.target.value }))} className={inputCls}>
-                  {CATEGORIES.map((c) => (
+                  {CATEGORIES.filter((c) => c !== 'product').map((c) => (
                     <option key={c} value={c}>
                       {t(c === 'product' ? '产品' : c === 'material' ? '物料' : '其他')}
                     </option>
