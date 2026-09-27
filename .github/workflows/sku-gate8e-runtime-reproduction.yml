@@ -1,0 +1,108 @@
+name: NON_PRODUCTION SKU Gate 8E Exact Image Plan Reproduction
+
+on:
+  push:
+    branches: [codex/sku-gate8e-runtime-reproduction]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sku_test
+          POSTGRES_PASSWORD: sku_test
+          POSTGRES_DB: sku_authority_test_gate8e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sku_test -d sku_authority_test_gate8e"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sku_test:sku_test@127.0.0.1:5432/sku_authority_test_gate8e
+      PLAN_DATABASE_URL: postgresql://sku_plan_ro:sku_plan_ro@127.0.0.1:5432/sku_authority_test_gate8e
+      NODE_ENV: test
+      APP_ENV: test
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout isolated diagnostic code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Checkout frozen exact v5 candidate
+        uses: actions/checkout@v4
+        with:
+          repository: GPTJJ/budu
+          ref: 456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          path: candidate
+          fetch-depth: 0
+      - name: Checkout exact production baseline for 85 migrations
+        uses: actions/checkout@v4
+        with:
+          repository: GPTJJ/budu
+          ref: 5ad27a06d731fbc94de5ae3776060b4350b886e8
+          path: baseline
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify source identities and diagnostic syntax
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = GPTJJ/budu
+          test "$GITHUB_REF" = refs/heads/codex/sku-gate8e-runtime-reproduction
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = 456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          test "$(git -C baseline rev-parse HEAD)" = 5ad27a06d731fbc94de5ae3776060b4350b886e8
+          test "$(find baseline/prisma/migrations -name migration.sql | wc -l | tr -d ' ')" = 85
+          test -z "$(git -C candidate status --porcelain --untracked-files=all)"
+          python3 candidate/scripts/deploy-prod-sku-authority.py identity --repo "$PWD/candidate"
+          node --check scripts/sku-gate8e-disposable-db.mjs
+          python3 - <<'PY'
+          import ast
+          ast.parse(open('scripts/sku-gate8e-runtime-reproduction.py').read())
+          PY
+      - name: Install frozen v5 host client and generate Prisma Client
+        run: |
+          set -euo pipefail
+          cd candidate
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx prisma generate
+      - name: Apply exactly baseline 85 migrations to disposable PostgreSQL 16
+        run: |
+          set -euo pipefail
+          cd candidate
+          npx prisma migrate deploy --schema "$GITHUB_WORKSPACE/baseline/prisma/schema.prisma"
+      - name: Seed synthetic frozen-plan fixture and read-only role
+        env:
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+        run: node scripts/sku-gate8e-disposable-db.mjs seed
+      - name: Build exact production-format runtime archive on runner
+        run: |
+          set -euo pipefail
+          release=456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          run_dir="$(mktemp -d "$RUNNER_TEMP/sku-gate8e.XXXXXX")"
+          echo "GATE8E_IMAGE_ARCHIVE=$run_dir/image.tar" >> "$GITHUB_ENV"
+          mkdir "$run_dir/source"
+          git -C candidate archive "$release" | tar -x -C "$run_dir/source"
+          docker buildx create --name "sku-gate8e-$GITHUB_RUN_ID" --driver docker-container
+          docker buildx inspect "sku-gate8e-$GITHUB_RUN_ID" --bootstrap > "$run_dir/builder.txt"
+          grep -q linux/amd64 "$run_dir/builder.txt"
+          docker buildx build --builder "sku-gate8e-$GITHUB_RUN_ID" --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$release" \
+            --tag "budu-api:sku-authority-${release:0:12}" \
+            --provenance=false --sbom=false \
+            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/image.tar" \
+            "$run_dir/source"
+      - name: Reproduce host control and exact-image E1 through E5
+        env:
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+        run: |
+          set -euo pipefail
+          python3 scripts/sku-gate8e-runtime-reproduction.py \
+            --candidate "$PWD/candidate" --archive "$GATE8E_IMAGE_ARCHIVE"
