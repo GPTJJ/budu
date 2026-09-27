@@ -13,6 +13,14 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const user = { id: 'sku-test-admin', role: 'admin', status: 'active' }
 const makeId = () => `sku-test-${crypto.randomUUID()}`
 
+async function seedLegacyProduct(data) {
+  return db.$transaction(async (tx) => {
+    const [mark] = await tx.$queryRaw`SELECT set_config('budu.sku_authority_writer', '1', true) AS value`
+    assert.equal(mark.value, '1')
+    return tx.inventoryItem.create({ data })
+  })
+}
+
 async function historicalFacts(productId) {
   const [order, transfer, purchase, supply, replenishment] = await Promise.all([
     db.orderItem.findFirst({ where: { productId }, select: { productId: true, productNameSnapshot: true, skuSnapshot: true } }),
@@ -46,6 +54,21 @@ async function createWithAllocatedSku(prefix, name, afterReserve = async () => {
   }, { maxWait: 10000, timeout: 20000 })
 }
 
+async function proveAtomicProductCreationRollback() {
+  const beforeProducts = await db.inventoryItem.count({ where: { category: 'product' } })
+  const beforeAssignments = await db.productSkuAssignment.count()
+  const beforeAudits = await db.sensitiveRecordAudit.count({ where: { action: 'product.sku.assign' } })
+  await assert.rejects(db.$transaction(async (tx) => {
+    const sku = await reserveProductSku(tx, { source: 'BD', user })
+    const itemId = makeId()
+    await tx.inventoryItem.create({ data: { id: itemId, name: '故障回滚商品', category: 'product', sku } })
+    await recordProductSkuAssignment(tx, { sku: 'BD-999999', itemId, user, reason: 'force assignment failure' })
+  }), /allocation must match|SKU allocation/)
+  assert.equal(await db.inventoryItem.count({ where: { category: 'product' } }), beforeProducts)
+  assert.equal(await db.productSkuAssignment.count(), beforeAssignments)
+  assert.equal(await db.sensitiveRecordAudit.count({ where: { action: 'product.sku.assign' } }), beforeAudits)
+}
+
 async function proveSamePrefixContention(prefix, expectedFirst) {
   let firstLocked
   const locked = new Promise((resolve) => { firstLocked = resolve })
@@ -68,13 +91,50 @@ try {
   assert.equal(Math.floor(version / 10000), 16, '真实 PostgreSQL 16 必须可用')
   assert.equal(await db.inventoryItem.count({ where: { category: 'product' } }), 0, '使用空白隔离测试库')
 
+  await assert.rejects(db.inventoryItem.create({ data: { id: makeId(), name: '旧应用未授权新商品', category: 'product', sku: 'LEGACY-DENY' } }), /SKU Authority writer/)
+
+  let markedPid = null
+  await db.$transaction(async (tx) => {
+    const [mark] = await tx.$queryRaw`SELECT set_config('budu.sku_authority_writer', '1', true) AS value`
+    assert.equal(mark.value, '1')
+    const [pid] = await tx.$queryRaw`SELECT pg_backend_pid() AS pid`
+    markedPid = pid.pid
+  })
+  let sameConnectionObserved = false
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const result = await db.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw`SELECT pg_backend_pid() AS pid, current_setting('budu.sku_authority_writer', true) AS value`
+      return row
+    })
+    if (result.pid === markedPid) {
+      sameConnectionObserved = true
+      assert.notEqual(result.value, '1', 'transaction-local SKU writer marker must not leak through pool reuse')
+      break
+    }
+  }
+  assert.equal(sameConnectionObserved, true, 'must observe the same pooled PostgreSQL connection after commit')
+
+  let releaseMarked
+  const markedGate = new Promise((resolve) => { releaseMarked = resolve })
+  let markedReady
+  const ready = new Promise((resolve) => { markedReady = resolve })
+  const markedTxn = db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT set_config('budu.sku_authority_writer', '1', true)`
+    markedReady()
+    await markedGate
+  }, { timeout: 10000 })
+  await ready
+  await assert.rejects(db.inventoryItem.create({ data: { id: makeId(), name: '并发事务不能继承授权', category: 'product', sku: 'LEGACY-CONCURRENT' } }), /SKU Authority writer/)
+  releaseMarked()
+  await markedTxn
+
   const category = await db.productCategory.create({ data: { id: makeId(), name: 'pos-森醒' } })
   const legacy = [
     { id: makeId(), name: 'SKU测试自有A', sku: 'LEGACY-A', createdAt: new Date('2026-01-01T00:00:00Z'), isActive: false, salePriceCents: 500n, costPriceCents: 100n },
     { id: makeId(), name: 'SKU测试自有B', sku: null, createdAt: new Date('2026-01-01T00:00:00Z'), isActive: false },
     { id: makeId(), name: 'SKU测试第三方', sku: 'LEGACY-TP', createdAt: new Date('2026-02-01T00:00:00Z'), isActive: false, productCategoryId: category.id },
   ]
-  for (const row of legacy) await db.inventoryItem.create({ data: { ...row, category: 'product' } })
+  for (const row of legacy) await seedLegacyProduct({ ...row, category: 'product' })
   const external = await db.onlineProductPolicy.create({ data: {
     id: makeId(), namespace: 'wechat', externalProductId: 'c1', externalSkuId: 's1',
     productId: legacy[0].id, enabled: true, updatedById: user.id,
@@ -141,6 +201,11 @@ try {
   await assert.rejects(db.inventoryItem.update({ where: { id: first.id }, data: { name: '禁改名' } }), /immutable/)
   await assert.rejects(db.inventoryItem.update({ where: { id: first.id }, data: { sku: 'BD-999999' } }), /immutable/)
   await assert.rejects(db.inventoryItem.update({ where: { id: first.id }, data: { category: 'material' } }), /immutable/)
+  await db.inventoryItem.update({ where: { id: first.id }, data: { salePriceCents: 600n, isActive: true } })
+  const mutable = await db.inventoryItem.findUnique({ where: { id: first.id } })
+  assert.equal(mutable.salePriceCents, 600n)
+  assert.equal(mutable.isActive, true)
+  await proveAtomicProductCreationRollback()
 
   await proveSamePrefixContention('BD', 3)
   await proveSamePrefixContention('TP', 2)
