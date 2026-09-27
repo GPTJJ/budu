@@ -71,6 +71,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
           python3 scripts/test-sku-release-lossless-native.py
+      - name: Rehearse pre-cutover database restore after three failure points
+        run: python3 scripts/test-sku-release-restore-native.py
       - run: node --test scripts/test-sku-authority-unit.mjs scripts/test-product-excel.mjs
       - run: npm run build
       - name: Build and inspect exact production-format image off-host

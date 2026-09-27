@@ -31,6 +31,7 @@ ENGINEERING_FILES = frozenset({
     'scripts/sku-release-apply.mjs',
     'scripts/release-prod-sku-authority-ci.sh',
     'scripts/test-sku-release-lossless-native.py',
+    'scripts/test-sku-release-restore-native.py',
     'scripts/test-sku-release-apply-native.mjs',
     'scripts/test-sku-release-contract.py',
     'scripts/test-sku-release-controller.py',
