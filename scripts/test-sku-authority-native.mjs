@@ -105,7 +105,7 @@ try {
     partnerStoreId: partnerStore.id, partnerNameSnapshot: partner.name,
     partnerStoreNameSnapshot: partnerStore.name, createdByType: 'INTERNAL', createdByActorId: user.id,
     requestedTotalAmountCents: 500n, idempotencyScope: makeId(), idempotencyKey: makeId(),
-    idempotencyPayloadDigest: 'sku-fixture', items: { create: [{ id: makeId(), inventoryItemId: legacy[0].id,
+    idempotencyPayloadDigest: crypto.createHash('sha256').update('sku-fixture').digest('hex'), items: { create: [{ id: makeId(), inventoryItemId: legacy[0].id,
       productNameSnapshot: legacy[0].name, skuSnapshot: 'LEGACY-A', productCodeSnapshot: 'LEGACY-A',
       orderUnitSnapshot: 'PCS', requestedQuantityBase: 1, basePriceSnapshotCents: 500n,
       discountBpsSnapshot: 10000, requestedLineAmountCents: 500n,
