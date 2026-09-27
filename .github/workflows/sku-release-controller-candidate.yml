@@ -1,0 +1,69 @@
+name: NON_PRODUCTION SKU Release Controller Candidate
+
+on:
+  push:
+    branches:
+      - codex/sku-authority-release-controller
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sku_release_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sku_release_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      APP_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sku_release_ci?schema=public
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate Prisma candidate
+        run: |
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+      - name: Verify strict release engineering scope
+        run: |
+          python3 scripts/test-sku-release-controller.py
+          python3 scripts/test-deploy-prod-transfer-cas.py
+          python3 scripts/test-release-path-post-transfer.py
+          bash -n scripts/deploy-remote.sh
+          bash -n scripts/release-prod-sku-authority-ci.sh
+          bash -n scripts/deploy-prod-transfer-cas.sh
+      - name: Re-run SKU authority candidate regressions
+        run: |
+          node --test scripts/test-sku-authority-unit.mjs scripts/test-product-excel.mjs scripts/test-partner-candy-pcs.mjs scripts/test-product-material-contract.mjs
+          node scripts/test-sku-authority-native.mjs
+          node scripts/test-product-group-workflow.mjs
+          node scripts/test-transfer-box-piece-workflow.mjs
+          node scripts/test-purchase-receiving-workflow.mjs
+      - name: Build
+        run: npm run build
+      - name: Clean worktree guard
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
