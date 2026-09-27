@@ -61,6 +61,22 @@ write identity, import/upsert key or transfer/partner authority. The mini-progra
 keeps `c1/s1/g24`, `externalProductId`, `externalSkuId` and menu codes unchanged;
 existing active mappings must still resolve their `productId` after migration.
 
+## Rollback compatibility — SAFE_DEGRADED
+
+Migration 86 installs a PostgreSQL product-creation guard. A new `category='product'` row is accepted only when the current transaction explicitly sets the SKU Authority writer capability with `set_config('budu.sku_authority_writer', '1', true)`. The marker is transaction-local and must not survive commit, pool reuse, or a second concurrent transaction.
+
+The SKU Authority application sets this capability inside the same transaction that allocates the BD/TP number and then creates the product, assignment and audit record. Any failure rolls the full transaction back; orphan products are forbidden.
+
+If production must temporarily roll back to the pre-SKU application after migration 86 and the 178-product migration, the old application is supported only in **SAFE_DEGRADED** mode:
+
+- product/POS/transfer/purchase/Partner reads continue;
+- price, enable/disable and other non-identity fields continue;
+- re-enabling the same disabled product keeps its existing ID/SKU;
+- creating a new product is denied by PostgreSQL;
+- changing formal product name, SKU or product identity is denied by PostgreSQL once assignment exists.
+
+This database guard is a rollback-compatibility contract, not a substitute for the normal server-side SKU Authority. Production release engineering must pin the exact final migration checksum and retain a verified database restore path.
+
 ## Controlled mapping and release gate
 
 All 178 products in the 2026-09-27 UI audit, including 65 disabled products,
