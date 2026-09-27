@@ -35,7 +35,8 @@ Only the release transport path is changed.
 - Timeout is converted to an explicit fail-closed code requiring read-only audit before any retry:
   - `SKU_RUNTIME_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED`
   - `SKU_MIGRATION_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED`
-- The outer GitHub deploy timeout is extended from 25 minutes to 50 minutes so the reviewed inner transport bounds can complete without being killed by the wrapper first.
+- Each remote image load is also wrapped by the production host's coreutils `timeout` with TERM + 30-second kill-after; the local SSH timeout is deliberately later, so the remote load receives the first bounded termination signal.
+- The outer GitHub deploy timeout is extended from 25 minutes to 90 minutes so both bounded transports plus the already-reviewed remote controller can complete without the wrapper becoming the first timeout authority.
 
 No schema, migration SQL, SKU business logic, Product Center, Inventory, Partner, Transfer, POS, mini-program code, production baseline authority, Gate 8B SAFE_DEGRADED behavior, or rollback state machine is changed.
 
@@ -43,7 +44,7 @@ No schema, migration SQL, SKU business logic, Product Center, Inventory, Partner
 
 Gate 8A-v3 ordering remains authoritative:
 
-1. pure read-only production readiness;
+1. pure read-only production readiness, including proof that the host `timeout` command is available;
 2. exact artifact/candidate-name admission;
 3. release lock;
 4. bounded image transport;
