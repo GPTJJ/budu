@@ -1,0 +1,55 @@
+name: NON_PRODUCTION SKU Rollback Compatibility Gate 8B
+
+on:
+  push:
+    branches: [codex/sku-authority-rollback-compatibility]
+
+permissions:
+  contents: read
+
+jobs:
+  gate8b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sku_test
+          POSTGRES_PASSWORD: sku_test
+          POSTGRES_DB: sku_authority_test_gate8b
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sku_test -d sku_authority_test_gate8b"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sku_test:sku_test@127.0.0.1:5432/sku_authority_test_gate8b
+      TEST_DATABASE_URL: postgresql://sku_test:sku_test@127.0.0.1:5432/sku_authority_test_gate8b
+      NODE_ENV: test
+      APP_ENV: test
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate candidate Prisma client
+        run: npx prisma validate && npx prisma generate
+      - name: Rehearse exact old production app on migration 86 database
+        run: node scripts/test-sku-old-app-safe-degraded.mjs
+      - name: Reset isolated PostgreSQL 16 for candidate authority tests
+        run: npx prisma migrate reset --force --skip-seed
+      - name: Prove transaction-local writer capability and atomic creation
+        run: node scripts/test-sku-authority-native.mjs
+      - name: Run SKU authority unit regressions
+        run: node --test scripts/test-sku-authority-unit.mjs scripts/test-product-excel.mjs
+      - name: Build
+        run: npm run build
+      - name: Clean worktree guard
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
