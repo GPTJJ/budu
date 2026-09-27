@@ -33,6 +33,7 @@ IMAGE_LOAD_MIN_TIMEOUT_SECONDS = 600
 IMAGE_LOAD_MAX_TIMEOUT_SECONDS = 1200
 IMAGE_LOAD_BASE_SECONDS = 180
 IMAGE_LOAD_ASSUMED_BYTES_PER_SECOND = 1024 * 1024
+IMAGE_LOAD_REMOTE_GRACE_SECONDS = 60
 
 
 
@@ -153,17 +154,27 @@ def load_image_archive(remote, source, source_art, kind):
                           'archiveBytes':source_art['archive'],
                           'timeoutSeconds':timeout_seconds},sort_keys=True),flush=True)
         started = time.monotonic()
+        remote_command = ('timeout --signal=TERM --kill-after=30s '+
+                          str(timeout_seconds)+'s docker load')
         try:
-            loaded = subprocess.run(remote.ssh + ['docker load'],stdin=stream,
+            loaded = subprocess.run(remote.ssh + [remote_command],stdin=stream,
                                     stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                                    timeout=timeout_seconds,check=False)
+                                    timeout=timeout_seconds + IMAGE_LOAD_REMOTE_GRACE_SECONDS,
+                                    check=False)
         except subprocess.TimeoutExpired:
             print(json.dumps({'event':'SKU_IMAGE_LOAD_TIMEOUT','kind':kind,
-                              'timeoutSeconds':timeout_seconds},sort_keys=True),flush=True)
+                              'timeoutSeconds':timeout_seconds,
+                              'boundary':'LOCAL_AFTER_REMOTE_GRACE'},sort_keys=True),flush=True)
             raise core.GateError('SKU_'+code+'_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED') from None
         except OSError:
             raise core.GateError('SKU_'+code+'_IMAGE_LOAD_TRANSPORT_UNAVAILABLE') from None
         elapsed = max(0,int(time.monotonic()-started))
+        if loaded.returncode in (124,137):
+            print(json.dumps({'event':'SKU_IMAGE_LOAD_TIMEOUT','kind':kind,
+                              'elapsedSeconds':elapsed,
+                              'timeoutSeconds':timeout_seconds,
+                              'boundary':'REMOTE'},sort_keys=True),flush=True)
+            raise core.GateError('SKU_'+code+'_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED')
         if loaded.returncode != 0:
             print(json.dumps({'event':'SKU_IMAGE_LOAD_FAILED','kind':kind,
                               'elapsedSeconds':elapsed,
@@ -176,6 +187,9 @@ def load_image_archive(remote, source, source_art, kind):
 def pre_mutation_readiness(remote, repo, art, migration_art, baseline):
     """Only read the running old application and host; never create release state."""
     state = core.preflight(remote,art,baseline)
+    timeout_tool = remote.run(['sh','-lc',
+        'command -v timeout >/dev/null 2>&1 && printf TIMEOUT_OK'])
+    core.require(timeout_tool == b'TIMEOUT_OK','SKU_TRANSPORT_TIMEOUT_TOOL_UNAVAILABLE')
     budget = combined_budget(state['diskUsed'],state['diskAvailable'],art,migration_art)
     core.application_db_probe(remote,state['name'],'OLD_APPLICATION_REAL_DB_PROBE_FAILED')
     mounts = core.mount_readability(remote,state['name'])
