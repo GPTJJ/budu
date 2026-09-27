@@ -29,6 +29,22 @@ CREATE TABLE "product_sku_aliases" (
 );
 CREATE INDEX "product_sku_aliases_item_id_idx" ON "product_sku_aliases"("item_id");
 
+
+-- Rollback compatibility guard: only the new SKU Authority writer may create products.
+-- The capability is transaction-local via set_config(..., true), so it cannot leak
+-- through the connection pool into the next transaction.
+CREATE OR REPLACE FUNCTION product_sku_insert_guard() RETURNS trigger AS $
+BEGIN
+  IF NEW.category = 'product'
+     AND current_setting('budu.sku_authority_writer', true) IS DISTINCT FROM '1' THEN
+    RAISE EXCEPTION 'product creation requires SKU Authority writer';
+  END IF;
+  RETURN NEW;
+END;
+$ LANGUAGE plpgsql;
+CREATE TRIGGER product_sku_insert_authority BEFORE INSERT ON "InventoryItem"
+  FOR EACH ROW EXECUTE FUNCTION product_sku_insert_guard();
+
 -- Preserve existing nonempty SKU as a canonical or alias, never both.
 CREATE OR REPLACE FUNCTION product_sku_code_disjoint() RETURNS trigger AS $$
 BEGIN
