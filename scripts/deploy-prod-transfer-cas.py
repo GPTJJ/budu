@@ -57,6 +57,7 @@ POST_TRANSFER_ENGINEERING_FILES = {
     'scripts/deploy-remote.sh',
     'scripts/deploy-prod-transfer-cas.py',
     'scripts/release-prod-post-transfer-ci.sh',
+    'scripts/test-deploy-prod-transfer-cas.py',
     'scripts/test-release-path-post-transfer.py',
     'scripts/test-transfer-cas-existing-workflow.py',
 }
