@@ -58,6 +58,7 @@ POST_TRANSFER_ENGINEERING_FILES = {
     'scripts/deploy-prod-transfer-cas.py',
     'scripts/release-prod-post-transfer-ci.sh',
     'scripts/test-deploy-prod-transfer-cas.py',
+    'scripts/test-candidate-db-probe-integration.py',
     'scripts/test-release-path-post-transfer.py',
     'scripts/test-transfer-cas-existing-workflow.py',
 }
@@ -631,6 +632,31 @@ def settle_writers(remote, ledger, names):
     raise GateError('WRITER_TRANSITION_FAILED')
 
 
+APPLICATION_DB_PROBE_TIMEOUT = 20
+APPLICATION_DB_PROBE_OK = b'DB_READ_OK\n'
+APPLICATION_DB_PROBE_SCRIPT = (
+    "import { prisma } from './server/pg.js'; "
+    "try { const rows = await prisma.$queryRawUnsafe('SELECT 1 AS ok'); "
+    "if (rows.length !== 1 || rows[0].ok !== 1) throw Error('BAD_RESULT'); "
+    "process.stdout.write('DB_READ_OK\\n'); "
+    "} catch { process.exitCode = 1; } "
+    "finally { try { await prisma.$disconnect(); } catch { process.exitCode = 1; } }"
+)
+
+
+def application_db_probe(remote, name, failure_code):
+    # Run inside the application container with its existing Prisma client and
+    # DATABASE_URL. Neither credentials nor Prisma diagnostics leave this gate.
+    args = ['docker', 'exec', '-w', '/app', '-e',
+            'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c temp_file_limit=0',
+            name, 'node', '--input-type=module', '-e', APPLICATION_DB_PROBE_SCRIPT]
+    try:
+        output = remote.run(args, timeout=APPLICATION_DB_PROBE_TIMEOUT)
+    except GateError:
+        raise GateError(failure_code) from None
+    require(output == APPLICATION_DB_PROBE_OK, failure_code)
+
+
 def rollback(remote, state, ledger):
     # Do not start the previous writer if candidate termination is unproven.
     if state.get('candidate_attempted'):
@@ -641,6 +667,7 @@ def rollback(remote, state, ledger):
     if state.get('old_stop_attempted'):
         remote.run(['docker','start',state['name']])
         remote.health(state['name'], EXPECTED_OLD_SHA)
+        application_db_probe(remote, state['name'], 'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
         settle_writers(remote, ledger, [state['name']])
     if state.get('routes_touched'):
         replace_routes(remote, state['template'], state['active'])
@@ -723,6 +750,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         stage = 'CANDIDATE_RUNTIME_CHECKS'
         runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
         validate_candidate_image(remote.inspect(name), art)
+        stage = 'CANDIDATE_APPLICATION_DB_PROBE'
+        application_db_probe(remote, name, 'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_CUTOVER')
         new = state['template'].replace('http://' + state['name'] + ':3000', 'http://' + name + ':3000')
         require(new.count('http://' + name + ':3000') == 3, 'CUTOVER_ROUTE_COUNT_INVALID')
@@ -756,7 +785,13 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
             try:
                 rollback(remote, state, ledger)
             except BaseException:
-                raise GateError('ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED') from None
+                code = ('CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED'
+                        if stage == 'CANDIDATE_APPLICATION_DB_PROBE'
+                        else 'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED')
+                failure = GateError(code)
+                failure.failure_stage = stage
+                failure.deployment_result = 'DEPLOY_BLOCKED'
+                raise failure from None
         error.failure_stage = stage
         error.deployment_result = 'DEPLOY_ROLLED_BACK' if state and state.get('old_stop_attempted') else 'DEPLOY_BLOCKED'
         raise
@@ -773,12 +808,15 @@ SAFE_CONTROLLER_CODES = frozenset({
     'CLONE_MOUNTS_MISMATCH','CLONE_NETWORKS_MISMATCH','WRITER_TRANSITION_FAILED',
     'DATABASE_AUTHORITY_MISMATCH','MIGRATION_LEDGER_INVALID','MIGRATION_CHECKSUM_MISMATCH',
     'COMMAND_FAILED','COMMAND_UNAVAILABLE_OR_TIMEOUT','INTERRUPTED',
+    'CANDIDATE_APPLICATION_DB_PROBE_FAILED',
+    'CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED',
     'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED',
     'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED',
 })
 SAFE_CONTROLLER_STAGES = frozenset({
     'PREFLIGHT','AUTHORITY_MOUNT_SNAPSHOT','OLD_WRITER_DRAIN','CANDIDATE_CREATE',
     'CANDIDATE_CLONE_PARITY','CANDIDATE_INTERNAL_HEALTH','CANDIDATE_RUNTIME_CHECKS',
+    'CANDIDATE_APPLICATION_DB_PROBE',
     'NGINX_CUTOVER','PUBLIC_HEALTH','FINAL_RUNTIME_CHECKS','FINAL_DISK','SHA_POINTER','UNKNOWN',
 })
 

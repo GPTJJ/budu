@@ -84,6 +84,17 @@ class Fake:
             self.fail=None;raise r.GateError('MOCK_PUBLIC_FAILURE')
     def run(self,args,data=None,timeout=60):
         self.events.append(tuple(args))
+        if args[:2]==['docker','exec'] and '--input-type=module' in args:
+            name=args[args.index('--input-type=module')-2]
+            self.events.append(('db-probe',name,timeout))
+            if name==NAME and self.fail in ('db-dns','db-refused','db-query','db-timeout'):
+                failure=self.fail;self.fail=None
+                raise r.GateError('COMMAND_UNAVAILABLE_OR_TIMEOUT' if failure=='db-timeout' else 'COMMAND_FAILED')
+            if name==NAME and self.fail=='db-bad-output':
+                self.fail=None;return b'WRONG_RESULT\n'
+            if name==OLD_NAME and self.fail=='old-db':
+                raise r.GateError('COMMAND_FAILED')
+            return r.APPLICATION_DB_PROBE_OK
         if args==['cat',r.CURRENT_SHA_FILE]:return self.pointer.encode()
         if args[-2:]==['sha256sum','/app/server/v2.js']:return (r.OLD_V2_HASH+'  /app/server/v2.js').encode()
         if args[:2]==['sh','-c'] and 'docker logs --tail' in args[2] and self.fail=='critical-log' and NAME in args[2]:
@@ -101,6 +112,7 @@ class Fake:
             self.running=[c for c in self.running if c['Name'].lstrip('/')!=args[-1]]
         if args[:2]==['docker','start']:
             assert args[-1]==OLD_NAME
+            if self.fail=='old-start':raise r.GateError('START_FAILED')
             self.running=[self.old]
         if args[:2]==['docker','update']:
             self.new['HostConfig']['RestartPolicy']=copy.deepcopy(self.old['HostConfig']['RestartPolicy'])
@@ -243,6 +255,115 @@ class Gates(unittest.TestCase):
         self.assertEqual(manifest['oldSha'],r.EXPECTED_OLD_SHA)
         self.assertNotIn('candidateImage',manifest)
         stop=f.events.index(('docker','stop','--time','30',OLD_NAME));start=f.events.index(('create-start',NAME));self.assertLess(stop,start)
+        health=f.events.index(('health',NAME,NEW,False))
+        probe=f.events.index(('db-probe',NAME,r.APPLICATION_DB_PROBE_TIMEOUT))
+        switch=f.events.index(('py','route'))
+        self.assertLess(start,health);self.assertLess(health,probe);self.assertLess(probe,switch)
+        command=next(e for e in f.events if e[:2]==('docker','exec') and '--input-type=module' in e)
+        self.assertEqual(command[command.index('--input-type=module')-2],NAME)
+        self.assertIn("SELECT 1 AS ok",command[-1]);self.assertNotIn(r.PG,command)
+        self.assertIn('default_transaction_read_only=on',command[command.index('-e')+1])
+        self.assertNotIn('DATABASE_URL',str(command))
+        self.assertEqual(f.maxwriters,1)
+    def test_candidate_application_db_probe_failures_restore_exact_old(self):
+        for failure in ('db-dns','db-refused','db-query','db-timeout','db-bad-output'):
+            with self.subTest(failure=failure):
+                f=Fake();f.fail=failure
+                with self.assertRaisesRegex(r.GateError,'CANDIDATE_APPLICATION_DB_PROBE_FAILED') as raised:
+                    r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+                self.assertEqual(raised.exception.failure_stage,'CANDIDATE_APPLICATION_DB_PROBE')
+                self.assertEqual(raised.exception.deployment_result,'DEPLOY_ROLLED_BACK')
+                self.assertEqual(f.running,[f.old]);self.assertEqual(f.maxwriters,1)
+                self.assertEqual(f.routes(),(ROUTES,ROUTES));self.assertEqual(f.pointer,r.EXPECTED_OLD_SHA)
+                self.assertNotIn(('py','route'),f.events)
+                candidate_probe=f.events.index(('db-probe',NAME,r.APPLICATION_DB_PROBE_TIMEOUT))
+                candidate_stop=f.events.index(('docker','stop','--time','30',NAME))
+                old_start=f.events.index(('docker','start',OLD_NAME))
+                old_health=f.events.index(('health',OLD_NAME,r.EXPECTED_OLD_SHA,False),old_start)
+                old_probe=f.events.index(('db-probe',OLD_NAME,r.APPLICATION_DB_PROBE_TIMEOUT))
+                self.assertLess(candidate_probe,candidate_stop)
+                self.assertLess(candidate_stop,old_start)
+                self.assertLess(old_start,old_health)
+                self.assertLess(old_health,old_probe)
+                r.writer_check(f.containers(),f.db(),[OLD_NAME])
+    def test_candidate_db_probe_failure_and_rollback_failure_is_severe(self):
+        f=Fake();f.fail='db-query'
+        original_run=f.run
+        def fail_old_start(args,data=None,timeout=60):
+            if args==['docker','start',OLD_NAME]:raise r.GateError('START_FAILED')
+            return original_run(args,data,timeout)
+        with patch.object(f,'run',side_effect=fail_old_start):
+            with self.assertRaisesRegex(r.GateError,'CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED') as raised:
+                r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        self.assertEqual(raised.exception.failure_stage,'CANDIDATE_APPLICATION_DB_PROBE')
+        self.assertEqual(raised.exception.deployment_result,'DEPLOY_BLOCKED')
+        self.assertNotIn(('py','route'),f.events)
+    def test_candidate_probe_failure_boundary_is_fixed_and_secret_safe(self):
+        f=Fake();f.fail='db-query';output=io.StringIO()
+        value={'art':art(),'ledger':LEDGER,'helper':'fixture-helper',
+               'oldId':'old-id','routeHash':r.digest(ROUTES.encode())}
+        with patch.object(r,'LocalRemote',return_value=f),patch('sys.stdout',new=output):
+            r.run_loaded_controller(value)
+        self.assertEqual(json.loads(output.getvalue()),
+                         {'result':'DEPLOY_ROLLED_BACK',
+                          'failureGate':'CANDIDATE_APPLICATION_DB_PROBE',
+                          'code':'CANDIDATE_APPLICATION_DB_PROBE_FAILED'})
+        self.assertNotIn('FIXTURE_ONLY',output.getvalue())
+    def test_old_app_db_probe_failure_prevents_rollback_complete(self):
+        f=Fake();f.fail='db-query'
+        original_run=f.run
+        def fail_old_db(args,data=None,timeout=60):
+            if args[:2]==['docker','exec'] and '--input-type=module' in args and OLD_NAME in args:
+                raise r.GateError('COMMAND_FAILED')
+            return original_run(args,data,timeout)
+        with patch.object(f,'run',side_effect=fail_old_db):
+            self.fail('CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED',r.execute_loaded,
+                      f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+    def test_post_transfer_probe_rollback_restores_exact_production_sha(self):
+        production='2fa28a6399c8a9f4fd70188d8df077f0b411589e'
+        with patch.object(r,'EXPECTED_OLD_SHA',production):
+            f=Fake();f.fail='db-refused'
+            self.fail('CANDIDATE_APPLICATION_DB_PROBE_FAILED',r.execute_loaded,
+                      f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+            self.assertEqual(f.running,[f.old])
+            self.assertIn(('health',OLD_NAME,production,True),f.events)
+            self.assertEqual(f.pointer,production)
+            r.writer_check(f.containers(),f.db(),[OLD_NAME])
+    def test_mutation_m1_skip_probe_is_rejected(self):
+        f=Fake();f.fail='db-query'
+        with patch.object(r,'application_db_probe',return_value=None),patch('sys.stdout',new=io.StringIO()):
+            with self.assertRaises(AssertionError):
+                with self.assertRaisesRegex(r.GateError,'CANDIDATE_APPLICATION_DB_PROBE_FAILED'):
+                    r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+    def test_mutation_m2_failure_as_success_is_rejected(self):
+        f=Fake();f.fail='db-query';original_run=f.run
+        def false_success(args,data=None,timeout=60):
+            if args[:2]==['docker','exec'] and '--input-type=module' in args:
+                return r.APPLICATION_DB_PROBE_OK
+            return original_run(args,data,timeout)
+        with patch.object(f,'run',side_effect=false_success),patch('sys.stdout',new=io.StringIO()):
+            with self.assertRaises(AssertionError):
+                with self.assertRaisesRegex(r.GateError,'CANDIDATE_APPLICATION_DB_PROBE_FAILED'):
+                    r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+    def test_mutation_m3_postgres_container_target_is_rejected(self):
+        original_probe=r.application_db_probe
+        def wrong_target(remote,name,code):
+            return original_probe(remote,r.PG,code)
+        f=Fake()
+        with patch.object(r,'application_db_probe',side_effect=wrong_target),patch('sys.stdout',new=io.StringIO()):
+            r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        probe_target=next(e[1] for e in f.events if e[0]=='db-probe')
+        with self.assertRaises(AssertionError):
+            assert probe_target==NAME
+    def test_mutation_m4_no_old_restart_is_rejected(self):
+        f=Fake();f.fail='db-query'
+        def incomplete_rollback(remote,state,ledger):
+            remote.run(['docker','stop','--time','30',state['candidate']])
+        with patch.object(r,'rollback',side_effect=incomplete_rollback):
+            self.fail('CANDIDATE_APPLICATION_DB_PROBE_FAILED',r.execute_loaded,
+                      f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        with self.assertRaises(AssertionError):
+            assert f.running==[f.old]
     def test_cutover_failure_matrix_restores_old(self):
         for failure in ['helper-after-start','health','secret-read','critical-log','active-write','reload','public','pointer-after']:
             with self.subTest(failure=failure):

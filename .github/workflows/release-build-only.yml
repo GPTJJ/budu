@@ -5,6 +5,7 @@ on:
     branches:
       - codex/release-path-post-transfer-generalization
       - codex/release-controller-dns-empty-normalization
+      - codex/release-single-writer-db-probe
 
 permissions:
   contents: read
@@ -34,7 +35,7 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
-            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization) ;;
+            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization|codex/release-single-writer-db-probe) ;;
             *) exit 1 ;;
           esac
           test "$GITHUB_REF" = "refs/heads/$branch"
@@ -52,6 +53,7 @@ jobs:
           python3 scripts/test-deploy-prod-transfer-cas.py
           python3 scripts/test-transfer-cas-existing-workflow.py
           python3 scripts/test-release-path-post-transfer.py
+          python3 -m py_compile scripts/test-candidate-db-probe-integration.py
           docker version --format 'DOCKER_VERSION={{.Server.Version}}'
           docker buildx version
 
@@ -121,6 +123,12 @@ jobs:
           printf 'APPROVAL_SOURCE_HASH=%s IMAGE_APPROVAL_HASH=%s TRANSFER_SOURCE_HASH=%s IMAGE_TRANSFER_HASH=%s\n' \
             "$approval_source_hash" "$approval_image_hash" "$transfer_source_hash" "$transfer_image_hash"
           printf 'TRANSFER_ARTIFACT_SIZE_BYTES=%s IMAGE_SMOKE=PASS\n' "$(stat -c%s "$run_dir/image.tar")"
+
+      - name: Probe application Prisma against isolated PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test-candidate-db-probe-integration.py "budu-api:post-transfer-${GITHUB_SHA:0:12}"
 
       - name: Retain exact artifact for read-only preflight
         uses: actions/upload-artifact@v4

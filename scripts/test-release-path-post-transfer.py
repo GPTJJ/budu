@@ -42,7 +42,8 @@ class RealShellRoute(unittest.TestCase):
             ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',str(workflow)]))
         self.assertEqual(parsed.get('on',parsed.get('true')),
                          {'push':{'branches':['codex/release-path-post-transfer-generalization',
-                                              'codex/release-controller-dns-empty-normalization']}})
+                                              'codex/release-controller-dns-empty-normalization',
+                                              'codex/release-single-writer-db-probe']}})
         self.assertEqual(parsed['permissions'],{'contents':'read'})
         job=parsed['jobs']['artifact']
         self.assertEqual(job['runs-on'],'ubuntu-latest')
@@ -56,7 +57,9 @@ class RealShellRoute(unittest.TestCase):
                          'compression=gzip,compression-level=9,force-compression=true',
                          'inspect-artifact --repo','docker image inspect',
                          'docker run --rm --network none','APPROVAL_WITHDRAW_CAS_PRESENT=YES',
-                         'codex/release-controller-dns-empty-normalization'):
+                         'codex/release-controller-dns-empty-normalization',
+                         'codex/release-single-writer-db-probe',
+                         'scripts/test-candidate-db-probe-integration.py'):
             self.assertIn(required,source)
 
     def test_t1_candidate_without_transfer_commit_denied(self):
