@@ -19,7 +19,7 @@ SPEC.loader.exec_module(c)
 class Identity(unittest.TestCase):
     def test_build_only_workflow_has_no_production_access(self):
         source = (ROOT/'.github/workflows/sku-release-build-only.yml').read_text()
-        self.assertIn('branches: [codex/sku-authority-release-controller-v2]',source)
+        self.assertIn('branches: [codex/sku-authority-release-controller-v3]',source)
         self.assertIn('image: postgres:16',source)
         self.assertIn('test-sku-release-lossless-native.py',source)
         self.assertNotIn('workflow_dispatch:',source)

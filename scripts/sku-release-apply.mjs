@@ -77,17 +77,34 @@ async function main() {
   const [{ name }] = await db.$queryRaw`SELECT current_database() AS name`
   assert(name === targetDb, 'SKU_RELEASE_DATABASE_MISMATCH')
   if (mode === 'plan') {
-    const state = await db.$transaction(snapshot, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
+    const state = await db.$transaction(async tx => ({
+      ...await snapshot(tx),
+      channelFlags: await tx.inventoryItem.findMany({ where: { category: 'product' },
+        select: { id: true, isActive: true, transferEnabled: true,
+          partnerSupplyEnabled: true, partnerReplenishmentEnabled: true },
+        orderBy: { id: 'asc' } }),
+    }), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
     assert(state.online.length === 153, 'SKU_RELEASE_ONLINE_DRIFT')
-    assert(state.products.filter(row => row.isActive).length === 113,
-      'SKU_RELEASE_ACTIVE_DRIFT')
+    assert(state.products.filter(row => row.isActive).length === 87,
+      'SKU_RELEASE_POS_ACTIVE_DRIFT')
+    assert(state.channelFlags.length === state.products.length &&
+      state.channelFlags.every((row, index) => row.id === state.products[index].id &&
+        row.isActive === state.products[index].isActive), 'SKU_RELEASE_CHANNEL_ID_DRIFT')
+    const anyChannelEnabled = state.channelFlags.filter(row => row.isActive ||
+      row.transferEnabled || row.partnerSupplyEnabled ||
+      row.partnerReplenishmentEnabled).length
+    assert(anyChannelEnabled === 113, 'SKU_RELEASE_ANY_CHANNEL_DRIFT')
     assert(testOnly || onlineIdentityDigest(state.online) === PINNED_ONLINE_DIGEST,
       'SKU_RELEASE_ONLINE_DRIFT')
     const plan = buildProductSkuPlan(state.products, { actorUserId: 'sku-authority-release',
       reason: 'SKU Authority 1.0 reviewed historical allocation',
       snapshotId: hash({ products: state.products, online: state.online }), expectedCount: 178 })
     verifyPlan(plan)
-    process.stdout.write(stable({ plan, online: state.online, historical: state.historical }) + '\n')
+    const channelDigest = hash(state.channelFlags.map(row => [row.id, row.isActive,
+      row.transferEnabled, row.partnerSupplyEnabled,
+      row.partnerReplenishmentEnabled]))
+    process.stdout.write(stable({ plan, online: state.online, historical: state.historical,
+      anyChannelEnabled, channelDigest }) + '\n')
     return
   }
   const approved = await readStdin()

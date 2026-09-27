@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { PrismaClient } from '@prisma/client'
+import { analyzeSnapshot } from './sku-release-readiness-plan.mjs'
 import { reserveProductSku, recordProductSkuAssignment, appendProductSkuAudit } from '../server/product-sku-authority.js'
 
 const target = new URL(process.env.DATABASE_URL || '')
@@ -40,7 +42,8 @@ try {
     sku:i<33?null:`LEGACY-${String(i+1).padStart(3,'0')}`,
     category:'product', productCategoryId:i<89?tp.id:bd.id,
     createdAt:new Date(Date.UTC(2026,0,1+Math.floor(i/6),i%24)),
-    isActive:i<113,
+    isActive:i<87,
+    transferEnabled:i>=87 && i<113,
   }))
   await db.$transaction(async tx => {
     await tx.$queryRaw`SELECT set_config('budu.sku_authority_writer','1',true)`
@@ -58,9 +61,26 @@ try {
     productId:products[0].id,productNameSnapshot:products[0].name,
     skuSnapshot:'LEGACY-SNAPSHOT',unitPrice:100n,costPriceSnapshot:50n,
     quantity:1,lineAmount:100n } })
+  const readonlyProbe = spawnSync('node', ['--input-type=module', '--eval',
+    readFileSync('scripts/sku-release-snapshot-probe.mjs','utf8')], {
+    env: { ...process.env, PGOPTIONS:'-c default_transaction_read_only=on -c statement_timeout=120000' },
+    encoding:'utf8', maxBuffer:8 * 1024 * 1024,
+  })
+  assert.equal(readonlyProbe.status,0,readonlyProbe.stderr)
+  const readiness = analyzeSnapshot(JSON.parse(readonlyProbe.stdout))
   const plan = adapter('plan')
   assert.deepEqual(plan.plan.counts,
     { total:178,BD:89,TP:89,missingOldSku:33,aliases:145 })
+  assert.equal(readiness.posActive,87)
+  assert.equal(readiness.anyChannelEnabled,113)
+  assert.equal(readiness.snapshotId,plan.plan.snapshotId)
+  assert.equal(readiness.channelDigest,plan.channelDigest)
+  assert.equal(readiness.mappingDigest,crypto.createHash('sha256')
+    .update(JSON.stringify(plan.plan.mapping)).digest('hex'))
+  assert.equal(readiness.onlineDigest,crypto.createHash('sha256')
+    .update(JSON.stringify(plan.online.map(row => [row.id,row.namespace,
+      row.externalProductId,row.externalSkuId,row.productId,row.enabled]))).digest('hex'))
+  assert.equal(plan.anyChannelEnabled,113)
   const approved = JSON.stringify(plan)
   const applied = adapter('apply',approved,{ SKU_RELEASE_WRITE_AUTHORIZED:sha })
   assert.equal(applied.digest,plan.plan.sha256)

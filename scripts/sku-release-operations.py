@@ -51,7 +51,7 @@ configure_core()
 
 class SkuProductionOperations:
     def __init__(self, art, migration_art, baseline_ledger, after_ledger,
-                 helper, old_id, route_hash):
+                 helper, old_id, route_hash, readiness, authority_mounts):
         self.remote = core.LocalRemote()
         self.art = art
         self.migration_art = migration_art
@@ -60,6 +60,8 @@ class SkuProductionOperations:
         self.helper = helper
         self.old_id = old_id
         self.route_hash = route_hash
+        self.readiness = readiness
+        self.expected_authority_mounts = authority_mounts
         self.release = art['release']
         self.candidate = 'budu-prod-' + self.release[:12] + core.CONTAINER_SUFFIX
         self.worker = 'budu-sku-worker-' + self.release[:12]
@@ -82,6 +84,8 @@ class SkuProductionOperations:
         core.require(not self.root.exists(), 'SKU_ROLLBACK_ROOT_ALREADY_EXISTS')
         self.root.mkdir(mode=0o700)
         self.authority_mounts = core.mount_readability(self.remote, self.state['name'])
+        core.require(self.authority_mounts == self.expected_authority_mounts,
+                     'SKU_AUTHORITY_MOUNTS_CHANGED_AFTER_READINESS')
         (self.root/'route-template').write_text(self.state['template'])
         (self.root/'route-active').write_text(self.state['active'])
         for path in (self.root/'route-template',self.root/'route-active'):
@@ -183,9 +187,21 @@ class SkuProductionOperations:
         self._fsync_directory()
         self.plan = value
 
+    def final_frozen_plan_check(self):
+        # Old writer is stopped. The candidate image reads the exact frozen DB
+        # before backup or migration; no SKU data may change since readiness.
+        self.require_writers(0)
+        raw = self._worker_command('plan',write=False)
+        value = json.loads(raw)
+        core.require(value['plan']['snapshotId'] == self.readiness['snapshotId'] and
+                     value['channelDigest'] == self.readiness['channelDigest'] and
+                     value['anyChannelEnabled'] == 113,
+                     'SKU_FINAL_FROZEN_PLAN_DRIFT')
+        self._save_plan(raw)
+
     def create_backup(self):
-        # With old stopped, the only DB client is this short-lived read-only plan.
-        self._save_plan(self._worker_command('plan',write=False))
+        core.require(self.plan is not None and self.plan_file.is_file(),
+                     'SKU_FINAL_FROZEN_PLAN_MISSING')
         self.require_writers(0)
         user = self._pg_user()
         command = ['docker','exec',core.PG,'pg_dump','-U',user,'-d',core.EXPECTED_DB,'-Fc']

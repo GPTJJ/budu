@@ -29,15 +29,21 @@ ENGINEERING_FILES = frozenset({
     'scripts/sku-release-operations.py',
     'scripts/deploy-prod-sku-authority.py',
     'scripts/sku-release-apply.mjs',
+    'scripts/sku-release-readiness-plan.mjs',
+    'scripts/sku-release-snapshot-probe.mjs',
     'scripts/release-prod-sku-authority-ci.sh',
     'scripts/test-sku-release-lossless-native.py',
     'scripts/test-sku-release-restore-native.py',
     'scripts/test-sku-release-apply-native.mjs',
     'scripts/test-sku-release-contract.py',
     'scripts/test-sku-release-controller.py',
+    'scripts/test-sku-release-readiness.py',
+    'scripts/test-sku-release-readiness.mjs',
     '.github/workflows/deploy-prod.yml',
     '.github/workflows/sku-release-build-only.yml',
+    '.github/fixtures/sku-release-gate7-readiness.json',
     'docs/checkpoints/2026-09-27-sku-release-controller-v2.md',
+    'docs/checkpoints/2026-09-28-sku-release-controller-v3.md',
 })
 PRE_CUTOVER = 'PRE_CUTOVER'
 POST_CUTOVER = 'POST_CUTOVER'

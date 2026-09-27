@@ -66,7 +66,7 @@ try:
   ops=importlib.util.module_from_spec(spec);spec.loader.exec_module(ops)
   ops.configure_core(payload['oldV2Hash'])
   op=ops.SkuProductionOperations(payload['art'],payload['migrationArt'],payload['baseline'],payload['after'],
-     payload['helper'],payload['oldId'],payload['routeHash'])
+     payload['helper'],payload['oldId'],payload['routeHash'],payload['readiness'],payload['authorityMounts'])
   def interrupted(*_): raise ops.core.GateError('INTERRUPTED')
   for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT): signal.signal(sig,interrupted)
   try:
@@ -122,9 +122,45 @@ def combined_budget(used, available, art, migration_art):
         max(art['largest'],migration_art['largest']))
 
 
-def deploy(remote, repo, archive, migration_archive, art, migration_art, baseline, after, release):
+def pre_mutation_readiness(remote, repo, art, migration_art, baseline):
+    """Only read the running old application and host; never create release state."""
     state = core.preflight(remote,art,baseline)
-    combined_budget(state['diskUsed'],state['diskAvailable'],art,migration_art)
+    budget = combined_budget(state['diskUsed'],state['diskAvailable'],art,migration_art)
+    core.application_db_probe(remote,state['name'],'OLD_APPLICATION_REAL_DB_PROBE_FAILED')
+    mounts = core.mount_readability(remote,state['name'])
+    probe = (Path(repo)/'scripts/sku-release-snapshot-probe.mjs').read_text()
+    args = ['docker','exec','-w','/app','-e',
+            'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c temp_file_limit=0',
+            state['name'],'node','--input-type=module','-e',probe]
+    snapshot = remote.run(args,timeout=150)
+    checked = subprocess.run(['node',str(Path(repo)/'scripts/sku-release-readiness-plan.mjs')],
+                             input=snapshot,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                             timeout=30,check=False)
+    core.require(checked.returncode == 0,'SKU_PRE_MUTATION_MAPPING_DRIFT')
+    try: identity = json.loads(checked.stdout)
+    except (ValueError,UnicodeDecodeError): raise core.GateError('SKU_READINESS_RESULT_INVALID') from None
+    core.require(identity.get('counts') == {'total':178,'BD':89,'TP':89,
+                 'missingOldSku':33,'aliases':145} and
+                 identity.get('posActive') == 87 and
+                 identity.get('anyChannelEnabled') == 113 and
+                 identity.get('online') == 153 and
+                 all(re.fullmatch(r'[0-9a-f]{64}',identity.get(key,'')) for key in
+                     ('mappingDigest','onlineDigest','idsDigest','snapshotId','channelDigest')),
+                 'SKU_READINESS_RESULT_INVALID')
+    # Prove that the old writer and route stayed on the same authority through
+    # the snapshot, while the subsequent post-stop frozen plan closes the race.
+    db = remote.db()
+    core.validate_database(db,baseline)
+    core.writer_check(remote.containers(),db,[state['name']])
+    core.require(remote.inspect(state['name'])['Id'] == state['old']['Id'] and
+                 remote.routes() == (state['template'],state['active']),
+                 'SKU_AUTHORITY_CHANGED_DURING_READINESS')
+    return {'state':state,'identity':identity,'mounts':mounts,'budget':budget}
+
+
+def deploy(remote, repo, archive, migration_archive, art, migration_art, baseline, after, release):
+    readiness = pre_mutation_readiness(remote,repo,art,migration_art,baseline)
+    state = readiness['state']
     core.require(art['release'] == release,'SKU_RELEASE_SHA_MISMATCH')
     core.require(not remote.run(['docker','ps','-aq','--filter',
         'name=^/budu-prod-'+release[:12]+core.CONTAINER_SUFFIX+'$']).strip(),
@@ -154,6 +190,10 @@ def deploy(remote, repo, archive, migration_archive, art, migration_art, baselin
         core.require(sql_hash == contract.MIGRATION_SHA256,'SKU_MIGRATION_IMAGE_SQL_MISMATCH')
         # Re-run the full baseline after import, before the writer is stopped.
         state = core.preflight(remote,art,baseline,imported=True)
+        core.require(state['old']['Id'] == readiness['state']['old']['Id'] and
+                     state['template'] == readiness['state']['template'] and
+                     state['active'] == readiness['state']['active'],
+                     'SKU_AUTHORITY_CHANGED_AFTER_READINESS')
         source_names = ('deploy-prod-transfer-cas.py','sku-release-contract.py',
                         'sku-release-controller.py','sku-release-operations.py')
         payload = {'sources':{name:(SCRIPTS/name).read_text() for name in source_names},
@@ -161,6 +201,7 @@ def deploy(remote, repo, archive, migration_archive, art, migration_art, baselin
                    'helper':(SCRIPTS/'clone-production-container.py').read_text(),
                    'oldId':state['old']['Id'],
                    'routeHash':core.digest(state['template'].encode()),
+                   'readiness':readiness['identity'],'authorityMounts':readiness['mounts'],
                    'oldV2Hash':old_v2_hash(repo),'lock':core.LOCK}
         handoff = True
         raw = remote.py(imported_controller_code(),payload,timeout=1500)
@@ -203,11 +244,13 @@ def main():
     core.require(args.ssh_key is not None,'SKU_SSH_KEY_REQUIRED')
     remote = core.Remote(args.ssh_key)
     if args.mode == 'preflight':
-        state = core.preflight(remote,art,baseline)
-        budget = combined_budget(state['diskUsed'],state['diskAvailable'],art,migration_art)
+        readiness = pre_mutation_readiness(remote,args.repo,art,migration_art,baseline)
         print(json.dumps({'result':'SKU_PREFLIGHT_PASS','releaseSha':release,
             'productionSha':contract.PRODUCTION_SHA,'database':core.EXPECTED_DB,
-            'migrations':85,'writer':1,'diskBudget':budget}))
+            'migrations':85,'writer':1,'posActive':87,'anyChannelEnabled':113,
+            'mappingDigest':readiness['identity']['mappingDigest'],
+            'onlineDigest':readiness['identity']['onlineDigest'],
+            'diskBudget':readiness['budget']}))
         return
     core.require(args.production_gate_authorized == 'SKU_GATE_8' and
                  args.authorize_release_sha == release,

@@ -38,6 +38,7 @@ class FakeOperations:
     def require_writers(self, count):
         assert int(self.writer is not None) == count
         self.event('writers_' + str(count))
+    def final_frozen_plan_check(self): self.event('final_frozen_plan')
     def create_backup(self):
         self.backup = copy.deepcopy(self.database)
         self.event('backup')
@@ -112,6 +113,15 @@ class ReleaseFailures(unittest.TestCase):
         self.assertEqual(op.writer,'old')
         self.assertIn('restore_database',op.events)
         self.assertEqual(op.route,'old')
+
+    def test_frozen_plan_drift_restarts_old_before_backup_or_migration(self):
+        op, controller = self.simulate('final_frozen_plan')
+        self.assertEqual(controller.rollback_outcome,'PRE_CUTOVER_RESTORED')
+        self.assertEqual(op.writer,'old')
+        self.assertEqual(op.route,'old')
+        self.assertEqual(op.database['ledger'],85)
+        self.assertNotIn('backup',op.events)
+        self.assertNotIn('migration',op.events)
 
     def test_r2_reconciliation_failure_restores_85(self):
         op, _ = self.simulate('reconcile_pre')

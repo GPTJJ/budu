@@ -54,10 +54,10 @@ class NativePreOperations:
     def stop_old_writer(self): self.writer=None
     def require_writers(self,count): assert int(self.writer is not None)==count
     def create_backup(self):
-        self.plan=self.adapter('plan')
         self.backup=self.root/'pre-migration.dump'
         self.backup.write_bytes(run(['pg_dump','-Fc',self.url],timeout=180))
         assert self.backup.stat().st_size>0
+    def final_frozen_plan_check(self): self.plan=self.adapter('plan')
     def backup_exists(self): return bool(self.backup and self.backup.is_file())
     def migration_started(self): return self.migration_attempted
     def on_failure_start(self): pass
@@ -104,11 +104,11 @@ class NativePreOperations:
 
 def seed(url):
     psql(url,"INSERT INTO \"ProductCategory\" (id,name) VALUES ('pre-bd','糖果'),('pre-tp','pos-森醒')")
-    psql(url,"""INSERT INTO "InventoryItem" (id,name,sku,category,"productCategoryId","createdAt","isActive")
+    psql(url,"""INSERT INTO "InventoryItem" (id,name,sku,category,"productCategoryId","createdAt","isActive","transferEnabled")
       SELECT 'pre-item-'||lpad(i::text,3,'0'),'Pre商品'||i,
              CASE WHEN i<=33 THEN NULL ELSE 'LEGACY-'||lpad(i::text,3,'0') END,
              'product',CASE WHEN i<=89 THEN 'pre-tp' ELSE 'pre-bd' END,
-             timestamp '2026-01-01'+i*interval '1 hour',i<=113
+             timestamp '2026-01-01'+i*interval '1 hour',i<=87,i BETWEEN 88 AND 113
       FROM generate_series(1,178) AS i""")
     psql(url,"""INSERT INTO online_product_policies
       (id,namespace,external_product_id,external_sku_id,product_id,enabled,updated_by_id)

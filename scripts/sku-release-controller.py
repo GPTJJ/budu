@@ -40,6 +40,7 @@ class ReleaseController:
         try:
             self.op.stop_old_writer()
             self.op.require_writers(0)
+            self.op.final_frozen_plan_check()
             self.op.create_backup()
             self.op.rehearse_restore()
             self.op.require_writers(0)
