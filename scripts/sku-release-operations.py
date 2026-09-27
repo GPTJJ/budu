@@ -82,10 +82,11 @@ class SkuProductionOperations:
                      'SKU_AUTHORITY_CHANGED_DURING_IMPORT')
         core.resolve_loaded_image(self.remote, self.art)
         core.require(not self.root.exists(), 'SKU_ROLLBACK_ROOT_ALREADY_EXISTS')
-        self.root.mkdir(mode=0o700)
         self.authority_mounts = core.mount_readability(self.remote, self.state['name'])
         core.require(self.authority_mounts == self.expected_authority_mounts,
                      'SKU_AUTHORITY_MOUNTS_CHANGED_AFTER_READINESS')
+        self.pre_stop_worker_db_probe()
+        self.root.mkdir(mode=0o700)
         (self.root/'route-template').write_text(self.state['template'])
         (self.root/'route-active').write_text(self.state['active'])
         for path in (self.root/'route-template',self.root/'route-active'):
@@ -118,20 +119,45 @@ class SkuProductionOperations:
             raise core.GateError('SKU_MIGRATION_LEDGER_INVALID')
         return db
 
-    def _worker_command(self, mode, data=None, write=False, timeout=150,
-                        post_cutover=False):
+    def _worker_database(self):
         old = self.state['old']
         url = core.env(old).get('DATABASE_URL','')
-        core.require(url and core.unquote(core.urlsplit(url).path).strip('/') == core.EXPECTED_DB,
-                     'SKU_DATABASE_URL_INVALID')
-        core.require('\n' not in url and '\r' not in url,'SKU_DATABASE_URL_INVALID')
+        try:
+            parsed = core.urlsplit(url)
+            valid = (parsed.scheme in ('postgresql','postgres') and parsed.hostname and
+                     core.unquote(parsed.path).strip('/') == core.EXPECTED_DB and
+                     '\n' not in url and '\r' not in url)
+        except ValueError:
+            valid = False
+        core.require(valid, 'SKU_DATABASE_URL_INVALID')
+        return url, parsed.hostname
+
+    def resolve_database_network(self, hostname):
+        old_networks = self.state['old'].get('NetworkSettings',{}).get('Networks',{})
+        pg_networks = self.remote.inspect(core.PG).get('NetworkSettings',{}).get('Networks',{})
+        core.require(isinstance(old_networks,dict) and isinstance(pg_networks,dict),
+                     'SKU_DB_NETWORK_AUTHORITY_NOT_FOUND')
+        matching = [name for name, details in pg_networks.items()
+                    if isinstance(details,dict) and isinstance(details.get('Aliases'),list)
+                    and hostname in details['Aliases']]
+        core.require(bool(matching), 'SKU_DB_NETWORK_AUTHORITY_NOT_FOUND')
+        shared = [name for name in matching if name in old_networks]
+        core.require(bool(shared), 'SKU_DB_NETWORK_OLD_RUNTIME_NOT_ATTACHED')
+        core.require(len(shared) == 1, 'SKU_DB_NETWORK_AUTHORITY_AMBIGUOUS')
+        network = shared[0]
+        core.require(bool(re.fullmatch(r'[A-Za-z0-9_.-]+',network)),
+                     'SKU_DB_NETWORK_AUTHORITY_INVALID')
+        return network
+
+    def _worker_command(self, mode, data=None, write=False, timeout=150,
+                        post_cutover=False):
+        url, hostname = self._worker_database()
         variables = {'DATABASE_URL':url,'SKU_RELEASE_CONTROLLER':'sku-authority-schema1',
                      'GIT_SHA':self.release}
         if write: variables['SKU_RELEASE_WRITE_AUTHORIZED'] = self.release
         else: variables['PGOPTIONS'] = '-c default_transaction_read_only=on -c statement_timeout=120000'
         if post_cutover: variables['SKU_RELEASE_PHASE'] = 'POST_CUTOVER'
-        network = old['HostConfig']['NetworkMode']
-        core.require(bool(re.fullmatch(r'[A-Za-z0-9_.-]+',network)), 'SKU_NETWORK_INVALID')
+        network = self.resolve_database_network(hostname)
         image = self.migration_art['imageReference'] if mode == 'migration' else self.art['imageReference']
         fd, env_path = tempfile.mkstemp(prefix='budu-sku-env-',dir='/dev/shm')
         try:
@@ -143,16 +169,31 @@ class SkuProductionOperations:
                     '--name',self.worker,'--network',network,'--env-file',env_path,
                     '--entrypoint','node',image]
             if mode == 'migration': args += ['/app/node_modules/prisma/build/index.js','migrate','deploy']
+            elif mode == 'db-probe': args += ['--input-type=module','-e',core.APPLICATION_DB_PROBE_SCRIPT]
             else: args += ['/app/scripts/sku-release-apply.mjs',mode]
             return self.remote.run(args,data=data,timeout=timeout)
-        except BaseException:
+        except BaseException as error:
             # A timed-out Docker CLI must not leave an untracked database client.
             ids = self.remote.run(['docker','ps','-q','--filter','name=^/'+self.worker+'$']).strip()
             if ids:
                 self.remote.run(['docker','stop','--time','30',self.worker])
+            if isinstance(error,core.GateError) and str(error) == 'COMMAND_FAILED':
+                raise core.GateError('SKU_WORKER_COMMAND_FAILED') from None
             raise
         finally:
             Path(env_path).unlink(missing_ok=True)
+
+    def pre_stop_worker_db_probe(self):
+        try:
+            result = self._worker_command('db-probe',write=False,
+                                          timeout=core.APPLICATION_DB_PROBE_TIMEOUT)
+        except Exception as error:
+            if isinstance(error,core.GateError) and (str(error).startswith('SKU_DB_NETWORK_') or
+                                                      str(error) == 'SKU_DATABASE_URL_INVALID'):
+                raise
+            raise core.GateError('SKU_WORKER_DB_CONNECTIVITY_PREFLIGHT_FAILED') from None
+        core.require(result == core.APPLICATION_DB_PROBE_OK,
+                     'SKU_WORKER_DB_CONNECTIVITY_PREFLIGHT_FAILED')
 
     def _in_candidate(self, mode, data=None, post_cutover=False):
         args = ['docker','exec','-i','-w','/app',

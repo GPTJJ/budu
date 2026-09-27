@@ -122,6 +122,8 @@ class ReleaseFailures(unittest.TestCase):
         self.assertEqual(op.database['ledger'],85)
         self.assertNotIn('backup',op.events)
         self.assertNotIn('migration',op.events)
+        self.assertEqual(controller.stage,'FINAL_FROZEN_PLAN_CHECK')
+        self.assertEqual(str(controller.primary_failure),'final_frozen_plan')
 
     def test_r2_reconciliation_failure_restores_85(self):
         op, _ = self.simulate('reconcile_pre')
@@ -138,7 +140,7 @@ class ReleaseFailures(unittest.TestCase):
     def test_r4_r5_post_cutover_runtime_preserves_business_facts(self):
         for failure in ('stability','public_health'):
             with self.subTest(failure=failure):
-                op, _ = self.simulate(failure)
+                op, controller = self.simulate(failure)
                 self.assertNotIn('restore_database',op.events)
                 self.assertEqual(op.database['ledger'],86)
                 self.assertEqual(op.database['assignments'],178)
@@ -147,6 +149,7 @@ class ReleaseFailures(unittest.TestCase):
                 self.assertIn('safe_degraded_guard',op.events)
                 self.assertEqual(op.database['orders'],['post-cutover-order'])
                 self.assertEqual(op.database['paymentFacts'],['post-cutover-payment'])
+                self.assertEqual(controller.rollback_outcome,'POST_CUTOVER_SAFE_DEGRADED')
 
     def test_r6_post_cutover_integrity_hold_preserves_facts(self):
         op, controller = self.simulate('reconcile_post')
@@ -156,6 +159,7 @@ class ReleaseFailures(unittest.TestCase):
         self.assertIsNone(op.writer)
         self.assertEqual(controller.phase(),r.contract.DATA_INTEGRITY_HOLD)
         self.assertIn('evidence_preserved',op.events)
+        self.assertEqual(controller.rollback_outcome,'POST_CUTOVER_DATA_INTEGRITY_HOLD')
 
     def test_r8_r9_partial_route_is_already_post_cutover(self):
         for failure in ('candidate_route_before_write','candidate_route_after_write'):

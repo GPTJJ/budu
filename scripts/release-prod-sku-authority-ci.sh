@@ -16,7 +16,7 @@ test "${GITHUB_RUN_ATTEMPT:-}" = 1
 test "$DEPLOY_HOST" = 154.8.195.42
 test "$DEPLOY_USER" = ubuntu
 test "$DEPLOY_APP_DIR" = /opt/budu
-test "${GITHUB_REF:-}" = refs/heads/codex/sku-authority-release-controller-v4
+test "${GITHUB_REF:-}" = refs/heads/codex/sku-authority-release-controller-v5
 test "$RELEASE_SHA" = "${GITHUB_SHA:-}"
 test "$RELEASE_SHA" = "${AUTHORIZE_RELEASE_SHA:-}"
 test "${SKU_GATE_8_AUTHORIZED:-}" = SKU_GATE_8
@@ -29,6 +29,7 @@ test -f "$HOME/.ssh/id_ed25519"
 python3 scripts/deploy-prod-sku-authority.py identity --repo "$PWD"
 python3 scripts/test-sku-release-contract.py
 python3 scripts/test-sku-release-controller.py
+python3 scripts/test-sku-release-controller-v5.py
 python3 scripts/test-release-path-post-transfer.py
 node --check scripts/sku-release-apply.mjs
 test -z "$(git status --porcelain --untracked-files=all)"

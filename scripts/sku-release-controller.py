@@ -23,6 +23,8 @@ class ReleaseController:
         self.op = operations
         self.manifest_path = Path(manifest_path)
         self.rollback_outcome = None
+        self.stage = 'CONTROLLER_PREFLIGHT'
+        self.primary_failure = None
 
     def phase(self):
         return contract.load_manifest(self.manifest_path)['phase']
@@ -36,37 +38,58 @@ class ReleaseController:
     def run(self):
         self.op.preflight()
         # The PRE manifest is durable before the first mutable release step.
+        self.stage = 'PRE_CUTOVER_MANIFEST'
         self.transition(contract.PRE_CUTOVER)
         try:
+            self.stage = 'STOP_OLD_WRITER'
             self.op.stop_old_writer()
+            self.stage = 'REQUIRE_ZERO_WRITERS'
             self.op.require_writers(0)
+            self.stage = 'FINAL_FROZEN_PLAN_CHECK'
             self.op.final_frozen_plan_check()
+            self.stage = 'CREATE_BACKUP'
             self.op.create_backup()
+            self.stage = 'RESTORE_REHEARSAL'
             self.op.rehearse_restore()
             self.op.require_writers(0)
+            self.stage = 'APPLY_MIGRATION_86'
             self.op.apply_migration_86()
             self.op.require_ledger(86)
             self.op.require_writers(0)
+            self.stage = 'APPLY_SKU_DATA'
             self.op.apply_sku_data()
             self.op.require_writers(0)
+            self.stage = 'PRE_CUTOVER_RECONCILIATION'
             self.op.reconcile(pre_cutover=True)
             self.op.require_writers(0)
+            self.stage = 'START_CANDIDATE'
             self.op.start_candidate()
             self.op.require_writers(1)
+            self.stage = 'CANDIDATE_HEALTH'
             self.op.candidate_health()
+            self.stage = 'CANDIDATE_REAL_DB_PROBE'
             self.op.candidate_real_db_probe()
+            self.stage = 'CANDIDATE_RUNTIME_PARITY'
             self.op.candidate_runtime_parity()
+            self.stage = 'PRE_CUTOVER_RECONCILIATION'
             self.op.reconcile(pre_cutover=True)
             # PUBLIC_CUTOVER_BARRIER: fsync file and directory before route touch.
+            self.stage = 'POST_CUTOVER_BARRIER'
             self.transition(contract.POST_CUTOVER)
+            self.stage = 'PUBLIC_ROUTE_CUTOVER'
             self.op.switch_public_to_candidate()
+            self.stage = 'PUBLIC_HEALTH'
             self.op.public_health()
+            self.stage = 'STABILITY'
             self.op.observe_stability(300)
+            self.stage = 'POST_CUTOVER_RECONCILIATION'
             self.op.reconcile(pre_cutover=False)
             self.op.require_writers(1)
+            self.stage = 'CURRENT_SHA_POINTER'
             self.op.write_current_sha()
             return 'SKU_RELEASE_DEPLOYED'
         except BaseException as error:
+            self.primary_failure = error
             self.op.on_failure_start()
             # A missing/corrupt phase is never interpreted as PRE_CUTOVER.
             phase = self.phase()

@@ -37,6 +37,7 @@ ENGINEERING_FILES = frozenset({
     'scripts/test-sku-release-apply-native.mjs',
     'scripts/test-sku-release-contract.py',
     'scripts/test-sku-release-controller.py',
+    'scripts/test-sku-release-controller-v5.py',
     'scripts/test-sku-release-readiness.py',
     'scripts/test-sku-release-readiness.mjs',
     'scripts/test-sku-release-transport.py',
@@ -46,6 +47,7 @@ ENGINEERING_FILES = frozenset({
     'docs/checkpoints/2026-09-27-sku-release-controller-v2.md',
     'docs/checkpoints/2026-09-28-sku-release-controller-v3.md',
     'docs/checkpoints/2026-09-28-sku-release-controller-v4.md',
+    'docs/checkpoints/2026-09-28-sku-release-controller-v5.md',
 })
 PRE_CUTOVER = 'PRE_CUTOVER'
 POST_CUTOVER = 'POST_CUTOVER'

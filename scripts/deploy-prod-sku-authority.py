@@ -61,7 +61,7 @@ def imported_controller_code():
     Only reviewed source bytes are transferred in memory. No release checkout,
     database credential, or secret file is copied to the production host.
     """
-    return r'''import importlib.util,json,os,pathlib,signal,sys,tempfile
+    return r'''import importlib.util,json,os,pathlib,re,signal,sys,tempfile
 payload=json.load(sys.stdin)
 result={'result':'SKU_RELEASE_ABORTED','code':'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}
 try:
@@ -78,24 +78,37 @@ try:
      payload['helper'],payload['oldId'],payload['routeHash'],payload['readiness'],payload['authorityMounts'])
   def interrupted(*_): raise ops.core.GateError('INTERRUPTED')
   for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT): signal.signal(sig,interrupted)
+  release_controller=ops.controller.ReleaseController(op,op.manifest)
   try:
-   status=ops.controller.ReleaseController(op,op.manifest).run()
+   status=release_controller.run()
    result={'result':status,'releaseSha':payload['art']['release'],
            'businessRuntimeSha':ops.contract.BUSINESS_SHA,'writer':1,
            'migrationApplied':86,'rollbackPhase':'POST_CUTOVER'}
-  except BaseException:
+  except BaseException as error:
+   primary=release_controller.primary_failure if release_controller.primary_failure is not None else error
+   code=str(primary) if isinstance(primary,(ops.core.GateError,ops.contract.ReleaseBlocked,
+                                             ops.controller.DataIntegrityError)) else ''
+   failure_code=code if re.fullmatch(r'[A-Z][A-Z0-9_]{0,100}',code) else 'UNEXPECTED_ERROR_DETAILS_SUPPRESSED'
+   details={'failureStage':release_controller.stage,
+            'failureCode':failure_code,'failureClass':type(primary).__name__,
+            'rollbackOutcome':release_controller.rollback_outcome}
    try:
     phase=ops.contract.load_manifest(op.manifest)['phase']
-    if op.rollback_outcome=='POST_CUTOVER_DATA_INTEGRITY_HOLD' and phase=='DATA_INTEGRITY_HOLD':
+    if release_controller.rollback_outcome=='POST_CUTOVER_DATA_INTEGRITY_HOLD' and phase=='DATA_INTEGRITY_HOLD':
      result={'result':'POST_CUTOVER_DATA_INTEGRITY_HOLD','code':'SKU_DATA_INTEGRITY_HOLD'}
-    elif op.rollback_outcome=='POST_CUTOVER_SAFE_DEGRADED' and phase=='POST_CUTOVER':
+    elif release_controller.rollback_outcome=='POST_CUTOVER_SAFE_DEGRADED' and phase=='POST_CUTOVER':
      result={'result':'SKU_RELEASE_ROLLED_BACK_SAFE_DEGRADED','code':'SKU_RUNTIME_ROLLBACK'}
-    elif op.rollback_outcome=='PRE_CUTOVER_RESTORED' and phase=='PRE_CUTOVER':
+    elif release_controller.rollback_outcome=='PRE_CUTOVER_RESTORED' and phase=='PRE_CUTOVER':
      result={'result':'SKU_RELEASE_ROLLED_BACK_PRE_CUTOVER','code':'SKU_PRE_CUTOVER_ROLLBACK'}
     else:
      result={'result':'SKU_RELEASE_ABORTED','code':'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED'}
    except BaseException:
-    result={'result':'SKU_RELEASE_ABORTED','code':'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED'}
+    if release_controller.stage in ('CONTROLLER_PREFLIGHT','PRE_CUTOVER_MANIFEST') and not op.manifest.exists():
+     details['rollbackOutcome']='NOT_REQUIRED_PRE_MUTATION'
+     result={'result':'SKU_RELEASE_ABORTED','code':failure_code}
+    else:
+     result={'result':'SKU_RELEASE_ABORTED','code':'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED'}
+   result.update(details)
 except BaseException:
  result={'result':'SKU_RELEASE_ABORTED','code':'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}
 finally:
@@ -265,9 +278,9 @@ def deploy(remote, repo, archive, migration_archive, art, migration_art, baselin
         handoff = True
         raw = remote.py(imported_controller_code(),payload,timeout=1500)
         output = json.loads(raw)
+        print(json.dumps(output,sort_keys=True),flush=True)
         core.require(output.get('result') == 'SKU_RELEASE_DEPLOYED',
                      output.get('code','SKU_REMOTE_RESULT_INVALID'))
-        print(json.dumps(output,sort_keys=True))
     finally:
         if not handoff:
             # Do not try this after handoff: the remote process may still own it.
