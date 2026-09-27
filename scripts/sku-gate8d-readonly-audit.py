@@ -164,13 +164,32 @@ def baseline(remote, deploy, approved_ledger):
                                            'migrationMarker', 'releaseLock')) and
             root['routeTemplateSnapshotMatches'] and
             root['routeActiveSnapshotMatches'], 'V5_ROLLBACK_STATE_DRIFT')
+    emit({'event':'GATE_8D_BASELINE_PRE_TABLES','productionSha':OLD,
+          'routeState':'OLD_PRODUCTION_TEMPLATE_EQUALS_ACTIVE',
+          'applicationHealth':'PASS','publicHealth':'PASS',
+          'database':database['database'],
+          'migrationLedger':f"{database['applied']}/{database['failed']}",
+          'writerState':'1_OLD_PRODUCTION_WRITER',
+          'v5RollbackPhase':root['phase'],
+          'v5PlanFile':'PRESENT' if root['plan'] else 'ABSENT',
+          'v5Backup':'PRESENT' if root['backup'] else 'ABSENT',
+          'v5MigrationMarker':'PRESENT' if root['migrationMarker'] else 'ABSENT',
+          'v5RouteSnapshotsMatch':True,'releaseLock':root['releaseLock']})
     tables = readonly_node(remote, name,
         "SELECT to_regclass('public.product_sku_assignments')::text AS assignments, "
         "to_regclass('public.product_sku_aliases')::text AS aliases, "
         "to_regclass('public.product_sku_sequences')::text AS sequences")
-    require(tables.get('ok') and len(tables['rows']) == 1 and
-            all(tables['rows'][0][key] is None for key in ('assignments','aliases','sequences')),
-            'SKU_TABLES_PRESENT_OR_UNVERIFIED')
+    if not tables.get('ok'):
+        emit({'event':'GATE_8D_SKU_TABLE_PROBE','sqlExecution':'FAIL',
+              'safeErrorCode':tables.get('code','QUERY_FAILED'),
+              'postgresCode':tables.get('dbCode','UNAVAILABLE')})
+        raise RuntimeError('SKU_TABLES_UNVERIFIED')
+    require(len(tables['rows']) == 1, 'SKU_TABLE_PROBE_RESULT_INVALID')
+    present = {key:tables['rows'][0][key] is not None for key in
+               ('assignments','aliases','sequences')}
+    emit({'event':'GATE_8D_SKU_TABLE_PROBE','sqlExecution':'PASS',
+          'present':present})
+    require(not any(present.values()), 'SKU_TABLES_PRESENT')
     summary = {
         'event':'GATE_8D_BASELINE', 'productionSha':OLD, 'baselineExact':True,
         'routeState':'OLD_PRODUCTION_TEMPLATE_EQUALS_ACTIVE',
@@ -337,7 +356,7 @@ def main():
 
 if __name__ == '__main__':
     try: sys.exit(main())
-    except BaseException as error:
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
         code = str(error)
         if not re.fullmatch(r'[A-Z0-9_:]{1,100}',code): code = 'AUDIT_UNVERIFIED'
         emit({'result':'GATE_8D_DIAGNOSIS_INCOMPLETE','code':code,
