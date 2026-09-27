@@ -28,6 +28,8 @@ jobs:
 
       - name: Verify source and release guard
         shell: bash
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/python-pycache
         run: |
           set -euo pipefail
           test "$RUNNER_OS" = Linux
@@ -54,6 +56,8 @@ jobs:
           python3 scripts/test-transfer-cas-existing-workflow.py
           python3 scripts/test-release-path-post-transfer.py
           python3 -m py_compile scripts/test-candidate-db-probe-integration.py
+          test -z "$(git status --porcelain --untracked-files=all)"
+          printf 'WORKTREE_CLEAN_AFTER_SYNTAX_CHECK=YES\n'
           docker version --format 'DOCKER_VERSION={{.Server.Version}}'
           docker buildx version
 

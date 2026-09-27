@@ -50,6 +50,12 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
         self.assertEqual(job['steps'][-1]['with']['retention-days'],1)
+        verify=next(step for step in job['steps'] if step.get('name')=='Verify source and release guard')
+        self.assertEqual(verify['env']['PYTHONPYCACHEPREFIX'],'${{ runner.temp }}/python-pycache')
+        syntax='python3 -m py_compile scripts/test-candidate-db-probe-integration.py'
+        after_syntax=verify['run'].split(syntax,1)[1]
+        self.assertIn('test -z "$(git status --porcelain --untracked-files=all)"',after_syntax)
+        self.assertIn('WORKTREE_CLEAN_AFTER_SYNTAX_CHECK=YES',after_syntax)
         for forbidden in ('secrets.','ssh ','scp ','deploy --repo','preflight --repo',
                           'DATABASE_URL','/opt/budu','docker push','docker system prune'):
             self.assertNotIn(forbidden,source)
