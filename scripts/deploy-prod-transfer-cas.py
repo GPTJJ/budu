@@ -597,7 +597,9 @@ def clone_parity(old, new, release):
     require(new['Config']['Labels'] == labels, 'CLONE_LABELS_MISMATCH')
     for k in ['RestartPolicy','PortBindings','PublishAllPorts','ReadonlyRootfs','CapAdd','CapDrop','Privileged','SecurityOpt','LogConfig','GroupAdd','Init','NetworkMode']:
         require(old['HostConfig'].get(k) == new['HostConfig'].get(k), 'CLONE_HOST_CONFIG_MISMATCH')
-    require(all(old['HostConfig'].get(k) == new['HostConfig'].get(k) for k in HOST_DEFAULTS), 'CLONE_RESOURCE_PROFILE_MISMATCH')
+    require(all(old['HostConfig'].get(k) == new['HostConfig'].get(k) for k in HOST_DEFAULTS if k != 'Dns')
+            and normalize_dns(old['HostConfig'].get('Dns')) == normalize_dns(new['HostConfig'].get('Dns')),
+            'CLONE_RESOURCE_PROFILE_MISMATCH')
     def mounts(c):
         return sorted((m['Type'],m.get('Name') or m['Source'],m['Destination'],m['RW']) for m in c['Mounts'])
     require(mounts(old) == mounts(new), 'CLONE_MOUNTS_MISMATCH')

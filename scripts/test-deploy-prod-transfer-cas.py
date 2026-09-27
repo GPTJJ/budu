@@ -236,6 +236,68 @@ class Gates(unittest.TestCase):
         self.fail('SOURCE_RESOURCE_PROFILE_CHANGED',r.preflight,f,art(),LEDGER)
     def test_restart_policy_admission(self):
         f=Fake();f.old['HostConfig']['RestartPolicy']['Name']='always';self.fail('RESTART_POLICY',r.preflight,f,art(),LEDGER)
+    def test_clone_dns_empty_representations_equivalent(self):
+        for old_dns, new_dns in ((None, []), ([], None), (None, None), ([], [])):
+            with self.subTest(old=old_dns, candidate=new_dns):
+                a=original();b=copy.deepcopy(a)
+                a['HostConfig']['Dns']=old_dns;b['HostConfig']['Dns']=new_dns
+                r.clone_parity(a,b,r.EXPECTED_OLD_SHA)
+    def test_clone_dns_identical_nonempty_preserved(self):
+        a=original();a['HostConfig']['Dns']=['8.8.8.8','1.1.1.1'];b=copy.deepcopy(a)
+        r.clone_parity(a,b,r.EXPECTED_OLD_SHA)
+    def test_clone_dns_real_or_invalid_differences_rejected(self):
+        pairs=((None,['8.8.8.8']),([],['8.8.8.8']),(['8.8.8.8'],None),
+               (['8.8.8.8'],[]),(['8.8.8.8'],['1.1.1.1']),
+               (['8.8.8.8','1.1.1.1'],['1.1.1.1','8.8.8.8']),
+               ([],''),([],False),([],{}))
+        for old_dns, new_dns in pairs:
+            with self.subTest(old=old_dns, candidate=new_dns):
+                a=original();b=copy.deepcopy(a)
+                a['HostConfig']['Dns']=old_dns;b['HostConfig']['Dns']=new_dns
+                self.fail('CLONE_RESOURCE_PROFILE_MISMATCH',r.clone_parity,a,b,r.EXPECTED_OLD_SHA)
+    def test_clone_dns_empty_does_not_mask_other_resource_drift(self):
+        for field, value in (('Memory',1024**3),('CpuShares',512),('NanoCpus',10**9),
+                             ('DnsSearch',None),('DnsOptions',None)):
+            with self.subTest(field=field):
+                a=original();b=copy.deepcopy(a)
+                a['HostConfig']['Dns']=[];b['HostConfig']['Dns']=None
+                b['HostConfig'][field]=value
+                self.fail('CLONE_RESOURCE_PROFILE_MISMATCH',r.clone_parity,a,b,r.EXPECTED_OLD_SHA)
+    def test_empty_dns_clone_reaches_db_probe_before_switch(self):
+        for old_dns, new_dns in (([],None),(None,[])):
+            with self.subTest(old=old_dns,candidate=new_dns):
+                f=Fake();f.old['HostConfig']['Dns']=old_dns
+                original_py=f.py
+                def clone_with_docker_dns(code,value=None,timeout=60):
+                    result=original_py(code,value,timeout)
+                    if value and 'helper' in value:f.new['HostConfig']['Dns']=new_dns
+                    return result
+                with patch.object(f,'py',side_effect=clone_with_docker_dns), patch('sys.stdout',new=io.StringIO()):
+                    r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+                self.assertEqual(f.maxwriters,1);self.assertEqual(f.pointer,NEW)
+                self.assertEqual(f.running,[f.new]);self.assertEqual(f.active.count(NAME),3)
+                self.assertLess(f.events.index(('docker','stop','--time','30',OLD_NAME)),f.events.index(('create-start',NAME)))
+                self.assertLess(f.events.index(('db-probe',NAME,r.APPLICATION_DB_PROBE_TIMEOUT)),f.events.index(('py','route')))
+    def test_real_clone_resource_drift_rolls_back_before_switch(self):
+        for field,value in (('Dns',['8.8.8.8']),('Memory',1024**3)):
+            with self.subTest(field=field):
+                f=Fake();f.old['HostConfig']['Dns']=[]
+                original_py=f.py
+                def clone_with_resource_drift(code,value_input=None,timeout=60):
+                    result=original_py(code,value_input,timeout)
+                    if value_input and 'helper' in value_input:
+                        f.new['HostConfig']['Dns']=None;f.new['HostConfig'][field]=value
+                    return result
+                with patch.object(f,'py',side_effect=clone_with_resource_drift):
+                    with self.assertRaisesRegex(r.GateError,'CLONE_RESOURCE_PROFILE_MISMATCH') as raised:
+                        r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+                self.assertEqual(raised.exception.failure_stage,'CANDIDATE_CLONE_PARITY')
+                self.assertEqual(raised.exception.deployment_result,'DEPLOY_ROLLED_BACK')
+                self.assertEqual(f.running,[f.old]);self.assertEqual(f.maxwriters,1)
+                self.assertEqual(f.routes(),(ROUTES,ROUTES));self.assertEqual(f.pointer,r.EXPECTED_OLD_SHA)
+                self.assertNotIn(('py','route'),f.events)
+                self.assertNotIn(('db-probe',NAME,r.APPLICATION_DB_PROBE_TIMEOUT),f.events)
+                self.assertIn(('db-probe',OLD_NAME,r.APPLICATION_DB_PROBE_TIMEOUT),f.events)
     def test_group_inheritance_enforced(self):
         a=original();b=copy.deepcopy(a);b['HostConfig']['GroupAdd']=[]
         self.fail('CLONE_HOST_CONFIG',r.clone_parity,a,b,r.EXPECTED_OLD_SHA)
