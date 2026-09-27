@@ -4,12 +4,14 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 sys.dont_write_bytecode = True
 SCRIPTS = Path(__file__).resolve().parent
@@ -26,6 +28,12 @@ def load(name, file):
 contract = load('sku_contract','sku-release-contract.py')
 operations = load('sku_operations','sku-release-operations.py')
 core = operations.core
+
+IMAGE_LOAD_MIN_TIMEOUT_SECONDS = 600
+IMAGE_LOAD_MAX_TIMEOUT_SECONDS = 1200
+IMAGE_LOAD_BASE_SECONDS = 180
+IMAGE_LOAD_ASSUMED_BYTES_PER_SECOND = 1024 * 1024
+
 
 
 def old_v2_hash(repo):
@@ -122,6 +130,49 @@ def combined_budget(used, available, art, migration_art):
         max(art['largest'],migration_art['largest']))
 
 
+def image_load_timeout_seconds(archive_bytes):
+    core.require(isinstance(archive_bytes,int) and 0 < archive_bytes <= core.MAX_ARCHIVE,
+                 'SKU_IMAGE_ARCHIVE_SIZE_INVALID')
+    estimated = IMAGE_LOAD_BASE_SECONDS + math.ceil(
+        archive_bytes / IMAGE_LOAD_ASSUMED_BYTES_PER_SECOND)
+    return min(IMAGE_LOAD_MAX_TIMEOUT_SECONDS,
+               max(IMAGE_LOAD_MIN_TIMEOUT_SECONDS,estimated))
+
+
+def load_image_archive(remote, source, source_art, kind):
+    core.require(kind in ('runtime','migration'),'SKU_IMAGE_KIND_INVALID')
+    code = 'RUNTIME' if kind == 'runtime' else 'MIGRATION'
+    core.require(source.stat().st_size == source_art['archive'],
+                 'SKU_'+code+'_IMAGE_ARCHIVE_SIZE_DRIFT')
+    with source.open('rb') as stream:
+        core.require(core.file_hash(stream) == source_art['archiveHash'],
+                     'SKU_ARTIFACT_CHANGED')
+        stream.seek(0)
+        timeout_seconds = image_load_timeout_seconds(source_art['archive'])
+        print(json.dumps({'event':'SKU_IMAGE_LOAD_START','kind':kind,
+                          'archiveBytes':source_art['archive'],
+                          'timeoutSeconds':timeout_seconds},sort_keys=True),flush=True)
+        started = time.monotonic()
+        try:
+            loaded = subprocess.run(remote.ssh + ['docker load'],stdin=stream,
+                                    stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                    timeout=timeout_seconds,check=False)
+        except subprocess.TimeoutExpired:
+            print(json.dumps({'event':'SKU_IMAGE_LOAD_TIMEOUT','kind':kind,
+                              'timeoutSeconds':timeout_seconds},sort_keys=True),flush=True)
+            raise core.GateError('SKU_'+code+'_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED') from None
+        except OSError:
+            raise core.GateError('SKU_'+code+'_IMAGE_LOAD_TRANSPORT_UNAVAILABLE') from None
+        elapsed = max(0,int(time.monotonic()-started))
+        if loaded.returncode != 0:
+            print(json.dumps({'event':'SKU_IMAGE_LOAD_FAILED','kind':kind,
+                              'elapsedSeconds':elapsed,
+                              'returnCode':loaded.returncode},sort_keys=True),flush=True)
+            raise core.GateError('SKU_'+code+'_IMAGE_LOAD_FAILED')
+        print(json.dumps({'event':'SKU_IMAGE_LOAD_COMPLETE','kind':kind,
+                          'elapsedSeconds':elapsed},sort_keys=True),flush=True)
+
+
 def pre_mutation_readiness(remote, repo, art, migration_art, baseline):
     """Only read the running old application and host; never create release state."""
     state = core.preflight(remote,art,baseline)
@@ -172,14 +223,8 @@ def deploy(remote, repo, archive, migration_archive, art, migration_art, baselin
     remote.py('import os; os.mkdir(%r,0o700)' % core.LOCK)
     handoff = False
     try:
-        for source,source_art in ((archive,art),(migration_archive,migration_art)):
-            with source.open('rb') as stream:
-                core.require(core.file_hash(stream) == source_art['archiveHash'],'SKU_ARTIFACT_CHANGED')
-                stream.seek(0)
-                loaded = subprocess.run(remote.ssh + ['docker load'], stdin=stream,
-                                        stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                                        timeout=240,check=False)
-                core.require(loaded.returncode == 0,'SKU_ARTIFACT_LOAD_FAILED')
+        load_image_archive(remote,archive,art,'runtime')
+        load_image_archive(remote,migration_archive,migration_art,'migration')
         image = core.resolve_loaded_image(remote,art)
         art['loadedDockerImageId'] = image['Id']
         migration_image = resolve_migration_image(remote,migration_art)
