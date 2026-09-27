@@ -60,6 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           run_dir="$(mktemp -d "$RUNNER_TEMP/approval-build-only.XXXXXX")"
+          printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$run_dir" >> "$GITHUB_ENV"
           builder="approval-build-only-$GITHUB_RUN_ID"
           docker buildx create --name "$builder" --driver docker-container
           docker buildx inspect "$builder" --bootstrap | tee "$run_dir/builder.txt"
@@ -120,3 +121,12 @@ jobs:
           printf 'APPROVAL_SOURCE_HASH=%s IMAGE_APPROVAL_HASH=%s TRANSFER_SOURCE_HASH=%s IMAGE_TRANSFER_HASH=%s\n' \
             "$approval_source_hash" "$approval_image_hash" "$transfer_source_hash" "$transfer_image_hash"
           printf 'TRANSFER_ARTIFACT_SIZE_BYTES=%s IMAGE_SMOKE=PASS\n' "$(stat -c%s "$run_dir/image.tar")"
+
+      - name: Retain exact artifact for read-only preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preflight-${{ github.sha }}
+          path: ${{ env.RELEASE_ARTIFACT_PATH }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

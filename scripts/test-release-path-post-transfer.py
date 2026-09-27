@@ -47,6 +47,8 @@ class RealShellRoute(unittest.TestCase):
         job=parsed['jobs']['artifact']
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
+        self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
+        self.assertEqual(job['steps'][-1]['with']['retention-days'],1)
         for forbidden in ('secrets.','ssh ','scp ','deploy --repo','preflight --repo',
                           'DATABASE_URL','/opt/budu','docker push','docker system prune'):
             self.assertNotIn(forbidden,source)
