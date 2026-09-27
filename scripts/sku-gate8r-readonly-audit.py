@@ -152,7 +152,7 @@ if (tables.aliasesTable) {
   result.aliases = { ok: true, value: null }
 }
 try { await prisma.$disconnect() } catch {}
-process.stdout.write(JSON.stringify(result) + '\\n')
+process.stdout.write(JSON.stringify(result) + '\n')
 """
 db_out = remote([
     "docker", "exec", "-i", "-w", "/app",
