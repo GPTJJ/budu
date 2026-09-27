@@ -103,34 +103,57 @@ prisma_probe = remote(
 )
 emit("oldAppPrismaProbe", prisma_probe)
 
-db_sql = r"""BEGIN READ ONLY;
-SELECT json_build_object(
-  'database', current_database(),
-  'applied', (SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),
-  'failed', (SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL),
-  'clients', (SELECT coalesce(json_agg(distinct coalesce(host(client_addr),'LOCAL_SOCKET')),'[]'::json)
-              FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()),
-  'products', (SELECT count(*) FROM "InventoryItem" WHERE category='product'),
-  'assignments', (SELECT CASE WHEN to_regclass('public.product_sku_assignments') IS NULL THEN NULL
-                             ELSE (SELECT count(*) FROM product_sku_assignments) END),
-  'aliases', (SELECT CASE WHEN to_regclass('public.product_sku_aliases') IS NULL THEN NULL
-                         ELSE (SELECT count(*) FROM product_sku_aliases) END),
-  'orphanProducts', (SELECT CASE WHEN to_regclass('public.product_sku_assignments') IS NULL THEN NULL ELSE
-      (SELECT count(*) FROM "InventoryItem" i WHERE i.category='product'
-       AND NOT EXISTS (SELECT 1 FROM product_sku_assignments a WHERE a.item_id=i.id)) END),
-  'online', (SELECT count(*) FROM "OnlineProductPolicy")
-);
-COMMIT;"""
-pg_user = remote(["sh", "-lc",
-    f"docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {shlex.quote(PG)} | sed -n 's/^POSTGRES_USER=//p' | head -n1"
-], sudo=True)
-if not pg_user:
-    pg_user = "postgres"
+db_probe_script = r"""
+import { prisma } from './server/pg.js'
+try {
+  const [{ database }] = await prisma.$queryRawUnsafe('SELECT current_database() AS database')
+  const [{ applied, failed }] = await prisma.$queryRawUnsafe(\`
+    SELECT
+      count(*) FILTER (WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL)::int AS applied,
+      count(*) FILTER (WHERE finished_at IS NULL AND rolled_back_at IS NULL)::int AS failed
+    FROM _prisma_migrations
+  \`)
+  const clients = await prisma.$queryRawUnsafe(\`
+    SELECT DISTINCT coalesce(host(client_addr),'LOCAL_SOCKET') AS client
+    FROM pg_stat_activity
+    WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()
+    ORDER BY 1
+  \`)
+  const [{ assignmentsTable, aliasesTable }] = await prisma.$queryRawUnsafe(\`
+    SELECT
+      to_regclass('public.product_sku_assignments') IS NOT NULL AS "assignmentsTable",
+      to_regclass('public.product_sku_aliases') IS NOT NULL AS "aliasesTable"
+  \`)
+  const products = await prisma.inventoryItem.count({ where: { category: 'product' } })
+  const online = await prisma.onlineProductPolicy.count()
+  let assignments = null, aliases = null, orphanProducts = null
+  if (assignmentsTable) {
+    ;[{ count: assignments }] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_assignments')
+    ;[{ count: orphanProducts }] = await prisma.$queryRawUnsafe(\`
+      SELECT count(*)::int AS count
+      FROM "InventoryItem" i
+      WHERE i.category='product'
+        AND NOT EXISTS (SELECT 1 FROM product_sku_assignments a WHERE a.item_id=i.id)
+    \`)
+  }
+  if (aliasesTable) {
+    ;[{ count: aliases }] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS count FROM product_sku_aliases')
+  }
+  process.stdout.write(JSON.stringify({
+    database, applied, failed, clients: clients.map(x => x.client),
+    products, assignments, aliases, orphanProducts, online
+  }) + '\\n')
+} catch {
+  process.exitCode = 1
+} finally {
+  try { await prisma.$disconnect() } catch { process.exitCode = 1 }
+}
+"""
 db_out = remote([
-    "docker", "exec", "-i",
+    "docker", "exec", "-i", "-w", "/app",
     "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c temp_file_limit=0",
-    PG, "psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-U", pg_user, "-d", DB
-], data=db_sql.encode(), sudo=True, timeout=45)
+    old, "node", "--input-type=module"
+], data=db_probe_script.encode(), sudo=True, timeout=45)
 db_state = json.loads(db_out)
 emit("database", db_state)
 
