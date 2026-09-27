@@ -26,6 +26,9 @@ run_remote() {
 # Every later production release must contain the deployed Transfer baseline;
 # the post-Transfer runner validates current production and the exact candidate.
 if [ "$ENV" = "prod" ]; then
+  if [ "${GITHUB_REF:-}" = "refs/heads/codex/sku-authority-release-controller" ]; then
+    exec bash scripts/release-prod-sku-authority-ci.sh "$HOST" "$USER" "$APP_DIR" "$SHA"
+  fi
   if [ "${GITHUB_REF:-}" = "refs/heads/codex/transfer-cas-existing-workflow" ]; then
     exec bash scripts/release-prod-transfer-cas-ci.sh "$HOST" "$USER" "$APP_DIR" "$SHA"
   fi
