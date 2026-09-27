@@ -19,7 +19,7 @@ try {
   const cookie = register.headers.get('set-cookie')?.split(';')[0]
   const headers = { 'Content-Type': 'application/json', Cookie: cookie }
   const productResult = await json(await fetch(`${origin}/api/v2/products`, { method: 'POST', headers, body: JSON.stringify({
-    name: '柠檬散糖', sku: 'BUDU-LEMON', transferCode: 'NO.2', salePriceCents: '', costPriceCents: '', unit: '颗',
+    name: '柠檬散糖', skuSource: 'BD', transferCode: 'NO.2', salePriceCents: '', costPriceCents: '', unit: '颗',
     isActive: false, transferEnabled: true, partnerSupplyEnabled: false, sortOrder: 1,
     transferBoxEnabled: true, transferBoxWeightGrams: 2500, transferPieceEnabled: true, transferPieceWeightGrams: 6,
   }) }))
@@ -28,7 +28,7 @@ try {
   if (!product.transferBoxEnabled || product.transferPieceWeightGrams !== 6) throw new Error('商品中心未返回正式包装规格')
   const masterResult = await json(await fetch(`${origin}/api/v2/transfer-master-items?active=true`, { headers }))
   const masterProduct = masterResult.body.rows?.find((row) => row.id === product.productId)
-  if (masterResult.status !== 200 || masterProduct?.sku !== 'BUDU-LEMON') throw new Error('调拨主数据未保留 SKU 搜索字段')
+  if (masterResult.status !== 200 || masterProduct?.sku !== product.sku || masterProduct?.code !== product.sku) throw new Error('调拨主数据未使用服务端 SKU')
 
   const createTransfer = (items) => fetch(`${origin}/api/v2/transfer-requests`, { method: 'POST', headers, body: JSON.stringify({ fromStoreKey: 'guanshe', toStoreKey: 'tongying', items }) }).then(json)
   const shipTransfer = (id, items) => fetch(`${origin}/api/v2/transfer-requests/${id}/ship`, { method: 'POST', headers, body: JSON.stringify({ items }) }).then(json)

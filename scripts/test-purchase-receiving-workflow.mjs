@@ -58,7 +58,7 @@ try {
   }
 
   const purchase = await createPurchase('atomic', [
-    { name: 'NO.2柠檬', category: 'product', quantity: 2, note: '产品' },
+    { itemId: 'purchase-product', name: 'NO.2柠檬', category: 'product', quantity: 2, note: '产品' },
     { name: '保温袋', category: 'material', quantity: 5, note: '物料' },
     { name: '临时展示架', category: 'other', quantity: 1, note: '其他' },
   ])
@@ -123,7 +123,7 @@ try {
   if (await prisma.stockBalance.count() !== beforeDuplicate.balances || await prisma.stockLedger.count() !== beforeDuplicate.ledgers) throw new Error('重复收货产生了新库存事实')
 
   const concurrentPurchase = await createPurchase('concurrent', [
-    { name: 'NO.2柠檬', category: 'product', quantity: 4 },
+    { itemId: 'purchase-product', name: 'NO.2柠檬', category: 'product', quantity: 4 },
   ])
   const concurrentResponses = await Promise.all([1, 2].map(() => fetch(`${base}/v2/purchase-requests/${concurrentPurchase.id}/receive`, {
     method: 'POST',

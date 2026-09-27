@@ -22,18 +22,19 @@ try {
   const cookie = register.headers.get('set-cookie')?.split(';')[0]
   await prisma.store.create({ data: { key: 'tongying', name: '北京通盈中心店' } })
 
-  const createProduct = async (name, sku, sortOrder, price = '7900') => {
+  const createProduct = async (name, sortOrder, price = '7900') => {
     const result = await json(await fetch(`${base}/products`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({
-      name, sku, salePriceCents: price, costPriceCents: '3000', unit: '个', image: name.endsWith('蓝') ? coverImage : '', isActive: true,
+      name, skuSource: 'BD', salePriceCents: price, costPriceCents: '3000', unit: '个', image: name.endsWith('蓝') ? coverImage : '', isActive: true,
       transferEnabled: name.endsWith('蓝'), partnerSupplyEnabled: name.endsWith('蓝'), sortOrder,
     }) }))
     if (result.status !== 201) throw new Error(`创建商品失败：${result.status} ${JSON.stringify(result.body)}`)
     return result.body.product
   }
-  const blue = await createProduct('12号幸运小饼干-蓝', 'LUCKY-12-BLUE', 1)
-  const green = await createProduct('12号幸运小饼干-绿', 'LUCKY-12-GREEN', 2)
-  const yellow = await createProduct('12号幸运小饼干-黄', 'LUCKY-12-YELLOW', 3, '8900')
-  const single = await createProduct('小草包', 'GRASS-BAG', 4, '12900')
+  const blue = await createProduct('12号幸运小饼干-蓝', 1)
+  const green = await createProduct('12号幸运小饼干-绿', 2)
+  const yellow = await createProduct('12号幸运小饼干-黄', 3, '8900')
+  const single = await createProduct('小草包', 4, '12900')
+  if ([blue, green, yellow, single].map((row) => row.sku).join(',') !== 'BD-000001,BD-000002,BD-000003,BD-000004') throw new Error('服务端 SKU 分配或流水错误')
   const stableIds = [blue.productId, green.productId, yellow.productId, single.productId]
 
   const created = await json(await fetch(`${base}/product-groups`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({
