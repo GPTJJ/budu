@@ -1,8 +1,8 @@
-name: NON_PRODUCTION SKU Release Controller V3
+name: NON_PRODUCTION SKU Release Controller V4
 
 on:
   push:
-    branches: [codex/sku-authority-release-controller-v3]
+    branches: [codex/sku-authority-release-controller-v4]
 
 permissions:
   contents: read
@@ -41,15 +41,16 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$GITHUB_REF" = refs/heads/codex/sku-authority-release-controller-v3
+          test "$GITHUB_REF" = refs/heads/codex/sku-authority-release-controller-v4
           if [ -z "$(git branch --show-current)" ]; then
-            git switch -c codex/sku-authority-release-controller-v3
+            git switch -c codex/sku-authority-release-controller-v4
           fi
-          test "$(git branch --show-current)" = codex/sku-authority-release-controller-v3
+          test "$(git branch --show-current)" = codex/sku-authority-release-controller-v4
           python3 scripts/deploy-prod-sku-authority.py identity --repo "$PWD"
           python3 scripts/test-sku-release-contract.py
           python3 scripts/test-sku-release-controller.py
           python3 scripts/test-sku-release-readiness.py
+          python3 scripts/test-sku-release-transport.py
           node scripts/test-sku-release-readiness.mjs
           python3 scripts/test-release-path-post-transfer.py
           python3 scripts/test-deploy-prod-transfer-cas.py
