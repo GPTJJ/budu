@@ -186,6 +186,38 @@ print(json.dumps(out,sort_keys=True))
 '''], sudo=True)
 emit("dbContainers", json.loads(writer_scan))
 
+event_code = r'''
+import json,subprocess
+p=subprocess.run([
+  "docker","events",
+  "--since","2026-09-27T18:19:30Z",
+  "--until","2026-09-27T18:21:10Z",
+  "--format","{{json .}}"
+],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=False,text=True)
+out=[]
+for line in p.stdout.splitlines():
+    try: e=json.loads(line)
+    except Exception: continue
+    actor=(e.get("Actor") or {}).get("Attributes") or {}
+    name=actor.get("name","")
+    image=actor.get("image","")
+    action=e.get("Action","")
+    if ("5ad27a06d731" in name or "4dee331f45e8" in name or
+        "sku-worker" in name or "sku-authority" in name or
+        "4dee331f45e8" in image or "sku-authority" in image):
+        out.append({
+          "time":e.get("time"),
+          "type":e.get("Type"),
+          "action":action,
+          "name":name,
+          "image":image
+        })
+print(json.dumps(out,sort_keys=True))
+'''
+events_raw = remote(["python3","-c",event_code], sudo=True, timeout=30)
+emit("incidentDockerEvents", json.loads(events_raw))
+
+
 snapshot_script = Path("scripts/sku-release-snapshot-probe.mjs").read_bytes()
 snapshot_cmd = [
     "docker", "exec", "-i", "-w", "/app",
