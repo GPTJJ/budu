@@ -28,6 +28,8 @@ class FakeRemote:
 
     def run(self, args, **_):
         self.events.append(tuple(args[:4]))
+        if args[:2] == ['sh','-lc'] and 'command -v timeout' in args[-1]:
+            return b'TIMEOUT_OK'
         if args[:2] == ['docker','exec'] and 'PGOPTIONS=' in ' '.join(args):
             if 'SELECT 1 AS ok' in args[-1]:
                 if not self.db_probe:
