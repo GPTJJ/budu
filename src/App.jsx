@@ -5,12 +5,40 @@ import { api } from './utils/api'
 import { loadUserData, prepareUserDataForUser, resetUserData } from './utils/userData'
 import { t } from './utils/text'
 import { lazyRetry } from './utils/lazyRetry'
+import { OverlayStackManager } from './components/overlay/OverlayPrimitives'
 
 // 主面板按需加载：未登录时只下载登录页所需代码，首屏体积最小
 const loadDashboard = () => import('./components/Dashboard')
 const Dashboard = lazyRetry(loadDashboard)
+const CustomerRequestPage = lazyRetry(() => import('./components/CustomerRequestPage'))
+const PartnerAccessPage = lazyRetry(() => import('./components/PartnerAccessPage'))
 
 export default function App() {
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
+  if (pathname === '/partner' || pathname.startsWith('/partner/')) {
+    return (
+      <>
+        <OverlayStackManager />
+        <Suspense fallback={<AppLoading />}>
+          <PartnerAccessPage />
+        </Suspense>
+      </>
+    )
+  }
+  if (pathname === '/customer-request') {
+    return (
+      <>
+        <OverlayStackManager />
+        <Suspense fallback={<AppLoading />}>
+          <CustomerRequestPage />
+        </Suspense>
+      </>
+    )
+  }
+  return <><OverlayStackManager /><AuthenticatedApp /></>
+}
+
+function AuthenticatedApp() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)
@@ -68,7 +96,7 @@ export default function App() {
         setUser((prev) => {
           if (!prev) return prev
           const next = data.user
-          const keys = ['role', 'storeKeys', 'staffKey', 'assetCenter', 'permissions', 'status', 'bindingComplete', 'bindingLegacyExempt']
+          const keys = ['role', 'storeKeys', 'staffKey', 'employeeId', 'assetCenter', 'permissions', 'status', 'bindingComplete', 'bindingLegacyExempt']
           const changed = keys.some((key) => JSON.stringify(prev[key]) !== JSON.stringify(next[key]))
           return changed ? next : prev
         })

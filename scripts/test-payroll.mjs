@@ -170,26 +170,26 @@ for (const c of monthCases) {
   }
 }
 
-/** 特殊员工「卡皮巴拉」：只统计工时，不计算工资 */
-const noPayEntries = {
+/** Gate 29E：展示姓名不得成为工资资格；历史吉祥物名称按普通员工计算。 */
+const mascotNameEntries = {
   '2026-08|tongying|17': { inc: 2500, ord: 10, staff: ['卡皮巴拉', '叶芷辰'] },
   '2026-08|guanshe|18': { inc: 2500, ord: 10, staff: ['卡皮巴拉'] },
 }
-const noPayMap = monthlyPayrollFromEntries(noPayEntries, '2026-08', { tongying: '北京通盈中心店' })
-const capybara = noPayMap.get('卡皮巴拉')
-const normal = noPayMap.get('叶芷辰')
+const mascotNameMap = monthlyPayrollFromEntries(mascotNameEntries, '2026-08', { tongying: '北京通盈中心店' })
+const capybara = mascotNameMap.get('卡皮巴拉')
+const normal = mascotNameMap.get('叶芷辰')
 if (
   !capybara ||
-  capybara.salary !== 0 ||
-  capybara.basePay !== 0 ||
-  capybara.commission !== 0 ||
-  capybara.transferSubsidy !== 0 ||
+  capybara.salary !== 671 ||
+  capybara.basePay !== 554 ||
+  capybara.commission !== 95 ||
+  capybara.transferSubsidy !== 22 ||
   capybara.hours !== 19
 ) {
   failed += 1
-  console.log('FAIL 卡皮巴拉应只统计工时、不计算工资:', JSON.stringify(capybara))
+  console.log('FAIL 展示姓名卡皮巴拉应按普通工资公式计算:', JSON.stringify(capybara))
 } else {
-  console.log('OK 卡皮巴拉只统计工时、不计算工资')
+  console.log('OK 展示姓名卡皮巴拉按普通工资公式计算')
 }
 if (!normal || normal.salary !== 264) {
   failed += 1

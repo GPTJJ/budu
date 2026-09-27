@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
 import { listUsers } from './user-store.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
+import { mpAccessToken, invalidateMiniprogramToken, _resetMiniprogramTokenAuthority } from './wechat-access-token.js'
 
 const uid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -40,6 +41,54 @@ export function publicBaseUrl() {
   }
 }
 
+const CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT = 'budu'
+const CUSTOMER_REQUEST_WECOM_USER_ID = 'dh'
+
+/** 已验证的 BUDU developer 企微固定绑定；绝不按姓名、角色或目录搜索推断。 */
+export function developerWecomRecipientBinding() {
+  const username = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME || '').trim()
+  const userId = String(process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID || '').trim()
+  if (username !== CUSTOMER_REQUEST_NOTIFICATION_ACCOUNT || userId !== CUSTOMER_REQUEST_WECOM_USER_ID) return null
+  return { username, userId }
+}
+
+/** CustomerRequest 保持使用同一条已验证的精确账号绑定。 */
+export function customerRequestWecomRecipientBinding() {
+  return developerWecomRecipientBinding()
+}
+
+export function customerRequestWecomRecipientUserId() {
+  return customerRequestWecomRecipientBinding()?.userId || ''
+}
+
+/** BUDU 站内深链：固定 HTTPS origin，记录 ID 只作为登录后的页面定位提示。 */
+export function notificationDeepLink(target, refType = '', refId = '') {
+  const baseUrl = publicBaseUrl()
+  if (!baseUrl) return ''
+  const nav = String(target || '').trim()
+  const recordId = String(refId || '').trim()
+  if (!['store-mailing', 'finance-invoice', 'inventory-transfer', 'partner-supply', 'partner-replenishment-review'].includes(nav) || !/^[A-Za-z0-9._:-]{1,160}$/.test(recordId)) return ''
+  const url = new URL('/', baseUrl)
+  url.searchParams.set('nav', nav)
+  url.searchParams.set('refType', String(refType || '').slice(0, 40))
+  url.searchParams.set('refId', recordId)
+  return url.toString()
+}
+
+export function formatBeijingNotificationTime(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
 /** 模板占位符渲染：{key} → 数据值（缺失留空） */
 export function renderTpl(tpl, data = {}) {
   return String(tpl || '').replace(/\{(\w+)\}/g, (_, k) => {
@@ -57,8 +106,10 @@ const BUILTIN_TEMPLATES = [
   { key: 'payroll_confirmed', name: '工资条已签收', description: '员工签收工资条通知', titleTpl: '{employeeName} 已签收工资条 {period}', contentTpl: '{employeeName} 已于 {time} 签收工资周期 {period} 的工资条', target: 'staff-payroll', defaultPriority: 'normal' },
   { key: 'payroll_recalled', name: '工资条已撤回', description: '工资条被管理员撤回通知', titleTpl: '工资条已撤回：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条已被撤回，不再需要签收；如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'high' },
   { key: 'payroll_deleted', name: '工资条已删除', description: '工资条记录被管理员删除通知', titleTpl: '工资条已删除：{employeeName} {period}', contentTpl: '工资周期 {period} 的工资条记录已删除，如有疑问请联系管理员', target: 'staff-payroll', defaultPriority: 'normal' },
-  { key: 'transfer_new', name: '新调货申请', description: '有新的调货申请', titleTpl: '新调货申请：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'normal' },
-  { key: 'transfer_shipped', name: '调货已发货', description: '调货已发货通知', titleTpl: '调货已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
+  { key: 'transfer_new', name: '新门店调拨', description: '调出门店有新的待备货调拨', titleTpl: '新调拨待备货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 提交人 {submitter}', target: 'inventory-transfer', defaultPriority: 'high' },
+  { key: 'transfer_shipped', name: '调拨已发货', description: '门店调拨已发货通知', titleTpl: '调拨已发货：{fromStore} → {toStore}', contentTpl: '货品 {count} 种 · 操作人 {operator}', target: 'inventory-transfer', defaultPriority: 'normal' },
+  { key: 'partner_supply_new', name: '新合作商供货', description: '发货门店有新的合作商供货单待备货', titleTpl: '{partner} 有新的供货单待备货', contentTpl: '发货门店 {store} · 产品 {count} 种 · 创建人 {submitter}', target: 'partner-supply', defaultPriority: 'high' },
+  { key: 'partner_supply_shipped', name: '合作商供货已发货', description: '合作商供货单发货结果通知创建人', titleTpl: '{partner} 供货单已发货', contentTpl: '发货门店 {store} · 操作人 {operator}', target: 'partner-supply', defaultPriority: 'normal' },
   { key: 'purchase_new', name: '新采购申请', description: '有新的采购申请', titleTpl: '新采购申请：{store}', contentTpl: '货品 {count} 种{supplier} · 提交人 {submitter}', target: 'inventory-purchase', defaultPriority: 'normal' },
   { key: 'invoice_new', name: '新发票申请', description: '有新的发票申请', titleTpl: '新发票申请：{store}', contentTpl: '抬头 {company} · 金额 ¥{amount} · 提交人 {submitter}', target: 'finance-invoice', defaultPriority: 'normal' },
   { key: 'mailing_new', name: '新门店邮寄', description: '有新的邮寄发件单', titleTpl: '新门店邮寄：{recipient}', contentTpl: '方式 {method} · 收件人 {recipient} · 提交人 {submitter}', target: 'store-mailing', defaultPriority: 'normal' },
@@ -126,7 +177,8 @@ export async function notify(opt) {
       data: { id: uid('nld'), notificationId: row.id, channel: 'inapp', status: 'sent' },
     })
     // 异步微信个人提醒（不阻塞业务；未配置通道或未绑定则记录 skipped）
-    pushWechat(row, title, content, target).catch(() => {})
+    const url = notificationDeepLink(target, opt.refType, opt.refId)
+    pushWechat(row, title, content, target, url).catch(() => {})
     return row
   } catch (e) {
     console.error('[notification-center]', e.message)
@@ -135,7 +187,7 @@ export async function notify(opt) {
 }
 
 /** 微信个人提醒：查绑定 → 按通道推送；未配置通道/未绑定 → skipped */
-export async function pushWechat(notification, title, content, target) {
+export async function pushWechat(notification, title, content, target, url = '') {
   const cfg = wechatPersonalConfig()
   if (!cfg) {
     await prisma.notificationDelivery.create({
@@ -152,7 +204,7 @@ export async function pushWechat(notification, title, content, target) {
     }).catch(() => {})
     return
   }
-  const result = await sendWechatPersonal(cfg, binding, { title, content, target })
+  const result = await sendWechatPersonal(cfg, binding, { title, content, target, url })
   // 失败时记录通道侧错误码（errcode/errmsg 安全、不泄露密钥），便于排查
   const errDetail = result.ok
     ? ''
@@ -168,13 +220,18 @@ export async function pushWechat(notification, title, content, target) {
  *   errcode/errmsg 来自通道侧响应（不含任何密钥），供投递记录与测试接口排查。
  *   token 失效类错误（企微 40001/40014/42001、公众号 40001/40014）自动重取后重发一次。
  */
-export async function sendWechatPersonal(cfg, binding, { title, content, target }) {
+export async function sendWechatPersonal(cfg, binding, { title, content, target, url = '' }) {
   try {
     const baseUrl = publicBaseUrl()
     if (!baseUrl) return { ok: false, errcode: 'CONFIG_ERROR', errmsg: 'PUBLIC_BASE_URL 未配置或不安全' }
-    const jump = new URL('/', baseUrl)
-    if (target) jump.searchParams.set('nav', String(target))
-    const jumpUrl = jump.toString()
+    const fallback = new URL('/', baseUrl)
+    if (target) fallback.searchParams.set('nav', String(target))
+    let jumpUrl = fallback.toString()
+    if (url) {
+      const supplied = new URL(String(url))
+      if (supplied.origin !== baseUrl) return { ok: false, errcode: 'CONFIG_ERROR', errmsg: '跳转地址必须使用 BUDU public origin' }
+      jumpUrl = supplied.toString()
+    }
     if (cfg.channel === 'wecom') {
       return await sendWecomTextcard(cfg, binding, title, content, jumpUrl)
     }
@@ -182,9 +239,87 @@ export async function sendWechatPersonal(cfg, binding, { title, content, target 
       return await sendMpTemplate(cfg, binding, title, content, jumpUrl)
     }
     return { ok: false, errcode: 'NO_CHANNEL', errmsg: 'unknown channel' }
-  } catch (e) {
-    console.error('[notification-center] wechat send', e.message)
-    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: String(e.message).slice(0, 200) }
+  } catch {
+    console.error('[notification-center] wechat send failed')
+    return { ok: false, errcode: 'LOCAL_ERROR', errmsg: 'local delivery error' }
+  }
+}
+
+/**
+ * CustomerRequest 专用企业微信投递。
+ * - 站内通知事务提交后调用，失败不回滚业务。
+ * - 固定配置 BUDU 账号 → UserID；不查姓名、不查角色、不广播。
+ * - 确定性 delivery 主键抢占，HTTP 重试/重复调用/进程重启不会重复发送。
+ */
+export async function deliverCustomerRequestWecom({
+  prismaClient = prisma,
+  notification,
+  requestId,
+  type,
+  storeName,
+  submittedAt,
+}) {
+  if (!notification?.id || !requestId || !['MAILING', 'INVOICE'].includes(type)) {
+    return { ok: false, status: 'skipped', reason: 'invalid customer request delivery event' }
+  }
+  const recipientBinding = customerRequestWecomRecipientBinding()
+  const recipientUserId = recipientBinding?.userId || ''
+  const deliveryId = `nld-csr-wecom-${crypto.createHash('sha256')
+    .update(`${requestId}\0${type}\0${recipientBinding?.username || 'missing'}\0${recipientUserId || 'missing'}`)
+    .digest('hex')
+    .slice(0, 32)}`
+  try {
+    await prismaClient.notificationDelivery.create({
+      data: {
+        id: deliveryId,
+        notificationId: notification.id,
+        channel: 'wecom',
+        status: 'pending',
+      },
+    })
+  } catch (error) {
+    if (error?.code === 'P2002') return { ok: true, status: 'duplicate' }
+    throw error
+  }
+
+  const cfg = wechatPersonalConfig()
+  if (!recipientUserId || !cfg || cfg.channel !== 'wecom') {
+    const reason = !recipientUserId ? 'customer request recipient not configured' : 'wecom app channel not configured'
+    await prismaClient.notificationDelivery.update({
+      where: { id: deliveryId },
+      data: { status: 'skipped', error: reason },
+    }).catch(() => {})
+    return { ok: false, status: 'skipped', reason }
+  }
+
+  const isMailing = type === 'MAILING'
+  const title = isMailing ? '【BUDU 新的邮寄信息】' : '【BUDU 新的开票申请】'
+  const action = isMailing
+    ? '顾客已提交收件信息，请进入 BUDU 核对并安排发货。'
+    : '顾客已提交开票资料，请进入 BUDU 核对并处理。'
+  const content = [
+    action,
+    `门店：${String(storeName || '未知门店').slice(0, 80)}`,
+    `提交时间：${formatBeijingNotificationTime(submittedAt)}`,
+  ].join('\n')
+  const url = notificationDeepLink(notification.target, notification.refType, notification.refId)
+  const result = await sendWechatPersonal(
+    cfg,
+    { openId: recipientUserId },
+    { title, content, target: notification.target, url },
+  )
+  const error = result.ok
+    ? ''
+    : `send failed (errcode=${result.errcode || 'UNKNOWN'}${result.errmsg ? ` ${String(result.errmsg).slice(0, 160)}` : ''})`.slice(0, 240)
+  await prismaClient.notificationDelivery.update({
+    where: { id: deliveryId },
+    data: { status: result.ok ? 'sent' : 'failed', error, sentAt: new Date() },
+  }).catch(() => {})
+  return {
+    ok: result.ok,
+    status: result.ok ? 'sent' : 'failed',
+    recipientCount: 1,
+    retried: Boolean(result.retried),
   }
 }
 
@@ -254,7 +389,7 @@ async function sendMpTemplate(cfg, binding, title, content, jumpUrl) {
   const first = await doSend(token)
   if (first.ok) return first
   if ([40001, 40014].includes(first.errcode)) {
-    mpTokenCache = { token: '', at: 0 }
+    invalidateMiniprogramToken({ appId: cfg.appId })
     const retryToken = await mpAccessToken(cfg.appId, cfg.secret)
     if (retryToken) {
       const second = await doSend(retryToken)
@@ -283,30 +418,16 @@ export async function wecomAccessToken(corpId, secret) {
   }
 }
 
-let mpTokenCache = { token: '', at: 0 }
-export async function mpAccessToken(appId, secret) {
-  if (mpTokenCache.token && Date.now() - mpTokenCache.at < 7000 * 1000) return mpTokenCache.token
-  try {
-    const url = new URL('https://api.weixin.qq.com/cgi-bin/token')
-    url.searchParams.set('grant_type', 'client_credential')
-    url.searchParams.set('appid', appId)
-    url.searchParams.set('secret', secret)
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    const j = await res.json()
-    if (j.access_token) {
-      mpTokenCache = { token: j.access_token, at: Date.now() }
-      return j.access_token
-    }
-    return ''
-  } catch {
-    return ''
-  }
-}
+// The MiniProgram access_token lives in server/wechat-access-token.js (imported
+// above). Do not reintroduce a cache here: one appid must have exactly one token
+// authority, or WeChat invalidates the token held by the other cache and both
+// start failing intermittently with 40001.
+export { mpAccessToken }
 
 /** 测试辅助：重置 access_token 缓存（企微/公众号；仅测试使用） */
 export function _resetWechatTokenCaches() {
   wecomTokenCache = { token: '', at: 0 }
-  mpTokenCache = { token: '', at: 0 }
+  _resetMiniprogramTokenAuthority()
 }
 
 /** 企微群机器人广播（兼容现状：与 sendWechatMarkdown 行为一致，统一入口） */

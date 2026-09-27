@@ -1,0 +1,378 @@
+{
+  "historicalTables": 95,
+  "changedTablesAfterRuntime": [],
+  "migration": "73|0",
+  "balanceCents": "1300110",
+  "ledgerCents": "1300110",
+  "readSmoke": {
+    "baseline": {
+      "results": [
+        {
+          "path": "/api/auth/me",
+          "status": 200,
+          "count": null
+        },
+        {
+          "path": "/api/v2/items",
+          "status": 200,
+          "count": 203
+        },
+        {
+          "path": "/api/v2/employees",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "path": "/api/v2/daily-entries?month=2026-09",
+          "status": 200,
+          "count": 44
+        },
+        {
+          "path": "/api/v2/transfer-requests",
+          "status": 200,
+          "count": 38
+        },
+        {
+          "path": "/api/v2/payroll-notices",
+          "status": 200,
+          "count": 18
+        },
+        {
+          "path": "/api/v2/pos/orders",
+          "status": 200,
+          "count": 200
+        },
+        {
+          "path": "/api/v2/partners",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "path": "/api/v2/partner-supply-orders",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "path": "/api/v2/sweet-cards/cards",
+          "status": 200,
+          "count": null
+        },
+        {
+          "path": "/api/v2/sweet-cards/reconciliation",
+          "status": 200,
+          "count": null
+        }
+      ],
+      "onlinePayment": "0",
+      "onlineRuntime": "0"
+    },
+    "candidate": {
+      "results": [
+        {
+          "path": "/api/auth/me",
+          "status": 200,
+          "count": null
+        },
+        {
+          "path": "/api/v2/items",
+          "status": 200,
+          "count": 203
+        },
+        {
+          "path": "/api/v2/employees",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "path": "/api/v2/daily-entries?month=2026-09",
+          "status": 200,
+          "count": 44
+        },
+        {
+          "path": "/api/v2/transfer-requests",
+          "status": 200,
+          "count": 38
+        },
+        {
+          "path": "/api/v2/payroll-notices",
+          "status": 200,
+          "count": 18
+        },
+        {
+          "path": "/api/v2/pos/orders",
+          "status": 200,
+          "count": 200
+        },
+        {
+          "path": "/api/v2/partners",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "path": "/api/v2/partner-supply-orders",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "path": "/api/v2/sweet-cards/cards",
+          "status": 200,
+          "count": null
+        },
+        {
+          "path": "/api/v2/sweet-cards/reconciliation",
+          "status": 200,
+          "count": null
+        }
+      ],
+      "onlinePayment": "0",
+      "onlineRuntime": "0"
+    }
+  },
+  "productionSha": "95cd9ce48b25de35570cc6f1f07154ab2e13cb78",
+  "applicationCandidateSha": "3c66ebf4a6dfe6937b61ab469c26d7e45da65298",
+  "postgresVersion": "16.14",
+  "backupBytes": 43145158,
+  "backupSha256": "1e98db29649f575167d767a880b50cfbc168f810c7fdd0c552d8e6638dd51e28",
+  "productionMigration": "70 / 0 failed",
+  "productionFinalBalanceCents": "1300110",
+  "productionFinalLedgerCents": "1300110",
+  "productionFinancialDeltaCents": "0",
+  "productionBusinessMutation": false,
+  "productionDeploy": false,
+  "isolatedContainersStopped": true,
+  "onlinePaymentCandidate": "OFF",
+  "productionFlagsObserved": {
+    "SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED": "1",
+    "SWEET_CARD_MINIPROGRAM_CLAIM_ALLOWLIST_ONLY": "0",
+    "SWEET_CARD_PRODUCTION_GATEWAY_ENABLED": "1",
+    "SWEET_CARD_ONLINE_RUNTIME_ENABLED": "UNSET",
+    "SWEET_CARD_ONLINE_PAYMENT_ENABLED": "UNSET"
+  },
+  "cloudBase": [
+    {
+      "FunctionName": "orders",
+      "Namespace": "budu-d6gz358ixe39faf43",
+      "Runtime": "Nodejs16.13",
+      "Handler": "index.main",
+      "Status": "Active",
+      "ModTime": "2026-09-04 01:56:55",
+      "CodeSize": 20009734,
+      "CodeSha256": null,
+      "FunctionVersion": "$LATEST",
+      "InstallDependency": "FALSE",
+      "entryCodeSha256": "686c59cd27ccc24aaca4030985975184d6cca1e9e60ffb89b7bdbd1dac16a7e4",
+      "entryMatchesPriorG05": true
+    },
+    {
+      "FunctionName": "payOrder",
+      "Namespace": "budu-d6gz358ixe39faf43",
+      "Runtime": "Nodejs16.13",
+      "Handler": "index.main",
+      "Status": "Active",
+      "ModTime": "2026-09-04 23:43:07",
+      "CodeSize": 11119294,
+      "CodeSha256": null,
+      "FunctionVersion": "$LATEST",
+      "InstallDependency": "TRUE",
+      "entryCodeSha256": "8e156a520f3802b2b28b32104d1a08e706691544d0805b309c811e92dcd9a835",
+      "entryMatchesPriorG05": true
+    },
+    {
+      "FunctionName": "merchant",
+      "Namespace": "budu-d6gz358ixe39faf43",
+      "Runtime": "Nodejs16.13",
+      "Handler": "index.main",
+      "Status": "Active",
+      "ModTime": "2026-09-09 00:13:06",
+      "CodeSize": 11138695,
+      "CodeSha256": null,
+      "FunctionVersion": "$LATEST",
+      "InstallDependency": "TRUE",
+      "entryCodeSha256": "0489445446ef50637b95f4f901de1450c88c4c696aa7ab59d725f58fdfd5689a",
+      "entryMatchesPriorG05": true
+    },
+    {
+      "FunctionName": "sweetCardApi",
+      "Namespace": "budu-d6gz358ixe39faf43",
+      "Runtime": "Nodejs16.13",
+      "Handler": "index.main",
+      "Status": "Active",
+      "ModTime": "2026-09-08 12:21:31",
+      "CodeSize": 11115309,
+      "CodeSha256": null,
+      "FunctionVersion": "$LATEST",
+      "InstallDependency": "TRUE",
+      "entryCodeSha256": "5c8716d7a5f264cb8b5d7535b23a19d950029544af45bcbb7c2307bf9d2bef9f",
+      "entryMatchesPriorG05": true
+    }
+  ],
+  "inspectedCloudBaseRootFileParity": [
+    {
+      "function": "orders",
+      "file": "config.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "orders",
+      "file": "index.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "orders",
+      "file": "config.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "orders",
+      "file": "package.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "orders",
+      "file": "pricing.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "payOrder",
+      "file": "order-description.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "payOrder",
+      "file": "config.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "payOrder",
+      "file": "index.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "payOrder",
+      "file": "config.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "payOrder",
+      "file": "package.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "payOrder",
+      "file": "pricing.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "merchant",
+      "file": "config.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "merchant",
+      "file": "index.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "merchant",
+      "file": "config.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "merchant",
+      "file": "package-lock.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "merchant",
+      "file": "package.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "merchant",
+      "file": "refund-service.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": false
+    },
+    {
+      "function": "sweetCardApi",
+      "file": "login-contract.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "sweetCardApi",
+      "file": "config.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "sweetCardApi",
+      "file": "index.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "sweetCardApi",
+      "file": "production-signature.js",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    },
+    {
+      "function": "sweetCardApi",
+      "file": "package.json",
+      "priorMatchesFresh": true,
+      "candidateMatchesFresh": true
+    }
+  ],
+  "nativeSyntheticReconciliation": {
+    "settlements": 710,
+    "settled": 370,
+    "pendingRefunds": 31,
+    "pendingCompensations": 30,
+    "activeReservations": 149,
+    "overdueReservations": 133,
+    "mismatches": 0,
+    "monetaryDeltaCents": "0",
+    "pass": true,
+    "operationallyClear": false
+  },
+  "validation": {
+    "onlineSuite": {
+      "pass": 183,
+      "fail": 0
+    },
+    "miniProgramSuite": {
+      "pass": 235,
+      "fail": 0
+    },
+    "criticalRunner": {
+      "pass": 79,
+      "fail": 0,
+      "includesEnvironmentIsolationSelfCheck": true
+    },
+    "cloneAuthenticatedReads": {
+      "pass": 22,
+      "fail": 0
+    },
+    "migrationRehearsals": {
+      "pass": 8,
+      "fail": 0
+    }
+  }
+}

@@ -42,7 +42,7 @@ test('员工工资明细生成真正的 Excel 工作簿与数值单元格', () =
   const workbook = createEmployeePayWorkbook(options)
   assert.deepEqual(workbook.SheetNames, ['工资明细'])
   const sheet = workbook.Sheets['工资明细']
-  assert.equal(sheet.A1.v, 'BUDU 员工工资明细')
+  assert.equal(sheet.A1.v, 'budu 员工工资明细')
   assert.equal(sheet.B2.v, '测试/员工')
   assert.equal(sheet.C6.v, 1234.56)
   assert.equal(sheet.C6.t, 'n')

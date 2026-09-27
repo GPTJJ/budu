@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BadgeDollarSign, Loader2, RotateCcw, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { employeeDailyPayDetail } from '../utils/selectors'
 import {
+  getDailyStoreStaff,
+  loadDailyStoreStaffMonth,
   removeDailyPayAdjustment,
   upsertDailyPayAdjustment,
 } from '../utils/userData'
@@ -18,6 +20,7 @@ function localDate() {
 function normalizeApiRow(row) {
   return {
     id: row.id,
+    employeeId: row.employeeId || '',
     staffName: row.staffName,
     date: String(row.date || '').slice(0, 10),
     autoPayCentsSnapshot: Number(row.autoPayCentsSnapshot) || 0,
@@ -47,13 +50,32 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [tip, setTip] = useState('')
+  const [attendance, setAttendance] = useState({ status: 'loading', month: '', rows: [] })
+  const attendanceRequestRef = useRef(0)
+  useEffect(() => {
+    const month = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : ''
+    const requestId = attendanceRequestRef.current + 1
+    attendanceRequestRef.current = requestId
+    if (!month) {
+      setAttendance({ status: 'ready', month: '', rows: [] })
+      return undefined
+    }
+    setAttendance({ status: 'loading', month, rows: [] })
+    let cancelled = false
+    loadDailyStoreStaffMonth(month).then(() => {
+      if (cancelled || attendanceRequestRef.current !== requestId) return
+      setAttendance({ status: 'ready', month, rows: getDailyStoreStaff(month) })
+    })
+    return () => { cancelled = true }
+  }, [date])
+  const attendanceReady = attendance.status === 'ready' && attendance.month === date.slice(0, 7)
   const detail = /^\d{4}-\d{2}-\d{2}$/.test(date)
-    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name)
+    ? employeeDailyPayDetail(date.slice(0, 7), date.slice(5), emp.name, emp.id, attendanceReady ? attendance.rows : [])
     : null
   const current = detail?.totals?.payAdjustment || null
   const automaticPay = detail?.totals?.automaticPay ?? 0
   const canAdjustWithoutDuty = currentUser?.role === 'developer'
-  const canAdjust = Boolean(detail) || canAdjustWithoutDuty
+  const canAdjust = attendanceReady && (Boolean(detail) || canAdjustWithoutDuty)
 
   useEffect(() => {
     if (current) {
@@ -96,6 +118,9 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
       const result = await api('/v2/daily-pay-adjustments', {
         method: 'PUT',
         body: JSON.stringify({
+          // Gate 9：直接提交所选 Employee 对象的稳定 id（绝不按姓名/门店推导）；
+          // staffName 保留为展示/历史快照。
+          employeeId: emp.id || undefined,
           staffName: emp.name,
           date,
           autoPayCentsSnapshot: Math.round(automaticPay * 100),
@@ -138,9 +163,9 @@ export default function DailyPayAdjustmentModal({ emp, initialDate, currentUser,
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('调整每日薪资')}>
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
+    <div className="budu-overlay-viewport fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('调整每日薪资')}>
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="budu-overlay-scroll relative max-h-[90dvh] w-full max-w-lg rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600">
             <BadgeDollarSign className="h-5 w-5" />

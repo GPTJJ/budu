@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#eff6ff"/>
+  <text x="40" y="90" font-size="34" fill="#111827">李四</text>
+  <text x="40" y="145" font-size="30" fill="#111827">139 0013 9000</text>
+  <text x="40" y="200" font-size="28" fill="#111827">上海市徐汇区测试路2号</text>
+  <text x="40" y="255" font-size="28" fill="#111827">糖果2盒</text>
+</svg>

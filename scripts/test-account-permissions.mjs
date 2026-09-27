@@ -6,16 +6,80 @@ import {
   canAccessTransferStore,
   canManageAccounts,
   canManageTransferStore,
+  DAILY_ENTRY_CAPABILITIES,
+  hasDailyEntryCapability,
+  hasExternalOrderCreate,
+  hasExternalSettlementConfirm,
+  hasManualExternalRefundConfirm,
+  hasManualExternalRefundRecord,
+  hasReportAllStores,
+  hasReportSalesView,
+  hasReportCostView,
+  hasReportLaborView,
+  hasReportCostManage,
   hasInventoryTransferAll,
   hasPageAccess,
   normalizeAccountPermissions,
   hasModuleAccess,
+  hasDeveloperSensitiveRecordDelete,
+  hasSweetCardProductionTestAccess,
 } from '../shared/accountPermissions.js'
 
 test('开发者始终拥有库存调拨全权限', () => {
   const user = { role: 'developer', storeKeys: [] }
   assert.equal(hasInventoryTransferAll(user), true)
   assert.equal(canManageTransferStore(user, 'any-store'), true)
+})
+
+test('敏感记录删除是不可下放的 developer 专属权限', () => {
+  assert.equal(hasDeveloperSensitiveRecordDelete({ role: 'developer' }), true)
+  for (const role of ['admin', 'finance', 'manager', 'staff', 'cashier', 'public']) {
+    assert.equal(hasDeveloperSensitiveRecordDelete({ role, permissions: { developerSensitiveRecordDelete: true } }), false)
+  }
+  assert.equal(hasDeveloperSensitiveRecordDelete({ role: 'developer', status: 'disabled' }), false)
+})
+
+test('外部订单创建与结算确认是独立、默认关闭的显式能力', () => {
+  assert.equal(hasExternalOrderCreate({ role: 'developer' }), true)
+  assert.equal(hasExternalSettlementConfirm({ role: 'developer' }), true)
+  assert.equal(hasExternalOrderCreate({ role: 'staff', permissions: {} }), false)
+  assert.equal(hasExternalSettlementConfirm({ role: 'manager', permissions: {} }), false)
+  assert.equal(hasExternalOrderCreate({ role: 'staff', permissions: { externalOrderCreate: true } }), true)
+  assert.equal(hasExternalSettlementConfirm({ role: 'manager', permissions: { externalSettlementConfirm: true } }), true)
+  assert.equal(hasExternalOrderCreate({ role: 'cashier', permissions: { externalOrderCreate: true } }), false)
+  assert.equal(hasExternalSettlementConfirm({ role: 'public', permissions: { externalSettlementConfirm: true } }), false)
+})
+
+test('人工外部退款记录与确认是独立、默认关闭且收银不可获得的显式能力', () => {
+  assert.equal(hasManualExternalRefundRecord({ role: 'developer' }), true)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'developer' }), true)
+  assert.equal(hasManualExternalRefundRecord({ role: 'staff', permissions: {} }), false)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'manager', permissions: {} }), false)
+  assert.equal(hasManualExternalRefundRecord({ role: 'finance', permissions: { manualExternalRefundRecord: true } }), true)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'admin', permissions: { manualExternalRefundConfirm: true } }), true)
+  assert.equal(hasManualExternalRefundRecord({ role: 'cashier', permissions: { manualExternalRefundRecord: true } }), false)
+  assert.equal(hasManualExternalRefundConfirm({ role: 'public', permissions: { manualExternalRefundConfirm: true } }), false)
+})
+
+test('销售报表与跨店读取是独立、默认关闭且服务端可判定的显式能力', () => {
+  assert.equal(hasReportSalesView({ role: 'developer' }), true)
+  assert.equal(hasReportAllStores({ role: 'developer' }), true)
+  assert.equal(hasReportSalesView({ role: 'finance', permissions: {} }), false)
+  assert.equal(hasReportAllStores({ role: 'admin', permissions: {} }), false)
+  assert.equal(hasReportSalesView({ role: 'staff', permissions: { reportSalesView: true } }), true)
+  assert.equal(hasReportAllStores({ role: 'manager', permissions: { reportAllStores: true } }), true)
+  assert.equal(hasReportSalesView({ role: 'cashier', permissions: { reportSalesView: true } }), false)
+  assert.equal(hasReportAllStores({ role: 'public', permissions: { reportAllStores: true } }), false)
+})
+
+test('商品成本、人工成本和配置写入是三项独立且默认关闭的敏感能力', () => {
+  assert.equal(hasReportCostView({ role: 'staff', permissions: { reportSalesView: true } }), false)
+  assert.equal(hasReportLaborView({ role: 'staff', permissions: { reportCostView: true } }), false)
+  assert.equal(hasReportCostManage({ role: 'staff', permissions: { reportCostView: true, reportLaborView: true } }), false)
+  assert.equal(hasReportCostView({ role: 'finance', permissions: { reportCostView: true } }), true)
+  assert.equal(hasReportLaborView({ role: 'finance', permissions: { reportLaborView: true } }), true)
+  assert.equal(hasReportCostManage({ role: 'finance', permissions: { reportCostManage: true } }), true)
+  assert.equal(hasReportCostManage({ role: 'cashier', permissions: { reportCostManage: true } }), false)
 })
 
 test('调拨全权限不依赖角色和绑定门店', () => {
@@ -47,6 +111,15 @@ test('权限规范化保留已知模块并过滤未知字段', () => {
     modules: { overview: false, finance: true, unknown: true },
   }, 'staff')
   assert.equal(normalized.inventoryTransferAll, true)
+  assert.equal(normalized.externalOrderCreate, false)
+  assert.equal(normalized.externalSettlementConfirm, false)
+  assert.equal(normalized.manualExternalRefundRecord, false)
+  assert.equal(normalized.manualExternalRefundConfirm, false)
+  assert.equal(normalized.reportSalesView, false)
+  assert.equal(normalized.reportAllStores, false)
+  assert.equal(normalized.reportCostView, false)
+  assert.equal(normalized.reportLaborView, false)
+  assert.equal(normalized.reportCostManage, false)
   assert.equal(normalized.modules.overview, false)
   assert.equal(normalized.modules.finance, true)
   assert.equal(Object.hasOwn(normalized.modules, 'unknown'), false)
@@ -60,6 +133,8 @@ test('开发者固定全权限，管理员财务默认全权限但可以被开�
   const finance = { role: 'finance', permissions: { modules: { ...Object.fromEntries(ALL_MODULE_KEYS.map((key) => [key, true])), finance: false } } }
   assert.equal(hasModuleAccess(finance, MODULE_KEYS.FINANCE), false)
   assert.equal(hasModuleAccess(finance, MODULE_KEYS.OVERVIEW), true)
+  assert.equal(hasModuleAccess(finance, MODULE_KEYS.PARTNER_MANAGEMENT), false)
+  assert.equal(hasModuleAccess({ ...finance, permissions: { modules: { [MODULE_KEYS.PARTNER_MANAGEMENT]: true } } }, MODULE_KEYS.PARTNER_MANAGEMENT), false)
 })
 
 test('收银账号无论保存何种权限都固定仅开放 POS', () => {
@@ -67,6 +142,18 @@ test('收银账号无论保存何种权限都固定仅开放 POS', () => {
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.STORE_POS), true)
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.FINANCE), false)
   assert.equal(hasModuleAccess(cashier, MODULE_KEYS.OVERVIEW), false)
+})
+
+test('POS capability 是支付账号资格的唯一人员级权威', () => {
+  const granted = { status: 'active', permissions: { modules: { [MODULE_KEYS.STORE_POS]: true } } }
+  const denied = { status: 'active', permissions: { modules: { [MODULE_KEYS.STORE_POS]: false } } }
+
+  for (const role of ['admin', 'finance', 'manager', 'staff', 'operations']) {
+    assert.equal(hasModuleAccess({ ...granted, role }, MODULE_KEYS.STORE_POS), true, `${role} 应按 capability 允许`)
+    assert.equal(hasModuleAccess({ ...denied, role }, MODULE_KEYS.STORE_POS), false, `${role} 应按 capability 拒绝`)
+  }
+  assert.equal(hasModuleAccess({ ...granted, role: 'public' }, MODULE_KEYS.STORE_POS), false)
+  assert.equal(hasModuleAccess({ ...granted, role: 'staff', status: 'disabled' }, MODULE_KEYS.STORE_POS), false)
 })
 
 test('账号管理作为开发者保留页面不会被版块撤权检查送回首页', () => {
@@ -82,4 +169,39 @@ test('Developer 保留操作不向管理员或财务开放', () => {
   assert.equal(canManageAccounts({ role: 'admin' }), false)
   assert.equal(canManageAccounts({ role: 'finance' }), false)
   assert.equal(canManageAccounts({ role: 'developer', status: 'disabled' }), false)
+})
+
+test('甜意卡生产测试名单按显式账号权限默认拒绝且不随角色继承', () => {
+  for (const role of ['developer', 'admin', 'finance', 'manager', 'staff', 'cashier']) {
+    assert.equal(hasSweetCardProductionTestAccess({ role, status: 'active', permissions: {} }), false, `${role} 不应默认进入生产测试名单`)
+    assert.equal(hasSweetCardProductionTestAccess({ role, status: 'active', permissions: { sweetCardProductionTest: true } }), true, `${role} 显式加入后应可识别`)
+  }
+  assert.equal(hasSweetCardProductionTestAccess({ role: 'developer', status: 'disabled', permissions: { sweetCardProductionTest: true } }), false)
+  assert.equal(hasSweetCardProductionTestAccess({ role: 'public', status: 'active', permissions: { sweetCardProductionTest: true } }), false)
+  assert.equal(normalizeAccountPermissions({ sweetCardProductionTest: 'true' }, 'developer').sweetCardProductionTest, false)
+})
+
+test('每日录入 view/edit/confirm/revise 能力在现有 JSON 权限中独立表达', () => {
+  const staff = { role: 'staff', storeKeys: ['guanshe'] }
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.VIEW), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.EDIT), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.CONFIRM), true)
+  assert.equal(hasDailyEntryCapability(staff, DAILY_ENTRY_CAPABILITIES.REVISE), false)
+
+  const manager = { role: 'manager', storeKeys: ['guanshe'] }
+  assert.equal(hasDailyEntryCapability(manager, DAILY_ENTRY_CAPABILITIES.REVISE), true)
+
+  const limited = {
+    role: 'manager',
+    storeKeys: ['guanshe'],
+    permissions: {
+      modules: { 'store-entry': true },
+      dailyEntry: { view: true, edit: false, confirm: true, revise: false },
+    },
+  }
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.VIEW), true)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.EDIT), false)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.CONFIRM), true)
+  assert.equal(hasDailyEntryCapability(limited, DAILY_ENTRY_CAPABILITIES.REVISE), false)
+  assert.equal(hasDailyEntryCapability({ role: 'cashier', permissions: { dailyEntry: { confirm: true } } }, DAILY_ENTRY_CAPABILITIES.CONFIRM), false)
 })

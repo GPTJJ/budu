@@ -69,27 +69,24 @@ function ProductModal({ month, store, day, weekStart, onClose, onOpenProduct }) 
   const totalAmount = list.reduce((s, p) => s + p.amount, 0)
   const maxAmount = list[0]?.amount || 1
 
-  // Esc 关闭 + 锁定背景滚动
+  // Esc 关闭；背景滚动由全局 OverlayStackManager 统一锁定。
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
     }
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div data-budu-overlay-root className="budu-overlay-viewport fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* 遮罩 */}
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
 
       {/* 弹窗 */}
-      <div className="relative flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
+      <div role="dialog" aria-modal="true" aria-label={t('商品销售明细')} className="budu-overlay-panel relative flex max-h-[86dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-lg">
         {/* 头部 */}
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+        <div className="budu-overlay-header flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('商品销售明细')}</h3>
             <p className="mt-1 text-xs text-slate-400">

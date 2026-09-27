@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, KeyRound, Loader2, MapPin, RotateCcw, Shield, SlidersHorizontal, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { api } from '../utils/api'
-import { allStores, employeeList, storeName } from '../utils/selectors'
+import { allStores, currentEmployeeDirectory, storeName } from '../utils/selectors'
 import { loadUserData } from '../utils/userData'
 import { t } from '../utils/text'
-import { ACTIVE_ROLES, MODULE_GROUPS, ROLE_LABELS, defaultModuleKeys } from '../../shared/accountPermissions'
+import {
+  ACTIVE_ROLES,
+  DAILY_ENTRY_CAPABILITIES,
+  DAILY_ENTRY_CAPABILITY_OPTIONS,
+  MODULE_GROUPS,
+  ROLE_LABELS,
+  ACCOUNT_PERMISSION_KEYS,
+  SWEET_CARD_CAPABILITIES,
+  defaultModuleKeys,
+  normalizeAccountPermissions,
+} from '../../shared/accountPermissions'
 
 const inputCls = 'input'
 
@@ -144,14 +154,21 @@ function StoreCheckboxes({ selected, onChange, single = false }) {
 }
 
 function CreateUserModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [], staffKey: '' })
+  const [form, setForm] = useState({ username: '', name: '', password: '', role: 'staff', storeKeys: [], staffKey: '', employeeId: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // Gate 20：员工选择器用当前 PG Employee 目录（currentEmployeeDirectory，Employee.id 为 option 身份，
+  // 不按姓名折叠——同店同名独立可选项）；employeeNo 辅助区分显示。
+  const directoryEmployees = currentEmployeeDirectory('all')
 
   const submit = async () => {
     setError('')
     if (!form.username.trim() || form.password.length < 6) {
       setError(t('请填写用户名和至少 6 位密码'))
+      return
+    }
+    if (['staff', 'manager'].includes(form.role) && !form.employeeId) {
+      setError(t('请选择绑定的员工'))
       return
     }
     setBusy(true)
@@ -165,6 +182,7 @@ function CreateUserModal({ onClose, onCreated }) {
           role: form.role,
           storeKeys: form.storeKeys,
           staffKey: form.staffKey,
+          employeeId: form.employeeId || undefined,
         }),
       })
       onCreated()
@@ -177,7 +195,7 @@ function CreateUserModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label={t('创建账号')} className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
@@ -251,11 +269,26 @@ function CreateUserModal({ onClose, onCreated }) {
           {['staff', 'manager'].includes(form.role) && (
             <div>
               <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定员工')}</span>
-              <select value={form.staffKey} onChange={(e) => setForm((s) => ({ ...s, staffKey: e.target.value }))} className={inputCls}>
+              <select
+                value={form.employeeId}
+                onChange={(e) => {
+                  const emp = directoryEmployees.find((s) => s.id === e.target.value)
+                  setForm((s) => ({
+                    ...s,
+                    employeeId: e.target.value,
+                    staffKey: emp ? `${emp.storeKey}::${emp.name}` : '',
+                  }))
+                }}
+                className={inputCls}
+              >
                 <option value="">{t('请选择员工')}</option>
-                {[...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
+                {directoryEmployees
                   .filter((s) => form.storeKeys.includes(s.storeKey))
-                  .map((s) => <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>{s.name}（{storeName(s.storeKey)}）</option>)}
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}（{storeName(s.storeKey)}）{s.employeeNo ? ` · ${s.employeeNo}` : ''}
+                    </option>
+                  ))}
               </select>
             </div>
           )}
@@ -346,18 +379,25 @@ function BindStoresModal({ user, onClose, onSaved }) {
 
 function RoleBindingModal({ user, role, onClose, onSaved }) {
   const [storeKeys, setStoreKeys] = useState(role === 'cashier' ? (user.storeKeys || []).slice(0, 1) : (user.storeKeys || []))
-  const [staffKey, setStaffKey] = useState(['manager', 'staff'].includes(role) ? (user.staffKey || '') : '')
+  // Gate 20：初始绑定 = User.employeeId（稳定身份）；staffKey 仅展示快照
+  const [employeeId, setEmployeeId] = useState(['manager', 'staff'].includes(role) ? (user.employeeId || '') : '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const staffOptions = [...new Map(employeeList('all').map((s) => [`${s.storeKey}::${s.name}`, s])).values()]
-    .filter((s) => storeKeys.includes(s.storeKey))
+  const directoryEmployees = currentEmployeeDirectory('all')
+  const staffOptions = directoryEmployees.filter((s) => storeKeys.includes(s.storeKey))
   const submit = async () => {
     setBusy(true)
     setError('')
     try {
+      const emp = directoryEmployees.find((s) => s.id === employeeId)
       await api(`/admin/users/${user.id}/role`, {
         method: 'PUT',
-        body: JSON.stringify({ role, storeKeys, staffKey: role === 'cashier' ? '' : staffKey }),
+        body: JSON.stringify({
+          role,
+          storeKeys,
+          staffKey: role === 'cashier' ? '' : (emp ? `${emp.storeKey}::${emp.name}` : ''),
+          employeeId: ['manager', 'staff'].includes(role) ? employeeId || undefined : undefined,
+        }),
       })
       await onSaved()
       onClose()
@@ -377,7 +417,7 @@ function RoleBindingModal({ user, role, onClose, onSaved }) {
         </div>
         <div className="mt-5 space-y-4">
           <div><span className="mb-1.5 block text-xs font-semibold text-slate-500">{role === 'cashier' ? t('绑定门店（仅一家）') : t('绑定门店')}</span><StoreCheckboxes single={role === 'cashier'} selected={storeKeys} onChange={(keys) => { setStoreKeys(keys); if (staffKey && !keys.includes(staffKey.split('::')[0])) setStaffKey('') }} /></div>
-          {['manager', 'staff'].includes(role) && <div><span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定员工')}</span><select value={staffKey} onChange={(e) => setStaffKey(e.target.value)} className={inputCls}><option value="">{t('请选择员工')}</option>{staffOptions.map((s) => <option key={`${s.storeKey}::${s.name}`} value={`${s.storeKey}::${s.name}`}>{s.name}（{storeName(s.storeKey)}）</option>)}</select></div>}
+          {['manager', 'staff'].includes(role) && <div><span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('绑定员工')}</span><select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className={inputCls}><option value="">{t('请选择员工')}</option>{staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}（{storeName(s.storeKey)}）{s.employeeNo ? ` · ${s.employeeNo}` : ''}</option>)}</select></div>}
           {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
         </div>
         <div className="mt-5 flex gap-2"><button onClick={onClose} className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">{t('取消')}</button><button onClick={submit} disabled={busy} className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{t('保存并切换')}</button></div>
@@ -390,6 +430,17 @@ function PermissionModal({ user, onClose, onSaved }) {
   const initialModules = user.permissions?.modules || {}
   const [modules, setModules] = useState(initialModules)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
+  const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
+  const [sweetCard, setSweetCard] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
+  const [externalOrderCreate, setExternalOrderCreate] = useState(user.permissions?.externalOrderCreate === true)
+  const [externalSettlementConfirm, setExternalSettlementConfirm] = useState(user.permissions?.externalSettlementConfirm === true)
+  const [manualExternalRefundRecord, setManualExternalRefundRecord] = useState(user.permissions?.manualExternalRefundRecord === true)
+  const [manualExternalRefundConfirm, setManualExternalRefundConfirm] = useState(user.permissions?.manualExternalRefundConfirm === true)
+  const [reportSalesView, setReportSalesView] = useState(user.permissions?.reportSalesView === true)
+  const [reportAllStores, setReportAllStores] = useState(user.permissions?.reportAllStores === true)
+  const [reportCostView, setReportCostView] = useState(user.permissions?.reportCostView === true)
+  const [reportLaborView, setReportLaborView] = useState(user.permissions?.reportLaborView === true)
+  const [reportCostManage, setReportCostManage] = useState(user.permissions?.reportCostManage === true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -403,7 +454,19 @@ function PermissionModal({ user, onClose, onSaved }) {
   }
   const resetDefaults = () => {
     const defaults = new Set(defaultModuleKeys(user.role, user.assetCenter === true))
-    setModules(Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)])))
+    const nextModules = Object.fromEntries(MODULE_GROUPS.flatMap((group) => group.modules).map((item) => [item.key, defaults.has(item.key)]))
+    setModules(nextModules)
+    setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
+    setSweetCard(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
+    setExternalOrderCreate(false)
+    setExternalSettlementConfirm(false)
+    setManualExternalRefundRecord(false)
+    setManualExternalRefundConfirm(false)
+    setReportSalesView(false)
+    setReportAllStores(false)
+    setReportCostView(false)
+    setReportLaborView(false)
+    setReportCostManage(false)
   }
   const submit = async () => {
     setBusy(true)
@@ -411,7 +474,21 @@ function PermissionModal({ user, onClose, onSaved }) {
     try {
       await api(`/admin/users/${user.id}/permissions`, {
         method: 'PUT',
-        body: JSON.stringify({ modules, inventoryTransferAll: transferAll }),
+        body: JSON.stringify({
+          modules,
+          inventoryTransferAll: transferAll,
+          dailyEntry,
+          sweetCard,
+          externalOrderCreate,
+          externalSettlementConfirm,
+          manualExternalRefundRecord,
+          manualExternalRefundConfirm,
+          reportSalesView,
+          reportAllStores: reportSalesView && reportAllStores,
+          reportCostView,
+          reportLaborView,
+          reportCostManage: reportCostView && reportLaborView && reportCostManage,
+        }),
       })
       await onSaved()
       try {
@@ -465,6 +542,89 @@ function PermissionModal({ user, onClose, onSaved }) {
             {t('允许管理全部门店的库存调拨（不受账号门店绑定限制）')}
           </label>
         )}
+        {modules['store-entry'] === true && (
+          <section className="mt-3 rounded-2xl border border-budu-100 bg-budu-50/60 p-3">
+            <p className="text-sm font-bold text-slate-700">{t('每日录入操作权限')}</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('编辑、确认与历史修正分开授权；门店范围仍受账号绑定限制。')}</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {DAILY_ENTRY_CAPABILITY_OPTIONS.map((item) => (
+                <label key={item.key} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={dailyEntry[item.key] === true}
+                    onChange={(event) => setDailyEntry((current) => ({ ...current, [item.key]: event.target.checked }))}
+                    className="h-4 w-4 accent-budu-500"
+                  />
+                  {t(item.label)}
+                </label>
+              ))}
+            </div>
+            {dailyEntry[DAILY_ENTRY_CAPABILITIES.REVISE] && (
+              <p className="mt-2 text-[11px] font-semibold text-amber-700">{t('历史修正必须经受控流程并写入审计日志。')}</p>
+            )}
+          </section>
+        )}
+        {modules['store-pos'] === true && (
+          <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-bold text-slate-700">{t('外部平台订单权限（功能尚未在 POS 开放）')}</p>
+            <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalOrderCreate} onChange={(e) => setExternalOrderCreate(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许创建外部平台订单')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={externalSettlementConfirm} onChange={(e) => setExternalSettlementConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许确认外部平台结算')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={manualExternalRefundRecord} onChange={(e) => setManualExternalRefundRecord(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许记录人工外部退款')}
+            </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+              <input type="checkbox" checked={manualExternalRefundConfirm} onChange={(e) => setManualExternalRefundConfirm(e.target.checked)} className="h-4 w-4 accent-budu-500" />
+              {t('允许确认人工外部退款事实')}
+            </label>
+          </section>
+        )}
+        {modules['sweet-card'] === true && (
+          <section className="mt-3 rounded-2xl border border-budu-100 bg-budu-50/60 p-3">
+            <p className="text-sm font-bold text-slate-700">{t('甜意卡独立权限')}</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('发卡、激活、冻结、作废与审计分开授权；POS 核销仍只认门店 POS 权限。')}</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.values(SWEET_CARD_CAPABILITIES).map((key) => <label key={key} className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-white/70 px-3 text-xs font-medium text-slate-600"><input type="checkbox" checked={sweetCard[key] === true} onChange={(event) => setSweetCard((current) => ({ ...current, [key]: event.target.checked }))} className="h-4 w-4 accent-budu-500" />{({ view: '查看', issue: '制卡/导出', manage: '管理/绑定/补发', activate: '激活', freeze: '冻结/解冻', void: '作废', audit: '审计' })[key]}</label>)}</div>
+          </section>
+        )}
+        <section className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-bold text-slate-700">{t('Report Center 销售数据权限（候选功能）')}</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('仅授权服务端销售查询；成本、工资和经营利润不在本权限范围内。')}</p>
+          <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={reportSalesView}
+              onChange={(event) => {
+                setReportSalesView(event.target.checked)
+                if (!event.target.checked) setReportAllStores(false)
+              }}
+              className="h-4 w-4 accent-budu-500"
+            />
+            {t('允许查看销售报表')}
+          </label>
+          <label className={`flex min-h-10 items-center gap-2 text-xs font-medium ${reportSalesView ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-300'}`}>
+            <input
+              type="checkbox"
+              checked={reportAllStores}
+              disabled={!reportSalesView}
+              onChange={(event) => setReportAllStores(event.target.checked)}
+              className="h-4 w-4 accent-budu-500 disabled:opacity-40"
+            />
+            {t('允许查看全部门店（否则仅限账号绑定门店）')}
+          </label>
+        </section>
+        <section className="mt-3 rounded-xl border border-rose-100 bg-rose-50/50 p-3">
+          <p className="text-xs font-bold text-slate-700">{t('经营成本敏感数据权限')}</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">{t('商品成本与人工工资分开授权；销售报表权限不会自动获得成本数据。')}</p>
+          <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600"><input type="checkbox" checked={reportCostView} onChange={(event) => { setReportCostView(event.target.checked); if (!event.target.checked) setReportCostManage(false) }} className="h-4 w-4 accent-budu-500" />{t('允许查看商品、租金、水电及其他成本')}</label>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600"><input type="checkbox" checked={reportLaborView} onChange={(event) => { setReportLaborView(event.target.checked); if (!event.target.checked) setReportCostManage(false) }} className="h-4 w-4 accent-budu-500" />{t('允许查看工资及人工附加成本')}</label>
+          <label className={`flex min-h-10 items-center gap-2 text-xs font-medium ${reportCostView && reportLaborView ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-300'}`}><input type="checkbox" checked={reportCostManage} disabled={!reportCostView || !reportLaborView} onChange={(event) => setReportCostManage(event.target.checked)} className="h-4 w-4 accent-budu-500 disabled:opacity-40" />{t('允许维护成本配置（独立高风险能力）')}</label>
+        </section>
         {user.permissionsUpdatedAt && <p className="mt-3 text-[11px] text-slate-400">{t('最近修改：{time} · {operator}', { time: new Date(user.permissionsUpdatedAt).toLocaleString(), operator: user.permissionsUpdatedBy || '开发者' })}</p>}
         {error && <p className="mt-3 text-xs font-medium text-rose-500">{error}</p>}
         <div className="mt-5 flex flex-wrap gap-2">
@@ -542,6 +702,26 @@ function AccountCard({ u, isSelf, currentUser, onChangeRole, onPermission, onBin
             {u.permissions?.inventoryTransferAll && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-[#ecfaf1] px-2 py-1 text-xs font-medium text-[#24a65a]">
                 ✓ {t('库存调拨全权限')}
+              </span>
+            )}
+            {u.permissions?.externalOrderCreate && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
+                ✓ {t('外部订单创建')}
+              </span>
+            )}
+            {u.permissions?.externalSettlementConfirm && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700">
+                ✓ {t('外部结算确认')}
+              </span>
+            )}
+            {u.permissions?.manualExternalRefundRecord && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                ✓ {t('外部退款记录')}
+              </span>
+            )}
+            {u.permissions?.manualExternalRefundConfirm && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">
+                ✓ {t('外部退款确认')}
               </span>
             )}
           </div>

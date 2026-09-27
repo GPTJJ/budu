@@ -34,8 +34,9 @@ test('DA-4: commitEntries 在 PG 失败时显式抛错（不写 KV 镜像）', (
 test('DA-4: loadUserData entries 仅以 PG 为权威（无 KV 初始值/回退）', () => {
   // 1) 不再存在 "PG 空 → 保留 KV entries" 的旧条件
   assert.ok(!userData.includes('v2.rows.length > 0'), '已移除 PG 空则保留 KV 的条件')
-  // 2) 基础 KV 数据中的 entries 被显式清空，只等 PG 填充
-  assert.match(userData, /cached\.entries = \{\} \/\/ entries 权威为 PG/, '基础 KV entries 不作为初始值')
+  // 2) Legacy cannot replace a last-success PG entry. Executable interleaving
+  // and initial-failure coverage lives in test-personnel-read-race.mjs.
+  assert.ok(!userData.includes('cached.entries = {}'), '刷新不得清空已成功的 PG entries')
   // 3) PG 填充逻辑
   assert.match(userData, /if \(v2 && Array\.isArray\(v2\.rows\)\)/, 'PG 返回（含空）即事实')
   // 4) PG 失败仅回退"上一次成功的 PG 缓存"并告警，非 KV 回退

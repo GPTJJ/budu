@@ -64,7 +64,7 @@ export function buildOrderSnapshot(products, items, options = {}) {
       throw httpError('订单中包含不存在、未上架或资料不完整的商品', 409)
     }
     const unitPrice = BigInt(product.salePriceCents)
-    const costPriceSnapshot = BigInt(product.costPriceCents)
+    const costPriceSnapshot = BigInt(product.effectiveCostPriceCents ?? product.costPriceCents)
     const isGift = gift === true
     const lineAmount = isGift ? 0n : unitPrice * BigInt(quantity)
     // Balls 礼盒搭配：口味明细拼进商品名快照（订单/小票可追溯）
@@ -132,12 +132,47 @@ export function assertOrderDeletable(order) {
 }
 
 /**
- * 订单取消守卫：存在未解决的微信支付（可能已扣款）时禁止取消，
+ * 订单取消守卫：存在任何未解决的外部支付（可能已扣款）时禁止取消，
  * 必须等查询/撤销到明确终态（failed/closed/revoked）后才能取消。
  */
-export function assertOrderCancelable(order, unresolvedWechatPayment) {
+export function assertOrderCancelable(order, unresolvedPayment) {
   if (order.status === 'cancelled') return
-  if (unresolvedWechatPayment) {
-    throw httpError('订单存在未核对的微信支付，请先完成核对后再操作', 409)
+  if (unresolvedPayment) {
+    throw httpError('订单存在未核对的支付，请先完成核对后再操作', 409)
+  }
+}
+
+/** 门店作废权限：最高权限可处理全部；收银/店长可处理所属门店；员工仅处理本人订单。 */
+export function canCancelOrder(user, order) {
+  if (!user || !order || user.status === 'disabled' || user.role === 'public') return false
+  if (['developer', 'admin', 'finance'].includes(user.role)) return true
+  const sameStore = Array.isArray(user.storeKeys) && user.storeKeys.includes(order.storeId)
+  if (!sameStore) return false
+  if (user.role === 'cashier' || user.role === 'manager') return true
+  return user.role === 'staff' && order.cashierId === user.id
+}
+
+/** 作废原因必须明确、短文本且不可包含控制字符，供永久审计展示。 */
+export function normalizeOrderCancelReason(value) {
+  const reason = String(value ?? '').trim()
+  if (reason.length < 2) throw httpError('请选择或填写作废原因')
+  if (reason.length > 100) throw httpError('作废原因不能超过 100 个字')
+  if (/[\u0000-\u001f\u007f]/.test(reason)) throw httpError('作废原因包含无效字符')
+  return reason
+}
+
+/**
+ * 营收只认“已成功收款且从未进入退款流程”的干净订单。
+ * 待支付/失败/异常订单，以及存在任意退款记录的订单，都不能进入营收、订单数和销量。
+ */
+export function buildRecognizedRevenueWhere(scope = {}) {
+  return {
+    AND: [
+      scope,
+      { status: { in: ['paid', 'completed'] } },
+      { paymentStatus: 'paid' },
+      { payments: { some: { status: 'success' } } },
+      { refunds: { none: {} } },
+    ],
   }
 }

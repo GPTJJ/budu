@@ -1,84 +1,122 @@
-// 收件信息智能拆分（姓名/电话/地址）单元测试
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseRecipientText } from '../src/utils/addressParser.js'
+import { mergeRecipientFields, normalizeRecipientText, parseRecipientText } from '../src/utils/addressParser.js'
 
-test('空格分隔：姓名 电话 地址', () => {
-  const r = parseRecipientText('张三 13800138000 北京市朝阳区望京街道阜通东大街6号院3号楼1201室')
-  assert.equal(r.name, '张三')
-  assert.equal(r.phone, '13800138000')
-  assert.ok(r.address.includes('北京市朝阳区'))
-  assert.equal(r.matched, true)
+const expectFields = (input, expected) => {
+  const actual = parseRecipientText(input)
+  for (const [key, value] of Object.entries(expected)) assert.equal(actual[key], value, key)
+  return actual
+}
+
+test('primary structure: multiline name/address/phone/product note', () => {
+  expectFields(
+    '童小诗\n福建省三明市永安市星河花园12栋二单元1001\n18250577559\n92生巧，柚子生巧，赠麻薯豆',
+    {
+      recipientName: '童小诗',
+      phone: '18250577559',
+      address: '福建省三明市永安市星河花园12栋二单元1001',
+      note: '92生巧，柚子生巧，赠麻薯豆',
+      matched: true,
+    },
+  )
 })
 
-test('带标签：收件人/电话/地址', () => {
-  const r = parseRecipientText('收件人：李四\n电话：13912345678\n地址：上海市浦东新区张江路88号')
-  assert.equal(r.name, '李四')
-  assert.equal(r.phone, '13912345678')
-  assert.ok(r.address.includes('上海市浦东新区'))
+test('name/phone/address order variations', () => {
+  const address = '北京市朝阳区望京街道阜通东大街6号院3号楼1201室'
+  for (const input of [
+    `张三 13800138000 ${address}`,
+    `13800138000 张三 ${address}`,
+    `${address}\n张三\n13800138000`,
+    `张三\n13800138000\n${address}`,
+  ]) {
+    expectFields(input, { recipientName: '张三', phone: '13800138000', address })
+  }
 })
 
-test('逗号分隔且顺序任意（电话在前）', () => {
-  const r = parseRecipientText('13712345678，王五，广州市天河区体育西路123号')
-  assert.equal(r.phone, '13712345678')
-  assert.equal(r.name, '王五')
-  assert.ok(r.address.includes('广州市天河区'))
+test('labeled and compact inputs use the same rules', () => {
+  expectFields('收件人：李四\n电话：13912345678\n地址：上海市浦东新区张江路88号', {
+    recipientName: '李四',
+    phone: '13912345678',
+    address: '上海市浦东新区张江路88号',
+  })
+  expectFields('河南省武冈市上店镇廖庄壹号收件人古月手机号135-2375-7594', {
+    recipientName: '古月',
+    phone: '13523757594',
+    address: '河南省武冈市上店镇廖庄壹号',
+  })
 })
 
-test('座机号码', () => {
-  const r = parseRecipientText('赵六 010-67891234 北京市海淀区中关村大街1号')
-  assert.equal(r.phone, '01067891234')
-  assert.equal(r.name, '赵六')
+test('phone normalization supports spaces, hyphens and full-width digits', () => {
+  expectFields('古月\n135 2375 7594\n河南省武冈市上店镇27号', { phone: '13523757594' })
+  expectFields('古月\n135-2375-7594\n河南省武冈市上店镇27号', { phone: '13523757594' })
+  expectFields('古月\n１３５２３７５７５９４\n河南省武冈市上店镇27号', { phone: '13523757594' })
 })
 
-test('带称谓的姓名', () => {
-  const r = parseRecipientText('张三先生 13800138000 北京市朝阳区')
-  assert.equal(r.name, '张三')
+test('address keeps building/unit/room facts and stops before note', () => {
+  expectFields('王五\n13712345678\n广州市天河区体育西路12栋2单元1001\n巧克力2盒，下午送', {
+    address: '广州市天河区体育西路12栋2单元1001',
+    note: '巧克力2盒，下午送',
+  })
+  expectFields('王五，13712345678，广州市天河区体育西路27号，蛋糕1个', {
+    address: '广州市天河区体育西路27号',
+    note: '蛋糕1个',
+  })
 })
 
-test('文本内嵌电话（无空格分隔）', () => {
-  const r = parseRecipientText('深圳市南山区科技园路100号 陈七 13512345678')
-  assert.equal(r.phone, '13512345678')
-  assert.equal(r.name, '陈七')
-  assert.ok(r.address.includes('深圳市南山区'))
+test('name lengths 2/3/4 Chinese characters', () => {
+  for (const name of ['张三', '林小满', '欧阳小满']) {
+    expectFields(`${name}\n13800138000\n北京市海淀区中关村大街1号`, { recipientName: name })
+  }
 })
 
-test('OCR 常见多行文本', () => {
-  const r = parseRecipientText('周八\n联系电话 13612345678\n收货地址 杭州市西湖区文三路 500 号')
-  assert.equal(r.name, '周八')
-  assert.equal(r.phone, '13612345678')
-  assert.ok(r.address.includes('杭州市西湖区'))
+test('multiple phones prefer labeled contact and preserve the other number', () => {
+  const result = parseRecipientText('备用 13900001111\n联系人：张三\n联系电话：13800138000\n北京市海淀区中关村大街1号')
+  assert.equal(result.phone, '13800138000')
+  assert.match(result.note, /13900001111/)
 })
 
-test('空文本或无关文本不误识别', () => {
-  assert.equal(parseRecipientText('').matched, false)
-  const r = parseRecipientText('今天天气不错')
-  assert.equal(r.matched, false)
+test('bank card and order/product numbers are never recognized as phone', () => {
+  const result = parseRecipientText('银行卡 6222030405017853986\n电话 13800138000\n北京市海淀区中关村大街1号\n订单 202608280001')
+  assert.equal(result.phone, '13800138000')
+  assert.doesNotMatch(result.phone, /6222/)
+  const productOnly = parseRecipientText('商品 1380013800 盒')
+  assert.equal(productOnly.phone, '')
 })
 
-test('11 位手机号与 1 开头的座机区分', () => {
-  // 1012345678 是 10 位（座机风格），不应被当作手机号匹配成 11 位
-  const r = parseRecipientText('钱九 01012345678 北京市东城区')
-  assert.equal(r.phone, '01012345678')
+test('note optional and partial parse remains fail-safe', () => {
+  assert.equal(parseRecipientText('张三\n13800138000\n北京市海淀区中关村大街1号').note, '')
+  expectFields('北京市海淀区中关村大街1号', { recipientName: '', phone: '', address: '北京市海淀区中关村大街1号' })
+  expectFields('13800138000\n北京市海淀区中关村大街1号', { recipientName: '', phone: '13800138000', address: '北京市海淀区中关村大街1号' })
+  const ambiguous = parseRecipientText('今天天气不错')
+  assert.equal(ambiguous.matched, false)
+  assert.equal(ambiguous.recipientName, '')
+  assert.equal(ambiguous.phone, '')
+  assert.equal(ambiguous.address, '')
+  assert.equal(ambiguous.note, '')
+  assert.equal(ambiguous.unparsedText, '今天天气不错')
 })
 
-test('手机号带横杠（135-2375-7594）', () => {
-  const r = parseRecipientText('古月 135-2375-7594 河南省武冈市上店镇廖庄壹号')
-  assert.equal(r.phone, '13523757594')
-  assert.equal(r.name, '古月')
-  assert.ok(r.address.includes('河南省武冈市'))
+test('CRLF, spacing and punctuation normalization preserves field boundaries', () => {
+  assert.equal(normalizeRecipientText(' 张三\r\n 138 0013 8000 \r\n 北京市朝阳区XX路2号 '), '张三\n138 0013 8000\n北京市朝阳区XX路2号')
+  expectFields('张三；138-0013-8000；北京市朝阳区XX路2号；备注：晚间配送', {
+    recipientName: '张三',
+    phone: '13800138000',
+    address: '北京市朝阳区XX路2号',
+    note: '晚间配送',
+  })
 })
 
-test('紧凑无分隔：地址收件人手机号连写', () => {
-  // 录屏实际场景：无空格无冒号，姓名/电话标签紧贴地址尾部
-  const r = parseRecipientText('河南省武冈市上店镇廖庄壹号收件人古月手机号135-2375-7594')
-  assert.equal(r.name, '古月')
-  assert.equal(r.phone, '13523757594')
-  assert.equal(r.address, '河南省武冈市上店镇廖庄壹号')
-})
-
-test('手机号空格分隔（135 2375 7594）', () => {
-  const r = parseRecipientText('135 2375 7594 古月 河南省武冈市')
-  assert.equal(r.phone, '13523757594')
-  assert.equal(r.name, '古月')
+test('existing user-entered values are never overwritten', () => {
+  const parsed = parseRecipientText('李四\n13912345678\n上海市浦东新区张江路88号\n蛋糕1个')
+  assert.deepEqual(
+    mergeRecipientFields(
+      { recipientName: '手工姓名', phone: '13600000000', address: '手工地址', note: '手工备注' },
+      parsed,
+    ),
+    { recipientName: '手工姓名', phone: '13600000000', address: '手工地址', note: '手工备注' },
+  )
+  assert.deepEqual(
+    mergeRecipientFields({ recipientName: '', phone: '', address: '', note: '' }, parsed),
+    { recipientName: '李四', phone: '13912345678', address: '上海市浦东新区张江路88号', note: '蛋糕1个' },
+  )
 })

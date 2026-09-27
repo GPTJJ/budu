@@ -12,6 +12,38 @@
 - 管理员账号：`budu`（第一个注册用户，密码由用户本人持有）
 - 技术栈说明：登录/账号等共享数据在 Upstash KV（budu-db）；业绩/申请/库存/发票等业务数据在 PostgreSQL（Prisma）
 
+## 最新可信快照（2026-09-05：Sweet Card Xidan Commercial Live）
+
+- 状态：**XIDAN_COMMERCIAL_LIVE**；go-live `2026-09-05T04:17:04.700Z`，actor `daa77021…`，scope xidan。
+- Production runtime：`fe4a7254a0ec9a68390cefe12b0766b3ec15ef93`；`budu-prod-fe4a725-sweet-card-xidan-live` — VERIFIED。
+- PostgreSQL authority：`budu_bj006`；Migration 65 applied / 0 failed；商业开关 ENABLED；单写者 1 — VERIFIED。
+- 首批 `BUDU-SC-202609-A01`：`COMMERCIAL`，10 张 × 20,000 分 = 200,000 分；全部 CREATED/UNACTIVATED、REQUIRED binding、recipient 空、无核销/退款。
+- 上线 smoke 使用 ACCEPTANCE_TEST 卡完成一次 10 分核销和 10 分全额退款；debit/credit 各一次，余额 90→80→90，订单 refunded，无 Payment fact。
+- Full Ledger：ISSUE 250,150 - REDEEM 160 + REFUND 100 = balance/Ledger 250,090 cents，delta 0。
+- Commercial-only：1 batch / 10 cards / issued 200,000 / redeemed 0 / refunded 0 / outstanding 200,000 cents。
+- 3 名批准 xidan operator ALLOW；未授权 xidan、其他门店、非直营探测、spoof 与普通 POS admin API 均 DENY。
+- POS / Cash / WeChat / Alipay / reports / permissions / health 全部 PASS；未创建新 provider charge。
+- CURRENT canonical backup：`/opt/budu/.rollback-assets/sweet-card-xidan-golive-fe4a725-20260905/current-canonical-budu_bj006-m65-xidan-live.dump`，SHA-256 `b86e40aac33675ae16829a3024525d2bd0c8ac21f7db99f355122fbf32ffe1c2`，隔离 restore PASS。
+- 西单首日 heartbeat monitoring ACTIVE；首个 409/5xx/P2034/negative-balance/credential-error snapshot 全为 0。
+- 完整 checkpoint：`docs/checkpoints/2026-09-05-sweet-card-xidan-commercial-live.md`。
+
+## 最新生产快照（2026-08-29：开发者安全删除）
+
+- 状态：**VERIFIED — LIVE**
+- 生产代码 SHA：`b6bacb1f061fa10992ee097817d824a237db462f`
+- 发布分支：`codex/developer-safe-delete`
+- 成功 GitHub Actions：`33250216419`
+- Public health：`ok=true`、`env=prod`、`gitSha=b6bacb1f061f`、`dbOk=true`
+- PostgreSQL authority：`budu_bj006`
+- Migration ledger：`56`（新增 additive migration `20260829200000_developer_safe_delete`）
+- 交接 checkpoint：`docs/checkpoints/2026-08-29-developer-safe-delete-production.md`
+
+已上线仅开发者可用的业务记录安全删除：门店邮寄、开发票、库存调拨、采购申请、合作商供货均采用软删除，要求独立二级密码、删除原因并写入不可覆盖审计；普通列表、通知、统计和导出排除已删除记录，开发者可在系统设置的“已删除记录”中心审计和恢复，原 ID、子记录与历史事实保持不变。
+
+验证：独立 PostgreSQL 工作流覆盖五类高风险状态、权限、限流、排除、审计和恢复；WebKit gate 93/93，build PASS；生产迁移、writer、历史摘要、candidate、public health 和 375px 开发者 UI smoke 均通过。生产 smoke 未执行删除或恢复。
+
+当前下一步：无自动 Next Action；仅监控生产。任何真实删除/恢复均应由已授权开发者在 UI 中输入二级密码后明确执行。
+
 ## 最新进度快照（2026-08-23：V2.20，分支已合并 main，与线上一致）
 
 当前版本：**V2.20**（提交 `9a12dbf` 之后的最新 HEAD）。**main 分支 = 线上生产**，任何平台/设备 clone 或 GitHub 下载 zip 均为最新代码。

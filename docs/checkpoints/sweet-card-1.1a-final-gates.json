@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T22:29:00+08:00",
+  "overall": "SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE",
+  "modelConfiguration": "MODEL_CONFIGURATION_NOT_VERIFIABLE",
+  "candidates": {
+    "osImplementation": "cc5dcf12fcbc9ae9552921d0fa917898a8403998",
+    "miniProgramA8": "4c2ba50408bea6ea5e43bf54727f313ca0f85d4c",
+    "productionCandidate": null
+  },
+  "gates": {
+    "A1_A7": "PASS",
+    "A8": "A8_PRIVACY_REVIEW_PENDING",
+    "A9": "PASS",
+    "A10": "NOT_STARTED_PRIVACY_REVIEW_PENDING"
+  },
+  "privacy": {
+    "candidateNotice": "READY",
+    "officialVersionEvidence": "VERIFIED",
+    "platformPrivacyEvidence": "PRIVACY_UPDATED_CONTENT_VERIFIED",
+    "securityScan": "NO_SECRET_LEAK",
+    "officialMiniProgram": {
+      "version": "3.2.7",
+      "publisher": "Dh",
+      "publishedAt": "2026-09-04T10:18:07+08:00",
+      "remark": "首页 OUR STORY 品牌故事文案更新",
+      "state": "ONLINE",
+      "reviewVersion": "NONE",
+      "evidencePath": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-official-version-baseline.png",
+      "evidenceSha256": "ee90a1541e9391bceebecc5eabdd191a6dd304163ed643871188f718153c933f"
+    },
+    "privacyChangeRequired": false,
+    "privacyEffectiveStatus": "PRIVACY_REVIEW_PENDING_USER_OBSERVED",
+    "privacyEvidence": {
+      "guideTitle": "budu小卖部 小程序隐私保护指引",
+      "developer": "北京三三得久企业管理有限公司",
+      "contactMethod": "PRESENT_REDACTED",
+      "retention": "SHORTEST_NECESSARY",
+      "thirdPartySdkEntries": "NONE_SHOWN",
+      "evidencePaths": [
+        "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-1-redacted.jpg",
+        "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-2-redacted.jpg"
+      ],
+      "evidenceSha256": [
+        "3b5c5fc17ba3198ffd6856496d116aa94ef0fd056fe6813164ec6618ee74b5ab",
+        "bb9020a82c70806c41bc1eaa01c972b57205dc3e3727bf8dd092efc987945405"
+      ],
+      "updatedContentEvidencePath": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-updated-content.png",
+      "updatedContentEvidenceSha256": "f0b16bae1654d6ee105179ffc68ea81f29cd090375fb7c18b02d1f2e2480e4cc",
+      "updatedContentVerification": "PASS"
+    },
+    "privacyStatusEvidence": {
+      "status": "审核中",
+      "evidenceStrength": "OBSERVED_USER_REPORTED",
+      "screenshot": "NOT_PROVIDED",
+      "updatedAt": "NOT_SHOWN"
+    }
+  },
+  "realTestE2E": {
+    "chain": "TEST_EXPERIENCE_VERSION_TO_TEST_CLOUDBASE_TO_TEST_API_TO_budu_sc11a_test",
+    "userA": "PASS_STABLE_REAL_WECHAT_IDENTITY",
+    "userB": "PASS_DIFFERENT_REAL_WECHAT_IDENTITY",
+    "sameUserRepeatedLogin": "PASS_USER_A_26_SESSIONS_ONE_IDENTITY",
+    "differentStableUsers": true,
+    "none": "PASS",
+    "optional": "PASS",
+    "required": "PASS",
+    "physical": "PASS",
+    "electronic": "PASS",
+    "wallet": "PASS",
+    "sameUserReplay": "PASS",
+    "twoUserRace": "PASS_ONE_201_ONE_OWNER",
+    "crossUserDenial": "PASS_409_AND_EMPTY_WALLET",
+    "fixtureCleanup": "PASS_EXACT"
+  },
+  "miniProgramDevelopmentUpload": {
+    "performed": true,
+    "authorizedByUser": true,
+    "appId": "wxfce0a3c4bb430023",
+    "version": "3.5.0-a9-test",
+    "description": "A9 TEST ONLY | Sweet Card 1.1A Test CloudBase | DO NOT REVIEW OR RELEASE",
+    "packageBytes": 2054525,
+    "cloudEnvironment": "budu-test-d8gwb4xwy41dc6c61",
+    "experienceVersionSelected": true,
+    "reviewSubmitted": false,
+    "released": false
+  },
+  "test": {
+    "database": "budu_sc11a_test",
+    "migrationsApplied": 70,
+    "migrationsFailed": 0,
+    "retainedA9Fixture": {
+      "status": "CLEANED",
+      "batches": 0,
+      "accounts": 0,
+      "claims": 0,
+      "bindings": 0,
+      "wechatIdentities": 0,
+      "customerSessions": 0
+    }
+  },
+  "production": {
+    "runtimeSha": "3838b35b6e2a",
+    "database": "budu_bj006",
+    "migrationsApplied": 67,
+    "migrationsFailed": 0,
+    "publicHealth": "PASS",
+    "internalHealth": "PASS",
+    "restartCount": 0,
+    "singleWriterCount": 1,
+    "claimFeatureFlag": "OFF_ENV_ABSENT",
+    "balanceCents": 500090,
+    "ledgerCents": 500090,
+    "deltaCents": 0,
+    "deployPerformed": false,
+    "schemaWritePerformed": false,
+    "businessWritePerformed": false
+  },
+  "rollout": {
+    "controlledRollout": "NOT_STARTED",
+    "fullPublicRollout": "NOT_AUTHORIZED",
+    "sweetCard1_1B": "NOT_STARTED"
+  },
+  "nextAction": "WAIT_FOR_PRIVACY_REVIEW_RESULT_AND_CAPTURE_STATUS"
+}

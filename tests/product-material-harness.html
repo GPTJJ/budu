@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Material Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import ProductMaterialManagementPage from '/src/components/ProductMaterialManagementPage.jsx'
+    import '/src/index.css'
+
+    const rows = [
+      { id: 'm-used', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1, used: true },
+      { id: 'm-off', category: 'material', name: '旧纸箱', code: '', enabled: false, sortOrder: 9, version: 1, used: false },
+    ]
+    const requests = []
+    window.__productMaterialTest = { rows, requests }
+    window.fetch = async (url, options = {}) => {
+      const parsed = new URL(url, location.origin)
+      const path = parsed.pathname
+      const method = options.method || 'GET'
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/v2/transfer-master-items' && method === 'GET') {
+        requests.push({ method, path: `${path}${parsed.search}` })
+        return json({ rows: rows.filter((item) => item.category === parsed.searchParams.get('category')) })
+      }
+      if (path === '/api/v2/transfer-master-items' && method === 'POST') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const item = { ...body, id: `new-${rows.length}`, version: 1, used: false }
+        rows.push(item); return json({ ok: true, item }, 201)
+      }
+      const update = path.match(/^\/api\/v2\/transfer-master-items\/([^/]+)$/)
+      if (update && method === 'PUT') {
+        const body = JSON.parse(options.body); requests.push({ method, path, body })
+        const index = rows.findIndex((item) => item.id === update[1])
+        rows[index] = { ...rows[index], ...body, version: rows[index].version + 1 }
+        return json({ ok: true, item: rows[index] })
+      }
+      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+    }
+    createRoot(document.getElementById('root')).render(React.createElement(ProductMaterialManagementPage, { onBack: () => {} }))
+  </script></body>
+</html>

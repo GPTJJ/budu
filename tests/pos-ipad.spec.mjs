@@ -56,6 +56,122 @@ async function enterPayment(page, url) {
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
 }
 
+for (const width of [320, 340, 375, 390, 430, 1024]) {
+  test(`${width}px POS header 使用 lowercase budu`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width >= 768 ? 768 : 820 })
+    await page.goto(`/tests/pos-harness.html?user=brand-header-${width}`)
+    await expect(page.getByText('budu POS', { exact: true })).toHaveCount(1)
+    if (width >= 768) await expect(page.getByText('budu POS', { exact: true })).toBeVisible()
+    await expect(page.getByText('BUDU POS', { exact: true })).toHaveCount(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
+test('iPad 横屏商品分类固定五列并按正式顺序换成两行', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=category-layout')
+  const categoryRegion = page.getByLabel('商品分类')
+  const buttons = categoryRegion.getByRole('button')
+  await expect(buttons).toHaveCount(8)
+  await expect(buttons.first()).toHaveText('全部')
+  const layout = await categoryRegion.evaluate((region) => {
+    const rects = [...region.querySelectorAll('button')].map((button) => {
+      const rect = button.getBoundingClientRect()
+      return { text: button.textContent.trim(), x: rect.x, y: rect.y, width: rect.width, right: rect.right, bottom: rect.bottom }
+    })
+    const rows = [...new Set(rects.map((rect) => Math.round(rect.y)))]
+    return {
+      rects,
+      rows,
+      perRow: rows.map((rowY) => rects.filter((rect) => Math.round(rect.y) === rowY).length),
+      region: region.getBoundingClientRect().toJSON(),
+      pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }
+  })
+  expect(layout.rects.map((item) => item.text)).toEqual(['全部', '布丁', '蛋糕', '饮品', '冰淇淋', '巧克力豆', '森醒', '太妃糖礼盒超长分类名称'])
+  expect(layout.rows).toHaveLength(2)
+  expect(layout.perRow).toEqual([5, 3])
+  expect(Math.max(...layout.rects.map((item) => item.width)) - Math.min(...layout.rects.map((item) => item.width))).toBeLessThanOrEqual(1)
+  expect(Math.max(...layout.rects.map((item) => item.right))).toBeLessThanOrEqual(layout.region.right + 1)
+  expect(layout.pageOverflow).toBe(0)
+
+  await page.getByRole('button', { name: '冰淇淋', exact: true }).click()
+  await expect(page.getByRole('button', { name: /香草冰淇淋/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toHaveCount(0)
+  await page.getByRole('button', { name: '全部', exact: true }).click()
+  await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect.poll(() => categoryRegion.evaluate((region) => {
+    const rows = [...new Set([...region.querySelectorAll('button')].map((button) => Math.round(button.getBoundingClientRect().y)))]
+    return {
+      perRow: rows.map((rowY) => [...region.querySelectorAll('button')].filter((button) => Math.round(button.getBoundingClientRect().y) === rowY).length),
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }
+  })).toEqual({ perRow: [5, 3], overflow: 0 })
+})
+
+test('POS 商品组聚合后选择款式仍把真实 SKU 加入订单', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=product-group-order&groups=1')
+  const luckyGroup = page.locator('[data-product-group-id="pg-lucky"]')
+  await expect(luckyGroup).toHaveCount(1)
+  await expect(luckyGroup).toContainText('12号幸运小饼干')
+  await expect(luckyGroup).toContainText('¥79.00 起')
+  await expect(luckyGroup).toContainText('4 个款式')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toHaveCount(0)
+  await expect(luckyGroup.locator('img')).toHaveAttribute('src', /\/api\/v2\/pos\/product-groups\/pg-lucky\/thumbnail/)
+  await expect(luckyGroup.locator('img')).toHaveAttribute('loading', 'lazy')
+
+  const samePriceGroup = page.locator('[data-product-group-id="pg-yeti"]')
+  await expect(samePriceGroup).toContainText('¥99.00')
+  await expect(samePriceGroup).not.toContainText('起')
+  await expect(samePriceGroup.locator('img')).toHaveAttribute('src', /\/api\/v2\/pos\/products\/p-yeti-white\/thumbnail/)
+
+  await luckyGroup.click()
+  const sheet = page.getByRole('dialog', { name: '选择12号幸运小饼干款式' })
+  await expect(sheet.locator('[data-variant-product-id]')).toHaveCount(4)
+  await expect(sheet.locator('[data-variant-product-id="p-lucky-blue"] img')).toHaveAttribute('src', /\/api\/v2\/pos\/products\/p-lucky-blue\/thumbnail/)
+  await expect(sheet.locator('[data-variant-product-id="p-lucky-blue"] img')).toHaveAttribute('loading', 'lazy')
+  await expect(sheet.getByText('蓝', { exact: true })).toBeVisible()
+  await sheet.locator('[data-variant-product-id="p-lucky-blue"]').click()
+  await expect(page.getByText('12号幸运小饼干-蓝', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '结算', exact: true }).click()
+  await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
+  const orderBody = await page.evaluate(() => window.__lastPosOrderBody)
+  expect(orderBody.items).toEqual([expect.objectContaining({ productId: 'p-lucky-blue', quantity: 1 })])
+})
+
+test('POS 商品组支持组名、款式与 SKU 搜索且单一结果直接展示真实商品', async ({ page }) => {
+  await page.goto('/tests/pos-harness.html?user=product-group-search&groups=1')
+  const search = page.getByPlaceholder('搜索商品名称 / SKU / 条码')
+  await search.fill('12号幸运小饼干')
+  await expect(page.locator('[data-product-group-id="pg-lucky"]')).toBeVisible()
+  await search.fill('蓝')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toBeVisible()
+  await expect(page.locator('[data-product-group-id="pg-lucky"]')).toHaveCount(0)
+  await search.fill('LUCKY-12-BLUE')
+  await expect(page.locator('[data-product-id="p-lucky-blue"]')).toBeVisible()
+  await page.locator('[data-product-id="p-lucky-blue"]').click()
+  await expect(page.getByTestId('pos-cart-panel').getByText('12号幸运小饼干-蓝', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
+for (const width of [320, 340, 375, 390, 430]) {
+  test(`${width}px POS 商品组与款式层无横向溢出`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 820 })
+    await page.goto(`/tests/pos-harness.html?user=product-group-mobile-${width}&groups=1`)
+    const group = page.locator('[data-product-group-id="pg-lucky"]')
+    await expect(group).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+    await group.click()
+    const sheet = page.getByRole('dialog', { name: '选择12号幸运小饼干款式' })
+    await expect(sheet).toBeVisible()
+    const bounds = await sheet.locator(':scope > div').nth(1).boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.width).toBeLessThanOrEqual(width)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+  })
+}
+
 test('iPad 横屏左订单右商品、快速加购、购物车和搜索', async ({ page }) => {
   await page.goto('/tests/pos-harness.html?user=layout-user')
   await expect(page.getByRole('heading', { name: '当前订单' })).toBeVisible()
@@ -245,6 +361,30 @@ test('live 现金模式：微信/支付宝暂未开通，现金确认收款后�
   expect(await page.evaluate(() => window.__paymentRequestCount)).toBe(1)
 })
 
+test('iPad WebKit 支付宝灰度开启后可扫码，付款码不写浏览器存储', async ({ page }) => {
+  const authCode = '287634438256643948'
+  await enterPayment(page, `/tests/pos-harness.html?user=alipay-live&posmode=live&alipay=1&codes=${authCode}`)
+  await expect(page.getByRole('button', { name: '支付宝扫码', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
+  await page.getByRole('button', { name: '支付宝扫码', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '支付宝付款码扫码' })).toBeVisible()
+  await expect(page.getByText('支付成功', { exact: true })).toBeVisible()
+  expect(await page.evaluate((code) => JSON.stringify({ local: localStorage, session: sessionStorage }).includes(code), authCode)).toBe(false)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
+test('375px 支付宝 pending 时禁用跨渠道付款，撤销明确后恢复', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await enterPayment(page, '/tests/pos-harness.html?user=alipay-pending&posmode=live&alipay=1&paymode=pending&codes=287634438256643948')
+  await page.getByRole('button', { name: '支付宝扫码', exact: true }).click()
+  await expect(page.getByText('正在核对支付宝扣款结果，请勿再次扫码或改用其他支付方式', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /现金收款/ })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()
+  await page.getByRole('button', { name: '关闭当前支付', exact: true }).click()
+  await expect(page.getByRole('button', { name: '现金收款', exact: true })).toBeEnabled()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+})
+
 test('手机端 POS：底部结算栏、分类横滑、购物车抽屉与结算', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/tests/pos-harness.html?user=mobile-pos')
@@ -401,18 +541,18 @@ test('R2：POS 配置按当前门店拉取（携带 storeId），切换门店重
   await page.goto('/tests/pos-harness.html?user=store-config&stores=2&configStale=1')
   await expect(page.getByRole('button', { name: /卡皮巴拉布丁/ })).toBeVisible()
   // 1) 首次配置请求必须携带当前门店 storeId（服务端按门店返回微信可用性）
-  await expect.poll(() => page.evaluate(() => window.__posConfigRequests[0]?.storeId)).toBe('test-store')
+  await expect.poll(() => page.evaluate(() => window.__posConfigRequests[0]?.storeId)).toBe('tongying')
   // 2) 切换到第二门店 → 立即触发携带新 storeId 的配置请求
-  await page.getByRole('combobox').selectOption('store-2')
+  await page.getByRole('combobox').selectOption('xidan')
   await expect.poll(() => page.evaluate(() => window.__posConfigRequests.length)).toBeGreaterThanOrEqual(2)
-  await expect.poll(() => page.evaluate(() => window.__posConfigRequests.at(-1)?.storeId)).toBe('store-2')
-  // 3) 进入结算页：通道必须跟随 store-2 配置（未授权微信 → 仅现金，微信/支付宝禁用）
+  await expect.poll(() => page.evaluate(() => window.__posConfigRequests.at(-1)?.storeId)).toBe('xidan')
+  // 3) 进入结算页：通道必须跟随西单配置（未授权微信 → 仅现金，微信/支付宝禁用）
   await page.getByRole('button', { name: /卡皮巴拉布丁/ }).click()
   await page.getByRole('button', { name: '结算', exact: true }).click()
   await expect(page.getByText('应付金额', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
   await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()
-  // 4) 过期响应防护：store-1 的慢响应（300ms）在切换后到达，必须被丢弃，不得覆盖 store-2 配置
+  // 4) 过期响应防护：通盈的慢响应（300ms）在切换后到达，必须被丢弃，不得覆盖西单配置
   await page.waitForTimeout(600)
   await expect(page.getByRole('button', { name: /微信扫码/ })).toBeDisabled()
   await expect(page.getByRole('button', { name: /支付宝扫码/ })).toBeDisabled()

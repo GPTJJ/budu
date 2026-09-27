@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T22:29:00+08:00",
+  "status": "PRIVACY_REVIEW_PENDING",
+  "changeRequired": false,
+  "guide": {
+    "title": "budu小卖部 小程序隐私保护指引",
+    "developer": "北京三三得久企业管理有限公司",
+    "contactMethodPresent": true,
+    "contactValueRedacted": true,
+    "retention": "SHORTEST_NECESSARY",
+    "thirdPartyPluginSdkEntries": "NONE_SHOWN",
+    "minorProtection": "PRESENT",
+    "dataSubjectRights": "PRESENT"
+  },
+  "currentInformationTypes": [
+    "微信昵称和头像",
+    "手机号",
+    "剪切板",
+    "订单信息",
+    "地址",
+    "微信openid",
+    "订单信息：商品、金额、状态",
+    "评价与退款信息",
+    "微信支付信息",
+    "收件人/取件人姓名及订单备注"
+  ],
+  "gap": {
+    "wechatIdentityPurposeMentionsSweetCardAccountMapping": false,
+    "sweetCardOwnershipBindingWalletRelationshipDeclared": false,
+    "sweetCardRecipientDisplayPurposeDeclared": false
+  },
+  "requiredMinimalChange": [
+    {
+      "field": "微信openid用途",
+      "text": "用于识别当前微信用户并关联 budu 账户，记录甜意卡领取、归属、绑定关系及“我的甜意卡”展示。"
+    },
+    {
+      "field": "新增信息类型",
+      "type": "甜意卡账户关系及卡片信息",
+      "text": "用于甜意卡领取、绑定，以及在“我的甜意卡”中查询余额、状态和可用门店。"
+    },
+    {
+      "field": "新增信息类型",
+      "type": "甜意卡收礼人称呼与祝福语",
+      "text": "用于甜意卡卡面展示，不作为身份认证或领取凭证。"
+    }
+  ],
+  "excludedClaims": [
+    "甜意卡线上支付",
+    "甜意卡线上退款",
+    "全国下单",
+    "新增物流"
+  ],
+  "evidence": [
+    {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-1-redacted.jpg",
+      "sha256": "3b5c5fc17ba3198ffd6856496d116aa94ef0fd056fe6813164ec6618ee74b5ab"
+    },
+    {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-2-redacted.jpg",
+      "sha256": "bb9020a82c70806c41bc1eaa01c972b57205dc3e3727bf8dd092efc987945405"
+    },
+    {
+      "path": "/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-updated-content.png",
+      "sha256": "f0b16bae1654d6ee105179ffc68ea81f29cd090375fb7c18b02d1f2e2480e4cc",
+      "classification": "UPDATED_CONTENT_FULL_TEXT"
+    }
+  ],
+  "platformMutationPerformed": "USER_PERFORMED_OBSERVED",
+  "effectiveStatusAndUpdatedAt": {
+    "status": "审核中",
+    "evidenceStrength": "OBSERVED_USER_REPORTED",
+    "updatedAt": "NOT_SHOWN",
+    "screenshot": "NOT_PROVIDED"
+  },
+  "currentContentVerification": {
+    "wechatOpenidPurpose": "PASS_PRESERVES_ORDER_PAYMENT_AFTERSALES_AND_ADDS_SWEET_CARD",
+    "sweetCardAccountRelationshipAndCardInformation": "PASS",
+    "sweetCardRecipientNameAndBlessing": "PASS",
+    "excluded1_1BClaims": "PASS"
+  }
+}

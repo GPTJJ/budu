@@ -13,6 +13,11 @@ export function isValidWechatAuthCode(value) {
   return WECHAT_AUTH_CODE_RE.test(String(value ?? '').trim())
 }
 
+// 支付宝付款码仅作为瞬时支付凭证传给后端，不持久化；长度边界与 Provider 一致。
+export function isValidAlipayAuthCode(value) {
+  return /^\d{16,64}$/.test(String(value ?? '').trim())
+}
+
 export function cameraErrorMessage(error) {
   const name = String(error?.name || '')
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
@@ -27,7 +32,7 @@ export function cameraErrorMessage(error) {
   if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
     return '当前摄像头不支持所需模式，请重新扫码或检查设备设置。'
   }
-  if (name === 'SecurityError') return '当前页面不能使用摄像头，请确认通过 HTTPS 打开 BUDU。'
+  if (name === 'SecurityError') return '当前页面不能使用摄像头，请确认通过 HTTPS 打开 budu。'
   return '摄像头启动失败，请检查权限和设备后重新扫码。'
 }
 

@@ -1,0 +1,101 @@
+[
+  {
+    "externalProductId": "c2",
+    "externalSkuId": "sku-748001bbb33a2831283a71755b741336ff6f3f095329440c00649a32724581c1",
+    "productId": "it-1dbcf102-123a-443d-889b-89dba8ce4555",
+    "canonicalSku": "BUDU-CHOC-MAT-02",
+    "version": 5,
+    "priceCents": "13800",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "c3",
+    "externalSkuId": "sku-ad5d0b1a0562c182d94af1fef4139ab2fc1574adb60baca17a7e0a0795202c55",
+    "productId": "it-6e4452d3-d360-4a45-aae9-12af11c939eb",
+    "canonicalSku": "BUDU-CHOC-HAZ-03",
+    "version": 5,
+    "priceCents": "13800",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "c4",
+    "externalSkuId": "sku-3454241d891f9957dc7311f33e1945319763f4a1dddc0c917c1e8fab7b1a2792",
+    "productId": "it-0559ed77-cfec-46a8-889b-d8c85eefb4bc",
+    "canonicalSku": "BUDU-CHOC-JAS-04",
+    "version": 5,
+    "priceCents": "13800",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "c5",
+    "externalSkuId": "sku-eb528b949741f26b35c0711cbfc22ae5d453d633bab3da35ea8a102ee92b4f42",
+    "productId": "it-14324985-dc49-4540-89a3-077530a6f4fa",
+    "canonicalSku": "BUDU-CHOC-CIT-05",
+    "version": 5,
+    "priceCents": "13800",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "g24",
+    "externalSkuId": "sku-8fd82f29fa7465965d6a7fc3e655024be55876293bb6d83c715aad500dde9b1d",
+    "productId": "it-msjcvvfl-7azlu5",
+    "canonicalSku": "BUDU-BOX-24",
+    "version": 7,
+    "priceCents": "12900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b1",
+    "externalSkuId": "sku-bebc4e14715fb1a36a7c9478b4910b85eddbd34dd129b079a9a94609a01bc17e",
+    "productId": "it-a792228b-11a9-4940-ac4f-f85a33f3a121",
+    "canonicalSku": "BUDU-CHOC-ESB-01",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b2",
+    "externalSkuId": "sku-e308ff4afa8f8f1e4217b0dac2ddf2e49b1c3b357312d89df42d26eed17ca734",
+    "productId": "it-bbf449bc-d45a-470a-93ba-6182531bf17d",
+    "canonicalSku": "BUDU-CHOC-TMM-02",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b3",
+    "externalSkuId": "sku-03c19ac7c69a6d1bbd0c176cb88b99cc5cb945bb2b2e556f31e015de1f8d8ba9",
+    "productId": "it-c64ad0b2-1ede-449d-8f6f-03698f542dda",
+    "canonicalSku": "BUDU-CHOC-WA-03",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b4",
+    "externalSkuId": "sku-a200a6ad1f4eddc14104022d48a410a8346c89e852c9fbb6886b90fe319882be",
+    "productId": "it-4e8c7c49-b5a8-4d97-b2fb-3ed5fdcf4a0d",
+    "canonicalSku": "BUDU-CHOC-PFP-04",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b5",
+    "externalSkuId": "sku-6ec20e3abe69f39dd14e3479b65775e8c1b6b66340bfb3b4631f522108d95c4b",
+    "productId": "it-ac6d14b6-90ad-4027-81e5-5595b82638e4",
+    "canonicalSku": "BUDU-CHOC-PF-05",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  },
+  {
+    "externalProductId": "b6",
+    "externalSkuId": "sku-31a93c2d2db44b50983e9652c27902f1785cc446c55066490643446326551328",
+    "productId": "it-c075196c-5703-41ff-ad99-d8a7e90159a6",
+    "canonicalSku": "BUDU-CHOC-GAP-06",
+    "version": 5,
+    "priceCents": "6900",
+    "evidence": "same product photograph, consistent retail price and presentation, unique active retail candidate"
+  }
+]

@@ -45,14 +45,17 @@ function boundedInt(value, fallback, min, max) {
 }
 
 /** 从环境变量读取并做有界校验的对账参数（无效值回退安全默认值）。 */
-export function reconcilerEnvConfig(env = process.env) {
+export function providerReconcilerEnvConfig(providerName, env = process.env) {
+  const prefix = providerName === 'alipay' ? 'ALIPAY' : 'WECHAT_PAY'
   return {
-    intervalMs: boundedInt(env.WECHAT_PAY_QUERY_INTERVAL_MS, DEFAULT_INTERVAL_MS, MIN_INTERVAL_MS, MAX_INTERVAL_MS),
-    maxQueries: boundedInt(env.WECHAT_PAY_MAX_QUERIES, DEFAULT_MAX_QUERIES, MAX_QUERIES_MIN, MAX_QUERIES_MAX),
-    reverseAfterMs: boundedInt(env.WECHAT_PAY_REVERSE_AFTER_MS, DEFAULT_REVERSE_AFTER_MS, REVERSE_AFTER_MIN_MS, REVERSE_AFTER_MAX_MS),
-    leaseMs: boundedInt(env.WECHAT_PAY_LEASE_MS, DEFAULT_LEASE_MS, LEASE_MIN_MS, LEASE_MAX_MS),
+    intervalMs: boundedInt(env[`${prefix}_QUERY_INTERVAL_MS`], DEFAULT_INTERVAL_MS, MIN_INTERVAL_MS, MAX_INTERVAL_MS),
+    maxQueries: boundedInt(env[`${prefix}_MAX_QUERIES`], DEFAULT_MAX_QUERIES, MAX_QUERIES_MIN, MAX_QUERIES_MAX),
+    reverseAfterMs: boundedInt(env[`${prefix}_REVERSE_AFTER_MS`], DEFAULT_REVERSE_AFTER_MS, REVERSE_AFTER_MIN_MS, REVERSE_AFTER_MAX_MS),
+    leaseMs: boundedInt(env[`${prefix}_LEASE_MS`], DEFAULT_LEASE_MS, LEASE_MIN_MS, LEASE_MAX_MS),
   }
 }
+
+export function reconcilerEnvConfig(env = process.env) { return providerReconcilerEnvConfig('wechat_pay', env) }
 
 export class PaymentReconciler {
   constructor({
@@ -65,7 +68,7 @@ export class PaymentReconciler {
     batchSize = 20,
     instanceId = null,
     now = null,
-    alarm = (message) => console.error('[wechat-pay-reconciler]', message),
+    alarm = (message) => console.error(`[${providerName}-reconciler]`, message),
   } = {}) {
     this.service = service
     this.providerName = providerName
@@ -165,6 +168,7 @@ export class PaymentReconciler {
     if (claimed.count !== 1) return
     const provider = this.service.provider(this.providerName)
     const response = await provider.queryPayment(payment)
+    if (response.callback) await this.service.applyProviderResult(this.providerName, response.callback)
     for (const callback of response.callbacks || []) {
       await this.service.applyProviderResult(this.providerName, callback)
     }
@@ -198,6 +202,7 @@ export class PaymentReconciler {
     if (claimed.count !== 1) return
     const provider = this.service.provider(this.providerName)
     const response = await provider.closePayment(payment)
+    if (response.callback) await this.service.applyProviderResult(this.providerName, response.callback)
     for (const callback of response.callbacks || []) {
       await this.service.applyProviderResult(this.providerName, callback)
     }
@@ -247,11 +252,16 @@ export class PaymentReconciler {
   }
 }
 
-let _instance = null
+const instances = new Map()
+
+export function startProviderReconciler(providerName, options = {}) {
+  if (instances.has(providerName)) return instances.get(providerName)
+  const instance = new PaymentReconciler({ ...options, providerName })
+  instances.set(providerName, instance)
+  return instance.start()
+}
 
 /** 启动单例对账器（服务启动时调用一次；未启用微信支付时返回 null）。 */
 export function startWechatReconciler(options = {}) {
-  if (_instance) return _instance
-  _instance = new PaymentReconciler(options)
-  return _instance.start()
+  return startProviderReconciler('wechat_pay', options)
 }

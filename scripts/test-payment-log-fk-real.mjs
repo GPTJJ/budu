@@ -85,8 +85,10 @@ test('B7：DELETE /pos/orders/:id 路由 → 409，订单/支付/日志计数全
       checkoutKey: `ck-b7-${process.pid}`,
       cartHash: 'hash-b7',
       payableAmount: 100n,
-      status: 'paid',
-      paymentStatus: 'paid',
+      // RC-2A settlement guards forbid a settled PAYMENT order before its
+      // Payment proof exists. Build the fixture through the legal state order.
+      status: 'pending_payment',
+      paymentStatus: 'unpaid',
       paymentMethod: 'wechat',
       paymentMode: 'wechat_pay',
     },
@@ -103,6 +105,10 @@ test('B7：DELETE /pos/orders/:id 路由 → 409，订单/支付/日志计数全
       provider: 'wechat_pay',
       requestKey: `rk-b7-${process.pid}`,
     },
+  })
+  await prisma.order.update({
+    where: { id: ORDER_ID },
+    data: { status: 'paid', paymentStatus: 'paid' },
   })
   await prisma.paymentLog.create({
     data: { id: `plog-b7-${process.pid}`, paymentId: PAYMENT_ID, orderId: ORDER_ID, event: 'payment.success' },
@@ -132,6 +138,12 @@ test('B7：DELETE /pos/orders/:id 路由 → 409，订单/支付/日志计数全
 
 test('B7：直接 DELETE payments → 外键 RESTRICT 拒绝（23001），日志不被级联清除', async (t) => {
   if (!requireStarted(t)) return
+  // Put the order back into a non-settled fixture state so the payment-log FK,
+  // rather than the newer settlement-proof trigger, is the rejecting guard.
+  await prisma.order.update({
+    where: { id: ORDER_ID },
+    data: { status: 'pending_payment', paymentStatus: 'unpaid' },
+  })
   // Prisma 将 raw 查询错误包装为 P2010，SQLSTATE 内嵌在 message（RESTRICT 违反=23001）
   const isRestrictViolation = (error) => {
     const sqlState = (String(error.message || '').match(/Code: `?(\d{5})`?/) || [])[1] || ''

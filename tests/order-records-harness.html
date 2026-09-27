@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import OrderRecordsPage from '/src/components/OrderRecordsPage.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -43,6 +44,21 @@
     ]
 
     const testParams = new URLSearchParams(location.search)
+    if (testParams.get('external') === '1') {
+      orders.push({
+        id: 'order-ext', orderNo: 'POS-TEST-MEITUAN-001', storeId: 'store-1', storeName: '测试门店',
+        cashierId: 'user-1', cashierNameSnapshot: '测试收银员', subtotal: '20000', discountAmount: '0', payableAmount: '20000',
+        status: 'completed', paymentStatus: 'paid', paymentMethod: 'platform', paymentMode: 'external',
+        orderSource: 'MEITUAN', entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL', sourceOrderRef: null,
+        createdAt: '2026-08-11T06:00:00.000Z', updatedAt: '2026-08-11T06:00:00.000Z', completedAt: '2026-08-11T06:00:05.000Z',
+        payments: [], refunds: [],
+        externalSettlement: { id: 'ext-1', settlementNo: 'EXT-TEST-1', settlementType: 'PLATFORM', amountCents: '20000', status: 'CONFIRMED', confirmedAt: '2026-08-11T06:00:05.000Z' },
+        items: [
+          { id: 'oi-ext-1', productId: 'p-1', productNameSnapshot: '卡皮巴拉布丁', skuSnapshot: 'BUDU-001', unitPrice: '10000', actualAmount: '20000', quantity: 2, lineAmount: '20000', isGift: false },
+          { id: 'oi-ext-gift', productId: 'p-gift', productNameSnapshot: '赠品卡片', skuSnapshot: 'GIFT-001', unitPrice: '5000', actualAmount: '0', quantity: 1, lineAmount: '0', isGift: true },
+        ],
+      })
+    }
     if (testParams.get('deletable') === '1') {
       orders[1].status = 'failed'
       orders[1].paymentStatus = 'failed'
@@ -57,19 +73,17 @@
         const filtered = orders.filter((order) => {
           if (qs.get('paymentMethod') && order.paymentMethod !== qs.get('paymentMethod')) return false
           if (qs.get('status') && order.status !== qs.get('status')) return false
+          if (!qs.get('status') && order.status === 'cancelled') return false
           if (qs.get('q') && !order.orderNo.toLowerCase().includes(qs.get('q').toLowerCase())) return false
           return true
         })
-        const paid = filtered.filter((order) => ['paid', 'partially_refunded', 'refunded'].includes(order.paymentStatus))
+        const paid = filtered.filter((order) => order.paymentStatus === 'paid' && ['paid', 'completed'].includes(order.status) && (order.payments || []).some((payment) => payment.status === 'success') && (order.refunds || []).length === 0)
         const grossAmount = paid.reduce((sum, order) => sum + Number(order.payableAmount), 0)
-        const refundAmount = paid.reduce((sum, order) => sum + (order.refunds || [])
+        const refundAmount = filtered.reduce((sum, order) => sum + (order.refunds || [])
           .filter((refund) => refund.status === 'completed')
           .reduce((inner, refund) => inner + Number(refund.amount), 0), 0)
         const soldQuantity = paid.reduce((sum, order) => sum + order.items.reduce((inner, item) => inner + item.quantity, 0), 0)
-        const refundedQuantity = paid.reduce((sum, order) => sum + (order.refunds || [])
-          .filter((refund) => refund.status === 'completed')
-          .reduce((inner, refund) => inner + (refund.items || []).reduce((qty, item) => qty + item.quantity, 0), 0), 0)
-        const collectedAmount = Math.max(0, grossAmount - refundAmount)
+        const collectedAmount = grossAmount
         return json({
           ok: true,
           total: filtered.length,
@@ -80,11 +94,24 @@
             grossAmount: String(grossAmount),
             refundAmount: String(refundAmount),
             discountAmount: String(paid.reduce((sum, order) => sum + Number(order.discountAmount), 0)),
-            itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
+            itemQuantity: soldQuantity,
             averageAmount: String(paid.length ? Math.floor(collectedAmount / paid.length) : 0),
           },
           rows: filtered,
         })
+      }
+      const cancelMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)\/cancel$/)
+      if (cancelMatch && options.method === 'POST') {
+        const id = decodeURIComponent(cancelMatch[1])
+        const order = orders.find((item) => item.id === id)
+        if (!order) return json({ error: '订单不存在' }, 404)
+        const body = JSON.parse(options.body)
+        window.__cancelledOrders = [...(window.__cancelledOrders || []), { id, reason: body.reason }]
+        order.status = 'cancelled'
+        order.cancelReason = body.reason
+        order.cancelledBy = 'dev'
+        order.cancelledAt = new Date().toISOString()
+        return json({ ok: true, order })
       }
       const deleteMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)$/)
       if (deleteMatch && options.method === 'DELETE') {
@@ -120,13 +147,41 @@
         order.paymentStatus = fully ? 'refunded' : 'partially_refunded'
         return json({ ok: true, refund, order }, 201)
       }
+      const manualRefundMatch = path.match(/^\/api\/v2\/pos\/orders\/(.+)\/manual-external-refunds$/)
+      if (manualRefundMatch && options.method === 'POST') {
+        const id = decodeURIComponent(manualRefundMatch[1])
+        const order = orders.find((item) => item.id === id)
+        if (!order) return json({ error: '订单不存在' }, 404)
+        const body = JSON.parse(options.body)
+        window.__manualExternalRefundBodies = [...(window.__manualExternalRefundBodies || []), body]
+        const items = body.items.map((row) => {
+          const orderItem = order.items.find((item) => item.id === row.orderItemId)
+          return { id: `ri-ext-${row.orderItemId}`, orderItemId: row.orderItemId, productName: orderItem.productNameSnapshot, quantity: row.quantity, amountCents: body.refundAmount }
+        })
+        const refund = {
+          id: `ref-ext-${Date.now()}`, refundNo: `RF-EXT-${Date.now()}`, orderId: order.id, paymentId: null,
+          externalSettlementId: order.externalSettlement.id, refundMode: 'MANUAL_EXTERNAL', amount: body.refundAmount,
+          reason: body.reason || '', status: 'completed', externalCompletedAt: body.externalCompletedAt,
+          requestedBy: 'dev', approvedBy: 'dev', createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), items,
+        }
+        order.refunds = [...order.refunds, refund]
+        const total = order.refunds.reduce((sum, row) => sum + Number(row.amount), 0)
+        const full = total === Number(order.payableAmount)
+        order.status = full ? 'refunded' : 'partially_refunded'
+        order.paymentStatus = order.status
+        order.externalSettlement.status = full ? 'REFUNDED' : 'PARTIALLY_REFUNDED'
+        return json({ ok: true, refund, order }, 201)
+      }
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
 
-    createRoot(document.getElementById('root')).render(React.createElement(OrderRecordsPage, {
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(OrderRecordsPage, {
       user: { id: 'user-1', username: 'dev', role: testParams.get('role') || 'developer', storeKeys: ['store-1'] },
       onBack: () => {},
       onPay: (order) => { window.__payOrder = { id: order.id, orderNo: order.orderNo } },
-    }))
+      }),
+    ))
   </script></body>
 </html>

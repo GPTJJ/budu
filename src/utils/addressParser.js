@@ -1,129 +1,224 @@
-// 收件信息智能拆分：从一段文本（粘贴/OCR/语音）中提取 姓名 / 电话 / 地址
-//
-// 支持格式：
-// - 空格/逗号/换行分隔：张三 13800138000 北京市朝阳区望京街道 xx 号
-// - 带标签：收件人：张三 电话：13800138000 地址：北京市朝阳区…
-// - 顺序任意：13800138000 张三 北京市…
-// - 手机号带横杠/空格：135-2375-7594 / 135 2375 7594
-// - 座机：010-12345678 / 02112345678 / (010)12345678
-// - 称谓：张三先生 / 李女士
-// - 紧凑无分隔：河南省武冈市上店镇廖庄壹号收件人古月手机号135-2375-7594
+// 门店邮寄收件信息的唯一解析入口。
+// 粘贴、OCR 与语音识别只负责提供原始文本，字段判断统一在这里完成。
 
-// 手机号：1[3-9] + 8 位（共 11 位，允许中间 -/空格，如 135-2375-7594）；座机：0 开头 10-11 位
-const MOBILE_RE = /1[3-9]\d[- ]?\d{4}[- ]?\d{4}/
-const PHONE_RE = new RegExp(`(?:\\+?86[- ]?)?(?:${MOBILE_RE.source}|0\\d{2,3}[- ]?\\d{7,8}|\\(0\\d{2,3}\\)\\d{7,8})`)
-const LABELED_PHONE_RE = new RegExp(`(?:电话|手机|联系方式|手机号|联系电话|号码|tel)[:：]?\\s*(\\+?86[- ]?)?(${MOBILE_RE.source}|0\\d{2,3}[- ]?\\d{7,8})`, 'i')
+const PHONE_LABEL_RE = /(?:联系电话|联系方式|手机号|电话|手机|号码|tel)[:：]?\s*/gi
+const NAME_LABEL_RE = /(?:收件人|收货人|联系人|姓名|名字|称呼)[:：]?\s*/gi
+const ADDRESS_LABEL_RE = /(?:收货地址|收件地址|邮寄地址|送货地址|地址|位置)[:：]?\s*/gi
+const NOTE_LABEL_RE = /(?:商品信息|商品|备注|附言|说明)[:：]?\s*/gi
+const ANY_LABEL_RE = /(^|[\n，,；;])\s*(?:收件人|收货人|联系人|姓名|名字|称呼|联系电话|联系方式|手机号|电话|手机|号码|tel|收货地址|收件地址|邮寄地址|送货地址|地址|位置|商品信息|商品|备注|附言|说明)[:：]?\s*/gim
 
-const ADDRESS_HINT_RE = /(?:省|市|区|县|自治州|盟|镇|乡|街道|街|路|道|巷|村|庄|园|大厦|广场|中心|小区|苑|号楼|楼|栋|单元|室|号|弄|里|组)/
+const ADDRESS_HINT_RE = /(?:省|自治区|特别行政区|市|区|县|自治州|盟|街道|镇|乡|村|路|街|巷|小区|社区|大厦|广场|花园|城|园|号楼|楼|栋|单元|室|号|弄)/
+const STRONG_ADDRESS_RE = /(?:省|自治区|特别行政区|市|区|县|街道|镇|乡|小区|社区|号楼|栋|单元|室|号)/g
+const NAME_REJECT_RE = /(?:省|市|区|县|镇|乡|村|街|路|道|巷|小区|社区|大厦|广场|花园|单元|地址|电话|手机|备注|商品|生巧|麻薯|赠|蛋糕|巧克力|快递|顺丰)/
+const HONORIFIC_RE = /(?:先生|女士|小姐|师傅|同学|老师|哥|姐)$/
+const MOBILE_CANDIDATE_RE = /(^|[^\d])((?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8})(?!\d)/g
+const LANDLINE_CANDIDATE_RE = /(^|[^\d])((?:\(0\d{2,3}\)|0\d{2,3})[\s-]?\d{7,8})(?!\d)/g
 
-const LABELED_ADDRESS_RE = /(?:地址|收货地址|收件地址|邮寄地址|送货地址|位置)[:：]?\s*([^\n，,；;]+)/i
-const LABELED_NAME_RE = /(?:收件人|收货人|联系人|姓名|名字|称呼)[:：]?\s*([\u4e00-\u9fa5·]{2,12}?)(?=\s*(?:手机号|电话|手机|联系电话|号码|地址|收货地址|收件地址|邮寄地址|[0-9]|\s|$))/i
-
-/** 姓名/电话等字段标签词（用于在地址串中截断尾部） */
-const FIELD_TAG_RE = /(?:收件人|收货人|联系人|姓名|名字|称呼|电话|手机号|手机|联系电话|联系方式|号码|地址|收货地址|收件地址|邮寄地址|送货地址|位置)/
-
-/** 清理文本：统一分隔符、去标签噪声 */
-function cleanText(text) {
+export function normalizeRecipientText(text) {
   return String(text || '')
-    .replace(/\r/g, '\n')
-    .replace(/[，,；;]+/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[０-９Ａ-Ｚａ-ｚ]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u00a0\u3000]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
-/** 提取电话：优先带标签，其次全文本正则；统一去横杠/空格 */
-function extractPhone(text) {
-  const labeled = text.match(LABELED_PHONE_RE)
-  if (labeled && labeled[2]) return labeled[2].replace(/[\s-]/g, '')
-  const m = text.match(PHONE_RE)
-  if (m) return m[0].replace(/[\s-]/g, '')
-  return ''
+function normalizePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '')
+  return digits.startsWith('86') && digits.length === 13 ? digits.slice(2) : digits
 }
 
-/** 从地址片段尾部截断：遇到字段标签或电话号码即停止 */
-function trimAddressTail(addr) {
-  let out = addr
-  // 截到字段标签词前（如「…廖庄壹号收件人古月…」→「…廖庄壹号」）
-  const tagIdx = out.search(FIELD_TAG_RE)
-  if (tagIdx >= 0) out = out.slice(0, tagIdx)
-  // 截到电话号码前（如「…廖庄壹号135-2375-7594」）
-  const phoneMatch = out.match(PHONE_RE)
-  if (phoneMatch && phoneMatch.index > 0) out = out.slice(0, phoneMatch.index)
-  // 尾部若为「空格 + 独立 2-4 字中文（可带称谓）」，视为姓名而非地址的一部分
-  out = out.replace(/\s+([\u4e00-\u9fa5]{2,4})(?:先生|女士|小姐|师傅|同学|老师|哥|姐)?\s*$/, '')
-  out = out.replace(/先生|女士|小姐|师傅|同学|老师|哥|姐$/, '').replace(/[。.，,、\s]+$/, '').trim()
-  return out
+function phoneCandidates(text) {
+  const candidates = []
+  for (const pattern of [MOBILE_CANDIDATE_RE, LANDLINE_CANDIDATE_RE]) {
+    pattern.lastIndex = 0
+    let match
+    while ((match = pattern.exec(text))) {
+      const raw = match[2]
+      const index = match.index + match[1].length
+      const phone = normalizePhone(raw)
+      const context = text.slice(Math.max(0, index - 12), index).toLowerCase()
+      const lineStart = text.lastIndexOf('\n', index - 1) + 1
+      const lineEndAt = text.indexOf('\n', index)
+      const lineEnd = lineEndAt < 0 ? text.length : lineEndAt
+      const line = text.slice(lineStart, lineEnd).replace(PHONE_LABEL_RE, '').trim()
+      let score = phone.startsWith('1') && phone.length === 11 ? 20 : 8
+      if (/(?:电话|手机|手机号|联系电话|联系方式|号码|tel)[:：]?\s*$/i.test(context)) score += 30
+      if (normalizePhone(line) === phone) score += 10
+      candidates.push({ raw, phone, index, score })
+    }
+  }
+  return candidates.sort((a, b) => b.score - a.score || a.index - b.index)
 }
 
-/**
- * 提取地址：
- * - 带「地址」标签 → 标签后内容（同样截断尾部字段）
- * - 否则取包含地址特征词的连续片段；从第一个「省/市」级词开始，尾部遇到
- *   姓名/电话等字段标签即截断
- */
-function extractAddress(text, phone) {
-  const labeled = text.match(LABELED_ADDRESS_RE)
-  if (labeled && labeled[1]) {
-    return trimAddressTail(labeled[1])
-  }
-  let rest = text
-  if (phone) rest = rest.replace(phone, ' ')
-  // 注意：不预剔除姓名/电话标签词——地址串尾部可能紧贴
-  // 「收件人古月手机号135…」等，需保留标签词供 trimAddressTail 精确截断
-  rest = rest.replace(/\s+/g, ' ').trim()
-  // 找第一个省级/市级词（省优先，其次市/自治州/盟）
-  const startMatch = rest.match(/(?:[\u4e00-\u9fa5]{1,4}?省|[\u4e00-\u9fa5]{2,4}?市|[\u4e00-\u9fa5]{2,4}?自治州|[\u4e00-\u9fa5]{2,4}?盟)/)
-  let idx = startMatch ? rest.indexOf(startMatch[0]) : -1
-  if (idx < 0) {
-    const m = rest.search(ADDRESS_HINT_RE)
-    idx = m
-  }
-  if (idx < 0) return ''
-  return trimAddressTail(rest.slice(idx))
+function cleanName(value) {
+  return String(value || '').replace(HONORIFIC_RE, '').trim()
 }
 
-/** 提取姓名：带标签优先；否则在剔除电话/地址后的剩余片段中找 2-4 字人名 */
-function extractName(text, phone, address) {
-  const labeled = text.match(LABELED_NAME_RE)
-  if (labeled && labeled[1]) {
-    return labeled[1].replace(/先生|女士|小姐|师傅|同学|老师|哥|姐/g, '').trim()
-  }
-  let rest = text
-  if (phone) rest = rest.replace(phone, ' ')
-  if (address) rest = rest.replace(address, '')
-  rest = rest
-    .replace(/(?:电话|手机|联系方式|手机号|联系电话|号码|tel)[:：]?\s*/gi, ' ')
-    .replace(/(?:地址|收货地址|收件地址|邮寄地址|送货地址|位置)[:：]?\s*/gi, ' ')
-    .replace(/(?:收件人|收货人|联系人|姓名|名字|称呼)[:：]?\s*/gi, ' ')
-    .replace(/\s+/g, ' ')
+function isPlausibleName(value) {
+  const name = cleanName(value)
+  return /^[\u3400-\u9fff·]{2,6}$/.test(name) && !NAME_REJECT_RE.test(name)
+}
+
+function addressScore(value) {
+  const text = String(value || '').trim()
+  if (text.length < 5 || !ADDRESS_HINT_RE.test(text)) return -1
+  const strong = text.match(STRONG_ADDRESS_RE)?.length || 0
+  let score = strong * 10 + Math.min(text.length, 60)
+  if (/(?:省|自治区|特别行政区)/.test(text)) score += 20
+  if (/(?:市|区|县)/.test(text)) score += 12
+  if (/(?:号楼|栋|单元|室|号|小区|社区)/.test(text)) score += 15
+  return score
+}
+
+function addressStart(value) {
+  const patterns = [
+    /[\u3400-\u9fff]{2,10}(?:省|自治区|特别行政区)/,
+    /[\u3400-\u9fff]{2,10}市/,
+    /[\u3400-\u9fff]{2,12}(?:区|县|街道|镇|乡|小区|社区)/,
+  ]
+  const indexes = patterns.map((pattern) => value.search(pattern)).filter((index) => index >= 0)
+  if (indexes.length) return Math.min(...indexes)
+  const hint = value.search(ADDRESS_HINT_RE)
+  if (hint < 0) return -1
+  const preceding = value.slice(0, hint)
+  const boundary = Math.max(preceding.lastIndexOf(' '), preceding.lastIndexOf('，'), preceding.lastIndexOf(','))
+  return boundary + 1
+}
+
+function trimAddress(value) {
+  let address = String(value || '').replace(ADDRESS_LABEL_RE, '').trim()
+  const labelIndex = address.search(/(?:收件人|收货人|联系人|姓名|名字|称呼|电话|手机|手机号|联系电话|联系方式|备注|商品信息|附言)[:：]?/)
+  if (labelIndex > 0) address = address.slice(0, labelIndex)
+  const phone = phoneCandidates(address)[0]
+  if (phone && phone.index > 0) address = address.slice(0, phone.index)
+  return address
+    .replace(/\s+[\u3400-\u9fff·]{2,6}(?:先生|女士|小姐|师傅|同学|老师|哥|姐)?\s*$/, '')
+    .replace(/[。.，,、;；\s]+$/, '')
     .trim()
-  // 空格分隔时取第一段
-  const seg = rest.split(' ')[0] || ''
-  const m = seg.match(/^[\u4e00-\u9fa5·]{2,12}$/)
-  if (m) return m[0].replace(/先生|女士|小姐|师傅|同学|老师|哥|姐$/g, '')
-  // 无分隔：在剩余文本里找 2-4 字人名（不包含地址特征词）
-  const nameMatch = rest.match(/[\u4e00-\u9fa5]{2,4}/)
-  if (nameMatch && !ADDRESS_HINT_RE.test(nameMatch[0]) && !/电话|手机|地址/.test(nameMatch[0])) {
-    return nameMatch[0]
+}
+
+function extractAddress(text, selectedPhone) {
+  const labeled = text.match(/(?:收货地址|收件地址|邮寄地址|送货地址|地址|位置)[:：]?\s*([^\n；;]+)/i)
+  if (labeled?.[1]) {
+    const candidate = trimAddress(labeled[1])
+    if (addressScore(candidate) >= 0) return candidate
+  }
+
+  const lines = text.split(/\n+|[；;]+/).map((line) => line.trim()).filter(Boolean)
+  const candidates = []
+  for (const line of lines) {
+    let source = line
+    if (selectedPhone?.raw) source = source.replace(selectedPhone.raw, ' ')
+    const start = addressStart(source)
+    if (start < 0) continue
+    let candidate = source.slice(start)
+    const commaIndex = candidate.search(/[，,]/)
+    if (commaIndex > 0) candidate = candidate.slice(0, commaIndex)
+    candidate = trimAddress(candidate)
+    const score = addressScore(candidate)
+    if (score >= 0) candidates.push({ candidate, score })
+  }
+  candidates.sort((a, b) => b.score - a.score || b.candidate.length - a.candidate.length)
+  return candidates[0]?.candidate || ''
+}
+
+function extractName(text, selectedPhone, address) {
+  const labeled = text.match(
+    /(?:收件人|收货人|联系人|姓名|名字|称呼)[:：]?\s*([\u3400-\u9fff·]{2,6}?)(?:先生|女士|小姐|师傅|同学|老师|哥|姐)?(?=\s*(?:联系电话|联系方式|手机号|电话|手机|号码|地址|收货地址|收件地址|邮寄地址|送货地址|\d|\n|$))/i,
+  )?.[1] || ''
+  if (isPlausibleName(labeled)) return cleanName(labeled)
+  if (!selectedPhone && !address) return ''
+
+  const lines = text.split(/\n+|[，,；;、]+/).map((line) => line.trim()).filter(Boolean)
+  for (const line of lines) {
+    let candidate = line
+      .replace(NAME_LABEL_RE, '')
+      .replace(PHONE_LABEL_RE, '')
+      .replace(ADDRESS_LABEL_RE, '')
+      .replace(NOTE_LABEL_RE, '')
+    if (selectedPhone?.raw) candidate = candidate.replace(selectedPhone.raw, ' ')
+    if (address) candidate = candidate.replace(address, ' ')
+    candidate = candidate.replace(/[：:\s]+/g, ' ').trim()
+    if (isPlausibleName(candidate)) return cleanName(candidate)
+    for (const token of candidate.split(' ')) {
+      if (isPlausibleName(token)) return cleanName(token)
+    }
   }
   return ''
 }
 
+function cleanResidual(text, selectedPhone, recipientName, address) {
+  let residual = text
+  if (address) residual = residual.replace(address, ' ')
+  if (selectedPhone?.raw) residual = residual.replace(selectedPhone.raw, ' ')
+  if (recipientName) residual = residual.replace(recipientName, ' ')
+  return residual
+    .replace(ANY_LABEL_RE, '$1')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/^[\s，,、；;。.]+|[\s，,、；;。.]+$/g, '')
+    .trim()
+}
+
+function looksLikeBusinessNote(value) {
+  if (!value) return false
+  if (/\d{7,}/.test(value)) return true
+  if (/[，,、；;]/.test(value)) return true
+  if (/(?:备注|商品|赠|送|盒|件|份|包|袋|个|瓶|生巧|麻薯|蛋糕|巧克力|到店|配送|下午|上午|晚上|时间)/.test(value)) return true
+  return value.length > 6
+}
+
 /**
- * 智能拆分收件文本。
- * @param {string} text 原始文本
- * @returns {{ name: string, phone: string, address: string, matched: boolean }}
- *   matched=false 表示未能识别出任何字段
+ * @returns {{recipientName: string, phone: string, address: string, note: string,
+ *   confidence: {recipientName: string, phone: string, address: string, note: string},
+ *   unparsedText: string, matched: boolean}}
  */
 export function parseRecipientText(text) {
-  const cleaned = cleanText(text)
-  if (!cleaned) return { name: '', phone: '', address: '', matched: false }
-  const phone = extractPhone(cleaned)
-  const address = extractAddress(cleaned, phone)
-  // 只有「姓名+电话」「姓名+地址」或「电话+地址」等组合才算有效识别；
-  // 单独一句日常文本（无电话无地址）不算命中
-  const hasAddressOrPhone = Boolean(address || phone)
-  const name = hasAddressOrPhone ? extractName(cleaned, phone, address) : ''
-  const matched = hasAddressOrPhone && Boolean(phone || address || name)
-  return { name, phone, address, matched }
+  const normalized = normalizeRecipientText(text)
+  if (!normalized) {
+    return {
+      recipientName: '', phone: '', address: '', note: '',
+      confidence: { recipientName: 'none', phone: 'none', address: 'none', note: 'none' },
+      unparsedText: '', matched: false,
+    }
+  }
+
+  const phones = phoneCandidates(normalized)
+  const selectedPhone = phones[0] || null
+  const phone = selectedPhone?.phone || ''
+  const address = extractAddress(normalized, selectedPhone)
+  const recipientName = extractName(normalized, selectedPhone, address)
+  const residual = cleanResidual(normalized, selectedPhone, recipientName, address)
+  const explicitNote = /(?:^|[\n；;])\s*(?:商品信息|商品|备注|附言|说明)[:：]?\s*([^\n]+)/i.exec(normalized)?.[1]?.trim() || ''
+  const noteCandidate = explicitNote || residual
+  const note = looksLikeBusinessNote(noteCandidate) ? noteCandidate : ''
+  const unparsedText = note ? '' : residual
+  const matched = Boolean(recipientName || phone || address || note)
+
+  return {
+    recipientName,
+    phone,
+    address,
+    note,
+    confidence: {
+      recipientName: recipientName ? 'high' : 'none',
+      phone: phone ? 'high' : 'none',
+      address: address ? 'high' : 'none',
+      note: note ? (explicitNote ? 'high' : 'medium') : 'none',
+    },
+    unparsedText,
+    matched,
+  }
+}
+
+export function mergeRecipientFields(existing, parsed) {
+  return {
+    recipientName: String(existing?.recipientName || '').trim() || parsed.recipientName || '',
+    phone: String(existing?.phone || '').trim() || parsed.phone || '',
+    address: String(existing?.address || '').trim() || parsed.address || '',
+    note: String(existing?.note || '').trim() || parsed.note || '',
+  }
 }

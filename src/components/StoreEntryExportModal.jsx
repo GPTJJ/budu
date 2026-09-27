@@ -36,15 +36,12 @@ export default function StoreEntryExportModal({ storeKey, storeName, onClose }) 
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
 
-  // Esc 关闭 + 锁定背景滚动
+  // Esc 关闭；背景滚动由全局 OverlayStackManager 统一锁定。
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
     }
   }, [onClose])
 
@@ -111,10 +108,10 @@ export default function StoreEntryExportModal({ storeKey, storeName, onClose }) 
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+    <div data-budu-overlay-root className="budu-overlay-viewport fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={t('导出业绩表格')} className="budu-overlay-panel relative flex max-h-[88dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-lg">
+        <div className="budu-overlay-header flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="text-base font-semibold text-slate-900">{t('导出业绩表格')}</h3>
             <p className="mt-1 text-xs text-slate-400">

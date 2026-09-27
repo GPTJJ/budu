@@ -6,21 +6,37 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { loadDb, persist } from './store.js'
 import { getUserById, getUserByUsername, listUsers, createUser, updateUser, deleteUser } from './user-store.js'
-import { hashPassword, verifyPassword, signToken, verifyToken } from './auth.js'
+import { hashPassword, verifyPassword, signToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
+import { partnerSupplyRouter } from './partner-supply.js'
+import { reportCenterRouter } from './report-center.js'
+import { developerSafeDeleteRouter } from './developer-safe-delete.js'
+import { orderPurposeRouter } from './order-purpose.js'
+import { payrollAuditAdminRouter } from './payroll-audit-admin.js'
 import { productsRouter } from './products.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
 import { approvalRouter, ensureApprovalTemplates } from './approvals.js'
 import { notificationRouter } from './notifications.js'
+import { customerRequestRouter, publicCustomerRequestRouter } from './customer-requests.js'
+import { redactCustomerRequestUrl } from './customer-request-core.js'
 import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
+import { dailyCorrectionRouter } from './daily-performance-correction.js'
 import { employeeProfileRouter } from './employee-profile.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
+import { sweetCardRouter } from './sweet-card.js'
+import { sweetCardAvailabilityRouter } from './sweet-card-availability.js'
+import { wechatTestLoginRouter } from './wechat-test-login.js'
+import { sweetCardClaimRouter } from './sweet-card-claim.js'
+import { createPartnerAuthRouter } from './partner-auth.js'
+import { createPartnerDomainRouter } from './partner-domain.js'
+import { authenticateInternalToken } from './internal-auth.js'
+import { isInternalUser, resolveInternalPrincipal } from './principals.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
 import { resolveStoreName } from './store-names.js'
@@ -35,6 +51,7 @@ import {
   hasAnyModuleAccess,
   hasModuleAccess,
   hasInventoryTransferAll,
+  hasSweetCardProductionTestAccess,
   isSuperUser,
   normalizeAccountPermissions,
 } from '../shared/accountPermissions.js'
@@ -242,8 +259,9 @@ function normalizeInventory(raw) {
   return out
 }
 
-export function createApp() {
+export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers } = {}) {
   const app = express()
+  onlineCheckoutRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
   // 请求级结构化日志（只记录方法/路径/状态/耗时/requestId，不记录 body）
@@ -253,7 +271,7 @@ export function createApp() {
     const requestId = crypto.randomUUID().slice(0, 8)
     res.setHeader('X-Request-Id', requestId)
     res.on('finish', () => {
-      console.log(`[req] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms ${requestId}`)
+      console.log(`[req] ${req.method} ${redactCustomerRequestUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - start}ms ${requestId}`)
     })
     next()
   })
@@ -270,7 +288,7 @@ export function createApp() {
   function userPublic(u) {
     const bindingComplete =
       !['manager', 'staff'].includes(u.role) ||
-      ((u.storeKeys || []).length > 0 && Boolean(u.staffKey))
+      ((u.storeKeys || []).length > 0 && Boolean(u.employeeId))
     return {
       id: u.id,
       username: u.username,
@@ -285,6 +303,7 @@ export function createApp() {
       disabledAt: u.disabledAt || '',
       bindingComplete,
       bindingLegacyExempt: u.bindingLegacyExempt === true && !bindingComplete,
+      operationalIdentityType: u.operationalIdentityType || 'STANDARD',
       permissionsUpdatedAt: u.permissionsUpdatedAt || '',
       permissionsUpdatedBy: u.permissionsUpdatedBy || '',
       avatar: u.avatar || '',
@@ -302,15 +321,18 @@ export function createApp() {
   }
 
   async function requireAuth(req, res, next) {
-    const token = req.cookies[COOKIE]
-    const payload = token ? verifyToken(token, await getSecret()) : null
-    if (!payload || !payload.sub) return res.status(401).json({ error: '未登录或登录已过期' })
-    // Data Authority DA-2：账号权威 = PostgreSQL
-    const user = await getUserById(payload.sub)
-    if (!user) return res.status(401).json({ error: '账号不存在' })
-    if (user.status === 'disabled' || user.role === 'public') return res.status(403).json({ error: '账号已停用，请联系开发者' })
-    req.user = user
-    next()
+    try {
+      const authenticated = await authenticateInternalToken({
+        token: req.cookies[COOKIE],
+        secret: await getSecret(),
+        getUserById,
+      })
+      req.user = authenticated.user
+      req.principal = authenticated.principal
+      return next()
+    } catch (error) {
+      return res.status(Number(error?.status) || 401).json({ error: error?.message || '未登录或登录已过期' })
+    }
   }
 
   function requireDeveloper(req, res, next) {
@@ -356,6 +378,7 @@ export function createApp() {
   }
 
   const ROLES = [...ACTIVE_ROLES]
+  const findInternalUser = (users, id) => users.find((user) => user.id === id && isInternalUser(user))
 
   /** 收银角色约束：仅绑定一家门店、不绑定员工 */
   function validateCashierRole(role, storeKeys, staffKey) {
@@ -369,20 +392,44 @@ export function createApp() {
     return null
   }
 
-  // Data Authority DA-2.2/2.4：绑定校验权威 = PG employees；返回 { error } 或 { employeeId }
-  async function validateBoundRole(role, storeKeys, staffKey) {
+  // Data Authority DA-2.2/2.4：绑定校验权威 = PG employees；返回 { error } 或 { employeeId, staffKeySnapshot }
+  // Gate 20：显式 Employee.id 优先（staffKey 快照由 canonical Employee 推导，忽略 client 传入值防矛盾）；
+  // legacy staffKey 路径 fail closed（0/1/>1 匹配）。
+  async function validateBoundRole(role, storeKeys, staffKey, explicitEmployeeId = '') {
     if (!['manager', 'staff'].includes(role)) return null
     if (!Array.isArray(storeKeys) || storeKeys.length < 1) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定至少一家门店`
-    if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
-    const [staffStoreKey, staffName] = String(staffKey).split('::')
-    if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
     try {
       const { prisma } = await import('./pg.js')
-      const emp = await prisma.employee.findFirst({
+      const explicitId = String(explicitEmployeeId || '').trim()
+      if (explicitId) {
+        // Gate 20：显式 Employee.id 为权威——绝不按姓名/门店重建/替换；
+        // staffKey 兼容快照必须由 canonical Employee（currentStoreKey + name）推导，
+        // client 传入的 staffKey 一律忽略，防止 employeeId 与快照互相矛盾。
+        const emp = await prisma.employee.findUnique({
+          where: { id: explicitId },
+          select: { id: true, name: true, currentStoreKey: true },
+        })
+        if (!emp) return '员工不存在'
+        if (!storeKeys.includes(emp.currentStoreKey)) return '绑定员工必须属于账号已绑定门店'
+        return {
+          employeeId: explicitId,
+          staffKeySnapshot: `${emp.currentStoreKey}::${emp.name}`,
+        }
+      }
+      // legacy 路径（无显式 id）：staffKey 既是解析输入也是门店归属校验；fail closed 0/1/>1
+      if (!staffKey) return `${role === 'manager' ? '店长' : '员工'}账号必须绑定员工`
+      const [staffStoreKey, staffName] = String(staffKey).split('::')
+      if (!staffStoreKey || !staffName || !storeKeys.includes(staffStoreKey)) return '绑定员工必须属于账号已绑定门店'
+      const matches = await prisma.employee.findMany({
         where: { name: staffName, currentStoreKey: staffStoreKey, status: { not: 'RESIGNED' } },
+        select: { id: true, name: true, currentStoreKey: true },
       })
-      if (!emp) return '绑定员工不存在或已离职'
-      return { employeeId: emp.id }
+      if (matches.length === 0) return '绑定员工不存在或已离职'
+      if (matches.length > 1) return '存在多个同名员工，无法确定绑定，请通过员工选择器指定'
+      return {
+        employeeId: matches[0].id,
+        staffKeySnapshot: `${matches[0].currentStoreKey}::${matches[0].name}`,
+      }
     } catch {
       return '绑定员工校验失败，请稍后重试'
     }
@@ -480,12 +527,8 @@ export function createApp() {
       if (allowed.has(store)) entries[k] = v
     }
     let staff = (db.staff || []).filter((s) => allowed.has(s.storeKey))
-    // 绑定员工的店员：只能看到本人档案
-    if (user.role === 'staff' && user.staffKey) {
-      staff = staff.filter((s) => `${s.storeKey}::${s.name}` === user.staffKey)
-    } else if (user.role === 'staff') {
-      staff = []
-    }
+    // 员工目录权威已迁移到 PG /v2/staff-list；legacy userdata 不再按 staffKey/姓名猜测本人。
+    if (user.role === 'staff') staff = []
     const schedules = {}
     for (const [wk, sm] of Object.entries(db.schedules || {})) {
       const o = {}
@@ -582,6 +625,46 @@ export function createApp() {
     gitSha: GIT_SHA || '',
     dbOk: dbReady(),
   }))
+  // A0.6 test-environment authority probe. It is deliberately unavailable in
+  // every non-test runtime and only reachable through the isolated test gateway.
+  app.get('/api/test-authority', async (req, res) => {
+    if (APP_ENV !== 'test' || req.get('x-budu-test-gateway') !== '1') {
+      return res.status(404).json({ error: 'NOT_FOUND' })
+    }
+    try {
+      const [identity] = await prisma.$queryRaw`
+        SELECT current_database() AS database_name,
+               current_setting('transaction_read_only') AS transaction_read_only
+      `
+      const [migration] = await prisma.$queryRaw`
+        SELECT COUNT(*)::int AS applied,
+               COUNT(*) FILTER (WHERE finished_at IS NULL)::int AS failed
+        FROM "_prisma_migrations"
+      `
+      return res.json({
+        ok: true,
+        env: APP_ENV,
+        gitSha: GIT_SHA || '',
+        database: identity?.database_name || '',
+        transactionReadOnly: identity?.transaction_read_only || '',
+        migration: {
+          applied: Number(migration?.applied || 0),
+          failed: Number(migration?.failed || 0),
+        },
+      })
+    } catch {
+      return res.status(503).json({ error: 'TEST_AUTHORITY_UNAVAILABLE' })
+    }
+  })
+  app.use('/api/customer/auth/wechat', wechatTestLoginRouter)
+  app.use('/api/customer/sweet-card', sweetCardClaimRouter)
+  // Production MiniProgram traffic enters only through the signed CloudBase
+  // gateway. These mounts must remain before the authenticated employee v2 API.
+  app.use('/api/v2/customer/auth/wechat', wechatTestLoginRouter)
+  app.use('/api/v2/customer/sweet-card', sweetCardClaimRouter)
+  app.use('/api/partner', createPartnerAuthRouter({ secretLoader: getSecret }))
+  // 顾客自助表单：公开但仅由高熵一次性 token 授权；固定路径避免 token 进入访问日志。
+  app.use('/api/public', publicCustomerRequestRouter)
   app.use('/api/payments', paymentCallbackRouter)
   // 微信扫码绑定 OAuth 回调（公开：数据库一次性 state 防伪造/重放）
   app.use('/api/v2/wechat/bind/callback', wechatBindCallbackRouter)
@@ -593,7 +676,9 @@ export function createApp() {
     const pathname = req.path || ''
     const rule =
       (/^\/products(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
+      (/^\/product-groups(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/pos\/(?:config|orders|products|payments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_POS]) ||
+      (/^\/sweet-cards(?:\/|$)/.test(pathname) && [MODULE_KEYS.SWEET_CARD]) ||
       (/^\/pos\/(?:daily-summary|product-sales)(?:\/|$)/.test(pathname) && [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.FINANCE]) ||
       (/^\/daily-entries(?:\/|$)/.test(pathname) && (req.method === 'GET'
         ? [MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.FINANCE]
@@ -603,6 +688,11 @@ export function createApp() {
       (/^\/schedules(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_SCHEDULE]) ||
       (/^\/store-sales-source/.test(pathname) && [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.SETTINGS]) ||
       (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/transfer-master-items(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
+      (/^\/(?:partners|partner-supply|partner-receipts)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_SUPPLY]) ||
+      (/^\/partner-management\/(?:replenishment-orders|fulfillment-stores)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW]) ||
+      (/^\/partner-management(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_MANAGEMENT]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:stock|items|waste-records)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ||
       (/^\/(?:expenses|profit|export\/profit)(?:\/|$)/.test(pathname) && [MODULE_KEYS.FINANCE]) ||
@@ -617,7 +707,11 @@ export function createApp() {
     return requireAnyModule(rule)(req, res, next)
   })
   app.use('/api/v2', posRouter)
-  app.use('/api/v2', requireBusiness, payrollNoticeRouter, productsRouter, scheduleRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, orderPurposeRouter)
+  app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
+  app.use('/api/v2', sweetCardAvailabilityRouter)
+  app.use('/api/v2', sweetCardRouter)
+  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -640,6 +734,7 @@ export function createApp() {
       staffKey: '',
       status: 'active',
       bindingLegacyExempt: false,
+      operationalIdentityType: 'STANDARD',
       permissions: normalizeAccountPermissions(null, 'developer'),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
@@ -668,7 +763,6 @@ export function createApp() {
     if (storeKeys === null) {
       return res.status(400).json({ error: 'storeKeys 格式错误' })
     }
-    const db = await loadDb()
     let staffKey = ''
     if (req.body.staffKey !== undefined) {
       const sk = normalizeStaffKey(req.body.staffKey)
@@ -680,23 +774,31 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingResult = await validateBoundRole(role, storeKeys, staffKey)
+    const bindingResult = await validateBoundRole(role, storeKeys, staffKey, String(req.body.employeeId || '').trim())
     if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
     // Data Authority DA-2：账号权威 = PostgreSQL
     const existing = await listUsers()
     if (existing.some((u) => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
+    // Gate 20：1 Employee ↔ 至多 1 User（无论 active/disabled——禁用账号不释放绑定）
+    const boundEmpId = bindingResult ? bindingResult.employeeId : ''
+    if (boundEmpId && existing.some((u) => u.employeeId === boundEmpId)) {
+      return res.status(409).json({ error: '该员工已绑定账号' })
+    }
+    // Gate 20：显式/legacy 解析出的 canonical staffKey 快照（由 Employee 推导，忽略 client 矛盾值）
+    const effStaffKey = bindingResult && bindingResult.staffKeySnapshot ? bindingResult.staffKeySnapshot : staffKey
     const user = {
       id: crypto.randomUUID(),
       username,
       displayName,
       role,
       storeKeys,
-      staffKey,
-      employeeId: bindingResult ? bindingResult.employeeId : '',
+      staffKey: effStaffKey,
+      employeeId: boundEmpId,
       status: 'active',
       bindingLegacyExempt: false,
+      operationalIdentityType: 'STANDARD',
       permissions: normalizeAccountPermissions(req.body.permissions, role),
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
@@ -714,7 +816,11 @@ export function createApp() {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: '用户名或密码错误' })
     }
-    if (user.status === 'disabled' || user.role === 'public') {
+    if (user.role === 'partner' && user.status === 'active') {
+      // Keep the internal session boundary; the Partner endpoint validates the binding.
+      return res.status(403).json({ error: '请使用合作商入口登录', code: 'PARTNER_LOGIN_REQUIRED' })
+    }
+    if (!resolveInternalPrincipal(user)) {
       return res.status(403).json({ error: '账号已停用，请联系开发者' })
     }
     setAuthCookie(res, signToken(user, await getSecret()))
@@ -847,7 +953,7 @@ export function createApp() {
   // ---------- 账号管理（最高权限） ----------
   app.get('/api/admin/users', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    res.json({ users: users.map(userPublic) })
+    res.json({ users: users.filter(isInternalUser).map(userPublic) })
   })
 
   app.put('/api/admin/users/:id/role', requireAuth, requireAccountAdmin, async (req, res) => {
@@ -862,7 +968,6 @@ export function createApp() {
         return res.status(400).json({ error: 'storeKeys 格式错误' })
       }
     }
-    const db = await loadDb()
     let staffKey = null
     if (req.body.staffKey !== undefined) {
       staffKey = normalizeStaffKey(req.body.staffKey)
@@ -870,7 +975,7 @@ export function createApp() {
     }
     // Data Authority DA-2：账号权威 = PostgreSQL
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能修改自己的权限' })
@@ -890,17 +995,27 @@ export function createApp() {
     if (cashierError) {
       return res.status(400).json({ error: cashierError })
     }
-    const bindingResult = await validateBoundRole(role, effStoreKeys, effStaffKey)
+    const bindingResult = await validateBoundRole(role, effStoreKeys, effStaffKey, String(req.body.employeeId || '').trim())
     if (typeof bindingResult === 'string') return res.status(400).json({ error: bindingResult })
+    // Gate 20：1 Employee ↔ 至多 1 User——排除当前编辑账号自身（自持绑定允许）
+    const boundEmpId = bindingResult ? bindingResult.employeeId : ''
+    if (boundEmpId) {
+      const otherBound = users.some((u) => u.id !== target.id && u.employeeId === boundEmpId)
+      if (otherBound) return res.status(409).json({ error: '该员工已绑定账号' })
+    }
     const next = {
       role,
       status: 'active',
       disabledAt: null,
       bindingLegacyExempt: false,
       storeKeys: effStoreKeys,
-      staffKey: !['manager', 'staff'].includes(role) ? '' : effStaffKey,
-      employeeId: bindingResult && ['manager', 'staff'].includes(role) ? bindingResult.employeeId : '',
-      permissions: normalizeAccountPermissions(null, role, target.assetCenter === true),
+      // Gate 20：canonical staffKey 快照（显式/legacy 解析由 Employee 推导；非绑定角色清空）
+      staffKey: !['manager', 'staff'].includes(role) ? '' : (bindingResult && bindingResult.staffKeySnapshot ? bindingResult.staffKeySnapshot : effStaffKey),
+      employeeId: boundEmpId,
+      permissions: {
+        ...normalizeAccountPermissions(null, role, target.assetCenter === true),
+        sweetCardProductionTest: hasSweetCardProductionTestAccess(target),
+      },
     }
     next.assetCenter = next.permissions.modules[MODULE_KEYS.ASSET_CENTER] === true
     const updated = await updateUser(target.id, next)
@@ -909,11 +1024,14 @@ export function createApp() {
 
   app.put('/api/admin/users/:id/permissions', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.role === 'developer') return res.status(400).json({ error: '开发者固定拥有全部权限' })
     if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
-    const permissions = normalizeAccountPermissions(req.body, target.role, target.assetCenter === true)
+    const permissions = normalizeAccountPermissions({
+      ...req.body,
+      sweetCardProductionTest: hasSweetCardProductionTestAccess(target),
+    }, target.role, target.assetCenter === true)
     const updated = await updateUser(target.id, {
       permissions,
       assetCenter: permissions.modules[MODULE_KEYS.ASSET_CENTER] === true,
@@ -923,9 +1041,30 @@ export function createApp() {
     res.json({ user: userPublic(updated) })
   })
 
+  app.put('/api/admin/users/:id/operational-identity', requireAuth, requireAccountAdmin, async (req, res) => {
+    const operationalIdentityType = String(req.body?.operationalIdentityType || '').trim()
+    if (!['STANDARD', 'NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE'].includes(operationalIdentityType)) {
+      return res.status(400).json({ error: '运营身份类型不正确' })
+    }
+    const users = await listUsers()
+    const target = findInternalUser(users, req.params.id)
+    if (!target) return res.status(404).json({ error: '账号不存在' })
+    if (operationalIdentityType === 'NON_EMPLOYEE_OPERATIONAL_SUBSTITUTE' && target.employeeId) {
+      return res.status(409).json({ error: '已绑定员工的账号不能标记为非员工运营替代账号' })
+    }
+    if (operationalIdentityType === 'STANDARD') {
+      const participationCount = await prisma.dailyStoreStaff.count({ where: { participantUserId: target.id } })
+      if (participationCount > 0) {
+        return res.status(409).json({ error: '该账号已有运营参与记录，不能直接取消替代身份' })
+      }
+    }
+    const updated = await updateUser(target.id, { operationalIdentityType })
+    res.json({ user: userPublic(updated) })
+  })
+
   app.put('/api/admin/users/:id/name', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     const displayName = String(req.body.name || '').trim().slice(0, 20)
     const updated = await updateUser(target.id, { displayName })
@@ -938,7 +1077,7 @@ export function createApp() {
       return res.status(400).json({ error: '密码至少 6 位' })
     }
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     await updateUser(target.id, { passwordHash: hashPassword(newPassword) })
     res.json({ ok: true })
@@ -946,7 +1085,7 @@ export function createApp() {
 
   app.delete('/api/admin/users/:id', requireAuth, requireAccountAdmin, async (req, res) => {
     const users = await listUsers()
-    const target = users.find((u) => u.id === req.params.id)
+    const target = findInternalUser(users, req.params.id)
     if (!target) return res.status(404).json({ error: '账号不存在' })
     if (target.id === req.user.id) {
       return res.status(400).json({ error: '不能删除自己' })
@@ -1247,7 +1386,7 @@ export function createApp() {
     if (req.path.startsWith('/api/')) return next()
     const index = path.join(DIST, 'index.html')
     if (fs.existsSync(index)) {
-      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Cache-Control', req.path === '/customer-request' ? 'no-store' : 'no-cache')
       return res.sendFile(index)
     }
     res.status(404).json({ error: '前端未构建，请先运行 npm run build' })

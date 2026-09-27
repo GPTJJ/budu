@@ -1,23 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Download, Eye, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { getWeekDays } from '../utils/schedule'
-import { employeeDailyPayDetail } from '../utils/selectors'
+import {
+  loadDailyStoreStaffRange,
+  getDailyStoreStaffRange,
+  getDailyStoreStaffRangeState,
+  getEntries,
+  getDailyPayAdjustments,
+  getBigBonuses,
+  getStores,
+} from '../utils/userData'
+import { resolvePayrollCalculation } from '../utils/payrollResolver'
+import { addBusinessDays, monthEnd, resolvePayrollPeriod } from '../utils/payrollPeriod'
+import { buildPayrollExportRows } from '../utils/payrollExport'
 import { t } from '../utils/text'
 
 const inputCls = 'input'
-
-function pad(n) {
-  return String(n).padStart(2, '0')
-}
-
-function toDateStr(d) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-function r2(v) {
-  return Math.round((Number(v) || 0) * 100) / 100
-}
 
 function PreviewTable({ rows }) {
   const cols = rows[0] ? Object.keys(rows[0]) : []
@@ -49,116 +47,28 @@ function PreviewTable({ rows }) {
   )
 }
 
-/** 按起止日期逐日生成明细与汇总行（口径与工资明细弹窗一致） */
-function buildRows(employees, startDate, endDate) {
-  const detailRows = []
-  const summaryMap = new Map()
-  const cursor = new Date(`${startDate}T00:00:00`)
-  const end = new Date(`${endDate}T00:00:00`)
-  while (cursor <= end) {
-    const date = toDateStr(cursor)
-    const monthKey = date.slice(0, 7)
-    const day = date.slice(5)
-    for (const emp of employees) {
-      const detail = employeeDailyPayDetail(monthKey, day, emp.name)
-      if (!detail) continue
-      const typeLabel = emp.type === 'fulltime' ? '全职人员' : '兼职人员'
-      let rec = summaryMap.get(emp.name)
-      if (!rec) {
-        rec = {
-          name: emp.name,
-          typeLabel,
-          stores: new Set(),
-          workedDays: 0,
-          inc: 0,
-          ord: 0,
-          hours: 0,
-          basePay: 0,
-          commission: 0,
-          transferSubsidy: 0,
-          bigBonus: 0,
-          automaticPay: 0,
-          salaryAdjustment: 0,
-          pay: 0,
-        }
-        summaryMap.set(emp.name, rec)
-      }
-      rec.workedDays += 1
-      rec.inc += detail.totals.inc
-      rec.ord += detail.totals.ord
-      rec.hours += detail.totals.hours
-      rec.basePay += detail.totals.basePay
-      rec.commission += detail.totals.commission
-      rec.transferSubsidy += detail.totals.transferSubsidy
-      rec.bigBonus += detail.totals.bigBonus
-      rec.automaticPay += detail.totals.automaticPay
-      rec.salaryAdjustment += detail.totals.salaryAdjustment
-      rec.pay += detail.totals.pay
-      for (const [rowIndex, row] of detail.rows.entries()) {
-        rec.stores.add(row.storeName)
-        detailRows.push({
-          日期: date,
-          员工姓名: emp.name,
-          类型: typeLabel,
-          门店: row.storeName,
-          '营业额(元)': r2(row.revenue),
-          订单: r2(row.orders),
-          '工时(h)': r2(row.hours),
-          '基础时薪(元/h)': r2(row.baseRate),
-          '基础工资(元)': r2(row.basePay),
-          '提成时薪(元/h)': r2(row.commissionRate),
-          '业绩提成(元)': r2(row.commission),
-          '调货补贴(元)': r2(row.transferSubsidy),
-          '大单奖(元)': r2(row.bigBonus),
-          '自动工资(元)': r2(row.total),
-          '薪资调整(元)': rowIndex === 0 ? r2(detail.totals.salaryAdjustment) : 0,
-          调整原因: rowIndex === 0 && detail.totals.payAdjustment ? detail.totals.payAdjustment.reason || '' : '',
-          '最终工资(元)': rowIndex === 0 ? r2(detail.totals.pay) : '',
-        })
-      }
-    }
-    cursor.setDate(cursor.getDate() + 1)
-  }
-  const summaryRows = [...summaryMap.values()].map((rec) => ({
-    员工姓名: rec.name,
-    类型: rec.typeLabel,
-    期间值班门店: rec.stores.size > 0 ? [...rec.stores].join('、') : '',
-    出勤天数: rec.workedDays,
-    '营业额(元)': r2(rec.inc),
-    订单: r2(rec.ord),
-    '工时(h)': r2(rec.hours),
-    '基础工资(元)': r2(rec.basePay),
-    '业绩提成(元)': r2(rec.commission),
-    '调货补贴(元)': r2(rec.transferSubsidy),
-    '大单奖(元)': r2(rec.bigBonus),
-    '自动工资(元)': r2(rec.automaticPay),
-    '薪资调整(元)': r2(rec.salaryAdjustment),
-    '工资合计(元)': r2(rec.pay),
-  }))
-  return { detailRows, summaryRows }
-}
-
 export default function ExportSalaryModal({ employees, month, day, weekStart, onClose }) {
   const defaults = useMemo(() => {
     if (weekStart) {
-      const days = getWeekDays(weekStart)
-      return { start: weekStart, end: days[6].date }
+      return { start: weekStart, end: addBusinessDays(weekStart, 6), periodType: 'week' }
     }
     if (day) {
       const dd = String(day).includes('-') ? day.slice(3) : day
       const date = `${month}-${dd}`
-      return { start: date, end: date }
+      return { start: date, end: date, periodType: 'custom' }
     }
-    const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate()
-    return { start: `${month}-01`, end: `${month}-${pad(daysInMonth)}` }
+    return { start: `${month}-01`, end: monthEnd(month), periodType: 'month' }
   }, [month, day, weekStart])
 
   const [startDate, setStartDate] = useState(defaults.start)
   const [endDate, setEndDate] = useState(defaults.end)
-  const [selected, setSelected] = useState(() => new Set(employees.map((e) => e.name)))
+  // Gate 25：选择身份 = Employee.id（同名员工独立可选/独立导出）
+  const [selected, setSelected] = useState(() => new Set(employees.map((e) => e.id)))
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(null)
   const [previewTab, setPreviewTab] = useState('detail')
+  const [exportMode, setExportMode] = useState('')
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -166,7 +76,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const runBuild = () => {
+  const runBuild = async () => {
     if (!startDate || !endDate) {
       setError(t('请选择开始和结束日期'))
       return null
@@ -179,13 +89,65 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
       setError(t('请至少选择一名员工'))
       return null
     }
-    const selectedEmployees = employees.filter((e) => selected.has(e.name))
-    const { detailRows, summaryRows } = buildRows(selectedEmployees, startDate, endDate)
-    if (detailRows.length === 0) {
-      setError(t('所选日期区间暂无薪酬数据'))
+    const selectedEmployees = employees.filter((e) => selected.has(e.id))
+    if (selectedEmployees.length === 0) {
+      setError(t('请至少选择一名员工'))
       return null
     }
-    return { detailRows, summaryRows }
+    setLoading(true)
+    setError('')
+    try {
+      const unchangedDefault = startDate === defaults.start && endDate === defaults.end
+      const requestedType = unchangedDefault ? defaults.periodType : 'custom'
+      const period = resolvePayrollPeriod(
+        requestedType === 'month'
+          ? { periodType: 'month', periodKey: startDate.slice(0, 7), periodStart: startDate, periodEnd: endDate }
+          : requestedType === 'week'
+            ? { periodType: 'week', periodKey: startDate, periodStart: startDate, periodEnd: endDate }
+            : { periodType: 'custom', periodStart: startDate, periodEnd: endDate },
+      )
+      if (!period.valid) {
+        setError(t(period.detail || '日期范围不正确'))
+        setLoading(false)
+        return null
+      }
+      await loadDailyStoreStaffRange(period.periodStart, period.periodEnd)
+      const rangeState = getDailyStoreStaffRangeState(period.periodStart, period.periodEnd)
+      if (!rangeState.complete) {
+        setError(t('工资数据尚未加载，请重新加载'))
+        setLoading(false)
+        return null
+      }
+      const storeNames = Object.fromEntries(getStores().map((store) => [store.key, store.name]))
+      const resolverResult = resolvePayrollCalculation({
+        ...period,
+        dailyEntries: getEntries(),
+        dailyStoreStaffRows: getDailyStoreStaffRange(period.periodStart, period.periodEnd),
+        dailyPayAdjustments: getDailyPayAdjustments(),
+        bigOrderBonuses: getBigBonuses(),
+        employees: selectedEmployees,
+        users: [],
+        storeNames,
+      })
+      if (resolverResult.mode !== 'EMPLOYEE_ID' || !resolverResult.calculationReady) {
+        setError(t('工资权威数据不完整，无法导出'))
+        setLoading(false)
+        return null
+      }
+      setExportMode('EMPLOYEE_ID')
+      const { detailRows, summaryRows } = buildPayrollExportRows(resolverResult, selectedEmployees, selected)
+      if (detailRows.length === 0 && summaryRows.length === 0) {
+        setError(t('所选日期区间暂无薪酬数据'))
+        setLoading(false)
+        return null
+      }
+      setLoading(false)
+      return { detailRows, summaryRows }
+    } catch (e) {
+      setError(t(e.message || '导出失败'))
+      setLoading(false)
+      return null
+    }
   }
 
   const downloadRows = (rows) => {
@@ -209,8 +171,8 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     onClose()
   }
 
-  const handlePreview = () => {
-    const rows = runBuild()
+  const handlePreview = async () => {
+    const rows = await runBuild()
     if (rows) {
       setPreview(rows)
       setPreviewTab('detail')
@@ -218,25 +180,25 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
     }
   }
 
-  const handleExport = () => {
-    const rows = runBuild()
+  const handleExport = async () => {
+    const rows = await runBuild()
     if (rows) downloadRows(rows)
   }
 
-  const toggleEmployee = (name) => {
+  const toggleEmployee = (id) => {
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
     setError('')
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
+    <div data-budu-overlay-root className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={t('导出工资表')} className="budu-overlay-scroll relative max-h-[88dvh] w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{t('导出表格')}</h3>
@@ -275,6 +237,12 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               <span className="text-xs text-slate-400">
                 {t('预览导出内容，确认后下载')}
               </span>
+              {exportMode === 'EMPLOYEE_ID' && (
+                <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">{t('稳定计算')}</span>
+              )}
+              {exportMode === 'LEGACY' && (
+                <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">{t('兼容计算')}</span>
+              )}
             </div>
             {previewTab === 'detail' ? (
               <PreviewTable rows={preview.detailRows} />
@@ -300,12 +268,12 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
         ) : (
           <div className="mt-5 space-y-4">
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('开始日期')}</label>
-            <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setError('') }} className={inputCls} />
+            <label htmlFor="payroll-export-start" className="mb-1.5 block text-xs font-semibold text-slate-500">{t('开始日期')}</label>
+            <input id="payroll-export-start" type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setError('') }} className={inputCls} />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-500">{t('结束日期')}</label>
-            <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setError('') }} className={inputCls} />
+            <label htmlFor="payroll-export-end" className="mb-1.5 block text-xs font-semibold text-slate-500">{t('结束日期')}</label>
+            <input id="payroll-export-end" type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setError('') }} className={inputCls} />
           </div>
           <p className="rounded-xl bg-budu-50/60 px-3 py-2 text-xs text-budu-600">
             {t('默认区间：{start} ~ {end}', { start: defaults.start, end: defaults.end })}
@@ -321,7 +289,7 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => {
-                    setSelected(new Set(employees.map((e) => e.name)))
+                    setSelected(new Set(employees.map((e) => e.id)))
                     setError('')
                   }}
                   className="rounded-lg bg-budu-50 px-2 py-1 text-[11px] font-semibold text-budu-600 transition hover:bg-budu-100"
@@ -342,16 +310,19 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
             <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-white p-2">
               {employees.map((emp) => (
                 <label
-                  key={emp.name}
+                  key={emp.id}
                   className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-budu-50/60"
                 >
                   <input
                     type="checkbox"
-                    checked={selected.has(emp.name)}
-                    onChange={() => toggleEmployee(emp.name)}
+                    checked={selected.has(emp.id)}
+                    onChange={() => toggleEmployee(emp.id)}
                     className="h-4 w-4 shrink-0 accent-budu-500"
                   />
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-700">{emp.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-700">
+                    {emp.name}
+                    {emp.employeeNo ? <span className="ml-1 text-[11px] font-normal text-slate-400">{emp.employeeNo}</span> : null}
+                  </span>
                   <span
                     className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                       emp.type === 'fulltime'
@@ -366,6 +337,18 @@ export default function ExportSalaryModal({ employees, month, day, weekStart, on
               ))}
             </div>
           </div>
+          {/* Gate 25：模式可见性 + loading */}
+          {exportMode === 'EMPLOYEE_ID' && (
+            <p className="rounded-xl bg-emerald-50/70 px-3 py-2 text-xs font-semibold text-emerald-600">
+              {t('稳定计算 · 按员工身份精确导出')}
+            </p>
+          )}
+          {exportMode === 'LEGACY' && (
+            <p className="rounded-xl bg-amber-50/70 px-3 py-2 text-xs font-semibold text-amber-600">
+              {t('兼容计算 · 按历史姓名快照导出')}
+            </p>
+          )}
+          {loading && <p className="text-xs font-medium text-slate-400">{t('加载中…')}</p>}
           {error && <p className="text-xs font-medium text-rose-500">{error}</p>}
           <div className="grid grid-cols-3 gap-2.5">
             <button

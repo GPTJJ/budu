@@ -15,6 +15,10 @@
     -webkit-tap-highlight-color: transparent;
     text-rendering: optimizeLegibility;
   }
+  html.budu-overlay-open,
+  html.budu-overlay-open body {
+    overscroll-behavior: none;
+  }
   #root {
     min-height: 100%;
   }
@@ -65,6 +69,69 @@
 }
 
 @layer components {
+  /* ===== Global overlay scroll contract ===== */
+  .budu-overlay-viewport {
+    box-sizing: border-box;
+    margin: 0 !important;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .budu-overlay-panel,
+  [data-budu-overlay-root],
+  [role='dialog'][aria-modal='true'],
+  .fixed.inset-0 {
+    overscroll-behavior: contain;
+  }
+
+  [data-budu-overlay-root],
+  .fixed.inset-0:not([data-budu-overlay-ignore]) {
+    margin: 0 !important;
+  }
+
+  [data-budu-overlay-root] .overflow-y-auto,
+  [role='dialog'][aria-modal='true'] .overflow-y-auto,
+  [role='dialog'][aria-modal='true'].overflow-y-auto,
+  .fixed.inset-0 .overflow-y-auto,
+  .fixed.inset-0.overflow-y-auto {
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .budu-overlay-panel {
+    min-height: 0;
+  }
+
+  .budu-overlay-header,
+  .budu-overlay-footer {
+    position: relative;
+    z-index: 10;
+    flex: none;
+  }
+
+  .budu-overlay-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: contain;
+    scroll-behavior: auto;
+    scroll-padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .budu-overlay-backdrop {
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
   /* ===== 移动端右滑返回（Interactive Pop Gesture）=====
      双层页面：上一页快照层（z-1）+ 当前页 #root（z-2）
      拖动阶段无 transition（1:1 跟手），松手后 settling 播放完成/回弹动画 */
@@ -246,6 +313,41 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* 商品中心：移动端先完整呈现商品名，SKU 下沉为次级信息。 */
+.product-mobile-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+@media (min-width: 431px) {
+  .product-title-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.5rem;
+  }
+
+  .product-mobile-title {
+    display: block;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .product-title-line [data-testid='product-price'] {
+    margin-top: 0;
   }
 }
 

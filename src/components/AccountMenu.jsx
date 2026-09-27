@@ -8,9 +8,9 @@ const inputCls = 'input'
 
 function ModalShell({ title, onClose, children }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
+    <div data-budu-overlay-root className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-label={title} className="budu-overlay-scroll relative max-h-[calc(100dvh-2rem)] w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
         <div className="flex items-start justify-between gap-4">
           <h3 className="text-lg font-bold text-slate-800">{title}</h3>
           <button

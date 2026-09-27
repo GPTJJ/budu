@@ -655,7 +655,11 @@ approvalRouter.post('/approvals/requests/:id/withdraw', wrap(async (req, res) =>
   if (!request) throw httpError('审批单不存在', 404)
   if (!canWithdraw(req.user, request)) throw httpError('仅提交人可在待审批时撤回', 403)
   await prisma.$transaction(async (tx) => {
-    await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'withdrawn' } })
+    const claimed = await tx.approvalRequest.updateMany({
+      where: { id: request.id, status: 'pending' },
+      data: { status: 'withdrawn' },
+    })
+    if (claimed.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
     await tx.approvalLog.create({ data: { id: `al-${crypto.randomUUID()}`, requestId: request.id, action: 'withdraw', username: req.user.username, detail: '撤回申请' } })
   })
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })
@@ -805,16 +809,20 @@ approvalRouter.post('/approvals/notifications/read', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   const body = req.body || {}
   const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : []
+  let result = { count: 0 }
   if (body.all === true) {
-    await prisma.approvalNotification.updateMany({
-      where: { username: req.user.username, readAt: null },
+    const through = body.through ? new Date(String(body.through)) : null
+    if (through && Number.isNaN(through.getTime())) throw httpError('已读截止时间无效', 400)
+    result = await prisma.approvalNotification.updateMany({
+      where: { username: req.user.username, readAt: null, ...(through ? { createdAt: { lte: through } } : {}) },
       data: { readAt: new Date() },
     })
   } else if (ids.length) {
-    await prisma.approvalNotification.updateMany({
+    result = await prisma.approvalNotification.updateMany({
       where: { id: { in: ids }, username: req.user.username },
       data: { readAt: new Date() },
     })
   }
-  res.json({ ok: true })
+  const unreadCount = await prisma.approvalNotification.count({ where: { username: req.user.username, readAt: null } })
+  res.json({ ok: true, updatedCount: result.count, unreadCount })
 }))

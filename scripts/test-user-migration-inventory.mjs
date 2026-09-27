@@ -417,7 +417,7 @@ test('非法 JSON 输入 → exit 2 明确报错（不打印原生栈/文件内�
   assert.ok(!r.stderr.includes('user-migration-inventory.mjs')) // 无原生异常栈
 })
 
-test('每账号有效权限盘点（运行时复现：developer/cashier 固定；有 source 时严格按 source）', () => {
+test('每账号有效权限盘点（developer/cashier 固定；旧 source 补齐新增模块）', () => {
   const f = path.join(tmp, 'eff-perm.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
     { id: 'x1', username: 'dev', role: 'developer', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { overview: false } }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
@@ -428,13 +428,13 @@ test('每账号有效权限盘点（运行时复现：developer/cashier 固定�
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
   // developer：固定全模块（normalizeModules 对 developer 不看 source）
   assert.equal(byName.dev.effectiveBasis, 'fixed-all')
-  assert.equal(byName.dev.effectiveModules.length, 16)
+  assert.equal(byName.dev.effectiveModules.length, 18)
   // cashier：固定仅 store-pos（normalizeModules 对 cashier 不看 source）
   assert.equal(byName.cash.effectiveBasis, 'fixed-pos')
   assert.deepEqual(byName.cash.effectiveModules, ['store-pos'])
-  // admin：有 source {store-pos:true} → 严格按 source，只含 store-pos，不恢复默认 16 模块
+  // admin：旧 source 补齐本次新增的两个默认模块；其余仍严格按 source。
   assert.equal(byName.adm.effectiveBasis, 'stored')
-  assert.deepEqual(byName.adm.effectiveModules, ['store-pos'])
+  assert.deepEqual(byName.adm.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
 })
 
 test('accountAdminCheck：仅 developer 且未停用可管理账号', () => {
@@ -651,10 +651,10 @@ test('运行时默认权限：Admin/Finance/Manager/Staff/Cashier（无存储 pe
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  assert.equal(byName.adm.effectiveModules.length, 16) // admin 默认全模块
-  assert.equal(byName.fin.effectiveModules.length, 16) // finance 默认全模块
-  assert.equal(byName.mgr.effectiveModules.length, 14) // manager 默认 14 项
-  assert.equal(byName.stf.effectiveModules.length, 13) // staff 默认 13 项（无 product-center）
+  assert.equal(byName.adm.effectiveModules.length, 18) // admin 默认全模块
+  assert.equal(byName.fin.effectiveModules.length, 18) // finance 默认全模块
+  assert.equal(byName.mgr.effectiveModules.length, 16) // manager 默认 16 项
+  assert.equal(byName.stf.effectiveModules.length, 15) // staff 默认 15 项（无 product-center）
   assert.deepEqual(byName.csh.effectiveModules, ['store-pos'])
   assert.ok(!byName.stf.effectiveModules.includes('product-center'))
   assert.ok(byName.mgr.effectiveModules.includes('product-center'))
@@ -695,17 +695,17 @@ test('assetCenter legacy fallback：仅无 source 时经 defaults 生效；有 s
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  // s1：无 source + assetCenter=true → defaults 追加 asset-center（13 + 1 = 14）
+  // s1：无 source + assetCenter=true → defaults 追加 asset-center（15 + 1 = 16）
   assert.equal(byName.s1.assetCenterStored, true)
   assert.ok(byName.s1.effectiveModules.includes('asset-center'))
-  assert.equal(byName.s1.effectiveModules.length, 14)
-  // s2：无 source 无 assetCenter → 13（不含 asset-center）
+  assert.equal(byName.s1.effectiveModules.length, 16)
+  // s2：无 source 无 assetCenter → 15（不含 asset-center）
   assert.equal(byName.s2.assetCenterStored, false)
   assert.ok(!byName.s2.effectiveModules.includes('asset-center'))
-  assert.equal(byName.s2.effectiveModules.length, 13)
-  // s3：有 source + assetCenter=true → 严格按 source，不恢复 asset-center（normalizeModules source 分支不用 defaults）
+  assert.equal(byName.s2.effectiveModules.length, 15)
+  // s3：有 source + assetCenter=true → 不恢复 asset-center，但补齐两个新增模块。
   assert.equal(byName.s3.assetCenterStored, true)
-  assert.deepEqual(byName.s3.effectiveModules, ['store-pos'])
+  assert.deepEqual(byName.s3.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
 })
 
 test('inventoryTransferAll：stored vs effective（跨门店调拨范围，非模块访问权）', () => {
@@ -758,7 +758,7 @@ test('validUsers 与 validation.errors 一致性（errors>0 → invalid）', () 
 
 // ================= 第四轮：runtime source 语义 =================
 
-test('runtime source 语义：Admin 无 source → defaults；有 source → 仅 source true；false 不恢复', () => {
+test('runtime source 语义：Admin 无 source → defaults；旧 source 补齐新增模块；false 不恢复', () => {
   const f = path.join(tmp, 'adm-source.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
     { id: 'a1', username: 'adm-none', role: 'admin', storeKeys: [], staffKey: '', status: 'active', passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
@@ -768,13 +768,13 @@ test('runtime source 语义：Admin 无 source → defaults；有 source → 仅
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
   assert.equal(byName['adm-none'].effectiveBasis, 'defaults')
-  assert.equal(byName['adm-none'].effectiveModules.length, 16) // 无 source → 默认全模块
+  assert.equal(byName['adm-none'].effectiveModules.length, 18) // 无 source → 默认全模块
   assert.equal(byName['adm-src'].effectiveBasis, 'stored')
-  assert.deepEqual(byName['adm-src'].effectiveModules, ['store-pos']) // finance:false 不恢复
-  assert.deepEqual(byName['adm-false'].effectiveModules, []) // 全部 false → 空
+  assert.deepEqual(byName['adm-src'].effectiveModules, ['store-pos', 'partner-supply', 'product-material-management']) // finance:false 不恢复
+  assert.deepEqual(byName['adm-false'].effectiveModules, ['partner-supply', 'product-material-management'])
 })
 
-test('runtime source 语义：Finance/Manager/Staff 有 source → 不恢复 defaults', () => {
+test('runtime source 语义：Finance/Manager/Staff 有 source → 仅补齐新增默认模块', () => {
   const f = path.join(tmp, 'role-source.json')
   fs.writeFileSync(f, JSON.stringify({ users: [
     { id: 'f1', username: 'fin', role: 'finance', storeKeys: [], staffKey: '', status: 'active', permissions: { modules: { 'store-pos': true } }, passwordHash: h('x'), createdAt: '2026-01-01T00:00:00.000Z' },
@@ -783,13 +783,13 @@ test('runtime source 语义：Finance/Manager/Staff 有 source → 不恢复 def
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  // Finance：source 存在 → 不恢复默认 16
-  assert.deepEqual(byName.fin.effectiveModules, ['store-pos'])
-  // Manager：source 存在 → 不恢复默认 14；assetCenter=true 也不恢复 asset-center
-  assert.deepEqual(byName.mgr.effectiveModules, ['store-pos'])
+  // Finance：source 存在 → 不恢复其他默认项，只补齐新增模块。
+  assert.deepEqual(byName.fin.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
+  // Manager：source 存在 → 不恢复其他默认项；assetCenter=true 也不恢复 asset-center。
+  assert.deepEqual(byName.mgr.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
   assert.equal(byName.mgr.assetCenterStored, true)
-  // Staff：source 存在 → 只按 source（overview:true），不恢复默认 13
-  assert.deepEqual(byName.stf.effectiveModules, ['overview'])
+  // Staff：source 存在 → overview + 两个新增默认模块。
+  assert.deepEqual(byName.stf.effectiveModules, ['overview', 'partner-supply', 'product-material-management'])
 })
 
 // ================= 第四轮：accountValidations =================

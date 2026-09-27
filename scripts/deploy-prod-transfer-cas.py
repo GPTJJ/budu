@@ -1,0 +1,1111 @@
+#!/usr/bin/env python3
+"""Transfer CAS only: inspect-artifact / preflight / explicitly authorized deploy.
+
+All command output, inspect environments and credentials stay in process memory.
+Only fixed error codes and an allowlisted summary are printed. No shell tracing.
+The existing cloner is used only AFTER the previous writer has stopped.
+"""
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import signal
+from urllib.parse import urlsplit, unquote
+
+EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
+RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
+RELEASE_BASE = '90cba06afb176d002b9b924f167cd79c8268460f'
+MEASURE_ONLY = False  # Deployment still requires exact-SHA explicit authorization.
+EXPECTED_DB = 'budu_bj006'
+EXPECTED_MIGRATIONS = 85
+MIGRATION_REQUIRED = 'NO'
+OLD_V2_HASH = '12d203f0c4cf451d41db314d513c3fe223169f9b51925f1403fa499848f61fc5'
+HOST = 'ubuntu@154.8.195.42'
+NGINX = 'budu-nginx-1'
+PG = 'budu-bj-006-final-restore-20260822-055653z-pg'
+TEMPLATE = '/opt/budu/deploy/nginx/conf.d/budu.conf.template'
+ACTIVE = '/etc/nginx/conf.d/budu.conf'
+LOCK = '/run/lock/budu-transfer-cas-release'
+ALLOWLIST = {
+    'scripts/deploy-prod-transfer-cas.sh',
+    'scripts/deploy-prod-transfer-cas.py',
+    'scripts/test-deploy-prod-transfer-cas.py',
+    'docs/checkpoints/2026-09-26-transfer-cas-release.md',
+    'scripts/deploy-remote.sh',
+    'scripts/release-prod-transfer-cas-ci.sh',
+    'scripts/test-transfer-cas-existing-workflow.py',
+}
+CURRENT_SHA_FILE = '/opt/budu/.current-sha'
+HOST_DEFAULTS = {'Memory': 0, 'MemoryReservation': 0, 'MemorySwap': 0, 'MemorySwappiness': None, 'NanoCpus': 0, 'CpuShares': 0, 'CpuPeriod': 0, 'CpuQuota': 0, 'CpusetCpus': '', 'CpusetMems': '', 'PidsLimit': None, 'Ulimits': [], 'ShmSize': 67108864, 'IpcMode': 'private', 'PidMode': '', 'UTSMode': '', 'CgroupnsMode': 'private', 'ExtraHosts': None, 'Dns': None, 'DnsOptions': [], 'DnsSearch': [], 'Devices': [], 'DeviceRequests': None, 'Sysctls': None, 'OomKillDisable': None, 'AutoRemove': False}
+GIB = 1024 ** 3
+# Admission bounds, not an assertion that an unbuilt image has these sizes.
+MAX_ARCHIVE = 768 * 1024 ** 2
+ABSOLUTE_MAX_PEAK = 6 * GIB
+MAX_LAYER_STREAM = 4 * GIB  # Existing independent expansion bound is unchanged.
+MAX_IMAGE_SIZE = 4 * GIB
+MAX_PROJECTED_USAGE = 85
+MIN_PROJECTED_AVAILABLE = 10 * GIB
+RESERVE = 512 * 1024 ** 2
+MAX_MEMBERS = 150000
+REVISION = 'org.opencontainers.image.revision'
+IDENTITY_KEYS = ('User', 'WorkingDir', 'Entrypoint', 'Cmd', 'ExposedPorts', 'Healthcheck')
+
+class GateError(Exception):
+    pass
+
+def require(ok, code):
+    if not ok:
+        raise GateError(code)
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+def command(args, data=None, timeout=60):
+    try:
+        r = subprocess.run(args, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise GateError('COMMAND_UNAVAILABLE_OR_TIMEOUT') from None
+    require(r.returncode == 0, 'COMMAND_FAILED')
+    return r.stdout
+
+def file_hash(stream):
+    h = hashlib.sha256()
+    while True:
+        block = stream.read(1024 * 1024)
+        if not block:
+            return h.hexdigest()
+        h.update(block)
+
+
+def runtime_payload(repo):
+    paths = git(repo, 'ls-files', '--', 'server', 'shared', 'src/utils', 'prisma', 'scripts', 'brand/web', 'package.json', 'package-lock.json').splitlines()
+    return {'app/' + p:digest((Path(repo)/p).read_bytes()) for p in paths if not p.startswith('server/data/')}
+
+
+def git(repo, *args):
+    return command(['git', '-C', str(repo), *args]).decode().strip()
+
+def validate_identity(release, parent, ancestor, files, schema_files, clean):
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != RUNTIME_SHA, 'RELEASE_SHA_INVALID')
+    require(parent == RELEASE_BASE and ancestor, 'RELEASE_ANCESTRY_INVALID')
+    require(set(files) == ALLOWLIST, 'RELEASE_DIFF_OUTSIDE_ALLOWLIST')
+    require(not schema_files, 'SCHEMA_CHANGED')
+    require(clean, 'WORKTREE_NOT_CLEAN')
+
+def identity(repo):
+    require(Path(__file__).resolve() == (Path(repo)/'scripts/deploy-prod-transfer-cas.py').resolve(), 'RUNNER_REPO_MISMATCH')
+    release = git(repo, 'rev-parse', 'HEAD')
+    require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
+    parents = git(repo, 'rev-list', '--parents', '-n', '1', release).split()
+    files = git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines()
+    schemas = git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma').splitlines()
+    validate_identity(release, parents[1] if len(parents) == 2 else '',
+                      git(repo, 'merge-base', RUNTIME_SHA, release) == RUNTIME_SHA,
+                      files, schemas, not git(repo, 'status', '--porcelain', '--untracked-files=all'))
+    command(['git', '-C', str(repo), 'diff', '--check', RUNTIME_SHA, release])
+    require(not git(repo, 'log', '--format=', '--name-only', EXPECTED_OLD_SHA+'..'+release, '--', '.github/workflows'), 'WORKFLOW_HISTORY_CHANGED')
+    for f in files:
+        change = 'M' if f == 'scripts/deploy-remote.sh' else 'A'
+        require(git(repo, 'diff', '--diff-filter='+change, '--name-only', RUNTIME_SHA, release, '--', f) == f,
+                'RELEASE_FILE_CHANGE_TYPE_INVALID')
+    migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
+    require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
+    return release, migrations
+
+def image_reference(release):
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)), 'IMAGE_RELEASE_SHA_INVALID')
+    return 'budu-api:transfer-cas-' + release[:12]
+
+
+def validate_loaded_image(image, art):
+    require(art['imageReference'] == image_reference(art['release']), 'IMAGE_REFERENCE_INVALID')
+    require(image.get('RepoTags') == [art['imageReference']], 'LOADED_IMAGE_TAG_MISMATCH')
+    require(bool(re.fullmatch(r'sha256:[0-9a-f]{64}', image.get('Id', ''))), 'LOADED_ARTIFACT_MISMATCH')
+    require(image['Os'] == 'linux'
+            and image['Architecture'] == 'amd64'
+            and image['Config'].get('Labels', {}).get(REVISION) == art['release'], 'LOADED_ARTIFACT_MISMATCH')
+    require(all(image['Config'].get(k) == art['config'].get(k) for k in IDENTITY_KEYS), 'LOADED_CONFIG_MISMATCH')
+    require(image.get('RootFS', {}).get('Layers') == art['rootfsDiffIds'], 'LOADED_ROOTFS_MISMATCH')
+    require(0 < image['Size'] <= MAX_IMAGE_SIZE, 'LOADED_IMAGE_SIZE_INVALID')
+    return image['Id']
+
+
+def resolve_loaded_image(remote, art):
+    # Config digest authenticates archive content, not Docker's store-specific
+    # lookup identity. Never scan images or guess digest prefixes as fallback.
+    require(art['imageReference'] == image_reference(art['release']), 'IMAGE_REFERENCE_INVALID')
+    image = remote.inspect(art['imageReference'], image=True)
+    loaded = validate_loaded_image(image, art)
+    require(art.get('loadedDockerImageId', loaded) == loaded, 'LOADED_IMAGE_CHANGED')
+    return image
+
+
+def validate_candidate_image(candidate, art):
+    require(candidate['Image'] == art['loadedDockerImageId']
+            and candidate['Config'].get('Image') == art['imageReference'], 'CANDIDATE_IMAGE_IDENTITY_MISMATCH')
+
+def disk_budget(used, available, archive, blobs, expanded, largest_layer):
+    # containerd import: incoming archive allowance + content blobs + snapshots +
+    # one expanded layer of staging + 512 MiB for metadata/runtime/ordinary growth.
+    peak = archive + blobs + expanded + largest_layer + RESERVE
+    require(0 < archive <= MAX_ARCHIVE and min(blobs, expanded, largest_layer) > 0,
+            'ARTIFACT_SIZE_INVALID')
+    require(peak <= ABSOLUTE_MAX_PEAK, 'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK')
+    projected = math.ceil(100 * (used + peak) / (used + available))
+    minimum = available - peak
+    require(projected <= MAX_PROJECTED_USAGE and minimum >= MIN_PROJECTED_AVAILABLE,
+            'ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM')
+    return dict(peakIncrement=peak, finalIncrement=blobs + expanded,
+                tempIncrement=archive + largest_layer + RESERVE,
+                projectedUsage=projected, projectedAvailable=minimum)
+
+def safe_name(name):
+    p = name.removeprefix('./')
+    require(not p.startswith('/') and '..' not in p.split('/'), 'ARCHIVE_PATH_INVALID')
+    return p
+
+class HashReader:
+    def __init__(self, source):
+        self.source, self.h, self.total = source, hashlib.sha256(), 0
+    def read(self, n=-1):
+        b = self.source.read(n)
+        self.total += len(b)
+        require(self.total <= MAX_LAYER_STREAM, 'LAYER_STREAM_TOO_LARGE')
+        self.h.update(b)
+        return b
+
+def artifact(path, release, repo):
+    """Read-only off-host validation of one uncompressed docker-save archive.
+
+Both plain and gzip layer blobs are supported; their expanded bytes/metadata
+are measured, not inferred from docker image inspect's compressed Size field.
+No archive member is extracted to the host filesystem.
+"""
+    p = Path(path)
+    size = p.stat().st_size
+    require(0 < size <= MAX_ARCHIVE, 'ARCHIVE_TOO_LARGE')
+    with p.open('rb') as f:
+        archive_hash = file_hash(f)
+    with tarfile.open(p, mode='r:') as outer:
+        members = outer.getmembers()
+        require(len(members) <= MAX_MEMBERS, 'ARCHIVE_TOO_MANY_MEMBERS')
+        by_name = {}
+        for m in members:
+            name = safe_name(m.name)
+            require(name not in by_name and (m.isfile() or m.isdir()), 'ARCHIVE_MEMBER_INVALID')
+            by_name[name] = m
+        def read(name, limit):
+            require(name in by_name and by_name[name].isfile() and by_name[name].size <= limit,
+                    'ARCHIVE_METADATA_INVALID')
+            return outer.extractfile(by_name[name]).read()
+        manifest = json.loads(read('manifest.json', 65536))
+        require(len(manifest) == 1, 'ARTIFACT_MUST_HAVE_ONE_IMAGE')
+        item = manifest[0]
+        tag = image_reference(release)
+        # BuildKit normalizes names, while the Docker compatibility manifest may
+        # use the familiar spelling. These name exactly the same repository/tag.
+        exact_tags = [tag, 'docker.io/library/' + tag]
+        require(item.get('RepoTags') in [[t] for t in exact_tags], 'ARTIFACT_TAG_INVALID')
+        config_bytes = read(safe_name(item['Config']), 4 * 1024 ** 2)
+        config = json.loads(config_bytes)
+        require(config.get('os') == 'linux' and config.get('architecture') == 'amd64', 'ARTIFACT_PLATFORM_INVALID')
+        require(config.get('config', {}).get('Labels', {}).get(REVISION) == release, 'ARTIFACT_REVISION_INVALID')
+        layers = item['Layers']
+        diffs = config.get('rootfs', {}).get('diff_ids', [])
+        require(len(layers) == len(diffs) and 0 < len(layers) <= 64 and len(set(layers)) == len(layers), 'LAYER_LIST_INVALID')
+        allowed_members = {'manifest.json', item['Config'], *layers}
+        if 'repositories' in by_name:
+            repositories = json.loads(read('repositories',65536))
+            require(set(repositories) == {'budu-api'} and set(repositories['budu-api']) == {'transfer-cas-'+release[:12]}, 'LEGACY_TAGS_INVALID')
+            allowed_members.add('repositories')
+        if 'index.json' in by_name:
+            index = json.loads(read('index.json',65536))
+            require(len(index.get('manifests',[])) == 1, 'OCI_INDEX_MUST_HAVE_ONE_IMAGE')
+            descriptor = index['manifests'][0]
+            index_name = 'blobs/sha256/'+descriptor.get('digest','').removeprefix('sha256:')
+            encoded_manifest = read(index_name,4*1024**2)
+            require(descriptor['digest'] == 'sha256:'+digest(encoded_manifest), 'OCI_MANIFEST_HASH_INVALID')
+            image_manifest = json.loads(encoded_manifest)
+            require(image_manifest['config']['digest'] == 'sha256:'+digest(config_bytes), 'OCI_CONFIG_MISMATCH')
+            require(['blobs/sha256/'+x['digest'].removeprefix('sha256:') for x in image_manifest['layers']] == layers, 'OCI_LAYER_LIST_MISMATCH')
+            for key,value in descriptor.get('annotations',{}).items():
+                if key in ('io.containerd.image.name','org.opencontainers.image.ref.name'):
+                    require(value in exact_tags+['transfer-cas-'+release[:12]], 'OCI_TAG_MISMATCH')
+            require(json.loads(read('oci-layout',65536)).get('imageLayoutVersion') == '1.0.0', 'OCI_LAYOUT_INVALID')
+            allowed_members.update({'index.json','oci-layout',index_name})
+        require({n for n,m in by_name.items() if m.isfile()} <= allowed_members, 'UNREVIEWED_ARCHIVE_CONTENT')
+        blobs = sum(m.size for m in members if m.isfile())
+        expanded = largest = 0
+        file_sizes = {}
+        expected_payload = runtime_payload(repo)
+        observed_payload = {}
+        v2_bytes = None
+        layer_metrics = []
+        chain = None
+        histories = [h.get('created_by','') for h in config.get('history',[]) if not h.get('empty_layer')]
+        for index, (layer_name, expected) in enumerate(zip(layers, diffs)):
+            m = by_name.get(safe_name(layer_name))
+            require(m is not None and m.isfile(), 'LAYER_MISSING')
+            if layer_name.startswith('blobs/sha256/'):
+                require(file_hash(outer.extractfile(m)) == layer_name.split('/')[-1], 'COMPRESSED_BLOB_HASH_MISMATCH')
+            raw = outer.extractfile(m)
+            header = raw.read(2)
+            raw.seek(0)
+            decoded = gzip.GzipFile(fileobj=raw) if header == b'\x1f\x8b' else raw
+            stream = HashReader(decoded)
+            physical = count = 0
+            categories = {}
+            with tarfile.open(fileobj=stream, mode='r|') as layer:
+                for member in layer:
+                    name = safe_name(member.name)
+                    count += 1
+                    # A directory/symlink/inode allowance in addition to regular extents.
+                    extent = member.size if member.isfile() else 0
+                    if member.islnk():
+                        target = safe_name(member.linkname)
+                        require(target in file_sizes, 'UNRESOLVED_HARDLINK')
+                        extent = file_sizes[target]
+                    file_sizes[name] = extent
+                    physical += 4096 + math.ceil(extent / 4096) * 4096
+                    category = next((p for p in ('usr/lib/chromium','usr/share/fonts','app/node_modules',
+                                                'usr/local','app/server','app/scripts','app/dist','app/prisma')
+                                     if name == p or name.startswith(p+'/')), 'other')
+                    categories[category] = categories.get(category, 0) + extent
+                    require(count <= MAX_MEMBERS and physical <= 2 * GIB, 'LAYER_EXPANSION_TOO_LARGE')
+                    require(not member.issparse(), 'SPARSE_LAYER_UNSUPPORTED')
+                    if member.issym() and any(k.startswith(name+'/') for k in expected_payload):
+                        raise GateError('RUNTIME_PARENT_SYMLINK_UNSUPPORTED')
+                    basename = name.rsplit('/',1)[-1]
+                    if basename.startswith('.wh.'):
+                        parent = name.rsplit('/',1)[0]+'/' if '/' in name else ''
+                        affected = parent if basename == '.wh..wh..opq' else parent+basename[4:]
+                        require(not any(k == affected or k.startswith(affected if affected.endswith('/') else affected+'/') for k in expected_payload), 'RUNTIME_WHITEOUT_UNSUPPORTED')
+                    if member.isfile() and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/')):
+                        require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
+                    if name in expected_payload:
+                        require(member.isfile(), 'RUNTIME_SOURCE_MUST_BE_REGULAR_FILE')
+                        observed_payload[name] = file_hash(layer.extractfile(member))
+                    if name in ('app/server/v2.js', 'app/server/.wh.v2.js', 'app/server/.wh..wh..opq', 'app/.wh.server'):
+                        require(name == 'app/server/v2.js' and member.isfile() and member.size < 4 * 1024 ** 2,
+                                'RUNTIME_LAYER_INVALID')
+                        v2_bytes = observed_payload.get(name)
+            # Include trailing tar padding in the canonical diff_id hash.
+            while stream.read(1024 * 1024):
+                pass
+            require('sha256:' + stream.h.hexdigest() == expected, 'LAYER_DIFF_ID_MISMATCH')
+            expanded += physical
+            largest = max(largest, physical)
+            chain = expected if chain is None else 'sha256:'+digest((chain+' '+expected).encode())
+            history = histories[index] if len(histories) == len(layers) else ''
+            history_kind = ('chromium_and_fonts_install' if 'apt-get install' in history and 'chromium' in history
+                            else 'node_modules_install' if 'npm ci' in history
+                            else 'prisma_client_generate' if 'prisma generate' in history
+                            else 'server_ownership_copyup' if 'chown -R' in history
+                            else 'application_copy' if history.startswith('COPY ')
+                            else 'base_or_other')
+            layer_metrics.append({'index':index,'blobBytes':m.size,'expandedPhysicalBytes':physical,
+                                  'diffId':expected,'contentDigest':'sha256:'+file_hash(outer.extractfile(m)),
+                                  'chainId':chain,'expandedTarBytes':stream.total,'entryCount':count,
+                                  'historyCategory':history_kind,'logicalBytesByDirectory':categories})
+        require(v2_bytes is not None and v2_bytes == digest((Path(repo) / 'server/v2.js').read_bytes()),
+                'ARTIFACT_BUSINESS_CODE_MISMATCH')
+        require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
+        return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
+                    archiveHash=archive_hash, archiveConfigDigest='sha256:' + digest(config_bytes),
+                    imageReference=tag, rootfsDiffIds=diffs,
+                    config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics)
+
+class Remote:
+    def __init__(self, key):
+        self.ssh = ['ssh', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+                    '-o', 'ConnectTimeout=12']
+        if os.environ.get('TRANSFER_CAS_KNOWN_HOSTS'):
+            self.ssh += ['-o', 'UserKnownHostsFile='+os.environ['TRANSFER_CAS_KNOWN_HOSTS'], '-o', 'HostKeyAlgorithms=ssh-ed25519']
+        self.ssh += [HOST]
+    def run(self, args, data=None, timeout=60):
+        return command(self.ssh + [shlex.join(args)], data, timeout)
+    def py(self, code, value=None, timeout=60):
+        return self.run(['sudo', '-n', 'python3', '-c', code],
+                        json.dumps(value).encode() if value is not None else None, timeout)
+    def inspect(self, name, image=False):
+        objects = json.loads(self.run(['docker', 'image' if image else 'container', 'inspect', name]))
+        require(isinstance(objects, list) and len(objects) == 1, 'DOCKER_IDENTITY_NOT_UNIQUE')
+        return objects[0]
+    def containers(self):
+        ids = self.run(['docker', 'ps', '-q']).decode().split()
+        return json.loads(self.run(['docker', 'container', 'inspect', *ids])) if ids else []
+    def routes(self):
+        return (self.run(['cat', TEMPLATE]).decode(),
+                self.run(['docker', 'exec', NGINX, 'cat', ACTIVE]).decode())
+    def disk(self):
+        fields = self.run(['df', '-Pk', '/']).decode().splitlines()[1].split()
+        return int(fields[2]) * 1024, int(fields[3]) * 1024
+    def db(self):
+        # Credentials remain in the PG container environment; only its local role
+        # name is used. This command creates no files and every SQL txn is readonly.
+        code = r'''import subprocess,json
+m=json.loads(subprocess.check_output(['docker','inspect',%r]))[0]
+e=dict(x.split('=',1) for x in m['Config']['Env'] if '=' in x)
+sql="""BEGIN READ ONLY;
+SELECT json_build_object('database',current_database(),'applied',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'failed',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL),'ledger',(SELECT json_object_agg(migration_name,checksum) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'clients',(SELECT coalesce(json_agg(distinct coalesce(host(client_addr),'LOCAL_SOCKET')),'[]') FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()));
+COMMIT;"""
+r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c temp_file_limit=0',%r,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',e.get('POSTGRES_USER','postgres'),'-d',%r],input=sql.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+if r.returncode: raise SystemExit(1)
+print(r.stdout.decode().strip())
+''' % (PG, PG, EXPECTED_DB)
+        return json.loads(self.py(code))
+    def health(self, name, sha, public=False):
+        args = ['curl', '--fail', '--silent', '--max-time', '10', 'https://buducandy.cn/api/health'] if public else ['docker', 'exec', name, 'wget', '-qO-', 'http://127.0.0.1:3000/api/health']
+        for _ in range(20):
+            try:
+                h = json.loads(self.run(args, timeout=15))
+                if h.get('ok') is True and h.get('dbOk') is True and h.get('gitSha') in (sha, sha[:12]):
+                    return
+            except (GateError, ValueError):
+                pass
+            time.sleep(2)
+        raise GateError('HEALTH_FAILED')
+
+
+def env(c):
+    return dict(x.split('=', 1) for x in c['Config']['Env'])
+
+def writer_check(containers, database, expected_names):
+    names = []
+    for c in containers:
+        url = env(c).get('DATABASE_URL', '')
+        if url and unquote(urlsplit(url).path).strip('/') == EXPECTED_DB:
+            # Conservative: count all same-name DB connections, regardless of URL
+            # spelling/query parameters/read-only flags. Unknown aliases fail closed.
+            names.append(c['Name'].lstrip('/'))
+    require(sorted(names) == sorted(expected_names), 'WRITER_COUNT_INVALID')
+    ips = {v['IPAddress'] for c in containers if c['Name'].lstrip('/') in expected_names
+           for v in c['NetworkSettings']['Networks'].values() if v.get('IPAddress')}
+    require(set(database['clients']) <= ips, 'UNKNOWN_DB_CLIENT_OR_OLD_WRITER')
+
+def validate_database(db, ledger):
+    require(db['database'] == EXPECTED_DB, 'DATABASE_AUTHORITY_MISMATCH')
+    require(db['applied'] == EXPECTED_MIGRATIONS and db['failed'] == 0, 'MIGRATION_LEDGER_INVALID')
+    require(db['ledger'] == ledger, 'MIGRATION_CHECKSUM_MISMATCH')
+
+def route_target(template, active):
+    require(template == active, 'NGINX_AUTHORITY_CONFLICT')
+    targets = re.findall(r'proxy_pass http://([A-Za-z0-9_.-]+):3000;', template)
+    require(len(targets) == 3 and len(set(targets)) == 1, 'PRODUCTION_ROUTE_COUNT_INVALID')
+    return targets[0]
+
+def validate_clone_source(old, image):
+    c, h = old['Config'], old['HostConfig']
+    for k in IDENTITY_KEYS:
+        require(c.get(k) == image.get(k), 'IMAGE_RUNTIME_CONFIG_MISMATCH')
+    require(set(c.get('Labels') or {}) == {REVISION, 'budu.production-role'}
+            and c['Labels']['budu.production-role'] == 'candidate', 'SOURCE_LABELS_UNSUPPORTED')
+    require(h.get('RestartPolicy') == {'Name': 'unless-stopped', 'MaximumRetryCount': 0}, 'RESTART_POLICY_UNSUPPORTED')
+    require(not h.get('PortBindings') and not h.get('PublishAllPorts'), 'PORT_BINDINGS_UNSUPPORTED')
+    require(not any(h.get(k) for k in ['Privileged','ReadonlyRootfs','CapAdd','CapDrop','SecurityOpt','Init']), 'SECURITY_CONFIG_UNSUPPORTED')
+    require(h.get('LogConfig') == {'Type':'json-file','Config':{}}, 'LOG_CONFIG_UNSUPPORTED')
+    require(not c.get('StopSignal'), 'STOP_SIGNAL_UNSUPPORTED')
+    require(h.get('NetworkMode') in old['NetworkSettings']['Networks'], 'NETWORK_MODE_UNSUPPORTED')
+    require(all(not v.get('Aliases') for v in old['NetworkSettings']['Networks'].values()), 'NETWORK_ALIASES_UNSUPPORTED')
+    require(all(h.get(k) == v for k,v in HOST_DEFAULTS.items()), 'SOURCE_RESOURCE_PROFILE_CHANGED')
+    e = env(old)
+    require(e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME') == 'budu'
+            and e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID') == 'dh', 'EXISTING_BINDING_MISMATCH')
+
+def preflight(remote, art, ledger, imported=False):
+    template, active = remote.routes()
+    name = route_target(template, active)
+    old = remote.inspect(name)
+    require(old['Config']['Labels'].get(REVISION) == EXPECTED_OLD_SHA
+            and env(old).get('GIT_SHA') == EXPECTED_OLD_SHA, 'PRODUCTION_SHA_MISMATCH')
+    require(old['State']['Running'] and old['State'].get('Health', {}).get('Status') == 'healthy', 'PRODUCTION_NOT_HEALTHY')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == EXPECTED_OLD_SHA, 'CURRENT_SHA_POINTER_MISMATCH')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == OLD_V2_HASH, 'OLD_RUNTIME_SOURCE_MISMATCH')
+    remote.health(name, EXPECTED_OLD_SHA)
+    remote.health(name, EXPECTED_OLD_SHA, public=True)
+    db = remote.db()
+    validate_database(db, ledger)
+    writer_check(remote.containers(), db, [name])
+    validate_clone_source(old, art['config'])
+    info = json.loads(remote.run(['docker','info','--format','{{json .}}']))
+    require(info['ServerVersion'] == '29.1.3' and info['Driver'] == 'overlayfs'
+            and info['DockerRootDir'] == '/var/lib/docker'
+            and ['driver-type','io.containerd.snapshotter.v1'] in info['DriverStatus'], 'DOCKER_STORAGE_MODEL_CHANGED')
+    same_fs = json.loads(remote.py("import os,json; print(json.dumps(all(os.stat(p).st_dev==os.stat('/').st_dev for p in ['/var/lib/docker','/var/lib/containerd'] if os.path.exists(p))))"))
+    require(same_fs is True, 'DOCKER_FILESYSTEM_MODEL_CHANGED')
+    used, available = remote.disk()
+    df_h = remote.run(['df','-h','/']).decode()
+    docker_df = remote.run(['docker','system','df']).decode()
+    budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest']) if not imported else {'projectedUsage':math.ceil(100*(used+RESERVE)/(used+available)), 'projectedAvailable':available-RESERVE}
+    require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
+            'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM')
+    remote.inspect(old['Image'], image=True)  # rollback image exists
+    return dict(old=old, name=name, template=template, active=active, budget=budget,
+                diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df)
+
+
+def mount_identity(mount):
+    # Hash BOTH the volume name and actual source; never persist secret paths.
+    return digest(json.dumps([mount['Type'],mount.get('Name'),mount['Source'],
+                              mount['Destination'],mount['RW']], separators=(',', ':')).encode())
+
+
+def mount_readability(remote, name):
+    current = remote.inspect(name)
+    require(current['State']['Running'], 'RUNTIME_MOUNT_PROBE_FAILED')
+    snapshot = []
+    for mount in sorted(current['Mounts'], key=lambda m: m['Destination']):
+        # test exits 1 for unreadable. The shell returns a fixed token and exits
+        # zero, so a failed docker exec/transport cannot masquerade as unreadable.
+        try:
+            result = remote.run(['docker','exec',name,'sh','-c',
+                                 'if test -r "$1"; then printf READABLE; else printf UNREADABLE; fi',
+                                 'mount-readability',mount['Destination']], timeout=15)
+        except GateError:
+            raise GateError('RUNTIME_MOUNT_PROBE_FAILED') from None
+        require(result in (b'READABLE', b'UNREADABLE'), 'RUNTIME_MOUNT_PROBE_FAILED')
+        snapshot.append({'identityHash':mount_identity(mount),
+                         'destinationHash':digest(mount['Destination'].encode()),
+                         'RW':mount['RW'],'readable':result == b'READABLE'})
+    after = remote.inspect(name)
+    require(after['State']['Running'] and after['Id'] == current['Id']
+            and after['State'].get('StartedAt') == current['State'].get('StartedAt')
+            and sorted(after['Mounts'], key=lambda m: m['Destination'])
+            == sorted(current['Mounts'], key=lambda m: m['Destination']), 'RUNTIME_MOUNT_PROBE_FAILED')
+    return snapshot
+
+
+def mount_readability_parity(authority, candidate):
+    require([{k:v for k,v in row.items() if k != 'readable'} for row in authority]
+            == [{k:v for k,v in row.items() if k != 'readable'} for row in candidate],
+            'RUNTIME_MOUNT_IDENTITY_PARITY_FAILED')
+    require(all(type(row.get('readable')) is bool for row in authority + candidate)
+            and [row['readable'] for row in authority] == [row['readable'] for row in candidate],
+            'RUNTIME_MOUNT_READABILITY_PARITY_FAILED')
+
+
+def runtime_checks(remote, name, runtime_hash, authority_mounts):
+    current = remote.inspect(name)
+    require(current['State']['Running'] and current.get('RestartCount', 0) == 0, 'RUNTIME_CRASH_DETECTED')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == runtime_hash,
+            'LIVE_TRANSFER_CODE_MISMATCH')
+    mount_readability_parity(authority_mounts, mount_readability(remote, name))
+    # Never publish raw logs: they can contain sensitive values. Only a fixed
+    # failure code leaves this process. The tail is bounded even on failure.
+    logs = remote.run(['sh','-c','docker logs --tail 100 '+shlex.quote(name)+' 2>&1']).decode(errors='replace')
+    require(not re.search(r'(?i)\b(fatal|panic|uncaughtexception|unhandledrejection|PrismaClientInitializationError|ECONNREFUSED)\b', logs),
+            'CRITICAL_STARTUP_LOG')
+
+
+def clone_parity(old, new, release):
+    desired = env(old)
+    desired['GIT_SHA'] = release
+    require(env(new) == desired, 'CLONE_ENV_MISMATCH')
+    for k in IDENTITY_KEYS:
+        require(old['Config'].get(k) == new['Config'].get(k), 'CLONE_CONFIG_MISMATCH')
+    labels = dict(old['Config']['Labels']); labels[REVISION] = release
+    require(new['Config']['Labels'] == labels, 'CLONE_LABELS_MISMATCH')
+    for k in ['RestartPolicy','PortBindings','PublishAllPorts','ReadonlyRootfs','CapAdd','CapDrop','Privileged','SecurityOpt','LogConfig','GroupAdd','Init','NetworkMode']:
+        require(old['HostConfig'].get(k) == new['HostConfig'].get(k), 'CLONE_HOST_CONFIG_MISMATCH')
+    require(all(old['HostConfig'].get(k) == new['HostConfig'].get(k) for k in HOST_DEFAULTS), 'CLONE_RESOURCE_PROFILE_MISMATCH')
+    def mounts(c):
+        return sorted((m['Type'],m.get('Name') or m['Source'],m['Destination'],m['RW']) for m in c['Mounts'])
+    require(mounts(old) == mounts(new), 'CLONE_MOUNTS_MISMATCH')
+    require(set(old['NetworkSettings']['Networks']) == set(new['NetworkSettings']['Networks']), 'CLONE_NETWORKS_MISMATCH')
+
+
+def write_authority(remote, path, text):
+    require(path in (TEMPLATE,CURRENT_SHA_FILE), 'AUTHORITY_PATH_INVALID')
+    remote.py("import os,json,pathlib,stat,sys,tempfile; v=json.load(sys.stdin); p=pathlib.Path(v['path']); s=p.stat(); fd,q=tempfile.mkstemp(prefix=p.name+'.transfer-cas-',dir=p.parent)\ntry:\n os.fchmod(fd,stat.S_IMODE(s.st_mode)); os.fchown(fd,s.st_uid,s.st_gid)\n with os.fdopen(fd,'w') as f: f.write(v['text']); f.flush(); os.fsync(f.fileno())\n os.replace(q,p)\nfinally:\n if os.path.exists(q): os.unlink(q)", {'path':path,'text':text})
+
+
+def replace_routes(remote, template, active):
+    # Same-directory atomic rename for each authority file; rollback restores both
+    # on any failure before or after reload. No claim of a two-file atomic commit.
+    write_authority(remote,TEMPLATE,template)
+    remote.run(['docker','exec','-i',NGINX,'sh','-c',
+                'set -eu; umask 077; p=/etc/nginx/conf.d/budu.conf; q=$(mktemp "$p.transfer-cas.XXXXXX"); trap \'rm -f "$q"\' EXIT; cat > "$q"; chmod "$(stat -c %a "$p")" "$q"; chown "$(stat -c %u "$p"):$(stat -c %g "$p")" "$q"; mv -f "$q" "$p"'], active.encode())
+    require(remote.routes() == (template, active), 'ROUTE_WRITE_MISMATCH')
+    remote.run(['docker','exec',NGINX,'nginx','-t'])
+    remote.run(['docker','exec',NGINX,'nginx','-s','reload'])
+
+
+def settle_writers(remote, ledger, names):
+    for _ in range(20):
+        db = remote.db()
+        validate_database(db, ledger)
+        try:
+            writer_check(remote.containers(), db, names)
+            return
+        except GateError:
+            time.sleep(1)
+    raise GateError('WRITER_TRANSITION_FAILED')
+
+
+def rollback(remote, state, ledger):
+    # Do not start the previous writer if candidate termination is unproven.
+    if state.get('candidate_attempted'):
+        current = remote.containers()
+        if any(c['Name'].lstrip('/') == state['candidate'] for c in current):
+            remote.run(['docker','stop','--time','30',state['candidate']])
+        settle_writers(remote, ledger, [])
+    if state.get('old_stop_attempted'):
+        remote.run(['docker','start',state['name']])
+        remote.health(state['name'], EXPECTED_OLD_SHA)
+        settle_writers(remote, ledger, [state['name']])
+    if state.get('routes_touched'):
+        replace_routes(remote, state['template'], state['active'])
+    if state.get('pointer_touched'):
+        write_authority(remote,CURRENT_SHA_FILE,EXPECTED_OLD_SHA+'\n')
+    remote.health(state['name'], EXPECTED_OLD_SHA, public=True)
+    settle_writers(remote, ledger, [state['name']])
+
+
+class LocalRemote(Remote):
+    """Same adapters, executed in ONE production-side control process.
+
+    SSH disconnects must not cause an off-host controller to race a still-running
+    helper. HUP/TERM/INT initiate rollback here, where the mutation occurs.
+    """
+    def __init__(self):
+        pass
+    def run(self, args, data=None, timeout=60):
+        mutation = args[0] == 'sudo' or args[:2] in (['docker','stop'],['docker','start'],['docker','update']) or (args[:2] == ['docker','exec'] and ('nginx' in args or 'sh' in args))
+        if not mutation:
+            return command(args,data,timeout)
+        # Do not kill a helper mid-create/start and then race it during rollback.
+        # Defer terminal/transport signals until its Docker operation has returned.
+        signals = {signal.SIGHUP,signal.SIGTERM,signal.SIGINT}
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK,signals)
+        try:
+            return command(args,data,timeout=None)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+
+
+def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
+    require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
+    state = None
+    stage = 'PREFLIGHT'
+    def interrupted(*_):
+        raise GateError('INTERRUPTED')
+    for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, interrupted)
+    try:
+        state = preflight(remote, art, ledger, imported=True)
+        require(state['old']['Id'] == expected_id and digest(state['template'].encode()) == expected_routes,
+                'AUTHORITY_CHANGED_DURING_IMPORT')
+        resolve_loaded_image(remote, art)  # Recheck exact tag before stopping old writer.
+        release = art['release']
+        name = 'budu-prod-' + release[:12] + '-transfer-cas'
+        state['candidate'] = name
+        stage = 'AUTHORITY_MOUNT_SNAPSHOT'
+        authority_mounts = mount_readability(remote, state['name'])
+        # Fresh route snapshots, not any previous feature's rollback directory.
+        root = '/opt/budu/.rollback-assets/transfer-cas-' + release
+        remote.py("import json,pathlib,sys,os; v=json.load(sys.stdin); p=pathlib.Path(v['root']); p.mkdir(mode=0o700); os.umask(0o077); (p/'template').write_text(v['template']); (p/'active').write_text(v['active']); (p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",
+                  {'root':root,'template':state['template'],'active':state['active'],
+                   'manifest':{'oldSha':EXPECTED_OLD_SHA,'runtimeSha':RUNTIME_SHA,'releaseSha':release,
+                               'oldContainer':state['name'],'oldImage':state['old']['Image'],
+                               'candidate':name,'candidateImageReference':art['imageReference'],
+                               'candidateLoadedImageId':art['loadedDockerImageId'],
+                               'candidateArchiveConfigDigest':art['archiveConfigDigest'],
+                               'templateHash':digest(state['template'].encode()),'migrations':85,
+                               'authorityMountReadability':authority_mounts}})
+        require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_STOP')
+        state['old_stop_attempted'] = True
+        stage = 'OLD_WRITER_DRAIN'
+        remote.run(['docker','stop','--time','30',state['name']])
+        settle_writers(remote, ledger, [])
+        state['candidate_attempted'] = True
+        stage = 'CANDIDATE_CREATE'
+        # Existing cloner is sent via stdin; binding comes only from existing env.
+        # It is held in tmpfs and removed even on failure. No env values printed.
+        payload = {'helper':helper,'old':state['name'],'candidate':name,'image':art['imageReference'],
+                   'sha':release,'network':state['old']['HostConfig']['NetworkMode']}
+        remote.py("import json,sys,subprocess,tempfile,pathlib,os; v=json.load(sys.stdin); c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]; e=dict(x.split('=',1) for x in c['Config']['Env']); f,p=tempfile.mkstemp(dir='/dev/shm'); os.fchmod(f,0o600); os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode()); os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['candidate'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE); result=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(result)", payload)
+        remote.run(['docker','update','--restart','unless-stopped',name])
+        stage = 'CANDIDATE_CLONE_PARITY'
+        validate_candidate_image(remote.inspect(name), art)
+        clone_parity(state['old'], remote.inspect(name), release)
+        settle_writers(remote, ledger, [name])
+        stage = 'CANDIDATE_INTERNAL_HEALTH'
+        remote.health(name, release)
+        stage = 'CANDIDATE_RUNTIME_CHECKS'
+        runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
+        validate_candidate_image(remote.inspect(name), art)
+        require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_CUTOVER')
+        new = state['template'].replace('http://' + state['name'] + ':3000', 'http://' + name + ':3000')
+        require(new.count('http://' + name + ':3000') == 3, 'CUTOVER_ROUTE_COUNT_INVALID')
+        state['routes_touched'] = True
+        stage = 'NGINX_CUTOVER'
+        replace_routes(remote, new, new)
+        stage = 'PUBLIC_HEALTH'
+        remote.health(name, release, public=True)
+        settle_writers(remote, ledger, [name])
+        stage = 'FINAL_RUNTIME_CHECKS'
+        runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
+        stage = 'FINAL_DISK'
+        used, available = remote.disk()
+        require(math.ceil(100*used/(used+available)) <= MAX_PROJECTED_USAGE
+                and available >= MIN_PROJECTED_AVAILABLE, 'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM')
+        state['pointer_touched'] = True
+        stage = 'SHA_POINTER'
+        write_authority(remote,CURRENT_SHA_FILE,release+'\n')
+        require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
+        print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':EXPECTED_OLD_SHA,'writer':1,
+                          'imageReference':art['imageReference'],'archiveConfigDigest':art['archiveConfigDigest'],
+                          'loadedDockerImageId':art['loadedDockerImageId'],'rootfsIdentityMatch':True,
+                          'mountReadabilityParity':'PASS','authorityMountReadability':authority_mounts,
+                          'diskAfterUsed':used,'diskAfterAvailable':available,
+                          'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True}))
+    except BaseException as error:
+        # Finish rollback despite a second transport/terminal signal.
+        for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_IGN)
+        if state and state.get('old_stop_attempted'):
+            try:
+                rollback(remote, state, ledger)
+            except BaseException:
+                raise GateError('ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED') from None
+        error.failure_stage = stage
+        error.deployment_result = 'DEPLOY_ROLLED_BACK' if state and state.get('old_stop_attempted') else 'DEPLOY_BLOCKED'
+        raise
+    finally:
+        remote.py('import os; os.rmdir(%r)' % LOCK)
+
+
+SAFE_CONTROLLER_CODES = frozenset({
+    'RUNTIME_MOUNT_PROBE_FAILED','RUNTIME_MOUNT_IDENTITY_PARITY_FAILED',
+    'RUNTIME_MOUNT_READABILITY_PARITY_FAILED','RUNTIME_CRASH_DETECTED',
+    'LIVE_TRANSFER_CODE_MISMATCH','CRITICAL_STARTUP_LOG','HEALTH_FAILED',
+    'CLONE_ENV_MISMATCH','CLONE_CONFIG_MISMATCH','CLONE_LABELS_MISMATCH',
+    'CLONE_HOST_CONFIG_MISMATCH','CLONE_RESOURCE_PROFILE_MISMATCH',
+    'CLONE_MOUNTS_MISMATCH','CLONE_NETWORKS_MISMATCH','WRITER_TRANSITION_FAILED',
+    'DATABASE_AUTHORITY_MISMATCH','MIGRATION_LEDGER_INVALID','MIGRATION_CHECKSUM_MISMATCH',
+    'COMMAND_FAILED','COMMAND_UNAVAILABLE_OR_TIMEOUT','INTERRUPTED',
+    'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED',
+    'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED',
+})
+SAFE_CONTROLLER_STAGES = frozenset({
+    'PREFLIGHT','AUTHORITY_MOUNT_SNAPSHOT','OLD_WRITER_DRAIN','CANDIDATE_CREATE',
+    'CANDIDATE_CLONE_PARITY','CANDIDATE_INTERNAL_HEALTH','CANDIDATE_RUNTIME_CHECKS',
+    'NGINX_CUTOVER','PUBLIC_HEALTH','FINAL_RUNTIME_CHECKS','FINAL_DISK','SHA_POINTER','UNKNOWN',
+})
+
+
+def run_loaded_controller(value):
+    try:
+        execute_loaded(LocalRemote(),value['art'],value['ledger'],value['helper'],value['oldId'],value['routeHash'])
+    except BaseException as error:
+        code = str(error) if isinstance(error, GateError) else ''
+        stage = getattr(error, 'failure_stage', 'UNKNOWN')
+        result = getattr(error, 'deployment_result', 'DEPLOY_BLOCKED')
+        # No stderr or exception text crosses SSH unless it is an exact fixed code.
+        print(json.dumps({'result':result if result in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK') else 'DEPLOY_BLOCKED',
+                          'failureGate':stage if stage in SAFE_CONTROLLER_STAGES else 'UNKNOWN',
+                          'code':code if code in SAFE_CONTROLLER_CODES else 'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}))
+
+
+def check_controller_result(raw):
+    try:
+        result = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise GateError('REMOTE_CONTROLLER_RESULT_INVALID') from None
+    require(isinstance(result, dict), 'REMOTE_CONTROLLER_RESULT_INVALID')
+    if result.get('result') in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK'):
+        require(result.get('code') in SAFE_CONTROLLER_CODES
+                and result.get('failureGate') in SAFE_CONTROLLER_STAGES
+                and set(result) == {'result','failureGate','code'}, 'REMOTE_CONTROLLER_RESULT_INVALID')
+        print(json.dumps(result), flush=True)
+        raise GateError(result['code'])
+    require(result.get('result') == 'DEPLOY_COMPLETE', 'REMOTE_CONTROLLER_RESULT_INVALID')
+    print(json.dumps(result), flush=True)
+
+
+def deploy(remote, repo, path, art, ledger, authorize):
+    require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
+    require(authorize == art['release'], 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
+    state = preflight(remote, art, ledger)
+    print(json.dumps({'stage':'PRE_IMPORT_ADMISSION','releaseSha':art['release'],
+                      'diskBefore':{'used':state['diskUsed'],'available':state['diskAvailable']},
+                      'budget':state['budget'],'metrics':artifact_metrics(art)}), flush=True)
+    release = art['release']
+    name = 'budu-prod-' + release[:12] + '-transfer-cas'
+    remote.py('import os; os.mkdir(%r,0o700)' % LOCK)
+    handed_off = False
+    import_started = import_complete = False
+    try:
+        require(not remote.run(['docker','ps','-aq','--filter','name=^/' + name + '$']).strip(), 'CANDIDATE_NAME_EXISTS')
+        require(not remote.run(['docker','images','-q',art['imageReference']]).strip(), 'CANDIDATE_TAG_EXISTS')
+        with open(path, 'rb') as stream:
+            require(file_hash(stream) == art['archiveHash'], 'ARTIFACT_CHANGED')
+            stream.seek(0)
+            import_started = True
+            r = subprocess.run(remote.ssh + [shlex.join(['docker','load'])], stdin=stream,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=240)
+            require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
+            import_complete = True
+        image = resolve_loaded_image(remote, art)
+        art['loadedDockerImageId'] = image['Id']
+        # Record post-import storage before any writer is stopped; no raw
+        # environment or credential-bearing inspect output is printed.
+        used, available = remote.disk()
+        print(json.dumps({'stage':'POST_IMPORT_DISK','used':used,'available':available,
+                          'IMAGE_SIZE_GIB':image['Size']/GIB,
+                          'IMAGE_REFERENCE':art['imageReference'],'ARCHIVE_CONFIG_DIGEST':art['archiveConfigDigest'],
+                          'LOADED_DOCKER_IMAGE_ID':art['loadedDockerImageId'],'ROOTFS_IDENTITY_MATCH':True,
+                          'dfPk':remote.run(['df','-Pk','/']).decode(),
+                          'dfHuman':remote.run(['df','-h','/']).decode(),
+                          'dockerSystemDf':remote.run(['docker','system','df']).decode()}), flush=True)
+        payload = {'art':art,'ledger':ledger,
+                   'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
+                   'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
+        # Entire cutover/rollback runs in one remote process, no source/env file is
+        # copied to production. Only the allowlisted summary is returned.
+        code = Path(__file__).read_text().rsplit("\nif __name__ == '__main__':", 1)[0]
+        code += "\nrun_loaded_controller(json.load(sys.stdin))\n"
+        handed_off = True
+        result = remote.py(code, payload, timeout=480)
+        check_controller_result(result)
+    finally:
+        # A transport failure after handoff is UNKNOWN, never start the old writer
+        # from this process while the remote transaction might still be running.
+        # Leave lock on an uncertain stream/import; a second load could double
+        # the disk peak while the first daemon import is still completing.
+        if not handed_off and (not import_started or import_complete):
+            remote.py('import os; os.rmdir(%r)' % LOCK)
+
+
+def artifact_metrics(art):
+    values = {'ARCHIVE':art['archive'],'TOTAL_BLOB':art['blobs'],
+              'TOTAL_EXPANDED_PHYSICAL':art['expanded'],'LARGEST_LAYER_EXPANDED':art['largest'],
+              'RESERVE':RESERVE,'CURRENT_FORMULA_PEAK':art['archive']+art['blobs']+art['expanded']+art['largest']+RESERVE}
+    result = {key+suffix:(value if suffix == '_BYTES' else value/GIB)
+              for key,value in values.items() for suffix in ('_BYTES','_GIB')}
+    result.update(CURRENT_GATE_MAX_GIB=ABSOLUTE_MAX_PEAK/GIB,
+                  EXCESS_OVER_4GIB_BYTES=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB),
+                  EXCESS_OVER_4GIB=max(0,values['CURRENT_FORMULA_PEAK']-4*GIB)/GIB,
+                  IMAGE_PLATFORM='linux',IMAGE_ARCH='amd64',
+                  IMAGE_REFERENCE=art['imageReference'],ARCHIVE_CONFIG_DIGEST=art['archiveConfigDigest'],
+                  LOADED_DOCKER_IMAGE_ID=art.get('loadedDockerImageId'),LAYERS=art['layers'])
+    return result
+
+
+MEASUREMENT_METADATA_SCRIPT = r'''import json,sys,subprocess,pathlib
+v=json.load(sys.stdin)
+base=['ctr','--address','/run/containerd/containerd.sock','--namespace','moby']
+result={}
+try:
+ content=set(subprocess.check_output(base+['content','list','--quiet'],stderr=subprocess.DEVNULL).decode().split())
+ snapshots=subprocess.check_output(base+['snapshots','--snapshotter','overlayfs','list'],stderr=subprocess.DEVNULL).decode().splitlines()[1:]
+ committed={line.split()[0] for line in snapshots if line.split() and line.split()[-1]=='Committed'}
+ result['metadataAvailable']=True
+ result['existingContentCount']=len(content)
+ result['contentProof']={}
+ for d in v['digests']:
+  p=pathlib.Path('/var/lib/containerd/io.containerd.content.v1.content/blobs/sha256')/d.split(':')[1]
+  result['contentProof'][d]={'present':d in content,'fileBytes':p.stat().st_size if d in content and p.is_file() else None}
+ result['snapshotProof']={d:d in committed for d in v['chains']}
+except (OSError,subprocess.CalledProcessError):
+ result={'metadataAvailable':False,'contentProof':{},'snapshotProof':{}}
+df=json.loads(subprocess.check_output(['curl','--fail','--silent','--unix-socket','/var/run/docker.sock','http://localhost/system/df']))
+matches=[i for i in df.get('Images',[]) if i.get('Id')==v['imageId']]
+result['currentImageDf']={k:matches[0].get(k) for k in ('Id','Size','SharedSize','VirtualSize','Containers')} if len(matches)==1 else None
+print(json.dumps(result))
+'''
+
+
+class MeasurementRemote(Remote):
+    """Only the enumerated production reads are admitted in this audit."""
+    def db(self):
+        self._db_read = True
+        try:
+            return super().db()
+        finally:
+            self._db_read = False
+
+    def run(self, args, data=None, timeout=60):
+        allowed = (args in (['cat',TEMPLATE],['cat',CURRENT_SHA_FILE],
+                           ['df','-Pk','/'],['df','-h','/'],['docker','ps','-q'],
+                           ['docker','info','--format','{{json .}}'],['docker','system','df','-v'],
+                           ['docker','version','--format','{{json .Server}}'],
+                           ['curl','--fail','--silent','--max-time','10','https://buducandy.cn/api/health'])
+                   or args[:3] in (['docker','container','inspect'],['docker','image','inspect']))
+        if args[:2] == ['docker','exec']:
+            allowed = (args == ['docker','exec',NGINX,'cat',ACTIVE]
+                       or args[3:] in (['wget','-qO-','http://127.0.0.1:3000/api/health'],
+                                       ['sha256sum','/app/server/v2.js']))
+        if args[:4] == ['sudo','-n','python3','-c']:
+            allowed = (args[4] == MEASUREMENT_METADATA_SCRIPT
+                       or (getattr(self,'_db_read',False) and 'BEGIN READ ONLY;' in args[4]
+                           and 'default_transaction_read_only=on' in args[4]))
+        require(allowed, 'MEASUREMENT_REMOTE_MUTATION_FORBIDDEN')
+        return super().run(args,data,timeout)
+
+
+def production_measurement(remote, art, ledger):
+    template, active = remote.routes()
+    name = route_target(template,active)
+    old = remote.inspect(name)
+    require(old['State']['Running'] and env(old).get('GIT_SHA') == EXPECTED_OLD_SHA
+            and old['Config']['Labels'].get(REVISION) == EXPECTED_OLD_SHA, 'PRODUCTION_SHA_MISMATCH')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == EXPECTED_OLD_SHA, 'CURRENT_SHA_POINTER_MISMATCH')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == OLD_V2_HASH, 'OLD_RUNTIME_SOURCE_MISMATCH')
+    remote.health(name,EXPECTED_OLD_SHA);remote.health(name,EXPECTED_OLD_SHA,public=True)
+    db=remote.db();validate_database(db,ledger);writer_check(remote.containers(),db,[name])
+    image=remote.inspect(old['Image'],image=True)
+    info=json.loads(remote.run(['docker','info','--format','{{json .}}']))
+    version=json.loads(remote.run(['docker','version','--format','{{json .Server}}']))
+    used,available=remote.disk()
+    metadata=json.loads(remote.py(MEASUREMENT_METADATA_SCRIPT,{'imageId':old['Image'],
+                        'digests':[x['contentDigest'] for x in art['layers']],
+                        'chains':[x['chainId'] for x in art['layers']]}))
+    # The verbose report is read but never print unrelated image/container names.
+    remote.run(['docker','system','df','-v'])
+    df=metadata['currentImageDf']
+    shared=df.get('SharedSize') if df else None
+    unique=(df['Size']-shared) if df and isinstance(shared,int) and 0 <= shared <= df['Size'] else None
+    return {'sha':EXPECTED_OLD_SHA,'health':'PASS','database':EXPECTED_DB,'migrationsApplied':85,
+            'migrationsFailed':0,'writer':1,'imageId':old['Image'],'imageInspectSize':image['Size'],
+            'rootfsDiffIds':image['RootFS']['Layers'],'imageDf':df,'sharedSize':shared,'uniqueSize':unique,
+            'storage':{k:info.get(k) for k in ('ServerVersion','Driver','DriverStatus','DockerRootDir')},
+            'containerdVersion':next((c['Version'] for c in version.get('Components',[]) if c['Name']=='containerd'),None),
+            'diskUsed':used,'diskAvailable':available,'diskPercent':math.ceil(100*used/(used+available)),
+            'metadata':metadata}
+
+
+def disk_models(art, production):
+    old_diffs=set(production['rootfsDiffIds'])
+    proof=production['metadata']
+    inventory=[]
+    shared_blobs=shared_expanded=shared_count=reused_count=0
+    largest_unique=largest_shared_blob=0
+    for source in art['layers']:
+        layer=dict(source)
+        diff_shared=layer['diffId'] in old_diffs
+        snapshot_shared=proof.get('snapshotProof',{}).get(layer['chainId']) is True
+        blob_proof=proof.get('contentProof',{}).get(layer['contentDigest'])
+        blob_shared=bool(blob_proof and blob_proof.get('present') is True and blob_proof.get('fileBytes') == layer['blobBytes'])
+        layer.update(SHARED_WITH_CURRENT_PRODUCTION='YES' if diff_shared else 'NO',
+                     SNAPSHOT_REUSE_CONFIRMED='YES' if snapshot_shared else ('NO' if proof['metadataAvailable'] else 'UNKNOWN'),
+                     CONTENT_REUSE_CONFIRMED='YES' if blob_shared else ('NO' if proof['metadataAvailable'] else 'UNKNOWN'))
+        shared_count+=int(diff_shared);reused_count+=int(snapshot_shared)
+        if snapshot_shared:shared_expanded+=layer['expandedPhysicalBytes']
+        else:largest_unique=max(largest_unique,layer['expandedPhysicalBytes'])
+        if blob_shared:
+            shared_blobs+=layer['blobBytes'];largest_shared_blob=max(largest_shared_blob,layer['blobBytes'])
+        inventory.append(layer)
+    unique_blobs=art['blobs']-shared_blobs # Includes all metadata; no metadata reuse credit.
+    unique_expanded=art['expanded']-shared_expanded
+    increments={'MODEL_A_CURRENT':art['archive']+art['blobs']+art['expanded']+art['largest']+RESERVE,
+                'MODEL_B_STREAMING_NO_ARCHIVE_FILE':art['blobs']+art['expanded']+art['largest']+RESERVE,
+                'MODEL_C_LAYER_REUSE_CONSERVATIVE':unique_blobs+unique_expanded+largest_unique+RESERVE}
+    # containerd ingests blobs before their digest is known; even a shared blob
+    # may transiently occupy an ingest file. Do not silently discount this peak.
+    increments['MODEL_C_INGEST_STAGING_CHECK']=unique_blobs+unique_expanded+max(largest_unique,largest_shared_blob)+RESERVE
+    models={}
+    for name,peak in increments.items():
+        used=production['diskUsed']+peak;available=production['diskAvailable']-peak
+        pct=math.ceil(100*used/(production['diskUsed']+production['diskAvailable']))
+        models[name]={'PEAK_INCREMENT_BYTES':peak,'PEAK_INCREMENT_GIB':peak/GIB,
+                      'PROJECTED_USED_GIB':used/GIB,'PROJECTED_AVAILABLE_GIB':available/GIB,
+                      'PROJECTED_USAGE_PERCENT':pct,
+                      'PROJECTED_USAGE_CONTINUOUS_PERCENT':100*used/(production['diskUsed']+production['diskAvailable']),
+                      'WITHIN_85_PERCENT_AND_10_GIB':pct<=MAX_PROJECTED_USAGE and available>=MIN_PROJECTED_AVAILABLE}
+    return {'layers':inventory,'CANDIDATE_LAYER_COUNT':len(inventory),'SHARED_LAYER_COUNT':shared_count,
+            'UNIQUE_CANDIDATE_LAYER_COUNT':len(inventory)-shared_count,'REUSABLE_SNAPSHOT_LAYER_COUNT':reused_count,
+            'SHARED_EXPANDED_BYTES':shared_expanded,'UNIQUE_CANDIDATE_EXPANDED_BYTES':unique_expanded,
+            'SHARED_COMPRESSED_BLOB_BYTES':shared_blobs if proof['metadataAvailable'] else 'UNKNOWN',
+            'UNIQUE_COMPRESSED_BLOB_BYTES':unique_blobs if proof['metadataAvailable'] else 'UNKNOWN',
+            'MODELED_UNIQUE_BLOB_BYTES':unique_blobs,'LARGEST_UNIQUE_LAYER_STAGING_BYTES':largest_unique,
+            'SHARED_BLOB_MAX_INGEST_BYTES':largest_shared_blob,'models':models}
+
+
+def ci_import_measurement(path, art):
+    """Load ONLY into a fresh, isolated hosted-runner daemon; never SSH."""
+    require(MEASURE_ONLY and os.environ.get('GITHUB_ACTIONS') == 'true'
+            and os.environ.get('RUNNER_OS') == 'Linux' and os.environ.get('RUNNER_ARCH') == 'X64', 'CI_MEASUREMENT_HOST_REQUIRED')
+    base=Path(os.environ['TRANSFER_CAS_RUN_DIR'])/'isolated-import'
+    require(Path(os.environ['RUNNER_TEMP']).resolve() in base.resolve().parents, 'CI_TEMP_PATH_REQUIRED')
+    base.mkdir()
+    (base/'daemon.json').write_text('{"features":{"containerd-snapshotter":false}}')
+    (base/'client').mkdir()
+    data_root=base/'data';socket=base/'docker.sock'
+    cli=['sudo','-n','docker','--config',str(base/'client'),'--host','unix://'+str(socket)]
+    daemon_args=['sudo','-n','dockerd','--config-file',str(base/'daemon.json'),
+                 '--data-root',str(data_root),'--exec-root',str(base/'exec'),'--pidfile',str(base/'daemon.pid'),
+                 '--host','unix://'+str(socket),'--storage-driver','overlay2',
+                 '--containerd-namespace=transfer-cas-measure-'+os.environ['GITHUB_RUN_ID'],
+                 '--containerd-plugins-namespace=transfer-cas-measure-plugins-'+os.environ['GITHUB_RUN_ID'],
+                 '--iptables=false','--ip6tables=false','--ip-forward=false','--ip-masq=false','--bridge=none']
+    with (base/'daemon.log').open('wb') as log:
+        daemon=subprocess.Popen(daemon_args,stdout=log,stderr=log)
+        try:
+            info=None
+            for _ in range(45):
+                try:
+                    info=json.loads(command(cli+['info','--format','{{json .}}'],timeout=5));break
+                except (GateError,ValueError):
+                    require(daemon.poll() is None,'CI_DAEMON_START_FAILED');time.sleep(1)
+            require(info and Path(info['DockerRootDir']).resolve() == data_root.resolve(),'CI_DAEMON_ISOLATION_FAILED')
+            require(not command(cli+['image','ls','-q']).strip(),'CI_DAEMON_NOT_EMPTY')
+            def allocated():
+                return int(command(['sudo','-n','du','-s','-B1',str(data_root)],timeout=30).split()[0])
+            before=allocated();peak=before
+            with path.open('rb') as source:
+                process=subprocess.Popen(cli+['load'],stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                started=time.monotonic()
+                while process.poll() is None:
+                    peak=max(peak,allocated())
+                    if time.monotonic()-started>300:
+                        process.terminate();process.wait(timeout=20)
+                        raise GateError('CI_IMPORT_TIMEOUT')
+                    time.sleep(.5)
+                stdout,stderr=process.communicate(timeout=10)
+                require(process.returncode == 0,'CI_IMPORT_FAILED')
+            after=allocated();peak=max(peak,after)
+            images=json.loads(command(cli+['image','inspect',art['imageReference']]))
+            require(isinstance(images,list) and len(images)==1,'DOCKER_IDENTITY_NOT_UNIQUE')
+            image=images[0]
+            # Measure first even when the deployment size cap would reject it.
+            validate_loaded_image(image,art)
+            return {'status':'PASS','CI_IMPORT_BEFORE_BYTES':before,'CI_IMPORT_AFTER_BYTES':after,
+                    'CI_IMPORT_DISK_DELTA':after-before,'CI_IMPORT_SAMPLED_PEAK_DELTA':peak-before,
+                    'CI_IMAGE_SIZE':image['Size'],
+                    'storage':{k:info.get(k) for k in ('ServerVersion','Driver','DriverStatus')},
+                    'SAMPLE_IS_UPPER_BOUND':False,'ISOLATED_DAEMON':True,'IMAGES_OR_CACHE_DELETED':False}
+        finally:
+            # Stop this dedicated CI daemon, keeping all image/data-root files.
+            # No production process or shared runner Docker daemon is targeted.
+            pidfile=base/'daemon.pid'
+            if pidfile.exists():
+                pid=command(['sudo','-n','cat',str(pidfile)]).decode().strip()
+                require(pid.isdigit(),'CI_DAEMON_PID_INVALID')
+                command(['sudo','-n','kill','-TERM',pid])
+            if daemon.poll() is None:
+                try:daemon.wait(timeout=30)
+                except subprocess.TimeoutExpired:raise GateError('CI_DAEMON_STOP_UNCONFIRMED') from None
+
+
+def measure_release(repo,path,art,ledger,key):
+    require(MEASURE_ONLY,'MEASUREMENT_RELEASE_REQUIRED')
+    production=production_measurement(MeasurementRemote(key),art,ledger)
+    reuse=disk_models(art,production)
+    print(json.dumps({'stage':'PRODUCTION_READ_ONLY_MODELS','production':production,'reuse':reuse},sort_keys=True),flush=True)
+    ci=ci_import_measurement(path,art)
+    metrics=artifact_metrics(art)
+    metrics.update(DOCKER_IMAGE_INSPECT_SIZE_BYTES=ci['CI_IMAGE_SIZE'],DOCKER_IMAGE_INSPECT_SIZE_GIB=ci['CI_IMAGE_SIZE']/GIB)
+    match=all(ci['storage'].get(k)==production['storage'].get(k) for k in ('ServerVersion','Driver','DriverStatus'))
+    ci['CI_STORAGE_MODEL_MATCHES_PRODUCTION']=match
+    ci['REPRESENTATIVENESS']='MATCHED_STORAGE_METADATA_ONLY' if match else 'NOT_DIRECTLY_REPRESENTATIVE'
+    streaming_evidence=(production['storage'].get('ServerVersion') == '29.1.3'
+                        and production['storage'].get('Driver') == 'overlayfs'
+                        and ['driver-type','io.containerd.snapshotter.v1'] in production['storage'].get('DriverStatus',[])
+                        and production.get('containerdVersion') == '2.2.1')
+    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE']['WITHIN_85_PERCENT_AND_10_GIB']
+    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK']['WITHIN_85_PERCENT_AND_10_GIB']
+    feasibility=('SAFE' if streaming_evidence and (model_b_safe or model_c_safe)
+                 else 'UNSAFE' if streaming_evidence and production['metadata']['metadataAvailable'] and not model_c_safe
+                 else 'INCONCLUSIVE')
+    return {'RESULT':'DISK_AUDIT_COMPLETE','MEASURE_ONLY':True,'BUSINESS_RUNTIME_SHA':RUNTIME_SHA,
+            'MEASUREMENT_RELEASE_SHA':art['release'],'GITHUB_RUN_ID':os.environ.get('GITHUB_RUN_ID'),
+            'artifactMetrics':metrics,'production':production,'reuse':reuse,'ciImport':ci,
+            'PRODUCTION_ARCHIVE_RESIDENT_BYTES':0 if streaming_evidence else 'UNKNOWN',
+            'archiveEvidence':'SSH stdin / containerd streaming ImportIndex; no complete archive file in the audited path',
+            'PRODUCTION_OPERATIONAL_CHANGES':0,'BUSINESS_DATA_WRITE_OPERATIONS':0,'PRODUCTION_DEPLOYED':False,
+            'DISK_FEASIBILITY':feasibility,'ABSOLUTE_MAX_PEAK':ABSOLUTE_MAX_PEAK,
+            'RECOMMENDED_PEAK_FORMULA':'unique blobs + unique chain snapshots + max(largest unique expanded layer, largest shared blob ingest) + 512MiB; unknown counted unique',
+            'RECOMMENDED_MAX_ARTIFACT_POLICY':'Model A <=6GiB AND projected usage <=85% AND available >=10GiB; 512MiB reserve retained; B/C metrics cannot authorize deployment',
+            'RECOMMENDED_NEXT_ACTION':('Review a future disk-admission policy separately; deployment still forbidden'
+                                       if feasibility=='SAFE' else 'EXPAND_PRODUCTION_SYSTEM_DISK'),
+            'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure'])
+    p.add_argument('--repo', type=Path, required=True)
+    p.add_argument('--archive', type=Path)
+    p.add_argument('--ssh-key', type=Path)
+    p.add_argument('--authorize-release-sha')
+    args = p.parse_args()
+    require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
+    release, ledger = identity(args.repo)
+    if args.mode == 'identity':
+        print(json.dumps({'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}))
+        return
+    require(args.archive is not None, 'ARCHIVE_REQUIRED')
+    if args.mode == 'deploy':
+        require(args.authorize_release_sha == release, 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
+        require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
+        # Freeze the input in a private OFF-HOST directory before validating it.
+        # A producer rewriting its original tar cannot change the import stream.
+        with tempfile.TemporaryDirectory(prefix='transfer-cas-artifact-') as directory:
+            frozen = Path(directory)/'image.tar'
+            total = 0
+            with args.archive.open('rb') as src, frozen.open('xb') as dst:
+                while True:
+                    block = src.read(1024*1024)
+                    if not block: break
+                    total += len(block)
+                    require(total <= MAX_ARCHIVE, 'ARCHIVE_TOO_LARGE')
+                    dst.write(block)
+            frozen.chmod(0o400)
+            art = artifact(frozen,release,args.repo)
+            deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
+        return
+    art = artifact(args.archive, release, args.repo)
+    print(json.dumps({'stage':'ARTIFACT_METRICS','metrics':artifact_metrics(art)},sort_keys=True),flush=True)
+    if args.mode in ('measure-artifact','measure'):
+        require(MEASURE_ONLY, 'MEASUREMENT_RELEASE_REQUIRED')
+        metrics = artifact_metrics(art)
+        print(json.dumps({'stage':'ARTIFACT_METRICS','metrics':metrics},sort_keys=True),flush=True)
+        if args.mode == 'measure-artifact':
+            return
+        require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
+        result = measure_release(args.repo, args.archive, art, ledger, args.ssh_key)
+        print('TRANSFER_CAS_MEASUREMENT_JSON='+json.dumps(result,sort_keys=True),flush=True)
+        return
+    summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
+               'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
+               'migrationRequired':MIGRATION_REQUIRED}
+    if args.mode == 'inspect-artifact':
+        # Offline validation still rejects artifacts over the absolute peak cap.
+        summary['budget'] = disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])
+    else:
+        require(args.ssh_key is not None, 'SSH_KEY_REQUIRED')
+        remote = Remote(args.ssh_key)
+        state = preflight(remote,art,ledger)
+        # Preserve measured layers and fresh reuse evidence as diagnostics only.
+        # Admission always uses full Model A, without reuse discounts.
+        measured = production_measurement(MeasurementRemote(args.ssh_key),art,ledger)
+        summary['models'] = disk_models(art,measured)
+        summary['budget'] = state['budget']
+        summary['diskBefore'] = {'used':state['diskUsed'],'available':state['diskAvailable']}
+        summary['dfHuman'] = state['dfHuman']
+        summary['dockerSystemDf'] = state['dockerSystemDf']
+    summary['result'] = 'PREFLIGHT_PASS'
+    print(json.dumps(summary,sort_keys=True))
+
+if __name__ == '__main__':
+    try:
+        main()
+    except GateError as error:
+        print(json.dumps({'result':'RELEASE_ABORTED','code':str(error)}))
+        sys.exit(1)
+    except Exception:
+        print(json.dumps({'result':'RELEASE_ABORTED','code':'UNEXPECTED_ERROR_DETAILS_SUPPRESSED'}))
+        sys.exit(1)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run budu payroll audit scheduler daily at the established 09:00 Asia/Shanghai time
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=0
+Unit=budu-payroll-audit.service
+
+[Install]
+WantedBy=timers.target

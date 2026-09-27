@@ -14,7 +14,7 @@ test('订单记录页展示列表、筛选、明细与导出', async ({ page }) 
   await expect(page.getByText('共 3 笔订单', { exact: true })).toBeVisible()
   const summary = page.getByRole('region', { name: '订单汇总' })
   await expect(summary.getByText('¥254.00', { exact: true })).toBeVisible()
-  await expect(summary.getByText('3 笔', { exact: true })).toBeVisible()
+  await expect(summary.getByText('2 笔', { exact: true })).toBeVisible()
   await expect(summary.getByText('4 件', { exact: true })).toBeVisible()
   await expect(summary.getByText('¥127.00', { exact: true })).toBeVisible()
   await expect(page.getByText('POS-TEST-ORDER-001', { exact: true })).toBeVisible()
@@ -145,6 +145,28 @@ test('微信支付订单支持部分退款，待支付订单显示去支付', as
   await expect(payButton).toBeVisible()
   await payButton.click()
   await expect.poll(() => page.evaluate(() => window.__payOrder)).toEqual({ id: 'order-2', orderNo: 'POS-TEST-ORDER-002' })
+})
+
+test('门店可将点错的待支付订单作废并记录原因', async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1180 })
+  await page.goto('/tests/order-records-harness.html?role=cashier')
+  const order = page.getByRole('row').filter({ hasText: 'POS-TEST-ORDER-002' })
+  await expect(order.getByRole('button', { name: '作废 POS-TEST-ORDER-002' })).toBeVisible()
+  await order.getByRole('button', { name: '作废 POS-TEST-ORDER-002' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '作废订单确认' })
+  await expect(dialog).toBeVisible()
+  const confirmButton = dialog.getByRole('button', { name: '确认作废', exact: true })
+  await expect(confirmButton).toBeDisabled()
+  await dialog.getByRole('button', { name: '重复下单', exact: true }).click()
+  await expect(confirmButton).toBeEnabled()
+  await confirmButton.click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByText('订单 POS-TEST-ORDER-002 已作废', { exact: true })).toBeVisible()
+  await expect(page.getByText('POS-TEST-ORDER-002', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('共 2 笔订单', { exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.__cancelledOrders)).toEqual([{ id: 'order-2', reason: '重复下单' }])
 })
 
 test('手机底部导航包含 POS点单并可跳转', async ({ page }) => {

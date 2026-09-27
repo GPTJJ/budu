@@ -1,0 +1,132 @@
+# budu Sweet Card 1.1A — Implementation Report
+
+Date: 2026-09-07 (Asia/Shanghai)
+Overall: `SWEET_CARD_1_1A_READY_FOR_MANUAL_RELEASE_GATE`
+
+## Release boundary
+
+- OS implementation baseline: `cc5dcf12fcbc9ae9552921d0fa917898a8403998` on `codex/sweet-card-1-1a`.
+- A7.5 electronic-delivery implementation: `d282c19cc5513a37706399eeda9cfbde143e73f6`; download verification: `c01431fb8ac47443379e8cecec863b7150aaa1b2` on the same branch.
+- MiniProgram post-A9 source candidate: `4c2ba50408bea6ea5e43bf54727f313ca0f85d4c` on `codex/sc11-a06-environment-isolation`; documentation head `302895a7ae5b6eeec3a61b11fbe03c8330f08e97`.
+- Production runtime: `3838b35b6e2a`, healthy, restart count 0.
+- Production database: `budu_bj006`; Migration 67 applied / 0 failed; exactly one running container uses the canonical Production `DATABASE_URL`.
+- Production Sweet Card balance and Ledger: 500,090 / 500,090 cents; delta 0.
+- Production MiniProgram Claim feature flag: `OFF` because `SWEET_CARD_MINIPROGRAM_CLAIM_ENABLED` is absent from the current Production runtime.
+- Production deploy, migration, Claim, Binding, review, and release in A8/A9: NO. A Test-only development version was uploaded and manually designated as the experience version.
+- Sweet Card 1.1B: NOT STARTED.
+
+## A1–A7 preserved result
+
+A1–A7 remain PASS at the accepted baselines. The canonical authorities are the server-observed WeChat identity mapping to stable `User.id`, server sessions, separate Claim credentials, `SweetCardClaim`, and the existing `SweetCardBinding`. Claim and Binding do not activate cards or change balance, Ledger, Redemption, Refund, Payment, or Order facts.
+
+Test PostgreSQL `budu_sc11a_test` contains additive Migrations 68–70 for the identity bridge, customer session, Claim credential, Claim receipt, and User binding. Production remains at Migration 67; the Test migration state is not treated as Production approval.
+
+Physical and electronic carriers share one economic authority. Claim QR and proof remain separate from the POS credential. Store Availability remains dynamic. Security, replay, concurrency, wallet authorization, legacy Sweet Card 1.0, POS, payment-channel, Product, Payroll, and Transfer evidence is recorded in the A1–A7 checkpoints.
+
+## A7.5 — electronic card delivery workflow
+
+Result: `SWEET_CARD_1_1A_A7_5_READY`.
+
+The OS Card Detail now composes the accepted A1–A7 services into one Test/Candidate operator flow: edit existing recipient/blessing presentation fields, inspect the selected template, generate and download a card carrying the Claim QR, explicitly activate it for delivery, revoke or explicitly reissue its Claim credential, and refresh Claim/Binding facts from PostgreSQL. Card, activation, electronic-presentation, Claim-credential, Claim, Binding, and delivery-preparation states remain distinct.
+
+The Claim QR is labelled `微信扫码领取甜意卡`. The POS bearer credential generator and manufacturer export remain unchanged. Electronic delivery activation requires both an electronic carrier and a current active Claim credential. Reissue requires a second confirmation. The operator surface shows business batch names, Chinese credential/state labels, yuan amounts and formatted Ledger amounts; internal IDs remain in a collapsed technical section.
+
+No new schema or Migration was required. The existing `SweetCardAccount` recipient/presentation fields, `SweetCardBatch.presentationTemplateKey`, `SweetCardClaimToken`, `SweetCardClaim`, and `SweetCardBinding` remain canonical. Presentation edits and asset operations do not modify balance, Ledger, Redemption, Refund, Payment, Order, POS credentials, Binding, ownership, or P2034 behavior. Safe audit events cover presentation updates, generation, reissue, revoke, and delivery activation without recording secrets.
+
+The A7.5-01 through A7.5-18 unit/WebKit matrix passed. `npm run build`, the canonical Sweet Card suite, the A6/A7 plus A7.5 unit suite (21/21), and Sweet Card admin WebKit suite (8/8) passed. The WebKit suite verifies a real SVG download and 320–430px layouts. Ten sanitized screenshots are stored under `/Users/apple/.codex/outputs/sweet-card-a7-5-20260907`. See `docs/checkpoints/2026-09-07-sweet-card-1.1a-a7.5-ready.md`.
+
+## A8 — privacy and platform preparation
+
+Result: `A8_PRIVACY_REVIEW_PENDING`.
+
+Completed in the MiniProgram candidate:
+
+- Added an in-app, versioned privacy and user-agreement page covering WeChat login identity, the stable internal account mapping, Sweet Card ownership and binding, recipient display text, wallet access, and current account/order/payment processing.
+- The notice explicitly limits Sweet Card 1.1A to Claim, Binding, and wallet viewing. It does not claim Sweet Card online payment, online refund, nationwide ordering, or logistics.
+- Removed raw OpenID display/copy from the ordinary customer page, removed OpenID from avatar object paths, and removed it from the candidate `user:get` response. The server retains OpenID only as internal authentication authority.
+- Added a platform privacy and release checklist. Suggested version: `3.5.0`, subject to checking current platform version numbering. Suggested remark: `甜意卡领取与绑定、我的甜意卡、实体/电子卡支持`.
+- Native WeChat Developer Tools compiled and rendered the privacy page. Evidence screenshot: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-privacy-notice.png`.
+
+Security review:
+
+- MiniProgram source scan: 0 full Claim tokens, 0 Claim proofs, 0 POS credentials, 0 AppSecret-shaped values, and 0 `session_key` values.
+- Current Test API source contains 0 exact matches for the mounted AppSecret value.
+- Current Test API logs contain 0 full Claim tokens, Claim proofs, POS credentials, `session_key` values, or OpenID-shaped values.
+- Result: `NO_SECRET_LEAK`.
+
+Platform evidence:
+
+- Current official MiniProgram version: `VERIFIED` from the WeChat Public Platform version-management screenshot.
+- Online version: `3.2.7`; publisher: `Dh`; publish time: `2026-09-04 10:18:07`; remark: `首页 OUR STORY 品牌故事文案更新`; state: online.
+- Review version: none pending.
+- Test development version `3.5.0-a9-test`: submitted at `2026-09-06 20:29:53`, marked as the experience version, not submitted for review or released.
+- Evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-official-version-baseline.png`, SHA-256 `ee90a1541e9391bceebecc5eabdd191a6dd304163ed643871188f718153c933f`.
+- Current platform privacy-guide content: `PRIVACY_EVIDENCE_VERIFIED` from two current WeChat Public Platform screenshots.
+- Current guide title: `budu小卖部 小程序隐私保护指引`; developer: `北京三三得久企业管理有限公司`; a contact method, minor protection, user rights, shortest-necessary retention and disclosure rules are present. No third-party plugin/SDK entry is shown.
+- Existing information types cover nickname/avatar, phone, clipboard, orders, address, WeChat OpenID, payment, review/refund and recipient/order-note data.
+- Result: `PRIVACY_CHANGE_REQUIRED`. The guide does not explicitly cover Sweet Card ownership/binding/wallet account relationships or recipient-name/blessing display for Sweet Card.
+- Required minimal platform change: expand the WeChat OpenID purpose to the stable budu account and Sweet Card relationship; add `甜意卡账户关系及卡片信息`; add `甜意卡收礼人称呼与祝福语`. Do not add 1.1B online-payment, online-refund, nationwide-ordering or logistics claims.
+- Redacted evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-guide-1-redacted.jpg` and `a8-platform-privacy-guide-2-redacted.jpg`. The browser session token and contact address were removed from retained artifacts.
+- Updated platform content: `PRIVACY_UPDATED_CONTENT_VERIFIED`. The WeChat OpenID purpose preserves order, payment and after-sales handling and adds the budu account and Sweet Card relationship. Both new Sweet Card information types and their purposes match the prepared minimum scope; 1.1B claims remain excluded.
+- Updated-content evidence: `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906/a8-platform-privacy-updated-content.png`, SHA-256 `f0b16bae1654d6ee105179ffc68ea81f29cd090375fb7c18b02d1f2e2480e4cc`.
+- Platform status is `审核中` (`PRIVACY_REVIEW_PENDING`), reported directly by the operator. Evidence strength is `OBSERVED_USER_REPORTED`; a status screenshot and update time have not been provided.
+- The permitted in-app browser rejected `mp.weixin.qq.com` under its site safety policy. No alternate browser surface or protocol workaround was used.
+
+## A9 — real Test E2E
+
+Result: `A9_PASS`.
+
+Verified chain: Test experience version `3.5.0-a9-test` → Test CloudBase `budu-test-d8gwb4xwy41dc6c61` → Test `sweetCardApi` → Test API → `budu_sc11a_test`. Test remains at Migration 70 / 0 failed.
+
+Real identity and Claim matrix:
+
+- Two real WeChat identities resolved to different stable internal users. USER_A's 26 Test sessions continued to resolve through one WeChat identity; USER_B resolved through a separate identity.
+- USER_A completed ACCEPTANCE_TEST Claim flows for NONE, OPTIONAL, and REQUIRED binding modes across physical and electronic carriers.
+- Safe same-user replay, wallet authorization, balance/status/validity/recipient/binding/carrier/store detail, and a Test-side authoritative balance refresh from ¥50.00 to ¥48.75 all passed.
+- The real same-card race produced USER_A 201 and USER_B 409. Repeated USER_B requests remained 409. The database contained one owner, one Claim and one Binding for the race card, with no ownership transfer.
+- USER_B's wallet contained zero cards. USER_A's claimed card was not visible cross-user.
+- The race Claim and Binding left the card balance and Ledger at 5,000 / 5,000 cents. The complete A9 fixture reconciled at 19,875 / 19,875 cents, delta 0 before cleanup.
+
+A9 compatibility fix:
+
+- WeChat's experience-version code can deliver launch options percent-encoded. The Claim page now uses one guarded decoder for token, proof and scene inputs, accepting raw or encoded options and failing closed on malformed encoding.
+- The exact live E2E completed with raw launch options. The post-A9 compatibility fix is committed locally at `4c2ba50408bea6ea5e43bf54727f313ca0f85d4c`, passes 38/38 MiniProgram tests, and has not been uploaded.
+
+Security and cleanup:
+
+- One Test proof suffix pasted into the operator conversation was immediately revoked. Its replacement was consumed by the race. No Production secret was exposed.
+- Exact Test cleanup removed one batch, four accounts, four Claims, two Bindings, five Ledger rows, three customer users, three WeChat identities and 28 customer sessions.
+- Post-cleanup A9 fixture rows, Test WeChat identities and Test customer sessions are all zero. All local Claim/session temporary files and QR artifacts were destroyed; non-sensitive success/denial/wallet screenshots remain.
+- Machine evidence: `docs/checkpoints/2026-09-06-sweet-card-1.1a-a9-real-e2e.json`.
+
+## A10 — controlled Production rollout
+
+Result: `NOT_STARTED_PREREQUISITES_INCOMPLETE`.
+
+A10 did not start because the verified updated privacy guide is still under platform review. The official-version baseline is VERIFIED. The real USER_A/USER_B matrix is now PASS. No Production candidate was deployed, no Production backup for A10 was created, and Migrations 68–70 were not applied to Production.
+
+Before A10 may begin, the manual A8/A9 evidence must pass. A10 must then independently verify a fresh canonical backup, isolated Migration 68–70 rehearsal and schema diff, rollback assets, health, single writer, and full legacy regression. Any backend deployment must start with Claim OFF; any later Claim enablement must remain limited to an explicit test-customer allowlist. Full public rollout is not authorized.
+
+## Regression and current reconciliation
+
+- A7.5 electronic-delivery matrix A7.5-01 through A7.5-18: PASS; Sweet Card admin WebKit 8/8 PASS; A6/A7 plus A7.5 unit contract 21/21 PASS.
+- A wider critical-suite attempt could not run its database-backed cross-domain cases because this Mac has no local PostgreSQL or Docker. Reached non-database cases passed; this is not represented as current database execution evidence. Previously accepted isolated-Test PostgreSQL A1–A7 evidence remains unchanged.
+- A8 MiniProgram environment, CloudBase, payment safety, API, Claim UI, privacy, responsive, and accessibility contracts: 55/55 PASS.
+- Post-A9 launch-option compatibility regression: 38/38 PASS.
+- Privacy JavaScript syntax and diff checks: PASS.
+- A1–A7 accepted regression evidence remains PASS; A10 full Production regression is intentionally not claimed because A10 did not start.
+- Production public/internal health and DB: PASS.
+- Production runtime restart count: 0.
+- Production single writer: PASS (1).
+- Production accounts: 18; Ledger rows: 31; redemptions: 9; refunds: 4; payments: 166.
+- Production Ledger / balance / delta: 500,090 / 500,090 / 0 cents.
+- Production write during A8/A9 final-gate work: NO.
+
+## Minimum manual steps
+
+1. Wait for the 微信公众平台 privacy review result, then capture the approved/effective state and update time.
+2. Do not submit the MiniProgram for review or release until A10 prerequisites and the controlled Production rollout are separately authorized and verified.
+
+Evidence images are stored under `/Users/apple/.codex/outputs/sweet-card-a8-a9-20260906`. They contain no full OpenID, AppSecret, `session_key`, Claim token, POS credential, or internal User ID.
+
+Model configuration could not be independently verified: `MODEL_CONFIGURATION_NOT_VERIFIABLE`.

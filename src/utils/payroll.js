@@ -1,3 +1,5 @@
+import { PAYABLE_HOURS_SOURCES } from '../../shared/payableHoursAuthority.js'
+
 /** 中国大陆 2026 法定节假日（含调休补班） */
 export const HOLIDAYS_2026 = new Set([
   '2026-01-01', '2026-01-02', '2026-01-03',
@@ -70,12 +72,16 @@ const COMMISSION_STEP = 1000
 const COMMISSION_PER_STEP = 5
 export const TRANSFER_SUBSIDY_EFFECTIVE_DATE = '2026-08-01'
 export const TRANSFER_SUBSIDY_RATE = 2
-/** 特殊员工：只统计工时，不计算任何工资（如吉祥物「卡皮巴拉」） */
-const NO_PAY_STAFF = new Set(['卡皮巴拉'])
+export const PAYABLE_HOURS_SOURCE = Object.freeze({
+  ...PAYABLE_HOURS_SOURCES,
+  LEGACY_DUTY_HOURS: 'LEGACY_DUTY_HOURS',
+  ADJUSTMENT_ONLY: 'ADJUSTMENT_ONLY',
+})
 
-export function isNoPayStaff(name) {
-  return NO_PAY_STAFF.has(String(name || ''))
-}
+export const CALCULATION_DAY_POLICY = Object.freeze({
+  HOLIDAY: 'HOLIDAY_POLICY',
+  WORKDAY: 'WORKDAY_POLICY',
+})
 
 /** 当日值班工时：1 人按门店标准工时；2 人及以上各 8h */
 export function dutyHours(storeKey, staffCount, storeName = '') {
@@ -83,15 +89,31 @@ export function dutyHours(storeKey, staffCount, storeName = '') {
   return 8
 }
 
-/** 阶梯提成时薪（元/h）：未达当日业绩目标为 0；达到目标奖励 5 元/h，之后每增加 1000 元再加 5 元/h */
-export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
+/**
+ * 提成政策的单一权威选择点。rate 与 target 必须从同一次政策选择返回，
+ * 解释元数据不得在调用方重算目标或日期分支。
+ */
+function commissionPolicy(storeKey, revenue, dateStr, storeName = '') {
   const normKey = normalizeStoreKey(storeKey, storeName)
   const cfg = storePayConfig(normKey)
-  const target = normKey === 'tongying' && isHoliday(dateStr) ? cfg.holidayTarget : cfg.target
+  // 当前只有通盈的薪资目标存在节假日分支；该字段描述实际使用的工资政策，
+  // 不是对自然日作“法定节假日”分类。
+  const holidayPolicy = normKey === 'tongying' && isHoliday(dateStr)
+  const target = normKey === 'tongying' && holidayPolicy ? cfg.holidayTarget : cfg.target
   const rev = Number(revenue) || 0
-  if (rev < target) return 0
-  const extra = Math.floor((rev - target) / COMMISSION_STEP)
-  return COMMISSION_PER_STEP + extra * COMMISSION_PER_STEP
+  const extra = rev < target ? null : Math.floor((rev - target) / COMMISSION_STEP)
+  return {
+    target,
+    rate: extra == null ? 0 : COMMISSION_PER_STEP + extra * COMMISSION_PER_STEP,
+    calculationDayPolicy: holidayPolicy
+      ? CALCULATION_DAY_POLICY.HOLIDAY
+      : CALCULATION_DAY_POLICY.WORKDAY,
+  }
+}
+
+/** 阶梯提成时薪（元/h）：未达当日业绩目标为 0；达到目标奖励 5 元/h，之后每增加 1000 元再加 5 元/h */
+export function commissionRate(storeKey, revenue, dateStr, storeName = '') {
+  return commissionPolicy(storeKey, revenue, dateStr, storeName).rate
 }
 
 /** 官舍运营中心调货补贴：自 2026-08-01 起按实际官舍值班工时增加 2 元/h。 */
@@ -105,16 +127,46 @@ function round2(v) {
   return Math.round(v * 100) / 100
 }
 
-/** 计算单个员工某日薪酬：基础薪资 + 业绩提成 + 官舍调货补贴 */
-export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount }) {
+/**
+ * 计算单个员工某日薪酬：基础薪资 + 业绩提成 + 官舍调货补贴。
+ * payableHours 仅由 Employee.id 稳定路径显式传入；省略时保留 legacy dutyHours 口径。
+ * 显式传入的稳定工时必须是有限非负数，禁止用默认班次替代损坏的考勤数据。
+ */
+export function calcDailyPay(input) {
+  const { storeKey, storeName, revenue, date, staffCount } = input
   const normKey = normalizeStoreKey(storeKey, storeName)
-  const hours = dutyHours(normKey, staffCount)
-  const baseRate = Number(staffCount) <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
+  const hasPayableHours = Object.prototype.hasOwnProperty.call(input, 'payableHours')
+  const explicitHours = Number(input.payableHours)
+  if (hasPayableHours && (input.payableHours == null || input.payableHours === '' || !Number.isFinite(explicitHours) || explicitHours < 0)) {
+    throw new TypeError('payableHours must be a finite non-negative number')
+  }
+  const payableHoursSource = input.payableHoursSource || (
+    hasPayableHours ? PAYABLE_HOURS_SOURCE.ACTUAL_HOURS : PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS
+  )
+  if (![
+    PAYABLE_HOURS_SOURCE.ACTUAL_HOURS,
+    PAYABLE_HOURS_SOURCE.LEGACY_PAYROLL_HOURS,
+    PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS,
+  ].includes(payableHoursSource)) {
+    throw new TypeError('payableHoursSource is invalid for calculated payroll')
+  }
+  if ([PAYABLE_HOURS_SOURCE.ACTUAL_HOURS, PAYABLE_HOURS_SOURCE.LEGACY_PAYROLL_HOURS].includes(payableHoursSource) && !hasPayableHours) {
+    throw new TypeError(`${payableHoursSource} requires explicit payableHours`)
+  }
+  if (payableHoursSource === PAYABLE_HOURS_SOURCE.LEGACY_DUTY_HOURS && hasPayableHours) {
+    throw new TypeError('LEGACY_DUTY_HOURS cannot use explicit payableHours')
+  }
+  const hours = hasPayableHours ? explicitHours : dutyHours(normKey, staffCount)
+  const participantCount = Number(staffCount)
+  const rawStoreRevenue = Number(revenue) || 0
+  const baseRate = participantCount <= 1 ? BASE_RATE + OVERTIME_SUBSIDY : BASE_RATE
   const basePay = round2(baseRate * hours)
-  const rate = commissionRate(normKey, revenue, date)
+  const policy = commissionPolicy(normKey, rawStoreRevenue, date, storeName)
+  const rate = policy.rate
   const commission = round2(rate * hours)
   const subsidyRate = transferSubsidyRate(normKey, date, storeName)
   const transferSubsidy = round2(subsidyRate * hours)
+  const total = round2(basePay + commission + transferSubsidy)
   return {
     hours,
     baseRate,
@@ -123,7 +175,23 @@ export function calcDailyPay({ storeKey, storeName, revenue, date, staffCount })
     commission,
     transferSubsidyRate: subsidyRate,
     transferSubsidy,
-    total: round2(basePay + commission + transferSubsidy),
+    total,
+    explanation: {
+      payableHours: hours,
+      payableHoursSource,
+      participantCount,
+      rawStoreRevenue,
+      commissionBasis: rawStoreRevenue,
+      calculationDayPolicy: policy.calculationDayPolicy,
+      baseRate,
+      basePay,
+      commissionTarget: policy.target,
+      commissionRate: rate,
+      commission,
+      transferSubsidyRate: subsidyRate,
+      transferSubsidy,
+      total,
+    },
   }
 }
 
@@ -154,7 +222,6 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
       staffCount: share,
     })
     for (const name of v.staff) {
-      const noPay = isNoPayStaff(name)
       const rec = map.get(name) || {
         name,
         workedDays: 0,
@@ -171,10 +238,10 @@ export function monthlyPayrollFromEntries(entries, monthKey, storeNames = {}) {
       rec.workedRevenue += inc / share
       rec.orders += ord / share
       rec.hours += daily.hours
-      rec.basePay += noPay ? 0 : daily.basePay
-      rec.commission += noPay ? 0 : daily.commission
-      rec.transferSubsidy += noPay ? 0 : daily.transferSubsidy
-      rec.salary += noPay ? 0 : daily.total
+      rec.basePay += daily.basePay
+      rec.commission += daily.commission
+      rec.transferSubsidy += daily.transferSubsidy
+      rec.salary += daily.total
       rec.days.add(day)
       rec.stores.add(storeKey)
       map.set(name, rec)

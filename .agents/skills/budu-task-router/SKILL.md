@@ -1,0 +1,44 @@
+---
+name: budu-task-router
+description: Use automatically for any task involving the BUDU repository, BUDU OS, POS, payroll, transfers, customer requests, product center, approvals, payments, deployment, database, or production changes. Classify the task as FAST, STANDARD, or STRICT before choosing the engineering workflow, and route payroll-correctness audits to budu-payroll-audit.
+---
+
+# BUDU Task Router
+
+Classify the requested BUDU work before choosing tools, verification, or tests. Start with one concise sentence: `BUDU task mode: FAST|STANDARD|STRICT — <reason>`. Do not turn a FAST task into a long planning exercise.
+
+## FAST
+
+Use for UI, CSS, copy, small layouts, display-only frontend work, and clearly bounded bugs that do not touch critical data models.
+
+Default flow: minimal diff → targeted tests → build → deploy only when the user explicitly requests it.
+
+Do not automatically run payroll, payment, large data audits, or unrelated module regressions.
+
+## STANDARD
+
+Use for ordinary business logic such as transfers, approvals, product management, notifications, partner supply, CustomerRequest, exports, and routine permission changes.
+
+Default flow: inspect the current implementation → make the smallest correct change → preserve affected data contracts → targeted regression → build → normal candidate or deployment only when authorized.
+
+## STRICT
+
+Use automatically for Payment, Refund, WeChat Pay, Alipay, payroll calculations, work hours, payroll issuance, production-data repair, authority migrations, destructive migrations, identity authority, high-risk deletion permissions, or large historical-data changes.
+
+Default flow: strict audit → backup and rollback consideration → isolated candidate → reconciliation → reviewer gate. Do not perform production cutover unless the current user instruction explicitly authorizes that production gate.
+
+## Route Only What Applies
+
+- New or recovered context: `budu-context`.
+- Business identity or source-of-truth work: `budu-data-authority`.
+- Frontend/mobile work: `budu-mobile-ui`.
+- User-visible UI, PDF, email, report, export, document, POS display, mini-program, print, or sharing output: also `budu-brand-system`.
+- Code changes: `budu-regression`.
+- Candidate, deployment, cutover, or production verification: `budu-production-deploy`.
+- Payment/refund work: always `budu-payment-safety` and STRICT.
+- 甜意卡、礼品卡、商务赠卡、甜意卡核销/余额/绑定/挂失/补发：使用 `budu-sweet-card`；涉及价值、核销、混合结算或退款时为 STRICT，并组合 `budu-payment-safety`。
+- Payroll correctness audit for one or more employees over a day or period: always `budu-payroll-audit` and STRICT, even when phrased briefly (for example, “看看这个人工资算对了吗”).
+- Payroll settlement questions such as “已经发了多少” or “还欠多少” are payment/settlement reconciliation, not `budu-payroll-audit`; do not mix paid cash facts with calculated payroll.
+- Device or conversation handoff: `budu-handoff`.
+
+Do not load every BUDU skill for every task. The classification does not grant deployment, database-write, notification, or other external authority.

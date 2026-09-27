@@ -1,10 +1,12 @@
 const roundQty = (value) => Math.round((Number(value) || 0) * 100) / 100
 
 export const TRANSFER_STATUS_LABEL = {
-  pending: '待审核',
-  in_transit: '运输中',
-  completed: '已完成',
+  pending: '待备货',
+  shipped: '已发货',
+  in_transit: '已发货',
+  completed: '已发货',
   rejected: '已驳回',
+  canceled: '已撤回',
 }
 
 export function inventoryQuantity(rows, storeKey, productName) {
@@ -32,36 +34,19 @@ export function setInventoryQuantity(rows, storeKey, productName, quantity, acto
   return next
 }
 
-function changeInventory(rows, storeKey, items, direction, actor, now) {
-  let next = Array.isArray(rows) ? rows : []
-  for (const item of items) {
-    const current = inventoryQuantity(next, storeKey, item.productName)
-    const quantity = roundQty(current + direction * Number(item.quantity || 0))
-    if (quantity < 0) throw new Error(`「${item.productName}」库存不足（当前 ${current}）`)
-    next = setInventoryQuantity(next, storeKey, item.productName, quantity, actor, now)
-  }
-  return next
-}
-
 export function transitionInventoryRequest({ requests, inventory, id, action, actor, note = '', now = new Date() }) {
   const list = Array.isArray(requests) ? requests : []
   const target = list.find((request) => request.id === id)
-  if (!target || target.type !== 'transfer') throw new Error('未找到该调货申请')
+  if (!target || target.type !== 'transfer') throw new Error('未找到该门店调拨')
   const rules = {
-    ship: { from: 'pending', to: 'in_transit', label: '审核通过并确认发货' },
-    receive: { from: 'in_transit', to: 'completed', label: '确认收货' },
-    reject: { from: 'pending', to: 'rejected', label: '驳回申请' },
+    ship: { from: 'pending', to: 'shipped', label: '确认发货' },
+    cancel: { from: 'pending', to: 'canceled', label: '撤回调拨' },
   }
   const rule = rules[action]
   if (!rule || target.status !== rule.from) throw new Error('当前状态不能执行此操作')
 
   const iso = now.toISOString()
-  let nextInventory = Array.isArray(inventory) ? inventory : []
-  if (action === 'ship') {
-    nextInventory = changeInventory(nextInventory, target.fromStoreKey, target.items, -1, actor, iso)
-  } else if (action === 'receive') {
-    nextInventory = changeInventory(nextInventory, target.storeKey, target.items, 1, actor, iso)
-  }
+  const nextInventory = Array.isArray(inventory) ? inventory : []
   const history = [
     ...(Array.isArray(target.history) ? target.history : []),
     {
@@ -72,7 +57,10 @@ export function transitionInventoryRequest({ requests, inventory, id, action, ac
       note: String(note || '').trim().slice(0, 100),
     },
   ]
-  const updated = { ...target, status: rule.to, history, updatedAt: iso }
+  const audit = action === 'ship'
+    ? { shippedBy: actor?.username || '', shippedAt: iso }
+    : { withdrawnBy: actor?.username || '', withdrawnAt: iso }
+  const updated = { ...target, ...audit, status: rule.to, history, updatedAt: iso }
   return {
     requests: list.map((request) => (request.id === id ? updated : request)),
     inventory: nextInventory,

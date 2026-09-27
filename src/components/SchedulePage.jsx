@@ -6,12 +6,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Pencil,
   Plus,
   Trash2,
   X,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
-import { allStores, employeeList } from '../utils/selectors'
+import { allStores, currentEmployeeDirectory } from '../utils/selectors'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
@@ -19,42 +20,60 @@ import { t } from '../utils/text'
 
 const inputCls = 'input'
 
-export default function SchedulePage({ onBack, canEdit = true, user }) {
+function weekFromRows(rows) {
+  const nested = {}
+  for (const row of rows || []) {
+    nested[row.storeKey] = nested[row.storeKey] || {}
+    nested[row.storeKey][row.date] = Array.isArray(row.shifts) ? row.shifts : []
+  }
+  return nested
+}
+
+export default function SchedulePage({ onBack, canEdit = true, user, registerNavigationGuard }) {
   // allStores 可能包含 BASE_STORES 与云端门店的重复 key，按 key 去重
   const stores = [...new Map(allStores().map((s) => [s.key, s])).values()]
   const [weekStart, setWeekStart] = useState(() => getWeekStart())
   // 默认「全部门店」：一次展示所有门店排班详情
   const [storeKey, setStoreKey] = useState('all')
-  const [version, setVersion] = useState(0)
   const [editingDate, setEditingDate] = useState(null)
   const [editingStore, setEditingStore] = useState('')
-  const [draft, setDraft] = useState({ staff: '', time: '', note: '' })
+  const [editingIndex, setEditingIndex] = useState(null)
+  const [draft, setDraft] = useState({ employeeId: '', time: '', note: '' })
   const [errorTip, setErrorTip] = useState('')
-  const [savedTip, setSavedTip] = useState('')
   const [exporting, setExporting] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
-  const [schedules, setSchedules] = useState({}) // PostgreSQL 权威数据（Data Authority DA-3）
+  const [schedules, setSchedules] = useState({}) // 当前编辑 draft；只在最终保存时写 PostgreSQL
+  const [baselineSchedules, setBaselineSchedules] = useState({})
+  const [scheduleVersions, setScheduleVersions] = useState({})
+  const [emptyVersion, setEmptyVersion] = useState('')
+  const [dirtyStores, setDirtyStores] = useState([])
+  const [discardOpen, setDiscardOpen] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [saving, setSaving] = useState(false)
   const exportRef = useRef(null)
+  const dirtyRef = useRef(false)
+  const pendingTransitionRef = useRef(null)
+
+  const dirty = dirtyStores.length > 0
 
   const days = getWeekDays(weekStart)
   const today = todayStr()
   const storeInfo = stores.find((s) => s.key === storeKey)
-  const staffNames = [...new Set(employeeList('all').map((e) => e.name))].sort((a, b) =>
-    a.localeCompare(b, 'zh-CN'),
+  const staffOptions = currentEmployeeDirectory('all').sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN'),
   )
 
   // 从 PostgreSQL 加载当前周排班（唯一读权威）
   const loadWeek = useCallback(async (ws) => {
     try {
       const res = await api(`/v2/schedules?weekStart=${encodeURIComponent(ws)}`)
-      const nested = {}
-      for (const row of res.rows || []) {
-        nested[row.storeKey] = nested[row.storeKey] || {}
-        nested[row.storeKey][row.date] = row.shifts
-      }
+      const nested = weekFromRows(res.rows)
       setSchedules((prev) => ({ ...prev, [ws]: nested }))
+      setBaselineSchedules((prev) => ({ ...prev, [ws]: structuredClone(nested) }))
+      setScheduleVersions((prev) => ({ ...prev, [ws]: res.versions || {} }))
+      setEmptyVersion(String(res.emptyVersion || ''))
+      dirtyRef.current = false
+      setDirtyStores([])
     } catch (e) {
       setErrorTip(e.message || t('排班加载失败'))
     }
@@ -64,77 +83,158 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
     loadWeek(weekStart)
   }, [weekStart, loadWeek])
 
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!dirtyRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
+  const discardCurrentDraft = useCallback(() => {
+    dirtyRef.current = false
+    setSchedules((current) => ({
+      ...current,
+      [weekStart]: structuredClone(baselineSchedules[weekStart] || {}),
+    }))
+    setDirtyStores([])
+    setErrorTip('')
+  }, [baselineSchedules, weekStart])
+
+  const requestTransition = useCallback((action) => {
+    if (!dirtyRef.current) {
+      return action?.()
+    }
+    pendingTransitionRef.current = action
+    setDiscardOpen(true)
+    return undefined
+  }, [])
+
+  useEffect(() => {
+    registerNavigationGuard?.(requestTransition)
+    return () => registerNavigationGuard?.(null)
+  }, [registerNavigationGuard, requestTransition])
+
+  const continueAfterDiscard = () => {
+    const action = pendingTransitionRef.current
+    pendingTransitionRef.current = null
+    discardCurrentDraft()
+    setDiscardOpen(false)
+    action?.()
+  }
+
+  const closeEditor = () => {
+    setEditingDate(null)
+    setEditingStore('')
+    setEditingIndex(null)
+    setErrorTip('')
+  }
+
   // 绑定员工（staffKey = storeKey::name）：本人当班名字高亮
   const myStaffKey = String((user && user.staffKey) || '')
   const myName = myStaffKey.includes('::') ? myStaffKey.split('::')[1] : ''
-  const isMyShift = (shiftStoreKey, staffName) =>
-    Boolean(myName) && myStaffKey === `${shiftStoreKey}::${staffName}`
+  const isMyShift = (shiftStoreKey, shift) => {
+    const myEmployeeId = String((user && user.employeeId) || '')
+    if (myEmployeeId && shift.employeeId) return myEmployeeId === shift.employeeId
+    return Boolean(myName) && myStaffKey === `${shiftStoreKey}::${shift.staff}`
+  }
 
-  /** 保存某门店某周排班（PostgreSQL 权威；失败回滚本地视图并显式报错） */
-  const commit = async (store, nextWeek, { feedback: withFeedback = false } = {}) => {
-    const prev = schedules
-    const next = { ...schedules, [weekStart]: nextWeek }
-    if (Object.keys(nextWeek).length === 0) delete next[weekStart]
-    setSchedules(next)
-    setVersion((v) => v + 1)
+  /** 单次把本轮所有门店修改原子写入 PostgreSQL；失败时保留 draft。 */
+  const saveSchedule = async () => {
+    if (!dirty || saving) return
+    setSaving(true)
+    setErrorTip('')
     try {
-      await api('/v2/schedules', {
+      const response = await api('/v2/schedules/batch', {
         method: 'PUT',
-        body: JSON.stringify({ weekStart, storeKey: store, days: nextWeek[store] || {} }),
+        body: JSON.stringify({
+          weekStart,
+          stores: dirtyStores.map((key) => ({
+            storeKey: key,
+            days: (schedules[weekStart] || {})[key] || {},
+            version: (scheduleVersions[weekStart] || {})[key] || emptyVersion,
+          })),
+        }),
       })
-      if (withFeedback) {
-        // 排班新增/修改成功（删除班次不触发点头动画）
-        setFeedback({ title: t('排班已保存') })
-      }
+      const savedWeek = { ...(schedules[weekStart] || {}) }
+      for (const key of dirtyStores) delete savedWeek[key]
+      Object.assign(savedWeek, weekFromRows(response.rows))
+      setSchedules((current) => ({ ...current, [weekStart]: savedWeek }))
+      setBaselineSchedules((current) => ({ ...current, [weekStart]: structuredClone(savedWeek) }))
+      setScheduleVersions((current) => ({
+        ...current,
+        [weekStart]: { ...(current[weekStart] || {}), ...(response.versions || {}) },
+      }))
+      if (response.emptyVersion) setEmptyVersion(String(response.emptyVersion))
+      dirtyRef.current = false
+      setDirtyStores([])
+      setFeedback({ title: t('排班已保存') })
     } catch (e) {
-      setSchedules(prev)
       setErrorTip(e.message || t('排班保存失败，请重试'))
+    } finally {
+      setSaving(false)
     }
+  }
+
+  const markStoreDirty = (store) => {
+    dirtyRef.current = true
+    setDirtyStores((current) => current.includes(store) ? current : [...current, store])
   }
 
   const weekShiftsOf = (store) => (schedules[weekStart] || {})[store] || {}
 
   const setWeekShifts = (store, date, shifts) => {
-    const nextWeek = { ...(schedules[weekStart] || {}) }
-    const nextStoreDays = { ...(nextWeek[store] || {}) }
-    if (shifts.length > 0) {
-      nextStoreDays[date] = shifts
-      nextWeek[store] = nextStoreDays
-    } else {
-      delete nextStoreDays[date]
-      if (Object.keys(nextStoreDays).length > 0) nextWeek[store] = nextStoreDays
-      else delete nextWeek[store]
-    }
-    return commit(store, nextWeek, { feedback: true })
+    setSchedules((current) => {
+      const nextWeek = { ...(current[weekStart] || {}) }
+      const nextStoreDays = { ...(nextWeek[store] || {}) }
+      if (shifts.length > 0) {
+        nextStoreDays[date] = shifts
+        nextWeek[store] = nextStoreDays
+      } else {
+        delete nextStoreDays[date]
+        if (Object.keys(nextStoreDays).length > 0) nextWeek[store] = nextStoreDays
+        else delete nextWeek[store]
+      }
+      return { ...current, [weekStart]: nextWeek }
+    })
+    markStoreDirty(store)
   }
 
-  const openEditor = (date, store) => {
+  const openEditor = (date, store, index = null) => {
+    const shift = index === null ? null : (weekShiftsOf(store)[date] || [])[index]
     setEditingDate(date)
     setEditingStore(store)
-    setDraft({ staff: '', time: '', note: '' })
+    setEditingIndex(index)
+    setDraft({
+      employeeId: String(shift?.employeeId || ''),
+      time: String(shift?.time || ''),
+      note: String(shift?.note || ''),
+    })
     setErrorTip('')
   }
 
   const confirmAdd = () => {
-    if (saving) return
-    const staff = draft.staff.trim()
-    if (!staff) {
-      setErrorTip(t('请填写员工姓名'))
+    const employee = staffOptions.find((row) => row.id === draft.employeeId)
+    if (!employee) {
+      setErrorTip(t('请选择有效员工'))
       return
     }
-    setSaving(true)
-    const shifts = [
-      ...((schedules[weekStart] || {})[editingStore] || {})[editingDate] || [],
-      {
-        staff,
-        time: draft.time.trim(),
-        note: draft.note.trim(),
-      },
-    ]
+    const current = [...((((schedules[weekStart] || {})[editingStore] || {})[editingDate]) || [])]
+    if (current.some((row, index) => index !== editingIndex && row.employeeId === employee.id)) {
+      setErrorTip(t('该员工当天已有排班'))
+      return
+    }
+    const nextShift = {
+      employeeId: employee.id,
+      staff: employee.name,
+      time: draft.time.trim(),
+      note: draft.note.trim(),
+    }
+    const shifts = editingIndex === null ? [...current, nextShift] : current.map((row, index) => index === editingIndex ? nextShift : row)
     setWeekShifts(editingStore, editingDate, shifts)
-      .then(() => setSaving(false))
-      .catch(() => setSaving(false))
-    setEditingDate(null)
+    closeEditor()
   }
 
   const removeShift = (store, date, index) => {
@@ -230,7 +330,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                   </div>
                   <div className="flex flex-1 flex-col gap-2 p-2.5">
                     {shifts.map((s, i) => {
-                      const mine = isMyShift(store, s.staff)
+                      const mine = isMyShift(store, s)
                       return (
                         <div
                           key={i}
@@ -249,16 +349,25 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
                                 )}
                               </p>
                               {s.time && <p className="mt-0.5 text-[11px] font-semibold text-budu-500">{s.time}</p>}
+                              {!s.employeeId && <p className="mt-0.5 text-[10px] font-semibold text-amber-600">{t('需重新选择员工')}</p>}
                             </div>
                             {canEdit && (
-                              <button
-                                data-export-ignore="1"
-                                onClick={() => removeShift(store, d.date, i)}
-                                className="shrink-0 rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
-                                aria-label={t('删除')}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              <div className="flex shrink-0 items-center" data-export-ignore="1">
+                                <button
+                                  onClick={() => openEditor(d.date, store, i)}
+                                  className="rounded-lg p-1 text-slate-300 transition hover:bg-budu-50 hover:text-budu-500"
+                                  aria-label={t('编辑')}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => removeShift(store, d.date, i)}
+                                  className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
+                                  aria-label={t('删除')}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             )}
                           </div>
                           {s.note && <p className="mt-1 truncate text-[10px] text-slate-400">{s.note}</p>}
@@ -293,7 +402,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       {/* 页面头部 */}
       <div className="flex flex-wrap items-center gap-4">
         <button
-          onClick={onBack}
+          onClick={() => requestTransition(onBack)}
           className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -306,6 +415,17 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {canEdit && (
+            <button
+              data-testid="schedule-save"
+              onClick={saveSchedule}
+              disabled={!dirty || saving}
+              className="hidden items-center gap-1.5 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 lg:flex"
+            >
+              <Check className="h-3.5 w-3.5" />
+              {saving ? t('保存中…') : t('保存排班')}
+            </button>
+          )}
           <button
             onClick={exportImage}
             disabled={exporting}
@@ -314,10 +434,9 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
             <Download className="h-3.5 w-3.5" />
             {exporting ? t('导出中…') : t('导出图片')}
           </button>
-          {savedTip && (
-            <span className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">
-              <Check className="h-3.5 w-3.5" />
-              {savedTip}
+          {dirty && (
+            <span data-testid="schedule-dirty" className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">
+              {t('有未保存修改')}
             </span>
           )}
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
@@ -331,24 +450,30 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
         </div>
       </div>
 
+      {errorTip && !editingDate && (
+        <div role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+          {errorTip}
+        </div>
+      )}
+
       {/* 周切换 + 门店选择 */}
       <div className="card flex flex-wrap items-center gap-3 p-4">
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => setWeekStart(addWeeks(weekStart, -1))}
+            onClick={() => requestTransition(() => setWeekStart(addWeeks(weekStart, -1)))}
             className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
             aria-label={t('上一周')}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
-            onClick={() => setWeekStart(getWeekStart())}
+            onClick={() => requestTransition(() => setWeekStart(getWeekStart()))}
             className="rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-600 transition hover:bg-budu-100"
           >
             {t('本周')}
           </button>
           <button
-            onClick={() => setWeekStart(addWeeks(weekStart, 1))}
+            onClick={() => requestTransition(() => setWeekStart(addWeeks(weekStart, 1)))}
             className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-500 transition hover:bg-budu-50 hover:text-budu-600"
             aria-label={t('下一周')}
           >
@@ -365,7 +490,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
 
         <div className="ml-auto flex flex-wrap gap-1.5">
           <button
-            onClick={() => setStoreKey('all')}
+            onClick={() => requestTransition(() => setStoreKey('all'))}
             className={`rounded-xl px-3 py-2 text-[13px] font-semibold transition ${
               storeKey === 'all'
                 ? 'bg-budu-500 text-white shadow-sm'
@@ -377,7 +502,7 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
           {stores.map((s) => (
             <button
               key={s.key}
-              onClick={() => setStoreKey(s.key)}
+              onClick={() => requestTransition(() => setStoreKey(s.key))}
               className={`rounded-xl px-3 py-2 text-[13px] font-semibold transition ${
                 s.key === storeKey
                   ? 'bg-budu-500 text-white shadow-sm'
@@ -400,8 +525,22 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
       </div>
 
       <p className="text-center text-[11px] text-slate-300">
-        {t('排班保存后自动同步到云端，所有登录账号实时可见；可与门店业绩录入中的值班人员互相参照')}
+        {t('可连续添加、编辑或删除多个班次；点击保存排班后一次同步到云端')}
       </p>
+
+      {canEdit && (
+        <div className="sticky bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-30 rounded-2xl border border-white/80 bg-white/95 p-2 shadow-lg backdrop-blur lg:hidden">
+          <button
+            data-testid="schedule-save-mobile"
+            onClick={saveSchedule}
+            disabled={!dirty || saving}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-budu-500 px-4 py-3 text-sm font-bold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+          >
+            <Check className="h-4 w-4" />
+            {saving ? t('保存中…') : dirty ? t('保存排班') : t('排班已保存')}
+          </button>
+        </div>
+      )}
 
       {/* 卡皮巴拉提交成功动画 */}
       {feedback && (
@@ -437,11 +576,46 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
         </div>
       )}
 
-      {/* 添加排班弹窗 */}
+      {discardOpen && (
+        <div
+          data-testid="schedule-unsaved-dialog"
+          className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm"
+          onClick={() => {
+            pendingTransitionRef.current = null
+            setDiscardOpen(false)
+          }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-800">{t('排班尚未保存')}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {t('离开后本次添加、编辑和删除将不会保存。')}
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => {
+                  pendingTransitionRef.current = null
+                  setDiscardOpen(false)
+                }}
+                className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-200"
+              >
+                {t('继续编辑')}
+              </button>
+              <button
+                onClick={continueAfterDiscard}
+                className="flex-1 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-600"
+              >
+                {t('放弃修改')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 添加/编辑排班弹窗 */}
       {editingDate && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm"
-          onClick={() => setEditingDate(null)}
+          onClick={closeEditor}
         >
           <div
             className="w-full max-w-md rounded-2xl bg-white p-5 shadow-lg"
@@ -449,13 +623,15 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
           >
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold text-slate-800">{t('添加员工排班')}</h3>
+                <h3 className="text-base font-bold text-slate-800">
+                  {editingIndex === null ? t('添加员工排班') : t('编辑员工排班')}
+                </h3>
                 <p className="mt-0.5 text-xs text-slate-400">
                   {weekRangeLabel(weekStart)} · {stores.find((x) => x.key === editingStore)?.name || ''} · {editingDate}
                 </p>
               </div>
               <button
-                onClick={() => setEditingDate(null)}
+                onClick={closeEditor}
                 className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
               >
                 <X className="h-4 w-4" />
@@ -464,20 +640,20 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
 
             <div className="space-y-3">
               <div>
-                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('员工姓名')}</span>
-                <input
-                  list={`budu-schedule-staff-${storeKey}`}
-                  value={draft.staff}
-                  onChange={(e) => setDraft((s) => ({ ...s, staff: e.target.value }))}
-                  placeholder={t('输入或选择员工姓名')}
+                <span className="mb-1.5 block text-xs font-semibold text-slate-500">{t('员工')}</span>
+                <select
+                  value={draft.employeeId}
+                  onChange={(e) => setDraft((s) => ({ ...s, employeeId: e.target.value }))}
                   className={inputCls}
                   autoFocus
-                />
-                <datalist id={`budu-schedule-staff-${storeKey}`}>
-                  {staffNames.map((n) => (
-                    <option key={n} value={n} />
+                >
+                  <option value="">{t('请选择员工')}</option>
+                  {staffOptions.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} · {employee.employeeNo || employee.id} · {stores.find((store) => store.key === employee.storeKey)?.name || employee.storeKey}
+                    </option>
                   ))}
-                </datalist>
+                </select>
               </div>
 
               <div>
@@ -509,18 +685,17 @@ export default function SchedulePage({ onBack, canEdit = true, user }) {
 
             <div className="mt-5 flex gap-2">
               <button
-                onClick={() => setEditingDate(null)}
+                onClick={closeEditor}
                 className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-200"
               >
                 {t('取消')}
               </button>
               <button
                 onClick={confirmAdd}
-                disabled={saving}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
               >
                 <Check className="h-4 w-4" />
-                {saving ? t('保存中…') : t('确认添加')}
+                {editingIndex === null ? t('确认添加') : t('确认修改')}
               </button>
             </div>
           </div>

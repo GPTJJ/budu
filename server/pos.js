@@ -2,28 +2,59 @@ import crypto from 'node:crypto'
 import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
-import { serializeProduct } from './products.js'
-import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, hashCart, httpError, normalizeCartItems } from './pos-core.js'
+import { productListSelect, serializeProduct } from './products.js'
+import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, buildRecognizedRevenueWhere, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
 import { paymentService } from './payments/index.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
 import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
+import { alipayFrontendStatus } from './payments/alipay-config.js'
+import { ALIPAY_AUTH_CODE_RE } from './payments/providers/alipay.js'
 import { assertOrderTransition } from './order-state.js'
 import { resolveStoreName } from './store-names.js'
-import { MODULE_KEYS, canManageAccounts, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
+import { sendStoredImage } from './product-images.js'
+import {
+  MODULE_KEYS,
+  canManageAccounts,
+  hasExternalOrderCreate,
+  hasExternalSettlementConfirm,
+  hasManualExternalRefundConfirm,
+  hasManualExternalRefundRecord,
+  hasModuleAccess,
+  isSuperUser,
+} from '../shared/accountPermissions.js'
+import { externalSettlementService } from './settlements/index.js'
+import { assertNoClientSettlementState, serializeExternalSettlement } from './settlements/settlement-contract.js'
+import { manualExternalRefundService } from './refunds/index.js'
+import { resolveEffectiveProductCosts } from './product-cost-authority.js'
+import { buduBusinessDate } from '../shared/businessDate.js'
+import { availabilityFor, hasNormalPosForStore } from './sweet-card-availability.js'
+import { reverseSweetCardRedemption } from './sweet-card-refunds.js'
 
 export const posRouter = Router()
 
 const wrap = (handler) => async (req, res) => {
   try { await handler(req, res) } catch (error) {
     const status = error.status || 500
-    if (status >= 500) console.error('[pos]', error)
-    res.status(status).json({ error: error.message || '服务器错误' })
+    if (status >= 500 && error.reported !== true) console.error('[pos]', error)
+    const message = status >= 500 && error.publicSafe !== true
+      ? '服务器暂时无法处理，请稍后重试'
+      : error.message || '服务器错误'
+    res.status(status).json({ error: message })
   }
 }
 
+function rethrowSafeCommandError(error, publicMessage, context) {
+  if ((error.status || 500) < 500) throw error
+  console.error(`[pos.${context}]`, error)
+  const safe = httpError(publicMessage, 500)
+  safe.reported = true
+  safe.publicSafe = true
+  throw safe
+}
+
 function requirePosUser(user) {
-  if (!user || !hasModuleAccess(user, MODULE_KEYS.STORE_POS) || (!isSuperUser(user) && !['manager', 'staff', 'cashier'].includes(user.role))) throw httpError('无权限', 403)
+  if (!user || !hasModuleAccess(user, MODULE_KEYS.STORE_POS)) throw httpError('无权限', 403)
 }
 
 function canStore(user, storeId) {
@@ -37,6 +68,12 @@ function canReadOrder(user, order) {
   return isSuperUser(user) || order.cashierId === user.id
 }
 
+// Existing tender settlement, cancellation and historical refunds use normal POS
+// authority. Availability controls only new redemption, never these recovery paths.
+async function requireSweetCardOrderAccess(user, order) {
+  if (BigInt(order?.sweetCardAmount || 0) > 0n && !hasNormalPosForStore(user, order.storeId)) throw httpError('无该门店 POS 权限', 403)
+}
+
 function paymentAuthCode(body, channel) {
   if (!['wechat', 'alipay'].includes(channel)) return ''
   const authCode = String(body?.authCode ?? '').trim()
@@ -45,6 +82,10 @@ function paymentAuthCode(body, channel) {
     if (!WECHAT_AUTH_CODE_RE.test(authCode)) {
       throw httpError('请扫描有效的微信付款码（18 位数字）')
     }
+    return authCode
+  }
+  if (channel === 'alipay' && paymentMode() === 'live') {
+    if (!ALIPAY_AUTH_CODE_RE.test(authCode)) throw httpError('请扫描有效的支付宝付款码（纯数字）')
     return authCode
   }
   if (authCode.length < 6 || authCode.length > 512 || /[\u0000-\u001f\u007f]/.test(authCode)) {
@@ -57,7 +98,9 @@ const orderInclude = () => ({
   store: true,
   items: { orderBy: { id: 'asc' } },
   payments: { orderBy: { createdAt: 'desc' } },
+  externalSettlement: true,
   refunds: { orderBy: { createdAt: 'desc' }, include: { items: { include: { orderItem: true } } } },
+  sweetCardRedemption: true,
 })
 
 function serializeRefund(refund) {
@@ -66,10 +109,16 @@ function serializeRefund(refund) {
     refundNo: refund.refundNo,
     orderId: refund.orderId,
     paymentId: refund.paymentId,
+    externalSettlementId: refund.externalSettlementId,
+    refundMode: refund.refundMode,
     amount: refund.refundAmount.toString(),
+    providerRefundAmount: String(refund.providerRefundAmount == null && refund.sweetCardRefundAmount == null && refund.refundMode === 'PAYMENT' ? refund.refundAmount : refund.providerRefundAmount || 0),
+    sweetCardRefundAmount: String(refund.sweetCardRefundAmount || 0),
     reason: refund.reason,
     status: refund.status,
     providerRefundNo: refund.providerRefundNo,
+    externalCompletedAt: refund.externalCompletedAt,
+    externalRefundReference: refund.externalRefundReference,
     requestedBy: refund.requestedBy,
     approvedBy: refund.approvedBy,
     createdAt: refund.createdAt,
@@ -95,6 +144,7 @@ function serializeOrder(order) {
     subtotal: order.subtotal.toString(),
     discountAmount: order.discountAmount.toString(),
     payableAmount: order.payableAmount.toString(),
+    sweetCardAmount: String(order.sweetCardAmount || 0),
     businessDate: order.businessDate ? order.businessDate.toISOString().slice(0, 10) : null,
     discountPercent: order.discountPercent ?? 100,
     remark: order.remark || '',
@@ -102,13 +152,22 @@ function serializeOrder(order) {
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
     paymentMode: order.paymentMode,
+    orderSource: order.orderSource,
+    entryMode: order.entryMode,
+    settlementAuthority: order.settlementAuthority,
+    sourceOrderRef: order.sourceOrderRef,
     checkoutKey: order.checkoutKey,
     version: order.version,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelledBy: order.cancelledBy || '',
+    cancelReason: order.cancelReason || '',
     payments: (order.payments || []).map(serializePayment),
+    externalSettlement: serializeExternalSettlement(order.externalSettlement),
     refunds: (order.refunds || []).map(serializeRefund),
+    sweetCardRedemption: order.sweetCardRedemption ? { id: order.sweetCardRedemption.id, publicCardNo: undefined, amountCents: order.sweetCardRedemption.amountCents.toString() } : null,
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -122,6 +181,9 @@ function serializeOrder(order) {
       discountAmount: item.discountAmount.toString(),
       actualAmount: item.actualAmount.toString(),
       isGift: item.isGift === true,
+      sweetCardEligibleSnapshot: item.sweetCardEligibleSnapshot,
+      sweetCardCategoryIdSnapshot: item.sweetCardCategoryIdSnapshot,
+      sweetCardRedeemedAmount: String(item.sweetCardRedeemedAmount || 0),
     })),
   }
 }
@@ -133,7 +195,7 @@ function replayOrder(existing, user, storeId, cartHash) {
   return existing
 }
 
-function buildOrderWhere(user, query = {}) {
+export function buildOrderWhere(user, query = {}) {
   const where = {}
   const allowed = Array.isArray(user.storeKeys) ? user.storeKeys : []
   if (!isSuperUser(user)) {
@@ -160,29 +222,30 @@ function buildOrderWhere(user, query = {}) {
   const status = String(query.status || '').trim()
   if (['draft', 'pending_payment', 'paid', 'completed', 'cancelled', 'partially_refunded', 'refunded'].includes(status)) {
     where.status = status
+  } else {
+    // 正常视图默认隐藏已作废订单；仍可通过 status=cancelled 查询完整审计记录。
+    where.status = { not: 'cancelled' }
   }
   const q = String(query.q || '').trim()
   if (q) where.orderNo = { contains: q, mode: 'insensitive' }
   return where
 }
 
-export function composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats) {
+export function composeOrderSummary(total, paidStats, refundStats, itemStats) {
   const paidOrderCount = Number(paidStats?._count?._all || 0)
   const grossAmount = BigInt(paidStats?._sum?.payableAmount || 0)
   const discountAmount = BigInt(paidStats?._sum?.discountAmount || 0)
   const refundAmount = BigInt(refundStats?._sum?.refundAmount || 0)
   const soldQuantity = Number(itemStats?._sum?.quantity || 0)
-  const refundedQuantity = Number(refundItemStats?._sum?.quantity || 0)
-  const collectedAmount = grossAmount > refundAmount ? grossAmount - refundAmount : 0n
   return {
     recordCount: Number(total || 0),
     paidOrderCount,
-    collectedAmount: collectedAmount.toString(),
+    collectedAmount: grossAmount.toString(),
     grossAmount: grossAmount.toString(),
     refundAmount: refundAmount.toString(),
     discountAmount: discountAmount.toString(),
-    itemQuantity: Math.max(0, soldQuantity - refundedQuantity),
-    averageAmount: (paidOrderCount > 0 ? collectedAmount / BigInt(paidOrderCount) : 0n).toString(),
+    itemQuantity: soldQuantity,
+    averageAmount: (paidOrderCount > 0 ? grossAmount / BigInt(paidOrderCount) : 0n).toString(),
   }
 }
 
@@ -196,28 +259,26 @@ posRouter.get('/pos/config', wrap(async (req, res) => {
   let storeKey = ''
   if (requestedStore) {
     if (!canStore(req.user, requestedStore)) {
-      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false } })
+      return res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: false }, alipay: { enabled: false }, sweetCard: { enabled: false } })
     }
     storeKey = requestedStore
   } else {
     storeKey = String(req.user?.storeKeys?.[0] || '')
   }
   const wechat = wechatPayFrontendStatus(storeKey, mode)
+  const alipay = alipayFrontendStatus(storeKey, mode)
+  const sweetCard = dbReady() && storeKey ? await availabilityFor(prisma, storeKey, req.user) : { enabled: false, reason: '当前门店暂未开启甜意卡' }
   if (wechat.enabled) channels.push('wechat')
-  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled } })
+  if (alipay.enabled) channels.push('alipay')
+  res.json({ mode, mock: mode === 'mock', channels, wechatPay: { enabled: wechat.enabled }, alipay: { enabled: alipay.enabled }, sweetCard })
 }))
 
 posRouter.get('/pos/orders', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const where = buildOrderWhere(req.user, req.query)
-  const paidWhere = {
-    AND: [
-      where,
-      { paymentStatus: { in: ['paid', 'partially_refunded', 'refunded'] } },
-    ],
-  }
-  const [rows, total, paidStats, refundStats, itemStats, refundItemStats] = await Promise.all([
+  const paidWhere = buildRecognizedRevenueWhere(where)
+  const [rows, total, paidStats, refundStats, itemStats] = await Promise.all([
     prisma.order.findMany({ where, include: orderInclude(), orderBy: { createdAt: 'desc' }, take: 200 }),
     prisma.order.count({ where }),
     prisma.order.aggregate({
@@ -226,22 +287,18 @@ posRouter.get('/pos/orders', wrap(async (req, res) => {
       _sum: { payableAmount: true, discountAmount: true },
     }),
     prisma.refund.aggregate({
-      where: { status: 'completed', order: paidWhere },
+      where: { status: 'completed', order: { is: where } },
       _sum: { refundAmount: true },
     }),
     prisma.orderItem.aggregate({
       where: { order: paidWhere },
       _sum: { quantity: true },
     }),
-    prisma.refundItem.aggregate({
-      where: { refund: { status: 'completed', order: paidWhere } },
-      _sum: { quantity: true },
-    }),
   ])
   res.json({
     ok: true,
     total,
-    summary: composeOrderSummary(total, paidStats, refundStats, itemStats, refundItemStats),
+    summary: composeOrderSummary(total, paidStats, refundStats, itemStats),
     rows: rows.map(serializeOrder),
   })
 }))
@@ -269,6 +326,7 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   if (!current) throw httpError('订单不存在', 404)
   const allowed = req.user.role !== 'public' && canStore(req.user, current.storeId)
   if (!allowed) throw httpError('无退款权限', 403)
+  await requireSweetCardOrderAccess(req.user, current)
   const result = await paymentService.createRefund({
     orderId: current.id,
     items: req.body?.items,
@@ -280,12 +338,40 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
   res.status(201).json({ ok: true, refund: serializeRefund(result.refund), order: serializeOrder(order) })
 }))
 
+// RC-2B internal authority API only. It records a refund that has already
+// completed on an external platform and never invokes a Payment provider.
+posRouter.post('/pos/orders/:id/manual-external-refunds', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasManualExternalRefundRecord(req.user) || !hasManualExternalRefundConfirm(req.user)) {
+    throw httpError('无人工外部退款记录及确认权限', 403)
+  }
+  const current = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!current) throw httpError('订单不存在', 404)
+  if (!canStore(req.user, current.storeId)) throw httpError('无权记录该门店外部退款', 403)
+  await requireSweetCardOrderAccess(req.user, current)
+  let result
+  try {
+    result = await manualExternalRefundService.createCompletedRefund({
+      ...(req.body || {}),
+      orderId: current.id,
+      actor: req.user.username,
+    })
+  } catch (error) {
+    rethrowSafeCommandError(error, '平台退款记录失败，未写入 budu，请重新确认。', 'manual-external-refund')
+  }
+  const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  const refund = order.refunds.find((item) => item.id === result.refundId)
+  res.status(result.reused ? 200 : 201).json({ ok: true, reused: result.reused, refund: serializeRefund(refund), order: serializeOrder(order) })
+}))
+
 posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
   const refund = await prisma.refund.findUnique({ where: { id: req.params.id }, include: { order: true } })
   if (!refund) throw httpError('退款记录不存在', 404)
   if (!canStore(req.user, refund.order.storeId)) throw httpError('无权限', 403)
+  await requireSweetCardOrderAccess(req.user, refund.order)
   await paymentService.reconcileRefund(refund.id)
   const order = await prisma.order.findUnique({ where: { id: refund.orderId }, include: orderInclude() })
   const current = order.refunds.find((item) => item.id === refund.id)
@@ -295,26 +381,66 @@ posRouter.post('/pos/refunds/:id/query', wrap(async (req, res) => {
 posRouter.get('/pos/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  const rows = await prisma.inventoryItem.findMany({
-    where: { isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
+  const [rows, imageRows, groupCoverRows] = await Promise.all([prisma.inventoryItem.findMany({
+    where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null } },
+    select: productListSelect,
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
-  })
+  }), prisma.inventoryItem.findMany({
+    where: { category: 'product', isActive: true, sku: { not: null }, salePriceCents: { not: null }, costPriceCents: { not: null }, image: { not: '' } },
+    select: { id: true },
+  }), prisma.productGroup.findMany({
+    where: { coverImage: { not: '' } },
+    select: { id: true },
+  })])
+  const imageIds = new Set(imageRows.map((row) => row.id))
+  const groupCoverIds = new Set(groupCoverRows.map((row) => row.id))
   res.json({
-    rows: rows.map((product) => ({ ...serializeProduct(product), image: '', hasImage: Boolean(product.image) })),
+    rows: rows.map((product) => ({
+      ...serializeProduct({
+        ...product,
+        hasImage: imageIds.has(product.id),
+        productGroup: product.productGroup ? { ...product.productGroup, hasCoverImage: groupCoverIds.has(product.productGroup.id) } : null,
+      }),
+      // ProductCategory is canonical. posCategory remains display-only legacy fallback
+      // until administrators classify every historical POS product.
+      posCategory: product.productCategory?.name || product.posCategory || '其他',
+      image: '',
+      hasImage: imageIds.has(product.id),
+    })),
   })
 }))
 
 posRouter.get('/pos/products/:productId/image', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId } })
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, select: { id: true, image: true, updatedAt: true } })
   if (!product || !product.image) throw httpError('商品图片不存在', 404)
-  const match = /^data:image\/(png|jpe?g|webp|gif);base64,(.*)$/i.exec(String(product.image))
-  if (!match) throw httpError('商品图片格式不正确', 400)
-  res.setHeader('Cache-Control', 'public, max-age=86400')
-  res.setHeader('Content-Type', `image/${match[1]}`)
-  res.send(Buffer.from(match[2], 'base64'))
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}` })
+}))
+
+posRouter.get('/pos/products/:productId/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.productId }, select: { id: true, image: true, updatedAt: true } })
+  if (!product || !product.image) throw httpError('商品图片不存在', 404)
+  await sendStoredImage(req, res, { dataUrl: product.image, updatedAt: product.updatedAt, identity: `product:${product.id}`, thumbnail: true })
+}))
+
+posRouter.get('/pos/product-groups/:groupId/image', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { id: true, coverImage: true, updatedAt: true } })
+  if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}` })
+}))
+
+posRouter.get('/pos/product-groups/:groupId/thumbnail', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  const group = await prisma.productGroup.findUnique({ where: { id: req.params.groupId }, select: { id: true, coverImage: true, updatedAt: true } })
+  if (!group?.coverImage) throw httpError('商品组主图不存在', 404)
+  await sendStoredImage(req, res, { dataUrl: group.coverImage, updatedAt: group.updatedAt, identity: `product-group:${group.id}`, thumbnail: true })
 }))
 
 posRouter.post('/pos/orders', wrap(async (req, res) => {
@@ -338,10 +464,12 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   for (const item of normalizedItems) {
     if (Array.isArray(item.comboFlavorIds)) for (const id of item.comboFlavorIds) needIds.add(id)
   }
-  const products = await prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+  const businessDateText = buduBusinessDate()
+  const rawProducts = await prisma.inventoryItem.findMany({ where: { id: { in: [...needIds] } } })
+  const products = await resolveEffectiveProductCosts(prisma, rawProducts, businessDateText)
   const snapshot = buildOrderSnapshot(products, normalizedItems, { discountPercent, remark })
   const now = new Date()
-  const businessDate = new Date(`${new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)}T00:00:00.000Z`)
+  const businessDate = new Date(`${businessDateText}T00:00:00.000Z`)
   const id = `ord-${crypto.randomUUID()}`
   const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
 
@@ -352,6 +480,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
         businessDate,
         discountPercent: snapshot.discountPercent, remark: snapshot.remark,
+        orderSource: 'STORE_POS', entryMode: 'POS_CHECKOUT', settlementAuthority: 'PAYMENT', sourceOrderRef: null,
         checkoutKey, cartHash, status: 'pending_payment', paymentStatus: 'unpaid',
         items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },
@@ -364,6 +493,60 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
     if (!existing) throw httpError('订单号冲突，请重新结算', 409)
     return res.json({ ok: true, reused: true, order: serializeOrder(replayOrder(existing, req.user, storeId, cartHash)) })
   }
+}))
+
+// RC-2A internal API only: no production POS control invokes this route.
+// Source, entry mode, settlement authority, amount, and order state are all derived server-side.
+posRouter.post('/pos/external-orders', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasExternalOrderCreate(req.user)) throw httpError('无外部订单创建权限', 403)
+  const storeId = String(req.body?.storeId || '').trim()
+  if (!canStore(req.user, storeId)) throw httpError('无权在该门店录入外部订单', 403)
+  const confirm = req.body?.confirm === true
+  if (confirm && !hasExternalSettlementConfirm(req.user)) throw httpError('无外部结算确认权限', 403)
+  let result
+  try {
+    result = await externalSettlementService.createExternalOrder({
+      ...req.body,
+      storeId,
+      confirm,
+      actorId: req.user.id,
+      actorName: req.user.username,
+    })
+  } catch (error) {
+    rethrowSafeCommandError(error, '平台订单记录失败，未写入 budu，请重新确认。', 'external-order')
+  }
+  const [order, settlement] = await Promise.all([
+    prisma.order.findUnique({ where: { id: result.orderId }, include: orderInclude() }),
+    prisma.externalSettlement.findUnique({ where: { id: result.settlementId } }),
+  ])
+  res.status(result.reused ? 200 : 201).json({
+    ok: true,
+    reused: result.reused,
+    order: serializeOrder(order),
+    externalSettlement: serializeExternalSettlement(settlement),
+  })
+}))
+
+posRouter.post('/pos/external-settlements/:id/confirm', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requirePosUser(req.user)
+  if (!hasExternalSettlementConfirm(req.user)) throw httpError('无外部结算确认权限', 403)
+  assertNoClientSettlementState(req.body || {})
+  const current = await prisma.externalSettlement.findUnique({ where: { id: req.params.id }, include: { order: true } })
+  if (!current) throw httpError('外部结算不存在', 404)
+  if (!canStore(req.user, current.order.storeId)) throw httpError('无权确认该门店外部结算', 403)
+  await externalSettlementService.confirmSettlement({
+    settlementId: current.id,
+    amountCents: req.body?.amountCents,
+    actorId: req.user.id,
+  })
+  const [order, settlement] = await Promise.all([
+    prisma.order.findUnique({ where: { id: current.orderId }, include: orderInclude() }),
+    prisma.externalSettlement.findUnique({ where: { id: current.id } }),
+  ])
+  res.json({ ok: true, order: serializeOrder(order), externalSettlement: serializeExternalSettlement(settlement) })
 }))
 
 posRouter.get('/pos/orders/:id', wrap(async (req, res) => {
@@ -381,6 +564,7 @@ posRouter.post('/pos/orders/:id/payments', wrap(async (req, res) => {
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  await requireSweetCardOrderAccess(req.user, current)
   const channel = String(req.body?.channel || '')
   const result = await paymentService.createPayment({
     orderId: current.id,
@@ -413,6 +597,7 @@ posRouter.post('/pos/payments/:id/query', wrap(async (req, res) => {
   requirePosUser(req.user)
   const before = await paymentService.result(req.params.id)
   if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
+  await requireSweetCardOrderAccess(req.user, before.order)
   const result = await paymentService.queryPayment(req.params.id)
   res.json({ payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))
@@ -422,6 +607,7 @@ posRouter.post('/pos/payments/:id/close', wrap(async (req, res) => {
   requirePosUser(req.user)
   const before = await paymentService.result(req.params.id)
   if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
+  await requireSweetCardOrderAccess(req.user, before.order)
   const result = await paymentService.closePayment(req.params.id)
   res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))
@@ -431,22 +617,33 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   requirePosUser(req.user)
   let current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
-  if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  if (!canCancelOrder(req.user, current)) throw httpError('无权作废该订单', 403)
+  await requireSweetCardOrderAccess(req.user, current)
   if (current.status === 'cancelled') {
     const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
     return res.json({ ok: true, order: serializeOrder(order) })
   }
+  const cancelReason = normalizeOrderCancelReason(req.body?.reason)
   assertOrderTransition(current.status, 'cancelled')
   const active = await paymentService.activePayment(current.id)
   if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
-  // E：存在未解决的微信支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
-  const unresolvedWechat = await paymentService.unresolvedWechatPayment(current.id)
-  assertOrderCancelable(current, unresolvedWechat)
+  // E：存在未解决的外部支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
+  const unresolvedPayment = await paymentService.unresolvedPayment(current.id)
+  assertOrderCancelable(current, unresolvedPayment)
   if (active) await paymentService.closePayment(active.id)
   current = await prisma.order.findUnique({ where: { id: current.id } })
-  const changed = await prisma.order.updateMany({
-    where: { id: current.id, status: current.status },
-    data: { status: 'cancelled', version: { increment: 1 } },
+  const changed = await prisma.$transaction(async (tx) => {
+    await reverseSweetCardRedemption(tx, current.id, { id: req.user.id, name: req.user.username })
+    return tx.order.updateMany({
+      where: { id: current.id, status: current.status },
+      data: {
+        status: 'cancelled',
+        cancelledAt: new Date(),
+        cancelledBy: req.user.username,
+        cancelReason,
+        version: { increment: 1 },
+      },
+    })
   })
   if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
@@ -462,6 +659,7 @@ posRouter.post('/pos/orders/:id/complete', wrap(async (req, res) => {
   const current = await prisma.order.findUnique({ where: { id: req.params.id } })
   if (!current) throw httpError('订单不存在', 404)
   if (!canReadOrder(req.user, current)) throw httpError('无权限', 403)
+  await requireSweetCardOrderAccess(req.user, current)
   if (current.status === 'completed' && current.paymentStatus === 'paid') {
     const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
     return res.json({ ok: true, order: serializeOrder(order) })

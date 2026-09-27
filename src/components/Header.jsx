@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
+import { ArrowLeft, MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import NotificationBell from './NotificationBell'
@@ -17,6 +17,7 @@ export default function Header({
   onWeekSelect,
   onStoreChange,
   onMenuClick,
+  onBack,
   onNavigate,
   onRefresh,
   user,
@@ -50,13 +51,23 @@ export default function Header({
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:gap-3 sm:px-5 sm:py-4 lg:px-8">
         {/* 问候语 */}
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-          <button
-            onClick={onMenuClick}
-            className="hidden h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm sm:grid lg:hidden"
-            aria-label={t('打开菜单')}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
+          {onBack ? (
+            <button
+              onClick={onBack}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-budu-600 transition hover:bg-white/80 lg:hidden"
+              aria-label={t('返回首页')}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+          ) : (
+            <button
+              onClick={onMenuClick}
+              className="hidden h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm sm:grid lg:hidden"
+              aria-label={t('打开菜单')}
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          )}
           <div className="min-w-0">
             <h1 className="truncate text-[17px] font-semibold text-slate-900 sm:text-lg lg:text-xl">
               {title ? t(title) : t(greetingKey, { name })}

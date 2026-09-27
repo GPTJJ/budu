@@ -26,21 +26,153 @@ function canStore(user, storeKey) {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-function normalizeShifts(raw) {
+export function scheduleVersion(rows) {
+  const canonical = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      id: String(row?.id || ''),
+      date: String(row?.date || ''),
+      shifts: Array.isArray(row?.shifts) ? row.shifts : [],
+      updatedAt: row?.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row?.updatedAt || ''),
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id))
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
+}
+
+export const EMPTY_SCHEDULE_VERSION = scheduleVersion([])
+
+function legacyShiftKey(shift) {
+  return JSON.stringify({
+    staff: String((shift && shift.staff) || '').trim().slice(0, 30),
+    time: String((shift && shift.time) || '').trim().slice(0, 20),
+    note: String((shift && shift.note) || '').trim().slice(0, 100),
+  })
+}
+
+export function normalizeShifts(raw, { allowedLegacy = [] } = {}) {
   if (raw === undefined || raw === null) return []
   if (!Array.isArray(raw)) throw httpError('班次格式不正确')
   if (raw.length > 50) throw httpError('单日班次过多（最多 50 个）')
   const seen = new Set()
+  const legacyRemaining = new Map()
+  for (const shift of allowedLegacy) {
+    const key = legacyShiftKey(shift)
+    legacyRemaining.set(key, (legacyRemaining.get(key) || 0) + 1)
+  }
   return raw.map((s, i) => {
+    const employeeId = String((s && s.employeeId) || '').trim().slice(0, 100)
     const staff = String((s && s.staff) || '').trim().slice(0, 30)
     if (!staff) throw httpError(`第 ${i + 1} 个班次缺少员工姓名`)
-    if (seen.has(staff)) throw httpError(`「${staff}」当日重复排班`)
-    seen.add(staff)
+    if (!employeeId) {
+      const key = legacyShiftKey(s)
+      const remaining = legacyRemaining.get(key) || 0
+      if (remaining < 1) throw httpError(`第 ${i + 1} 个班次缺少稳定员工 ID，请重新选择员工`)
+      legacyRemaining.set(key, remaining - 1)
+      return JSON.parse(key)
+    }
+    if (seen.has(employeeId)) throw httpError(`「${staff}」当日重复排班`)
+    seen.add(employeeId)
     return {
+      employeeId,
       staff,
       time: String((s && s.time) || '').trim().slice(0, 20),
       note: String((s && s.note) || '').trim().slice(0, 100),
     }
+  })
+}
+
+function rawStorePayload(weekStart, input) {
+  const storeKey = String(input?.storeKey || '')
+  const days = input?.days && typeof input.days === 'object' && !Array.isArray(input.days) ? input.days : {}
+  if (!storeKey || storeKey.length > 30) throw httpError('门店不正确')
+  if (Object.keys(days).length > 7) throw httpError('一周最多 7 天')
+  const ws = new Date(`${weekStart}T00:00:00Z`)
+  const rawPayloads = []
+  for (const [date, raw] of Object.entries(days)) {
+    if (!DATE_RE.test(date)) throw httpError(`日期格式不正确：${date}`)
+    const d = new Date(`${date}T00:00:00Z`)
+    const diff = (d - ws) / 86400000
+    if (diff < 0 || diff > 6) throw httpError(`日期不在本周范围内：${date}`)
+    rawPayloads.push({ date, raw })
+  }
+  return { storeKey, version: String(input?.version || ''), rawPayloads }
+}
+
+export async function replaceScheduleStoresAtomic(prismaClient, { weekStart, stores, requireVersions = true }) {
+  if (!DATE_RE.test(weekStart)) throw httpError('周起始日期格式不正确')
+  if (!Array.isArray(stores) || stores.length < 1 || stores.length > 20) throw httpError('排班保存范围不正确')
+  const payloads = stores.map((input) => rawStorePayload(weekStart, input))
+  if (new Set(payloads.map((row) => row.storeKey)).size !== payloads.length) throw httpError('门店排班重复')
+  if (requireVersions && payloads.some((row) => !row.version)) throw httpError('排班版本缺失，请刷新后重试', 409)
+
+  return prismaClient.$transaction(async (tx) => {
+    const prepared = []
+    for (const payload of [...payloads].sort((left, right) => left.storeKey.localeCompare(right.storeKey))) {
+      // Prisma 无法反序列化 PostgreSQL void；子查询仍执行事务级锁，外层只返回普通整数。
+      await tx.$queryRawUnsafe(
+        'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
+        `schedule:${weekStart}:${payload.storeKey}`,
+      )
+      const existingRows = await tx.schedule.findMany({
+        where: { weekStart, storeKey: payload.storeKey },
+        orderBy: { date: 'asc' },
+        select: { id: true, date: true, shifts: true, updatedAt: true },
+      })
+      if (requireVersions && scheduleVersion(existingRows) !== payload.version) {
+        throw httpError('排班已被其他管理员更新，请刷新后重试', 409)
+      }
+      const existingByDate = new Map(existingRows.map((row) => [row.date, Array.isArray(row.shifts) ? row.shifts : []]))
+      prepared.push({
+        storeKey: payload.storeKey,
+        days: payload.rawPayloads.map(({ date, raw }) => ({
+          date,
+          shifts: normalizeShifts(raw, {
+            // 只允许原样保留既有 legacy shift；新增/修改必须提供 employeeId。
+            allowedLegacy: (existingByDate.get(date) || []).filter((shift) => !String(shift?.employeeId || '').trim()),
+          }),
+        })),
+      })
+    }
+
+    const employeeIds = [...new Set(prepared.flatMap((store) => (
+      store.days.flatMap((day) => day.shifts.map((shift) => shift.employeeId).filter(Boolean))
+    )))]
+    const employees = employeeIds.length > 0
+      ? await tx.employee.findMany({
+        where: { id: { in: employeeIds }, status: { not: 'RESIGNED' } },
+        select: { id: true },
+      })
+      : []
+    if (employees.length !== employeeIds.length) {
+      throw httpError('排班包含不存在或已离职的员工，请刷新员工目录后重试', 409)
+    }
+
+    const now = new Date()
+    for (const store of prepared) {
+      await tx.schedule.deleteMany({ where: { weekStart, storeKey: store.storeKey } })
+      for (const day of store.days) {
+        if (day.shifts.length === 0) continue
+        await tx.schedule.create({
+          data: {
+            id: `sc-${crypto.randomUUID()}`,
+            weekStart,
+            storeKey: store.storeKey,
+            date: day.date,
+            shifts: day.shifts,
+            updatedAt: now,
+          },
+        })
+      }
+    }
+
+    const rows = await tx.schedule.findMany({
+      where: { weekStart, storeKey: { in: prepared.map((row) => row.storeKey) } },
+      orderBy: [{ storeKey: 'asc' }, { date: 'asc' }],
+    })
+    const versions = Object.fromEntries(prepared.map((store) => [
+      store.storeKey,
+      scheduleVersion(rows.filter((row) => row.storeKey === store.storeKey)),
+    ]))
+    return { rows, versions }
   })
 }
 
@@ -59,9 +191,38 @@ scheduleRouter.get('/schedules', wrap(async (req, res) => {
     where.storeKey = { in: keys }
   }
   const rows = await prisma.schedule.findMany({ where, orderBy: [{ storeKey: 'asc' }, { date: 'asc' }] })
+  const rowsByStore = new Map()
+  for (const row of rows) {
+    const storeRows = rowsByStore.get(row.storeKey) || []
+    storeRows.push(row)
+    rowsByStore.set(row.storeKey, storeRows)
+  }
+  const versions = Object.fromEntries([...rowsByStore].map(([storeKey, storeRows]) => [storeKey, scheduleVersion(storeRows)]))
   res.json({
     ok: true,
     rows: rows.map((r) => ({ id: r.id, weekStart: r.weekStart, storeKey: r.storeKey, date: r.date, shifts: r.shifts, updatedAt: r.updatedAt })),
+    versions,
+    emptyVersion: EMPTY_SCHEDULE_VERSION,
+  })
+}))
+
+/** 单次保存当前周内一个或多个门店；同一事务 + 乐观并发版本。 */
+scheduleRouter.put('/schedules/batch', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (req.user.role === 'cashier' || req.user.role === 'public') throw httpError('无权限', 403)
+  const weekStart = String((req.body || {}).weekStart || '')
+  const stores = Array.isArray((req.body || {}).stores) ? (req.body || {}).stores : []
+  if (!DATE_RE.test(weekStart)) throw httpError('周起始日期格式不正确')
+  for (const input of stores) {
+    const storeKey = String(input?.storeKey || '')
+    if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
+  }
+  const result = await replaceScheduleStoresAtomic(prisma, { weekStart, stores, requireVersions: true })
+  res.json({
+    ok: true,
+    rows: result.rows.map((r) => ({ id: r.id, weekStart: r.weekStart, storeKey: r.storeKey, date: r.date, shifts: r.shifts, updatedAt: r.updatedAt })),
+    versions: result.versions,
+    emptyVersion: EMPTY_SCHEDULE_VERSION,
   })
 }))
 
@@ -75,33 +236,10 @@ scheduleRouter.put('/schedules', wrap(async (req, res) => {
   if (!DATE_RE.test(weekStart)) throw httpError('周起始日期格式不正确')
   if (!storeKey || storeKey.length > 30) throw httpError('门店不正确')
   if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
-  if (Object.keys(days).length > 7) throw httpError('一周最多 7 天')
-  // 校验日期必须在本周内（weekStart ~ weekStart+6）
-  const ws = new Date(`${weekStart}T00:00:00Z`)
-  const payloads = []
-  for (const [date, raw] of Object.entries(days)) {
-    if (!DATE_RE.test(date)) throw httpError(`日期格式不正确：${date}`)
-    const d = new Date(`${date}T00:00:00Z`)
-    const diff = (d - ws) / 86400000
-    if (diff < 0 || diff > 6) throw httpError(`日期不在本周范围内：${date}`)
-    payloads.push({ date, shifts: normalizeShifts(raw) })
-  }
-  const now = new Date()
-  await prisma.$transaction(async (tx) => {
-    await tx.schedule.deleteMany({ where: { weekStart, storeKey } })
-    for (const p of payloads) {
-      if (p.shifts.length === 0) continue
-      await tx.schedule.create({
-        data: {
-          id: `sc-${crypto.randomUUID()}`,
-          weekStart,
-          storeKey,
-          date: p.date,
-          shifts: p.shifts,
-          updatedAt: now,
-        },
-      })
-    }
+  await replaceScheduleStoresAtomic(prisma, {
+    weekStart,
+    stores: [{ storeKey, days }],
+    requireVersions: false,
   })
-  res.json({ ok: true, count: payloads.filter((p) => p.shifts.length > 0).length })
+  res.json({ ok: true, count: Object.values(days).filter((value) => Array.isArray(value) && value.length > 0).length })
 }))

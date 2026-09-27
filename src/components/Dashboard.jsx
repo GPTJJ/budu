@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import HomeWorkspace from './HomeWorkspace'
@@ -14,7 +14,8 @@ import { PublicModeProvider } from '../visibility'
 import ErrorBoundary from './ErrorBoundary'
 import { lazyRetry } from '../utils/lazyRetry'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { firstAccessibleModule, hasModuleAccess, hasPageAccess } from '../../shared/accountPermissions'
+import { firstAccessibleModule, hasModuleAccess, hasPageAccess, hasSweetCardCapability, SWEET_CARD_CAPABILITIES } from '../../shared/accountPermissions'
+import { consumeNotificationDeepLink } from '../utils/notificationNavigation'
 
 // 功能页面按需加载（登录后进入对应板块才下载，首屏不再包含它们）
 const BusinessAnalysisPage = lazy(() => import('./BusinessAnalysisPage'))
@@ -30,10 +31,16 @@ const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
 const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
-const FinancePage = lazy(() => import('./FinancePage'))
+const ProductMaterialManagementPage = lazy(() => import('./ProductMaterialManagementPage'))
+const PartnerSupplyPage = lazy(() => import('./PartnerSupplyPage'))
+const PartnerManagementPage = lazy(() => import('./PartnerManagementPage'))
+const PartnerReplenishmentReviewPage = lazy(() => import('./PartnerReplenishmentReviewPage'))
+const PartnerAfterSalesPage = lazy(() => import('./PartnerAfterSalesPage'))
+const ReportCenterPage = lazy(() => import('./ReportCenterPage'))
 const InvoicePage = lazy(() => import('./InvoicePage'))
 const ApprovalCenterPage = lazy(() => import('./ApprovalCenterPage'))
 const AssetCenterPage = lazy(() => import('./AssetCenterPage'))
+const SweetCardPage = lazy(() => import('./SweetCardPage'))
 
 const pageTitles = {
   analysis: '经营分析',
@@ -46,12 +53,18 @@ const pageTitles = {
   'store-orders': '订单记录',
   'store-pos': 'POS 点单',
   'product-center': '商品中心',
-  'inventory-transfer': '申请调货',
+  'inventory-transfer': '门店调拨',
   'inventory-purchase': '申请采购',
-  finance: '财务利润',
+  'partner-supply': '合作商供货',
+  'partner-management': '合作商档案',
+  'partner-replenishment-review': '补货订单',
+  'partner-after-sales': '售后处理',
+  'product-material-management': '物料管理',
+  finance: '报表中心',
   'finance-invoice': '发票开具',
   approval: '审批中心',
   'asset-center': 'budu档案馆',
+  'sweet-card': 'budu 甜意卡',
   settings: '系统设置',
   'account-admin': '账号管理',
 }
@@ -77,20 +90,34 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` // 默认当天
   })
   const [weekStart, setWeekStart] = useState(null)
-  const [view, setView] = useState(() => (
-    typeof window !== 'undefined' && window.location.hash === '#pos' && hasModuleAccess(user, 'store-pos')
-      ? 'store-pos'
-      : firstAccessibleModule(user)
-  ))
+  const [view, setView] = useState(() => {
+    const deepLinkTarget = consumeNotificationDeepLink((target) => hasModuleAccess(user, target))
+    if (deepLinkTarget) return deepLinkTarget
+    if (typeof window !== 'undefined' && window.location.hash === '#pos' && hasModuleAccess(user, 'store-pos')) return 'store-pos'
+    return firstAccessibleModule(user)
+  })
   const [pageKey, setPageKey] = useState(0)
-  // 从人员管理跳转员工档案时的初始搜索目标（员工姓名）
+  // 从人员管理跳转员工档案时的初始搜索目标（员工姓名/员工编号）
   const [profileTarget, setProfileTarget] = useState('')
+  // Gate 7：有稳定 Employee.id 时直接以 id 打开档案（重名员工不再按姓名命中错误档案）
+  const [profileTargetId, setProfileTargetId] = useState('')
   const [pendingPosOrder, setPendingPosOrder] = useState(null)
   // 移动端右滑返回的轻量页面栈：记录进入顺序，返回时回到真正的“上一页”
   const viewStackRef = useRef([])
+  // 页面本地 draft 未保存时，统一拦截侧栏、底栏、返回与刷新。
+  const pageNavigationGuardRef = useRef(null)
+  const registerPageNavigationGuard = useCallback((guard) => {
+    pageNavigationGuardRef.current = guard
+  }, [])
 
-  const openEmployeeProfile = (name) => {
+  const runNavigationGuard = (action) => {
+    if (pageNavigationGuardRef.current) return pageNavigationGuardRef.current(action)
+    return action()
+  }
+
+  const openEmployeeProfile = (name, id) => {
     setProfileTarget(name || '')
+    setProfileTargetId(id || '')
     handleNavigate('employee-profile')
   }
 
@@ -127,12 +154,18 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   const isProductCenterView = view === 'product-center'
   const isInventoryTransferView = view === 'inventory-transfer'
   const isInventoryPurchaseView = view === 'inventory-purchase'
+  const isPartnerSupplyView = view === 'partner-supply'
+  const isPartnerManagementView = view === 'partner-management'
+  const isPartnerReplenishmentReviewView = view === 'partner-replenishment-review'
+  const isPartnerAfterSalesView = view === 'partner-after-sales'
+  const isProductMaterialManagementView = view === 'product-material-management'
   const isFinanceView = view === 'finance'
   const isInvoiceView = view === 'finance-invoice'
   const isApprovalView = view === 'approval'
   const isAssetCenterView = view === 'asset-center'
+  const isSweetCardView = view === 'sweet-card'
 
-  const returnToOverview = () => {
+  const performReturnToOverview = () => {
     viewStackRef.current = []
     setView(hasModuleAccess(user, 'overview') ? 'overview' : firstAccessibleModule(user))
     if (typeof window !== 'undefined' && window.location.hash === '#pos') {
@@ -141,15 +174,19 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
     window.scrollTo?.({ top: 0, behavior: 'smooth' })
   }
 
+  const returnToOverview = () => runNavigationGuard(performReturnToOverview)
+
   // 右滑返回：优先回到进入当前页之前的“上一页”（与动画快照一致），栈空则回首页
   const handleSwipeBack = () => {
-    const prev = viewStackRef.current.pop()
-    if (prev && hasPageAccess(user, prev)) {
-      setView(prev)
-      window.scrollTo?.({ top: 0, behavior: 'smooth' })
-    } else {
-      returnToOverview()
-    }
+    runNavigationGuard(() => {
+      const prev = viewStackRef.current.pop()
+      if (prev && hasPageAccess(user, prev)) {
+        setView(prev)
+        window.scrollTo?.({ top: 0, behavior: 'smooth' })
+      } else {
+        performReturnToOverview()
+      }
+    })
   }
 
   const swipeBack = useSwipeBack({
@@ -201,15 +238,17 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
 
   const handleNavigate = (nextView) => {
     if (!hasPageAccess(user, nextView)) return
-    if (nextView !== view) {
-      // 记录来源页并捕获其快照（右滑返回时作为“上一页”真实参与过渡）
-      viewStackRef.current.push(view)
-      swipeBack.capture()
-    }
-    setView(nextView)
-    if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
-    else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    runNavigationGuard(() => {
+      if (nextView !== view) {
+        // 记录来源页并捕获其快照（右滑返回时作为“上一页”真实参与过渡）
+        viewStackRef.current.push(view)
+        swipeBack.capture()
+      }
+      setView(nextView)
+      if (nextView === 'store-pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#pos`)
+      else if (window.location.hash === '#pos') window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    })
   }
 
   const exitPos = () => {
@@ -218,14 +257,14 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
   }
 
   /** 局部刷新：先拉取最新共享数据，再重挂载当前页面组件（Header/Sidebar 保持不动） */
-  const handleRefresh = async () => {
+  const handleRefresh = async () => runNavigationGuard(async () => {
     try {
       await loadUserData()
     } catch {
       /* 网络异常时仍重挂载当前页，页面会读取本地缓存 */
     }
     setPageKey((v) => v + 1)
-  }
+  })
 
   if (isPosView && hasModuleAccess(user, 'store-pos')) {
     return (
@@ -287,6 +326,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
             }}
             onStoreChange={setStore}
             onMenuClick={() => setSidebarOpen(true)}
+            onBack={isSettingsView ? returnToOverview : undefined}
             onRefresh={handleRefresh}
           />
 
@@ -323,15 +363,21 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   user={user}
                   onBack={returnToOverview}
                   initialQuery={profileTarget}
+                  initialId={profileTargetId}
                 />
               ) : isPayrollView && hasModuleAccess(user, 'staff-payroll') ? (
                 <PayrollPage user={user} onBack={returnToOverview} onOpenProfile={openEmployeeProfile} />
               ) : isStoreEntryView && hasModuleAccess(user, 'store-entry') ? (
-                <StoreEntryPage user={user} onBack={returnToOverview} />
+                <StoreEntryPage user={user} onBack={returnToOverview} registerNavigationGuard={registerPageNavigationGuard} />
               ) : isScheduleView && hasModuleAccess(user, 'store-schedule') ? (
-                <SchedulePage user={user} onBack={returnToOverview} canEdit={user?.role !== 'public' && user?.role !== 'staff'} />
+                <SchedulePage
+                  user={user}
+                  onBack={returnToOverview}
+                  canEdit={user?.role !== 'public' && user?.role !== 'staff'}
+                  registerNavigationGuard={registerPageNavigationGuard}
+                />
               ) : isMailingView && hasModuleAccess(user, 'store-mailing') ? (
-                <StoreMailingPage onBack={returnToOverview} />
+                <StoreMailingPage currentUser={user} onBack={returnToOverview} />
               ) : isOrdersView && hasModuleAccess(user, 'store-pos') ? (
                 <OrderRecordsPage
                   user={user}
@@ -359,14 +405,26 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   currentUser={user}
                   onBack={returnToOverview}
                 />
+              ) : isPartnerSupplyView && hasModuleAccess(user, 'partner-supply') ? (
+                <PartnerSupplyPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerManagementView && hasModuleAccess(user, 'partner-management') ? (
+                <PartnerManagementPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerReplenishmentReviewView && hasModuleAccess(user, 'partner-replenishment-review') ? (
+                <PartnerReplenishmentReviewPage currentUser={user} onBack={returnToOverview} />
+              ) : isPartnerAfterSalesView && hasModuleAccess(user, 'partner-management') ? (
+                <PartnerAfterSalesPage onBack={returnToOverview} />
+              ) : isProductMaterialManagementView && hasModuleAccess(user, 'product-material-management') ? (
+                <ProductMaterialManagementPage onBack={returnToOverview} />
               ) : isFinanceView && hasModuleAccess(user, 'finance') ? (
-                <FinancePage currentUser={user} onBack={returnToOverview} />
+                <ReportCenterPage currentUser={user} onBack={returnToOverview} onNavigate={handleNavigate} />
               ) : isInvoiceView && hasModuleAccess(user, 'finance-invoice') ? (
                 <InvoicePage currentUser={user} onBack={returnToOverview} />
               ) : isApprovalView && hasModuleAccess(user, 'approval') ? (
                 <ApprovalCenterPage user={user} onBack={returnToOverview} />
               ) : isAssetCenterView && hasModuleAccess(user, 'asset-center') ? (
                 <AssetCenterPage user={user} onBack={returnToOverview} />
+              ) : isSweetCardView && hasModuleAccess(user, 'sweet-card') && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW) ? (
+                <SweetCardPage user={user} onBack={returnToOverview} />
               ) : (
                 <>
                   <HomeWorkspace

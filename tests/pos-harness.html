@@ -5,6 +5,7 @@
     import React from 'react'
     import { createRoot } from 'react-dom/client'
     import PosPage from '/src/components/PosPage.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
     import { seedCachedDataForTest } from '/src/utils/userData.js'
     import '/src/index.css'
 
@@ -15,15 +16,20 @@
     const scanDelay = Number(params.get('scanDelay') || 20)
     const duplicateScan = params.get('duplicate') === '1'
     const payMode = params.get('paymode') || 'success'
+    const externalCapabilities = params.get('external') === '1'
+    const livePos = params.get('posmode') === 'live'
+    const sweetCard = params.get('sweet') === '1'
+    const sweetBalance = Number(params.get('sweetBalance') || 50000)
     // R2：双门店（验证 POS 配置按当前门店拉取）与过期配置响应（验证门店切换丢弃旧响应）
     const twoStores = params.get('stores') === '2'
     const configStale = params.get('configStale') === '1'
-    const storeKeys = twoStores ? ['test-store', 'store-2'] : ['test-store']
+    const storeKeys = twoStores ? ['tongying', 'xidan'] : ['tongying']
     let scanIndex = 0
     window.__paymentRequestCount = 0
     window.__cameraTrackStops = 0
     window.__cameraStarts = 0
     window.__posConfigRequests = []
+    window.__externalOrderBodies = []
 
     Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { configurable: true, get() { return this.__srcObject || null }, set(value) { this.__srcObject = value } })
     HTMLMediaElement.prototype.play = async function () {}
@@ -57,14 +63,28 @@
         stop() { stopped = true; window.clearTimeout(timer) },
       }
     }
+    const luckyGroup = { id: 'pg-lucky', name: '12号幸运小饼干', sortOrder: 20, isActive: true, hasCoverImage: true, updatedAt: '2026-08-29T00:00:00.000Z' }
+    const yetiGroup = { id: 'pg-yeti', name: '雪怪联名系列', sortOrder: 21, isActive: true, hasCoverImage: false, updatedAt: '2026-08-29T00:00:00.000Z' }
     const products = [
       { productId: 'p-1', name: '卡皮巴拉布丁', sku: 'BUDU-001', barcode: '690000000001', posCategory: '布丁', salePriceCents: '7200', costPriceCents: '2300', unit: '份', image: '', isActive: true, trackInventory: false, sortOrder: 1, version: 1 },
       { productId: 'p-2', name: '草莓奶油蛋糕', sku: 'BUDU-002', barcode: '690000000002', posCategory: '蛋糕', salePriceCents: '3800', costPriceCents: '1200', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 2, version: 1 },
       { productId: 'p-3', name: '蓝莓酸奶杯', sku: 'BUDU-003', barcode: '', posCategory: '饮品', salePriceCents: '2600', costPriceCents: '900', unit: '杯', image: '', isActive: true, trackInventory: false, sortOrder: 3, version: 1 },
       { productId: 'p-4', name: '法式海盐焦糖巧克力千层蛋糕', sku: 'BUDU-004', barcode: '690000000004', posCategory: '蛋糕', salePriceCents: '4500', costPriceCents: '1600', unit: '块', image: '', isActive: true, trackInventory: false, sortOrder: 4, version: 1 },
+      { productId: 'p-5', name: '香草冰淇淋', sku: 'BUDU-005', barcode: '', posCategory: '冰淇淋', salePriceCents: '3000', costPriceCents: '1000', unit: '份', image: '', isActive: true, trackInventory: false, sortOrder: 5, version: 1 },
+      { productId: 'p-6', name: '榛果巧克力豆', sku: 'BUDU-006', barcode: '', posCategory: '巧克力豆', salePriceCents: '4800', costPriceCents: '1800', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 6, version: 1 },
+      { productId: 'p-7', name: '森醒礼盒', sku: 'BUDU-007', barcode: '', posCategory: '森醒', salePriceCents: '6800', costPriceCents: '2600', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 7, version: 1 },
+      { productId: 'p-8', name: '太妃糖组合装', sku: 'BUDU-008', barcode: '', posCategory: '太妃糖礼盒超长分类名称', salePriceCents: '8800', costPriceCents: '3200', unit: '盒', image: '', isActive: true, trackInventory: false, sortOrder: 8, version: 1 },
+      ...(params.get('groups') === '1' ? [
+        { productId: 'p-lucky-blue', name: '12号幸运小饼干-蓝', sku: 'LUCKY-12-BLUE', barcode: '', posCategory: '冰淇淋', salePriceCents: '7900', costPriceCents: '3000', unit: '个', image: '', hasImage: true, isActive: true, trackInventory: false, sortOrder: 20, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '蓝' },
+        { productId: 'p-lucky-green', name: '12号幸运小饼干-绿', sku: 'LUCKY-12-GREEN', barcode: '', posCategory: '冰淇淋', salePriceCents: '7900', costPriceCents: '3000', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 21, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '绿' },
+        { productId: 'p-lucky-yellow', name: '12号幸运小饼干-黄', sku: 'LUCKY-12-YELLOW', barcode: '', posCategory: '冰淇淋', salePriceCents: '8900', costPriceCents: '3400', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 22, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '黄' },
+        { productId: 'p-lucky-orange', name: '12号幸运小饼干-橙', sku: 'LUCKY-12-ORANGE', barcode: '', posCategory: '冰淇淋', salePriceCents: '8900', costPriceCents: '3400', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 23, version: 1, productGroupId: luckyGroup.id, productGroup: luckyGroup, variantName: '橙' },
+        { productId: 'p-yeti-white', name: '雪怪联名系列-白', sku: 'YETI-WHITE', barcode: '', posCategory: '森醒', salePriceCents: '9900', costPriceCents: '4000', unit: '个', image: '', hasImage: true, isActive: true, trackInventory: false, sortOrder: 24, version: 1, productGroupId: yetiGroup.id, productGroup: yetiGroup, variantName: '白' },
+        { productId: 'p-yeti-black', name: '雪怪联名系列-黑', sku: 'YETI-BLACK', barcode: '', posCategory: '森醒', salePriceCents: '9900', costPriceCents: '4000', unit: '个', image: '', hasImage: false, isActive: true, trackInventory: false, sortOrder: 25, version: 1, productGroupId: yetiGroup.id, productGroup: yetiGroup, variantName: '黑' },
+      ] : []),
     ]
-    const mirrorStores = [{ key: 'test-store', name: '测试门店' }]
-    if (twoStores) mirrorStores.push({ key: 'store-2', name: '第二门店' })
+    const mirrorStores = [{ key: 'tongying', name: '北京通盈中心店' }]
+    if (twoStores) mirrorStores.push({ key: 'xidan', name: '北京西单店' })
     localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify({ entries: {}, staff: [], stores: mirrorStores, schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {} }))
     seedCachedDataForTest(JSON.parse(localStorage.getItem('budu-os-cloud-mirror-v1')))
     let order = JSON.parse(sessionStorage.getItem('__budu-pos-test-order') || 'null')
@@ -76,21 +96,47 @@
         const storeId = new URL(url, location.origin).searchParams.get('storeId') || ''
         window.__posConfigRequests.push({ storeId, at: Date.now() })
         if (configStale) {
-          // store-2：未授权微信 → 仅现金，立即返回；store-1：慢 300ms 返回（过期响应场景）
-          const respond = () => json(storeId === 'store-2'
+          // 西单：未授权微信 → 仅现金，立即返回；通盈：慢 300ms 返回（过期响应场景）
+          const respond = () => json(storeId === 'xidan'
             ? { mode: 'mock', mock: true, channels: ['cash'] }
             : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
-          if (storeId === 'store-2') return respond()
+          if (storeId === 'xidan') return respond()
           return new Promise((resolve) => setTimeout(() => resolve(respond()), 300))
         }
-        const live = params.get('posmode') === 'live'
-        return json(live
-          ? { mode: 'live', mock: false, channels: ['cash'] }
-          : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'] })
+        return json(livePos
+          ? { mode: 'live', mock: false, channels: params.get('alipay') === '1' ? ['cash', 'alipay'] : ['cash'] }
+          : { mode: 'mock', mock: true, channels: ['wechat', 'alipay', 'cash'], sweetCard: { enabled: sweetCard } })
       }
       if (path === '/api/v2/pos/products') return json({ rows: products })
+      if (path === '/api/v2/pos/external-orders' && options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        window.__externalOrderBodies.push(body)
+        if (params.get('externalFail') === '1') return json({ error: '平台订单记录失败，未写入 BUDU，请重新确认。' }, 500)
+        const sourceLabels = { MEITUAN: '美团外卖', TAOBAO_FLASH: '淘宝闪购', JD_INSTANT: '京东秒送', OTHER: '其他平台' }
+        const items = body.items.map((row) => {
+          const p = products.find((pp) => pp.productId === row.productId)
+          const gift = row.gift === true
+          return { id: `oi-${row.productId}`, productId: row.productId, productNameSnapshot: p.name, skuSnapshot: p.sku, unitPrice: p.salePriceCents, actualAmount: gift ? '0' : String(Number(p.salePriceCents) * row.quantity), quantity: row.quantity, lineAmount: gift ? '0' : String(Number(p.salePriceCents) * row.quantity), isGift: gift }
+        })
+        const subtotal = items.reduce((sum, item) => sum + Number(item.unitPrice) * item.quantity, 0)
+        const chargeable = items.reduce((sum, item) => sum + Number(item.lineAmount), 0)
+        const payable = Math.round((chargeable * Number(body.discountPercent ?? 100)) / 100)
+        order = {
+          id: `external-order-${userId}`, orderNo: `POS-EXT-${userId}`, storeId: body.storeId,
+          storeName: body.storeId === 'xidan' ? '北京西单店' : '北京通盈中心店', cashierId: userId,
+          cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable),
+          payableAmount: String(payable), discountPercent: body.discountPercent ?? 100, remark: body.remark || '',
+          status: 'completed', paymentStatus: 'paid', paymentMethod: body.orderSource === 'OTHER' ? 'custom' : 'platform',
+          paymentMode: 'external', orderSource: body.orderSource, entryMode: 'MANUAL_POS', settlementAuthority: 'EXTERNAL',
+          sourceOrderRef: null, completedAt: new Date().toISOString(), items, payments: [], refunds: [],
+          externalSettlement: { id: `ext-${userId}`, settlementType: body.orderSource === 'OTHER' ? 'CUSTOM' : 'PLATFORM', amountCents: String(payable), status: 'CONFIRMED' },
+          sourceLabel: sourceLabels[body.orderSource],
+        }
+        return json({ ok: true, order, externalSettlement: order.externalSettlement }, 201)
+      }
       if (path === '/api/v2/pos/orders' && options.method === 'POST') {
         const body = JSON.parse(options.body)
+        window.__lastPosOrderBody = body
         const items = body.items.map((row) => {
           const p = products.find((pp) => pp.productId === row.productId)
           const gift = row.gift === true
@@ -101,7 +147,7 @@
         const chargeable = items.reduce((sum, item) => sum + Number(item.lineAmount), 0)
         const discountPercent = Number(body.discountPercent ?? 100)
         const payable = Math.round((chargeable * discountPercent) / 100)
-        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: '测试门店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable), payableAmount: String(payable), discountPercent, remark: body.remark || '', status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', checkoutKey: body.checkoutKey, items, payments: [] }
+        order = { id: `order-${userId}`, orderNo: `POS-TEST-${userId}`, storeId: body.storeId, storeName: body.storeId === 'xidan' ? '北京西单店' : '北京通盈中心店', cashierId: userId, cashierNameSnapshot: userId, subtotal: String(subtotal), discountAmount: String(subtotal - payable), payableAmount: String(payable), sweetCardAmount: '0', discountPercent, remark: body.remark || '', status: 'pending_payment', paymentStatus: 'unpaid', paymentMethod: null, paymentMode: 'mock', checkoutKey: body.checkoutKey, items, payments: [] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         return json({ ok: true, order }, 201)
       }
@@ -110,18 +156,28 @@
         return json({ ok: true, total: rows.length, rows })
       }
       if (order && path === `/api/v2/pos/orders/${order.id}` && options.method !== 'POST') return json({ order: { ...order, payments: payment ? [payment] : [] } })
+      if (order && path === `/api/v2/pos/orders/${order.id}/sweet-card/inspect`) {
+        const body = JSON.parse(options.body)
+        if (!String(body.token || '').startsWith('budu:sc:v1:')) return json({ error: '甜意卡 credential 无效' }, 404)
+        return json({ card: { publicCardNo: 'SC2026TEST01', status: 'ACTIVE', credentialStatus: 'ACTIVE', balanceCents: String(sweetBalance), eligibleSubtotalCents: order.payableAmount, ineligibleSubtotalCents: '0', maximumRedeemableCents: String(Math.min(sweetBalance, Number(order.payableAmount))), remainingPayableCents: String(Math.max(0, Number(order.payableAmount) - sweetBalance)), usable: true } })
+      }
+      if (order && path === `/api/v2/pos/orders/${order.id}/sweet-card/redeem`) {
+        const body = JSON.parse(options.body); const amount = String(body.amountCents)
+        order = { ...order, sweetCardAmount: amount, status: BigInt(amount) === BigInt(order.payableAmount) ? 'completed' : 'pending_payment', paymentStatus: BigInt(amount) === BigInt(order.payableAmount) ? 'paid' : 'unpaid', paymentMethod: BigInt(amount) === BigInt(order.payableAmount) ? 'sweet-card' : null }
+        return json({ ok: true, redemption: { id: `scr-${userId}`, amountCents: amount }, order }, 201)
+      }
       if (order && path === `/api/v2/pos/orders/${order.id}/payments`) {
         const body = JSON.parse(options.body)
         window.__paymentRequestCount += 1
         if (['wechat', 'alipay'].includes(body.channel) && !body.authCode) return json({ error: '请扫描有效的顾客付款码' }, 400)
         const failed = String(body.authCode || '').startsWith('FAIL')
         const pending = payMode === 'pending' && ['wechat', 'alipay'].includes(body.channel)
-        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: order.payableAmount, currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
+        payment = { id: `payment-${userId}-${window.__paymentRequestCount}`, paymentNo: `PAY-${userId}-${window.__paymentRequestCount}`, orderId: order.id, channel: body.channel, amount: String(BigInt(order.payableAmount) - BigInt(order.sweetCardAmount || 0)), currency: 'CNY', status: pending ? 'pending' : failed ? 'failed' : 'success', merchantTradeNo: `MT-${userId}-${window.__paymentRequestCount}`, providerTradeNo: `MOCK-${userId}-${window.__paymentRequestCount}`, provider: livePos && body.channel === 'alipay' ? 'alipay' : 'mock', callbackCount: 1, failureMessage: failed ? '模拟支付失败，请重新扫码' : '' }
         order = pending
           ? { ...order, status: 'pending_payment', paymentStatus: 'pending', paymentMethod: null, payments: [payment] }
           : failed
           ? { ...order, status: 'pending_payment', paymentStatus: 'failed', paymentMethod: null, payments: [payment] }
-          : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: body.channel, completedAt: new Date().toISOString(), payments: [payment] }
+          : { ...order, status: 'completed', paymentStatus: 'paid', paymentMethod: BigInt(order.sweetCardAmount || 0) > 0n ? `sweet-card+${body.channel}` : body.channel, completedAt: new Date().toISOString(), payments: [payment] }
         sessionStorage.setItem('__budu-pos-test-order', JSON.stringify(order))
         sessionStorage.setItem('__budu-pos-test-payment', JSON.stringify(payment))
         return json({ ok: true, payment, order }, 201)
@@ -139,6 +195,9 @@
       return json({ error: `未模拟接口 ${path}` }, 404)
     }
     window.__posExitCount = 0
-    createRoot(document.getElementById('root')).render(React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }))
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(PosPage, { user: { id: userId, username: userId, role: 'staff', storeKeys, permissions: externalCapabilities ? { externalOrderCreate: true, externalSettlementConfirm: true } : {} }, onExit: () => { window.__posExitCount += 1 }, scannerDecoderFactory }),
+    ))
   </script></body>
 </html>

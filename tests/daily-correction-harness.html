@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div>
+<script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import DailyHistoricalCorrection from '/src/components/DailyHistoricalCorrection.jsx'
+import '/src/index.css'
+const supplement = new URLSearchParams(location.search).has('supplement')
+window.__writes = []; window.__saved = false; window.__error = null
+window.fetch = async (url, options = {}) => {
+  let data
+  if (options.method === 'POST') {
+    window.__writes.push(JSON.parse(options.body))
+    data = window.__error ? { error: window.__error } : { ok: true }
+  } else data = { token: 'a'.repeat(64), sales: { source: 'manual', incCents: '71600', ord: 9 },
+    entry: supplement ? null : { incCents: '71600', ord: 9 },
+    staff: supplement ? [] : [{ employeeId: 'emp-a', staffName: '员工甲', actualHours: 12 }],
+    stores: [{ key: 'tongying', name: '北京通盈中心店' }, { key: 'xidan', name: '北京西单店' }],
+    employees: [{ id: 'emp-a', name: '员工甲', employeeNo: 'TEST-A' }, { id: 'emp-b', name: '员工乙', employeeNo: 'TEST-B' }], audits: [] }
+  return new Response(JSON.stringify(data), { status: options.method === 'POST' && window.__error ? 409 : 200, headers: { 'Content-Type': 'application/json' } })
+}
+createRoot(document.getElementById('root')).render(React.createElement(DailyHistoricalCorrection, {
+  initialStore: 'tongying', initialDate: '2026-09-15', supplement,
+  onClose: () => {}, onSaved: () => { window.__saved = true },
+}))
+</script></body></html>

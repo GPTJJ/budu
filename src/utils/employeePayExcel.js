@@ -55,7 +55,7 @@ export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, 
     money(totals.pay),
   ]
   const sheet = XLSX.utils.aoa_to_sheet([
-    ['BUDU 员工工资明细'],
+    ['budu 员工工资明细'],
     ['员工', employeeName],
     ['期间', periodLabel],
     [],
@@ -84,9 +84,9 @@ export function createEmployeePayWorkbook({ employeeName, periodLabel, dayRows, 
 
   const workbook = XLSX.utils.book_new()
   workbook.Props = {
-    Title: `BUDU 员工工资明细 - ${employeeName}`,
+    Title: `budu 员工工资明细 - ${employeeName}`,
     Subject: periodLabel,
-    Author: 'BUDU Operating System',
+    Author: 'budu Operating System',
     CreatedDate: new Date(),
   }
   XLSX.utils.book_append_sheet(workbook, sheet, '工资明细')

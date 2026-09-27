@@ -7,21 +7,136 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum OrderSource {
+  STORE_POS
+  MEITUAN
+  TAOBAO_FLASH
+  JD_INSTANT
+  OTHER
+}
+
+enum EntryMode {
+  POS_CHECKOUT
+  MANUAL_POS
+}
+
+enum SettlementAuthority {
+  PAYMENT
+  EXTERNAL
+}
+
+enum ExternalSettlementType {
+  PLATFORM
+  CUSTOM
+}
+
+enum ExternalSettlementStatus {
+  PENDING
+  CONFIRMED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOIDED
+}
+
+enum RefundMode {
+  PAYMENT
+  MANUAL_EXTERNAL
+}
+
+enum SweetCardValidityType {
+  ONE_YEAR
+  THREE_YEARS
+  LONG_TERM
+}
+
+enum SweetCardCarrierType {
+  PHYSICAL
+  ELECTRONIC
+}
+
+enum SweetCardBindingMode {
+  NONE
+  OPTIONAL
+  REQUIRED
+}
+
+enum SweetCardBatchPurpose {
+  ACCEPTANCE_TEST
+  COMMERCIAL
+}
+
+enum SweetCardAccountStatus {
+  CREATED
+  ACTIVE
+  FROZEN
+  LOST
+  EXHAUSTED
+  EXPIRED
+  VOID
+}
+
+enum SweetCardCredentialStatus {
+  UNACTIVATED
+  ACTIVE
+  REVOKED
+}
+
+enum SweetCardLedgerType {
+  ISSUE
+  REDEEM
+  REFUND
+  REVERSAL
+}
+
+enum StoreRentMode {
+  FIXED
+  PERCENT
+  FIXED_PLUS_PERCENT
+  MAX_FIXED_PERCENT
+}
+
+enum RentPercentageBasis {
+  GROSS_SALES
+  NET_REVENUE
+}
+
+enum LaborCostCategory {
+  SOCIAL_SECURITY
+  PROVIDENT_FUND
+  OTHER
+}
+
+enum StoreOperationType {
+  UNKNOWN
+  DIRECT
+  NON_DIRECT
+}
+
+model SweetCardControl {
+  id          String   @id
+  enabled     Boolean  @default(false)
+  updatedById String   @default("") @map("updated_by_id")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("sweet_card_control")
+}
+
 model Store {
-  key                          String              @id
-  name                         String              @unique
-  district                     String              @default("")
-  active                       Boolean             @default(true)
-  salesDataSource              String              @default("manual") @map("sales_data_source")
-  salesDataSourceEffectiveDate DateTime?           @map("sales_data_source_effective_date")
-  createdAt                    DateTime            @default(now())
+  key                          String                   @id
+  operationType                StoreOperationType       @default(UNKNOWN) @map("operation_type")
+  name                         String                   @unique
+  district                     String                   @default("")
+  active                       Boolean                  @default(true)
+  salesDataSource              String                   @default("manual") @map("sales_data_source")
+  salesDataSourceEffectiveDate DateTime?                @map("sales_data_source_effective_date")
+  createdAt                    DateTime                 @default(now())
   staff                        Staff[]
   entries                      DailyEntry[]
   dailyStaff                   DailyStoreStaff[]
   stock                        StockBalance[]
   ledger                       StockLedger[]
-  transferOut                  TransferRequest[]   @relation("TransferFrom")
-  transferIn                   TransferRequest[]   @relation("TransferTo")
+  transferOut                  TransferRequest[]        @relation("TransferFrom")
+  transferIn                   TransferRequest[]        @relation("TransferTo")
   purchases                    PurchaseRequest[]
   waste                        WasteRecord[]
   expenses                     Expense[]
@@ -29,31 +144,87 @@ model Store {
   bigBonuses                   BigOrderBonus[]
   memberConsumptions           MemberConsumption[]
   orders                       Order[]
+  customerServiceRequests      CustomerServiceRequest[]
+  partnerDefaults              Partner[]                @relation("PartnerDefaultStore")
+  partnerSupplyOrders          PartnerSupplyOrder[]     @relation("PartnerSupplyStore")
+  replenishmentShipments       ReplenishmentShipment[]
+  rentHistories                StoreRentHistory[]
+  utilityCosts                 StoreUtilityCost[]
+  laborCostPeriods             StoreLaborCostPeriod[]
+  sweetCardPolicy              SweetCardStorePolicy?
 }
 
 /// 账号（Data Authority DA-2：PostgreSQL 唯一权威；KV users 为迁移源/只读存档）
 model User {
-  id                  String    @id
-  username            String    @unique
-  passwordHash        String
-  role                String    @default("staff") // developer | admin | finance | manager | staff | cashier | public
-  displayName         String    @default("") @map("display_name")
-  avatar              String    @default("")
-  storeKeys           Json      @default("[]") @map("store_keys") // 绑定门店 key 列表
-  staffKey            String    @default("") @map("staff_key") // storeKey::name（兼容快照；DA-2.4 起以 employeeId 为准）
-  employeeId          String    @default("") @map("employee_id") // 绑定员工稳定 ID（employees.id）
-  status              String    @default("active") // active | disabled
-  secondPasswordHash  String    @default("") @map("second_password_hash")
-  bindingLegacyExempt Boolean   @default(false) @map("binding_legacy_exempt")
-  assetCenter         Boolean   @default(false) @map("asset_center")
-  permissions         Json      @default("{}") // 模块授权（normalizeAccountPermissions 产物）
-  disabledAt          DateTime? @map("disabled_at")
-  permissionsUpdatedAt DateTime? @map("permissions_updated_at")
-  permissionsUpdatedBy String    @default("") @map("permissions_updated_by")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+  id                              String    @id
+  username                        String    @unique
+  passwordHash                    String
+  role                            String    @default("staff") // internal roles | public(disabled legacy) | customer | partner
+  displayName                     String    @default("") @map("display_name")
+  avatar                          String    @default("")
+  storeKeys                       Json      @default("[]") @map("store_keys") // 绑定门店 key 列表
+  staffKey                        String    @default("") @map("staff_key") // storeKey::name（兼容快照；DA-2.4 起以 employeeId 为准）
+  employeeId                      String    @default("") @map("employee_id") // 绑定员工稳定 ID（employees.id）
+  status                          String    @default("active") // active | disabled
+  secondPasswordHash              String    @default("") @map("second_password_hash")
+  sensitiveFailedAttempts         Int       @default(0) @map("sensitive_failed_attempts")
+  sensitiveAttemptWindowStartedAt DateTime? @map("sensitive_attempt_window_started_at")
+  sensitiveLockedUntil            DateTime? @map("sensitive_locked_until")
+  bindingLegacyExempt             Boolean   @default(false) @map("binding_legacy_exempt")
+  operationalIdentityType         String    @default("STANDARD") @map("operational_identity_type")
+  assetCenter                     Boolean   @default(false) @map("asset_center")
+  permissions                     Json      @default("{}") // 模块授权（normalizeAccountPermissions 产物）
+  disabledAt                      DateTime? @map("disabled_at")
+  permissionsUpdatedAt            DateTime? @map("permissions_updated_at")
+  permissionsUpdatedBy            String    @default("") @map("permissions_updated_by")
+  createdAt                       DateTime  @default(now()) @map("created_at")
+  updatedAt                       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  dailyStoreStaffParticipations DailyStoreStaff[]        @relation("DailyStoreStaffParticipantUser")
+  customerServiceRequests       CustomerServiceRequest[]
+  weChatAuthIdentities          WeChatAuthIdentity[]
+  customerSessions              CustomerSession[]
+  partnerMemberships            PartnerUser[]
+  sweetCardClaimTokensCreated   SweetCardClaimToken[]    @relation("SweetCardClaimTokenCreator")
+  sweetCardClaims               SweetCardClaim[]
+  sweetCardBindings             SweetCardBinding[]
+  onlineQuotes                  OnlineCheckoutQuote[]
+  onlineSettlements             OnlineSettlement[]
+  sweetCardReservations         SweetCardReservation[]
 
   @@map("User")
+}
+
+model WeChatAuthIdentity {
+  id        String   @id
+  provider  String
+  appId     String   @map("app_id")
+  openId    String   @map("open_id")
+  unionId   String?  @map("union_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, appId, openId])
+  @@index([userId])
+  @@index([unionId])
+  @@map("wechat_auth_identities")
+}
+
+model CustomerSession {
+  id            String    @id
+  tokenHash     String    @unique @map("token_hash")
+  userId        String    @map("user_id")
+  principalType String    @default("CUSTOMER") @map("principal_type")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
+  @@index([principalType, userId, expiresAt])
+  @@map("customer_sessions")
 }
 
 model Staff {
@@ -68,51 +239,63 @@ model Staff {
 }
 
 model DailyEntry {
-  id                      String    @id
-  storeKey                String
-  date                    DateTime  @db.Date
-  incCents                BigInt    @default(0)
-  ord                     Int       @default(0)
-  staffNames              Json      @default("[]")
-  status                  String    @default("draft")
-  salesDataStatus         String    @default("not_applicable") @map("sales_data_status")
-  posSyncAt               DateTime? @map("pos_sync_at")
-  hybridAdjustmentCents   BigInt    @default(0) @map("hybrid_adjustment_cents")
-  hybridAdjustmentNote    String    @default("") @map("hybrid_adjustment_note")
-  confirmedAt             DateTime? @map("confirmed_at")
-  confirmedBy             String    @default("") @map("confirmed_by")
-  version                 Int       @default(1)
-  updatedBy               String    @default("")
-  updatedAt               DateTime  @default(now()) @updatedAt
-  store                   Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  id                    String    @id
+  storeKey              String
+  date                  DateTime  @db.Date
+  incCents              BigInt    @default(0)
+  ord                   Int       @default(0)
+  staffNames            Json      @default("[]")
+  status                String    @default("draft")
+  salesDataStatus       String    @default("not_applicable") @map("sales_data_status")
+  posSyncAt             DateTime? @map("pos_sync_at")
+  hybridAdjustmentCents BigInt    @default(0) @map("hybrid_adjustment_cents")
+  hybridAdjustmentNote  String    @default("") @map("hybrid_adjustment_note")
+  confirmedAt           DateTime? @map("confirmed_at")
+  confirmedBy           String    @default("") @map("confirmed_by")
+  version               Int       @default(1)
+  updatedBy             String    @default("")
+  updatedAt             DateTime  @default(now()) @updatedAt
+  store                 Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@unique([storeKey, date])
 }
 
 model DailyStoreStaff {
-  id                  String   @id
-  storeId             String   @map("store_id")
-  date                DateTime @db.Date
-  staffId             String   @map("staff_id")
-  staffNameSnapshot   String   @default("") @map("staff_name_snapshot")
-  shiftId             String   @default("") @map("shift_id")
-  scheduledStartTime  String   @default("") @map("scheduled_start_time")
-  scheduledEndTime    String   @default("") @map("scheduled_end_time")
-  actualStartTime     String   @default("") @map("actual_start_time")
-  actualEndTime       String   @default("") @map("actual_end_time")
-  breakMinutes        Int      @default(0) @map("break_minutes")
-  scheduledHours      Float    @default(0) @map("scheduled_hours")
-  actualHours         Float    @default(0) @map("actual_hours")
-  attendanceStatus    String   @default("normal") @map("attendance_status")
-  source              String   @default("manual")
-  createdBy           String   @default("") @map("created_by")
-  updatedBy           String   @default("") @map("updated_by")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
-  store               Store    @relation(fields: [storeId], references: [key], onDelete: Cascade)
+  id                     String    @id
+  storeId                String    @map("store_id")
+  date                   DateTime  @db.Date
+  employeeId             String?   @map("employee_id")
+  participantType        String    @default("LEGACY_UNKNOWN") @map("participant_type")
+  participantUserId      String?   @map("participant_user_id")
+  staffId                String    @map("staff_id")
+  staffNameSnapshot      String    @default("") @map("staff_name_snapshot")
+  shiftId                String    @default("") @map("shift_id")
+  scheduledStartTime     String    @default("") @map("scheduled_start_time")
+  scheduledEndTime       String    @default("") @map("scheduled_end_time")
+  actualStartTime        String    @default("") @map("actual_start_time")
+  actualEndTime          String    @default("") @map("actual_end_time")
+  breakMinutes           Int       @default(0) @map("break_minutes")
+  scheduledHours         Float     @default(0) @map("scheduled_hours")
+  actualHours            Float?    @map("actual_hours")
+  historicalPayrollHours Float?    @map("historical_payroll_hours")
+  payableHoursSource     String    @default("ACTUAL_HOURS") @map("payable_hours_source")
+  attendanceStatus       String    @default("normal") @map("attendance_status")
+  source                 String    @default("manual")
+  createdBy              String    @default("") @map("created_by")
+  updatedBy              String    @default("") @map("updated_by")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at")
+  store                  Store     @relation(fields: [storeId], references: [key], onDelete: Cascade)
+  employee               Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  participantUser        User?     @relation("DailyStoreStaffParticipantUser", fields: [participantUserId], references: [id], onDelete: Restrict)
 
-  @@unique([storeId, date, staffId])
+  // Gate 16：稳定行身份 = (storeId, date, employeeId)；全量 staffId unique 已移除
+  // （同店同名稳定行可共存，staffId 允许相同——仅兼容快照）。
+  // legacy 行（employeeId=NULL）的 staffId 唯一保护由 migration 中的 partial unique index
+  // (store_id, date, staff_id) WHERE employee_id IS NULL 提供（Prisma 无法表示 partial，故 SQL-only）。
+  @@unique([storeId, date, employeeId])
   @@index([storeId, date])
+  @@index([participantUserId])
   @@map("daily_store_staff")
 }
 
@@ -134,105 +317,558 @@ model DailyEntryAuditLog {
 }
 
 model InventoryItem {
-  id             String         @id
-  name           String         @unique
-  unit           String         @default("")
-  spec           String         @default("")
-  barcode        String         @default("")
-  category       String         @default("product")
-  image          String         @default("")
-  sku            String?        @unique
-  posCategory    String         @default("")
-  salePriceCents BigInt?
-  costPriceCents BigInt?
-  isActive       Boolean        @default(false)
-  trackInventory Boolean        @default(false)
-  sortOrder      Int            @default(0)
-  version        Int            @default(1)
-  updatedAt      DateTime       @default(now()) @updatedAt
-  createdAt      DateTime       @default(now())
-  balances       StockBalance[]
-  ledger         StockLedger[]
-  transferItems  TransferItem[]
-  purchaseItems  PurchaseItem[]
-  waste          WasteRecord[]
-  orderItems     OrderItem[]
+  id                       String                     @id
+  name                     String                     @unique
+  unit                     String                     @default("")
+  spec                     String                     @default("")
+  barcode                  String                     @default("")
+  category                 String                     @default("product")
+  image                    String                     @default("")
+  sku                      String?                    @unique
+  posCategory              String                     @default("")
+  salePriceCents           BigInt?
+  costPriceCents           BigInt?
+  isActive                 Boolean                    @default(false)
+  trackInventory           Boolean                    @default(false)
+  sortOrder                Int                        @default(0)
+  transferCode             String?                    @unique
+  transferEnabled          Boolean                    @default(false)
+  transferSortOrder        Int                        @default(0)
+  transferBoxEnabled       Boolean                    @default(false)
+  transferBoxWeightGrams   Int?
+  transferPieceEnabled     Boolean                    @default(false)
+  transferPieceWeightGrams Int?
+  partnerSupplyEnabled     Boolean                    @default(false)
+  productCategoryId        String?
+  productGroupId           String?
+  variantName              String                     @default("")
+  version                  Int                        @default(1)
+  updatedAt                DateTime                   @default(now()) @updatedAt
+  createdAt                DateTime                   @default(now())
+  balances                 StockBalance[]
+  ledger                   StockLedger[]
+  transferItems            TransferItem[]
+  purchaseItems            PurchaseItem[]
+  waste                    WasteRecord[]
+  orderItems               OrderItem[]
+  partnerSupplyItems       PartnerSupplyItem[]
+  costHistories            InventoryItemCostHistory[]
+  productCategory          ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+  productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
+  sweetCardAllocations     SweetCardRedemptionItem[]
+  onlinePolicies           OnlineProductPolicy[]
+  partnerReplenishmentEnabled Boolean                    @default(false)
+  partnerOrderUnit            String?
+  partnerKgBasePriceCents     BigInt?
+  partnerMinOrderBaseQty      Int?
+  partnerOrderStepBaseQty     Int?
+  replenishmentItems          ReplenishmentOrderItem[]
+
+  @@index([productCategoryId])
+  @@index([productGroupId])
+  @@index([category, partnerSupplyEnabled])
+  @@index([category, partnerReplenishmentEnabled, isActive])
+}
+
+model InventoryItemCostHistory {
+  id              String        @id
+  inventoryItemId String        @map("inventory_item_id")
+  costPriceCents  BigInt        @map("cost_price_cents")
+  effectiveFrom   DateTime      @map("effective_from") @db.Date
+  effectiveTo     DateTime?     @map("effective_to") @db.Date
+  reason          String        @default("")
+  createdBy       String        @default("") @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  @@unique([inventoryItemId, effectiveFrom])
+  @@index([inventoryItemId, effectiveFrom, effectiveTo])
+  @@map("inventory_item_cost_histories")
+}
+
+model ProductCategory {
+  id              String                   @id
+  name            String                   @unique
+  sortOrder       Int                      @default(0)
+  isActive        Boolean                  @default(true)
+  version         Int                      @default(1)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @default(now()) @updatedAt
+  products        InventoryItem[]
+  sweetCardPolicy SweetCardCategoryPolicy?
+
+  @@index([isActive, sortOrder])
+}
+
+model ProductGroup {
+  id         String          @id
+  name       String          @unique
+  coverImage String          @default("")
+  sortOrder  Int             @default(0)
+  isActive   Boolean         @default(true)
+  version    Int             @default(1)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @default(now()) @updatedAt
+  products   InventoryItem[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Partner {
+  id                      String                           @id
+  name                    String                           @unique
+  companyName             String                           @default("")
+  contactName             String                           @default("")
+  contactPhone            String                           @default("")
+  cooperationStartDate    DateTime?                        @db.Date
+  status                  String                           @default("ACTIVE")
+  invoiceTitle            String                           @default("")
+  taxpayerId              String                           @default("")
+  contractReference       String                           @default("")
+  defaultStoreKey         String
+  defaultDiscountBps      Int                              @default(6500)
+  // Legacy Partner Supply compatibility mirror. Gate 2 lifecycle authority is status.
+  isActive                Boolean                          @default(true)
+  note                    String                           @default("")
+  version                 Int                              @default(1)
+  createdBy               String                           @default("")
+  updatedBy               String                           @default("")
+  createdAt               DateTime                         @default(now())
+  updatedAt               DateTime                         @default(now()) @updatedAt
+  defaultStore            Store                            @relation("PartnerDefaultStore", fields: [defaultStoreKey], references: [key], onDelete: Restrict)
+  supplyOrders            PartnerSupplyOrder[]
+  partnerUsers            PartnerUser[]
+  partnerStores           PartnerStore[]
+  auditLogs               PartnerAuditLog[]
+  replenishmentOrders     ReplenishmentOrder[]
+  replenishmentAfterSales ReplenishmentAfterSalesRequest[]
+
+  @@index([status, name])
+  @@index([isActive, name])
+}
+
+model PartnerUser {
+  id           String    @id
+  partnerId    String    @map("partner_id")
+  userId       String    @unique @map("user_id")
+  status       String    @default("active")
+  createdById  String    @default("") @map("created_by_id")
+  disabledAt   DateTime? @map("disabled_at")
+  disabledById String    @default("") @map("disabled_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+  partner      Partner   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([partnerId, userId])
+  @@index([partnerId, status])
+  @@map("partner_users")
+}
+
+model PartnerStore {
+  id                  String               @id
+  partnerId           String
+  name                String
+  contactName         String               @default("")
+  phone               String               @default("")
+  province            String               @default("")
+  city                String               @default("")
+  district            String               @default("")
+  addressLine         String               @default("")
+  status              String               @default("ACTIVE")
+  version             Int                  @default(1)
+  createdById         String               @default("")
+  updatedById         String               @default("")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @default(now()) @updatedAt
+  partner             Partner              @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  replenishmentOrders ReplenishmentOrder[]
+
+  @@unique([partnerId, name])
+  @@unique([partnerId, id])
+  @@index([partnerId, status, name])
+}
+
+model PartnerAuditLog {
+  id            String   @id
+  partnerId     String
+  entityType    String
+  entityId      String
+  action        String
+  before        Json?
+  after         Json?
+  actorUserId   String
+  actorUsername String   @default("")
+  createdAt     DateTime @default(now())
+  partner       Partner  @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}
+
+model ReplenishmentOrder {
+  id                        String                           @id
+  purpose                   OrderPurpose                     @default(REAL)
+  orderNo                   String                           @unique
+  partnerId                 String
+  partnerStoreId            String
+  partnerNameSnapshot       String
+  partnerStoreNameSnapshot  String
+  contactNameSnapshot       String                           @default("")
+  phoneSnapshot             String                           @default("")
+  provinceSnapshot          String                           @default("")
+  citySnapshot              String                           @default("")
+  districtSnapshot          String                           @default("")
+  addressLineSnapshot       String                           @default("")
+  status                    String                           @default("SUBMITTED")
+  createdByType             String
+  createdByActorId          String
+  createdByActorName        String                           @default("")
+  submittedAt               DateTime                         @default(now())
+  cancelledAt               DateTime?
+  cancelledByType           String?
+  cancelledByActorId        String                           @default("")
+  cancelledByActorName      String                           @default("")
+  requestedTotalAmountCents BigInt
+  approvedTotalAmountCents  BigInt?
+  reviewAction              String?
+  reviewReason              String                           @default("")
+  reviewedAt                DateTime?
+  reviewedByActorId         String                           @default("")
+  reviewedByActorName       String                           @default("")
+  reviewIdempotencyScope    String?
+  reviewIdempotencyKey      String?
+  reviewPayloadDigest       String?
+  idempotencyScope          String
+  idempotencyKey            String
+  idempotencyPayloadDigest  String
+  version                   Int                              @default(1)
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @default(now()) @updatedAt
+  partner                   Partner                          @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  partnerStore              PartnerStore                     @relation(fields: [partnerId, partnerStoreId], references: [partnerId, id], onDelete: Restrict)
+  items                     ReplenishmentOrderItem[]
+  shipments                 ReplenishmentShipment[]
+  afterSalesRequests        ReplenishmentAfterSalesRequest[]
+
+  @@unique([idempotencyScope, idempotencyKey])
+  @@unique([reviewIdempotencyScope, reviewIdempotencyKey])
+  @@index([partnerId, submittedAt])
+  @@index([partnerId, status, submittedAt])
+  @@index([partnerStoreId, createdAt])
+  @@index([status, submittedAt])
+}
+
+model ReplenishmentOrderItem {
+  id                          String                      @id
+  replenishmentOrderId        String
+  inventoryItemId             String
+  productNameSnapshot         String
+  skuSnapshot                 String                      @default("")
+  productCodeSnapshot         String                      @default("")
+  orderUnitSnapshot           String
+  nativeUnitSnapshot          String                      @default("")
+  requestedQuantityBase       Int
+  basePriceSnapshotCents      BigInt
+  discountBpsSnapshot         Int
+  requestedLineAmountCents    BigInt
+  minimumOrderBaseQtySnapshot Int
+  orderStepBaseQtySnapshot    Int
+  approvedQuantityBase        Int?
+  approvedLineAmountCents     BigInt?
+  reviewReason                String                      @default("")
+  createdAt                   DateTime                    @default(now())
+  replenishmentOrder          ReplenishmentOrder          @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  inventoryItem               InventoryItem               @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  shipmentItems               ReplenishmentShipmentItem[]
+
+  @@unique([replenishmentOrderId, inventoryItemId])
+  @@index([inventoryItemId])
+}
+
+model ReplenishmentShipment {
+  id                       String                      @id
+  shipmentNo               String                      @unique
+  replenishmentOrderId     String
+  fulfillmentStoreKey      String
+  fulfillmentStoreSnapshot String
+  carrier                  String
+  trackingNumber           String
+  freightType              String
+  shippedAt                DateTime
+  createdByActorId         String
+  createdByActorName       String                      @default("")
+  idempotencyScope         String
+  idempotencyKey           String
+  idempotencyPayloadDigest String
+  createdAt                DateTime                    @default(now())
+  replenishmentOrder       ReplenishmentOrder          @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  fulfillmentStore         Store                       @relation(fields: [fulfillmentStoreKey], references: [key], onDelete: Restrict)
+  items                    ReplenishmentShipmentItem[]
+
+  @@unique([idempotencyScope, idempotencyKey])
+  @@index([replenishmentOrderId, shippedAt])
+  @@index([fulfillmentStoreKey, shippedAt])
+}
+
+model ReplenishmentShipmentItem {
+  id                       String                           @id
+  replenishmentShipmentId  String
+  replenishmentOrderItemId String
+  productNameSnapshot      String
+  orderUnitSnapshot        String
+  nativeUnitSnapshot       String                           @default("")
+  shippedQuantityBase      Int
+  createdAt                DateTime                         @default(now())
+  replenishmentShipment    ReplenishmentShipment            @relation(fields: [replenishmentShipmentId], references: [id], onDelete: Restrict)
+  replenishmentOrderItem   ReplenishmentOrderItem           @relation(fields: [replenishmentOrderItemId], references: [id], onDelete: Restrict)
+  afterSalesRequests       ReplenishmentAfterSalesRequest[]
+
+  @@unique([replenishmentShipmentId, replenishmentOrderItemId])
+  @@index([replenishmentOrderItemId, createdAt])
+}
+
+model ReplenishmentAfterSalesRequest {
+  id                          String                              @id
+  requestNo                   String                              @unique
+  partnerId                   String
+  replenishmentOrderId        String
+  replenishmentShipmentItemId String
+  type                        String
+  quantityBase                Int
+  description                 String
+  status                      String                              @default("PENDING")
+  resultNote                  String                              @default("")
+  createdByActorId            String
+  createdByActorName          String                              @default("")
+  handledByActorId            String                              @default("")
+  handledByActorName          String                              @default("")
+  handledAt                   DateTime?
+  version                     Int                                 @default(1)
+  createdAt                   DateTime                            @default(now())
+  updatedAt                   DateTime                            @default(now()) @updatedAt
+  partner                     Partner                             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  replenishmentOrder          ReplenishmentOrder                  @relation(fields: [replenishmentOrderId], references: [id], onDelete: Restrict)
+  replenishmentShipmentItem   ReplenishmentShipmentItem           @relation(fields: [replenishmentShipmentItemId], references: [id], onDelete: Restrict)
+  attachments                 ReplenishmentAfterSalesAttachment[]
+
+  @@unique([partnerId, id])
+  @@index([partnerId, createdAt])
+  @@index([status, createdAt])
+  @@index([replenishmentOrderId, createdAt])
+  @@index([replenishmentShipmentItemId, status])
+}
+
+model ReplenishmentAfterSalesAttachment {
+  id              String                         @id
+  requestId       String
+  partnerId       String
+  name            String
+  fileType        String
+  fileSize        Int
+  dataUrl         String                         @db.Text
+  storageProvider String                         @default("local")
+  storageKey      String                         @default("")
+  createdAt       DateTime                       @default(now())
+  request         ReplenishmentAfterSalesRequest @relation(fields: [partnerId, requestId], references: [partnerId, id], onDelete: Restrict)
+
+  @@index([requestId])
+  @@index([partnerId, createdAt])
+}
+
+model PartnerSupplyOrder {
+  id                         String              @id
+  orderNo                    String              @unique
+  partnerId                  String
+  partnerNameSnapshot        String
+  fromStoreKey               String
+  fromStoreNameSnapshot      String
+  businessDate               DateTime            @db.Date
+  status                     String              @default("pending")
+  defaultDiscountBpsSnapshot Int
+  effectiveDiscountBps       Int
+  totalAmountCents           BigInt
+  note                       String              @default("")
+  createdById                String              @default("")
+  createdBy                  String              @default("")
+  priceOverrideById          String              @default("")
+  priceOverrideBy            String              @default("")
+  priceOverrideAt            DateTime?
+  shippedById                String              @default("")
+  shippedBy                  String              @default("")
+  shippedAt                  DateTime?
+  withdrawnById              String              @default("")
+  withdrawnBy                String              @default("")
+  withdrawnAt                DateTime?
+  version                    Int                 @default(1)
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @default(now()) @updatedAt
+  deletedAt                  DateTime?
+  deletedBy                  String              @default("")
+  deleteReason               String              @default("")
+  partner                    Partner             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  fromStore                  Store               @relation("PartnerSupplyStore", fields: [fromStoreKey], references: [key], onDelete: Restrict)
+  items                      PartnerSupplyItem[]
+  receipts                   PartnerReceipt[]
+
+  @@index([partnerId, businessDate])
+  @@index([fromStoreKey, businessDate])
+  @@index([status, businessDate])
+  @@index([deletedAt, businessDate])
+}
+
+model PartnerSupplyItem {
+  id                          String             @id
+  orderId                     String
+  productId                   String
+  productCodeSnapshot         String
+  productNameSnapshot         String
+  productCategoryNameSnapshot String             @default("")
+  retailPriceCentsSnapshot    BigInt
+  discountBpsSnapshot         Int
+  partnerUnitPriceCents       BigInt
+  quantity                    Int
+  subtotalCents               BigInt
+  order                       PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product                     InventoryItem      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, productId])
+  @@index([productId])
+}
+
+model PartnerReceipt {
+  id           String             @id
+  orderId      String
+  amountCents  BigInt
+  receivedDate DateTime           @db.Date
+  note         String             @default("")
+  status       String             @default("active")
+  createdById  String             @default("")
+  createdBy    String             @default("")
+  createdAt    DateTime           @default(now())
+  voidedById   String             @default("")
+  voidedBy     String             @default("")
+  voidedAt     DateTime?
+  voidReason   String             @default("")
+  order        PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@index([receivedDate])
 }
 
 model Order {
-  id                  String      @id
-  orderNo             String      @unique @map("order_no")
-  storeId             String      @map("store_id")
-  cashierId           String      @map("cashier_id")
-  cashierNameSnapshot String      @default("") @map("cashier_name_snapshot")
-  subtotal            BigInt      @default(0)
-  discountAmount      BigInt      @default(0) @map("discount_amount")
-  payableAmount       BigInt      @default(0) @map("payable_amount")
-  businessDate        DateTime?   @db.Date @map("business_date")
-  discountPercent     Int         @default(100) @map("discount_percent")
-  remark              String      @default("")
-  status              String      @default("draft")
-  paymentStatus       String      @default("unpaid") @map("payment_status")
-  paymentMethod       String?     @map("payment_method")
-  paymentMode         String      @default("mock") @map("payment_mode")
-  checkoutKey         String      @unique @map("checkout_key")
-  cartHash            String      @map("cart_hash")
-  version             Int         @default(1)
-  createdAt           DateTime    @default(now()) @map("created_at")
-  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at")
-  completedAt         DateTime?   @map("completed_at")
-  store               Store       @relation(fields: [storeId], references: [key], onDelete: Restrict)
+  id                  String               @id
+  orderNo             String               @unique @map("order_no")
+  storeId             String               @map("store_id")
+  cashierId           String               @map("cashier_id")
+  cashierNameSnapshot String               @default("") @map("cashier_name_snapshot")
+  subtotal            BigInt               @default(0)
+  discountAmount      BigInt               @default(0) @map("discount_amount")
+  payableAmount       BigInt               @default(0) @map("payable_amount")
+  sweetCardAmount     BigInt               @default(0) @map("sweet_card_amount")
+  businessDate        DateTime?            @map("business_date") @db.Date
+  discountPercent     Int                  @default(100) @map("discount_percent")
+  remark              String               @default("")
+  status              String               @default("draft")
+  paymentStatus       String               @default("unpaid") @map("payment_status")
+  paymentMethod       String?              @map("payment_method")
+  paymentMode         String               @default("mock") @map("payment_mode")
+  orderSource         OrderSource          @default(STORE_POS) @map("order_source")
+  entryMode           EntryMode            @default(POS_CHECKOUT) @map("entry_mode")
+  settlementAuthority SettlementAuthority  @default(PAYMENT) @map("settlement_authority")
+  sourceOrderRef      String?              @map("source_order_ref")
+  checkoutKey         String               @unique @map("checkout_key")
+  cartHash            String               @map("cart_hash")
+  version             Int                  @default(1)
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @default(now()) @updatedAt @map("updated_at")
+  completedAt         DateTime?            @map("completed_at")
+  cancelledAt         DateTime?            @map("cancelled_at")
+  cancelledBy         String               @default("") @map("cancelled_by")
+  cancelReason        String               @default("") @map("cancel_reason")
+  store               Store                @relation(fields: [storeId], references: [key], onDelete: Restrict)
   items               OrderItem[]
   payments            Payment[]
+  externalSettlement  ExternalSettlement?
   refunds             Refund[]
   paymentLogs         PaymentLog[]
+  sweetCardRedemption SweetCardRedemption?
+  sweetCardLedger     SweetCardLedger[]
 
   @@index([storeId, createdAt])
   @@index([cashierId, createdAt])
   @@index([status, paymentStatus])
+  @@index([orderSource, businessDate, status])
+  @@index([settlementAuthority, status])
   @@map("orders")
 }
 
+model ExternalSettlement {
+  id             String                   @id
+  settlementNo   String                   @unique @map("settlement_no")
+  orderId        String                   @unique @map("order_id")
+  settlementType ExternalSettlementType   @map("settlement_type")
+  amountCents    BigInt                   @map("amount_cents")
+  currency       String                   @default("CNY")
+  status         ExternalSettlementStatus @default(PENDING)
+  requestKey     String                   @unique @map("request_key")
+  note           String                   @default("")
+  recordedBy     String                   @map("recorded_by")
+  recordedAt     DateTime                 @default(now()) @map("recorded_at")
+  confirmedBy    String                   @default("") @map("confirmed_by")
+  confirmedAt    DateTime?                @map("confirmed_at")
+  voidedBy       String                   @default("") @map("voided_by")
+  voidedAt       DateTime?                @map("voided_at")
+  voidReason     String                   @default("") @map("void_reason")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @default(now()) @updatedAt @map("updated_at")
+  order          Order                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds        Refund[]
+
+  @@index([status, recordedAt])
+  @@map("external_settlements")
+}
+
 model Payment {
-  id               String    @id
-  paymentNo        String    @unique @map("payment_no")
-  orderId          String    @map("order_id")
-  channel          String
-  paymentMethod    String    @default("") @map("payment_method")
-  amount           BigInt
-  currency         String    @default("CNY")
-  status           String    @default("created")
-  merchantTradeNo  String    @unique @map("merchant_trade_no")
-  providerTradeNo  String?   @unique @map("provider_trade_no")
-  provider         String
-  requestKey       String    @unique @map("request_key")
-  failureCode      String    @default("") @map("failure_code")
-  failureMessage   String    @default("") @map("failure_message")
-  providerMetadata Json      @default("{}") @map("provider_metadata")
-  requestPayload   Json?     @map("request_payload")
-  responsePayload  Json?     @map("response_payload")
-  rawCallback      Json?     @map("raw_callback")
-  callbackCount    Int       @default(0) @map("callback_count")
-  lastCallbackId   String    @default("") @map("last_callback_id")
-  lastCallbackAt   DateTime? @map("last_callback_at")
-  requestedAt      DateTime  @default(now()) @map("requested_at")
-  paidAt           DateTime? @map("paid_at")
-  failedAt         DateTime? @map("failed_at")
-  closedAt         DateTime? @map("closed_at")
-  providerStatus   String    @default("") @map("provider_status")
-  queryAttempts    Int       @default(0) @map("query_attempts")
-  lastQueriedAt    DateTime? @map("last_queried_at")
-  nextActionAt     DateTime? @map("next_action_at")
-  reconciliationRequired Boolean @default(false) @map("reconciliation_required")
-  reconciledAt     DateTime? @map("reconciled_at")
-  networkAttemptStartedAt DateTime? @map("network_attempt_started_at")
-  reconcileLeaseOwner String @default("") @map("reconcile_lease_owner")
-  reconcileLeaseUntil DateTime? @map("reconcile_lease_until")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
-  order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  refunds          Refund[]
-  paymentLogs      PaymentLog[]
+  id                      String       @id
+  paymentNo               String       @unique @map("payment_no")
+  orderId                 String       @map("order_id")
+  channel                 String
+  paymentMethod           String       @default("") @map("payment_method")
+  amount                  BigInt
+  currency                String       @default("CNY")
+  status                  String       @default("created")
+  merchantTradeNo         String       @unique @map("merchant_trade_no")
+  providerTradeNo         String?      @unique @map("provider_trade_no")
+  provider                String
+  requestKey              String       @unique @map("request_key")
+  failureCode             String       @default("") @map("failure_code")
+  failureMessage          String       @default("") @map("failure_message")
+  providerMetadata        Json         @default("{}") @map("provider_metadata")
+  requestPayload          Json?        @map("request_payload")
+  responsePayload         Json?        @map("response_payload")
+  rawCallback             Json?        @map("raw_callback")
+  callbackCount           Int          @default(0) @map("callback_count")
+  lastCallbackId          String       @default("") @map("last_callback_id")
+  lastCallbackAt          DateTime?    @map("last_callback_at")
+  requestedAt             DateTime     @default(now()) @map("requested_at")
+  paidAt                  DateTime?    @map("paid_at")
+  failedAt                DateTime?    @map("failed_at")
+  closedAt                DateTime?    @map("closed_at")
+  providerStatus          String       @default("") @map("provider_status")
+  queryAttempts           Int          @default(0) @map("query_attempts")
+  lastQueriedAt           DateTime?    @map("last_queried_at")
+  nextActionAt            DateTime?    @map("next_action_at")
+  reconciliationRequired  Boolean      @default(false) @map("reconciliation_required")
+  reconciledAt            DateTime?    @map("reconciled_at")
+  networkAttemptStartedAt DateTime?    @map("network_attempt_started_at")
+  reconcileLeaseOwner     String       @default("") @map("reconcile_lease_owner")
+  reconcileLeaseUntil     DateTime?    @map("reconcile_lease_until")
+  createdAt               DateTime     @default(now()) @map("created_at")
+  updatedAt               DateTime     @default(now()) @updatedAt @map("updated_at")
+  order                   Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds                 Refund[]
+  paymentLogs             PaymentLog[]
 
   @@index([orderId, createdAt])
   @@index([orderId, status])
@@ -241,38 +877,51 @@ model Payment {
 }
 
 model Refund {
-  id               String    @id
-  refundNo         String    @unique @map("refund_no")
-  orderId          String    @map("order_id")
-  paymentId        String    @map("payment_id")
-  refundAmount     BigInt    @map("refund_amount")
-  reason           String    @default("")
-  status           String    @default("pending")
-  providerRefundNo String?   @unique @map("provider_refund_no")
-  requestKey       String    @unique @map("request_key")
-  requestedBy      String    @default("") @map("requested_by")
-  approvedBy       String    @default("") @map("approved_by")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  completedAt      DateTime? @map("completed_at")
-  order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  payment          Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  items            RefundItem[]
+  id                      String              @id
+  refundNo                String              @unique @map("refund_no")
+  orderId                 String              @map("order_id")
+  paymentId               String?             @map("payment_id")
+  externalSettlementId    String?             @map("external_settlement_id")
+  refundMode              RefundMode          @default(PAYMENT) @map("refund_mode")
+  refundAmount            BigInt              @map("refund_amount")
+  providerRefundAmount    BigInt?             @map("provider_refund_amount")
+  sweetCardRefundAmount   BigInt?             @map("sweet_card_refund_amount")
+  reason                  String              @default("")
+  status                  String              @default("pending")
+  providerRefundNo        String?             @unique @map("provider_refund_no")
+  externalCompletedAt     DateTime?           @map("external_completed_at")
+  externalRefundReference String?             @map("external_refund_reference")
+  requestKey              String              @unique @map("request_key")
+  requestedBy             String              @default("") @map("requested_by")
+  approvedBy              String              @default("") @map("approved_by")
+  createdAt               DateTime            @default(now()) @map("created_at")
+  completedAt             DateTime?           @map("completed_at")
+  order                   Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment                 Payment?            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  externalSettlement      ExternalSettlement? @relation(fields: [externalSettlementId], references: [id], onDelete: Restrict)
+  items                   RefundItem[]
+  sweetCardRefund         SweetCardRefund?
+  sweetCardLedger         SweetCardLedger[]
 
   @@index([orderId, createdAt])
   @@index([paymentId, createdAt])
+  @@index([externalSettlementId, createdAt])
+  @@index([refundMode, status, createdAt])
   @@map("refunds")
 }
 
 model RefundItem {
-  id           String    @id
-  refundId     String    @map("refund_id")
-  orderItemId  String    @map("order_item_id")
-  quantity     Int
-  amountCents  BigInt    @map("amount_cents")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  refund       Refund    @relation(fields: [refundId], references: [id], onDelete: Cascade)
-  orderItem    OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  id                  String               @id
+  refundId            String               @map("refund_id")
+  orderItemId         String               @map("order_item_id")
+  quantity            Int
+  amountCents         BigInt               @map("amount_cents")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  refund              Refund               @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  orderItem           OrderItem            @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  sweetCardRefundItem SweetCardRefundItem?
 
+  @@unique([refundId, orderItemId])
   @@index([refundId])
   @@index([orderItemId])
   @@map("refund_items")
@@ -302,23 +951,27 @@ model PaymentLog {
 }
 
 model OrderItem {
-  id                  String        @id
-  orderId             String        @map("order_id")
-  productId           String        @map("product_id")
-  productNameSnapshot String        @map("product_name_snapshot")
-  skuSnapshot         String        @map("sku_snapshot")
-  unitSnapshot        String        @default("") @map("unit_snapshot")
-  unitPrice           BigInt        @map("unit_price")
-  costPriceSnapshot   BigInt        @map("cost_price_snapshot")
-  skuId               String        @default("") @map("sku_id")
-  quantity            Int
-  lineAmount          BigInt        @map("line_amount")
-  discountAmount      BigInt        @default(0) @map("discount_amount")
-  actualAmount        BigInt        @default(0) @map("actual_amount")
-  isGift              Boolean       @default(false) @map("is_gift")
-  order               Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product             InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
-  refundItems         RefundItem[]
+  id                          String                    @id
+  orderId                     String                    @map("order_id")
+  productId                   String                    @map("product_id")
+  productNameSnapshot         String                    @map("product_name_snapshot")
+  skuSnapshot                 String                    @map("sku_snapshot")
+  unitSnapshot                String                    @default("") @map("unit_snapshot")
+  unitPrice                   BigInt                    @map("unit_price")
+  costPriceSnapshot           BigInt                    @map("cost_price_snapshot")
+  skuId                       String                    @default("") @map("sku_id")
+  quantity                    Int
+  lineAmount                  BigInt                    @map("line_amount")
+  discountAmount              BigInt                    @default(0) @map("discount_amount")
+  actualAmount                BigInt                    @default(0) @map("actual_amount")
+  isGift                      Boolean                   @default(false) @map("is_gift")
+  sweetCardEligibleSnapshot   Boolean?                  @map("sweet_card_eligible_snapshot")
+  sweetCardCategoryIdSnapshot String?                   @map("sweet_card_category_id_snapshot")
+  sweetCardRedeemedAmount     BigInt                    @default(0) @map("sweet_card_redeemed_amount")
+  order                       Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product                     InventoryItem             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems                 RefundItem[]
+  sweetCardAllocations        SweetCardRedemptionItem[]
 
   @@index([orderId])
   @@index([productId])
@@ -357,6 +1010,7 @@ model StockLedger {
 
 model TransferRequest {
   id               String         @id
+  purpose          OrderPurpose   @default(REAL)
   fromStoreKey     String?
   toStoreKey       String?
   fromLocationName String         @default("")
@@ -364,42 +1018,63 @@ model TransferRequest {
   status           String         @default("pending")
   note             String         @default("")
   createdBy        String         @default("")
+  shippedBy        String         @default("")
+  shippedAt        DateTime?
+  withdrawnBy      String         @default("")
+  withdrawnAt      DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @default(now())
+  deletedAt        DateTime?
+  deletedBy        String         @default("")
+  deleteReason     String         @default("")
   items            TransferItem[]
   fromStore        Store?         @relation("TransferFrom", fields: [fromStoreKey], references: [key])
   toStore          Store?         @relation("TransferTo", fields: [toStoreKey], references: [key])
 
   @@index([fromStoreKey, status])
   @@index([toStoreKey, status])
+  @@index([deletedAt, createdAt])
 }
 
 model TransferItem {
-  id        String          @id
-  requestId String
-  itemId    String
-  quantity  Int
-  note      String          @default("")
-  request   TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  item      InventoryItem   @relation(fields: [itemId], references: [id])
+  id                          String          @id
+  requestId                   String
+  itemId                      String
+  quantity                    Int
+  quantityUnit                String          @default("legacy")
+  unitWeightGramsSnapshot     Int?
+  shippedQuantity             Int?
+  note                        String          @default("")
+  itemNameSnapshot            String          @default("")
+  itemCodeSnapshot            String          @default("")
+  categorySnapshot            String          @default("")
+  productCategoryNameSnapshot String          @default("")
+  request                     TransferRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item                        InventoryItem   @relation(fields: [itemId], references: [id])
+
+  @@unique([requestId, itemId, quantityUnit], map: "TransferItem_request_item_unit_unique")
 }
 
 model PurchaseRequest {
-  id          String         @id
-  storeKey    String
-  status      String         @default("pending")
-  supplier    String         @default("")
-  supplierId  String?
-  expectedAt  DateTime?
-  note        String         @default("")
-  createdBy   String         @default("")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @default(now())
-  items       PurchaseItem[]
-  store       Store          @relation(fields: [storeKey], references: [key], onDelete: Cascade)
-  supplierRef Supplier?      @relation(fields: [supplierId], references: [id])
+  id           String         @id
+  storeKey     String
+  status       String         @default("pending")
+  supplier     String         @default("")
+  supplierId   String?
+  expectedAt   DateTime?
+  note         String         @default("")
+  createdBy    String         @default("")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now())
+  deletedAt    DateTime?
+  deletedBy    String         @default("")
+  deleteReason String         @default("")
+  items        PurchaseItem[]
+  store        Store          @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  supplierRef  Supplier?      @relation(fields: [supplierId], references: [id])
 
   @@index([storeKey, status])
+  @@index([deletedAt, createdAt])
 }
 
 model Supplier {
@@ -448,34 +1123,110 @@ model Expense {
   @@index([storeKey, date])
 }
 
+model StoreRentHistory {
+  id               String               @id
+  storeKey         String               @map("store_key")
+  mode             StoreRentMode
+  fixedAmountCents BigInt?              @map("fixed_amount_cents")
+  percentageBps    Int?                 @map("percentage_bps")
+  percentageBasis  RentPercentageBasis? @map("percentage_basis")
+  effectiveFrom    DateTime             @map("effective_from") @db.Date
+  effectiveTo      DateTime?            @map("effective_to") @db.Date
+  reason           String               @default("")
+  createdBy        String               @default("") @map("created_by")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  store            Store                @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+
+  @@unique([storeKey, effectiveFrom])
+  @@index([storeKey, effectiveFrom, effectiveTo])
+  @@map("store_rent_histories")
+}
+
+model StoreUtilityCost {
+  id             String   @id
+  storeKey       String   @map("store_key")
+  period         DateTime @db.Date
+  estimatedCents BigInt   @map("estimated_cents")
+  actualCents    BigInt?  @map("actual_cents")
+  note           String   @default("")
+  createdBy      String   @default("") @map("created_by")
+  updatedBy      String   @default("") @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  store          Store    @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+
+  @@unique([storeKey, period])
+  @@index([period])
+  @@map("store_utility_costs")
+}
+
+model StoreLaborCostPeriod {
+  id          String                @id
+  storeKey    String                @map("store_key")
+  period      DateTime              @db.Date
+  note        String                @default("")
+  confirmedAt DateTime              @map("confirmed_at")
+  confirmedBy String                @default("") @map("confirmed_by")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @default(now()) @updatedAt @map("updated_at")
+  store       Store                 @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  entries     StoreLaborCostEntry[]
+
+  @@unique([storeKey, period])
+  @@index([period])
+  @@map("store_labor_cost_periods")
+}
+
+model StoreLaborCostEntry {
+  id          String               @id
+  periodId    String               @map("period_id")
+  category    LaborCostCategory
+  amountCents BigInt               @map("amount_cents")
+  employeeId  String?              @map("employee_id")
+  note        String               @default("")
+  createdBy   String               @default("") @map("created_by")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  period      StoreLaborCostPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee    Employee?            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([periodId, category])
+  @@index([employeeId])
+  @@map("store_labor_cost_entries")
+}
+
 model Member {
-  id           String              @id
-  name         String
-  phone        String              @unique
-  birthday     DateTime?
-  level        Int                 @default(0)
-  points       Int                 @default(0)
-  createdAt    DateTime            @default(now())
-  consumptions MemberConsumption[]
+  id                String              @id
+  name              String
+  phone             String              @unique
+  birthday          DateTime?
+  level             Int                 @default(0)
+  points            Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  consumptions      MemberConsumption[]
+  sweetCardBindings SweetCardBinding[]
 }
 
 model Invoice {
-  id          String   @id
-  storeKey    String
-  titleType   String   @default("company")
-  companyName String   @default("")
-  taxNo       String   @default("")
-  amountCents BigInt   @default(0)
-  category    String   @default("其他")
-  email       String   @default("")
-  note        String   @default("")
-  status      String   @default("pending")
-  createdBy   String   @default("")
-  createdAt   DateTime @default(now())
-  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  id           String    @id
+  storeKey     String
+  titleType    String    @default("company")
+  companyName  String    @default("")
+  taxNo        String    @default("")
+  amountCents  BigInt    @default(0)
+  category     String    @default("其他")
+  email        String    @default("")
+  note         String    @default("")
+  status       String    @default("pending")
+  createdBy    String    @default("")
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+  deletedBy    String    @default("")
+  deleteReason String    @default("")
+  store        Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
 
   @@index([storeKey, createdAt])
   @@index([storeKey, status])
+  @@index([deletedAt, createdAt])
 }
 
 model InvoiceCompany {
@@ -487,51 +1238,57 @@ model InvoiceCompany {
 }
 
 model BigOrderBonus {
-  id          String   @id
+  id          String    @id
+  employeeId  String?   @map("employee_id") // Gate 10：稳定员工身份（employees.id）；历史行 NULL；staffKey/staffName/storeKey 为历史快照
   staffKey    String
   staffName   String
   storeKey    String
-  date        DateTime @db.Date
-  amountCents BigInt   @default(0)
-  bonusCents  BigInt   @default(0)
-  receipt     String   @default("")
-  createdBy   String   @default("")
-  createdAt   DateTime @default(now())
-  store       Store    @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  date        DateTime  @db.Date
+  amountCents BigInt    @default(0)
+  bonusCents  BigInt    @default(0)
+  receipt     String    @default("")
+  createdBy   String    @default("")
+  createdAt   DateTime  @default(now())
+  store       Store     @relation(fields: [storeKey], references: [key], onDelete: Cascade)
+  employee    Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([staffKey, createdAt])
   @@index([storeKey, createdAt])
+  @@index([employeeId, createdAt])
 }
 
 model DailyPayAdjustment {
-  id                   String   @id
-  staffName            String   @map("staff_name")
-  date                 DateTime @db.Date
-  autoPayCentsSnapshot BigInt   @default(0) @map("auto_pay_cents_snapshot")
-  adjustedPayCents     BigInt   @default(0) @map("adjusted_pay_cents")
-  reason               String   @default("")
-  active               Boolean  @default(true)
-  createdBy            String   @default("") @map("created_by")
-  updatedBy            String   @default("") @map("updated_by")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
-  version              Int      @default(1)
+  id                   String    @id
+  employeeId           String?   @map("employee_id") // Gate 9：稳定员工身份（employees.id）；历史行 NULL；staffName 仍为展示/历史快照
+  staffName            String    @map("staff_name")
+  date                 DateTime  @db.Date
+  autoPayCentsSnapshot BigInt    @default(0) @map("auto_pay_cents_snapshot")
+  adjustedPayCents     BigInt    @default(0) @map("adjusted_pay_cents")
+  reason               String    @default("")
+  active               Boolean   @default(true)
+  createdBy            String    @default("") @map("created_by")
+  updatedBy            String    @default("") @map("updated_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  version              Int       @default(1)
+  employee             Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@unique([staffName, date])
+  @@unique([employeeId, date])
   @@index([date])
   @@map("daily_pay_adjustments")
 }
 
 model DailyPayAdjustmentAuditLog {
-  id             String   @id
-  adjustmentId   String   @map("adjustment_id")
-  staffName      String   @map("staff_name")
-  date           DateTime @db.Date
-  action         String
-  beforeValue    Json?    @map("before_value")
-  afterValue     Json?    @map("after_value")
-  operatorName   String   @default("") @map("operator_name")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id           String   @id
+  adjustmentId String   @map("adjustment_id")
+  staffName    String   @map("staff_name")
+  date         DateTime @db.Date
+  action       String
+  beforeValue  Json?    @map("before_value")
+  afterValue   Json?    @map("after_value")
+  operatorName String   @default("") @map("operator_name")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([adjustmentId, createdAt])
   @@index([staffName, date])
@@ -553,57 +1310,160 @@ model MemberConsumption {
 }
 
 model PurchaseItem {
-  id          String          @id
-  requestId   String
-  itemId      String
-  orderedQty  Int
-  receivedQty Int             @default(0)
-  note        String          @default("")
-  request     PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  item        InventoryItem   @relation(fields: [itemId], references: [id])
+  id               String          @id
+  requestId        String
+  itemId           String
+  orderedQty       Int
+  receivedQty      Int             @default(0)
+  note             String          @default("")
+  itemNameSnapshot String          @default("")
+  request          PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item             InventoryItem   @relation(fields: [itemId], references: [id])
 }
 
 model MailingRecord {
-  id        String    @id
-  method    String
-  postage   String
-  fee       String?
-  address   String
-  recipient String
-  phone     String
-  remark    String    @default("")
-  status    String    @default("pending")
-  createdBy String    @default("")
-  createdAt DateTime  @default(now())
-  shippedAt DateTime?
+  id                         String    @id
+  method                     String
+  postage                    String
+  fee                        String?
+  storeKey                   String?   @map("store_key")
+  shippingTier               String?   @map("shipping_tier")
+  shippingAmountCents        Int?      @map("shipping_amount_cents")
+  shippingPaymentMode        String?   @map("shipping_payment_mode")
+  shippingPaymentConfirmedAt DateTime? @map("shipping_payment_confirmed_at")
+  shippingPaymentConfirmedBy String?   @map("shipping_payment_confirmed_by")
+  address                    String
+  recipient                  String
+  phone                      String
+  remark                     String    @default("")
+  status                     String    @default("pending")
+  createdBy                  String    @default("")
+  createdAt                  DateTime  @default(now())
+  shippedAt                  DateTime?
+  deletedAt                  DateTime?
+  deletedBy                  String    @default("")
+  deleteReason               String    @default("")
 
   @@index([status, createdAt])
+  @@index([storeKey, status, createdAt])
+  @@index([deletedAt, createdAt])
+}
+
+model SensitiveRecordAudit {
+  id            String   @id
+  action        String
+  recordType    String   @map("record_type")
+  recordId      String   @map("record_id")
+  actorUserId   String   @map("actor_user_id")
+  actorUsername String   @map("actor_username")
+  reason        String   @default("")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([recordType, recordId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("sensitive_record_audits")
+}
+
+enum OrderPurpose {
+  REAL
+  TEST
+  ACCEPTANCE_TEST
+  LEGACY_UNCLASSIFIED
+}
+
+// Independent, append-only audit/tombstone. Deliberately no order FK/cascade.
+model OrderPurposeAudit {
+  id             String       @id
+  operationKey   String       @unique
+  action         String
+  orderType      String
+  orderId        String
+  orderNo        String
+  actorId        String
+  actorRole      String
+  reason         String
+  beforePurpose  OrderPurpose?
+  afterPurpose   OrderPurpose?
+  snapshot       Json
+  safety         Json
+  deletedCounts  Json
+  transactionId  BigInt       @default(dbgenerated("txid_current()"))
+  createdAt      DateTime     @default(now())
+
+  @@index([orderType, orderId, createdAt])
+}
+
+/**
+ * 顾客自助资料采集工作流：仅负责 token、状态与正式业务记录关联。
+ */
+model CustomerServiceRequest {
+  id                     String                        @id
+  type                   String
+  storeKey               String                        @map("store_key")
+  createdByUserId        String?                       @map("created_by_user_id")
+  createdByUsername      String                        @map("created_by_username")
+  handlerUsername        String                        @map("handler_username")
+  status                 String                        @default("WAITING_CUSTOMER")
+  expiresAt              DateTime                      @map("expires_at")
+  submittedAt            DateTime?                     @map("submitted_at")
+  cancelledAt            DateTime?                     @map("cancelled_at")
+  linkedBusinessRecordId String?                       @unique @map("linked_business_record_id")
+  requestMetadata        Json                          @default("{}") @map("request_metadata")
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @default(now()) @updatedAt @map("updated_at")
+  store                  Store                         @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  createdBy              User?                         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  tokens                 CustomerServiceRequestToken[]
+
+  @@index([type, status, createdAt])
+  @@index([storeKey, status, createdAt])
+  @@index([createdByUsername, type, status])
+  @@map("customer_service_requests")
+}
+
+/**
+ * 一次性公开授权；数据库只保存 SHA-256 hash，不保存二维码明文 token。
+ */
+model CustomerServiceRequestToken {
+  id            String                 @id
+  requestId     String                 @map("request_id")
+  tokenHash     String                 @unique @map("token_hash")
+  status        String                 @default("ACTIVE")
+  expiresAt     DateTime               @map("expires_at")
+  consumedAt    DateTime?              @map("consumed_at")
+  invalidatedAt DateTime?              @map("invalidated_at")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  request       CustomerServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, status])
+  @@index([expiresAt, status])
+  @@map("customer_service_request_tokens")
 }
 
 model AssetFile {
-  id               String    @id
+  id               String             @id
   name             String
   category         String
-  company          String    @default("")
-  storeKey         String    @default("") @map("store_key")
-  thumbnail        String    @default("")
-  tags             Json      @default("[]")
-  description      String    @default("")
-  fileType         String    @default("") @map("file_type")
-  fileSize         Int       @default(0) @map("file_size")
-  storageProvider  String    @default("local") @map("storage_provider")
-  storageKey       String    @default("") @map("storage_key")
-  currentVersion   Int       @default(1) @map("current_version")
-  issuingAuthority String    @default("") @map("issuing_authority")
-  licenseNo        String    @default("") @map("license_no")
-  issueDate        DateTime? @map("issue_date")
-  expiryDate       DateTime? @map("expiry_date")
-  isPermanent      Boolean   @default(false) @map("is_permanent")
-  deletedAt        DateTime? @map("deleted_at")
-  createdBy        String    @default("") @map("created_by")
-  updatedBy        String    @default("") @map("updated_by")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  company          String             @default("")
+  storeKey         String             @default("") @map("store_key")
+  thumbnail        String             @default("")
+  tags             Json               @default("[]")
+  description      String             @default("")
+  fileType         String             @default("") @map("file_type")
+  fileSize         Int                @default(0) @map("file_size")
+  storageProvider  String             @default("local") @map("storage_provider")
+  storageKey       String             @default("") @map("storage_key")
+  currentVersion   Int                @default(1) @map("current_version")
+  issuingAuthority String             @default("") @map("issuing_authority")
+  licenseNo        String             @default("") @map("license_no")
+  issueDate        DateTime?          @map("issue_date")
+  expiryDate       DateTime?          @map("expiry_date")
+  isPermanent      Boolean            @default(false) @map("is_permanent")
+  deletedAt        DateTime?          @map("deleted_at")
+  createdBy        String             @default("") @map("created_by")
+  updatedBy        String             @default("") @map("updated_by")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @default(now()) @updatedAt @map("updated_at")
   versions         AssetFileVersion[]
 
   @@index([category, deletedAt])
@@ -630,7 +1490,7 @@ model AssetFileVersion {
   name            String
   fileType        String    @default("") @map("file_type")
   fileSize        Int       @default(0) @map("file_size")
-  dataUrl         String    @db.Text @map("data_url")
+  dataUrl         String    @map("data_url") @db.Text
   storageProvider String    @default("local") @map("storage_provider")
   storageKey      String    @default("") @map("storage_key")
   uploaderId      String    @default("") @map("uploader_id")
@@ -688,8 +1548,11 @@ model AssetReminder {
 
 model PayrollNotice {
   id             String    @id
-  periodType     String    @map("period_type") // month（全职月结）| week（兼职周结）
-  periodKey      String    @map("period_key") // 月: '2026-08'；周: 周起始日 '2026-08-10'
+  employeeId     String?   @map("employee_id") // Gate 18：稳定工资主体（employees.id）；历史行 NULL；employeeName/storeKey/targetUsername 为发放时快照
+  periodType     String    @map("period_type") // month | week | custom
+  periodKey      String    @map("period_key") // 月 YYYY-MM；周 周一 YYYY-MM-DD；自定义 start~end
+  periodStart    DateTime  @map("period_start") @db.Date
+  periodEnd      DateTime  @map("period_end") @db.Date
   employeeName   String    @map("employee_name")
   storeKey       String    @map("store_key")
   targetUsername String    @default("") @map("target_username")
@@ -704,53 +1567,60 @@ model PayrollNotice {
   deletedBy      String    @default("") @map("deleted_by")
   createdBy      String    @default("") @map("created_by")
   createdAt      DateTime  @default(now()) @map("created_at")
+  employee       Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([targetUsername, status])
   @@index([periodKey])
+  @@index([employeeId, periodType, periodKey])
+  @@index([employeeId, periodStart, periodEnd])
   @@map("payroll_notices")
 }
 
 // ================= 审批中心（通用审批引擎）=================
 
-/** 审批模板：工资审批 / 报销审批（后续可扩展请假/调休/采购/报损） */
+/**
+ * 审批模板：工资审批 / 报销审批（后续可扩展请假/调休/采购/报损）
+ */
 model ApprovalTemplate {
-  key          String   @id // payroll | expense
+  key          String            @id // payroll | expense
   name         String
-  description  String   @default("")
+  description  String            @default("")
   schema       Json // 表单字段定义 [{key,label,type,required,options?,placeholder?}]
-  approverRule Json     @map("approver_rule") // {type:'role', role:'developer'} 或 {type:'username', username:'budu'}
-  ccRule       Json     @map("cc_rule") // [{type:'role',role:'finance'},{type:'staffField',field:'employee'},{type:'submitter'}]
-  active       Boolean  @default(true)
-  sort         Int      @default(0)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  approverRule Json              @map("approver_rule") // {type:'role', role:'developer'} 或 {type:'username', username:'budu'}
+  ccRule       Json              @map("cc_rule") // [{type:'role',role:'finance'},{type:'staffField',field:'employee'},{type:'submitter'}]
+  active       Boolean           @default(true)
+  sort         Int               @default(0)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @default(now()) @updatedAt @map("updated_at")
   requests     ApprovalRequest[]
 
   @@map("approval_templates")
 }
 
-/** 审批单：一张单据一条记录，表单数据存 form_data（金额以分存 Number） */
+/**
+ * 审批单：一张单据一条记录，表单数据存 form_data（金额以分存 Number）
+ */
 model ApprovalRequest {
-  id               String             @id
-  requestNo        String             @unique @map("request_no") // AP-YYYYMMDD-XXXX
-  templateKey      String             @map("template_key")
-  title            String             @default("")
-  status           String             @default("draft") // draft|pending|approved|rejected|withdrawn|archived
-  formData         Json               @map("form_data")
-  amountCents      BigInt             @default(0) @map("amount_cents") // 冗余金额（分），列表排序/财务汇总
-  submitterUsername String             @map("submitter_username")
-  submitterName    String             @default("") @map("submitter_name")
-  approvedAt       DateTime?          @map("approved_at")
-  archivedAt       DateTime?          @map("archived_at")
-  createdAt        DateTime           @default(now()) @map("created_at")
-  updatedAt        DateTime           @default(now()) @updatedAt @map("updated_at")
-  template         ApprovalTemplate   @relation(fields: [templateKey], references: [key], onDelete: Restrict)
-  nodes            ApprovalNode[]
-  ccs              ApprovalCc[]
-  attachments      ApprovalAttachment[]
-  comments         ApprovalComment[]
-  logs             ApprovalLog[]
-  notifications    ApprovalNotification[]
+  id                String                 @id
+  requestNo         String                 @unique @map("request_no") // AP-YYYYMMDD-XXXX
+  templateKey       String                 @map("template_key")
+  title             String                 @default("")
+  status            String                 @default("draft") // draft|pending|approved|rejected|withdrawn|archived
+  formData          Json                   @map("form_data")
+  amountCents       BigInt                 @default(0) @map("amount_cents") // 冗余金额（分），列表排序/财务汇总
+  submitterUsername String                 @map("submitter_username")
+  submitterName     String                 @default("") @map("submitter_name")
+  approvedAt        DateTime?              @map("approved_at")
+  archivedAt        DateTime?              @map("archived_at")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @default(now()) @updatedAt @map("updated_at")
+  template          ApprovalTemplate       @relation(fields: [templateKey], references: [key], onDelete: Restrict)
+  nodes             ApprovalNode[]
+  ccs               ApprovalCc[]
+  attachments       ApprovalAttachment[]
+  comments          ApprovalComment[]
+  logs              ApprovalLog[]
+  notifications     ApprovalNotification[]
 
   @@index([submitterUsername, status])
   @@index([status, createdAt])
@@ -758,17 +1628,19 @@ model ApprovalRequest {
   @@map("approval_requests")
 }
 
-/** 审批节点：提交人 → 审批人 → 抄送人（抄送不进节点表）；支持未来多级审批 */
+/**
+ * 审批节点：提交人 → 审批人 → 抄送人（抄送不进节点表）；支持未来多级审批
+ */
 model ApprovalNode {
-  id               String          @id
-  requestId        String          @map("request_id")
-  nodeIndex        Int             @map("node_index")
-  approverUsername String          @map("approver_username")
-  status           String          @default("pending") // pending|approved|rejected
-  comment          String          @default("")
-  actedAt          DateTime?       @map("acted_at")
-  createdAt        DateTime        @default(now()) @map("created_at")
-  request          ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  id               String            @id
+  requestId        String            @map("request_id")
+  nodeIndex        Int               @map("node_index")
+  approverUsername String            @map("approver_username")
+  status           String            @default("pending") // pending|approved|rejected
+  comment          String            @default("")
+  actedAt          DateTime?         @map("acted_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  request          ApprovalRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
   comments         ApprovalComment[]
 
   @@index([requestId])
@@ -776,40 +1648,46 @@ model ApprovalNode {
   @@map("approval_nodes")
 }
 
-/** 抄送：仅结果通知，非审批节点 */
+/**
+ * 抄送：仅结果通知，非审批节点
+ */
 model ApprovalCc {
-  id          String          @id
-  requestId   String          @map("request_id")
-  ccUsername  String          @map("cc_username")
-  ccName      String          @default("") @map("cc_name")
-  readAt      DateTime?       @map("read_at")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  request     ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  id         String          @id
+  requestId  String          @map("request_id")
+  ccUsername String          @map("cc_username")
+  ccName     String          @default("") @map("cc_name")
+  readAt     DateTime?       @map("read_at")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  request    ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@unique([requestId, ccUsername])
   @@index([ccUsername, readAt])
   @@map("approval_ccs")
 }
 
-/** 附件：图片/PDF/Excel，永久保存（PG data_url，可切 COS），在线预览 */
+/**
+ * 附件：图片/PDF/Excel，永久保存（PG data_url，可切 COS），在线预览
+ */
 model ApprovalAttachment {
-  id               String          @id
-  requestId        String?         @map("request_id") // 草稿期可空，提交时回填
+  id               String           @id
+  requestId        String?          @map("request_id") // 草稿期可空，提交时回填
   name             String
-  fileType         String          @default("") @map("file_type")
-  fileSize         Int             @default(0) @map("file_size")
-  dataUrl          String          @db.Text @map("data_url")
-  storageProvider  String          @default("local") @map("storage_provider")
-  storageKey       String          @default("") @map("storage_key")
-  uploaderUsername String          @default("") @map("uploader_username")
-  createdAt        DateTime        @default(now()) @map("created_at")
+  fileType         String           @default("") @map("file_type")
+  fileSize         Int              @default(0) @map("file_size")
+  dataUrl          String           @map("data_url") @db.Text
+  storageProvider  String           @default("local") @map("storage_provider")
+  storageKey       String           @default("") @map("storage_key")
+  uploaderUsername String           @default("") @map("uploader_username")
+  createdAt        DateTime         @default(now()) @map("created_at")
   request          ApprovalRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@index([requestId])
   @@map("approval_attachments")
 }
 
-/** 审批意见：通过/驳回时的说明 */
+/**
+ * 审批意见：通过/驳回时的说明
+ */
 model ApprovalComment {
   id        String          @id
   requestId String          @map("request_id")
@@ -825,7 +1703,9 @@ model ApprovalComment {
   @@map("approval_comments")
 }
 
-/** 操作日志：提交/审批/撤回/归档/重新提交 */
+/**
+ * 操作日志：提交/审批/撤回/归档/重新提交
+ */
 model ApprovalLog {
   id        String          @id
   requestId String          @map("request_id")
@@ -839,7 +1719,9 @@ model ApprovalLog {
   @@map("approval_logs")
 }
 
-/** 站内通知：待办/结果/抄送；channel 预留微信/企微扩展 */
+/**
+ * 站内通知：待办/结果/抄送；channel 预留微信/企微扩展
+ */
 model ApprovalNotification {
   id        String          @id
   requestId String          @map("request_id")
@@ -860,47 +1742,53 @@ model ApprovalNotification {
 // ==================== 通知中心（Notification Center）====================
 // 唯一通知入口：业务模块只调用通知中心，通道（站内/微信/APP/短信/邮件）由中心统一派发
 
-/** 通知模板：标题/内容占位符渲染、默认优先级、跳转目标 */
+/**
+ * 通知模板：标题/内容占位符渲染、默认优先级、跳转目标
+ */
 model NotificationTemplate {
-  key          String  @id
-  name         String
-  description  String  @default("")
-  titleTpl     String
-  contentTpl   String
-  target       String  @default("") // 跳转目标：staff-payroll / approval / inventory-transfer / finance-invoice / store-mailing / asset-center 等
-  defaultPriority String @default("normal") // high | normal | low
-  active       Boolean @default(true)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @default(now()) @map("updated_at")
+  key             String   @id
+  name            String
+  description     String   @default("")
+  titleTpl        String
+  contentTpl      String
+  target          String   @default("") // 跳转目标：staff-payroll / approval / inventory-transfer / finance-invoice / store-mailing / asset-center 等
+  defaultPriority String   @default("normal") // high | normal | low
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @map("updated_at")
 
   @@map("notification_templates")
 }
 
-/** 站内通知消息：模板/优先级/已读未读/删除/签收 */
+/**
+ * 站内通知消息：模板/优先级/已读未读/删除/签收
+ */
 model Notification {
-  id          String   @id
+  id          String    @id
   username    String
-  templateKey String   @default("") @map("template_key")
+  templateKey String    @default("") @map("template_key")
   title       String
   content     String
-  priority    String   @default("normal") // high | normal | low
-  status      String   @default("unread") // unread | read | deleted
-  ackStatus   String   @default("none") @map("ack_status") // none | pending | confirmed（签收）
+  priority    String    @default("normal") // high | normal | low
+  status      String    @default("unread") // unread | read | deleted
+  ackStatus   String    @default("none") @map("ack_status") // none | pending | confirmed（签收）
   ackAt       DateTime? @map("ack_at")
-  ackBy       String   @default("") @map("ack_by")
-  target      String   @default("") // 跳转目标（模板或业务指定）
-  refType     String   @default("") @map("ref_type")
-  refId       String   @default("") @map("ref_id")
+  ackBy       String    @default("") @map("ack_by")
+  target      String    @default("") // 跳转目标（模板或业务指定）
+  refType     String    @default("") @map("ref_type")
+  refId       String    @default("") @map("ref_id")
   readAt      DateTime? @map("read_at")
   deletedAt   DateTime? @map("deleted_at")
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([username, status])
   @@index([username, createdAt])
   @@map("notifications")
 }
 
-/** 通知投递记录：通道扩展留痕（inapp/wechat/wecom/email/sms/app） */
+/**
+ * 通知投递记录：通道扩展留痕（inapp/wechat/wecom/email/sms/app）
+ */
 model NotificationDelivery {
   id             String   @id
   notificationId String   @map("notification_id")
@@ -913,15 +1801,17 @@ model NotificationDelivery {
   @@map("notification_deliveries")
 }
 
-/** 微信绑定：扫码授权一次建立绑定，通知中心据此推送个人微信提醒 */
+/**
+ * 微信绑定：扫码授权一次建立绑定，通知中心据此推送个人微信提醒
+ */
 model WechatBinding {
-  id        String   @id
+  id        String    @id
   username  String
-  channel   String   @default("wecom") // wecom 企业微信 | mp 公众号
+  channel   String    @default("wecom") // wecom 企业微信 | mp 公众号
   openId    String
-  nickname  String   @default("")
-  status    String   @default("active") // active | revoked
-  boundAt   DateTime @default(now()) @map("bound_at")
+  nickname  String    @default("")
+  status    String    @default("active") // active | revoked
+  boundAt   DateTime  @default(now()) @map("bound_at")
   revokedAt DateTime? @map("revoked_at")
 
   @@unique([username, channel])
@@ -929,7 +1819,9 @@ model WechatBinding {
   @@map("wechat_bindings")
 }
 
-/** 微信扫码绑定的一次性 state：只保存随机票据哈希，防伪造与重放 */
+/**
+ * 微信扫码绑定的一次性 state：只保存随机票据哈希，防伪造与重放
+ */
 model WechatBindState {
   id        String    @id
   stateHash String    @unique @map("state_hash")
@@ -944,7 +1836,9 @@ model WechatBindState {
   @@map("wechat_bind_states")
 }
 
-/** 微信绑定安全审计：不保存完整 userid/openid，仅保存脱敏提示 */
+/**
+ * 微信绑定安全审计：不保存完整 userid/openid，仅保存脱敏提示
+ */
 model WechatBindingAuditLog {
   id             String   @id
   bindingId      String   @default("") @map("binding_id")
@@ -964,29 +1858,34 @@ model WechatBindingAuditLog {
 
 /// 员工唯一主档：employeeNo 对外可读唯一编号；userId 关联登录账号（可空）
 model Employee {
-  id               String   @id
-  employeeNo       String   @unique @map("employee_no") // BUDU-0001 起，唯一、不随调店/调岗/调薪变化
-  name             String
-  status           String   @default("ACTIVE") // PROBATION | ACTIVE | LEAVE | SUSPENDED | RESIGNED
-  employmentType   String   @default("fulltime") @map("employment_type") // fulltime 全职 | parttime 兼职 | intern 实习 | other 其他（兼容现有枚举）
-  hireDate         DateTime? @map("hire_date")
-  currentStoreKey  String   @default("") @map("current_store_key")
-  userId           String?  @map("user_id")
-  position         String   @default("") // 当前岗位
-  level            String   @default("") // 当前职级
-  avatar           String   @default("")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+  id              String    @id
+  employeeNo      String    @unique @map("employee_no") // BUDU-0001 起，唯一、不随调店/调岗/调薪变化
+  name            String
+  status          String    @default("ACTIVE") // PROBATION | ACTIVE | LEAVE | SUSPENDED | RESIGNED
+  employmentType  String    @default("fulltime") @map("employment_type") // fulltime 全职 | parttime 兼职 | intern 实习 | other 其他（兼容现有枚举）
+  hireDate        DateTime? @map("hire_date")
+  currentStoreKey String    @default("") @map("current_store_key")
+  userId          String?   @map("user_id")
+  position        String    @default("") // 当前岗位
+  level           String    @default("") // 当前职级
+  avatar          String    @default("")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  profile          EmployeeProfile?
-  bankAccounts     EmployeeBankAccount[]
-  contracts        EmployeeContract[]
-  salaryHistory    EmployeeSalaryHistory[]
-  storeHistory     EmployeeStoreHistory[]
-  positionHistory  EmployeePositionHistory[]
-  statusHistory    EmployeeStatusHistory[]
-  documents        EmployeeDocument[]
-  auditLogs        EmployeeAuditLog[]
+  profile             EmployeeProfile?
+  bankAccounts        EmployeeBankAccount[]
+  contracts           EmployeeContract[]
+  salaryHistory       EmployeeSalaryHistory[]
+  storeHistory        EmployeeStoreHistory[]
+  positionHistory     EmployeePositionHistory[]
+  statusHistory       EmployeeStatusHistory[]
+  documents           EmployeeDocument[]
+  auditLogs           EmployeeAuditLog[]
+  dailyStoreStaff     DailyStoreStaff[]
+  dailyPayAdjustments DailyPayAdjustment[]
+  bigOrderBonuses     BigOrderBonus[]
+  payrollNotices      PayrollNotice[]
+  laborCostEntries    StoreLaborCostEntry[]
 
   @@index([status])
   @@index([currentStoreKey])
@@ -995,150 +1894,157 @@ model Employee {
 
 /// 基本资料 + 紧急联系人 + 身份信息（身份证号加密存储）
 model EmployeeProfile {
-  id                 String   @id
-  employeeId         String   @unique @map("employee_id")
-  gender             String   @default("")
-  birthDate          DateTime? @map("birth_date")
-  phone              String   @default("")
-  backupPhone        String   @default("") @map("backup_phone")
-  email              String   @default("")
-  wechat             String   @default("")
-  nationality        String   @default("")
-  city               String   @default("")
-  address            String   @default("")
-  idType             String   @default("identity") @map("id_type") // identity 身份证 | passport 护照 | other
-  idNumberEnc        String   @default("") @map("id_number_enc") // AES-256-GCM 加密
-  idNumberLast4      String   @default("") @map("id_number_last4") // 用于掩码展示 1101********1234
-  idNumberMasked     String   @default("") @map("id_number_masked") // 完整掩码 110101********1234
-  idExpiryDate       DateTime? @map("id_expiry_date")
-  idPermanent        Boolean  @default(false) @map("id_permanent")
-  emergencyName      String   @default("") @map("emergency_name")
-  emergencyRelation  String   @default("") @map("emergency_relation")
-  emergencyPhone     String   @default("") @map("emergency_phone")
-  emergencyBackup    String   @default("") @map("emergency_backup")
-  emergencyNote      String   @default("") @map("emergency_note")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+  id                String    @id
+  employeeId        String    @unique @map("employee_id")
+  gender            String    @default("")
+  birthDate         DateTime? @map("birth_date")
+  phone             String    @default("")
+  backupPhone       String    @default("") @map("backup_phone")
+  email             String    @default("")
+  wechat            String    @default("")
+  nationality       String    @default("")
+  city              String    @default("")
+  address           String    @default("")
+  idType            String    @default("identity") @map("id_type") // identity 身份证 | passport 护照 | other
+  idNumberEnc       String    @default("") @map("id_number_enc") // AES-256-GCM 加密
+  idNumberLast4     String    @default("") @map("id_number_last4") // 用于掩码展示 1101********1234
+  idNumberMasked    String    @default("") @map("id_number_masked") // 完整掩码 110101********1234
+  idExpiryDate      DateTime? @map("id_expiry_date")
+  idPermanent       Boolean   @default(false) @map("id_permanent")
+  emergencyName     String    @default("") @map("emergency_name")
+  emergencyRelation String    @default("") @map("emergency_relation")
+  emergencyPhone    String    @default("") @map("emergency_phone")
+  emergencyBackup   String    @default("") @map("emergency_backup")
+  emergencyNote     String    @default("") @map("emergency_note")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  employee           Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@map("employee_profiles")
 }
 
 /// 工资银行卡（卡号加密存储；默认只返回掩码）
 model EmployeeBankAccount {
-  id             String   @id
-  employeeId     String   @map("employee_id")
-  accountName    String   @default("") @map("account_name")
-  cardNumberEnc  String   @map("card_number_enc") // AES-256-GCM 加密
-  cardLast4      String   @map("card_last4") // 掩码展示 **** **** **** 6288
-  bankName       String   @default("") @map("bank_name")
-  bankBranch     String   @default("") @map("bank_branch")
-  bankCode       String   @default("") @map("bank_code") // 联行号
-  isPayroll      Boolean  @default(true) @map("is_payroll") // 是否工资卡
-  status         String   @default("active") // active | inactive
-  effectiveDate  DateTime? @map("effective_date")
-  note           String   @default("")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  id            String    @id
+  employeeId    String    @map("employee_id")
+  accountName   String    @default("") @map("account_name")
+  cardNumberEnc String    @map("card_number_enc") // AES-256-GCM 加密
+  cardLast4     String    @map("card_last4") // 掩码展示 **** **** **** 6288
+  bankName      String    @default("") @map("bank_name")
+  bankBranch    String    @default("") @map("bank_branch")
+  bankCode      String    @default("") @map("bank_code") // 联行号
+  isPayroll     Boolean   @default(true) @map("is_payroll") // 是否工资卡
+  status        String    @default("active") // active | inactive
+  effectiveDate DateTime? @map("effective_date")
+  note          String    @default("")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, status])
   @@map("employee_bank_accounts")
 }
 
 /// 劳动合同（一期记录；到期提醒二期）
 model EmployeeContract {
-  id               String   @id
-  employeeId       String   @map("employee_id")
-  contractType     String   @default("") @map("contract_type")
-  contractNo       String   @default("") @map("contract_no")
-  signDate         DateTime? @map("sign_date")
-  startDate        DateTime? @map("start_date")
-  endDate          DateTime? @map("end_date")
-  isIndefinite     Boolean  @default(false) @map("is_indefinite") // 无固定期限
-  probationMonths  Int      @default(0) @map("probation_months")
-  status           String   @default("active") // active 有效 | expiring 即将到期 | expired 已到期 | terminated 已终止
-  note             String   @default("")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+  id              String    @id
+  employeeId      String    @map("employee_id")
+  contractType    String    @default("") @map("contract_type")
+  contractNo      String    @default("") @map("contract_no")
+  signDate        DateTime? @map("sign_date")
+  startDate       DateTime? @map("start_date")
+  endDate         DateTime? @map("end_date")
+  isIndefinite    Boolean   @default(false) @map("is_indefinite") // 无固定期限
+  probationMonths Int       @default(0) @map("probation_months")
+  status          String    @default("active") // active 有效 | expiring 即将到期 | expired 已到期 | terminated 已终止
+  note            String    @default("")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, status])
   @@map("employee_contracts")
 }
 
 /// 调薪历史（不可覆盖；每次调整追加一条）
 model EmployeeSalaryHistory {
-  id           String   @id
-  employeeId   String   @map("employee_id")
+  id            String   @id
+  employeeId    String   @map("employee_id")
   effectiveDate DateTime @map("effective_date")
-  oldValue     String   @default("") @map("old_value") // 如 25 元/h
-  newValue     String   @default("") @map("new_value")
-  salaryType   String   @default("") @map("salary_type") // hourly 时薪 | monthly 月薪 | other
-  reason       String   @default("") // 转正调薪 / 年度调薪 ...
-  operatorName String   @default("") @map("operator_name")
-  createdAt    DateTime @default(now()) @map("created_at")
+  oldValue      String   @default("") @map("old_value") // 如 25 元/h
+  newValue      String   @default("") @map("new_value")
+  salaryType    String   @default("") @map("salary_type") // hourly 时薪 | monthly 月薪 | other
+  reason        String   @default("") // 转正调薪 / 年度调薪 ...
+  operatorName  String   @default("") @map("operator_name")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, effectiveDate])
   @@map("employee_salary_history")
 }
 
 /// 调店历史
 model EmployeeStoreHistory {
-  id           String   @id
-  employeeId   String   @map("employee_id")
+  id            String   @id
+  employeeId    String   @map("employee_id")
   effectiveDate DateTime @map("effective_date")
-  fromStoreKey String   @default("") @map("from_store_key")
-  toStoreKey   String   @default("") @map("to_store_key")
-  reason       String   @default("")
-  operatorName String   @default("") @map("operator_name")
-  createdAt    DateTime @default(now()) @map("created_at")
+  fromStoreKey  String   @default("") @map("from_store_key")
+  toStoreKey    String   @default("") @map("to_store_key")
+  reason        String   @default("")
+  operatorName  String   @default("") @map("operator_name")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, effectiveDate])
   @@map("employee_store_history")
 }
 
 /// 调岗 / 职级变更历史
 model EmployeePositionHistory {
-  id           String   @id
-  employeeId   String   @map("employee_id")
+  id            String   @id
+  employeeId    String   @map("employee_id")
   effectiveDate DateTime @map("effective_date")
-  fromPosition String   @default("") @map("from_position")
-  toPosition   String   @default("") @map("to_position")
-  fromLevel    String   @default("") @map("from_level")
-  toLevel      String   @default("") @map("to_level")
-  reason       String   @default("")
-  operatorName String   @default("") @map("operator_name")
-  createdAt    DateTime @default(now()) @map("created_at")
+  fromPosition  String   @default("") @map("from_position")
+  toPosition    String   @default("") @map("to_position")
+  fromLevel     String   @default("") @map("from_level")
+  toLevel       String   @default("") @map("to_level")
+  reason        String   @default("")
+  operatorName  String   @default("") @map("operator_name")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, effectiveDate])
   @@map("employee_position_history")
 }
 
 /// 在职状态历史（入职/转正/离职/返聘；离职 ≠ 删除）
 model EmployeeStatusHistory {
-  id                String   @id
-  employeeId        String   @map("employee_id")
-  action            String   @map("action") // HIRE | PROBATION_PASS | LEAVE | SUSPEND | RESIGN | REHIRE
-  effectiveDate     DateTime @map("effective_date")
-  fromStatus        String   @default("") @map("from_status")
-  toStatus          String   @default("") @map("to_status")
-  lastWorkDate      DateTime? @map("last_work_date")
-  resignType        String   @default("") @map("resign_type") // voluntary 主动 | company 公司 | other
-  resignReason      String   @default("") @map("resign_reason")
-  handoverStatus    String   @default("") @map("handover_status")
-  salarySettled     Boolean  @default(false) @map("salary_settled")
-  propertyReturned  Boolean  @default(false) @map("property_returned")
-  accountDisabled   Boolean  @default(false) @map("account_disabled")
-  rehireAllowed     Boolean  @default(true) @map("rehire_allowed")
-  note              String   @default("")
-  operatorName      String   @default("") @map("operator_name")
-  createdAt         DateTime @default(now()) @map("created_at")
+  id               String    @id
+  employeeId       String    @map("employee_id")
+  action           String    @map("action") // HIRE | PROBATION_PASS | LEAVE | SUSPEND | RESIGN | REHIRE
+  effectiveDate    DateTime  @map("effective_date")
+  fromStatus       String    @default("") @map("from_status")
+  toStatus         String    @default("") @map("to_status")
+  lastWorkDate     DateTime? @map("last_work_date")
+  resignType       String    @default("") @map("resign_type") // voluntary 主动 | company 公司 | other
+  resignReason     String    @default("") @map("resign_reason")
+  handoverStatus   String    @default("") @map("handover_status")
+  salarySettled    Boolean   @default(false) @map("salary_settled")
+  propertyReturned Boolean   @default(false) @map("property_returned")
+  accountDisabled  Boolean   @default(false) @map("account_disabled")
+  rehireAllowed    Boolean   @default(true) @map("rehire_allowed")
+  note             String    @default("")
+  operatorName     String    @default("") @map("operator_name")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
-  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, effectiveDate])
   @@map("employee_status_history")
 }
@@ -1157,7 +2063,8 @@ model EmployeeDocument {
   uploadedBy   String   @default("") @map("uploaded_by")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, documentType])
   @@map("employee_documents")
 }
@@ -1175,7 +2082,8 @@ model EmployeeAuditLog {
   operatorRole String   @default("") @map("operator_role")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
   @@index([employeeId, createdAt])
   @@index([action, createdAt])
   @@map("employee_audit_logs")
@@ -1186,12 +2094,607 @@ model Schedule {
   id        String   @id
   weekStart String   @map("week_start") // 周一起始日 YYYY-MM-DD
   storeKey  String   @map("store_key")
-  date      String   // YYYY-MM-DD（周内某天）
-  shifts    Json     // [{ staff, time, note }]
+  date      String // YYYY-MM-DD（周内某天）
+  shifts    Json // [{ employeeId, staff, time, note }]；staff 仅展示快照，routing 只认 employeeId
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@unique([weekStart, storeKey, date])
   @@index([weekStart])
   @@map("schedules")
+}
+
+model SweetCardBatch {
+  id                      String                @id
+  name                    String
+  purpose                 String                @default("")
+  businessPurpose         SweetCardBatchPurpose @map("business_purpose")
+  faceValueCents          BigInt                @map("face_value_cents")
+  cardCount               Int                   @map("card_count")
+  totalInitialAmountCents BigInt                @map("total_initial_amount_cents")
+  validityType            SweetCardValidityType @map("validity_type")
+  carrierType             SweetCardCarrierType  @map("carrier_type")
+  bindingMode             SweetCardBindingMode  @map("binding_mode")
+  giftingScenario         String                @default("") @map("gifting_scenario")
+  presentationTemplateKey String                @default("minimal-v1") @map("presentation_template_key")
+  createdById             String                @map("created_by_id")
+  createdByName           String                @default("") @map("created_by_name")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  archivedAt              DateTime?             @map("archived_at")
+  accounts                SweetCardAccount[]
+  auditLogs               SweetCardAuditLog[]
+  issueOperation          SweetCardIssueOperation?
+
+  @@index([createdAt])
+  @@index([businessPurpose, createdAt])
+  @@index([archivedAt, createdAt])
+  @@map("sweet_card_batches")
+}
+
+/// Durable request identity for one completed batch issuance. The row and the
+/// entire value issuance commit atomically; absence therefore never means
+/// "PENDING", and this index is not a second Batch/Ledger business authority.
+model SweetCardIssueOperation {
+  id                 String         @id
+  actorId            String         @map("actor_id")
+  requestKey         String         @map("request_key")
+  requestFingerprint String         @map("request_fingerprint")
+  batchId            String         @unique @map("batch_id")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  batch              SweetCardBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, requestKey])
+  @@index([createdAt])
+  @@map("sweet_card_issue_operations")
+}
+
+model SweetCardAccount {
+  id                 String                 @id
+  publicCardNo       String                 @unique @map("public_card_no")
+  batchId            String?                @map("batch_id")
+  initialAmountCents BigInt                 @map("initial_amount_cents")
+  balanceCents       BigInt                 @map("balance_cents")
+  validityType       SweetCardValidityType  @map("validity_type")
+  validFrom          DateTime?              @map("valid_from")
+  expiresAt          DateTime?              @map("expires_at")
+  status             SweetCardAccountStatus @default(CREATED)
+  carrierType        SweetCardCarrierType   @map("carrier_type")
+  bindingMode        SweetCardBindingMode   @map("binding_mode")
+  recipientType      String                 @default("") @map("recipient_type")
+  recipientLabel     String                 @default("") @map("recipient_label")
+  recipientCompany   String                 @default("") @map("recipient_company")
+  recipientNote      String                 @default("") @map("recipient_note")
+  giftingScenario    String                 @default("") @map("gifting_scenario")
+  issuedById         String                 @default("") @map("issued_by_id")
+  issuedByName       String                 @default("") @map("issued_by_name")
+  issuedAt           DateTime?              @map("issued_at")
+  activatedById      String                 @default("") @map("activated_by_id")
+  activatedAt        DateTime?              @map("activated_at")
+  version            Int                    @default(1)
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @default(now()) @updatedAt @map("updated_at")
+  batch              SweetCardBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  credentials        SweetCardCredential[]
+  binding            SweetCardBinding?
+  ledger             SweetCardLedger[]
+  redemptions        SweetCardRedemption[]
+  refunds            SweetCardRefund[]
+  auditLogs          SweetCardAuditLog[]
+  claimTokens        SweetCardClaimToken[]
+  claim              SweetCardClaim?
+  onlinePolicy       SweetCardOnlinePolicy?
+  reservations       SweetCardReservation[]
+  onlineSettlements  OnlineSettlement[]
+
+  @@index([batchId, status])
+  @@index([status, expiresAt])
+  @@map("sweet_card_accounts")
+}
+
+model SweetCardCredential {
+  id                     String                    @id
+  accountId              String                    @map("account_id")
+  publicTokenId          String                    @unique @map("public_token_id")
+  tokenHash              String                    @unique @map("token_hash")
+  tokenCiphertext        String                    @map("token_ciphertext")
+  tokenIv                String                    @map("token_iv")
+  tokenTag               String                    @map("token_tag")
+  status                 SweetCardCredentialStatus @default(UNACTIVATED)
+  carrierType            SweetCardCarrierType      @map("carrier_type")
+  activatedAt            DateTime?                 @map("activated_at")
+  revokedAt              DateTime?                 @map("revoked_at")
+  revokeReason           String                    @default("") @map("revoke_reason")
+  replacedByCredentialId String?                   @unique @map("replaced_by_credential_id")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  account                SweetCardAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  replacedByCredential   SweetCardCredential?      @relation("SweetCardReplacement", fields: [replacedByCredentialId], references: [id], onDelete: Restrict)
+  replacesCredential     SweetCardCredential?      @relation("SweetCardReplacement")
+  redemptions            SweetCardRedemption[]
+  auditLogs              SweetCardAuditLog[]
+
+  @@index([accountId, status])
+  @@map("sweet_card_credentials")
+}
+
+model SweetCardClaimToken {
+  id          String           @id
+  accountId   String           @map("account_id")
+  tokenHash   String           @unique @map("token_hash")
+  proofHash   String           @unique @map("proof_hash")
+  expiresAt   DateTime         @map("expires_at")
+  revokedAt   DateTime?        @map("revoked_at")
+  consumedAt  DateTime?        @map("consumed_at")
+  createdById String           @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  createdBy   User             @relation("SweetCardClaimTokenCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  claim       SweetCardClaim?
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_claim_tokens")
+}
+
+model SweetCardBinding {
+  id                 String           @id
+  accountId          String           @unique @map("account_id")
+  memberId           String?          @map("member_id")
+  userId             String?          @map("user_id")
+  channel            String           @default("ADMIN")
+  verificationMethod String           @default("ADMIN_VERIFIED") @map("verification_method")
+  boundById          String           @map("bound_by_id")
+  boundByName        String           @default("") @map("bound_by_name")
+  boundAt            DateTime         @default(now()) @map("bound_at")
+  account            SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  member             Member?          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  user               User?            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([memberId, boundAt])
+  @@index([userId, boundAt])
+  @@map("sweet_card_bindings")
+}
+
+model SweetCardClaim {
+  id             String               @id
+  accountId      String               @unique @map("account_id")
+  userId         String               @map("user_id")
+  tokenId        String               @unique @map("token_id")
+  claimedAt      DateTime             @default(now()) @map("claimed_at")
+  channel        String               @default("MINIPROGRAM")
+  sourceCarrier  SweetCardCarrierType @map("source_carrier")
+  requestKeyHash String               @map("request_key_hash")
+  account        SweetCardAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  token          SweetCardClaimToken  @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, requestKeyHash])
+  @@index([userId, claimedAt])
+  @@map("sweet_card_claims")
+}
+
+model SweetCardStorePolicy {
+  storeId       String   @id @map("store_id")
+  eligible      Boolean  @default(false)
+  updatedById   String   @default("") @map("updated_by_id")
+  updatedByName String   @default("") @map("updated_by_name")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+  store         Store    @relation(fields: [storeId], references: [key], onDelete: Restrict)
+
+  @@map("sweet_card_store_policies")
+}
+
+model SweetCardCategoryPolicy {
+  categoryId    String          @id @map("category_id")
+  blocked       Boolean         @default(true)
+  updatedById   String          @default("") @map("updated_by_id")
+  updatedByName String          @default("") @map("updated_by_name")
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at")
+  category      ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@map("sweet_card_category_policies")
+}
+
+model SweetCardRedemption {
+  id                      String                    @id
+  redemptionNo            String                    @unique @map("redemption_no")
+  orderId                 String                    @unique @map("order_id")
+  accountId               String                    @map("account_id")
+  credentialId            String                    @map("credential_id")
+  amountCents             BigInt                    @map("amount_cents")
+  eligibleSubtotalCents   BigInt                    @map("eligible_subtotal_cents")
+  ineligibleSubtotalCents BigInt                    @map("ineligible_subtotal_cents")
+  requestKey              String                    @unique @map("request_key")
+  storeIdSnapshot         String                    @map("store_id_snapshot")
+  redeemedById            String                    @map("redeemed_by_id")
+  redeemedByName          String                    @default("") @map("redeemed_by_name")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  order                   Order                     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  account                 SweetCardAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  credential              SweetCardCredential       @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+  items                   SweetCardRedemptionItem[]
+  refunds                 SweetCardRefund[]
+  ledgerEntries           SweetCardLedger[]
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_redemptions")
+}
+
+model SweetCardRedemptionItem {
+  id                  String                @id
+  redemptionId        String                @map("redemption_id")
+  orderItemId         String                @map("order_item_id")
+  productId           String                @map("product_id")
+  categoryIdSnapshot  String?               @map("category_id_snapshot")
+  eligibleSnapshot    Boolean               @map("eligible_snapshot")
+  eligibleAmountCents BigInt                @map("eligible_amount_cents")
+  redeemedAmountCents BigInt                @map("redeemed_amount_cents")
+  redemption          SweetCardRedemption   @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  orderItem           OrderItem             @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  product             InventoryItem         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems         SweetCardRefundItem[]
+
+  @@unique([redemptionId, orderItemId])
+  @@index([orderItemId])
+  @@map("sweet_card_redemption_items")
+}
+
+model SweetCardLedger {
+  id                String               @id
+  accountId         String               @map("account_id")
+  type              SweetCardLedgerType
+  amountCents       BigInt               @map("amount_cents")
+  balanceAfterCents BigInt               @map("balance_after_cents")
+  orderId           String?              @map("order_id")
+  redemptionId      String?              @map("redemption_id")
+  refundId          String?              @map("refund_id")
+  requestKey        String               @unique @map("request_key")
+  actorId           String               @default("") @map("actor_id")
+  actorName         String               @default("") @map("actor_name")
+  metadata          Json                 @default("{}")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  account           SweetCardAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  redemption        SweetCardRedemption? @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  order             Order?               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refund            Refund?              @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  onlineCapture     OnlineSettlement?    @relation("OnlineCaptureLedger")
+  onlineCredit      OnlineRefund?        @relation("OnlineRefundLedger")
+
+  @@index([accountId, createdAt])
+  @@index([orderId])
+  @@index([refundId])
+  @@map("sweet_card_ledger")
+}
+
+model SweetCardRefund {
+  id           String                @id
+  refundId     String                @unique @map("refund_id")
+  redemptionId String                @map("redemption_id")
+  accountId    String                @map("account_id")
+  amountCents  BigInt                @map("amount_cents")
+  requestKey   String                @unique @map("request_key")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  refund       Refund                @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  redemption   SweetCardRedemption   @relation(fields: [redemptionId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  items        SweetCardRefundItem[]
+
+  @@index([accountId, createdAt])
+  @@map("sweet_card_refunds")
+}
+
+model SweetCardRefundItem {
+  id                String                  @id
+  sweetCardRefundId String                  @map("sweet_card_refund_id")
+  refundItemId      String                  @unique @map("refund_item_id")
+  redemptionItemId  String                  @map("redemption_item_id")
+  amountCents       BigInt                  @map("amount_cents")
+  sweetCardRefund   SweetCardRefund         @relation(fields: [sweetCardRefundId], references: [id], onDelete: Restrict)
+  refundItem        RefundItem              @relation(fields: [refundItemId], references: [id], onDelete: Restrict)
+  redemptionItem    SweetCardRedemptionItem @relation(fields: [redemptionItemId], references: [id], onDelete: Restrict)
+
+  @@index([sweetCardRefundId])
+  @@map("sweet_card_refund_items")
+}
+
+model SweetCardAuditLog {
+  id           String               @id
+  batchId      String?              @map("batch_id")
+  accountId    String?              @map("account_id")
+  credentialId String?              @map("credential_id")
+  action       String
+  actorId      String               @default("") @map("actor_id")
+  actorName    String               @default("") @map("actor_name")
+  metadata     Json                 @default("{}")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  batch        SweetCardBatch?      @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount?    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  credential   SweetCardCredential? @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@index([batchId, createdAt])
+  @@index([action, createdAt])
+  @@map("sweet_card_audit_logs")
+}
+
+// Online authorization is explicit and independent of existing POS policy.
+model SweetCardOnlinePolicy {
+  accountId   String           @id @map("account_id")
+  enabled     Boolean          @default(false)
+  updatedById String           @map("updated_by_id")
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at")
+  account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  @@map("sweet_card_online_policies")
+}
+
+model OnlineProductPolicy {
+  id                String        @id
+  namespace         String
+  externalProductId String        @map("external_product_id")
+  externalSkuId     String        @map("external_sku_id")
+  productId         String        @map("product_id")
+  enabled           Boolean       @default(false)
+  updatedById       String        @map("updated_by_id")
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at")
+  product           InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([namespace, externalProductId, externalSkuId])
+  @@map("online_product_policies")
+}
+
+model OnlineCheckoutQuote {
+  id                 String            @id
+  userId             String            @map("user_id")
+  requestKey         String            @map("request_key")
+  requestFingerprint String            @map("request_fingerprint")
+  snapshot           Json
+  expiresAt          DateTime          @map("expires_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  user               User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  settlement         OnlineSettlement?
+  @@unique([userId, requestKey])
+  @@index([expiresAt])
+  @@map("online_checkout_quotes")
+}
+
+model OnlineSettlement {
+  id                       String               @id
+  userId                   String               @map("user_id")
+  quoteId                  String               @unique @map("quote_id")
+  namespace                String
+  externalOrderId          String               @map("external_order_id")
+  requestKey               String               @map("request_key")
+  requestFingerprint       String               @map("request_fingerprint")
+  accountId                String?              @map("account_id")
+  status                   String               @default("PENDING")
+  version                  Int                  @default(1)
+  currency                 String               @default("CNY")
+  merchandiseCents         BigInt               @map("merchandise_cents")
+  eligibleMerchandiseCents BigInt               @map("eligible_merchandise_cents")
+  shippingCents            BigInt               @map("shipping_cents")
+  totalCents               BigInt               @map("total_cents")
+  sweetCardCents           BigInt               @map("sweet_card_cents")
+  wechatCents              BigInt               @map("wechat_cents")
+  capturedLedgerId         String?              @unique @map("captured_ledger_id")
+  expiresAt                DateTime             @map("expires_at")
+  paidAt                   DateTime?            @map("paid_at")
+  cancelledAt              DateTime?            @map("cancelled_at")
+  reconciliationReason     String?              @map("reconciliation_reason")
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @default(now()) @updatedAt @map("updated_at")
+  user                     User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote                    OnlineCheckoutQuote  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  account                  SweetCardAccount?    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  capturedLedger           SweetCardLedger?     @relation("OnlineCaptureLedger", fields: [capturedLedgerId], references: [id], onDelete: Restrict)
+  reservation              SweetCardReservation?
+  tenders                  OnlineTender[]
+  refunds                  OnlineRefund[]
+  compensations            OnlinePaymentCompensation[]
+  outbox                   OnlineOutbox[]
+  @@unique([namespace, externalOrderId])
+  @@unique([userId, requestKey])
+  @@index([status, expiresAt])
+  @@map("online_settlements")
+  fulfillmentAuthorization OnlineFulfillmentAuthorization?
+  logisticsTrace           OnlineLogisticsTrace?
+  wechatShippingSync       OnlineWechatShippingSync?
+}
+
+model SweetCardReservation {
+  id           String           @id
+  settlementId String           @unique @map("settlement_id")
+  accountId    String           @map("account_id")
+  userId       String           @map("user_id")
+  requestKey   String           @unique @map("request_key")
+  amountCents  BigInt           @map("amount_cents")
+  status       String           @default("RESERVED")
+  expiresAt    DateTime         @map("expires_at")
+  capturedAt   DateTime?        @map("captured_at")
+  releasedAt   DateTime?        @map("released_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  account      SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([accountId, status])
+  @@index([status, expiresAt])
+  @@map("sweet_card_reservations")
+}
+
+model OnlineTender {
+  id                    String           @id
+  settlementId          String           @map("settlement_id")
+  type                  String
+  amountCents           BigInt           @map("amount_cents")
+  status                String           @default("PENDING")
+  merchantTradeNo       String?          @unique @map("merchant_trade_no")
+  providerTransactionId String?          @unique @map("provider_transaction_id")
+  prepayId              String?          @map("prepay_id")
+  prepayRequestedAt     DateTime?        @map("prepay_requested_at")
+  verifiedAt            DateTime?        @map("verified_at")
+  providerSuccessAt     DateTime?        @map("provider_success_at")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, type])
+  @@map("online_tenders")
+}
+
+model OnlineRefund {
+  id                      String           @id
+  settlementId            String           @map("settlement_id")
+  requestKey              String           @map("request_key")
+  requestFingerprint      String           @map("request_fingerprint")
+  approvalReason          String?          @map("approval_reason")
+  sequence                Int
+  status                  String           @default("PENDING")
+  eligibleCents           BigInt           @map("eligible_cents")
+  ineligibleCents         BigInt           @map("ineligible_cents")
+  shippingCents           BigInt           @map("shipping_cents")
+  totalCents              BigInt           @map("total_cents")
+  sweetCardCents          BigInt           @map("sweet_card_cents")
+  wechatCents             BigInt           @map("wechat_cents")
+  cumulativeEligibleCents BigInt           @map("cumulative_eligible_cents")
+  cumulativeCardCents     BigInt           @map("cumulative_card_cents")
+  items                   Json
+  merchantRefundNo        String?          @unique @map("merchant_refund_no")
+  providerRefundId        String?          @unique @map("provider_refund_id")
+  providerStatus          String?          @map("provider_status")
+  creditedLedgerId        String?          @unique @map("credited_ledger_id")
+  verifiedAt              DateTime?        @map("verified_at")
+  settledAt               DateTime?        @map("settled_at")
+  createdById             String           @map("created_by_id")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement              OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  creditedLedger          SweetCardLedger? @relation("OnlineRefundLedger", fields: [creditedLedgerId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, requestKey])
+  @@unique([settlementId, sequence])
+  @@index([status, updatedAt])
+  @@map("online_refunds")
+}
+
+model OnlinePaymentCompensation {
+  id                    String           @id
+  settlementId          String           @map("settlement_id")
+  providerTransactionId String           @unique @map("provider_transaction_id")
+  amountCents           BigInt           @map("amount_cents")
+  reason                String
+  status                String           @default("PENDING")
+  merchantRefundNo      String           @unique @map("merchant_refund_no")
+  providerRefundId      String?          @unique @map("provider_refund_id")
+  providerStatus        String?          @map("provider_status")
+  verifiedAt            DateTime?        @map("verified_at")
+  settledAt             DateTime?        @map("settled_at")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
+  settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, updatedAt])
+  @@map("online_payment_compensations")
+}
+
+model OnlineOutbox {
+  id           String           @id
+  eventKey     String           @unique @map("event_key")
+  settlementId String           @map("settlement_id")
+  version      Int
+  type         String
+  payload      Json
+  attempts     Int              @default(0)
+  availableAt  DateTime         @default(now()) @map("available_at")
+  leaseUntil   DateTime?        @map("lease_until")
+  leaseOwner   String?          @map("lease_owner")
+  deliveredAt  DateTime?        @map("delivered_at")
+  lastError    String?          @map("last_error")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@unique([settlementId, version, type])
+  @@index([deliveredAt, availableAt])
+  @@map("online_outbox")
+}
+
+
+model OnlineFulfillmentAuthorization {
+  id                 String @id
+  settlementId       String @unique @map("settlement_id")
+  requestKey         String @map("request_key")
+  requestFingerprint String @map("request_fingerprint")
+  method             String
+  carrierCode        String? @map("carrier_code")
+  trackingNo         String? @map("tracking_no")
+  actorId            String @map("actor_id")
+  settlementVersion  Int @map("settlement_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+  settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@map("online_fulfillment_authorizations")
+}
+
+/// 微信物流服务「传运单」（trace_waybill）的同步状态。
+///
+/// 这里是发货的从属事实，不是第二套发货权威：发货事实永远是
+/// OnlineFulfillmentAuthorization。物流上报失败绝不影响发货，所以本表与
+/// 发货授权分离，并且只记录「我们向微信上报过什么、结果如何」。
+/// receiverPhone 等字段是承运商查单必需信息，由 CloudBase 边缘层在发货时
+/// 转发；OS 不从 payNo 或任何哈希推导它们。
+model OnlineLogisticsTrace {
+  id              String    @id
+  settlementId    String    @unique @map("settlement_id")
+  authorizationId String    @map("authorization_id")
+  status          String    @default("PENDING") // PENDING | SYNCED | UNSUPPORTED | FAILED
+  waybillToken    String?   @map("waybill_token")
+  receiverPhone   String    @map("receiver_phone")
+  goodsName       String    @map("goods_name")
+  goodsImgUrl     String    @map("goods_img_url")
+  orderDetailPath String    @map("order_detail_path")
+  attempts        Int       @default(0)
+  availableAt     DateTime  @default(now()) @map("available_at")
+  leaseUntil      DateTime? @map("lease_until")
+  leaseOwner      String?   @map("lease_owner")
+  lastError       String?   @map("last_error")
+  syncedAt        DateTime? @map("synced_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  settlement      OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt])
+  @@map("online_logistics_traces")
+}
+
+/// 微信小程序「发货信息管理」（upload_shipping_info）的同步状态。
+///
+/// 与 OnlineLogisticsTrace 是**两个互不相干的微信能力**，状态必须独立：
+/// trace_waybill 管物流轨迹/waybill_token，upload_shipping_info 管平台侧发货
+/// 信息录入与资金结算。两者可以共用 access_token authority、发货事实、
+/// transaction_id、openid 和 worker 基础设施，但不共用状态。
+///
+/// 同样不是第二套发货权威：发货事实永远是 OnlineFulfillmentAuthorization。
+/// 微信同步失败不得撤销发货、不得让商家看到「发货失败」、不得改支付/退款/
+/// 甜意卡任何状态，也不得改写 canonical fulfillment。
+model OnlineWechatShippingSync {
+  id                 String    @id
+  settlementId       String    @unique @map("settlement_id")
+  authorizationId    String    @map("authorization_id")
+  /// PENDING_UPLOAD | PENDING_VERIFY | SYNCED | UNSUPPORTED | FAILED
+  status             String    @default("PENDING_UPLOAD")
+  /// 履约方式：DELIVERY | PICKUP。两种履约的物流事实不对称，必须真实表达
+  method             String
+  /// 微信官方 logistics_type：1 = 快递，4 = 用户自提
+  logisticsType      Int       @map("logistics_type")
+  /// 微信官方 delivery_id（不是 BUDU 页面码；韵达是 YD 而非 YUNDA）。PICKUP 为 NULL
+  deliveryId         String?   @map("delivery_id")
+  /// PICKUP 为 NULL（由 DB CHECK 强制，不许用 sentinel 冒充运单）
+  trackingNo         String?   @map("tracking_no")
+  uploadTime         DateTime  @map("upload_time")
+  /// 防止同一 settlement 被不同的物流数据覆盖
+  payloadFingerprint String    @map("payload_fingerprint")
+  attempts           Int       @default(0)
+  verifyAttempts     Int       @default(0) @map("verify_attempts")
+  /// 「唯一一次受控重传」的持久化预算，DB 侧 CHECK 0..1，服务端原子赢取
+  reuploadCount      Int       @default(0) @map("reupload_count")
+  availableAt        DateTime  @default(now()) @map("available_at")
+  leaseUntil         DateTime? @map("lease_until")
+  leaseOwner         String?   @map("lease_owner")
+  lastError          String?   @map("last_error")
+  uploadAcceptedAt   DateTime? @map("upload_accepted_at")
+  verifiedAt         DateTime? @map("verified_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+  settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt])
+  @@map("online_wechat_shipping_sync")
 }

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>budu Payroll Refresh Race</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { prepareUserDataForUser, seedCachedDataForTest, loadUserData, getStaff, getPersonnelReadState, resetUserData } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const employees = [
+      { id: 'emp-sui', name: '隋晓', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0004' },
+      { id: 'emp-other', name: '其他员工', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0099' },
+    ]
+    const entries = {
+      '2026-08|guanshe|08-31': { inc: 0, ord: 0, staff: ['隋晓'] },
+      '2026-09|guanshe|09-01': { inc: 0, ord: 0, staff: ['隋晓'] },
+      '2026-09|guanshe|09-03': { inc: 0, ord: 0, staff: ['隋晓'] },
+      '2026-09|guanshe|09-04': { inc: 0, ord: 0, staff: ['隋晓'] },
+    }
+    const authoritativeRows = {
+      '2026-08': [
+        { id: 'sui-0831', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-08-31', employeeId: 'emp-sui', staffNameSnapshot: '隋晓', actualHours: 11, payableHoursSource: 'ACTUAL_HOURS' },
+      ],
+      '2026-09': [
+        { id: 'sui-0901', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-01', employeeId: 'emp-sui', staffNameSnapshot: '隋晓', actualHours: 11, payableHoursSource: 'ACTUAL_HOURS' },
+        { id: 'sui-0903', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-03', employeeId: 'emp-sui', staffNameSnapshot: '隋晓', actualHours: 11, payableHoursSource: 'ACTUAL_HOURS' },
+        { id: 'sui-0904', storeId: 'guanshe', storeKey: 'guanshe', date: '2026-09-04', employeeId: 'emp-sui', staffNameSnapshot: '隋晓', actualHours: 11, payableHoursSource: 'ACTUAL_HOURS' },
+      ],
+    }
+
+    prepareUserDataForUser('payroll-race-test')
+    seedCachedDataForTest({
+      entries, staff: employees, removedStaff: [], stores: [{ key: 'guanshe', name: '北京官舍店' }],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {}, productImages: {},
+      bigBonuses: [], dailyPayAdjustments: [], posDaily: [], posProductSales: [], dailyStoreStaffByMonth: {},
+    })
+
+    const race = {
+      phase: new URLSearchParams(location.search).get('phase') || 'success',
+      calls: [],
+      pending: [],
+      setPhase(phase) { this.phase = phase },
+      resolvePending(rowsByMonth = authoritativeRows) {
+        const pending = this.pending.splice(0)
+        for (const request of pending) request.resolve(rowsByMonth[request.month] || [])
+      },
+    }
+    race.basePhase = 'success'
+    race.basePending = []
+    race.refreshBase = () => loadUserData()
+    race.staffCount = () => getStaff().length
+    race.readState = () => getPersonnelReadState()
+    race.staffState = () => getPersonnelReadState().status
+    race.resolveBase = () => { for (const resolve of race.basePending.splice(0)) resolve() }
+    window.__payrollRace = race
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async (input, init = {}) => {
+      const value = String(input)
+      const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (value.includes('/api/v2/daily-store-staff')) {
+        const month = new URL(value, location.origin).searchParams.get('month')
+        race.calls.push({ month, phase: race.phase })
+        if (race.phase === 'error') return json({ error: 'test refresh unavailable' }, 503)
+        if (race.phase === 'pending') {
+          return new Promise((resolve) => {
+            race.pending.push({
+              month,
+              resolve: (rows) => resolve(new Response(JSON.stringify({ ok: true, month, businessDate: '2026-09-07', rows }), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+            })
+          })
+        }
+        return json({ ok: true, month, businessDate: '2026-09-07', rows: authoritativeRows[month] || [] })
+      }
+      if (value.includes('/api/userdata')) return json({ staff: [], entries: {}, stores: [] })
+      if (value.includes('/api/v2/') && !value.includes('/daily-store-staff')) {
+        const phase = race.basePhase
+        if (phase === 'pending') await new Promise((resolve) => race.basePending.push(resolve))
+        if (phase === 'error' || (race.entriesError && value.includes('/daily-entries'))) return json({ error: 'synthetic' }, 503)
+        if (value.includes('/staff-list')) return json({ rows: employees })
+        if (value.includes('/stores')) return json({ rows: [{ key: 'guanshe', name: '北京官舍店' }] })
+        if (value.includes('/daily-entries')) return json({ rows: Object.entries(entries).map(([key, row]) => ({ ...row, date: key.slice(0,4) + '-' + key.split('|')[2], storeKey:'guanshe', staffNames:row.staff, incCents:0 })) })
+        return json({ rows: [] })
+      }
+      if (value.includes('/api/v2/staff-list') && (init.method || 'GET') === 'GET') return json({ ok: true, rows: employees })
+      if (value.includes('/api/v2/employees/backfill') || value.includes('/api/v2/staff') || value.includes('/api/v2/daily-entries')) return json({ ok: true })
+      return originalFetch(input, init)
+    }
+
+    const nativeSetInterval = window.setInterval.bind(window)
+    const nativeClearInterval = window.clearInterval.bind(window)
+    const payrollIntervals = new Map()
+    let intervalId = 91000
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay === 8000) {
+        intervalId += 1
+        payrollIntervals.set(intervalId, () => callback(...args))
+        return intervalId
+      }
+      return nativeSetInterval(callback, delay, ...args)
+    }
+    window.clearInterval = (id) => {
+      if (payrollIntervals.delete(id)) return
+      nativeClearInterval(id)
+    }
+    window.__nativeInterval = nativeSetInterval
+    window.__runPayrollSyncTick = () => {
+      for (const callback of payrollIntervals.values()) callback()
+    }
+
+    if (new URLSearchParams(location.search).has('bootstrap')) { resetUserData(); prepareUserDataForUser('payroll-race-test'); race.basePhase = 'pending'; race.refreshBase() }
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-race', username: 'developer', role: 'developer' },
+          canDelete: false, canManage: false, onBack: () => {}, onOpenProfile: () => {},
+        }),
+      ),
+    )
+  </script></body>
+</html>

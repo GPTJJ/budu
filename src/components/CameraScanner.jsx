@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, RefreshCw, X } from 'lucide-react'
 import { cameraErrorMessage, createBarcodeDecoder, normalizeAuthCode } from '../utils/cameraScanner'
 
-const channelLabel = { wechat: '微信', alipay: '支付宝' }
+const channelLabel = { wechat: '微信', alipay: '支付宝', 'sweet-card': 'budu 甜意卡' }
 
 export default function CameraScanner({ channel, onDetected, onCancel, decoderFactory = createBarcodeDecoder }) {
   const videoRef = useRef(null)
@@ -78,7 +78,7 @@ export default function CameraScanner({ channel, onDetected, onCancel, decoderFa
         }
         decoderRef.current = decoder
         setPhase('scanning')
-        setMessage('请将顾客付款码对准扫描框')
+        setMessage(channel === 'sweet-card' ? '请将 budu 甜意卡二维码对准扫描框' : '请将顾客付款码对准扫描框')
         hintTimer = window.setTimeout(() => {
           if (activeRef.current && !handledRef.current) setMessage('暂未识别，请保持付款码完整、清晰并避免反光。')
         }, 12000)
@@ -95,7 +95,7 @@ export default function CameraScanner({ channel, onDetected, onCancel, decoderFa
             }
             handledRef.current = true
             setPhase('detected')
-            setMessage(channel === 'wechat' ? '已识别付款码，正在提交支付…' : '已识别付款码，正在提交模拟支付…')
+            setMessage(channel === 'sweet-card' ? '已识别甜意卡，正在安全核验…' : channel === 'wechat' ? '已识别付款码，正在提交支付…' : '已识别付款码，正在提交支付…')
             releaseCamera()
             onDetectedRef.current(authCode)
           },
@@ -142,7 +142,7 @@ export default function CameraScanner({ channel, onDetected, onCancel, decoderFa
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${channelLabel[channel] || ''}付款码扫码`}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${channelLabel[channel] || ''}扫码`}>
       <div className="grid h-full max-h-[680px] w-full max-w-5xl overflow-hidden rounded-[28px] bg-slate-900 shadow-2xl md:grid-cols-[minmax(0,1fr)_300px]">
         <div className="relative min-h-[300px] overflow-hidden bg-black">
           <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" aria-label="摄像头预览" />
@@ -159,7 +159,7 @@ export default function CameraScanner({ channel, onDetected, onCancel, decoderFa
 
         <aside className="flex min-h-0 flex-col bg-white p-6" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
           <button onClick={cancel} className="ml-auto grid h-10 w-10 place-items-center rounded-xl bg-slate-100 text-slate-500" aria-label="关闭扫码"><X className="h-5 w-5" /></button>
-          <div className="mt-3"><div className="grid h-12 w-12 place-items-center rounded-2xl bg-budu-50 text-budu-600"><Camera className="h-6 w-6" /></div><h2 className="mt-4 text-xl font-black text-slate-900">扫描{channelLabel[channel]}付款码</h2><p className={`mt-3 text-sm leading-6 ${phase === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>{message}</p></div>
+          <div className="mt-3"><div className="grid h-12 w-12 place-items-center rounded-2xl bg-budu-50 text-budu-600"><Camera className="h-6 w-6" /></div><h2 className="mt-4 text-xl font-black text-slate-900">扫描{channelLabel[channel]}{channel === 'sweet-card' ? '二维码' : '付款码'}</h2><p className={`mt-3 text-sm leading-6 ${phase === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>{message}</p></div>
           <div className="mt-auto space-y-3 pt-6">
             <button onClick={retry} disabled={phase === 'detected'} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-budu-500 py-3.5 text-sm font-bold text-white disabled:opacity-40"><RefreshCw className="h-4 w-4" />重新扫码</button>
             <button onClick={cancel} className="w-full rounded-2xl border border-slate-200 py-3.5 text-sm font-bold text-slate-500">取消</button>

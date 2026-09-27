@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Purchase Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import InventoryRequestPage from '/src/components/InventoryRequestPage.jsx'
+    import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const stores = [
+      { key: 'guanshe', name: '北京官舍店' },
+      { key: 'tongying', name: '北京通盈中心店' },
+      { key: 'chaowai', name: '北京朝外店' },
+      { key: 'xidan', name: '北京西单店' },
+    ]
+    const suppliers = [{ id: 'supplier-1', name: '北京测试供应商', phone: '', contact: '', note: '' }]
+    const itemRows = [
+      { id: 'item-product', name: 'NO.2柠檬', category: 'product', unit: '颗', spec: '', image: '' },
+      { id: 'item-material', name: '保温袋', category: 'material', unit: '件', spec: '', image: '' },
+      { id: 'item-long', name: '特别特别长名称的采购测试展示产品', category: 'product', unit: '盒', spec: '', image: '' },
+    ]
+    const rawRecords = [
+      {
+        id: 'purchase-pending', type: 'purchase', storeKey: 'tongying', storeName: '北京通盈中心店',
+        status: 'pending', supplier: '北京测试供应商', supplierId: 'supplier-1', expectedAt: '2026-09-02T00:00:00.000Z',
+        note: '门店补货', createdBy: 'manager-a', createdAt: '2026-08-30T08:00:00.000Z', updatedAt: '2026-08-30T08:00:00.000Z',
+        items: [
+          { id: 'pi-1', itemId: 'item-product', category: 'product', productName: 'NO.2柠檬', unit: '颗', quantity: 166, receivedQty: 0, note: '' },
+          { id: 'pi-2', itemId: 'item-material', category: 'material', productName: '保温袋', unit: '件', quantity: 100, receivedQty: 0, note: '加急' },
+        ],
+      },
+      {
+        id: 'purchase-done', type: 'purchase', storeKey: 'guanshe', storeName: '北京官舍店',
+        status: 'received', supplier: '', expectedAt: null, note: '', createdBy: 'manager-b', createdAt: '2026-08-29T08:00:00.000Z', updatedAt: '2026-08-29T09:00:00.000Z',
+        items: [{ id: 'pi-3', itemId: 'item-long', category: 'product', productName: '特别特别长名称的采购测试展示产品', unit: '盒', quantity: 3, receivedQty: 3, note: '' }],
+      },
+    ]
+    const uiRecords = rawRecords.map((row) => ({ ...row, status: row.status === 'received' ? 'done' : row.status }))
+    seedCachedDataForTest({
+      stores,
+      inventoryRequests: uiRecords,
+      products: itemRows.filter((row) => row.category === 'product').map((row) => ({ id: row.id, storeKey: 'tongying', name: row.name, price: 0 })),
+    })
+
+    const state = { rawRecords, suppliers, itemRows, created: [], receiveAttempts: 0, receiveFailure: true }
+    window.__purchaseTest = state
+    window.fetch = async (url, options = {}) => {
+      const requestUrl = new URL(url, location.origin)
+      const path = requestUrl.pathname
+      const method = options.method || 'GET'
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/userdata') return json({})
+      if (path === '/api/v2/stores') return json({ rows: stores })
+      if (path === '/api/v2/items' && method === 'GET') return json({ rows: itemRows })
+      if (path === '/api/v2/suppliers' && method === 'GET') return json({ rows: suppliers })
+      if (path === '/api/v2/suppliers' && method === 'POST') {
+        const body = JSON.parse(options.body)
+        const supplier = { id: `supplier-${suppliers.length + 1}`, ...body }
+        suppliers.push(supplier)
+        return json({ ok: true, supplier })
+      }
+      if (path === '/api/v2/purchase-requests' && method === 'GET') return json({ rows: rawRecords })
+      if (path === '/api/v2/purchase-requests' && method === 'POST') {
+        const body = JSON.parse(options.body)
+        state.created.push(body)
+        const supplier = suppliers.find((row) => row.id === body.supplierId)
+        const row = {
+          id: `purchase-created-${state.created.length}`, type: 'purchase', storeKey: body.storeKey,
+          storeName: stores.find((store) => store.key === body.storeKey)?.name || body.storeKey,
+          status: 'pending', supplier: supplier?.name || '', expectedAt: body.expectedAt || null, note: body.note || '',
+          createdBy: 'developer-test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          items: body.items.map((item, index) => ({ id: `created-${index}`, itemId: itemRows.find((row) => row.name === item.name)?.id || `other-${index}`, category: item.category, productName: item.name, unit: itemRows.find((row) => row.name === item.name)?.unit || '', quantity: item.quantity, receivedQty: 0, note: item.note || '' })),
+        }
+        rawRecords.unshift(row)
+        return json({ ok: true, request: row })
+      }
+      const receive = path.match(/^\/api\/v2\/purchase-requests\/([^/]+)\/receive$/)
+      if (receive && method === 'POST') {
+        state.receiveAttempts += 1
+        await new Promise((resolve) => setTimeout(resolve, 180))
+        if (state.receiveFailure) return json({ error: '收货入库失败，库存未发生变化，请稍后重试。' }, 500)
+        const row = rawRecords.find((record) => record.id === receive[1])
+        row.status = 'received'
+        row.items = row.items.map((item) => ({ ...item, receivedQty: item.quantity }))
+        return json({ ok: true })
+      }
+      if (path === '/api/v2/transfer-requests' || path === '/api/v2/stock' || path === '/api/v2/daily-entries' || path === '/api/v2/daily-pay-adjustments' || path === '/api/v2/pos/daily-summary' || path === '/api/v2/pos/product-sales' || path === '/api/v2/big-bonuses' || path === '/api/v2/staff-list') return json({ rows: [] })
+      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+    }
+    const user = { id: 'developer-test', username: 'developer-test', role: 'developer', status: 'active', storeKeys: stores.map((store) => store.key), permissions: {} }
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(InventoryRequestPage, { type: 'purchase', currentUser: user, onBack: () => {} }),
+      React.createElement(MobileBottomNav, { view: 'inventory-purchase', user, onNavigate: () => {}, onMore: () => {} }),
+    ))
+  </script></body>
+</html>

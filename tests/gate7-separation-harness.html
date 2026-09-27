@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Gate 7 Separation Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { seedCachedDataForTest, onUserDataUpdated } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    window.__resignCalls = []
+    window.__staffListPuts = 0
+    window.__origFetch = window.fetch
+    window.fetch = (url, opts = {}) => {
+      const u = String(url)
+      if (u.includes('/api/v2/employees/') && u.endsWith('/status-change')) {
+        window.__resignCalls.push({ url: u, body: JSON.parse(opts.body || '{}') })
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'PUT') {
+        window.__staffListPuts += 1
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, count: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (u.includes('/api/v2/staff-list') && (opts.method || 'GET') === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, rows: window.__staff || [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      if (u.includes('/api/auth/verify-second-password')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      return window.__origFetch(url, opts)
+    }
+    window.__setStaff = (staff) => {
+      window.__staff = staff
+      seedCachedDataForTest({
+        entries: {
+          // 历史业绩：王五（不在当前 PG 目录）——只作为 payroll 历史快照存在
+          '2026-08|guanshe|08-10': { inc: 5000, ord: 50, staff: ['王五'] },
+        },
+        staff,
+        removedStaff: [],
+        stores: [
+          { key: 'guanshe', name: '北京官舍店' },
+          { key: 'chaowai', name: '北京朝外店' },
+        ],
+        schedules: {},
+        products: [],
+        inventoryRequests: [],
+        inventory: [],
+        analysis: {},
+        productImages: {},
+        bigBonuses: [],
+        dailyPayAdjustments: [],
+        posDaily: [],
+        posProductSales: [],
+      })
+    }
+    seedCachedDataForTest({
+      entries: {
+        '2026-08|guanshe|08-10': { inc: 5000, ord: 50, staff: ['王五'] },
+      },
+      staff: [
+        { id: 'emp-A', name: '张伟', storeKey: 'guanshe', storeName: '北京官舍店', type: 'fulltime', employeeNo: 'BUDU-0101' },
+        { id: 'emp-B', name: '张伟', storeKey: 'chaowai', storeName: '北京朝外店', type: 'parttime', employeeNo: 'BUDU-0102' },
+      ],
+      removedStaff: [],
+      stores: [
+        { key: 'guanshe', name: '北京官舍店' },
+        { key: 'chaowai', name: '北京朝外店' },
+      ],
+      schedules: {},
+      products: [],
+      inventoryRequests: [],
+      inventory: [],
+      analysis: {},
+      productImages: {},
+      bigBonuses: [],
+      dailyPayAdjustments: [],
+      posDaily: [],
+      posProductSales: [],
+    })
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'dev-1', username: 'developer', role: 'developer' },
+          canDelete: true,
+          canManage: true,
+          onBack: () => {},
+          onOpenProfile: (name, id) => { window.__openedProfile = { name, id } },
+        }),
+      ),
+    )
+  </script></body>
+</html>

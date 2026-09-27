@@ -20,19 +20,56 @@ const mode = process.argv[2] === 'critical' ? 'critical' : 'all'
 // ---------------- 测试清单 ----------------
 // node:test 框架（自动发现断言，失败非 0）
 const NODE_TEST_SUITE = [
+  'test-transfer-lifecycle-cas.mjs', // Transfer生命周期：真实PG + 确定性HTTP并发，终态/删除/权限保护
+  'test-wechat-access-token.mjs', // 微信小程序 access_token 唯一权威：单 cache、过期重取、失效重取、失败不抛
+  'test-wechat-logistics.mjs', // 传运单客户端：无 trans_id 不上报、错误分类、token 不泄漏、不伪造 waybill_token
+  'test-online-logistics.mjs', // 物流上报状态：发货前不注册、幂等、自提不进入、失败不阻断发货、upsert 后不重复上报
+  'test-legacy-waybill-register.mjs', // 旧链运单注册：网关签名、商家身份、参数边界、无 trans_id 不上报、失败不造 token
+  'test-transaction-conflict.mjs',
+  'test-partner-replenishment-gate9a.mjs',
+  'test-partner-replenishment-gate3.mjs',
+  'test-partner-replenishment-gate4.mjs',
+  'test-partner-replenishment-gate5.mjs',
+  'test-partner-replenishment-gate6.mjs',
+  'test-partner-replenishment-gate7.mjs',
+  'test-partner-replenishment-gate8.mjs',
+  'test-partner-domain-policy.mjs', // Partner lifecycle、discount、admin role 与 1:N schema contract
+  'test-partner-domain-migration.mjs', // Gate 2 additive lifecycle/store migration rehearsal
+  'test-partner-provisioning-atomicity.mjs', // Partner + Store + User + PartnerUser all-or-nothing
+  'test-partner-principal-boundary.mjs', // Partner/internal/customer principal、session 与 tenant fail-closed 边界
+  'test-partner-principal-migration.mjs', // PartnerUser 与 external session discriminator additive migration rehearsal
+  'test-partner-route-shell-boundary.mjs', // /partner 独立壳层与内部账号管理隔离静态合同
+  'test-budu-brand-system.mjs', // Canonical budu wordmark、品牌路由与 user-facing 命名
+  'test-budu-sweet-card-skill.mjs', // Sweet Card 业务 Skill、路由与核心合同
+  'test-sweet-card-core.mjs', // Sweet Card 金额、credential、权限、分配与结算合同
+  'test-sweet-card-commercial-eligibility.mjs',
+  'test-sweet-card-pos-presentation.mjs', // 小程序出示现有 POS credential，Claim/POS 隔离与零经济写入
+  'test-sweet-card-migration.mjs', // migration 63 PGlite rehearsal 与 legacy 零改写
+  'test-sweet-card-settlement.mjs', // mixed settlement 与退款分配
+  'test-budu-payroll-audit-skill.mjs', // Team Skill：STRICT 只读工资审计路由与领域合同
+  'test-payroll-audit-report-v2.mjs', // Payroll Audit 2.0：canonical model、MD/PDF/email、幂等与零写入
+  'test-overlay-scroll-contract.mjs', // 全站弹层 inventory、共享锁与单滚动容器静态契约 → critical
   'test-config.mjs',                // 生产环境配置与数据存储 fail-closed
   'test-account-permissions.mjs',   // Auth / Permission（单元）→ critical
+  'test-payment-access.mjs',        // POS capability 支付账号资格与 Provider 门店开关 → critical
   'test-daily-entry-upgrade.mjs',   // DailyEntry（单元）→ critical
   'test-pos-core.mjs',              // POS 核心快照/归并（单元）→ critical
   'test-pos-daily.mjs',             // POS 日结（单元）
   'test-pos-order-summary.mjs',     // POS 订单汇总（单元）
+  'test-pos-revenue-recognition-real.mjs', // POS 营收口径（真实 PostgreSQL）
   'test-homepage-lightweight.mjs',  // Homepage 轻量首页（Vite 内存服务）→ critical
   'test-daily-pay-adjustment.mjs',  // 日薪调整（单元）
   'test-product-excel.mjs',         // 商品 Excel 导入（单元）
   'test-employee-pay-excel.mjs',    // 员工薪资 Excel（单元）
   'test-payment-foundation.mjs',    // 支付基础（单元）
+  'test-alipay-config.mjs',         // 支付宝配置 fail-closed 与密钥文件校验
+  'test-alipay-provider.mjs',       // 支付宝付款码支付/查询/撤销/退款与 RSA2（合成传输）
+  'test-alipay-callback-route.mjs', // 支付宝 form-urlencoded callback 与应答合同
+  'test-alipay-pg-integration.mjs', // 支付宝幂等/退款并发（可弃用 PostgreSQL schema）
   'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
+  'test-customer-request-wecom-unit.mjs', // CustomerRequest 固定 UserID 企微投递/幂等/隐私/深链
   'test-approval-ui-regressions.mjs', // 工资提交成功动画与移动端通知层级回归
+  'test-approval-withdraw-race.mjs', // Approval 撤回与审批 CAS 竞争（隔离 PGlite + 确定性 HTTP）
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）
   'test-wechat-config.mjs',         // 微信配置 fail-closed 校验（单元）
   'test-wechat-pay-provider.mjs',   // 微信付款码 Provider（假传输，不连真实接口）
@@ -48,12 +85,33 @@ const NODE_TEST_SUITE = [
   'test-store-directory.mjs',       // 固定四店目录与幽灵门店回归保护
   'test-item-category.mjs',         // 商品分类（单元）
   'test-ocr-map.mjs',               // OCR 映射（单元）
+  'test-customer-service-request.mjs', // 顾客自助二维码：token/并发/事务/通知/金额锁定 → critical
+  'test-invoice-qr-workflow.mjs', // 发票 QR-only：门店/金额/三选一类目锁定与公开只读合同 → critical
+  'test-mailing-qr-workflow.mjs', // 门店邮寄 QR-only：配送组合/收款门禁/逐单复制 → critical
+  'test-mailing-qr-migration-rehearsal.mjs', // 48→49 additive migration 与旧应用读取回滚合同 → critical
+  'test-store-transfer-draft.mjs', // 门店调拨 2.0 产品/物料草稿隔离、数量、历史状态展示
+  'test-store-transfer-migration-rehearsal.mjs', // 49→50 additive migration 与历史调拨摘要/旧应用读取
+  'test-transfer-box-piece-migration-rehearsal.mjs', // 56→57 additive 箱/颗真实单位与历史 quantity 保护
+  'test-transfer-actual-shipment-migration-rehearsal.mjs', // 57→58 additive 实发数量权威与历史 NULL 保护
+  'test-transfer-notification-routing.mjs', // 调拨按发货门店业务日排班 employeeId 路由、fallback、幂等
+  'test-transfer-delivery-recipients.mjs', // 调拨卡片只读真实 NotificationDelivery 收件人事实
+  'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
+  'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
+  'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
+  'test-product-group-migration-rehearsal.mjs', // 54→55 仅新增 POS 展示分组，所有历史 InventoryItem 引用不变
+  'test-product-group-workflow.mjs', // 人工分组、互斥成员、真实 SKU 下单与跨域身份保持
   'test-user-migration-inventory.mjs', // User 迁移只读清单（V3-004A）
   'test-employee-profile.mjs',      // 员工档案：加密/掩码/权限矩阵（单元）
   'test-download-file.mjs',      // 文件下载：iOS/非 iOS 判定（单元）
   'test-address-parser.mjs',    // 收件信息智能拆分（单元）
   'test-invoice-parser.mjs',    // 发票开票信息智能拆分（单元）
   'test-data-authority-freeze.mjs', // Data Authority 1.0 DA-1：冻结 PG 权威域（静态扫描 + 可选 DB 冒烟）→ critical
+  'test-pg-bootstrap-independence.mjs', // Data Authority Gate 1：/userdata 不得阻塞 PG authority bootstrap → critical
+  'test-personnel-read-race.mjs', // Personnel P0: atomic PG cache, same-session generations and stale/error retention
+  'test-removed-staff-retirement.mjs', // Data Authority Gate 2：removedStaff 退出当前员工目录裁决 → critical
+  'test-pg-employee-reactivity.mjs', // Data Authority Gate 3：异步 PG 员工更新驱动已挂载 React consumer → critical
+  'test-store-entry-state-integrity.mjs', // StoreEntry P0：历史日期代际/迟到响应/移动候选面板 → critical
+  'test-store-entry-performance-staff-display.mjs', // StoreEntry：业绩明细值班人员 DSS 稳定展示权威 → critical
   'test-data-authority-migration.mjs', // Data Authority：legacy DailyEntry 按业务唯一键幂等回填 → critical
   'test-daily-entry-authority.mjs', // Data Authority 1.0 DA-4：DailyEntry 读/写权威 = PG，禁止 KV 回退 → critical
   'test-schedule-authority.mjs', // Data Authority 1.0 DA-3：Schedule 读/写权威 = PG，前端禁 KV
@@ -61,30 +119,151 @@ const NODE_TEST_SUITE = [
 ]
 // 直接执行脚本（自带断言与退出码；与原 npm 命令 node scripts/xxx 一致）
 const DIRECT_SUITE = [
+  'test-partner-review-version-http.mjs', // GET DTO → review expected version, stale/retry/race and fulfillment
+  'test-pg-ephemeral-database-isolation.mjs', // disposable database、完整migration、双run隔离与exact cleanup
+  'test-partner-domain-http.mjs', // Gate 2 real Prisma + Express domain/tenant/provisioning integration
+  'test-partner-principal-http.mjs', // Partner/Internal/Customer real Prisma + Express boundary
   'test-role-module-api.mjs',       // Auth / 角色 / 模块权限 API（本地起服务）→ critical
+  'test-pg-account-load-db-isolation.mjs', // Gate 4：PG 账号路由不受 legacy loadDb 故障阻塞 → critical
+  'test-daily-store-staff-employee-identity.mjs', // Gate 6：DailyStoreStaff 稳定 Employee.id + legacy 兼容 → critical
+  'test-current-directory-identity.mjs', // Gate 7：当前员工目录 Employee.id 身份——重名并存/定向离职不误伤 → critical
+  'test-daily-pay-adjustment-employee-identity.mjs', // Gate 9：DailyPayAdjustment 稳定 Employee.id + legacy 兼容 → critical
+  'test-big-order-bonus-employee-identity.mjs', // Gate 10：BigOrderBonus 稳定 Employee.id + 稳定读取无双计 → critical
+  'test-daily-store-staff-foundation.mjs', // Gate 12：DailyStoreStaff 按月批量只读数据基础（不改 payroll）→ critical
+  'test-payroll-shadow-input.mjs', // Gate 13：Employee.id payroll 输入 shadow 模型（纯函数，零 live 消费）→ critical
+  'test-payroll-shadow-calculator.mjs', // Gate 14：Employee.id shadow 月度工资计算（并行，零 live 消费）→ critical
+  'test-daily-store-staff-constraint-cutover.mjs', // Gate 16：DailyStoreStaff 稳定身份约束切换（同店同名共存）→ critical
+  'test-payroll-notice-identity.mjs', // Gate 18：PayrollNotice 稳定主体 + 收件人 User.employeeId → critical
+  'test-explicit-employee-account-binding.mjs', // Gate 20：显式 Employee.id 账号绑定（同店同名安全）→ critical
+  'test-month-scoped-staff-cache.mjs', // Gate 21：DailyStoreStaff 月键控缓存隔离 → critical
+  'test-payroll-cache-lifecycle.mjs', // P0：reset/账号切换/迟到响应/月状态缓存生命周期 → critical
+  'test-payroll-readiness.mjs', // Gate 22：payroll 月就绪度评估（纯函数，零 live 消费）→ critical
+  'test-payroll-resolver.mjs', // Gate 23：统一 payroll 计算 resolver（纯函数，零 live 消费）→ critical
+  'test-payroll-orphan-dependency.mjs', // Hotfix：无 DailyEntry 的 orphan DSS 不形成工资完整性依赖 → critical
+  'test-export-salary-identity.mjs', // Gate 25：ExportSalaryModal Employee.id 导出身份（纯逻辑）→ critical
+  'test-export-detail-identity.mjs', // Gate 25 澄清：明细行调整/奖金按 employeeId 精确隔离（同店同名）→ critical
+  'test-payroll-adjustment-only.mjs', // Gate 26：稳定调整仅日 Employee.id 月度贡献（无考勤也可进入 payroll）→ critical
+  'test-payroll-issue-resolver.mjs', // Gate 27：PayrollIssueModal resolver 发放纯逻辑（主体/快照/预检）→ critical
+  'test-week-custom-payroll.mjs', // WEEK/CUSTOM：统一范围 resolver / 跨月 / 历史 / cache / algebra → critical
+  'test-payroll-payable-hours.mjs', // Gate 29B：稳定应付工时权威 + 月/日/快照统一计算合同 → critical
+  'test-payroll-mascot-isolation.mjs', // Gate 29E：展示姓名不得控制工资资格 → critical
+  'test-personnel-payroll-identity.mjs', // Gate 29F：Personnel 日/周 Employee.id + 跨月/竞态身份 → critical
+  'test-personnel-monthly-display.mjs', // Gate 29G：Personnel 月度提成/大单奖展示语义 → critical
+  'test-payroll-explanation-metadata.mjs', // Gate 29I：权威日工资解释元数据 + 金额/历史快照冻结 → critical
+  'test-payroll-card-ui.mjs', // Gate 29J：员工工资月卡/日解释卡只读权威元数据 → critical
+  'test-payroll-self-scope.mjs', // Gate 29L：员工本人范围只认 User.employeeId → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
+  'test-purchase-receiving-workflow.mjs', // 采购收货事务、StockLedger、幂等与安全错误 → critical
+  'test-partner-supply-workflow.mjs', // 合作商供货价格快照/发货/多笔收款/通知/零库存副作用 → critical
+  'test-unified-product-center-workflow.mjs', // 单一 InventoryItem、独立业务开关、批量管理与稳定身份 → critical
+  'test-transfer-box-piece-workflow.mjs', // 箱/颗独立持久化、混合调拨、普通 quantity 兼容 → critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
   'test-approval-engine.mjs',       // Approval 审批引擎（单元）→ critical
   'test-payroll-integration.mjs',   // Payroll 集成（Vite 内存服务）→ critical
 ]
 // critical 子集（关键业务域：Auth/Account/Permission、DailyEntry、POS、Inventory、Payroll、Approval、Homepage）
 const CRITICAL_DIRECT = [
+  'test-partner-review-version-http.mjs',
+  'test-pg-ephemeral-database-isolation.mjs',
+  'test-partner-domain-http.mjs',
+  'test-partner-principal-http.mjs',
   'test-role-module-api.mjs',
+  'test-pg-account-load-db-isolation.mjs',
+  'test-daily-store-staff-employee-identity.mjs',
+  'test-current-directory-identity.mjs',
+  'test-daily-pay-adjustment-employee-identity.mjs',
+  'test-big-order-bonus-employee-identity.mjs',
+  'test-daily-store-staff-foundation.mjs',
+  'test-payroll-shadow-input.mjs',
+  'test-payroll-shadow-calculator.mjs',
+  'test-daily-store-staff-constraint-cutover.mjs',
+  'test-payroll-notice-identity.mjs',
+  'test-explicit-employee-account-binding.mjs',
+  'test-month-scoped-staff-cache.mjs',
+  'test-payroll-cache-lifecycle.mjs',
+  'test-payroll-readiness.mjs',
+  'test-payroll-resolver.mjs',
+  'test-export-salary-identity.mjs',
+  'test-export-detail-identity.mjs',
+  'test-payroll-adjustment-only.mjs',
+  'test-payroll-issue-resolver.mjs',
+  'test-week-custom-payroll.mjs',
+  'test-payroll-payable-hours.mjs',
+  'test-payroll-mascot-isolation.mjs',
+  'test-personnel-payroll-identity.mjs',
+  'test-personnel-monthly-display.mjs',
+  'test-payroll-explanation-metadata.mjs',
+  'test-payroll-card-ui.mjs',
+  'test-payroll-self-scope.mjs',
   'test-inventory-workflow.mjs',
+  'test-purchase-receiving-workflow.mjs',
+  'test-partner-supply-workflow.mjs',
+  'test-unified-product-center-workflow.mjs',
+  'test-transfer-box-piece-workflow.mjs',
+  'test-schedule-batch-workflow.mjs', // 排班 draft 最终单次原子保存、并发保护、legacy 与调拨 resolver
   'test-payroll.mjs',
   'test-approval-engine.mjs',
   'test-payroll-integration.mjs',
 ]
 const CRITICAL_NODE_TEST = [
+  'test-approval-withdraw-race.mjs',
+  'test-transfer-lifecycle-cas.mjs',
+  'test-transaction-conflict.mjs',
+  'test-partner-replenishment-gate9a.mjs',
+  'test-partner-replenishment-gate3.mjs',
+  'test-partner-replenishment-gate4.mjs',
+  'test-partner-replenishment-gate5.mjs',
+  'test-partner-replenishment-gate6.mjs',
+  'test-partner-replenishment-gate7.mjs',
+  'test-partner-replenishment-gate8.mjs',
+  'test-partner-domain-policy.mjs',
+  'test-partner-domain-migration.mjs',
+  'test-partner-provisioning-atomicity.mjs',
+  'test-partner-principal-boundary.mjs',
+  'test-partner-principal-migration.mjs',
+  'test-partner-route-shell-boundary.mjs',
+  'test-budu-brand-system.mjs',
+  'test-budu-sweet-card-skill.mjs',
+  'test-sweet-card-core.mjs',
+  'test-sweet-card-migration.mjs',
+  'test-sweet-card-settlement.mjs',
+  'test-budu-payroll-audit-skill.mjs',
+  'test-payroll-audit-report-v2.mjs',
+  'test-overlay-scroll-contract.mjs',
   'test-account-permissions.mjs',
+  'test-payment-access.mjs',
   'test-daily-entry-upgrade.mjs',
   'test-pos-core.mjs',
   'test-homepage-lightweight.mjs',
   'test-data-authority-freeze.mjs',
+  'test-pg-bootstrap-independence.mjs',
+  'test-personnel-read-race.mjs',
+  'test-removed-staff-retirement.mjs',
+  'test-pg-employee-reactivity.mjs',
+  'test-store-entry-state-integrity.mjs',
+  'test-store-entry-performance-staff-display.mjs',
   'test-data-authority-migration.mjs',
   'test-daily-entry-authority.mjs',
   'test-schedule-authority.mjs',
   'test-identity-authority.mjs',
+  'test-customer-service-request.mjs',
+  'test-invoice-qr-workflow.mjs',
+  'test-customer-request-wecom-unit.mjs',
+  'test-mailing-qr-workflow.mjs',
+  'test-mailing-qr-migration-rehearsal.mjs',
+  'test-store-transfer-draft.mjs',
+  'test-store-transfer-migration-rehearsal.mjs',
+  'test-transfer-box-piece-migration-rehearsal.mjs',
+  'test-transfer-actual-shipment-migration-rehearsal.mjs',
+  'test-transfer-notification-routing.mjs',
+  'test-transfer-delivery-recipients.mjs',
+  'test-product-material-migration-rehearsal.mjs',
+  'test-product-material-contract.mjs',
+  'test-product-category-migration-rehearsal.mjs',
+  'test-transfer-summary-export.mjs',
+  'test-partner-supply-contract.mjs',
+  'test-partner-supply-migration-rehearsal.mjs',
+  'test-unified-product-center-migration-rehearsal.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）
@@ -92,7 +271,6 @@ const CRITICAL_NODE_TEST = [
 
 const directFiles = (mode === 'critical' ? CRITICAL_DIRECT : DIRECT_SUITE).map((f) => path.join('scripts', f))
 const nodeTestFiles = (mode === 'critical' ? CRITICAL_NODE_TEST : NODE_TEST_SUITE).map((f) => path.join('scripts', f))
-checkFiles([...directFiles, ...nodeTestFiles])
 
 // ---------------- 隔离测试环境 ----------------
 // 生产/外部服务凭证变量黑名单：测试子进程一律不继承（fail-safe，不依赖开发者机器是否干净）
@@ -105,6 +283,12 @@ const STRIPPED_ENV_KEYS = [
   'KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_REST_API_READ_ONLY_TOKEN',
   // 支付
   'PAYMENT_MODE', 'ENABLE_MOCK_CALLBACK_API', 'EMAIL_NOTIFY_ENABLED',
+  // 支付宝付款码支付——测试只使用临时生成的合成密钥，绝不继承本机/生产配置
+  'ALIPAY_ENABLED', 'ALIPAY_PROTOCOL', 'ALIPAY_APP_ID', 'ALIPAY_SELLER_ID',
+  'ALIPAY_ENDPOINT', 'ALIPAY_NOTIFY_URL', 'ALIPAY_PRIVATE_KEY_FILE', 'ALIPAY_PUBLIC_KEY_FILE',
+  'ALIPAY_ENABLED_STORES', 'ALIPAY_REQUEST_TIMEOUT_MS', 'ALIPAY_QUERY_INTERVAL_MS',
+  'ALIPAY_MAX_QUERIES', 'ALIPAY_REVERSE_AFTER_MS', 'ALIPAY_LEASE_MS',
+  'ALIPAY_REFUND_QUERY_INTERVAL_MS',
   // 微信付款码支付（V2 MICROPAY）——测试一律剥离，绝不继承生产密钥
   'WECHAT_PAY_ENABLED', 'WECHAT_PAY_PROTOCOL', 'WECHAT_PAY_MCHID', 'WECHAT_PAY_APPID',
   'WECHAT_PAY_API_V2_KEY_FILE', 'WECHAT_PAY_CERT_FILE', 'WECHAT_PAY_PRIVATE_KEY_FILE',
@@ -117,6 +301,7 @@ const STRIPPED_ENV_KEYS = [
   'TENCENT_OCR_REGION', 'TENCENT_OCR_SECRET_ID', 'TENCENT_OCR_SECRET_KEY',
   // 微信 / 企业微信
   'WXWORK_CORP_ID', 'WXWORK_AGENT_ID', 'WXWORK_SECRET',
+  'CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID',
   'WXWORK_RECV_TOKEN', 'WXWORK_RECV_AES_KEY',
   'MP_APP_ID', 'MP_APP_SECRET', 'MP_TEMPLATE_ID',
   'WECHAT_WORK_WEBHOOK_URL',
@@ -124,6 +309,7 @@ const STRIPPED_ENV_KEYS = [
   'SENTRY_DSN', 'VITE_SENTRY_DSN',
   // 其他外部服务
   'PUBLIC_BASE_URL',
+  'CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME',
   // 随机种子/环境密钥（避免测试继承生产 JWT 等）
   'JWT_SECRET',
 ]
@@ -133,7 +319,40 @@ function createTestEnv() {
   return createTestEnvFrom(process.env)
 }
 
+function isolatedTestDatabaseUrl(parentEnv) {
+  const raw = String(parentEnv.TEST_DATABASE_URL || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    if (!['localhost', '127.0.0.1', '::1'].includes(url.hostname)) return ''
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
 const testEnv = createTestEnv()
+if (process.env.GITHUB_ACTIONS === 'true') testEnv.TEST_APPROVAL_NATIVE_CI = '1'
+if (mode === 'all' && process.env.GITHUB_ACTIONS === 'true') {
+  const nativeFile = path.join('scripts', 'test-approval-withdraw-native-ci.mjs')
+  checkFiles([nativeFile])
+  console.log('\n===== Approval native PostgreSQL CI review gate =====')
+  if (!runOne(nativeFile)) process.exit(1)
+}
+checkFiles([...directFiles, ...nodeTestFiles])
+const testDatabaseUrl = isolatedTestDatabaseUrl(process.env)
+let suiteDatabaseUrl = ''
+let dropSuiteDatabase = null
+if (process.env.TEST_DATABASE_URL && !testDatabaseUrl) {
+  console.error('TEST_DATABASE_URL 必须指向 loopback 隔离测试数据库')
+  process.exit(1)
+}
+if (testDatabaseUrl) {
+  const helper = await import('./helpers/test-pg-schema.mjs')
+  suiteDatabaseUrl = await helper.createDisposablePgSchema(`${mode}_suite`)
+  dropSuiteDatabase = helper.dropDisposablePgDatabase
+  testEnv.TEST_DATABASE_URL = suiteDatabaseUrl
+}
 
 /** 文件存在性预检（node --test 对缺失文件静默返回 0，需显式拦截） */
 function checkFiles(list) {
@@ -188,8 +407,10 @@ console.log(`\n===== 结果：PASS ${pass} / FAIL ${fail} =====`)
 if (failures.length) {
   console.log('失败项：')
   for (const f of failures) console.log(`  - ${f}`)
+  if (suiteDatabaseUrl) await dropSuiteDatabase(suiteDatabaseUrl)
   process.exit(1)
 }
+if (suiteDatabaseUrl) await dropSuiteDatabase(suiteDatabaseUrl)
 process.exit(0)
 
 /** 环境隔离自验证：
@@ -259,7 +480,7 @@ function verifyIsolation() {
 /** 从指定父进程环境构造隔离测试环境（供自验证复用同一剥离逻辑） */
 function createTestEnvFrom(parentEnv) {
   const env = {}
-  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT']) {
+  for (const k of ['PATH', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'USER', 'LOGNAME', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'PLAYWRIGHT_BROWSERS_PATH']) {
     if (parentEnv[k] !== undefined) env[k] = parentEnv[k]
   }
   env.NODE_ENV = 'test'

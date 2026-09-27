@@ -1,22 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
-  ArrowLeft, Check, ClipboardPaste, Copy, FileSpreadsheet, ImageUp, Loader2, Mic, PackageCheck, Plus, ScanText, Send, Sparkles,
+  ArrowLeft, CalendarDays, Check, ClipboardCopy, FileSpreadsheet, Loader2, MessageCircle, PackageCheck, QrCode, WalletCards, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { parseRecipientText } from '../utils/addressParser'
-import qrUrl from '../assets/mailing-qr.jpg'
-
-const STORAGE_KEY = 'budu-store-mailing'
-
-function loadSaved() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
+import { allStores } from '../utils/selectors'
+import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
+import {
+  MAILING_METHOD,
+  MAILING_TIER,
+  buildMailingCopyText,
+  canGenerateCustomerQr,
+  requiresPaymentConfirmation,
+  shippingAmountCents,
+  shippingPresentation,
+} from '../utils/mailingWorkflow'
+import MailingQrSheet from './MailingQrSheet'
+import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
 
 async function copyText(text) {
   if (!text) return false
@@ -24,628 +24,369 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text)
     return true
   } catch {
-    /* 降级方案：兼容部分 WebView / 非安全上下文 */
+    // Some WeChat WebViews do not expose the async clipboard API.
   }
   try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    return ok
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    const copied = document.execCommand('copy')
+    textarea.remove()
+    return copied
   } catch {
     return false
   }
 }
 
-function OptionGroup({ label, options, value, onChange }) {
+function ChoiceGroup({ label, options, value, onChange }) {
   return (
-    <div>
-      <p className="mb-2 text-sm font-medium text-slate-600">{label}</p>
-      <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
-        {options.map((opt) => {
-          const active = value === opt
+    <fieldset className="min-w-0">
+      <legend className="mb-2 text-sm font-semibold text-slate-600">{label}</legend>
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={label}>
+        {options.map((option) => {
+          const item = typeof option === 'string' ? { value: option, label: option } : option
+          const active = value === item.value
           return (
             <button
-              key={opt}
+              key={item.value}
               type="button"
               role="radio"
               aria-checked={active}
-              onClick={() => onChange(opt)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                active
-                  ? 'bg-budu-50 text-budu-700 ring-1 ring-budu-200'
-                  : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
+              onClick={() => onChange(item.value)}
+              className={`min-h-11 min-w-0 rounded-xl border px-3 text-sm font-semibold transition ${active ? 'border-budu-200 bg-budu-50 text-budu-700 ring-1 ring-budu-100' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
             >
-              {opt}
+              <span className="whitespace-nowrap">{item.label}</span>
             </button>
           )
         })}
       </div>
+    </fieldset>
+  )
+}
+
+function ConfirmShipSheet({ record, busy, onConfirm, onClose }) {
+  if (!record) return null
+  return (
+    <div className="fixed inset-0 z-[175] flex items-end justify-center bg-slate-950/45 backdrop-blur-sm sm:items-center sm:p-6" role="presentation">
+      <section role="dialog" aria-modal="true" aria-label="确认已发货" className="w-full max-w-md rounded-t-[28px] bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[28px]">
+        <div className="flex items-start justify-between gap-3">
+          <div><h3 className="text-lg font-bold text-slate-900">确认已发货</h3><p className="mt-1 text-sm leading-6 text-slate-500">确认 {record.recipient} 的邮寄任务已经交付物流？</p></div>
+          <button type="button" onClick={onClose} aria-label="关闭" className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-12">暂不</button>
+          <button type="button" onClick={onConfirm} disabled={busy} className="btn-primary min-h-12">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}{busy ? '处理中…' : '确认已发货'}</button>
+        </div>
+      </section>
     </div>
   )
 }
 
-export default function StoreMailingPage({ onBack }) {
-  const saved = loadSaved()
-  const [method, setMethod] = useState(saved?.method || '顺丰邮寄')
-  const [postage, setPostage] = useState(saved?.postage || '包邮')
-  const [fee, setFee] = useState(saved?.fee || '标准件18¥')
-  const [wechatFee, setWechatFee] = useState(saved?.wechatFee || false)
-  const [address, setAddress] = useState(saved?.address || '')
-  const [recipient, setRecipient] = useState(saved?.recipient || '')
-  const [phone, setPhone] = useState(saved?.phone || '')
-  const [remark, setRemark] = useState(saved?.remark || '')
-  const [copied, setCopied] = useState('')
+const formatTime = (iso) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date).replaceAll('/', '-')
+}
+
+export default function StoreMailingPage({ currentUser, onBack }) {
+  const availableStores = useMemo(() => allStores().filter((store) => {
+    const keys = Array.isArray(currentUser?.storeKeys) ? currentUser.storeKeys : []
+    return ['developer', 'admin', 'finance'].includes(currentUser?.role) || keys.includes(store.key)
+  }), [currentUser])
+  const [storeKey, setStoreKey] = useState(availableStores[0]?.key || '')
+  const [method, setMethod] = useState(MAILING_METHOD.SF)
+  const [postage, setPostage] = useState('包邮')
+  const [shippingTier, setShippingTier] = useState(MAILING_TIER.STANDARD)
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false)
+  const [sheetKind, setSheetKind] = useState('')
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState('')
+  const [qrRequest, setQrRequest] = useState(null)
   const [records, setRecords] = useState([])
   const [recordsLoading, setRecordsLoading] = useState(true)
   const [recordsError, setRecordsError] = useState('')
   const [activeTab, setActiveTab] = useState('pending')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
-  const [submitTip, setSubmitTip] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [shippingId, setShippingId] = useState('')
   const [exportDone, setExportDone] = useState(false)
+  const [toast, setToast] = useState('')
+  const [shipRecord, setShipRecord] = useState(null)
+  const [shippingId, setShippingId] = useState('')
+  const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('store-mailing'))
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ method, postage, fee, wechatFee, address, recipient, phone, remark }),
-      )
-    } catch {
-      /* 隐私模式等场景忽略 */
-    }
-  }, [method, postage, fee, wechatFee, address, recipient, phone, remark])
+  const amountCents = shippingAmountCents(shippingTier)
+  const config = { storeKey, method, postage, shippingTier, paymentConfirmed }
+  const selectedStoreName = availableStores.find((store) => store.key === storeKey)?.name || storeKey
+  const selectedPresentation = shippingPresentation({
+    method,
+    postage,
+    shippingTier,
+    shippingAmountCents: amountCents,
+    shippingPaymentMode: method === MAILING_METHOD.FLASH && postage === '不包邮' ? 'WECHAT_COMMUNICATION' : '',
+  })
 
-  useEffect(() => {
-    if (!copied) return undefined
-    const id = setTimeout(() => setCopied(''), 1600)
-    return () => clearTimeout(id)
-  }, [copied])
-
-  const handleCopy = async (key, text) => {
-    const ok = await copyText(text)
-    if (ok) setCopied(key)
-  }
-
-  const copyAll = async () => {
-    const lines = [`收件地址：${address}`, `收件人：${recipient}`, `联系方式：${phone}`]
-    if (remark) lines.push(`备注：${remark}`)
-    const ok = await copyText(lines.join('\n'))
-    if (ok) setCopied('all')
+  const showToast = (message) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 1800)
   }
 
   const loadRecords = async () => {
+    setRecordsLoading(true)
     try {
-      setRecordsLoading(true)
       const data = await api('/v2/mailing-records')
       setRecords(Array.isArray(data.rows) ? data.rows : [])
       setRecordsError('')
-    } catch (e) {
-      setRecordsError(e.message || '加载发件记录失败')
+    } catch (error) {
+      setRecordsError(error.message || '加载发件记录失败')
     } finally {
       setRecordsLoading(false)
     }
   }
 
+  useEffect(() => { loadRecords() }, [])
+  useEffect(() => { setPaymentConfirmed(false); setQrRequest(null); setQrError('') }, [storeKey, method, postage, shippingTier])
   useEffect(() => {
-    loadRecords()
+    if (!notificationFocusId || records.length === 0) return
+    const row = records.find((record) => record.id === notificationFocusId)
+    if (!row) return
+    setActiveTab(row.status === 'shipped' ? 'shipped' : 'pending')
+    window.setTimeout(() => document.querySelector(`[data-mailing-record-id="${CSS.escape(notificationFocusId)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50)
+  }, [notificationFocusId, records])
+  useEffect(() => {
+    const receiveFocus = (event) => {
+      if (event.detail?.target !== 'store-mailing') return
+      const refId = takeNotificationRecordFocus('store-mailing') || String(event.detail?.refId || '')
+      if (refId) setNotificationFocusId(refId)
+    }
+    window.addEventListener('budu:notification-record-focus', receiveFocus)
+    return () => window.removeEventListener('budu:notification-record-focus', receiveFocus)
   }, [])
 
-  const showTip = (text) => {
-    setSubmitTip(text)
-    setTimeout(() => setSubmitTip(''), 2500)
-  }
+  const requestPayload = () => ({
+    type: 'MAILING',
+    storeKey,
+    method,
+    postage,
+    shippingTier: requiresPaymentConfirmation(config) ? shippingTier : undefined,
+    shippingAmountCents: requiresPaymentConfirmation(config) ? amountCents : undefined,
+    paymentConfirmed: requiresPaymentConfirmation(config) ? paymentConfirmed : false,
+  })
 
-  // ---------- 智能识别（粘贴 / 图片 / 语音 → 拆分姓名/电话/地址） ----------
-  const [recognizeText, setRecognizeText] = useState('')
-  const [recognizeBusy, setRecognizeBusy] = useState('') // '' | 'image' | 'voice'
-  const [recognizeHint, setRecognizeHint] = useState('')
-  const fileInputRef = useRef(null)
-  const recognitionRef = useRef(null)
-
-  const applyParsed = (text) => {
-    const { name, phone: parsedPhone, address: parsedAddress, matched } = parseRecipientText(text)
-    if (!matched) {
-      setRecognizeHint('未能从文本中识别出收件信息，请检查后重试或手动填写')
-      return
-    }
-    if (name) setRecipient((v) => v || name)
-    if (parsedPhone) setPhone((v) => v || parsedPhone)
-    if (parsedAddress) setAddress((v) => v || parsedAddress)
-    const parts = []
-    if (name) parts.push(`姓名「${name}」`)
-    if (parsedPhone) parts.push(`电话「${parsedPhone}」`)
-    if (parsedAddress) parts.push(`地址「${parsedAddress}」`)
-    setRecognizeHint(`已识别${parts.join('、')}（空字段已自动填入）`)
-    setRecognizeText('')
-  }
-
-  const handlePasteRecognize = () => {
-    const text = recognizeText.trim()
-    if (!text) {
-      setRecognizeHint('请先粘贴或输入收件文本')
-      return
-    }
-    applyParsed(text)
-  }
-
-  const handleImageFile = async (file) => {
-    if (!file) return
-    setRecognizeBusy('image')
-    setRecognizeHint('')
+  const generateCustomerQr = async () => {
+    if (!canGenerateCustomerQr(config)) return
+    setSheetKind('customer')
+    setQrLoading(true)
+    setQrError('')
     try {
-      // 图片压缩到 1600px 内、JPEG 质量 0.85，控制上传体积
-      const compressed = await new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const img = new Image()
-          img.onload = () => {
-            const MAX = 1600
-            const scale = Math.min(1, MAX / Math.max(img.width, img.height))
-            const canvas = document.createElement('canvas')
-            canvas.width = Math.round(img.width * scale)
-            canvas.height = Math.round(img.height * scale)
-            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-            resolve(canvas.toDataURL('image/jpeg', 0.85))
-          }
-          img.onerror = () => reject(new Error('图片读取失败'))
-          img.src = String(reader.result)
-        }
-        reader.onerror = () => reject(new Error('图片读取失败'))
-        reader.readAsDataURL(file)
-      })
-      const data = await api('/v2/ocr/general', {
-        method: 'POST',
-        body: JSON.stringify({ imageBase64: compressed }),
-      })
-      const text = String(data.text || '').trim()
-      if (!text) {
-        setRecognizeHint('未识别到文字，请确认照片文字清晰完整')
-        return
-      }
-      applyParsed(text)
-    } catch (e) {
-      setRecognizeHint(e.message || '图片识别失败')
+      const data = await api('/v2/customer-requests', { method: 'POST', body: JSON.stringify(requestPayload()) })
+      setQrRequest(data)
+    } catch (error) {
+      setQrError(error.message || '二维码生成失败')
     } finally {
-      setRecognizeBusy('')
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      setQrLoading(false)
     }
   }
 
-  const handleVoiceRecognize = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      setRecognizeHint('当前浏览器不支持语音识别（请使用 iPhone Safari / 微信内置浏览器）')
-      return
-    }
+  const regenerateCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
+    setQrError('')
     try {
-      const rec = new SR()
-      recognitionRef.current = rec
-      rec.lang = 'zh-CN'
-      rec.interimResults = false
-      rec.maxAlternatives = 1
-      setRecognizeBusy('voice')
-      setRecognizeHint('正在聆听…请说出收件人、电话和地址')
-      rec.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((r) => r[0].transcript)
-          .join('')
-        setRecognizeBusy('')
-        if (transcript.trim()) applyParsed(transcript)
-        else setRecognizeHint('没有听清，请重试')
-      }
-      rec.onerror = (event) => {
-        setRecognizeBusy('')
-        const msg = {
-          'not-allowed': '麦克风权限被拒绝，请在系统设置中允许访问麦克风',
-          'service-not-allowed': '语音服务不可用',
-          'no-speech': '没有检测到语音，请重试',
-          network: '网络异常，语音识别失败',
-        }[event.error]
-        setRecognizeHint(msg || `语音识别失败（${event.error}）`)
-      }
-      rec.onend = () => {
-        recognitionRef.current = null
-        setRecognizeBusy((busy) => (busy === 'voice' ? '' : busy))
-      }
-      rec.start()
-    } catch {
-      setRecognizeBusy('')
-      setRecognizeHint('语音识别启动失败，请重试')
-    }
-  }
-
-  const handleSubmit = async () => {
-    if (!address.trim() || !recipient.trim() || !phone.trim()) {
-      showTip('请先填写收件地址、收件人、联系方式')
-      return
-    }
-    setSubmitting(true)
-    try {
-      await api('/v2/mailing-records', {
-        method: 'POST',
-        body: JSON.stringify({ method, postage, fee, address, recipient, phone, remark }),
-      })
-      // 提交成功后清空表单与本地存档，避免下次打开时残留上次信息
-      setMethod('顺丰邮寄')
-      setPostage('包邮')
-      setFee('标准件18¥')
-      setWechatFee(false)
-      setAddress('')
-      setRecipient('')
-      setPhone('')
-      setRemark('')
-      try {
-        localStorage.removeItem(STORAGE_KEY)
-      } catch {
-        /* 隐私模式等场景忽略 */
-      }
-      showTip('已提交发件单，表单已清空 ✓')
-      await loadRecords()
-    } catch (e) {
-      showTip(e.message || '提交失败')
+      const data = await api(`/v2/customer-requests/${qrRequest.request.id}/regenerate`, { method: 'POST' })
+      setQrRequest(data)
+    } catch (error) {
+      setQrError(error.message || '二维码重新生成失败')
     } finally {
-      setSubmitting(false)
+      setQrLoading(false)
     }
   }
 
-  const markShipped = async (id) => {
-    setShippingId(id)
+  const cancelCustomerQr = async () => {
+    if (!qrRequest?.request?.id) return
+    setQrLoading(true)
     try {
-      await api(`/v2/mailing-records/${id}/ship`, { method: 'POST' })
+      await api(`/v2/customer-requests/${qrRequest.request.id}/cancel`, { method: 'POST' })
+      setQrRequest(null)
+      setSheetKind('')
+      showToast('本次二维码已取消')
+    } catch (error) {
+      setQrError(error.message || '二维码取消失败')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const inRange = (iso) => {
+    const date = iso ? iso.slice(0, 10) : ''
+    return (!fromDate || date >= fromDate) && (!toDate || date <= toDate)
+  }
+  const pendingRecords = records.filter((record) => record.status === 'pending' && inRange(record.createdAt))
+  const shippedRecords = records.filter((record) => record.status === 'shipped' && inRange(record.createdAt))
+  const visibleRecords = activeTab === 'pending' ? pendingRecords : shippedRecords
+
+  const copyRecord = async (record) => {
+    const copied = await copyText(buildMailingCopyText(record))
+    showToast(copied ? '已复制本单收件信息' : '复制失败，请长按选择内容')
+  }
+
+  const confirmShip = async () => {
+    if (!shipRecord?.id) return
+    setShippingId(shipRecord.id)
+    try {
+      await api(`/v2/mailing-records/${shipRecord.id}/ship`, { method: 'POST' })
+      setShipRecord(null)
       await loadRecords()
-    } catch (e) {
-      showTip(e.message || '操作失败')
+      showToast('已移入已发货')
+    } catch (error) {
+      showToast(error.message || '操作失败')
     } finally {
       setShippingId('')
     }
   }
 
-  const inRange = (iso) => {
-    if (!fromDate && !toDate) return true
-    const d = iso ? iso.slice(0, 10) : ''
-    if (fromDate && d < fromDate) return false
-    if (toDate && d > toDate) return false
-    return true
-  }
-
-  const pendingRecords = records.filter((r) => r.status === 'pending' && inRange(r.createdAt))
-  const shippedRecords = records.filter((r) => r.status === 'shipped' && inRange(r.createdAt))
-  const visibleRecords = activeTab === 'pending' ? pendingRecords : shippedRecords
-
-  const fmtTime = (iso) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    const p = (n) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-  }
-
   const handleExport = () => {
-    if (visibleRecords.length === 0) {
-      showTip('当前筛选范围内暂无记录')
-      return
-    }
-    const header = ['提交时间', '状态', '邮寄方式', '运费', '运费选项', '收件地址', '收件人', '联系方式', '备注']
-    const body = visibleRecords.map((r) => [
-      fmtTime(r.createdAt),
-      r.status === 'shipped' ? '已发货' : '待发货',
-      r.method,
-      r.postage,
-      r.fee || '',
-      r.address,
-      r.recipient,
-      r.phone,
-      r.remark || '',
-    ])
-    const ws = XLSX.utils.aoa_to_sheet([header, ...body])
-    ws['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 14 }, { wch: 24 }]
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, '发件记录')
-    const f = `${(fromDate || 'all').replace(/-/g, '')}-${(toDate || 'all').replace(/-/g, '')}`
-    XLSX.writeFile(wb, `budu发件记录_${f}.xlsx`)
+    if (!visibleRecords.length) return showToast('当前筛选范围内暂无记录')
+    const rows = visibleRecords.map((record) => {
+      const view = shippingPresentation(record)
+      return [formatTime(record.createdAt), record.status === 'shipped' ? '已发货' : '待发货', record.storeKey || '', view.method, view.detail, view.tierLabel, record.address, record.recipient, record.phone, record.remark || '']
+    })
+    const sheet = XLSX.utils.aoa_to_sheet([['提交时间', '状态', '门店', '配送', '运费', '类型', '收件地址', '收件人', '联系方式', '备注'], ...rows])
+    sheet['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 14 }, { wch: 24 }]
+    const book = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(book, sheet, '发件记录')
+    XLSX.writeFile(book, `budu发件记录_${(fromDate || 'all').replaceAll('-', '')}-${(toDate || 'all').replaceAll('-', '')}.xlsx`)
     setExportDone(true)
-    setTimeout(() => setExportDone(false), 2000)
+    window.setTimeout(() => setExportDone(false), 1600)
   }
 
-  const tabCls = (tab) =>
-    `rounded-lg px-3 py-1.5 transition ${
-      activeTab === tab ? 'bg-white text-budu-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-    }`
-
-  const fieldCls = 'input'
+  const tabClass = (tab) => `min-h-10 rounded-lg px-3 text-xs font-semibold transition ${activeTab === tab ? 'bg-white text-budu-700 shadow-sm' : 'text-slate-500'}`
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4">
+    <div className="mx-auto w-full max-w-5xl space-y-4 pb-4">
       <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="btn-secondary px-3 py-2"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回
-        </button>
-        <p className="text-sm text-slate-400">填写内容自动保存在本机，便于下次直接复制</p>
+        <button type="button" onClick={onBack} className="btn-secondary min-h-11 px-3"><ArrowLeft className="h-4 w-4" />返回</button>
+        <p className="text-right text-xs leading-5 text-slate-400">顾客扫码提交后自动进入待发货</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto]">
-      <div className="card p-5 sm:p-6">
-        <div className="space-y-6">
-          <OptionGroup label="邮寄方式" options={['顺丰邮寄', '同城闪送']} value={method} onChange={setMethod} />
-          <OptionGroup label="运费" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
-          {method === '顺丰邮寄' && postage === '不包邮' && (
-            <OptionGroup label="运费选项" options={['标准件18¥', '生鲜航运30¥']} value={fee} onChange={setFee} />
-          )}
-          {method === '同城闪送' && postage === '不包邮' && (
-            <div>
-              <p className="mb-2 text-sm font-medium text-slate-600">费用</p>
-              <button
-                type="button"
-                onClick={() => setWechatFee((v) => !v)}
-                aria-pressed={wechatFee}
-                className={`flex w-full items-center justify-between gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
-                  wechatFee
-                    ? 'border-budu-200 bg-budu-50 text-budu-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <span>添加微信支付费用</span>
-                {wechatFee ? <Check className="h-4 w-4 text-budu-600" /> : <Plus className="h-4 w-4 text-slate-400" />}
-              </button>
-            </div>
-          )}
-
-          {/* 智能识别：粘贴/图片/语音 → 拆分姓名电话地址 */}
-          <div className="space-y-3 rounded-2xl border border-budu-100 bg-budu-50/40 p-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-budu-600" />
-              <p className="text-sm font-bold text-slate-700">智能识别收件信息</p>
-              <span className="text-[11px] text-slate-400">粘贴或说出「姓名+电话+地址」，自动拆分填入</span>
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={recognizeText}
-                onChange={(e) => setRecognizeText(e.target.value)}
-                placeholder="「粘贴识别」或输入文本，智能拆分姓名、电话和地址"
-                className={`${fieldCls} flex-1`}
-              />
-              <button
-                type="button"
-                onClick={handlePasteRecognize}
-                disabled={recognizeBusy !== ''}
-                className="btn-primary h-10 shrink-0 px-3"
-              >
-                <ClipboardPaste className="h-4 w-4" />
-                粘贴并识别
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={recognizeBusy !== ''}
-                className="btn-secondary h-9 px-3"
-              >
-                {recognizeBusy === 'image' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageUp className="h-4 w-4" />}
-                图片识别
-              </button>
-              <button
-                type="button"
-                onClick={handleVoiceRecognize}
-                disabled={recognizeBusy !== ''}
-                className="btn-secondary h-9 px-3"
-              >
-                {recognizeBusy === 'voice' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
-                {recognizeBusy === 'voice' ? '聆听中…' : '语音识别'}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => handleImageFile(e.target.files?.[0])}
-              />
-              {recognizeHint && (
-                <p className="w-full text-xs font-medium text-budu-600">{recognizeHint}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-4 border-t border-slate-100 pt-5">
-            <p className="text-sm font-medium text-slate-600">收件信息</p>
-
-            <div>
-              <label className="mb-1.5 block text-[13px] font-medium text-slate-500">收件地址</label>
-              <div className="flex gap-2">
-                <textarea
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="请输入收件地址"
-                  rows={2}
-                  className={`${fieldCls} min-h-[72px] resize-none`}
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopy('address', address)}
-                  className="btn-secondary h-10 shrink-0 px-3"
-                  aria-label="复制收件地址"
-                >
-                  {copied === 'address' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-[13px] font-medium text-slate-500">收件人</label>
-              <div className="flex gap-2">
-                <input
-                  value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  placeholder="请输入收件人姓名"
-                  className={fieldCls}
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopy('recipient', recipient)}
-                  className="btn-secondary h-10 shrink-0 px-3"
-                  aria-label="复制收件人"
-                >
-                  {copied === 'recipient' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-[13px] font-medium text-slate-500">联系方式</label>
-              <div className="flex gap-2">
-                <input
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="请输入手机号 / 电话"
-                  inputMode="tel"
-                  className={fieldCls}
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopy('phone', phone)}
-                  className="btn-secondary h-10 shrink-0 px-3"
-                  aria-label="复制联系方式"
-                >
-                  {copied === 'phone' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-[13px] font-medium text-slate-500">备注</label>
-              <div className="flex gap-2">
-                <textarea
-                  value={remark}
-                  onChange={(e) => setRemark(e.target.value)}
-                  placeholder="商品信息及数量，顾客指定时间"
-                  rows={2}
-                  className={`${fieldCls} min-h-[56px] resize-none`}
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopy('remark', remark)}
-                  className="btn-secondary h-10 shrink-0 px-3"
-                  aria-label="复制备注"
-                >
-                  {copied === 'remark' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <button type="button" onClick={copyAll} className="btn-primary w-full py-2.5">
-            {copied === 'all' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied === 'all' ? '已复制全部收件信息' : '一键复制全部收件信息'}
-          </button>
-          <button type="button" onClick={handleSubmit} disabled={submitting} className="btn-primary w-full py-2.5">
-            <Send className="h-4 w-4" />
-            {submitting ? '提交中…' : '提交'}
-          </button>
-          {submitTip && (
-            <p
-              className={`text-center text-xs font-medium ${
-                submitTip.includes('请先') || submitTip.includes('失败') || submitTip.includes('操作') || submitTip.includes('暂无')
-                  ? 'text-rose-500'
-                  : 'text-emerald-600'
-              }`}
-            >
-              {submitTip}
-            </p>
-          )}
+      <section className="card overflow-hidden p-4 sm:p-6" data-testid="mailing-qr-only-creation">
+        <div className="mb-5">
+          <h2 className="text-lg font-bold text-slate-900">创建邮寄</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">选择本次服务条件，再生成顾客填写二维码。</p>
         </div>
-      </div>
-        <aside className="card h-fit p-5 text-center lg:w-64">
-          <p className="text-sm font-semibold text-slate-700">门店二维码</p>
-          <img src={qrUrl} alt="门店二维码" className="mx-auto mt-3 w-48 rounded-xl sm:w-56" />
-          <p className="mt-2 text-xs text-slate-400">扫码</p>
-        </aside>
-      </div>
+        <div className="space-y-5">
+          <label className="block text-sm font-semibold text-slate-600">本次服务门店
+            <select value={storeKey} onChange={(event) => setStoreKey(event.target.value)} className="input mt-2 min-h-12 w-full" aria-label="本次服务门店">
+              {availableStores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}
+            </select>
+          </label>
+          <ChoiceGroup label="配送方式" options={[MAILING_METHOD.SF, MAILING_METHOD.FLASH]} value={method} onChange={setMethod} />
+          <ChoiceGroup label="运费承担" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
 
-      {/* 发件记录 */}
-      <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-          <h3 className="text-[15px] font-semibold text-slate-900">发件记录</h3>
-          <span className="rounded-lg bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-            待发货 {pendingRecords.length} 条
-          </span>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-medium">
-              <button type="button" onClick={() => setActiveTab('pending')} className={tabCls('pending')}>
-                待发货（{pendingRecords.length}）
+          {requiresPaymentConfirmation(config) && (
+            <div className="space-y-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-3">
+              <ChoiceGroup label="顺丰类型" options={[{ value: MAILING_TIER.STANDARD, label: '标准 ¥18' }, { value: MAILING_TIER.FRESH, label: '生鲜 ¥35' }]} value={shippingTier} onChange={setShippingTier} />
+              <button type="button" onClick={() => setSheetKind('payment')} className="btn-secondary min-h-12 w-full"><WalletCards className="h-4 w-4" />打开微信收款二维码</button>
+              <button
+                type="button"
+                aria-pressed={paymentConfirmed}
+                onClick={() => setPaymentConfirmed((value) => !value)}
+                className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border px-3 text-sm font-bold transition ${paymentConfirmed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-white text-amber-700'}`}
+              >
+                <Check className="h-4 w-4" />{paymentConfirmed ? `已确认收到 ¥${amountCents / 100}` : `确认已收到 ¥${amountCents / 100}`}
               </button>
-              <button type="button" onClick={() => setActiveTab('shipped')} className={tabCls('shipped')}>
-                已发货（{shippedRecords.length}）
-              </button>
+              {!paymentConfirmed && <p className="text-center text-xs leading-5 text-amber-700">收到运费并确认后，才能生成顾客填写二维码。</p>}
             </div>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="input w-auto" aria-label="开始日期" />
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="input w-auto" aria-label="结束日期" />
-            <button type="button" onClick={handleExport} disabled={visibleRecords.length === 0} className="btn-secondary px-3 py-2">
-              {exportDone ? <Check className="h-4 w-4 text-emerald-600" /> : <FileSpreadsheet className="h-4 w-4" />}
-              {exportDone ? '已导出' : '导出 Excel'}
-            </button>
-          </div>
+          )}
+
+          {method === MAILING_METHOD.FLASH && postage === '不包邮' && (
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+              <p className="text-sm font-bold text-emerald-800">不包邮 · 微信沟通</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-700">闪送费用不在系统内定价，请顾客添加微信后沟通。</p>
+              <button type="button" onClick={() => setSheetKind('wechat')} className="btn-secondary mt-3 min-h-12 w-full"><MessageCircle className="h-4 w-4" />打开个人微信二维码</button>
+            </div>
+          )}
+
+          <button type="button" onClick={generateCustomerQr} disabled={!canGenerateCustomerQr(config) || qrLoading} className="btn-primary min-h-12 w-full whitespace-nowrap">
+            {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+            生成顾客填写二维码
+          </button>
         </div>
-        <div className="max-h-[480px] overflow-y-auto">
-          {recordsLoading ? (
-            <div className="empty-state py-12">加载中…</div>
-          ) : recordsError ? (
-            <div className="empty-state py-12">{recordsError}</div>
-          ) : visibleRecords.length === 0 ? (
-            <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
-          ) : (
-            visibleRecords.map((r) => (
-              <div key={r.id} className="flex flex-col gap-2 border-b border-slate-50 px-5 py-3 sm:flex-row sm:items-center sm:gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13px] font-semibold text-slate-700">{r.recipient}</span>
-                    <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
-                      {r.method} · {r.postage}
-                      {r.fee ? ` · ${r.fee}` : ''}
-                    </span>
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
-                        r.status === 'shipped' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                      }`}
+      </section>
+
+      <section className="card overflow-hidden">
+        <div data-testid="mailing-record-toolbar" className="space-y-3 border-b border-slate-100 px-4 py-4 sm:px-5 lg:flex lg:items-end lg:gap-3 lg:space-y-0">
+          <div className="flex items-center justify-between gap-3 lg:mr-auto lg:block">
+            <h3 className="text-[15px] font-bold text-slate-900">发件记录</h3>
+            <span className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">待发货 {pendingRecords.length} 条</span>
+          </div>
+          <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 lg:w-64">
+            <button type="button" onClick={() => setActiveTab('pending')} className={tabClass('pending')}>待发货 {pendingRecords.length}</button>
+            <button type="button" onClick={() => setActiveTab('shipped')} className={tabClass('shipped')}>已发货 {shippedRecords.length}</button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-w-0 text-[11px] font-semibold text-slate-500"><span className="mb-1 flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />开始日期</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="input min-w-0 w-full text-xs" /></label>
+            <label className="min-w-0 text-[11px] font-semibold text-slate-500"><span className="mb-1 flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />结束日期</span><input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="input min-w-0 w-full text-xs" /></label>
+          </div>
+          <button type="button" onClick={handleExport} disabled={!visibleRecords.length} className="btn-secondary min-h-11 w-full whitespace-nowrap lg:w-auto"><FileSpreadsheet className="h-4 w-4" />{exportDone ? '已导出' : '导出 Excel'}</button>
+        </div>
+
+        <div className="space-y-3 bg-slate-50/60 p-3 sm:p-4">
+          {recordsLoading ? <div className="empty-state py-12">加载中…</div>
+            : recordsError ? <div className="empty-state py-12">{recordsError}</div>
+              : !visibleRecords.length ? <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
+                : visibleRecords.map((record) => {
+                  const view = shippingPresentation(record)
+                  const storeName = availableStores.find((store) => store.key === record.storeKey)?.name || record.storeKey || '历史记录'
+                  return (
+                    <article
+                      key={record.id}
+                      data-mailing-record-id={record.id}
+                      className={`rounded-2xl border bg-white p-4 shadow-sm ${record.status === 'shipped' ? 'border-slate-100 opacity-70' : 'border-slate-200'} ${notificationFocusId === record.id ? 'ring-2 ring-budu-200' : ''}`}
                     >
-                      {r.status === 'shipped' ? '已发货' : '待发货'}
-                    </span>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-slate-500">{r.address}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-400">
-                    {r.phone}
-                    {r.remark ? ` · ${r.remark}` : ''} · 提交于 {fmtTime(r.createdAt)}
-                  </p>
-                </div>
-                {r.status === 'pending' ? (
-                  <button
-                    type="button"
-                    onClick={() => markShipped(r.id)}
-                    disabled={shippingId === r.id}
-                    className="btn-primary shrink-0 px-3 py-2 text-xs"
-                  >
-                    <PackageCheck className="h-4 w-4" />
-                    {shippingId === r.id ? '处理中…' : '已发货'}
-                  </button>
-                ) : (
-                  <span className="shrink-0 text-[11px] text-slate-300">发货于 {fmtTime(r.shippedAt)}</span>
-                )}
-              </div>
-            ))
-          )}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2"><h4 className="font-bold text-slate-900">{record.recipient}</h4><span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${record.status === 'shipped' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{record.status === 'shipped' ? '已发货' : '待发货'}</span></div>
+                          <p className="mt-1 text-xs text-slate-400">{formatTime(record.createdAt)} · {storeName}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1"><span className="rounded-lg bg-budu-50 px-2 py-1 text-[10px] font-bold text-budu-700">{view.method}</span><span className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">{view.tierLabel || view.detail}</span></div>
+                      </div>
+                      <div className="mt-3 space-y-1 rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">
+                        <p className="font-semibold">{record.phone}</p>
+                        <p className="break-words">{record.address}</p>
+                        {record.remark && <p className="break-words text-slate-500">备注：{record.remark}</p>}
+                        <p className="text-xs font-semibold text-slate-500">运费：{view.detail}</p>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => copyRecord(record)} className="btn-secondary min-h-11 whitespace-nowrap"><ClipboardCopy className="h-4 w-4" />复制本单</button>
+                        {record.status === 'pending' ? <button type="button" onClick={() => setShipRecord(record)} className="btn-primary min-h-11 whitespace-nowrap"><PackageCheck className="h-4 w-4" />标记已发货</button> : <span className="flex min-h-11 items-center justify-center text-xs text-slate-400">发货于 {formatTime(record.shippedAt)}</span>}
+                        <DeveloperSafeDeleteButton user={currentUser} type="mailing" record={{ ...record, title: `${record.recipient} · ${view.method}`, subtitle: record.address }} onDeleted={loadRecords} className="col-span-2" />
+                      </div>
+                    </article>
+                  )
+                })}
         </div>
-      </div>
+      </section>
+
+      {toast && <div role="status" className="fixed bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4rem))] left-1/2 z-[190] -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-xl">{toast}</div>}
+      <MailingQrSheet
+        open={Boolean(sheetKind)}
+        kind={sheetKind}
+        amountCents={amountCents}
+        request={qrRequest}
+        loading={sheetKind === 'customer' && qrLoading}
+        error={sheetKind === 'customer' ? qrError : ''}
+        storeName={selectedStoreName}
+        conditions={`${selectedPresentation.method}${selectedPresentation.tierLabel ? ` · ${selectedPresentation.tierLabel}` : ''} · ${selectedPresentation.detail}`}
+        onRegenerate={regenerateCustomerQr}
+        onCancel={cancelCustomerQr}
+        onClose={() => setSheetKind('')}
+      />
+      <ConfirmShipSheet record={shipRecord} busy={shippingId === shipRecord?.id} onConfirm={confirmShip} onClose={() => setShipRecord(null)} />
     </div>
   )
 }

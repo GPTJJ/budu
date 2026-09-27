@@ -47,3 +47,15 @@ test('缺失必填列值和 Excel 内重复 SKU 会标记并跳过', () => {
   assert.match(result.rows[1].errors.join(','), /售价|成本价|SKU 重复/)
 })
 
+test('同名但不同 SKU 不会自动关联历史商品', () => {
+  const result = analyzeProductMenuSheets([{
+    name: '菜单',
+    rows: [
+      ['菜品名', 'SKU', '分类', '售价', '成本价'],
+      ['历史商品', 'NEW-SKU', '甜品', '10', '3'],
+    ],
+  }], [{ productId: 'stable-history-id', name: '历史商品', sku: 'OLD-SKU' }])
+  assert.equal(result.validRows.length, 0)
+  assert.equal(result.rows[0].matchedProductId, '')
+  assert.match(result.rows[0].errors.join(','), /禁止按名称自动关联/)
+})

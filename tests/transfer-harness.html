@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Transfer 2.0 Test</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import StoreTransferPage from '/src/components/StoreTransferPage.jsx'
+    import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
+    import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+    import { seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const records = new URLSearchParams(location.search).has('records') ? [
+      { id: 'tr-pending', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'tongying', fromStoreName: '官舍店', storeName: '通盈店', status: 'pending', note: '优先备货', createdBy: 'requester', createdAt: '2026-08-28T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'sent' }, { key: 'user:sui', type: 'individual', label: '隋晓', status: 'sent' }, { key: 'user:shu', type: 'individual', label: '舒敏', status: 'sent' }], undelivered: [] }, items: [{ id: 'ti-1', itemId: 'it-1', itemCode: 'NO.2', category: 'product', productName: 'NO.2柠檬', quantity: null, boxQuantity: 1, pieceQuantity: 166, boxWeightGrams: 2500, pieceWeightGrams: 6, estimatedWeightGrams: 3496, note: '' }, { id: 'ti-1b', itemId: 'master-m1', itemCode: '', category: 'material', productName: '冰袋', quantity: 100, note: '' }] },
+      { id: 'tr-legacy', type: 'transfer', fromStoreKey: 'guanshe', storeKey: 'xidan', fromStoreName: '官舍店', storeName: '西单店', status: 'completed', note: '', createdBy: 'legacy', createdAt: '2026-08-08T06:00:00.000Z', shippedBy: 'legacy-shipper', shippedAt: '2026-08-09T01:00:00.000Z', items: [{ id: 'ti-2', itemId: 'it-2', itemCode: '', category: 'material', productName: '冰袋', productCategory: '', quantity: 3, note: '' }] },
+      { id: 'tr-rejected', type: 'transfer', fromStoreKey: 'chaowai', storeKey: 'guanshe', fromStoreName: '朝外店', storeName: '官舍店', status: 'rejected', note: '', createdBy: 'legacy', createdAt: '2026-08-09T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [{ key: 'group_robot', type: 'group', label: '企业微信群机器人', status: 'sent' }, { key: 'developer', type: 'developer', label: '开发者', status: 'sent' }], undelivered: [] }, items: [{ id: 'ti-3', itemId: 'it-3', itemCode: '', category: 'product', productName: 'NO.2柠檬', quantity: 1, note: '' }] },
+      { id: 'tr-single', type: 'transfer', fromStoreKey: 'tongying', storeKey: 'guanshe', status: 'pending', note: '', createdBy: 'requester', createdAt: '2026-08-27T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'sent' }], undelivered: [] }, items: [{ id: 'ti-4', itemId: 'it-4', category: 'product', productName: '树莓', quantity: 1, note: '' }] },
+      { id: 'tr-partial', type: 'transfer', fromStoreKey: 'tongying', storeKey: 'guanshe', status: 'pending', note: '', createdBy: 'requester', createdAt: '2026-08-26T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'sent' }, { key: 'user:sui', type: 'individual', label: '隋晓', status: 'sent' }], undelivered: [{ key: 'user:shu', type: 'individual', label: '舒敏', status: 'skipped', reason: 'NO_WECOM_BINDING' }] }, items: [{ id: 'ti-5', itemId: 'it-5', category: 'product', productName: '树莓', quantity: 1, note: '' }] },
+      { id: 'tr-failed', type: 'transfer', fromStoreKey: 'tongying', storeKey: 'guanshe', status: 'pending', note: '', createdBy: 'requester', createdAt: '2026-08-25T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [], undelivered: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'failed', reason: 'DELIVERY_FAILED' }] }, items: [{ id: 'ti-6', itemId: 'it-6', category: 'product', productName: '树莓', quantity: 1, note: '' }] },
+    ] : []
+    seedCachedDataForTest({ inventoryRequests: records })
+    const categories = [
+      { id: 'c-candy', name: '糖果', sortOrder: 1, isActive: true, version: 1 },
+      { id: 'c-gift', name: '礼盒', sortOrder: 2, isActive: true, version: 1 },
+    ]
+    const masterRows = [
+      { id: 'master-p1', category: 'product', name: 'NO.1树莓', code: 'NO.1', enabled: true, sortOrder: 1, productCategoryId: 'c-candy', productCategory: categories[0], version: 1 },
+      { id: 'master-p2', category: 'product', name: 'NO.2柠檬', code: 'NO.2', enabled: true, sortOrder: 2, productCategoryId: '', productCategory: null, transferBoxEnabled: true, transferBoxWeightGrams: 2500, transferPieceEnabled: true, transferPieceWeightGrams: 6, version: 1 },
+      { id: 'master-p3', category: 'product', name: '礼盒产品', sku: 'BUDU-CHOC-WA-03', code: 'GIFT-1', enabled: true, sortOrder: 3, productCategoryId: 'c-gift', productCategory: categories[1], version: 1 },
+      { id: 'master-p4', category: 'product', name: '停用产品', code: 'OFF', enabled: false, sortOrder: 4, productCategoryId: 'c-candy', productCategory: categories[0], version: 1 },
+      { id: 'master-m1', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1 },
+      { id: 'master-m2', category: 'material', name: '停用纸袋', code: '', enabled: false, sortOrder: 2, version: 1 },
+    ]
+    const requests = []
+    let imageExports = 0
+    const nativeCanvasToDataUrl = HTMLCanvasElement.prototype.toDataURL
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+      imageExports += 1
+      return nativeCanvasToDataUrl.apply(this, args)
+    }
+    window.open = () => { imageExports += 1; return null }
+    const shipments = []
+    window.__transferTest = { records, requests, shipments, get imageExports() { return imageExports } }
+    window.fetch = async (url, options = {}) => {
+      const requestUrl = new URL(url, location.origin)
+      const path = requestUrl.pathname
+      const method = options.method || 'GET'
+      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+      if (path === '/api/userdata') return json({})
+      if (path === '/api/v2/transfer-master-items' && method === 'GET') return json({ rows: masterRows.filter((item) => requestUrl.searchParams.get('active') !== 'true' || item.enabled) })
+      if (path === '/api/v2/product-categories' && method === 'GET') return json({ rows: categories.filter((item) => requestUrl.searchParams.get('active') !== 'true' || item.isActive) })
+      if (path === '/api/v2/transfer-requests' && method === 'GET') return json({ rows: records })
+      if (path === '/api/v2/transfer-requests' && method === 'POST') {
+        const body = JSON.parse(options.body)
+        requests.push(body)
+        const row = { id: `tr-created-${records.length}`, type: 'transfer', fromStoreKey: body.fromStoreKey, storeKey: body.toStoreKey, fromStoreName: body.fromStoreKey, storeName: body.toStoreKey, status: 'pending', note: body.note, createdBy: 'manager-test', createdAt: new Date().toISOString(), items: body.items.map((item, index) => ({ id: `created-item-${index}`, itemId: item.itemId || `created-${index}`, itemCode: `CODE-${index}`, category: item.category, productName: item.name, quantity: item.quantity ?? null, boxQuantity: item.boxQuantity || 0, pieceQuantity: item.pieceQuantity || 0, boxWeightGrams: item.boxQuantity ? 2500 : null, pieceWeightGrams: item.pieceQuantity ? 6 : null, estimatedWeightGrams: (item.boxQuantity || 0) * 2500 + (item.pieceQuantity || 0) * 6, note: item.note })) }
+        records.push(row)
+        return json({ ok: true, request: row })
+      }
+      const ship = path.match(/^\/api\/v2\/transfer-requests\/([^/]+)\/ship$/)
+      if (ship && method === 'POST') {
+        const row = records.find((item) => item.id === ship[1])
+        const body = JSON.parse(options.body)
+        shipments.push(body)
+        for (const actual of body.items || []) {
+          const item = row.items.find((candidate) => candidate.itemId === actual.itemId)
+          if (!item) continue
+          item.shippedQuantity = actual.shippedQuantity
+          item.shippedBoxQuantity = actual.shippedBoxQuantity
+          item.shippedPieceQuantity = actual.shippedPieceQuantity
+          item.shipmentRecorded = true
+        }
+        row.shipmentRecorded = row.items.every((item) => item.shipmentRecorded)
+        row.status = 'shipped'; row.shippedBy = 'manager-test'; row.shippedAt = new Date().toISOString()
+        return json({ ok: true, request: row })
+      }
+      const remove = path.match(/^\/api\/v2\/transfer-requests\/([^/]+)$/)
+      if (remove && method === 'DELETE') {
+        const row = records.find((item) => item.id === remove[1])
+        row.status = 'canceled'; row.withdrawnBy = 'manager-test'; row.withdrawnAt = new Date().toISOString()
+        return json({ ok: true, request: row })
+      }
+      if (path === '/api/v2/purchase-requests' || path === '/api/v2/stock' || path === '/api/v2/daily-entries' || path === '/api/v2/daily-pay-adjustments' || path === '/api/v2/pos/daily-summary' || path === '/api/v2/pos/product-sales' || path === '/api/v2/big-bonuses' || path === '/api/v2/staff-list') return json({ rows: [] })
+      if (path === '/api/v2/stores') return json({ rows: [{ key: 'guanshe', name: '官舍店' }, { key: 'tongying', name: '通盈店' }, { key: 'chaowai', name: '朝外店' }, { key: 'xidan', name: '西单店' }] })
+      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
+    }
+    const user = { id: 'manager-test', username: 'manager-test', role: 'manager', status: 'active', storeKeys: ['guanshe'], permissions: {} }
+    createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+      React.createElement(OverlayStackManager),
+      React.createElement(StoreTransferPage, { currentUser: user, onBack: () => {} }),
+      React.createElement(MobileBottomNav, { view: 'inventory-transfer', user, onNavigate: () => {}, onMore: () => {} }),
+    ))
+  </script></body>
+</html>

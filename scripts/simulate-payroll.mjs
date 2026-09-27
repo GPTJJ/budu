@@ -6,7 +6,7 @@
  * 2. 随机多轮工资场景（门店 x 人数 x 营业额 x 日期类型）
  * 3. 通盈周末/节假日目标 5000 回归
  * 4. 多店同日聚合（出勤日只算 1 天）
- * 5. 卡皮巴拉只统计工时不计工资（月度口径）
+ * 5. Gate 29E：历史吉祥物展示姓名按普通工资公式计算（月度口径）
  * 6. 自然周工具（getWeekStart / isoWeek / weekRangeLabel）
  */
 import { calcDailyPay, commissionRate, isHoliday, monthlyPayrollFromEntries, HOLIDAYS_2026, WORKDAYS_2026, STORE_PAY_CONFIG } from '../src/utils/payroll.js'
@@ -197,7 +197,7 @@ function round2(v) {
   ok('兼容旧格式（day=10）：480 元', legacyMap.get('叶芷辰') && Math.abs(legacyMap.get('叶芷辰').salary - 480) < 1e-6, JSON.stringify(legacyMap.get('叶芷辰')))
 }
 
-// ---------- 5. 卡皮巴拉只统计工时 ----------
+// ---------- 5. 展示姓名不控制工资资格 ----------
 {
   const entries = {
     '2026-08|tongying|08-10': { inc: 5000, ord: 60, staff: ['卡皮巴拉', '叶芷辰'] },
@@ -205,8 +205,8 @@ function round2(v) {
   }
   const map = monthlyPayrollFromEntries(entries, '2026-08', { tongying: '通盈中心店', xidan: '西单店' })
   const capy = map.get('卡皮巴拉')
-  ok('卡皮巴拉月度：工资为 0', capy && capy.salary === 0 && capy.basePay === 0 && capy.commission === 0, JSON.stringify(capy))
-  ok('卡皮巴拉月度：工时只统计（8+12=20h）', capy && Math.abs(capy.hours - 20) < 1e-6, JSON.stringify(capy))
+  ok('卡皮巴拉月度：展示姓名不排除普通工资', capy && capy.salary === 864 && capy.basePay === 584 && capy.commission === 280, JSON.stringify(capy))
+  ok('卡皮巴拉月度：正常统计工时（8+12=20h）', capy && Math.abs(capy.hours - 20) < 1e-6, JSON.stringify(capy))
   ok('卡皮巴拉月度：出勤 2 天', capy && capy.workedDays === 2, JSON.stringify(capy))
 }
 

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>BUDU Partner Shipment Test</title></head><body class="m-0"><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import PartnerReplenishmentReviewPage from '/src/components/PartnerReplenishmentReviewPage.jsx'
+import '/src/index.css'
+
+const order = {
+  id: 'order-ship', orderNo: 'RPL-20260907-SHIPMENT', partnerId: 'partner-a', partnerNameSnapshot: '秦皇岛合作商', partnerStoreId: 'store-a',
+  partnerStore: { name: '秦皇岛一店', contactName: '李女士', phone: '13900000000', province: '河北省', city: '秦皇岛市', district: '海港区', addressLine: '河北大街88号' },
+  status: 'APPROVED', createdByType: 'PARTNER', requestedTotalAmountCents: '149500', approvedTotalAmountCents: '149500',
+  submittedAt: '2026-09-07T00:00:00.000Z', reviewedAt: '2026-09-07T01:00:00.000Z', reviewReason: '按计划确认', version: 2, shipments: [],
+  items: [
+    { id: 'kg-line', inventoryItemId: 'kg', productNameSnapshot: 'KG 糖', skuSnapshot: 'KG-1', productCodeSnapshot: 'NO.1', orderUnitSnapshot: 'KG', requestedQuantityBase: 10000, basePriceSnapshotCents: '18000', discountBpsSnapshot: 6500, requestedLineAmountCents: '117000', minimumOrderBaseQtySnapshot: 1000, orderStepBaseQtySnapshot: 500, approvedQuantityBase: 10000, approvedLineAmountCents: '117000', reviewReason: '', shippedQuantityBase: 0, remainingQuantityBase: 10000 },
+    { id: 'pcs-line', inventoryItemId: 'pcs', productNameSnapshot: '颗糖', skuSnapshot: 'PCS-1', productCodeSnapshot: 'NO.2', orderUnitSnapshot: 'PCS', requestedQuantityBase: 100, basePriceSnapshotCents: '500', discountBpsSnapshot: 6500, requestedLineAmountCents: '32500', minimumOrderBaseQtySnapshot: 20, orderStepBaseQtySnapshot: 10, approvedQuantityBase: 0, approvedLineAmountCents: '0', reviewReason: '本次不发', shippedQuantityBase: 0, remainingQuantityBase: 0 },
+  ],
+}
+const requests = []
+window.__partnerShipmentTest = { order, requests }
+const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
+window.fetch = async (url, options = {}) => {
+  const parsed = new URL(url, location.origin)
+  const method = options.method || 'GET'
+  if (parsed.pathname === '/api/v2/partner-management/replenishment-orders' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, rows: [order] })
+  if (parsed.pathname === '/api/v2/partner-management/replenishment-orders/order-ship' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, order })
+  if (parsed.pathname === '/api/v2/partner-management/fulfillment-stores' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, defaultStoreKey: 'guanshe', rows: [{ key: 'guanshe', name: '北京官舍店' }, { key: 'tongying', name: '北京通盈中心店' }] })
+  if (parsed.pathname.endsWith('/shipments') && method === 'POST') {
+    const body = JSON.parse(options.body)
+    requests.push({ body, idempotencyKey: options.headers['Idempotency-Key'] })
+    const shipment = { id: 'shipment-1', carrier: body.carrier, trackingNumber: body.trackingNumber, freightType: body.freightType, fulfillmentStoreKey: body.fulfillmentStoreKey, fulfillmentStoreName: body.fulfillmentStoreKey === 'tongying' ? '北京通盈中心店' : '北京官舍店', shippedAt: '2026-09-07T04:00:00.000Z', items: [{ orderItemId: 'kg-line', productNameSnapshot: 'KG 糖', orderUnitSnapshot: 'KG', shippedQuantityBase: body.items[0].shippedQuantityBase }] }
+    return json({ ok: true, reused: false, order: { ...order, status: 'PARTIALLY_SHIPPED', version: 3, shipments: [shipment], items: [{ ...order.items[0], shippedQuantityBase: body.items[0].shippedQuantityBase, remainingQuantityBase: 10000 - body.items[0].shippedQuantityBase }, order.items[1]] } }, 201)
+  }
+  return json({ error: 'NOT_MOCKED', message: `${method} ${parsed.pathname}` }, 404)
+}
+createRoot(document.getElementById('root')).render(React.createElement('div', { className: 'min-h-screen bg-canvas p-3 sm:p-6' }, React.createElement(PartnerReplenishmentReviewPage, { onBack: () => {} })))
+</script></body></html>

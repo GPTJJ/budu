@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Award, BadgeDollarSign, CalendarDays, FileSpreadsheet, IdCard, Plus, Trash2, X } from 'lucide-react'
 import CalendarPicker from './CalendarPicker'
 import BigBonusModal from './BigBonusModal'
@@ -8,25 +8,51 @@ import { getWeekDays, isoWeek } from '../utils/schedule'
 import {
   employeesByType,
   employeeList,
-  allEmployeeMonths,
   monthLabel,
-  employeeDayStatus,
   employeeDailyPayDetail,
-  employeeWeekStatus,
+  legacyAmbiguousEmployeeNames,
   hasLocalEntry,
   localStaffList,
-  removeStaff,
+  currentEmployeeDirectory,
   saveLocalStaffList,
   allStores,
   storeName,
 } from '../utils/selectors'
+import {
+  getPersonnelReadState,
+  onUserDataUpdated,
+  onPersonnelReadStateUpdated,
+  resignEmployeeById,
+  loadDailyStoreStaffMonth,
+  refreshDailyStoreStaffMonth,
+  getDailyStoreStaff,
+  getDailyStoreStaffMonthState,
+  getEntries,
+  getDailyPayAdjustments,
+  getBigBonuses,
+  getDailyStoreStaffRange,
+  getDailyStoreStaffRangeState,
+  loadDailyStoreStaffRange,
+} from '../utils/userData'
+import { resolvePayrollCalculation } from '../utils/payrollResolver'
+import { resolvePayrollPeriod } from '../utils/payrollPeriod'
+import {
+  PAYROLL_COMPLETENESS_UI,
+  projectPayrollCompleteness,
+} from '../utils/payrollCompletenessPresentation'
 import { HOLIDAYS_2026, WORKDAYS_2026 } from '../utils/payroll'
 import { formatMoney } from '../utils/format'
 import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
 import { api } from '../utils/api'
 import { downloadEmployeePayExcel } from '../utils/employeePayExcel'
-import { commitRemovedStaff, getRemovedStaff } from '../utils/userData'
+import { personnelMonthlyComponents } from '../utils/payrollDisplay'
+import {
+  PAYROLL_DAILY_VIEW_STATE,
+  PayrollDailyList,
+  PayrollExplanationHeading,
+  PayrollMonthlySummary,
+} from './payroll/EmployeePayrollPresentation'
 
 const AVATAR_GRADIENTS = [
   'bg-budu-100',
@@ -45,9 +71,27 @@ function todayParts() {
   return { month: `${d.getFullYear()}-${mm}`, day: `${mm}-${dd}` }
 }
 
+function resolverPeriodStatus(record) {
+  return {
+    pay: record.salary || 0,
+    hours: record.payableHours || 0,
+    commission: record.commission || 0,
+    basePay: record.basePay || 0,
+    transferSubsidy: record.transferSubsidy || 0,
+    bigBonus: record.bigBonus || 0,
+    salaryAdjustment: record.salaryAdjustment || 0,
+    adjustmentCount: record.adjustmentCount || 0,
+    inc: record.workedRevenue || 0,
+    ord: record.orders || 0,
+    stores: record.storesWorked || [],
+    workedDays: record.days || 0,
+    adjustmentOnly: (record.days || 0) === 0 && (record.adjustmentCount || 0) > 0,
+  }
+}
+
 function Stat({ label, value, accent, className = '' }) {
   return (
-    <div className={`rounded-xl bg-slate-50/80 px-3 py-2 ${className}`}>
+    <div data-stat-label={label} className={`rounded-xl bg-slate-50/80 px-3 py-2 ${className}`}>
       <p className="text-[10px] text-slate-400">{label}</p>
       <p className={`mt-0.5 text-sm font-bold tabular-nums ${accent || 'text-slate-700'}`}>{value}</p>
     </div>
@@ -81,8 +125,10 @@ function AddStaffModal({ onClose, onSave }) {
       setError(t('请输入员工姓名'))
       return
     }
-    if (employeeList('all').some((e) => e.name === trimmed)) {
-      setError(t('该员工已存在，请勿重复添加'))
+    if (employeeList('all').some((e) => e.name === trimmed && e.storeKey === storeKey)) {
+      // Gate 7：仅拒绝同店同名（服务端 PUT /staff-list 按 name+storeKey findFirst，同店同名会更新既有行而非新建）；
+      // 跨店同名允许——Employee.id 才是稳定身份。
+      setError(t('该门店已有同名员工，请勿重复添加'))
       return
     }
     onSave({
@@ -302,13 +348,34 @@ function SecondPasswordModal({ name, onClose, onSuccess }) {
   )
 }
 
-function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
+function DailyPayModal({
+  emp,
+  month,
+  day,
+  weekStart,
+  hidePersonal,
+  stableIdentity,
+  attendanceRows,
+  dailyExplanations,
+  payrollState,
+  payrollRefreshing,
+  payrollRefreshError,
+  onClose,
+}) {
   const [y, m] = String(month).split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const weekDays = weekStart ? getWeekDays(weekStart) : null
+  // 导出继续复用既有逐日明细合同；界面展示则只读取 resolver 已提供的 explanation metadata。
   const dayRows = []
   const pushDay = (monthKey, dd, label) => {
-    const detail = employeeDailyPayDetail(monthKey, dd, emp.name)
+    if (stableIdentity) return
+    const detail = employeeDailyPayDetail(
+      monthKey,
+      dd,
+      emp.name,
+      stableIdentity ? emp.id : undefined,
+      stableIdentity ? attendanceRows : undefined,
+    )
     // 周末/法定节假日标记（与首页日历一致：假=红+「假」、调休=绿+「班」、普通周末=红）
     const full = String(dd).includes('-') ? `${monthKey}-${String(dd).slice(3)}` : `${monthKey}-${String(dd)}`
     const isHolidayDay = HOLIDAYS_2026.has(full)
@@ -344,7 +411,7 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
       pushDay(month, `${String(m).padStart(2, '0')}-${dd}`, dd)
     }
   }
-  const totals = dayRows.reduce(
+  const legacyTotals = dayRows.reduce(
     (s, r) => ({
       revenue: s.revenue + r.revenue,
       orders: s.orders + r.orders,
@@ -360,25 +427,80 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
     { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 0, salaryAdjustment: 0, pay: 0 },
   )
 
+  const scopedDates = weekStart && weekDays
+    ? new Set(weekDays.map((item) => item.date))
+    : null
+  const selectedDate = day
+    ? (String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${String(day).padStart(2, '0')}`)
+    : ''
+  const explanationRows = (Array.isArray(dailyExplanations) ? dailyExplanations : [])
+    .filter((row) => {
+      const date = String(row?.date || '')
+      if (selectedDate) return date === selectedDate
+      if (scopedDates) return scopedDates.has(date)
+      return date.startsWith(month)
+    })
+    .slice()
+    .sort((a, b) => `${a.date}|${a.storeKey || ''}`.localeCompare(`${b.date}|${b.storeKey || ''}`))
+
+  // Stable detail/export is a projection of the same resolver explanations;
+  // employeeDailyPayDetail remains only for explicit legacy compatibility display.
+  const resolverDayRows = explanationRows.map((row) => ({
+    day: row.date,
+    stores: row.storeName || row.storeKey || '',
+    revenue: row.explanation?.displayWorkedRevenue || 0,
+    orders: row.orders || 0,
+    hours: row.payableHours ?? row.hours ?? 0,
+    basePay: row.basePay || 0,
+    commission: row.commission || 0,
+    transferSubsidy: row.transferSubsidy || 0,
+    bigBonus: row.bigBonus || 0,
+    automaticPay: row.automaticPay || 0,
+    salaryAdjustment: row.salaryAdjustment || 0,
+    payAdjustment: row.explanation?.adjustment || null,
+    pay: row.finalPay || 0,
+  }))
+  const effectiveDayRows = stableIdentity ? resolverDayRows : dayRows
+  const totals = stableIdentity
+    ? effectiveDayRows.reduce(
+        (sum, row) => ({
+          revenue: sum.revenue + row.revenue,
+          orders: sum.orders + row.orders,
+          hours: sum.hours + row.hours,
+          basePay: sum.basePay + row.basePay,
+          commission: sum.commission + row.commission,
+          transferSubsidy: sum.transferSubsidy + row.transferSubsidy,
+          bigBonus: sum.bigBonus + row.bigBonus,
+          automaticPay: sum.automaticPay + row.automaticPay,
+          salaryAdjustment: sum.salaryAdjustment + row.salaryAdjustment,
+          pay: sum.pay + row.pay,
+        }),
+        { revenue: 0, orders: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, automaticPay: 0, salaryAdjustment: 0, pay: 0 },
+      )
+    : legacyTotals
+
   const download = () => {
-    const selectedDate = day
-      ? (String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${String(day).padStart(2, '0')}`)
-      : ''
     const periodLabel = weekStart
       ? `本周 ${weekStart} ~ ${weekDays[6].date}`
       : day
         ? `当日 ${selectedDate}`
         : month
     const periodKey = weekStart ? weekStart.replace(/-/g, '') : day ? selectedDate.replace(/-/g, '') : month.replace(/-/g, '')
-    downloadEmployeePayExcel({ employeeName: emp.name, periodLabel, periodKey, dayRows, totals })
+    downloadEmployeePayExcel({ employeeName: emp.name, periodLabel, periodKey, dayRows: effectiveDayRows, totals })
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`${emp.name}工资明细`}>
+    <div
+      className="fixed inset-0 z-[95] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${emp.name}工资明细`}
+      data-payroll-employee-id={emp.id || ''}
+    >
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-lg">
-        <div className="flex flex-wrap items-center gap-3">
-          <div>
+      <div className="relative max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-4 shadow-lg sm:max-h-[88vh] sm:rounded-2xl sm:p-6">
+        <div className="sticky top-0 z-10 -mx-4 -mt-4 flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white/95 px-4 py-4 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6">
+          <div className="min-w-0">
             <h3 className="text-lg font-bold text-slate-800">{emp.name} · {t(weekStart ? '本周每日工资明细' : day ? '当日工资明细' : '当月每日工资明细')}</h3>
             <p className="mt-0.5 text-xs text-slate-400">{t('{period} · 按日期正序排列', { period: weekStart ? `${weekStart} ~ ${weekDays[6].date}` : day ? `${month}-${day}` : month })}</p>
           </div>
@@ -390,102 +512,27 @@ function DailyPayModal({ emp, month, day, weekStart, hidePersonal, onClose }) {
         {hidePersonal ? (
           <p className="grid place-items-center py-16 text-sm text-slate-300">{t('工资详情仅开发者/店长可见')}</p>
         ) : (
-          <>
-            <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />周末 / 法定节假日</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />调休上班（周末补班）</span>
+          <div className="mt-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <PayrollExplanationHeading />
+              <button
+                onClick={download}
+                className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-budu-500 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                {t('导出 Excel')}
+              </button>
             </div>
-            <div className="mt-4 max-h-[52vh] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
-                    <th className="py-2 pr-2">{t('日期')}</th>
-                    <th className="py-2 pr-2 text-right">{t('营业额')}</th>
-                    <th className="py-2 pr-2 text-right">{t('订单')}</th>
-                    <th className="py-2 pr-2 text-right">{t('工时')}</th>
-                    <th className="py-2 pr-2 text-right">{t('基础工资')}</th>
-                    <th className="py-2 pr-2 text-right">{t('提成')}</th>
-                    <th className="py-2 pr-2 text-right">{t('调货补贴')}</th>
-                    <th className="py-2 pr-2 text-right">{t('大单奖')}</th>
-                    <th className="py-2 pr-2 text-right">{t('自动工资')}</th>
-                    <th className="py-2 pr-2 text-right">{t('薪资调整')}</th>
-                    <th className="py-2 pr-2 text-right">{t('当日工资')}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {dayRows.map((r) => (
-                    <tr key={r.day} className={r.hasData ? '' : 'text-slate-300'}>
-                      <td className="py-1.5 pr-2 font-semibold">
-                        <span className={r.mark === 'holiday' || r.mark === 'weekend' ? 'text-amber-600' : r.mark === 'makeup' ? 'text-emerald-600' : 'text-slate-700'}>
-                          {r.day}
-                          {r.mark === 'holiday' && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700">{t('假')}</span>}
-                          {r.mark === 'makeup' && <span className="ml-1 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-600">{t('班')}</span>}
-                        </span>
-                        {r.stores && <span className="ml-1 text-[10px] font-normal text-slate-400">({r.stores})</span>}
-                        {r.payAdjustment && <span className="ml-1 rounded bg-violet-50 px-1 py-0.5 text-[9px] text-violet-600">{t('已调整')}</span>}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.revenue.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? r.orders : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `${r.hours}h` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.basePay.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.commission.toFixed(2)}` : '—'}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">
-                        {r.hasData ? `¥${r.transferSubsidy.toFixed(2)}` : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">
-                        {r.hasData && r.bigBonus > 0 ? `¥${r.bigBonus.toFixed(2)}` : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{r.hasData ? `¥${r.automaticPay.toFixed(2)}` : '—'}</td>
-                      <td className={`py-1.5 pr-2 text-right tabular-nums ${r.payAdjustment ? 'font-semibold text-violet-600' : ''}`}>
-                        {r.payAdjustment ? signedMoney(r.salaryAdjustment) : '—'}
-                      </td>
-                      <td className="py-1.5 pr-2 text-right font-bold tabular-nums text-budu-600">
-                        {r.hasData ? `¥${r.pay.toFixed(2)}` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="bg-budu-50/40 font-bold">
-                    <td className="py-2 pr-2 text-slate-700">{t('合计')}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.revenue.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.orders}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">{totals.hours}h</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.basePay.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.commission.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-emerald-600">¥{totals.transferSubsidy.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.bigBonus.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">¥{totals.automaticPay.toFixed(2)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-violet-600">{signedMoney(totals.salaryAdjustment)}</td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-budu-600">¥{totals.pay.toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            {dayRows.some((row) => row.payAdjustment) && (
-              <div className="mt-4 space-y-2">
-                <p className="text-xs font-bold text-slate-600">{t('人工调整明细')}</p>
-                {dayRows.filter((row) => row.payAdjustment).map((row) => (
-                  <div key={`adjustment-${row.day}`} className="rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-xs text-violet-700">
-                    <p className="font-semibold">
-                      {row.day} · {t('自动 ¥{auto} → 最终 ¥{final}（差额 {difference}）', {
-                        auto: row.payAdjustment.autoPaySnapshot.toFixed(2),
-                        final: row.payAdjustment.adjustedPay.toFixed(2),
-                        difference: signedMoney(row.payAdjustment.recordedDifference),
-                      })}
-                    </p>
-                    <p className="mt-1 break-words">{t('原因')}：{row.payAdjustment.reason}</p>
-                    <p className="mt-1 text-violet-400">{t('操作人')}：{row.payAdjustment.updatedBy || row.payAdjustment.createdBy || '—'} · {row.payAdjustment.updatedAt ? new Date(row.payAdjustment.updatedAt).toLocaleString('zh-CN') : '—'}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={download}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              {t('导出 Excel')}
-            </button>
-          </>
+            <PayrollDailyList
+              records={stableIdentity ? explanationRows : []}
+              legacyRows={dayRows}
+              legacyLimited={!stableIdentity && !emp.legacyAmbiguous}
+              legacyAmbiguous={!stableIdentity && emp.legacyAmbiguous}
+              state={payrollState}
+              refreshing={payrollRefreshing}
+              refreshError={payrollRefreshError}
+            />
+          </div>
         )}
       </div>
     </div>
@@ -496,7 +543,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
   const isPublic = usePublicMode()
   const isStore = useStorePrivacy()
   const hidePersonal = isPublic || isStore
-  const [filter, setFilter] = useState(() => (['developer', 'finance', 'admin'].includes(user?.role) ? 'all' : 'fulltime'))
+  const [filter, setFilter] = useState(() => (['developer', 'finance', 'admin', 'staff'].includes(user?.role) ? 'all' : 'fulltime'))
   const [month, setMonth] = useState(() => todayParts().month)
   const [day, setDay] = useState(null)
   const [weekStart, setWeekStart] = useState(null)
@@ -515,28 +562,350 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     return () => clearInterval(id)
   }, [])
   const [staffVersion, setStaffVersion] = useState(0)
+  const [, renderReadState] = useState(0)
+  useEffect(() => onUserDataUpdated(() => renderReadState((v) => v + 1)), [])
+  useEffect(() => onPersonnelReadStateUpdated(() => renderReadState((v) => v + 1)), [])
+  const staffRead = getPersonnelReadState('staff')
+  const baseReadRevision = staffRead.completedSequence || 0
+  const payrollBaseReadStatus = () => {
+    const states = ['staff', 'entries', 'stores', 'dailyPayAdjustments', 'bigBonuses'].map(getPersonnelReadState)
+    if (states.some((state) => state.status.startsWith('ERROR'))) return 'error'
+    return states.every((state) => state.hasSuccess) ? 'ready' : 'loading'
+  }
+  const visibleCount = (count) => staffRead.hasSuccess ? count : '…'
 
   const localStaff = localStaffList()
-  const hasData = allEmployeeMonths().includes(month) || localStaff.length > 0
+  // Gate 7：PersonnelPage 当前目录卡片 = PostgreSQL Employee 当前在册记录（均有 Employee.id）。
+  // Gate 24：月度工资/绩效展示改为统一 payroll resolver（resolvePayrollCalculation）——
+  //   EMPLOYEE_ID 模式按 Employee.id join（同店同名各自正确）；
+  //   LEGACY 模式显式标记兼容计算，且重名员工不把模糊 legacy 金额当精确结果。
+  // 历史 payroll 合成员工（当前目录之外、无 Employee.id）一律不出现在当前人员目录。
+  const directory = currentEmployeeDirectory('all')
+  // Gate 24：卡片渲染以当前 PG 目录为准（hasData = 目录有员工；不再由"当月有无薪资数据"决定）
+  const hasData = directory.length > 0
   const dayHasData = day ? hasLocalEntry(month, day) : false
   const weekDays = weekStart ? getWeekDays(weekStart) : null
   const weekLabel = weekDays ? `${weekStart} ~ ${weekDays[6].date}` : ''
 
-  const all = hasData ? employeeList('all', month) : []
-  const scopedAll =
-    user?.role === 'staff' && user.staffKey
-      ? all.filter((e) => `${e.storeKey}::${e.name}` === user.staffKey)
-      : all
+  // Gate 29F：日/周稳定工资必须先加载所选日期覆盖的每一个月份。
+  // 请求键只由所选期间决定；员工切换不发请求，渲染始终使用当前 Employee.id，避免迟到的 A 覆盖 B。
+  const periodDates = weekDays
+    ? weekDays.map((item) => item.date)
+    : day
+      ? [String(day).includes('-') ? `${month.slice(0, 4)}-${day}` : `${month}-${day}`]
+      : []
+  const periodKey = periodDates.join('|')
+  const emptyPeriodState = (status = 'idle', key = '') => ({
+    status,
+    key,
+    mode: '',
+    rows: [],
+    byEmployeeId: new Map(),
+    dailyByEmployeeId: new Map(),
+    error: null,
+  })
+  const [periodAttendance, setPeriodAttendance] = useState(emptyPeriodState())
+  const periodRequestRef = useRef(0)
+  useEffect(() => {
+    if (periodDates.length === 0) {
+      setPeriodAttendance(emptyPeriodState())
+      return undefined
+    }
+    const requestId = periodRequestRef.current + 1
+    periodRequestRef.current = requestId
+    const key = periodDates.join('|')
+    const period = resolvePayrollPeriod({
+      periodType: weekStart ? 'week' : 'custom',
+      ...(weekStart
+        ? { periodKey: weekStart }
+        : { periodStart: periodDates[0], periodEnd: periodDates[periodDates.length - 1] }),
+    })
+    if (!period.valid) {
+      setPeriodAttendance(emptyPeriodState('error', key))
+      return undefined
+    }
+    setPeriodAttendance((previous) => {
+      const canRetain = previous.key === key
+        && previous.mode === 'EMPLOYEE_ID'
+        && ['ready', 'refreshing', 'refresh_error'].includes(previous.status)
+      return canRetain
+        ? { ...previous, status: 'refreshing', error: null }
+        : emptyPeriodState('loading', key)
+    })
+    let cancelled = false
+    // The selected day/week owns refreshes for every intersecting month. The
+    // monthly projection below joins these in-flight requests without forcing
+    // a competing request token for the same month.
+    loadDailyStoreStaffRange(period.periodStart, period.periodEnd, { force: true }).then(() => {
+      if (cancelled || periodRequestRef.current !== requestId) return
+      if (baseReadRevision !== (getPersonnelReadState('staff').completedSequence || 0)) return
+      if (payrollBaseReadStatus() === 'loading') return
+      const rangeState = getDailyStoreStaffRangeState(period.periodStart, period.periodEnd)
+      if (!rangeState.complete || payrollBaseReadStatus() === 'error') {
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
+        return
+      }
+      const rows = getDailyStoreStaffRange(period.periodStart, period.periodEnd)
+      const result = resolvePayrollCalculation({
+        ...period,
+        dailyEntries: getEntries(),
+        dailyStoreStaffRows: rows,
+        dailyPayAdjustments: getDailyPayAdjustments(),
+        bigOrderBonuses: getBigBonuses(),
+        employees: directory,
+        users: [],
+        storeNames: Object.fromEntries(allStores().map((store) => [store.key, store.name])),
+      })
+      if (result.mode !== 'EMPLOYEE_ID' || !result.calculationReady) {
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
+        return
+      }
+      const byEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, resolverPeriodStatus(record)]))
+      const dailyByEmployeeId = new Map(result.payroll.employees.map((record) => [record.employeeId, record.dailyExplanations || []]))
+      setPeriodAttendance({ status: 'ready', key, mode: 'EMPLOYEE_ID', rows, byEmployeeId, dailyByEmployeeId, error: null })
+    }).catch(() => {
+      if (!cancelled && periodRequestRef.current === requestId) {
+        setPeriodAttendance((previous) => (
+          previous.key === key && previous.mode === 'EMPLOYEE_ID'
+            ? { ...previous, status: 'refresh_error', error: '工资数据刷新失败' }
+            : emptyPeriodState('error', key)
+        ))
+      }
+    })
+    return () => { cancelled = true }
+    // syncTick/staffVersion intentionally reload the current period from the month-keyed cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, day, weekStart, staffVersion, syncTick, baseReadRevision])
+
+  // ---- Gate 24：显式月份加载 + resolver（竞态安全：晚到的响应不覆盖当前所选月）----
+  const [payrollDisplay, setPayrollDisplay] = useState({ status: 'loading', month: '', mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+  const requestedMonthRef = useRef('')
+  const monthlyRequestRef = useRef(0)
+  useEffect(() => {
+    const m = String(month || '')
+    const requestId = monthlyRequestRef.current + 1
+    monthlyRequestRef.current = requestId
+    requestedMonthRef.current = m
+    setPayrollDisplay((prev) => ({
+      ...(prev.month === m ? prev : { mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() }),
+      status: prev.month === m && prev.mode ? 'refreshing' : 'loading',
+      month: m,
+    }))
+    let cancelled = false
+    const markMonthlyUnavailable = () => {
+      setPayrollDisplay((previous) => (
+        previous.month === m && previous.mode
+          ? { ...previous, status: 'refresh_error' }
+          : { status: 'unavailable', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() }
+      ))
+    }
+    // Completeness classification must use a fresh server business date rather
+    // than a browser clock or a possibly stale month-cache value.
+    loadDailyStoreStaffMonth(m, { force: !(day || weekStart) }).then((staffLoad) => {
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
+      if (baseReadRevision !== (getPersonnelReadState('staff').completedSequence || 0)) return
+      if (payrollBaseReadStatus() === 'loading') return
+      if (payrollBaseReadStatus() === 'error') { markMonthlyUnavailable(); return }
+      const monthState = getDailyStoreStaffMonthState(m)
+      if (monthState.status !== 'loaded' || !monthState.hasPayload) {
+        markMonthlyUnavailable()
+        return
+      }
+      const businessDate = staffLoad?.businessDate || ''
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+        markMonthlyUnavailable()
+        return
+      }
+      const storeNames = Object.fromEntries(allStores().map((store) => [store.key, store.name]))
+      const res = resolvePayrollCalculation({
+        month: m,
+        dailyEntries: getEntries(),
+        dailyStoreStaffRows: getDailyStoreStaff(m),
+        dailyPayAdjustments: getDailyPayAdjustments(),
+        bigOrderBonuses: getBigBonuses(),
+        employees: directory,
+        users: [],
+        storeNames,
+      })
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
+      if (res.mode === 'EMPLOYEE_ID') {
+        const readinessById = new Map((res.readiness?.employees || []).map((row) => [row.employeeId, row]))
+        // Employee-scoped business completeness may hide that employee's amount,
+        // but it is not a transport/load error. Unscoped calculation blockers
+        // remain fail-closed for every employee, and issuance stays globally gated
+        // by resolver.calculationReady / resolver.issueReady.
+        const globalCalculationBlockers = (res.blockers || []).filter((blocker) => (
+          blocker?.type === 'CALCULATION_BLOCKER'
+          && !blocker.employeeId
+          && !(Array.isArray(blocker.employeeIds) && blocker.employeeIds.length > 0)
+        ))
+        const byId = new Map(res.payroll.employees.map((row) => {
+          const readiness = readinessById.get(row.employeeId)
+          const blockers = [
+            ...(readiness?.blockers || []).filter((blocker) => blocker.type === 'CALCULATION_BLOCKER'),
+            ...globalCalculationBlockers,
+          ]
+          const completeness = projectPayrollCompleteness(blockers, businessDate, storeNames)
+          const employeeCalculationReady = completeness.state === PAYROLL_COMPLETENESS_UI.READY
+          return [row.employeeId, {
+            ...row,
+            payrollComputed: employeeCalculationReady,
+            payrollIncomplete: !employeeCalculationReady,
+            payrollBlockers: blockers,
+            payrollCompleteness: completeness,
+          }]
+        }))
+        // An employee whose authoritative attendance row is incomplete may be
+        // intentionally absent from payroll output. Preserve that fail-closed
+        // business state on the employee card without synthesizing a zero row.
+        for (const employee of directory) {
+          if (!employee?.id || byId.has(employee.id)) continue
+          const scopedBlockers = (res.readiness?.calculationBlockers || []).filter((blocker) => (
+            blocker?.type === 'CALCULATION_BLOCKER'
+            && (blocker.employeeId === employee.id || blocker.employeeIds?.includes(employee.id))
+          ))
+          const blockers = [...scopedBlockers, ...globalCalculationBlockers]
+          if (blockers.length === 0) continue
+          const completeness = projectPayrollCompleteness(blockers, businessDate, storeNames)
+          if (completeness.state === PAYROLL_COMPLETENESS_UI.READY) continue
+          byId.set(employee.id, {
+            employeeId: employee.id,
+            payrollComputed: false,
+            payrollIncomplete: true,
+            payrollBlockers: blockers,
+            payrollCompleteness: completeness,
+          })
+        }
+        const rows = [...byId.values()]
+        const readyCount = rows.filter((row) => !row.payrollIncomplete).length
+        const incompleteCount = rows.filter((row) => row.payrollIncomplete).length
+        const incompleteStates = [...byId.values()]
+          .filter((row) => row.payrollIncomplete)
+          .map((row) => row.payrollCompleteness?.state)
+        const onlyTodayPending = incompleteStates.length > 0
+          && incompleteStates.every((state) => state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING)
+        const status = incompleteCount === 0
+          ? 'ready'
+          : onlyTodayPending
+            ? (readyCount > 0 ? 'partial_today' : 'today_pending')
+            : (readyCount > 0 ? 'partial' : 'incomplete')
+        setPayrollDisplay({ status, month: m, businessDate, mode: 'EMPLOYEE_ID', byEmployeeId: byId, legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+      } else {
+        const calculationBlockers = res.readiness?.calculationBlockers || []
+        if (calculationBlockers.length > 0 && calculationBlockers.every((item) => item.reason === 'NO_PAYROLL_SUBJECTS')) {
+          setPayrollDisplay({ status: 'empty', month: m, mode: '', byEmployeeId: new Map(), legacyByName: new Map(), legacyAmbiguousNames: new Set() })
+          return
+        }
+        // LEGACY 兼容：按姓名聚合；模糊判定 = 当前目录中同名员工数 > 1
+        // （legacy 结果本身把重名合并成一行，无法反推——以目录为准，绝不给重名卡精确金额）
+        const byName = new Map()
+        for (const row of res.payroll.employees) byName.set(row.name, row)
+        const ambiguous = legacyAmbiguousEmployeeNames(directory)
+        setPayrollDisplay({ status: 'ready', month: m, mode: 'LEGACY', byEmployeeId: new Map(), legacyByName: byName, legacyAmbiguousNames: ambiguous })
+      }
+    }).catch(() => {
+      if (cancelled || requestedMonthRef.current !== m || monthlyRequestRef.current !== requestId) return
+      markMonthlyUnavailable()
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month, day, weekStart, staffVersion, syncTick, baseReadRevision])
+
+  // Gate 24：卡片 payroll 富集——EMPLOYEE_ID 按 id；LEGACY 唯一名兼容、重名不赋值
+  const enrichPayroll = (d) => {
+    if (payrollDisplay.mode === 'EMPLOYEE_ID') {
+      return payrollDisplay.byEmployeeId.get(d.id) || null
+    }
+    if (payrollDisplay.mode === 'LEGACY') {
+      if (payrollDisplay.legacyAmbiguousNames.has(d.name)) return { legacyAmbiguous: true } // 重名模糊：不给精确金额
+      return payrollDisplay.legacyByName.get(d.name) || null
+    }
+    return null
+  }
+  const all = directory.map((d) => {
+    const p = enrichPayroll(d)
+    if (p?.legacyAmbiguous) {
+      // Gate 24 澄清：LEGACY 重名无法归属 → payroll 派生字段为 null（渲染「—」），
+      // 绝不以数字零冒充"零工资"；非 payroll 员工字段保持原样。
+      return {
+        ...d,
+        legacyAmbiguous: true,
+        salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
+        hours: null, workedRevenue: null, workedDays: null,
+        salaryAdjustment: null, adjustmentCount: null, payrollComputed: false, roi: null,
+        payrollAvailable: false, payrollUnavailable: false,
+      }
+    }
+    if (!p) {
+      return {
+        ...d,
+        salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
+        hours: null, workedRevenue: null, workedDays: null,
+        salaryAdjustment: null, adjustmentCount: null, dailyExplanations: [], payrollComputed: false, roi: null,
+        payrollAvailable: false,
+        payrollUnavailable: payrollDisplay.status === 'unavailable',
+        payrollLoading: payrollDisplay.status === 'loading',
+      }
+    }
+    if (p.payrollIncomplete) {
+      return {
+        ...d,
+        salary: null, basePay: null, commission: null, perf: null, bigBonus: null, big: null, transferSubsidy: null,
+        hours: null, workedRevenue: null, workedDays: null,
+        salaryAdjustment: null, adjustmentCount: null, dailyExplanations: [], payrollComputed: false, roi: null,
+        payrollAvailable: false,
+        payrollUnavailable: false,
+        payrollIncomplete: true,
+        payrollBlockers: p.payrollBlockers || [],
+        payrollCompleteness: p.payrollCompleteness || null,
+      }
+    }
+    const monthlyComponents = personnelMonthlyComponents(p)
+    return {
+      ...d,
+      salary: monthlyComponents.salary,
+      basePay: monthlyComponents.basePay,
+      commission: monthlyComponents.commission,
+      perf: monthlyComponents.commission,
+      bigBonus: monthlyComponents.bigBonus,
+      big: monthlyComponents.bigBonus,
+      transferSubsidy: monthlyComponents.transferSubsidy,
+      hours: p.hours ?? p.payableHours ?? 0,
+      workedRevenue: p.workedRevenue ?? 0,
+      workedDays: p.workedDays ?? p.days ?? 0,
+      salaryAdjustment: monthlyComponents.salaryAdjustment,
+      adjustmentCount: p.adjustmentCount ?? 0,
+      dailyExplanations: Array.isArray(p.dailyExplanations) ? p.dailyExplanations : [],
+      payrollComputed: p.payrollComputed === true,
+      payrollAvailable: true,
+      payrollUnavailable: false,
+      roi: p.roi ?? (p.workedRevenue != null && p.salary ? p.workedRevenue / p.salary : 0),
+    }
+  })
+  const scopedAll = user?.role === 'staff'
+    ? (user.employeeId ? all.filter((employee) => employee.id === user.employeeId) : [])
+    : all
   const fulltime = scopedAll.filter((e) => e.type === 'fulltime')
   const parttime = scopedAll.filter((e) => e.type === 'parttime')
   const list = filter === 'all' ? scopedAll : filter === 'fulltime' ? fulltime : parttime
   const payrollComputed = all.some((e) => e.payrollComputed)
 
+  const retryMonthlyPayroll = async () => {
+    setPayrollDisplay((prev) => ({ ...prev, status: 'loading', month }))
+    const result = await refreshDailyStoreStaffMonth(month)
+    if (result?.status === 'loaded') setSyncTick((value) => value + 1)
+    else setPayrollDisplay((prev) => ({ ...prev, status: 'unavailable', month }))
+  }
+
   const handleAddStaff = async (emp) => {
-    // 重新添加曾删除的员工时，需从已删除名单中移除，否则列表/报表会继续过滤掉该员工
-    if (getRemovedStaff().includes(emp.name)) {
-      commitRemovedStaff(getRemovedStaff().filter((n) => n !== emp.name))
-    }
     setShowAdd(false)
     try {
       await saveLocalStaffList([...localStaffList(), emp])
@@ -548,14 +917,23 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
     }
   }
 
-  const handleDeleteStaff = async (name) => {
+  const handleDeleteStaff = async (emp) => {
+    // Gate 7：当前目录员工卡片必须携带 Employee.id；删除/离职只按 id 定向，
+    // 绝不回退到按姓名移除（removeStaff(name) 会误伤同名员工）。
+    if (!emp?.id) {
+      setError(t('员工数据不完整（缺少稳定 ID），无法删除，请刷新后重试'))
+      return
+    }
     try {
-      await removeStaff(name)
+      await resignEmployeeById(emp.id)
       setStaffVersion((v) => v + 1)
     } catch (e) {
       setError(t('员工名单保存失败（PostgreSQL 不可用），请重试'))
     }
   }
+
+  const canUseAllFilter = ['developer', 'finance', 'admin'].includes(user?.role)
+  const showToolbarActions = (canManage && !isPublic) || canUseAllFilter
 
   return (
     <div className="space-y-6">
@@ -564,110 +942,174 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {t('当前账号仅可查看本人信息')}
         </p>
       )}
-      {/* 页面头部 */}
-      <div className="flex flex-wrap items-center gap-4">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 rounded-2xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {t('返回首页')}
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">{t('人员管理')}</h2>
-          <p className="mt-0.5 text-[13px] text-slate-400">
-            {payrollComputed
-              ? t('薪酬按每日业绩录入自动计算 · 全职 {full} 人 / 兼职 {part} 人', {
-                  full: fulltime.length,
-                  part: parttime.length,
-                })
-              : t('薪资表 2026.27-31 周 · 按所选月份显示 · 全职 {full} 人 / 兼职 {part} 人', {
-                  full: fulltime.length,
-                  part: parttime.length,
-                })}
-            {weekStart
-              ? t('· 查看整周 {range}', { range: weekLabel })
-              : day
-                ? t('· 当日值班查询中')
-                : ''}
-          </p>
+      {/* 页面头部 / 筛选工具栏 */}
+      <section className="space-y-3" data-testid="personnel-toolbar">
+        <div className="flex items-start gap-3">
+          <button
+            onClick={onBack}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-2xl bg-white px-3 py-2.5 text-sm font-medium text-slate-500 shadow-card transition hover:text-budu-600"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {t('返回首页')}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <h2 className="shrink-0 text-xl font-bold text-slate-800">{t('人员管理')}</h2>
+              <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                payrollDisplay.mode === 'EMPLOYEE_ID'
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : 'bg-amber-50 text-amber-600'
+              }`}>
+                {t(payrollDisplay.mode === 'EMPLOYEE_ID' ? '稳定计算' : '兼容计算')}
+              </span>
+            </div>
+            <p className="mt-1 text-[13px] font-semibold text-slate-600" data-testid="personnel-counts">
+              {!staffRead.hasSuccess ? (staffRead.status === 'ERROR' ? '人员数据暂不可用' : '人员加载中…') : t('全职 {full} 人 · 兼职 {part} 人', {
+                full: fulltime.length,
+                part: parttime.length,
+              })}
+            </p>
+            <p className="mt-0.5 text-xs leading-5 text-slate-400">
+              {payrollComputed
+                ? t('薪酬按每日业绩录入自动计算')
+                : t('薪资表 2026.27-31 周 · 按所选月份显示')}
+              {weekStart
+                ? t(' · 查看整周 {range}', { range: weekLabel })
+                : day
+                  ? t(' · 当日值班查询中')
+                  : ''}
+              {payrollDisplay.status === 'loading' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                  {t('加载中…')}
+                </span>
+              )}
+              {payrollDisplay.status === 'unavailable' && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                  {t('工资数据暂不可用')}
+                  <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
+                </span>
+              )}
+              {payrollDisplay.status === 'refreshing' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                  {t('正在刷新…')}
+                </span>
+              )}
+              {payrollDisplay.status === 'refresh_error' && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                  {t('刷新失败，显示上次成功数据')}
+                </span>
+              )}
+              {(payrollDisplay.status === 'partial' || payrollDisplay.status === 'incomplete') && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                  {t(payrollDisplay.status === 'partial' ? '部分工资待完善' : '工资事实待完善')}
+                </span>
+              )}
+              {(payrollDisplay.status === 'partial_today' || payrollDisplay.status === 'today_pending') && (
+                <span className="ml-2 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                  {t('今日数据待确认')}
+                </span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="ml-auto flex items-center gap-2.5">
-          {canManage && !isPublic && (
-            <button
-              onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 rounded-2xl bg-budu-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" />
-              {t('添加员工')}
-            </button>
-          )}
-          <CalendarPicker
-            month={month}
-            day={day}
-            onSelect={(m, d) => {
-              setMonth(m)
-              setDay(d)
-              if (d) setWeekStart(null)
-            }}
-            onWeekSelect={(ws) => {
-              setMonth(ws.slice(0, 7))
-              setDay(null)
-              setWeekStart(ws)
-            }}
-          />
-        </div>
-      </div>
 
-      {/* 类型切换 */}
-      <div className="space-y-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap gap-1.5 rounded-2xl bg-white p-1.5 shadow-card">
-            {['developer', 'finance', 'admin'].includes(user?.role) && (
+        <div className="grid min-w-0 gap-2.5 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center" data-testid="personnel-toolbar-controls">
+          <div className="min-w-0" data-testid="personnel-month-selector">
+            <CalendarPicker
+              month={month}
+              day={day}
+              weekStart={weekStart}
+              onSelect={(m, d) => {
+                setMonth(m)
+                setDay(d)
+                if (d) setWeekStart(null)
+              }}
+              onWeekSelect={(ws) => {
+                setMonth(ws.slice(0, 7))
+                setDay(null)
+                setWeekStart(ws)
+              }}
+            />
+          </div>
+
+          <div
+            className={`grid min-w-0 w-full gap-1.5 rounded-2xl bg-white p-1.5 shadow-card ${
+              canUseAllFilter ? 'grid-cols-3' : 'grid-cols-2'
+            }`}
+            data-testid="personnel-filters"
+          >
+            {canUseAllFilter && (
               <button
+                type="button"
+                aria-label={`${t('全部')}（${visibleCount(scopedAll.length)}）`}
                 onClick={() => setFilter('all')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+                className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                   filter === 'all'
                     ? 'bg-budu-500 text-white shadow-md'
                     : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
                 }`}
               >
-                {t('全部')}（{scopedAll.length}）
+                <span className="sm:hidden">{t('全部')} {visibleCount(scopedAll.length)}</span>
+                <span className="hidden sm:inline">{t('全部')}（{visibleCount(scopedAll.length)}）</span>
               </button>
             )}
             <button
+              type="button"
+              aria-label={`${t('全职人员')}（${visibleCount(fulltime.length)}）`}
               onClick={() => setFilter('fulltime')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+              className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'fulltime'
                   ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              {t('全职人员')}（{fulltime.length}）
+              <span className="sm:hidden">{t('全职')} {visibleCount(fulltime.length)}</span>
+              <span className="hidden sm:inline">{t('全职人员')}（{visibleCount(fulltime.length)}）</span>
             </button>
             <button
+              type="button"
+              aria-label={`${t('兼职人员')}（${visibleCount(parttime.length)}）`}
               onClick={() => setFilter('parttime')}
-                className={`rounded-xl px-4 py-1.5 text-[13px] font-semibold transition ${
+              className={`min-w-0 whitespace-nowrap rounded-xl px-2 py-2 text-[13px] font-semibold transition ${
                 filter === 'parttime'
                   ? 'bg-budu-500 text-white shadow-md'
                   : 'text-slate-500 hover:bg-budu-50 hover:text-budu-600'
               }`}
             >
-              {t('兼职人员')}（{parttime.length}）
+              <span className="sm:hidden">{t('兼职')} {visibleCount(parttime.length)}</span>
+              <span className="hidden sm:inline">{t('兼职人员')}（{visibleCount(parttime.length)}）</span>
             </button>
           </div>
-          {['developer', 'finance', 'admin'].includes(user?.role) && (
-            <button
-              onClick={() => setShowExport(true)}
-              className="ml-auto flex items-center gap-1.5 rounded-2xl bg-emerald-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:opacity-90"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              {t('导出表格')}
-            </button>
+
+          {showToolbarActions && (
+            <div className="grid w-full grid-cols-2 gap-2.5 md:flex md:w-auto" data-testid="personnel-actions">
+              {canManage && !isPublic && (
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(true)}
+                  className="flex h-11 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl bg-budu-500 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 md:w-auto"
+                >
+                  <Plus className="h-4 w-4 shrink-0" />
+                  {t('添加员工')}
+                </button>
+              )}
+              {canUseAllFilter && (
+                <button
+                  type="button"
+                  onClick={() => setShowExport(true)}
+                  className="flex h-11 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-budu-100 hover:bg-budu-50 hover:text-budu-600 md:w-auto"
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                  {t('导出表格')}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      </div>
+      </section>
 
+      {staffRead.status.startsWith('ERROR') && <p role="status" className="text-sm text-amber-700">数据刷新失败，正在重试</p>}
+      {staffRead.status === 'REFRESHING' && <p role="status" className="text-sm text-slate-500">正在刷新人员数据…</p>}
       {day && !dayHasData && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-medium text-amber-600">
           {t('所选日期 {date} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩', {
@@ -681,28 +1123,28 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           {/* 员工卡片 */}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-sync-tick={syncTick}>
             {list.map((emp, i) => {
-              const status = weekStart
-                ? weekDays
-                  ? employeeWeekStatus(month, weekDays.map((w) => w.date), emp.name)
-                  : null
-                : day
-                  ? employeeDayStatus(month, day, emp.name)
-                  : null
-              const onDuty = Boolean((day || weekStart) && status)
-              const periodSalary = onDuty ? status.pay : 0
-              const periodHours = onDuty ? status.hours : 0
-              const periodPerf = onDuty ? status.commission : 0
-              const periodBase = onDuty ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
-              const periodTransfer = onDuty ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
-              const periodBig = onDuty ? status.bigBonus || 0 : day || weekStart ? 0 : emp.big || 0
-              const periodAdjustment = onDuty ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
-              const periodAdjustmentCount = onDuty ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
-              const periodRevenue = onDuty ? status.inc : 0
+              const periodReady = ['ready', 'refreshing', 'refresh_error'].includes(periodAttendance.status)
+                && periodAttendance.key === periodKey
+              const stablePeriod = periodAttendance.mode === 'EMPLOYEE_ID'
+              const status = (day || weekStart) && stablePeriod && periodReady
+                ? periodAttendance.byEmployeeId.get(emp.id) || null
+                : null
+              const hasPeriodResult = Boolean((day || weekStart) && status)
+              const onDuty = Boolean(hasPeriodResult && !status.adjustmentOnly)
+              const periodSalary = hasPeriodResult ? status.pay : 0
+              const periodHours = hasPeriodResult ? status.hours : 0
+              const periodPerf = hasPeriodResult ? status.commission : 0
+              const periodBase = hasPeriodResult ? status.basePay : day || weekStart ? 0 : emp.basePay || 0
+              const periodTransfer = hasPeriodResult ? status.transferSubsidy || 0 : day || weekStart ? 0 : emp.transferSubsidy || 0
+              const periodBig = hasPeriodResult ? status.bigBonus || 0 : day || weekStart ? 0 : emp.bigBonus || 0
+              const periodAdjustment = hasPeriodResult ? status.salaryAdjustment || 0 : day || weekStart ? 0 : emp.salaryAdjustment || 0
+              const periodAdjustmentCount = hasPeriodResult ? status.adjustmentCount || (status.payAdjustment ? 1 : 0) : day || weekStart ? 0 : emp.adjustmentCount || 0
+              const periodRevenue = hasPeriodResult ? status.inc : 0
               const periodStores = onDuty && status.stores ? status.stores.length : 0
               const periodWorkedDays = weekStart
                 ? status ? status.workedDays : 0
                 : day
-                  ? status ? 1 : 0
+                  ? onDuty ? 1 : 0
                   : emp.workedDays
               const periodText = weekStart
                 ? `${Number(weekStart.slice(5, 7))}.${Number(weekStart.slice(8, 10))} - ${Number(weekDays[6].date.slice(5, 7))}.${Number(weekDays[6].date.slice(8, 10))}`
@@ -710,18 +1152,20 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   ? `${Number(day.slice(0, 2))}.${Number(day.slice(3, 5))}`
                   : monthLabel(month)
               const canBigBonus =
-                user?.role !== 'public' && (user?.role !== 'staff' || user.staffKey === `${emp.storeKey}::${emp.name}`)
+                user?.role !== 'public' && (user?.role !== 'staff' || (user.employeeId && user.employeeId === emp.id))
               return (
                 <div
-                  key={emp.name}
-                  onClick={() => setDetailEmp(emp)}
+                  key={emp.id}
+                  onClick={() => {
+                    if (day || weekStart || emp.payrollAvailable) setDetailEmp(emp)
+                  }}
                   className="card relative cursor-pointer p-5 transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover"
                 >
                   {canDelete && !isPublic && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        setPendingDelete(emp.name)
+                        setPendingDelete(emp)
                       }}
                       className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"
                       title={t('删除该员工')}
@@ -733,7 +1177,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        onOpenProfile(emp.name)
+                        onOpenProfile(emp.name, emp.id)
                       }}
                       className="absolute right-11 top-3 grid h-7 w-7 place-items-center rounded-lg text-slate-300 transition hover:bg-budu-50 hover:text-budu-600"
                       title={t('员工档案')}
@@ -752,6 +1196,16 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="truncate text-[15px] font-bold text-slate-800">{emp.name}</p>
+                        {emp.employeeNo && (
+                          <span className="shrink-0 rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                            {emp.employeeNo}
+                          </span>
+                        )}
+                        {emp.legacyAmbiguous && (
+                          <span className="shrink-0 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600" title={t('兼容计算下存在同名员工，金额无法精确归属')}>
+                            {t('身份模糊')}
+                          </span>
+                        )}
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
                             emp.type === 'fulltime'
@@ -766,7 +1220,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                             {t('本地')}
                           </span>
                         )}
-                        {(day || weekStart) && status && (
+                        {(day || weekStart) && onDuty && (
                           <span className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
                             {t('值班')}
@@ -774,56 +1228,114 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {emp.storeName} · {t('出勤 {days} 天', { days: periodWorkedDays })}
+                        {emp.storeName} · {!day && !weekStart && !emp.payrollAvailable ? t('出勤 —') : t('出勤 {days} 天', { days: periodWorkedDays })}
                       </p>
                     </div>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
-                    <span className="text-[10px] font-bold text-budu-600">{periodText}</span>
-                    {weekStart && <span className="text-[10px] text-slate-400">{t('第 {n} 周', { n: isoWeek(weekStart) })}</span>}
-                  </div>
+                  {!day && !weekStart && emp.payrollAvailable ? (
+                    <PayrollMonthlySummary
+                      employee={emp}
+                      monthText={periodText}
+                      hidden={hidePersonal}
+                      ambiguous={emp.legacyAmbiguous}
+                    />
+                  ) : !day && !weekStart ? (
+                    <div
+                      data-payroll-completeness-state={emp.payrollCompleteness?.state || ''}
+                      className={`mt-4 rounded-xl border px-3 py-4 text-center ${
+                      emp.payrollUnavailable
+                        ? 'border-rose-100 bg-rose-50/70'
+                        : emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                          ? 'border-slate-200 bg-slate-50/80'
+                          : emp.payrollIncomplete
+                            ? 'border-amber-100 bg-amber-50/70'
+                          : 'border-slate-100 bg-slate-50/70'
+                    }`}
+                    >
+                      <p className={`text-sm font-bold ${
+                        emp.payrollUnavailable
+                          ? 'text-rose-600'
+                          : emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                            ? 'text-slate-600'
+                            : emp.payrollIncomplete
+                              ? 'text-amber-600'
+                            : 'text-slate-500'
+                      }`}>
+                        {t(emp.payrollUnavailable
+                          ? '工资数据暂不可用'
+                          : emp.payrollLoading
+                            ? '工资数据加载中…'
+                          : emp.payrollIncomplete
+                            ? (emp.payrollCompleteness?.title || '工资数据待完善')
+                            : '暂无工资数据')}
+                      </p>
+                      {emp.payrollIncomplete && (
+                        <p className={`mt-1 text-xs leading-5 ${
+                          emp.payrollCompleteness?.state === PAYROLL_COMPLETENESS_UI.TODAY_PENDING
+                            ? 'text-slate-500'
+                            : 'text-amber-600'
+                        }`}>
+                          {emp.payrollCompleteness?.description || t('缺少工资计算所需事实')}
+                        </p>
+                      )}
+                      {emp.payrollUnavailable && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            retryMonthlyPayroll()
+                          }}
+                          className="mt-2 text-xs font-bold text-budu-600 underline"
+                        >
+                          {t('重新加载')}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-3 flex items-center justify-between rounded-lg bg-budu-50/60 px-2.5 py-1">
+                        <span className="text-[10px] font-bold text-budu-600">{periodText}</span>
+                        {weekStart && <span className="text-[10px] text-slate-400">{t('第 {n} 周', { n: isoWeek(weekStart) })}</span>}
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <Stat
+                          label={weekStart ? t('周工资') : t('当日工资')}
+                          value={hidePersonal ? '•••' : `¥${formatMoney(periodSalary)}`}
+                          accent="text-budu-600"
+                        />
+                        <Stat label={t('基础工资')} value={hidePersonal ? '•••' : `¥${formatMoney(periodBase)}`} />
+                        <Stat label={t('业绩提成')} value={hidePersonal ? '•••' : `¥${formatMoney(periodPerf)}`} accent="text-budu-600" />
+                        <Stat label={t('大单奖')} value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`} accent="text-amber-600" />
+                        <Stat label={t('调货补贴')} value={hidePersonal ? '•••' : `¥${formatMoney(periodTransfer)}`} accent="text-emerald-600" className="col-span-2" />
+                        {periodAdjustmentCount > 0 && (
+                          <Stat
+                            label={t('薪资调整')}
+                            value={hidePersonal ? '•••' : signedMoney(periodAdjustment)}
+                            accent="text-violet-600"
+                            className="col-span-2"
+                          />
+                        )}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
+                        <span>{t('工时 {h}h', { h: Math.round(periodHours) })}</span>
+                        <span>{isPublic ? '•••' : t('个人业绩分摊 ¥{amount}', { amount: formatMoney(periodRevenue) })}</span>
+                      </div>
+                    </>
+                  )}
 
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <Stat
-                      label={weekStart ? t('周工资') : day ? t('当日工资') : t('工资合计')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodSalary : emp.salary)}`}
-                      accent="text-budu-600"
-                    />
-                    <Stat
-                      label={t('基础工资')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBase)}`}
-                    />
-                    <Stat
-                      label={t('业绩提成')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(weekStart || day ? periodPerf : emp.perf + emp.big)}`}
-                      accent="text-budu-600"
-                    />
-                    <Stat
-                      label={t('大单奖')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodBig)}`}
-                      accent="text-amber-600"
-                    />
-                    <Stat
-                      label={t('调货补贴')}
-                      value={hidePersonal ? '•••' : `¥${formatMoney(periodTransfer)}`}
-                      accent="text-emerald-600"
-                      className="col-span-2"
-                    />
-                    {periodAdjustmentCount > 0 && (
-                      <Stat
-                        label={t('薪资调整')}
-                        value={hidePersonal ? '•••' : signedMoney(periodAdjustment)}
-                        accent="text-violet-600"
-                        className="col-span-2"
-                      />
-                    )}
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2 text-[11px] text-slate-400">
-                    <span>{t('工时 {h}h', { h: Math.round(weekStart || day ? periodHours : emp.hours) })}</span>
-                    <span>{isPublic ? '•••' : t('营业额 ¥{amount}', { amount: formatMoney(weekStart || day ? periodRevenue : emp.workedRevenue) })}</span>
-                  </div>
+                  {!day && !weekStart && emp.payrollAvailable && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setDetailEmp(emp)
+                      }}
+                      className="mt-3 flex min-h-10 w-full items-center justify-center rounded-xl border border-budu-100 bg-white px-3 py-2 text-xs font-bold text-budu-600 transition hover:bg-budu-50"
+                    >
+                      {t('查看每日工资明细')}
+                    </button>
+                  )}
 
                   {canBigBonus && (
                     <button
@@ -856,10 +1368,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                       {status ? (
                         <>
                           <span className="text-xs font-semibold text-slate-500">
-                            {t(weekStart ? '本周值班 · {count} 天 · {stores} 家店' : '当日值班 · {count} 家店', {
-                              count: weekStart ? status.workedDays : periodStores,
-                              stores: periodStores,
-                            })}
+                            {status.adjustmentOnly
+                              ? t('仅薪资调整 · 无考勤记录')
+                              : t(weekStart ? '本周值班 · {count} 天 · {stores} 家店' : '当日值班 · {count} 家店', {
+                                  count: weekStart ? status.workedDays : periodStores,
+                                  stores: periodStores,
+                                })}
                           </span>
                           {isPublic ? (
                             <span className="text-xs font-bold text-slate-300">•••</span>
@@ -878,13 +1392,17 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                   ) : (
                     <div className="mt-3 flex items-center justify-between">
                       <span className="text-[11px] text-slate-300">{t('ROI = 当班营业额 / 工资')}</span>
-                      <span
-                        className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
-                          emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                        }`}
-                      >
-                        {hidePersonal ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
-                      </span>
+                      {!emp.payrollAvailable ? (
+                        <span className="rounded-lg bg-slate-50 px-2 py-0.5 text-xs font-bold text-slate-400">{t('ROI —')}</span>
+                      ) : (
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-xs font-bold ${
+                            emp.roi >= 8 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                          }`}
+                        >
+                          {hidePersonal ? '•••' : `ROI ${emp.roi.toFixed(2)}x`}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -903,7 +1421,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         <div className="card grid place-items-center py-20 text-center">
           <CalendarDays className="h-9 w-9 text-slate-200" />
           <p className="mt-3 text-sm font-semibold text-slate-400">
-            {t('{month}暂无薪资数据', { month: monthLabel(month) })}
+            {['DATA', 'REAL_EMPTY'].includes(staffRead.status) ? t('{month}暂无薪资数据', { month: monthLabel(month) }) : staffRead.status.startsWith('ERROR') ? '人员数据刷新失败，正在重试' : '人员数据加载中…'}
           </p>
           <p className="mt-1.5 text-xs text-slate-300">
             {t('当前薪资表覆盖 2026.27-31 周（6 月 ~ 8 月）；已录入业绩的月份自动计算薪酬，可切换日历月份或添加本地员工')}
@@ -914,7 +1432,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onSave={handleAddStaff} />}
       {pendingDelete && !showSecondPwd && (
         <ConfirmDeleteModal
-          name={pendingDelete}
+          name={pendingDelete.name}
           onClose={() => setPendingDelete(null)}
           onConfirm={() => {
             if (canDelete) setShowSecondPwd(true)
@@ -927,7 +1445,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
       )}
       {pendingDelete && showSecondPwd && (
         <SecondPasswordModal
-          name={pendingDelete}
+          name={pendingDelete.name}
           onClose={() => {
             setShowSecondPwd(false)
             setPendingDelete(null)
@@ -948,15 +1466,69 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
           onClose={() => setShowExport(false)}
         />
       )}
-      {detailEmp && (        <DailyPayModal
-          emp={detailEmp}
+      {detailEmp && (() => {
+        const currentDetailEmp = list.find((employee) => employee.id === detailEmp.id) || detailEmp
+        const scopedPeriod = Boolean(day || weekStart)
+        const periodMatches = scopedPeriod && periodAttendance.key === periodKey
+        const dailyExplanations = scopedPeriod
+          ? (periodMatches ? (periodAttendance.dailyByEmployeeId?.get(currentDetailEmp.id) || []) : [])
+          : (currentDetailEmp.dailyExplanations || [])
+        const stableIdentity = scopedPeriod
+          ? Boolean(currentDetailEmp.id)
+          : payrollDisplay.mode === 'EMPLOYEE_ID'
+        let payrollState
+        let payrollRefreshing = false
+        let payrollRefreshError = false
+        if (stableIdentity) {
+          if (scopedPeriod) {
+            if (!periodMatches || periodAttendance.status === 'loading' || periodAttendance.status === 'idle') {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+            } else if (periodAttendance.status === 'error') {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+            } else if (periodAttendance.status === 'refreshing' && dailyExplanations.length === 0) {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+            } else if (periodAttendance.status === 'refresh_error' && dailyExplanations.length === 0) {
+              payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+            } else {
+              payrollState = dailyExplanations.length > 0
+                ? PAYROLL_DAILY_VIEW_STATE.DATA
+                : PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY
+              payrollRefreshing = periodAttendance.status === 'refreshing'
+              payrollRefreshError = periodAttendance.status === 'refresh_error'
+            }
+          } else if (['loading', 'refreshing'].includes(payrollDisplay.status) && dailyExplanations.length === 0) {
+            payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+          } else if (['unavailable', 'refresh_error'].includes(payrollDisplay.status) && dailyExplanations.length === 0) {
+            payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+          } else {
+            payrollState = dailyExplanations.length > 0
+              ? PAYROLL_DAILY_VIEW_STATE.DATA
+              : PAYROLL_DAILY_VIEW_STATE.REAL_EMPTY
+            payrollRefreshing = payrollDisplay.status === 'refreshing'
+            payrollRefreshError = payrollDisplay.status === 'refresh_error'
+          }
+        } else if (!scopedPeriod && payrollDisplay.status === 'loading') {
+          payrollState = PAYROLL_DAILY_VIEW_STATE.LOADING
+        } else if (!scopedPeriod && payrollDisplay.status === 'unavailable') {
+          payrollState = PAYROLL_DAILY_VIEW_STATE.ERROR
+        }
+        return (
+        <DailyPayModal
+          emp={currentDetailEmp}
           month={month}
           day={day}
           weekStart={weekStart}
           hidePersonal={hidePersonal}
+          stableIdentity={stableIdentity}
+          attendanceRows={day || weekStart ? (periodAttendance.key === periodKey ? periodAttendance.rows : []) : getDailyStoreStaff(month)}
+          dailyExplanations={dailyExplanations}
+          payrollState={payrollState}
+          payrollRefreshing={payrollRefreshing}
+          payrollRefreshError={payrollRefreshError}
           onClose={() => setDetailEmp(null)}
         />
-      )}
+        )
+      })()}
       {bigBonusEmp && <BigBonusModal emp={bigBonusEmp} currentUser={user} onClose={() => setBigBonusEmp(null)} />}
       {adjustmentEmp && (
         <DailyPayAdjustmentModal

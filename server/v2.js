@@ -1,19 +1,29 @@
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
+import { appendPurposeAudit, assertPurposeActor, cleanReason, purposeError } from './order-purpose-service.js'
+import { isTestOrderPurpose } from '../shared/orderPurpose.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
-import { broadcast } from './notification-center.js'
+import { broadcast, notify } from './notification-center.js'
+import { listUsers } from './user-store.js'
+import { deliverTransferRequestNotification } from './transfer-notification.js'
+import { EMPTY_TRANSFER_DELIVERY_SUMMARY, loadTransferDeliverySummaries } from './transfer-delivery-recipients.js'
 import { ocrConfigured, extractInvoiceFromBase64, generalOcrText } from './ocr.js'
+import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { resolveStoreName } from './store-names.js'
 import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
+  DAILY_ENTRY_CAPABILITIES,
   canAccessTransferStore,
   canManageAccounts,
   canManageTransferStore,
+  hasDailyEntryCapability,
+  hasModuleAccess,
   hasInventoryTransferAll,
   isSuperUser,
+  MODULE_KEYS,
 } from '../shared/accountPermissions.js'
 
 export const v2Router = Router()
@@ -32,6 +42,13 @@ const bad = (msg, status = 400) => {
   const e = new Error(msg)
   e.status = status
   return e
+}
+
+const internalFailure = (publicMessage, cause) => {
+  const error = new Error(publicMessage, { cause })
+  error.status = 500
+  error.publicMessage = publicMessage
+  return error
 }
 
 function canStore(user, storeKey) {
@@ -97,21 +114,136 @@ export async function upsertItem(name, category = 'product') {
 
 export function itemRows(items) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('请至少添加一种货品（最多 50 种）')
-  return items.map((it) => {
+  const rows = items.map((it) => {
+    const itemId = String(it.itemId || '').trim()
     const name = String(it.name || it.productName || '').trim()
-    const quantity = Number(it.quantity)
     const note = it.note === undefined || it.note === null ? '' : String(it.note).trim().slice(0, 100)
     const category = normalizeItemCategory(name, it.category)
     if (!name || name.length > 50) throw bad('货品名称不正确')
+    const usesUnitQuantities = Object.prototype.hasOwnProperty.call(it, 'boxQuantity') || Object.prototype.hasOwnProperty.call(it, 'pieceQuantity')
+    if (usesUnitQuantities) {
+      const boxQuantity = Number(it.boxQuantity || 0)
+      const pieceQuantity = Number(it.pieceQuantity || 0)
+      if (!Number.isInteger(boxQuantity) || boxQuantity < 0 || boxQuantity > 999999) throw bad('箱数应为 0-999999 的整数')
+      if (!Number.isInteger(pieceQuantity) || pieceQuantity < 0 || pieceQuantity > 999999) throw bad('散颗数应为 0-999999 的整数')
+      if (boxQuantity === 0 && pieceQuantity === 0) throw bad('箱数和散颗数不能同时为 0')
+      return { itemId, name, quantity: null, boxQuantity, pieceQuantity, usesUnitQuantities, note, category }
+    }
+    const quantity = Number(it.quantity)
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('数量应为 1-999999 的整数')
-    return { name, quantity, note, category }
+    return { itemId, name, quantity, boxQuantity: 0, pieceQuantity: 0, usesUnitQuantities, note, category }
   })
+  const seen = new Set()
+  for (const row of rows) {
+    const identity = row.itemId || `${row.category}:${row.name}`
+    if (seen.has(identity)) throw bad('同一货品只能填写一次')
+    seen.add(identity)
+  }
+  return rows
+}
+
+async function findActiveTransferItem(row) {
+  const existing = await prisma.inventoryItem.findUnique({
+    where: row.itemId ? { id: row.itemId } : { name: row.name },
+    include: { productCategory: true },
+  })
+  if (!existing || !existing.transferEnabled || existing.category !== row.category) {
+    throw bad('货品已停用或不存在，请刷新后重试', 409)
+  }
+  return existing
+}
+
+function inventoryItemCode(item) {
+  return String(item?.transferCode || item?.sku || item?.barcode || item?.id || '')
+}
+
+function transferItemBase(row, item) {
+  return {
+    itemId: item.id,
+    note: row.note,
+    itemNameSnapshot: item.name,
+    itemCodeSnapshot: inventoryItemCode(item),
+    categorySnapshot: row.category,
+    productCategoryNameSnapshot: row.category === 'product' ? item.productCategory?.name || '' : '',
+  }
+}
+
+function transferItemCreates(row, item) {
+  const packagingConfigured = item.transferBoxEnabled || item.transferPieceEnabled
+  if (!row.usesUnitQuantities) {
+    if (packagingConfigured) throw bad(`「${item.name}」请按箱/颗填写调拨数量`, 409)
+    return [{ ...transferItemBase(row, item), quantity: row.quantity, quantityUnit: 'legacy', unitWeightGramsSnapshot: null }]
+  }
+  if (!packagingConfigured) throw bad(`「${item.name}」未配置箱/颗调拨规格`, 409)
+  if (row.boxQuantity > 0 && (!item.transferBoxEnabled || !item.transferBoxWeightGrams)) throw bad(`「${item.name}」不允许整箱调拨`, 409)
+  if (row.pieceQuantity > 0 && (!item.transferPieceEnabled || !item.transferPieceWeightGrams)) throw bad(`「${item.name}」不允许散颗调拨`, 409)
+  return [
+    row.boxQuantity > 0 && { ...transferItemBase(row, item), quantity: row.boxQuantity, quantityUnit: 'box', unitWeightGramsSnapshot: item.transferBoxWeightGrams },
+    row.pieceQuantity > 0 && { ...transferItemBase(row, item), quantity: row.pieceQuantity, quantityUnit: 'piece', unitWeightGramsSnapshot: item.transferPieceWeightGrams },
+  ].filter(Boolean)
+}
+
+function serializeTransferItems(items) {
+  const result = []
+  const packaged = new Map()
+  for (const it of items) {
+    const category = it.categorySnapshot || normalizeItemCategory(it.item.name, it.item.category)
+    const base = {
+      id: it.id,
+      itemId: it.itemId,
+      category,
+      productName: it.itemNameSnapshot || it.item.name,
+      itemCode: it.itemCodeSnapshot || '',
+      productCategory: it.productCategoryNameSnapshot || '',
+      note: it.note,
+    }
+    if (!['box', 'piece'].includes(it.quantityUnit)) {
+      result.push({
+        ...base,
+        quantity: it.quantity,
+        shippedQuantity: it.shippedQuantity,
+        shipmentRecorded: it.shippedQuantity !== null,
+      })
+      continue
+    }
+    let row = packaged.get(it.itemId)
+    if (!row) {
+      row = {
+        ...base,
+        quantity: null,
+        boxQuantity: 0,
+        pieceQuantity: 0,
+        shippedBoxQuantity: 0,
+        shippedPieceQuantity: 0,
+        shipmentRecorded: true,
+        boxWeightGrams: null,
+        pieceWeightGrams: null,
+        estimatedWeightGrams: 0,
+      }
+      packaged.set(it.itemId, row)
+      result.push(row)
+    }
+    row.shipmentRecorded = row.shipmentRecorded && it.shippedQuantity !== null
+    if (it.quantityUnit === 'box') {
+      row.boxQuantity += it.quantity
+      if (it.shippedQuantity !== null) row.shippedBoxQuantity += it.shippedQuantity
+      row.boxWeightGrams = it.unitWeightGramsSnapshot
+    } else {
+      row.pieceQuantity += it.quantity
+      if (it.shippedQuantity !== null) row.shippedPieceQuantity += it.shippedQuantity
+      row.pieceWeightGrams = it.unitWeightGramsSnapshot
+    }
+    row.estimatedWeightGrams += it.quantity * Number(it.unitWeightGramsSnapshot || 0)
+  }
+  return result
 }
 
 function serializeTransfer(r) {
+  const items = serializeTransferItems(r.items)
   return {
     id: r.id,
     type: 'transfer',
+    purpose: r.purpose,
     storeKey: r.toStoreKey,
     fromStoreKey: r.fromStoreKey,
     storeName: r.toStore ? resolveStoreName(r.toStore.key, r.toStore.name) : r.toLocationName || '',
@@ -119,17 +251,75 @@ function serializeTransfer(r) {
     status: r.status,
     note: r.note,
     createdBy: r.createdBy,
+    shippedBy: r.shippedBy || '',
+    shippedAt: r.shippedAt || null,
+    withdrawnBy: r.withdrawnBy || '',
+    withdrawnAt: r.withdrawnAt || null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
-    items: r.items.map((it) => ({
-      id: it.id,
-      itemId: it.itemId,
-      category: normalizeItemCategory(it.item.name, it.item.category),
-      productName: it.item.name,
-      quantity: it.quantity,
-      note: it.note,
-    })),
+    shipmentRecorded: items.length > 0 && items.every((item) => item.shipmentRecorded),
+    items,
   }
+}
+
+function parseShippedQuantity(value, label, requested) {
+  if (value === undefined || value === null || value === '') throw bad(`${label}不能为空`)
+  const quantity = Number(value)
+  if (!Number.isInteger(quantity) || quantity < 0 || quantity > requested) {
+    throw bad(`${label}应为 0-${requested} 的整数`)
+  }
+  return quantity
+}
+
+function transferShipmentUpdates(inputItems, storedItems) {
+  if (!Array.isArray(inputItems) || inputItems.length === 0) throw bad('请逐项核对实际发货数量')
+  const storedByItem = new Map()
+  for (const row of storedItems) {
+    const group = storedByItem.get(row.itemId) || []
+    group.push(row)
+    storedByItem.set(row.itemId, group)
+  }
+  if (inputItems.length !== storedByItem.size) throw bad('实际发货明细必须与原申请完全一致')
+
+  const inputByItem = new Map()
+  for (const input of inputItems) {
+    const itemId = String(input?.itemId || '').trim()
+    if (!itemId || !storedByItem.has(itemId)) throw bad('实际发货明细包含未申请货品')
+    if (inputByItem.has(itemId)) throw bad('同一货品只能核对一次')
+    inputByItem.set(itemId, input)
+  }
+
+  const updates = []
+  let totalShipped = 0
+  for (const [itemId, rows] of storedByItem) {
+    const input = inputByItem.get(itemId)
+    if (!input) throw bad('实际发货明细缺少原申请货品')
+    const packaged = rows.some((row) => ['box', 'piece'].includes(row.quantityUnit))
+    if (packaged && rows.some((row) => !['box', 'piece'].includes(row.quantityUnit))) throw bad('调拨单位事实冲突', 409)
+    if (!packaged) {
+      if (Object.prototype.hasOwnProperty.call(input, 'shippedBoxQuantity') || Object.prototype.hasOwnProperty.call(input, 'shippedPieceQuantity')) {
+        throw bad('普通件数货品不得提交箱/颗实发数量')
+      }
+      const requested = rows.reduce((sum, row) => sum + row.quantity, 0)
+      const shipped = parseShippedQuantity(input.shippedQuantity, '实发数量', requested)
+      if (rows.length !== 1) throw bad('历史调拨单位事实不唯一', 409)
+      updates.push({ id: rows[0].id, shippedQuantity: shipped })
+      totalShipped += shipped
+      continue
+    }
+
+    if (Object.prototype.hasOwnProperty.call(input, 'shippedQuantity')) throw bad('箱/颗货品不得提交普通件数')
+    const requestedBox = rows.filter((row) => row.quantityUnit === 'box').reduce((sum, row) => sum + row.quantity, 0)
+    const requestedPiece = rows.filter((row) => row.quantityUnit === 'piece').reduce((sum, row) => sum + row.quantity, 0)
+    const shippedBox = parseShippedQuantity(input.shippedBoxQuantity, '实发箱数', requestedBox)
+    const shippedPiece = parseShippedQuantity(input.shippedPieceQuantity, '实发颗数', requestedPiece)
+    for (const row of rows) {
+      updates.push({ id: row.id, shippedQuantity: row.quantityUnit === 'box' ? shippedBox : shippedPiece })
+    }
+    totalShipped += shippedBox + shippedPiece
+  }
+  if (totalShipped <= 0) throw bad('没有实际发货商品')
+  return updates
 }
 
 function serializePurchase(r) {
@@ -139,7 +329,7 @@ function serializePurchase(r) {
     storeKey: r.storeKey,
     storeName: r.store ? resolveStoreName(r.store.key, r.store.name) : '',
     status: r.status,
-    supplier: r.supplier,
+    supplier: r.supplierRef?.name || r.supplier,
     expectedAt: r.expectedAt,
     note: r.note,
     createdBy: r.createdBy,
@@ -149,7 +339,8 @@ function serializePurchase(r) {
       id: it.id,
       itemId: it.itemId,
       category: normalizeItemCategory(it.item.name, it.item.category),
-      productName: it.item.name,
+      productName: it.itemNameSnapshot || it.item.name,
+      unit: it.item.unit || '',
       quantity: it.orderedQty,
       receivedQty: it.receivedQty,
       note: it.note,
@@ -180,6 +371,12 @@ function serializeMailingRecord(r) {
     method: r.method,
     postage: r.postage,
     fee: r.fee,
+    storeKey: r.storeKey || '',
+    shippingTier: r.shippingTier || '',
+    shippingAmountCents: r.shippingAmountCents,
+    shippingPaymentMode: r.shippingPaymentMode || '',
+    shippingPaymentConfirmedAt: r.shippingPaymentConfirmedAt,
+    shippingPaymentConfirmedBy: r.shippingPaymentConfirmedBy || '',
     address: r.address,
     recipient: r.recipient,
     phone: r.phone,
@@ -194,6 +391,7 @@ function serializeMailingRecord(r) {
 function serializeBigBonus(r) {
   return {
     id: r.id,
+    employeeId: r.employeeId || '',
     staffKey: r.staffKey,
     staffName: r.staffName,
     storeKey: r.storeKey,
@@ -209,6 +407,7 @@ function serializeBigBonus(r) {
 function serializeDailyPayAdjustment(r) {
   return {
     id: r.id,
+    employeeId: r.employeeId || '',
     staffName: r.staffName,
     date: isoDate(r.date),
     autoPayCentsSnapshot: r.autoPayCentsSnapshot.toString(),
@@ -234,17 +433,17 @@ function dailyPayAdjustmentAuditValue(r) {
   }
 }
 
-function staffNameFromAccount(user) {
-  if (!user || user.role !== 'staff' || !user.staffKey) return ''
-  const parts = String(user.staffKey).split('::')
-  return parts.length > 1 ? parts.slice(1).join('::') : ''
+function selfEmployeeId(user) {
+  return user?.role === 'staff' ? String(user.employeeId || '').trim() : ''
 }
 
 async function scopeDailyPayAdjustments(rows, user) {
   if (isSuperUser(user)) return rows
   if (!user || user.role === 'public') return []
-  const ownName = staffNameFromAccount(user)
-  if (user.role === 'staff' && !ownName) return []
+  if (user.role === 'staff') {
+    const ownId = selfEmployeeId(user)
+    return ownId ? rows.filter((row) => String(row.employeeId || '').trim() === ownId) : []
+  }
   const allowedStores = new Set(Array.isArray(user.storeKeys) ? user.storeKeys : [])
   if (allowedStores.size === 0 || rows.length === 0) return []
 
@@ -254,7 +453,6 @@ async function scopeDailyPayAdjustments(rows, user) {
     select: { storeKey: true, date: true, staffNames: true },
   })
   return rows.filter((row) => {
-    if (user.role === 'staff' && row.staffName !== ownName) return false
     const date = isoDate(row.date)
     const duties = entries.filter(
       (entry) => isoDate(entry.date) === date && Array.isArray(entry.staffNames) && entry.staffNames.includes(row.staffName),
@@ -379,6 +577,7 @@ v2Router.get('/daily-entries', wrap(async (req, res) => {
       incCents: r.incCents.toString(),
       ord: r.ord,
       staffNames: r.staffNames,
+      status: r.status,
       version: r.version,
       updatedBy: r.updatedBy,
       updatedAt: r.updatedAt,
@@ -389,7 +588,7 @@ v2Router.get('/daily-entries', wrap(async (req, res) => {
 v2Router.put('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date, incCents, ord, staffNames, version } = req.body || {}
-  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw bad('无权限', 403)
   const store = await prisma.store.findUnique({ where: { key: storeKey } })
   const effDate = store?.salesDataSourceEffectiveDate ? store.salesDataSourceEffectiveDate.toISOString().slice(0, 10) : ''
   const source = store?.salesDataSource === 'manual' || (effDate && date && String(date).slice(0, 10) < effDate)
@@ -408,10 +607,8 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   await ensureStore(storeKey)
   const composite = { storeKey, date: d }
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: composite } })
-  if (existing?.status === 'confirmed' && !isSuperUser(req.user) && req.user.role !== 'manager') {
-    throw bad('日报已确认，普通员工不可修改', 409)
-  }
-  if (existing && ((existing.active && version == null) || (version != null && existing.version !== Number(version)))) {
+  if (existing?.status === 'confirmed') throw bad('日报已确认，请通过受控历史修正流程处理', 409)
+  if (existing && (version == null || existing.version !== Number(version))) {
     return res.status(409).json({
       error: '数据已被他人修改，已加载最新数据',
       latest: {
@@ -421,12 +618,18 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
         incCents: existing.incCents.toString(),
         ord: existing.ord,
         staffNames: existing.staffNames,
+        status: existing.status,
         version: existing.version,
       },
     })
   }
   const base = { incCents: BigInt(cents), ord: orderCount, staffNames: names, updatedBy: req.user.username }
   const saved = await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${storeKey}:${date}`)
+    const current = await tx.dailyEntry.findUnique({ where: { storeKey_date: composite } })
+    if (current?.status === 'confirmed' || current?.id !== existing?.id || current?.version !== existing?.version) {
+      throw bad('记录已变化或已确认，请重新读取；历史事实需通过更正记录处理', 409)
+    }
     const row = await tx.dailyEntry.upsert({
       where: { storeKey_date: composite },
       update: { ...base, version: { increment: 1 }, updatedAt: new Date() },
@@ -459,6 +662,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
       incCents: saved.incCents.toString(),
       ord: saved.ord,
       staffNames: saved.staffNames,
+      status: saved.status,
       version: saved.version,
     },
   })
@@ -467,93 +671,370 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
 v2Router.delete('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date } = req.body || {}
-  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
-  if (req.user.role === 'public') throw bad('无权限', 403)
+  if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw bad('无权限', 403)
   const d = dateOnly(date)
-  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d } })
+  const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
+  if (existing?.status === 'confirmed') throw bad('已确认每日录入是工资与经营历史事实，禁止硬删除', 409)
+  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d, status: 'draft' } })
   res.json({ ok: true, deleted: result.count })
 }))
 
-// ---------- 调货 ----------
-v2Router.post('/transfer-requests', wrap(async (req, res) => {
+// ---------- 门店调拨 ----------
+function transferMasterData(body, category) {
+  const name = String(body?.name || '').trim()
+  if (!name || name.length > 50) throw bad(`${category === 'product' ? '产品' : '物料'}名称不正确`)
+  const sortOrder = Number(body?.sortOrder ?? 0)
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 999999) throw bad('排序必须是 0-999999 的整数')
+  const code = category === 'product' ? String(body?.code || '').trim() : ''
+  if (category === 'product' && (!code || code.length > 40)) throw bad('产品编号不能为空且不能超过 40 个字符')
+  const productCategoryId = category === 'product' ? String(body?.productCategoryId || '').trim() || null : null
+  return { name, code: code || null, enabled: body?.enabled !== false, sortOrder, productCategoryId }
+}
+
+function serializeTransferMasterItem(item) {
+  return {
+    id: item.id,
+    category: item.category,
+    name: item.name,
+    sku: item.sku || '',
+    code: item.transferCode || '',
+    enabled: item.transferEnabled,
+    sortOrder: item.transferSortOrder,
+    transferBoxEnabled: item.transferBoxEnabled,
+    transferBoxWeightGrams: item.transferBoxWeightGrams,
+    transferPieceEnabled: item.transferPieceEnabled,
+    transferPieceWeightGrams: item.transferPieceWeightGrams,
+    productCategoryId: item.productCategoryId || '',
+    productCategory: item.productCategory ? {
+      id: item.productCategory.id,
+      name: item.productCategory.name,
+      isActive: item.productCategory.isActive,
+      sortOrder: item.productCategory.sortOrder,
+    } : null,
+    version: item.version,
+    used: Boolean(item._count?.transferItems || item._count?.purchaseItems),
+  }
+}
+
+function requireTransferMasterManager(user) {
+  if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT)) throw bad('无权限', 403)
+}
+
+function requireProductCategoryManager(user) {
+  if (!canWrite(user) || !hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)) throw bad('无权限', 403)
+}
+
+function serializeProductCategory(category) {
+  return {
+    id: category.id,
+    name: category.name,
+    sortOrder: category.sortOrder,
+    isActive: category.isActive,
+    version: category.version,
+    productCount: Number(category._count?.products || 0),
+    createdAt: category.createdAt,
+    updatedAt: category.updatedAt,
+  }
+}
+
+function productCategoryData(body) {
+  const name = String(body?.name || '').trim()
+  const sortOrder = Number(body?.sortOrder ?? 0)
+  if (!name || name.length > 30) throw bad('分类名称不能为空且不能超过 30 个字符')
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 999999) throw bad('排序必须是 0-999999 的整数')
+  return { name, sortOrder, isActive: body?.isActive !== false }
+}
+
+async function requireAssignableProductCategory(productCategoryId, currentCategoryId = '') {
+  if (!productCategoryId) return null
+  const category = await prisma.productCategory.findUnique({ where: { id: productCategoryId } })
+  if (!category) throw bad('产品分类不存在', 404)
+  if (!category.isActive && category.id !== currentCategoryId) throw bad('已停用分类不能接收产品', 409)
+  return category
+}
+
+v2Router.get('/product-categories', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
+  const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
+  const rows = await prisma.productCategory.findMany({
+    where: active === undefined ? {} : { isActive: active },
+    include: { _count: { select: { products: true } } },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    take: 500,
+  })
+  res.json({ rows: rows.map(serializeProductCategory) })
+}))
+
+v2Router.post('/product-categories', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireProductCategoryManager(req.user)
+  const data = productCategoryData(req.body)
+  const duplicate = await prisma.productCategory.findFirst({ where: { name: { equals: data.name, mode: 'insensitive' } } })
+  if (duplicate) throw bad('分类名称已存在', 409)
+  const category = await prisma.productCategory.create({
+    data: { id: uid('pc'), ...data },
+    include: { _count: { select: { products: true } } },
+  })
+  res.status(201).json({ ok: true, category: serializeProductCategory(category) })
+}))
+
+v2Router.put('/product-categories/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireProductCategoryManager(req.user)
+  const version = Number(req.body?.version)
+  if (!Number.isInteger(version) || version < 1) throw bad('分类版本不正确，请刷新后重试')
+  const data = productCategoryData(req.body)
+  const duplicate = await prisma.productCategory.findFirst({
+    where: { id: { not: req.params.id }, name: { equals: data.name, mode: 'insensitive' } },
+  })
+  if (duplicate) throw bad('分类名称已存在', 409)
+  const updated = await prisma.productCategory.updateMany({
+    where: { id: req.params.id, version },
+    data: { ...data, version: { increment: 1 } },
+  })
+  if (updated.count !== 1) throw bad('分类已被其他人修改，请刷新后重试', 409)
+  const category = await prisma.productCategory.findUnique({
+    where: { id: req.params.id },
+    include: { _count: { select: { products: true } } },
+  })
+  res.json({ ok: true, category: serializeProductCategory(category) })
+}))
+
+v2Router.get('/transfer-master-items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const category = String(req.query.category || '').trim()
+  if (category && !['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  const active = req.query.active === 'true' ? true : req.query.active === 'false' ? false : undefined
+  const rows = await prisma.inventoryItem.findMany({
+    where: {
+      category: category || { in: ['product', 'material'] },
+      ...(active === undefined ? {} : { transferEnabled: active }),
+    },
+    include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
+    orderBy: [{ category: 'asc' }, { transferSortOrder: 'asc' }, { name: 'asc' }],
+    take: 1000,
+  })
+  res.json({ rows: rows.map(serializeTransferMasterItem) })
+}))
+
+v2Router.post('/transfer-master-items', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const category = String(req.body?.category || '').trim()
+  if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
+  if (category === 'product') requireProductCategoryManager(req.user)
+  else requireTransferMasterManager(req.user)
+  const data = transferMasterData(req.body, category)
+  await requireAssignableProductCategory(data.productCategoryId)
+  const duplicate = await prisma.inventoryItem.findFirst({
+    where: { OR: [
+      { name: data.name },
+      ...(data.code ? [{ transferCode: data.code }] : []),
+    ] },
+  })
+  if (duplicate) throw bad(duplicate.name === data.name ? '名称已存在，请编辑现有资料' : '产品编号已存在', 409)
+  const row = await prisma.inventoryItem.create({
+    data: {
+      id: uid('it'),
+      name: data.name,
+      category,
+      transferCode: data.code,
+      transferEnabled: data.enabled,
+      transferSortOrder: data.sortOrder,
+      productCategoryId: data.productCategoryId,
+    },
+    include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
+  })
+  res.status(201).json({ ok: true, item: serializeTransferMasterItem(row) })
+}))
+
+v2Router.put('/transfer-master-items/bulk-category', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireProductCategoryManager(req.user)
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map((id) => String(id || '').trim()).filter(Boolean))]
+  if (!ids.length || ids.length > 500) throw bad('请选择 1-500 个产品')
+  const productCategoryId = String(req.body?.productCategoryId || '').trim() || null
+  await requireAssignableProductCategory(productCategoryId)
+  const products = await prisma.inventoryItem.findMany({ where: { id: { in: ids }, category: 'product' }, select: { id: true } })
+  if (products.length !== ids.length) throw bad('批量归类中包含不存在或非产品资料', 409)
+  await prisma.inventoryItem.updateMany({
+    where: { id: { in: ids }, category: 'product' },
+    data: { productCategoryId, version: { increment: 1 } },
+  })
+  res.json({ ok: true, updated: ids.length })
+}))
+
+v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  const existing = await prisma.inventoryItem.findUnique({ where: { id: req.params.id } })
+  if (!existing || !['product', 'material'].includes(existing.category)) throw bad('产品或物料不存在', 404)
+  if (existing.category === 'product') requireProductCategoryManager(req.user)
+  else requireTransferMasterManager(req.user)
+  const version = Number(req.body?.version)
+  if (!Number.isInteger(version) || version < 1) throw bad('资料版本不正确，请刷新后重试')
+  const data = transferMasterData(req.body, existing.category)
+  await requireAssignableProductCategory(data.productCategoryId, existing.productCategoryId || '')
+  const duplicate = await prisma.inventoryItem.findFirst({
+    where: {
+      id: { not: existing.id },
+      OR: [
+        { name: data.name },
+        ...(data.code ? [{ transferCode: data.code }] : []),
+      ],
+    },
+  })
+  if (duplicate) throw bad(duplicate.name === data.name ? '名称已存在' : '产品编号已存在', 409)
+
+  const row = await prisma.$transaction(async (tx) => {
+    if (existing.name !== data.name) {
+      await tx.transferItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
+      await tx.purchaseItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
+    }
+    const updated = await tx.inventoryItem.updateMany({
+      where: { id: existing.id, version },
+      data: {
+        name: data.name,
+        transferCode: data.code,
+        transferEnabled: data.enabled,
+        transferSortOrder: data.sortOrder,
+        productCategoryId: data.productCategoryId,
+        version: { increment: 1 },
+      },
+    })
+    if (updated.count !== 1) throw bad('资料已被其他人修改，请刷新后重试', 409)
+    return tx.inventoryItem.findUnique({
+      where: { id: existing.id },
+      include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
+    })
+  })
+  res.json({ ok: true, item: serializeTransferMasterItem(row) })
+}))
+
+async function createTransferRequest(req, res, testMode = false) {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!testMode && Object.hasOwn(req.body || {}, 'purpose')) throw bad('普通业务入口不能指定订单用途', 400)
+  const testActor = testMode ? await assertPurposeActor(prisma, req.user?.id) : null
+  let testKey
+  if (testMode) {
+    if (!isTestOrderPurpose(req.body?.purpose)) throw bad('请选择测试用途', 400)
+    cleanReason(req.body.reason)
+    if (!/^[A-Za-z0-9._:-]{8,100}$/.test(req.get('Idempotency-Key') || '')) throw bad('请提供有效的幂等请求标识', 400)
+    testKey = `test-transfer:${testActor.id}:${req.get('Idempotency-Key')}`
+    const source = await prisma.transferRequest.findUnique({ where: { id: String(req.body.sourceId || '') }, include: { items: { include: { item: true } }, fromStore: true, toStore: true } })
+    if (!source) throw bad('模板订单不存在', 404)
+    const template = serializeTransfer(source)
+    req.body = { ...req.body, fromStoreKey: source.fromStoreKey, toStoreKey: source.toStoreKey,
+      items: template.items.map(i => ({ itemId: i.itemId, name: i.productName, category: i.category,
+        ...(i.quantity != null ? { quantity: i.quantity } : { boxQuantity: i.boxQuantity || 0, pieceQuantity: i.pieceQuantity || 0 }) })) }
+    const previous = await prisma.orderPurposeAudit.findUnique({ where: { operationKey: testKey } })
+    if (previous) {
+      if (previous.afterPurpose !== req.body.purpose || previous.safety?.sourceId !== req.body.sourceId) throw bad('相同请求标识的测试用途或模板不一致', 409)
+      const row = await prisma.transferRequest.findUnique({ where: { id: previous.orderId }, include: { items: { include: { item: true } }, fromStore: true, toStore: true } })
+      if (!row) throw purposeError('ORDER_NOT_FOUND_OR_DELETED', '该请求对应的测试订单已删除', 410)
+      return res.json({ ok: true, reused: true, request: serializeTransfer(row) })
+    }
+  }
   const { items, note } = req.body || {}
   const fromStoreKey = String((req.body || {}).fromStoreKey || '').trim()
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '').trim()
-  const fromLocationName = String((req.body || {}).fromLocationName || '').trim().slice(0, 50)
-  const toLocationName = String((req.body || {}).toLocationName || '').trim().slice(0, 50)
   if (req.user?.role === 'public') throw bad('无权限', 403)
-  if (fromStoreKey && !isFixedStoreKey(fromStoreKey)) throw bad('调出门店不在正式门店目录')
-  if (toStoreKey && !isFixedStoreKey(toStoreKey)) throw bad('调入门店不在正式门店目录')
-  if (Boolean(fromStoreKey) === Boolean(fromLocationName)) throw bad('调出地点必须选择正式门店或填写一个临时地点')
-  if (Boolean(toStoreKey) === Boolean(toLocationName)) throw bad('调入地点必须选择正式门店或填写一个临时地点')
-  const fromLabel = fromStoreKey ? resolveStoreName(fromStoreKey) : fromLocationName
-  const toLabel = toStoreKey ? resolveStoreName(toStoreKey) : toLocationName
-  if (fromLabel.localeCompare(toLabel, 'zh-CN', { sensitivity: 'base' }) === 0) throw bad('调出/调入地点不能相同')
-  if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, fromStoreKey) && !canAccessTransferStore(req.user, toStoreKey)) {
-    throw bad('无权为所选门店发起调货', 403)
-  }
+  if (!isFixedStoreKey(fromStoreKey)) throw bad('请选择调出门店')
+  if (!isFixedStoreKey(toStoreKey)) throw bad('请选择调入门店')
+  if (fromStoreKey === toStoreKey) throw bad('调出门店不能与调入门店相同')
+  if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, toStoreKey)) throw bad('无权为所选调入门店创建调拨', 403)
   const rows = itemRows(items)
-  if (fromStoreKey) await ensureStore(fromStoreKey)
-  if (toStoreKey) await ensureStore(toStoreKey)
-  const created = await prisma.transferRequest.create({
+  await ensureStore(fromStoreKey)
+  await ensureStore(toStoreKey)
+  const createItems = []
+  for (const row of rows) {
+    const item = await findActiveTransferItem(row)
+    for (const data of transferItemCreates(row, item)) {
+      createItems.push({ id: uid('ti'), ...data })
+    }
+  }
+  const creation = {
     data: {
       id: `tr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      fromStoreKey: fromStoreKey || null,
-      toStoreKey: toStoreKey || null,
-      fromLocationName: fromStoreKey ? '' : fromLocationName,
-      toLocationName: toStoreKey ? '' : toLocationName,
+      purpose: testMode ? req.body.purpose : 'REAL',
+      fromStoreKey,
+      toStoreKey,
+      fromLocationName: '',
+      toLocationName: '',
       note: String(note || '').trim().slice(0, 200),
       createdBy: req.user.username,
       items: {
-        create: await Promise.all(
-          rows.map(async (row) => {
-            const item = await upsertItem(row.name)
-            return { id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, quantity: row.quantity, note: row.note }
-          }),
-        ),
+        create: createItems,
       },
     },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
-  })
-  broadcast(
-    '新调货申请',
-    `**${fromLabel}** → **${toLabel}**\n货品 **${created.items.length}** 种 · 提交人 **${req.user.username}**\n请调出地点负责人尽快审核发货。`,
-  ).catch(() => {})
-  res.json({ ok: true, request: serializeTransfer(created) })
-}))
+  }
+  const created = testMode ? await prisma.$transaction(async tx => {
+    const actor = await assertPurposeActor(tx, req.user.id)
+    const row = await tx.transferRequest.create(creation)
+    await appendPurposeAudit(tx, { actor, type: 'transfer', order: row, action: 'CREATE_TEST', reason: req.body.reason, afterPurpose: req.body.purpose, operationKey: testKey, safety: { sourceId: req.body.sourceId, externalNotifications: 'SUPPRESSED' } })
+    return row
+  }, { isolationLevel: 'Serializable' }).catch(error => {
+    if (['P2002','P2034'].includes(error.code)) throw bad('测试创建请求正在并发处理，请使用相同请求标识重试', 409)
+    throw error
+  }) : await prisma.transferRequest.create(creation)
+  const serialized = serializeTransfer(created)
+  if (testMode) return res.status(201).json({ ok: true, request: serialized })
+  const notificationResult = await deliverTransferRequestNotification({ transfer: serialized }).catch((error) => ({
+    ok: false,
+    status: 'failed',
+    reason: String(error?.message || 'transfer notification failed').slice(0, 200),
+  }))
+  if (!notificationResult.ok) {
+    console.error('[transfer-notification]', created.id, notificationResult.status, notificationResult.reason || '')
+  }
+  res.json({ ok: true, request: serialized })
+}
+v2Router.post('/transfer-requests', wrap((req,res) => createTransferRequest(req,res)))
+v2Router.post('/order-purpose/test-transfer', wrap((req,res) => createTransferRequest(req,res,true)))
 
 v2Router.get('/transfer-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user?.role === 'public') throw bad('无权限', 403)
   const sf = hasInventoryTransferAll(req.user) ? null : storeFilter(req.user)
-  const where = {}
+  const where = { deletedAt: null }
   if (sf) where.OR = [{ fromStoreKey: sf }, { toStoreKey: sf }, { createdBy: req.user.username }]
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.transferRequest.findMany({
     where,
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
     orderBy: { createdAt: 'desc' },
-    take: 500,
   })
-  res.json({ rows: rows.map(serializeTransfer) })
+  const deliveryByTransfer = await loadTransferDeliverySummaries(prisma, rows.map((row) => row.id))
+  res.json({
+    rows: rows.map((row) => ({
+      ...serializeTransfer(row),
+      deliveryRecipients: deliveryByTransfer.get(row.id) || EMPTY_TRANSFER_DELIVERY_SUMMARY,
+    })),
+  })
 }))
 
 v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await prisma.transferRequest.findUnique({ where: { id: req.params.id } })
-  if (!t) throw bad('申请不存在', 404)
+  if (!t) throw bad('调拨不存在', 404)
+  if (t.deletedAt) throw bad('已删除调拨不可继续操作', 409)
   const transferAdmin = hasInventoryTransferAll(req.user)
   if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = t.status === 'rejected' && transferAdmin
-  if (t.status !== 'pending' && !canDeleteRejected) throw bad('仅待审核或已驳回申请可删除')
-  await prisma.transferRequest.delete({ where: { id: t.id } })
-  res.json({ ok: true })
+  if (t.status !== 'pending') throw bad('仅待备货调拨可撤回', 409)
+  const claimed = await prisma.transferRequest.updateMany({
+    where: { id: t.id, status: 'pending', deletedAt: null },
+    data: { status: 'canceled', withdrawnBy: req.user.username, withdrawnAt: new Date(), updatedAt: new Date() },
+  })
+  if (claimed.count !== 1) throw bad('当前状态不可撤回', 409)
+  const updated = await prisma.transferRequest.findUnique({
+    where: { id: t.id },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  })
+  res.json({ ok: true, request: serializeTransfer(updated) })
 }))
 
 async function getTransfer(id) {
-  return prisma.transferRequest.findUnique({
-    where: { id },
+  return prisma.transferRequest.findFirst({
+    where: { id, deletedAt: null },
     include: { items: { include: { item: true } }, fromStore: true, toStore: true },
   })
 }
@@ -561,39 +1042,42 @@ async function getTransfer(id) {
 v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const t = await getTransfer(req.params.id)
-  if (!t) throw bad('申请不存在', 404)
+  if (!t) throw bad('调拨不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('当前状态不可发货')
-  // 调货仅保留发货/收货提醒与记录，不校验、不扣减库存；发货后立即完成
-  // 发货门店可提交修改后的货品清单（items），以修改后的内容为准
-  const bodyItems = req.body && req.body.items
-  const rows = Array.isArray(bodyItems) ? itemRows(bodyItems) : null
-  const resolved = rows
-    ? await Promise.all(rows.map(async (r) => ({ ...r, item: await upsertItem(r.name, r.category) })))
-    : null
-  await prisma.$transaction(async (tx) => {
-    if (resolved) {
-      await tx.transferItem.deleteMany({ where: { requestId: t.id } })
-      for (const r of resolved) {
-        await tx.transferItem.create({
-          data: {
-            id: `ti-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-            requestId: t.id,
-            itemId: r.item.id,
-            quantity: r.quantity,
-            note: r.note,
-          },
-        })
-      }
+  if (t.status !== 'pending') throw bad('当前状态不可发货', 409)
+  const shipmentUpdates = transferShipmentUpdates(req.body?.items, t.items)
+  const shippedAt = new Date()
+  const final = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.transferRequest.updateMany({
+      where: { id: t.id, status: 'pending', deletedAt: null },
+      data: { status: 'shipped', shippedBy: req.user.username, shippedAt, updatedAt: shippedAt },
+    })
+    if (claimed.count !== 1) throw bad('当前状态不可发货', 409)
+    for (const update of shipmentUpdates) {
+      const saved = await tx.transferItem.updateMany({
+        where: { id: update.id, requestId: t.id, shippedQuantity: null },
+        data: { shippedQuantity: update.shippedQuantity },
+      })
+      if (saved.count !== 1) throw bad('实际发货数量已被记录，请刷新后重试', 409)
     }
-    await tx.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
+    return tx.transferRequest.findUnique({
+      where: { id: t.id },
+      include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+    })
   })
-  const final = await getTransfer(t.id)
-  broadcast(
-    '调货已发货',
-    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${final.items.length}** 种 · 操作人 **${req.user.username}**\n请调入地点负责人留意收货。`,
-  ).catch(() => {})
-  res.json({ ok: true, request: serializeTransfer(final) })
+  const serialized = serializeTransfer(final)
+  if (isTestOrderPurpose(final.purpose)) return res.json({ ok: true, request: serialized })
+  await notify({
+    username: t.createdBy,
+    templateKey: 'transfer_shipped',
+    data: { fromStore: resolveStoreName(t.fromStoreKey), toStore: resolveStoreName(t.toStoreKey), count: serialized.items.length, operator: req.user.username },
+    title: `调拨已发货：${resolveStoreName(t.fromStoreKey)} → ${resolveStoreName(t.toStoreKey)}`,
+    content: `${serialized.items.length} 种货品 · 发货人 ${req.user.username}`,
+    target: 'inventory-transfer',
+    refType: 'transfer',
+    refId: t.id,
+  })
+  res.json({ ok: true, request: serialized })
 }))
 
 v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
@@ -601,24 +1085,21 @@ v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
   const t = await getTransfer(req.params.id)
   if (!t) throw bad('申请不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
-  if (t.status !== 'pending') throw bad('当前状态不可驳回')
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'rejected', updatedAt: new Date() } })
-  res.json({ ok: true, request: updated })
+  if (t.status !== 'pending') throw bad('当前状态不可驳回', 409)
+  const claimed = await prisma.transferRequest.updateMany({
+    where: { id: t.id, status: 'pending', deletedAt: null },
+    data: { status: 'rejected', updatedAt: new Date() },
+  })
+  if (claimed.count !== 1) throw bad('当前状态不可驳回', 409)
+  const updated = await prisma.transferRequest.findUnique({
+    where: { id: t.id },
+    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  })
+  res.json({ ok: true, request: serializeTransfer(updated) })
 }))
 
 v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  const t = await getTransfer(req.params.id)
-  if (!t) throw bad('申请不存在', 404)
-  if (!canManageTransferStore(req.user, t.toStoreKey)) throw bad('无权限', 403)
-  if (!['pending', 'in_transit'].includes(t.status)) throw bad('当前状态不可收货')
-  // 收货仅确认与记录，不增减库存；确认后立即完成
-  const updated = await prisma.transferRequest.update({ where: { id: t.id }, data: { status: 'completed', updatedAt: new Date() } })
-  broadcast(
-    '调货已收货',
-    `**${t.fromStoreKey ? resolveStoreName(t.fromStoreKey) : t.fromLocationName}** → **${t.toStoreKey ? resolveStoreName(t.toStoreKey) : t.toLocationName}**\n货品 **${t.items.length}** 种 · 确认人 **${req.user.username}**`,
-  ).catch(() => {})
-  res.json({ ok: true, request: updated })
+  throw bad('门店调拨 2.0 不需要确认收货', 410)
 }))
 
 // ---------- 采购 ----------
@@ -644,17 +1125,17 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
       items: {
         create: await Promise.all(
           rows.map(async (row) => {
-            const item = await upsertItem(row.name)
-            return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note }
+            const item = await upsertItem(row.name, row.category)
+            return { id: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, itemId: item.id, orderedQty: row.quantity, note: row.note, itemNameSnapshot: item.name }
           }),
         ),
       },
     },
-    include: { items: { include: { item: true } }, store: true },
+    include: { items: { include: { item: true } }, store: true, supplierRef: true },
   })
   broadcast(
     '新采购申请',
-    `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplier ? ` · 供应商 **${created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
+    `门店 **${created.storeKey}**\n货品 **${created.items.length}** 种${created.supplierRef?.name || created.supplier ? ` · 供应商 **${created.supplierRef?.name || created.supplier}**` : ''}\n提交人 **${req.user.username}**\n请尽快安排采购收货。`,
   ).catch(() => {})
   res.json({ ok: true, request: serializePurchase(created) })
 }))
@@ -662,11 +1143,11 @@ v2Router.post('/purchase-requests', wrap(async (req, res) => {
 v2Router.get('/purchase-requests', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const sf = storeFilter(req.user)
-  const where = sf ? { storeKey: sf } : {}
+  const where = { deletedAt: null, ...(sf ? { storeKey: sf } : {}) }
   if (req.query.status) where.status = String(req.query.status)
   const rows = await prisma.purchaseRequest.findMany({
     where,
-    include: { items: { include: { item: true } }, store: true },
+    include: { items: { include: { item: true } }, store: true, supplierRef: true },
     orderBy: { createdAt: 'desc' },
     take: 500,
   })
@@ -674,41 +1155,58 @@ v2Router.get('/purchase-requests', wrap(async (req, res) => {
 }))
 
 v2Router.delete('/purchase-requests/:id', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id } })
-  if (!p) throw bad('申请不存在', 404)
-  if (!isSuperUser(req.user) && p.createdBy !== req.user.username) throw bad('无权限', 403)
-  const canDeleteRejected = p.status === 'rejected' && isSuperUser(req.user)
-  if (p.status !== 'pending' && !canDeleteRejected) throw bad('仅待处理或已驳回申请可删除')
-  await prisma.purchaseRequest.delete({ where: { id: p.id } })
-  res.json({ ok: true })
+  throw bad('该删除入口已停用，请由开发者通过安全删除操作', 410)
 }))
 
 v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const p = await prisma.purchaseRequest.findUnique({ where: { id: req.params.id }, include: { items: { include: { item: true } } } })
   if (!p) throw bad('申请不存在', 404)
+  if (p.deletedAt) throw bad('已删除采购申请不可继续操作', 409)
   if (!isManager(req.user) || !canStore(req.user, p.storeKey)) throw bad('无权限', 403)
-  if (p.status !== 'pending') throw bad('当前状态不可收货')
+  if (p.status === 'received') throw bad('该采购单已入库', 409)
+  if (p.status !== 'pending') throw bad('采购单状态异常，无法收货', 409)
   const received = (req.body && req.body.items) || []
   const receivedMap = new Map(received.map((r) => [String(r.itemId || r.id || ''), Number(r.receivedQty)]))
   const operator = req.user.username
-  await prisma.$transaction(async (tx) => {
-    for (const row of p.items) {
-      const qty = Number.isInteger(receivedMap.get(row.itemId)) ? receivedMap.get(row.itemId) : row.orderedQty
-      if (qty < 0 || qty > 999999) throw bad('实收数量不正确')
-      const bal = await tx.stockBalance.findUnique({ where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } } })
-      const cur = bal ? bal.quantity : 0
-      await tx.stockBalance.upsert({
-        where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } },
-        update: { quantity: cur + qty, updatedAt: new Date() },
-        create: { id: `sb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: p.storeKey, itemId: row.itemId, quantity: qty },
+  try {
+    await prisma.$transaction(async (tx) => {
+      // The conditional state transition is the idempotency claim. It is part
+      // of the same transaction, so a later stock or ledger failure restores
+      // the purchase to pending and permits an intentional retry.
+      const claimed = await tx.purchaseRequest.updateMany({
+        where: { id: p.id, status: 'pending', deletedAt: null },
+        data: { status: 'received', updatedAt: new Date() },
       })
-      await tx.stockLedger.create({ id: `sl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, storeKey: p.storeKey, itemId: row.itemId, change: qty, balance: cur + qty, type: 'purchase_in', refId: p.id, operator })
-      await tx.purchaseItem.update({ where: { id: row.id }, data: { receivedQty: qty } })
-    }
-    await tx.purchaseRequest.update({ where: { id: p.id }, data: { status: 'received', updatedAt: new Date() } })
-  })
+      if (claimed.count !== 1) throw bad('该采购单已入库或状态已变化', 409)
+
+      for (const row of p.items) {
+        const qty = Number.isInteger(receivedMap.get(row.itemId)) ? receivedMap.get(row.itemId) : row.orderedQty
+        if (qty < 0 || qty > 999999) throw bad('实收数量不正确')
+        const balance = await tx.stockBalance.upsert({
+          where: { storeKey_itemId: { storeKey: p.storeKey, itemId: row.itemId } },
+          update: { quantity: { increment: qty }, updatedAt: new Date() },
+          create: { id: uid('sb'), storeKey: p.storeKey, itemId: row.itemId, quantity: qty },
+        })
+        await tx.stockLedger.create({
+          data: {
+            id: uid('sl'),
+            storeKey: p.storeKey,
+            itemId: row.itemId,
+            change: qty,
+            balance: balance.quantity,
+            type: 'purchase_in',
+            refId: p.id,
+            operator,
+          },
+        })
+        await tx.purchaseItem.update({ where: { id: row.id }, data: { receivedQty: qty } })
+      }
+    })
+  } catch (error) {
+    if (error?.status && error.status < 500) throw error
+    throw internalFailure('收货入库失败，库存未发生变化，请稍后重试。', error)
+  }
   maybeAlertLowStock(p.storeKey).catch(() => {})
   broadcast(
     '采购已入库',
@@ -1050,6 +1548,13 @@ v2Router.put('/staff', wrap(async (req, res) => {
 }))
 
 // ---------- M3-2：企微告警测试 ----------
+v2Router.get('/alerts/status', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!isSuperUser(req.user)) throw bad('无权限', 403)
+  // 仅投影是否配置，绝不返回 webhook、环境变量名或任何凭据。
+  res.json({ ok: true, configured: Boolean(wecomWebhookUrl()) })
+}))
+
 v2Router.post('/alerts/test', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('无权限', 403)
@@ -1196,8 +1701,9 @@ v2Router.post('/ocr/general', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!req.user || req.user.role === 'cashier' || req.user.role === 'public') throw bad('无权限', 403)
   const { imageBase64 } = req.body || {}
+  const correlation = correlateOcrRequest(req.body)
   const result = await generalOcrText(String(imageBase64 || ''))
-  res.json({ ok: true, text: result.text })
+  res.json({ ok: true, text: result.text, ...correlation })
 }))
 
 v2Router.delete('/invoices/companies/:id', wrap(async (req, res) => {
@@ -1215,7 +1721,7 @@ v2Router.get('/invoices', wrap(async (req, res) => {
   const month = String(req.query.month || '')
   const status = String(req.query.status || '')
   const date = String(req.query.date || '')
-  const where = { storeKey: whereStores(req.user, store || undefined) }
+  const where = { storeKey: whereStores(req.user, store || undefined), deletedAt: null }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.createdAt = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
@@ -1280,20 +1786,14 @@ v2Router.post('/invoices/:id/status', wrap(async (req, res) => {
   if (status !== 'pending' && status !== 'done') throw bad('状态不正确')
   const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发票记录不存在', 404)
+  if (row.deletedAt) throw bad('已删除发票不可继续操作', 409)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   const updated = await prisma.invoice.update({ where: { id: row.id }, data: { status } })
   res.json({ ok: true, invoice: serializeInvoice(updated) })
 }))
 
 v2Router.delete('/invoices/:id', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!canInvoice(req.user)) throw bad('无权限', 403)
-  const row = await prisma.invoice.findUnique({ where: { id: req.params.id } })
-  if (!row) throw bad('发票记录不存在', 404)
-  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
-  if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
-  await prisma.invoice.delete({ where: { id: row.id } })
-  res.json({ ok: true })
+  throw bad('该删除入口已停用，请由开发者通过安全删除操作', 410)
 }))
 
 // ---------- 门店邮寄发件记录 ----------
@@ -1303,7 +1803,7 @@ v2Router.get('/mailing-records', wrap(async (req, res) => {
   const status = String(req.query.status || '')
   const from = String(req.query.from || '')
   const to = String(req.query.to || '')
-  const where = {}
+  const where = { deletedAt: null }
   if (status === 'pending' || status === 'shipped') where.status = status
   if (/^\d{4}-\d{2}-\d{2}$/.test(from) || /^\d{4}-\d{2}-\d{2}$/.test(to)) {
     where.createdAt = {}
@@ -1356,6 +1856,7 @@ v2Router.post('/mailing-records/:id/ship', wrap(async (req, res) => {
   if (!canMailing(req.user)) throw bad('无权限', 403)
   const row = await prisma.mailingRecord.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发件记录不存在', 404)
+  if (row.deletedAt) throw bad('已删除邮寄记录不可继续操作', 409)
   if (row.status !== 'pending') throw bad('该记录已发货', 409)
   const updated = await prisma.mailingRecord.update({
     where: { id: row.id },
@@ -1373,7 +1874,13 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
   const month = String(req.query.month || '')
   if (store && !canStore(req.user, store)) throw bad('无权限', 403)
   const where = { storeKey: whereStores(req.user, store || undefined) }
-  if (staffKey) where.staffKey = staffKey
+  if (req.user.role === 'staff') {
+    const ownId = selfEmployeeId(req.user)
+    if (!ownId) return res.json({ rows: [] })
+    where.employeeId = ownId
+  } else if (staffKey) {
+    where.staffKey = staffKey
+  }
   if (/^\d{4}-\d{2}$/.test(month)) {
     const [y, m] = month.split('-').map(Number)
     where.date = { gte: new Date(Date.UTC(y, m - 1, 1)), lt: new Date(Date.UTC(y, m, 1)) }
@@ -1385,10 +1892,21 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
 v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canInvoice(req.user)) throw bad('无权限', 403)
-  const { staffName, storeKey, amountCents, receipt, date } = req.body || {}
+  const { staffName, storeKey, amountCents, receipt, date, employeeId } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 30) throw bad('员工姓名不正确')
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  // Gate 10：稳定员工身份（新 UI 必须携带实际 Employee.id；绝不按姓名/门店推导）
+  const stableEmployeeId = employeeId == null ? null : String(employeeId).trim()
+  if (req.user.role === 'staff') {
+    const ownId = selfEmployeeId(req.user)
+    if (!ownId || stableEmployeeId !== ownId) throw bad('只能为本人登记大单奖', 403)
+  }
+  if (stableEmployeeId) {
+    if (stableEmployeeId.length > 100) throw bad('员工 ID 不正确')
+    const emp = await prisma.employee.findUnique({ where: { id: stableEmployeeId }, select: { id: true } })
+    if (!emp) throw bad('员工不存在', 400)
+  }
   const cents = Number(amountCents)
   if (!Number.isInteger(cents) || cents <= 0 || cents > 999999999999) throw bad('订单金额不正确（单位：分）')
   const receiptStr = String(receipt || '').trim()
@@ -1400,6 +1918,7 @@ v2Router.post('/big-bonuses', wrap(async (req, res) => {
   const row = await prisma.bigOrderBonus.create({
     data: {
       id: uid('bb'),
+      ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
       staffKey: `${storeKey}::${name}`,
       staffName: name,
       storeKey,
@@ -1418,6 +1937,7 @@ v2Router.delete('/big-bonuses/:id', wrap(async (req, res) => {
   if (!canInvoice(req.user)) throw bad('无权限', 403)
   const row = await prisma.bigOrderBonus.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('大单奖记录不存在', 404)
+  if (req.user.role === 'staff' && (!selfEmployeeId(req.user) || row.employeeId !== selfEmployeeId(req.user))) throw bad('无权限', 403)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
   await prisma.bigOrderBonus.delete({ where: { id: row.id } })
@@ -1451,7 +1971,7 @@ v2Router.get('/daily-pay-adjustments', wrap(async (req, res) => {
 v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('仅最高业务权限账号可调整每日薪资', 403)
-  const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version } = req.body || {}
+  const { staffName, date, autoPayCentsSnapshot, adjustedPayCents, reason, version, employeeId } = req.body || {}
   const name = String(staffName || '').trim()
   if (!name || name.length > 50) throw bad('员工姓名不正确')
   const d = dateOnly(date)
@@ -1466,6 +1986,14 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   const reasonText = String(reason || '').trim()
   if (!reasonText || reasonText.length > 200) throw bad('请填写 1-200 字的调整原因')
 
+  // Gate 9：稳定员工身份（新 UI 必须携带实际 Employee.id；绝不按姓名/门店推导）
+  const stableEmployeeId = employeeId == null ? null : String(employeeId).trim()
+  if (stableEmployeeId) {
+    if (stableEmployeeId.length > 100) throw bad('员工 ID 不正确')
+    const emp = await prisma.employee.findUnique({ where: { id: stableEmployeeId }, select: { id: true } })
+    if (!emp) throw bad('员工不存在', 400)
+  }
+
   const duties = await prisma.dailyEntry.findMany({ where: { date: d }, select: { staffNames: true } })
   const hasDuty = duties.some((entry) => Array.isArray(entry.staffNames) && entry.staffNames.includes(name))
   if (!hasDuty && !canManageAccounts(req.user)) {
@@ -1473,15 +2001,28 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
   }
   if (!hasDuty && autoCents !== 0) throw bad('无值班记录时自动工资必须为 0', 409)
 
-  const key = { staffName: name, date: d }
-  const existing = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: key } })
+  // 稳定行以 (employeeId, date) 为变更身份；legacy 行（无 employeeId）沿用 (staffName, date)
+  const stableKey = stableEmployeeId ? { employeeId: stableEmployeeId, date: d } : null
+  const legacyKey = { staffName: name, date: d }
+  const existing = stableKey
+    ? await prisma.dailyPayAdjustment.findUnique({ where: { employeeId_date: stableKey } })
+    : await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: legacyKey } })
   if (existing && version != null && existing.version !== Number(version)) {
     return res.status(409).json({
       error: '该工资调整已被其他开发者修改，请刷新后重试',
       latest: serializeDailyPayAdjustment(existing),
     })
   }
+  // Gate 9 §11：既有 legacy 行（employeeId=NULL）不得仅凭姓名/日期自动归属到新稳定行；
+  // 若 legacy 唯一约束挡住稳定行创建 → 受控冲突，历史解析留待后续 Gate。
+  if (!existing && stableEmployeeId) {
+    const legacyBlocker = await prisma.dailyPayAdjustment.findUnique({ where: { staffName_date: legacyKey } })
+    if (legacyBlocker) {
+      throw bad('该姓名当天已存在历史工资调整（未绑定员工），无法创建稳定调整；请联系开发者处理', 409)
+    }
+  }
   const base = {
+    ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
     autoPayCentsSnapshot: BigInt(autoCents),
     adjustedPayCents: BigInt(adjustedCents),
     reason: reasonText,
@@ -1503,6 +2044,7 @@ v2Router.put('/daily-pay-adjustments', wrap(async (req, res) => {
         row = await tx.dailyPayAdjustment.create({
           data: {
             id: uid('dpa'),
+            ...(stableEmployeeId ? { employeeId: stableEmployeeId } : {}),
             staffName: name,
             date: d,
             ...base,

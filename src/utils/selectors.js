@@ -3,23 +3,24 @@ import { isFixedStoreKey } from '../../shared/storeDirectory.js'
 import {
   commitEntries,
   commitStaff,
-  commitRemovedStaff,
   getAnalysis,
   getEntries,
   getStaff,
-  getRemovedStaff,
   getStores,
   getProducts,
   getBigBonuses,
   getDailyPayAdjustments,
+  getDailyStoreStaff,
   getUserData,
 } from './userData.js'
 import { formatMoney } from './format.js'
 import { t } from './text.js'
-import { calcDailyPay, monthlyPayrollFromEntries, isNoPayStaff } from './payroll.js'
+import { calcDailyPay, monthlyPayrollFromEntries, PAYABLE_HOURS_SOURCE } from './payroll.js'
 import { posDailyMetrics } from './posDaily.js'
 import { applyDailyPayOverride } from './dailyPayAdjustment.js'
 import { addWeeks, getWeekDays } from './schedule.js'
+import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
+import { normalizePayableHours } from '../../shared/payableHoursAuthority.js'
 
 export const STORE_KEYS = BASE_STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
@@ -30,37 +31,73 @@ function fullDateOf(monthKey, day) {
   return d.includes('-') ? `${monthKey}-${d.slice(3)}` : `${monthKey}-${d}`
 }
 
-function bigBonusesByName(name) {
+/**
+ * Gate 10：大单奖读取（稳定身份优先，legacy 兼容，绝不双计）。
+ * - 有 employeeId 的员工：只按 employeeId 精确匹配。legacy NULL 行不得按姓名猜给稳定员工。
+ * - 无 employeeId 的调用（历史 payroll 合成员工等）：沿用 legacy endsWith("::"+name) 聚合，
+ *   包含 stable 行（其 staffKey 快照仍匹配）与 legacy 行——与旧行为一致。
+ */
+function bigBonusesByName(name, employeeId) {
   const rows = getBigBonuses()
-  return Array.isArray(rows) ? rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`)) : []
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    return rows.filter((r) => String(r.employeeId || '').trim() === stableId)
+  }
+  return rows.filter((r) => String(r.staffKey || '').endsWith(`::${name}`))
 }
 
 /** 员工某日大单奖（元） */
-export function bigBonusYuanOn(name, dateStr) {
-  const cents = bigBonusesByName(name)
+export function bigBonusYuanOn(name, dateStr, employeeId) {
+  const cents = bigBonusesByName(name, employeeId)
     .filter((r) => String(r.date || '') === dateStr)
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
   return Math.round((cents / 100) * 100) / 100
 }
 
 /** 员工某月大单奖（元） */
-export function bigBonusYuanMonth(name, monthKey) {
-  const cents = bigBonusesByName(name)
+export function bigBonusYuanMonth(name, monthKey, employeeId) {
+  const cents = bigBonusesByName(name, employeeId)
     .filter((r) => String(r.date || '').startsWith(monthKey))
     .reduce((s, r) => s + (Number(r.bonusCents) || 0), 0)
   return Math.round((cents / 100) * 100) / 100
 }
 
-function dailyPayAdjustmentOn(name, dateStr) {
+/** Gate 25 澄清：调整查找——有 employeeId 时按稳定身份精确（Gate 9 新行）；无则 legacy name 兼容 */
+function dailyPayAdjustmentOn(name, dateStr, employeeId) {
   const rows = getDailyPayAdjustments()
-  return Array.isArray(rows)
-    ? rows.find((row) => row.staffName === name && String(row.date || '') === dateStr) || null
-    : null
+  if (!Array.isArray(rows)) return null
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    // 稳定调整行按 employeeId+date 精确；同店同名两人各自命中自己的调整，绝不交叉
+    const stable = rows.find((row) => row.employeeId === stableId && String(row.date || '') === dateStr)
+    if (stable) return stable
+    return null
+  }
+  return rows.find((row) => row.staffName === name && String(row.date || '') === dateStr) || null
 }
 
-function applyDailyPayAdjustment(name, dateStr, automaticPay) {
-  const adjustment = dailyPayAdjustmentOn(name, dateStr)
+function applyDailyPayAdjustment(name, dateStr, automaticPay, employeeId) {
+  const adjustment = dailyPayAdjustmentOn(name, dateStr, employeeId)
   return applyDailyPayOverride(automaticPay, adjustment)
+}
+
+function bigOrderBonusExplanation(rows) {
+  return rows.map((row) => ({
+    orderAmount: Math.round(((Number(row.amountCents) || 0) / 100) * 100) / 100,
+    bonusAmount: Math.round(((Number(row.bonusCents) || 0) / 100) * 100) / 100,
+    receiptPresent: Boolean(String(row.receipt || '').trim()),
+  }))
+}
+
+function dailyAdjustmentExplanation(applied) {
+  if (!applied?.payAdjustment) return null
+  return {
+    automaticPay: applied.automaticPay,
+    autoPaySnapshot: applied.payAdjustment.autoPaySnapshot,
+    salaryAdjustment: applied.salaryAdjustment,
+    finalPay: applied.pay,
+    reason: applied.payAdjustment.reason == null ? '' : String(applied.payAdjustment.reason),
+  }
 }
 
 export function customStores() {
@@ -237,6 +274,29 @@ export function periodDates(monthKey, day = null, weekStart = null) {
   if (weekStart) return getWeekDays(weekStart).map((item) => item.date)
   if (day) return [fullDateOf(monthKey, day)]
   return dailyRows(monthKey, 'all').map((row) => `${monthKey}-${row.d.slice(3)}`)
+}
+
+/** Gate 29F：日/周期间涉及的月份键；跨月周必须同时加载，顺序稳定且不重复。 */
+export function payrollPeriodMonths(dateList) {
+  const months = []
+  const seen = new Set()
+  for (const value of Array.isArray(dateList) ? dateList : []) {
+    const month = String(value || '').slice(0, 7)
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || seen.has(month)) continue
+    seen.add(month)
+    months.push(month)
+  }
+  return months
+}
+
+/** LEGACY 兼容只允许唯一展示姓名；重名不得猜测金额归属。 */
+export function legacyAmbiguousEmployeeNames(employees) {
+  const counts = new Map()
+  for (const employee of Array.isArray(employees) ? employees : []) {
+    const name = String(employee?.name || '')
+    if (name) counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name))
 }
 
 /** 按日/自然周/整月读取每日经营数据；自然周允许跨月。 */
@@ -431,9 +491,30 @@ export function localStaffList() {
   return getStaff()
 }
 
+/**
+ * Gate 12：读取按月加载的 DailyStoreStaff 稳定考勤行（数据基础，尚未参与 payroll 计算）。
+ * month 传 'YYYY-MM' 过滤；不传返回全部已加载行。同一员工/同名员工按行独立保留（id 身份）。
+ */
+export function dailyStoreStaffRows(month) {
+  return getDailyStoreStaff(month)
+}
+
+/**
+ * 当前员工目录（Gate 7）：PostgreSQL employees 的当前在册名单，
+ * 以 Employee.id 为稳定对象身份，不按姓名折叠——重名员工（跨店或同店）
+ * 各自保留独立条目。仅作当前目录展示/操作的数据源；
+ * 历史 payroll 聚合仍走 employeeList（按姓名快照，语义不变）。
+ */
+export function currentEmployeeDirectory(storeKey = 'all') {
+  const list = localStaffList()
+    .map((e) => ({ ...e, local: true }))
+    .filter((e) => isFixedStoreKey(e.storeKey))
+  return storeKey === 'all' ? list : list.filter((e) => e.storeKey === storeKey)
+}
+
 /** 保存员工名单（自动同步到服务端共享数据） */
 export function saveLocalStaffList(list) {
-  commitStaff(list)
+  return commitStaff(list)
 }
 
 export function analysisEmployees() {
@@ -497,11 +578,10 @@ export function entryMonthPayroll(monthKey) {
   return map
 }
 
-/** 删除员工：从当前名单移除，并记录到已删除名单（报表员工也生效，历史业绩保留） */
+/** 删除员工：从 PG 当前名单移除，由 Employee.status 记录离职状态；历史业绩保留。 */
 export async function removeStaff(name) {
   const next = localStaffList().filter((e) => e.name !== name)
   await commitStaff(next)
-  commitRemovedStaff([...getRemovedStaff().filter((n) => n !== name), name])
 }
 
 function monthPayAdjustmentSummary(name, monthKey) {
@@ -526,10 +606,9 @@ function monthPayAdjustmentSummary(name, monthKey) {
 
 /** 员工绩效列表（按工资排序，可过滤门店；monthKey 传时按该月薪资数据 + 本地员工） */
 export function employeeList(storeKey, monthKey = null) {
-  const removed = new Set(getRemovedStaff())
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
-    .filter((e) => !removed.has(e.name) && isFixedStoreKey(e.storeKey))
+    .filter((e) => isFixedStoreKey(e.storeKey))
   // 当前人员目录只读取 PostgreSQL employees；历史月份仍可由当月业绩记录补出姓名。
   const base = [...new Map(local.map((e) => [e.name, e])).values()]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
@@ -567,7 +646,7 @@ export function employeeList(storeKey, monthKey = null) {
       list = [...merged.values()].filter((e) => storeKey === 'all' || e.storeKey === storeKey)
       list = list.map((e) => {
         const pr = payroll.get(e.name)
-        const bigBonus = pr && !isNoPayStaff(e.name) ? bigBonusYuanMonth(e.name, monthKey) : 0
+        const bigBonus = pr ? bigBonusYuanMonth(e.name, monthKey, e.id) : 0
         const automaticSalary = pr ? Math.round((pr.salary + bigBonus) * 100) / 100 : 0
         const adjustments = monthPayAdjustmentSummary(e.name, monthKey)
         return {
@@ -830,11 +909,10 @@ export function storeDetails(storeKey) {
 export function employeesByType(type, monthKey = null) {
   return employeeList('all', monthKey).filter((e) => e.type === type)
 }
-/** 不含人工覆盖的员工当日自动工资，供日/周/月统一计算。 */
-function automaticEmployeeDayStatus(monthKey, day, name) {
+/** 不含人工覆盖的员工当日自动工资，供日/周/月统一计算。employeeId 可选：传入时大单奖按稳定身份读取。 */
+function automaticEmployeeDayStatus(monthKey, day, name, employeeId) {
   if (!day) return null
   const entries = localEntries()
-  const noPay = isNoPayStaff(name)
   let inc = 0
   let ord = 0
   let count = 0
@@ -842,7 +920,7 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
-  const bigBonus = noPay ? 0 : bigBonusYuanOn(name, fullDateOf(monthKey, day))
+  const bigBonus = bigBonusYuanOn(name, fullDateOf(monthKey, day), employeeId)
   const stores = []
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
@@ -860,9 +938,9 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
     inc += (Number(v.inc) || 0) / share
     ord += (Number(v.ord) || 0) / share
     hours += daily.hours
-    basePay += noPay ? 0 : daily.basePay
-    commission += noPay ? 0 : daily.commission
-    transferSubsidy += noPay ? 0 : daily.transferSubsidy
+    basePay += daily.basePay
+    commission += daily.commission
+    transferSubsidy += daily.transferSubsidy
     count += 1
     stores.push(storeKey)
   }
@@ -881,11 +959,32 @@ function automaticEmployeeDayStatus(monthKey, day, name) {
   }
 }
 
-/** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。 */
-export function employeeDayStatus(monthKey, day, name) {
-  const automatic = automaticEmployeeDayStatus(monthKey, day, name)
+/** 员工在所选日期的值班业绩；开发者人工调整时以调整后的最终工资为准。employeeId 可选（大单奖稳定身份）。 */
+export function employeeDayStatus(monthKey, day, name, employeeId, attendanceRows) {
+  const stableId = String(employeeId || '').trim()
+  if (stableId) {
+    const detail = employeeDailyPayDetail(monthKey, day, name, stableId, Array.isArray(attendanceRows) ? attendanceRows : [])
+    if (!detail) return null
+    return {
+      inc: detail.totals.inc,
+      ord: detail.totals.ord,
+      stores: detail.rows.map((row) => row.storeKey),
+      hours: detail.totals.hours,
+      basePay: detail.totals.basePay,
+      commission: detail.totals.commission,
+      transferSubsidy: detail.totals.transferSubsidy,
+      bigBonus: detail.totals.bigBonus,
+      adjustmentOnly: detail.rows.length === 0,
+      automaticPay: detail.totals.automaticPay,
+      salaryAdjustment: detail.totals.salaryAdjustment,
+      payAdjustment: detail.totals.payAdjustment,
+      adjustmentCount: detail.totals.payAdjustment ? 1 : 0,
+      pay: detail.totals.pay,
+    }
+  }
+  const automatic = automaticEmployeeDayStatus(monthKey, day, name, employeeId)
   const date = fullDateOf(monthKey, day)
-  const adjustment = dailyPayAdjustmentOn(name, date)
+  const adjustment = dailyPayAdjustmentOn(name, date, employeeId)
   if (!automatic && !adjustment) return null
   const base = automatic || { inc: 0, ord: 0, stores: [], hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0, pay: 0 }
   return {
@@ -895,8 +994,16 @@ export function employeeDayStatus(monthKey, day, name) {
   }
 }
 
-/** 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载 */
-export function employeeDailyPayDetail(monthKey, day, name) {
+/**
+ * 员工某日工资组成明细（按门店逐条）：用于「每日工资详情」弹窗与文档下载。
+ * employeeId 可选（大单奖稳定身份）。
+ * Gate 25 澄清（工时身份）：attendanceRows 可选——传入时（EMPLOYEE_ID 导出明细路径），
+ * 每门店行的工时 = DailyStoreStaff.actualHours（按 employeeId+date+storeId 精确），
+ * 金额与月汇总复用 calcDailyPay 的同一稳定工时合同，不在明细层二次计算；
+ * 该员工当日该店无稳定考勤行 → 不生成该门店行（同名绝不制造考勤/工时）。
+ * 未传 attendanceRows 的调用（legacy、弹窗等）保持原公式工时口径，行为逐字节不变。
+ */
+export function employeeDailyPayDetail(monthKey, day, name, employeeId, attendanceRows) {
   if (!day) return null
   const entries = localEntries()
   const rows = []
@@ -906,7 +1013,31 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   let basePay = 0
   let commission = 0
   let transferSubsidy = 0
-  const dayBonuses = bigBonusesByName(name).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
+  const stableId = String(employeeId || '').trim()
+  const strictAttendance = Boolean(stableId)
+  const stableAttendanceRows = Array.isArray(attendanceRows) ? attendanceRows : []
+  const attendanceByStore = new Map()
+  const participantCountByStore = new Map()
+  if (strictAttendance) {
+    const fullDate = fullDateOf(monthKey, day)
+    for (const a of stableAttendanceRows) {
+      if (String(a.date || '').slice(0, 10) !== fullDate) continue
+      const attendanceStore = String(a.storeId || a.storeKey || '')
+      if (!attendanceStore) continue
+      const participantType = a.participantType || (
+        a.employeeId ? PAYROLL_PARTICIPANT_TYPES.EMPLOYEE : PAYROLL_PARTICIPANT_TYPES.LEGACY_UNKNOWN
+      )
+      if ([
+        PAYROLL_PARTICIPANT_TYPES.EMPLOYEE,
+        PAYROLL_PARTICIPANT_TYPES.NON_EMPLOYEE_SUBSTITUTE,
+        PAYROLL_PARTICIPANT_TYPES.LEGACY_EMPLOYEE_COMPATIBLE,
+      ].includes(participantType)) {
+        participantCountByStore.set(attendanceStore, (participantCountByStore.get(attendanceStore) || 0) + 1)
+      }
+      if (String(a.employeeId || '') === stableId) attendanceByStore.set(attendanceStore, a)
+    }
+  }
+  const dayBonuses = bigBonusesByName(name, employeeId).filter((r) => String(r.date || '') === fullDateOf(monthKey, day))
   const bonusByStore = new Map()
   let bonusTotalCents = 0
   for (const r of dayBonuses) {
@@ -917,17 +1048,31 @@ export function employeeDailyPayDetail(monthKey, day, name) {
   for (const [k, v] of Object.entries(entries)) {
     const parts = k.split('|')
     if (parts.length !== 3 || parts[0] !== monthKey || parts[1] === 'all' || parts[2] !== day) continue
-    if (!Array.isArray(v.staff) || !v.staff.includes(name)) continue
+    if (!Array.isArray(v.staff)) continue
     const storeKey = parts[1]
-    const share = v.staff.length
-    const noPay = isNoPayStaff(name)
+    // Gate 25 澄清：稳定模式该员工当日该店无考勤行 → 不生成该门店行（同名不制造考勤）
+    if (strictAttendance && !attendanceByStore.has(storeKey)) continue
+    if (!strictAttendance && !v.staff.includes(name)) continue
+    const share = strictAttendance ? participantCountByStore.get(storeKey) || 0 : v.staff.length
+    if (share <= 0) continue
+    const att = strictAttendance ? attendanceByStore.get(storeKey) : null
+    const normalizedHours = att ? normalizePayableHours(att) : null
     const daily = calcDailyPay({
       storeKey,
       storeName: storeName(storeKey),
       revenue: Number(v.inc) || 0,
       date: fullDateOf(monthKey, day),
       staffCount: share,
+      ...(att ? {
+        payableHours: normalizedHours.payableHours,
+        payableHoursSource: normalizedHours.payableHoursSource,
+      } : {}),
     })
+    // 稳定模式由 calcDailyPay 消费精确 actualHours；legacy 未传 payableHours，继续使用 dutyHours。
+    const rowHours = daily.hours
+    const rowBasePay = daily.basePay
+    const rowCommission = daily.commission
+    const rowSubsidy = daily.transferSubsidy
     const revShare = (Number(v.inc) || 0) / share
     const ordShare = (Number(v.ord) || 0) / share
     rows.push({
@@ -935,91 +1080,114 @@ export function employeeDailyPayDetail(monthKey, day, name) {
       storeName: storeName(storeKey),
       revenue: Math.round(revShare * 100) / 100,
       orders: Math.round(ordShare * 100) / 100,
-      hours: daily.hours,
+      hours: rowHours,
+      payableHours: rowHours,
+      payableHoursSource: daily.explanation.payableHoursSource,
       baseRate: daily.baseRate,
-      basePay: daily.basePay,
+      basePay: rowBasePay,
       commissionRate: daily.commissionRate,
-      commission: daily.commission,
+      commission: rowCommission,
       transferSubsidyRate: daily.transferSubsidyRate,
-      transferSubsidy: daily.transferSubsidy,
+      transferSubsidy: rowSubsidy,
       bigBonus: 0,
       total: daily.total,
+      explanation: {
+        ...daily.explanation,
+        state: daily.hours === 0 ? 'REAL_ZERO' : 'NORMAL',
+        displayWorkedRevenue: Math.round(revShare * 100) / 100,
+        bigOrderBonuses: [],
+        adjustment: null,
+      },
     })
     inc += revShare
     ord += ordShare
-    hours += daily.hours
-    basePay += noPay ? 0 : daily.basePay
-    commission += noPay ? 0 : daily.commission
-    transferSubsidy += noPay ? 0 : daily.transferSubsidy
+    hours += rowHours
+    basePay += rowBasePay
+    commission += rowCommission
+    transferSubsidy += rowSubsidy
   }
   if (rows.length === 0) {
-    const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day))
+    const adjustment = dailyPayAdjustmentOn(name, fullDateOf(monthKey, day), employeeId)
     if (!adjustment) return null
+    const applied = applyDailyPayOverride(0, adjustment)
     return {
       rows: [],
       totals: {
-        inc: 0, ord: 0, hours: 0, basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
-        ...applyDailyPayOverride(0, adjustment),
+        inc: 0, ord: 0, hours: 0, payableHours: 0,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ADJUSTMENT_ONLY,
+        basePay: 0, commission: 0, transferSubsidy: 0, bigBonus: 0,
+        ...applied,
+      },
+      explanation: {
+        state: 'ADJUSTMENT_ONLY',
+        payableHours: 0,
+        payableHoursSource: PAYABLE_HOURS_SOURCE.ADJUSTMENT_ONLY,
+        participantCount: null,
+        rawStoreRevenue: null,
+        displayWorkedRevenue: null,
+        commissionBasis: null,
+        calculationDayPolicy: null,
+        baseRate: null,
+        basePay: 0,
+        commissionTarget: null,
+        commissionRate: null,
+        commission: 0,
+        transferSubsidyRate: null,
+        transferSubsidy: 0,
+        total: 0,
+        bigOrderBonuses: [],
+        adjustment: dailyAdjustmentExplanation(applied),
       },
     }
   }
   let assignedCents = 0
+  const assignedBonusRows = new Set()
   for (const row of rows) {
+    const storeBonusRows = dayBonuses.filter((bonus) => bonus.storeKey === row.storeKey)
     const c = bonusByStore.get(row.storeKey) || 0
     if (c > 0) {
       row.bigBonus = Math.round((c / 100) * 100) / 100
       row.total = Math.round((row.total + row.bigBonus) * 100) / 100
       assignedCents += c
     }
+    for (const bonus of storeBonusRows) assignedBonusRows.add(bonus)
+    row.explanation.bigOrderBonuses = bigOrderBonusExplanation(storeBonusRows)
   }
   if (assignedCents < bonusTotalCents) {
     const extra = Math.round(((bonusTotalCents - assignedCents) / 100) * 100) / 100
+    const unassignedBonusRows = dayBonuses.filter((bonus) => !assignedBonusRows.has(bonus))
     rows[0].bigBonus = Math.round((rows[0].bigBonus + extra) * 100) / 100
     rows[0].total = Math.round((rows[0].total + extra) * 100) / 100
+    rows[0].explanation.bigOrderBonuses.push(...bigOrderBonusExplanation(unassignedBonusRows))
   }
   const bigBonus = Math.round((bonusTotalCents / 100) * 100) / 100
-  if (isNoPayStaff(name)) {
-    for (const row of rows) {
-      row.basePay = 0
-      row.commission = 0
-      row.transferSubsidy = 0
-      row.bigBonus = 0
-      row.total = 0
-    }
-    const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), 0)
-    return {
-      rows,
-      totals: {
-        inc: Math.round(inc * 100) / 100,
-        ord: Math.round(ord * 100) / 100,
-        hours: Math.round(hours * 100) / 100,
-        basePay: 0,
-        commission: 0,
-        transferSubsidy: 0,
-        bigBonus: 0,
-        ...applied,
-      },
-    }
-  }
   const automaticPay = Math.round((basePay + commission + transferSubsidy + bigBonus) * 100) / 100
-  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay)
+  const applied = applyDailyPayAdjustment(name, fullDateOf(monthKey, day), automaticPay, employeeId)
+  const adjustmentExplanation = dailyAdjustmentExplanation(applied)
+  for (const row of rows) row.explanation.adjustment = adjustmentExplanation
   return {
     rows,
     totals: {
       inc: Math.round(inc * 100) / 100,
       ord: Math.round(ord * 100) / 100,
       hours: Math.round(hours * 100) / 100,
+      payableHours: Math.round(hours * 100) / 100,
+      payableHoursSource: [...new Set(rows.map((row) => row.payableHoursSource))].join('+'),
       basePay: Math.round(basePay * 100) / 100,
       commission: Math.round(commission * 100) / 100,
       transferSubsidy: Math.round(transferSubsidy * 100) / 100,
       bigBonus,
       ...applied,
     },
+    explanation: {
+      state: rows.every((row) => row.hours === 0) ? 'REAL_ZERO' : 'NORMAL',
+      adjustment: adjustmentExplanation,
+    },
   }
 }
 
-/** 员工在指定日期区间（如自然周）的汇总薪酬 */
-export function employeeWeekStatus(monthKey, dateList, name) {
+/** 员工在指定日期区间（如自然周）的汇总薪酬。employeeId 可选（大单奖稳定身份）。 */
+export function employeeWeekStatus(monthKey, dateList, name, employeeId, attendanceRows) {
   let includedDays = 0
   let workedDays = 0
   let hours = 0
@@ -1036,7 +1204,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   for (const fullDate of dateList) {
     const dateStr = String(fullDate)
     // 自然周可能跨月（如 8.31-9.6），按每个日期的真实月份查业绩
-    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name)
+    const st = employeeDayStatus(dateStr.slice(0, 7), dateStr.slice(5), name, employeeId, attendanceRows)
     if (!st) continue
     includedDays += 1
     if (!st.adjustmentOnly) workedDays += 1
@@ -1056,6 +1224,7 @@ export function employeeWeekStatus(monthKey, dateList, name) {
   const r2 = (v) => Math.round(v * 100) / 100
   return {
     workedDays,
+    adjustmentOnly: workedDays === 0,
     hours: r2(hours),
     basePay: r2(basePay),
     commission: r2(commission),

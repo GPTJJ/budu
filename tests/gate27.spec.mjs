@@ -1,0 +1,115 @@
+import { expect, test } from '@playwright/test'
+
+const open = async (page, query = '') => {
+  await page.addInitScript(() => {
+    const RealDate = Date
+    const fixedNow = new RealDate('2026-08-31T04:00:00.000Z').valueOf()
+    // Keep this historical payroll fixture deterministic after the calendar advances.
+    window.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [fixedNow])) }
+      static now() { return fixedNow }
+    }
+  })
+  await page.goto(`/tests/gate27-issue-harness.html${query}`)
+  await expect(page.getByText('发放工资条', { exact: true })).toBeVisible()
+  await expect(page.getByText('月度 · 2026-08-01 ～ 2026-08-31', { exact: true })).toBeVisible()
+}
+
+test('MONTH：Employee.id 独立金额、服务器预检与权威快照发放', async ({ page }) => {
+  await open(page)
+  const rows = page.locator('tbody tr')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'A001' })).toContainText('¥1180.00')
+  await expect(rows.filter({ hasText: 'B001' })).toContainText('¥460.00')
+  await expect(rows.filter({ hasText: 'A001' })).toContainText('@user-a')
+  await expect(rows.filter({ hasText: 'B001' })).toContainText('@user-b')
+
+  await page.getByRole('button', { name: '选择全部可发放员工' }).click()
+  await expect(page.getByText('已选 2 人', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '确认发放工资条' }).click()
+  await expect(page.getByText(/已发放 2 份工资条/)).toBeVisible()
+
+  const posted = await page.evaluate(() => window.__posted)
+  expect(posted.periodType).toBe('month')
+  expect(posted.periodStart).toBe('2026-08-01')
+  expect(posted.periodEnd).toBe('2026-08-31')
+  const a = posted.rows.find((row) => row.employeeId === 'emp-A')
+  const b = posted.rows.find((row) => row.employeeId === 'emp-B')
+  expect(a.totalCents).toBe(118000)
+  expect(b.totalCents).toBe(46000)
+  expect(a.snapshot.period).toEqual({ periodType: 'month', periodStart: '2026-08-01', periodEnd: '2026-08-31' })
+  expect(a.snapshot.days.map((day) => day.date)).toEqual(['2026-08-01', '2026-08-10'])
+  expect(a.snapshot.days.find((day) => day.date === '2026-08-01').payableHours).toBe(8)
+  expect(b.snapshot.days.find((day) => day.date === '2026-08-01').payableHours).toBe(6)
+  expect(a.snapshot.days.find((day) => day.date === '2026-08-10').adjustment).toBe(500)
+})
+
+test('WEEK：自然周归一化、范围外调整排除并可发放', async ({ page }) => {
+  await open(page)
+  await page.getByRole('button', { name: '周度' }).click()
+  await page.getByLabel('周度日期').fill('2026-08-01')
+  await expect(page.getByText('周度 · 2026-07-27 ～ 2026-08-02', { exact: true })).toBeVisible()
+  const rows = page.locator('tbody tr')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'A001' })).toContainText('¥680.00')
+  await expect(rows.filter({ hasText: 'B001' })).toContainText('¥510.00')
+  await rows.filter({ hasText: 'A001' }).click()
+  await page.getByRole('button', { name: '确认发放工资条' }).click()
+  await expect(page.getByText(/已发放 1 份工资条/)).toBeVisible()
+  const posted = await page.evaluate(() => window.__posted)
+  expect(posted.periodType).toBe('week')
+  expect(posted.periodStart).toBe('2026-07-27')
+  expect(posted.periodEnd).toBe('2026-08-02')
+  expect(posted.rows[0].snapshot.days.map((day) => day.date)).toEqual(['2026-08-01'])
+})
+
+test('CUSTOM：含首尾日、跨月加载且不泄漏范围外日期', async ({ page }) => {
+  await open(page)
+  await page.getByRole('button', { name: '自定义日期' }).click()
+  await page.getByLabel('自定义周期开始日期').fill('2026-08-01')
+  await page.getByLabel('自定义周期结束日期').fill('2026-09-03')
+  await expect(page.getByText('自定义日期 · 2026-08-01 ～ 2026-09-03', { exact: true })).toBeVisible()
+  const rows = page.locator('tbody tr')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'A001' })).toContainText('¥1180.00')
+  await rows.filter({ hasText: 'A001' }).click()
+  await page.getByRole('button', { name: '确认发放工资条' }).click()
+  await expect(page.getByText(/已发放 1 份工资条/)).toBeVisible()
+  const posted = await page.evaluate(() => window.__posted)
+  expect(posted.periodType).toBe('custom')
+  expect(posted.periodKey).toBe('2026-08-01~2026-09-03')
+  expect(posted.rows[0].snapshot.days.map((day) => day.date)).toEqual(['2026-08-01', '2026-08-10'])
+})
+
+test('受控阻断：legacy、未绑定与负工资均不能进入实际 POST', async ({ page }) => {
+  await open(page, '?legacy=1')
+  await expect(page.getByText('所选范围的工资权威数据不完整', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => window.__posted)).toBeNull()
+
+  await open(page, '?unbound=1')
+  const unbound = page.locator('tbody tr').filter({ hasText: 'B001' })
+  await expect(unbound).toContainText('工资权威数据不完整')
+  await expect(page.getByRole('button', { name: '确认发放工资条' })).toBeDisabled()
+
+  await open(page, '?negative=1')
+  const negative = page.locator('tbody tr').filter({ hasText: 'B001' })
+  await expect(negative).toContainText('¥-290.00')
+  await expect(negative).toContainText('工资权威数据不完整')
+  expect(await page.evaluate(() => window.__posted)).toBeNull()
+})
+
+for (const width of [340, 375, 390]) {
+  test(`移动端 ${width}px：日期、员工卡、合计和确认按钮无横向溢出`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    await open(page)
+    await page.getByRole('button', { name: '自定义日期' }).click()
+    await page.getByLabel('自定义周期开始日期').fill('2026-08-01')
+    await page.getByLabel('自定义周期结束日期').fill('2026-08-10')
+    await expect(page.getByText('自定义日期 · 2026-08-01 ～ 2026-08-10', { exact: true })).toBeVisible()
+    await expect(page.locator('button').filter({ hasText: 'A001' })).toBeVisible()
+    await expect(page.getByText('已选 0 人', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认发放工资条' })).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
+}

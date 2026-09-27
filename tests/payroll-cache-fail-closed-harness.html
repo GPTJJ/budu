@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>P0 payroll cache fail closed</title></head>
+  <body class="m-0"><div id="root"></div><script type="module">
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+    import PersonnelPage from '/src/components/PersonnelPage.jsx'
+    import { PublicModeProvider } from '/src/visibility.jsx'
+    import { prepareUserDataForUser, seedCachedDataForTest } from '/src/utils/userData.js'
+    import '/src/index.css'
+
+    const employee = {
+      id: 'emp-cache-test', name: '缓存测试员工', type: 'parttime',
+      storeKey: 'chaowai', storeName: '北京朝外店', employeeNo: 'CACHE-001',
+    }
+    prepareUserDataForUser('cache-test-account')
+    seedCachedDataForTest({
+      entries: {}, staff: [employee], stores: [{ key: 'chaowai', name: '北京朝外店' }],
+      dailyStoreStaffByMonth: {}, dailyPayAdjustments: [], bigBonuses: [], removedStaff: [],
+      schedules: {}, products: [], inventoryRequests: [], inventory: [], analysis: {},
+      productImages: {}, posDaily: [], posProductSales: [],
+    })
+    window.__monthRequestCount = 0
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/api/v2/daily-store-staff')) {
+        window.__monthRequestCount += 1
+        return new Response(JSON.stringify({ error: 'month unavailable' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return originalFetch(input, init)
+    }
+
+    createRoot(document.getElementById('root')).render(
+      React.createElement(PublicModeProvider, { isPublic: false, isStore: false },
+        React.createElement(PersonnelPage, {
+          user: { id: 'cache-test-account', username: 'developer', role: 'developer' },
+          canDelete: false,
+          canManage: false,
+          onBack: () => {},
+        }),
+      ),
+    )
+  </script></body>
+</html>

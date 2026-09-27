@@ -5,13 +5,17 @@ import { MockPaymentProvider } from './providers/mock.js'
 import { CashPaymentProvider } from './providers/cash.js'
 import { WechatPayProvider } from './providers/wechat-pay.js'
 import { AlipayProvider } from './providers/alipay.js'
-import { wechatPayConfig, wechatPayStoreAllowed } from './wechat-config.js'
+import { settlementCoordinator } from '../settlements/settlement-coordinator.js'
+import { completeSweetCardRefund, prepareSweetCardRefund } from '../sweet-card-refunds.js'
 
 const ACTIVE_PAYMENT_STATUSES = ['created', 'pending', 'success']
 const CHANNELS = ['wechat', 'alipay', 'cash']
-const SENSITIVE_KEYS = /^(authcode|auth_code|code|secret|apikey|api_key|privatekey|private_key|password|cert|key)$/i
+const SENSITIVE_KEYS = /^(authcode|auth_code|code|secret|apikey|api_key|privatekey|private_key|password|cert|key|sign|buyer_id|buyer_logon_id|open_id|user_id)$/i
 
 const paymentNo = () => `PAY${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 14).toUpperCase()}`
+const providerRefundCents = (refund) => refund.providerRefundAmount == null && refund.sweetCardRefundAmount == null
+  ? BigInt(refund.refundAmount)
+  : BigInt(refund.providerRefundAmount || 0)
 
 export function paymentMode() {
   const mode = String(process.env.PAYMENT_MODE || 'mock').trim().toLowerCase()
@@ -42,8 +46,9 @@ export function sanitizePayload(value) {
 }
 
 export class PaymentService {
-  constructor(prismaClient, providers) {
+  constructor(prismaClient, providers, coordinator = settlementCoordinator) {
     this.prisma = prismaClient
+    this.settlementCoordinator = coordinator
     this.providers = providers || new Map([
       ['mock', new MockPaymentProvider()],
       ['cash', new CashPaymentProvider()],
@@ -75,6 +80,7 @@ export class PaymentService {
         store: true,
         items: { orderBy: { id: 'asc' } },
         payments: { orderBy: { createdAt: 'desc' } },
+        externalSettlement: true,
         refunds: { orderBy: { createdAt: 'desc' } },
       },
     })
@@ -88,19 +94,20 @@ export class PaymentService {
     })
   }
 
-  /**
-   * 订单是否存在未解决的微信支付（created 已发起 / pending / 待核对）。
-   * 存在时订单不得取消、不得开启其他支付渠道。
-   */
-  async unresolvedWechatPayment(orderId) {
+  /** 订单是否存在未解决的支付；存在时不得取消或开启其他支付渠道。 */
+  async unresolvedPayment(orderId) {
     return this.prisma.payment.findFirst({
       where: {
         orderId,
-        provider: 'wechat_pay',
         OR: [{ status: 'created' }, { status: 'pending' }, { reconciliationRequired: true }],
       },
       orderBy: { createdAt: 'desc' },
     })
+  }
+
+  // 兼容旧调用与旧测试；通用权威为 unresolvedPayment()。
+  async unresolvedWechatPayment(orderId) {
+    return this.unresolvedPayment(orderId)
   }
 
   validateReplay(payment, input) {
@@ -167,7 +174,6 @@ export class PaymentService {
     const orderId = String(input.orderId || '').trim()
     const channel = String(input.channel || '')
     const requestKey = String(input.requestKey || '').trim()
-    const providerName = this.resolveProvider(channel)
     if (!orderId) throw httpError('订单 ID 不正确')
     if (!CHANNELS.includes(channel)) throw httpError('支付渠道不正确')
     if (requestKey.length < 8 || requestKey.length > 160) throw httpError('支付请求幂等键不正确')
@@ -180,6 +186,8 @@ export class PaymentService {
 
     const order = await this.prisma.order.findUnique({ where: { id: orderId } })
     if (!order) throw httpError('订单不存在', 404)
+    if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算订单不能创建 Payment', 409)
+    const providerName = this.resolveProvider(channel)
     const active = await this.activePayment(order.id)
     if (active) {
       if (active.status === 'success') return { ...(await this.result(active.id)), reused: true }
@@ -189,18 +197,12 @@ export class PaymentService {
     if (order.status !== 'pending_payment' || !['unpaid', 'failed', 'pending'].includes(order.paymentStatus)) {
       throw httpError('当前订单状态不可创建支付', 409)
     }
-    if (order.payableAmount <= 0n) throw httpError('订单应付金额必须大于 0')
-    // D：真实微信付款码支付必须服务端按 ORDER storeId 强制校验灰度名单。
-    // 客户端/UI 状态不是安全边界。
-    if (providerName === 'wechat_pay') {
-      const provider = this.provider(providerName)
-      const config = typeof provider.config === 'function' ? provider.config() : wechatPayConfig()
-      if (!config.enabled || !config.configured || paymentMode() !== 'live') {
-        throw httpError('微信支付未开通或配置不完整', 501)
-      }
-      if (!wechatPayStoreAllowed(order.storeId, config)) {
-        throw httpError('当前门店未授权微信支付', 403)
-      }
+    const paymentAmount = order.payableAmount - BigInt(order.sweetCardAmount || 0)
+    if (paymentAmount <= 0n) throw httpError('订单已无外部待支付金额')
+    // Provider 自己负责配置完整性和门店灰度；UI 永远不是安全边界。
+    const provider = this.provider(providerName)
+    if (typeof provider.assertAvailable === 'function') {
+      provider.assertAvailable({ storeId: order.storeId, mode: paymentMode(), authCode: input.authCode })
     }
 
     const no = paymentNo()
@@ -214,7 +216,7 @@ export class PaymentService {
             orderId: order.id,
             channel,
             paymentMethod: String(input.paymentMethod || '').slice(0, 30),
-            amount: order.payableAmount,
+            amount: paymentAmount,
             currency: 'CNY',
             status: 'created',
             merchantTradeNo: `BUDU${no}`,
@@ -249,13 +251,12 @@ export class PaymentService {
 
     await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
-    const provider = this.provider(providerName)
     // C：外部网络请求发出前，以单条原子更新持久化「已尝试发起」崩溃标记：
     //   networkAttemptStartedAt（核对器只恢复 created+已发起 的支付）、
     //   reconciliationRequired=true（进入核对队列）、nextActionAt=null（立即可核对）。
     // 三条字段必须同一条语句写入；进程在标记落库后、响应应用前崩溃时，
     // 核对器重启后即可按 orderquery 恢复，绝不盲查本地未发起的支付。
-    if (providerName === 'wechat_pay') {
+    if (provider.capability?.('ambiguousResultRecovery')) {
       await this.prisma.payment.update({
         where: { id: payment.id },
         data: {
@@ -289,7 +290,7 @@ export class PaymentService {
     if (response.reconciliation) {
       await this.logEvent(payment, order, 'payment.reconciliation.required', {
         status: payment.status,
-        providerTradeNo: payment.providerTradeNo,
+        providerTradeNo: payment?.providerTradeNo,
       })
     }
     await this.logEvent(payment, order, 'payment.provider.response', {
@@ -373,6 +374,9 @@ export class PaymentService {
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.refund.findUnique({ where: { id: refundId } })
       if (!current || current.status === 'completed') return
+      if (current.refundMode !== 'PAYMENT' || current.externalSettlementId || (!current.paymentId && BigInt(current.sweetCardRefundAmount || 0) <= 0n)) {
+        throw httpError('退款不属于 Payment authority', 409)
+      }
       if (current.status !== 'pending') throw httpError('当前退款状态不可完成', 409)
       const won = await tx.refund.updateMany({
         where: { id: refundId, status: 'pending' },
@@ -383,33 +387,12 @@ export class PaymentService {
         },
       })
       if (won.count !== 1) return
-
-      const order = await tx.order.findUnique({
-        where: { id: current.orderId },
-        include: { payments: true, refunds: true },
-      })
-      if (!order) throw httpError('退款订单不存在', 404)
-      const refundedTotal = (order.refunds || [])
-        .filter((refund) => refund.status === 'completed')
-        .reduce((sum, refund) => sum + refund.refundAmount, 0n)
-      const fullyRefunded = refundedTotal >= order.payableAmount
-      const nextOrderStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      const nextPaymentStatus = fullyRefunded ? 'refunded' : 'partially_refunded'
-      assertOrderTransition(order.status, nextOrderStatus)
-      assertOrderPaymentTransition(order.paymentStatus, nextPaymentStatus)
-      const updated = await tx.order.updateMany({
-        where: { id: order.id, status: order.status, paymentStatus: order.paymentStatus },
-        data: { status: nextOrderStatus, paymentStatus: nextPaymentStatus, version: { increment: 1 } },
-      })
-      if (updated.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
-      await tx.payment.updateMany({
-        where: { id: current.paymentId, status: { in: ['success', 'partially_refunded'] } },
-        data: { status: nextPaymentStatus },
-      })
-      const payment = (order.payments || []).find((item) => item.id === current.paymentId) || { id: current.paymentId, orderId: order.id }
-      await this.logEvent(payment, order, 'refund.completed', {
-        status: nextPaymentStatus,
-        providerTradeNo: payment.providerTradeNo,
+      await completeSweetCardRefund(tx, current, current.requestedBy)
+      const state = await this.settlementCoordinator.applyCompletedRefund(tx, { refundId: current.id })
+      const payment = current.paymentId ? await tx.payment.findUnique({ where: { id: current.paymentId } }) : null
+      if (payment) await this.logEvent(payment, state.orderBefore, 'refund.completed', {
+        status: state.order.paymentStatus,
+        providerTradeNo: payment?.providerTradeNo,
         failureCode: '',
         failureMessage: '',
         callbackAt: new Date(),
@@ -418,25 +401,30 @@ export class PaymentService {
     return this.refundResult(refundId)
   }
 
-  /** 查询并推进一条微信退款；查询不到且申请已超过 60 秒时，用原退款单号安全重提。 */
+  /** 查询并推进一条 Provider 退款；按 Provider 能力决定是否允许原退款单号安全重提。 */
   async reconcileRefund(refundId, { resubmitIfMissing = true } = {}) {
     const refund = await this.prisma.refund.findUnique({ where: { id: refundId } })
     if (!refund) throw httpError('退款记录不存在', 404)
+    if (refund.refundMode !== 'PAYMENT' || !refund.paymentId || refund.externalSettlementId) {
+      throw httpError('Manual External Refund 不进入 Payment 核对', 409)
+    }
     if (refund.status !== 'pending') return this.refundResult(refund.id)
     const payment = await this.prisma.payment.findUnique({ where: { id: refund.paymentId } })
     if (!payment) throw httpError('退款对应的支付记录不存在', 404)
-    if (payment.provider !== 'wechat_pay') return this.refundResult(refund.id)
     const provider = this.provider(payment.provider)
+    const supportsRefundQuery = provider.capability?.('supportsRefundQuery') ?? typeof provider.queryRefund === 'function'
+    if (!supportsRefundQuery) return this.refundResult(refund.id)
     let result = await provider.queryRefund(payment, {
       refundNo: refund.refundNo,
       providerRefundNo: refund.providerRefundNo,
-      refundAmount: refund.refundAmount,
+      refundAmount: providerRefundCents(refund),
     })
     const ageMs = Date.now() - new Date(refund.createdAt).getTime()
-    if (result.notFound && resubmitIfMissing && ageMs >= 60_000) {
+    const resubmitAfterMs = Number(provider.capability?.('refundResubmitAfterMs') || 0)
+    if (result.notFound && resubmitIfMissing && resubmitAfterMs > 0 && ageMs >= resubmitAfterMs) {
       result = await provider.refundPayment(payment, {
         refundNo: refund.refundNo,
-        refundAmount: refund.refundAmount,
+        refundAmount: providerRefundCents(refund),
         totalAmount: payment.amount,
         reason: refund.reason,
       })
@@ -452,7 +440,10 @@ export class PaymentService {
     if (!orderId || requestKey.length < 8 || requestKey.length > 160) throw httpError('退款参数不正确')
 
     const replay = await this.prisma.refund.findUnique({ where: { requestKey } })
-    if (replay) return replay.status === 'pending' ? this.reconcileRefund(replay.id) : this.refundResult(replay.id)
+    if (replay) {
+      if (replay.status === 'pending' && replay.providerRefundAmount === 0n && replay.sweetCardRefundAmount > 0n) return this.applyRefundProviderResult(replay.id, { status: 'completed' })
+      return replay.status === 'pending' ? this.reconcileRefund(replay.id) : this.refundResult(replay.id)
+    }
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -463,16 +454,20 @@ export class PaymentService {
       },
     })
     if (!order) throw httpError('订单不存在', 404)
+    if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算退款尚未开放', 409)
     if (!['paid', 'completed', 'partially_refunded'].includes(order.status)) throw httpError('当前订单状态不可退款', 409)
     const payment = order.payments.find((item) => ['success', 'partially_refunded'].includes(item.status))
-    if (!payment) throw httpError('订单没有成功支付的支付单，无法退款', 409)
+    if (!payment && BigInt(order.sweetCardAmount || 0) !== BigInt(order.payableAmount)) throw httpError('订单没有完整结算事实，无法退款', 409)
     const pendingRefund = order.refunds.find((refund) => refund.status === 'pending')
     if (pendingRefund) throw httpError('该订单已有退款处理中，请等待退款结果后再操作', 409)
-    if (payment.provider === 'wechat_pay' && order.refunds.length > 0) {
+    const provider = payment ? this.provider(payment.provider) : null
+    const repeatDelayMs = Number(provider?.capability?.('refundRepeatDelayMs') || 0)
+    if (repeatDelayMs > 0 && order.refunds.length > 0) {
       const latestAt = Math.max(...order.refunds.map((refund) => new Date(refund.createdAt).getTime()).filter(Number.isFinite))
-      const waitMs = latestAt + 60_000 - Date.now()
+      const waitMs = latestAt + repeatDelayMs - Date.now()
       if (Number.isFinite(waitMs) && waitMs > 0) {
-        throw httpError(`同一微信订单的多次退款需间隔 1 分钟，请约 ${Math.ceil(waitMs / 1000)} 秒后重试`, 409)
+        const message = String(provider?.capability?.('refundRepeatMessage') || '同一支付单的多次退款需等待')
+        throw httpError(`${message}，请约 ${Math.ceil(waitMs / 1000)} 秒后重试`, 409)
       }
     }
 
@@ -537,21 +532,30 @@ export class PaymentService {
     if (amount > remainingOrder) throw httpError('退款金额超出订单可退金额', 409)
 
     const no = `RF${Date.now().toString(36).toUpperCase()}${crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`
+    // CHECK constraints are immediate. A pure Sweet Card refund must carry its
+    // existing row-local rail discriminator at INSERT time; the deterministic
+    // allocation below re-derives and cross-validates the same values.
+    const pureSweetCardRefund = !payment && BigInt(order.sweetCardAmount || 0) === BigInt(order.payableAmount)
     let refund
     try {
       refund = await this.prisma.$transaction(async (tx) => {
-        return tx.refund.create({
+        const created = await tx.refund.create({
           data: {
             id: `ref-${crypto.randomUUID()}`,
             refundNo: no,
             orderId: order.id,
-            paymentId: payment.id,
+            paymentId: payment?.id || null,
+            externalSettlementId: null,
+            refundMode: 'PAYMENT',
             refundAmount: amount,
+            ...(pureSweetCardRefund ? { providerRefundAmount: 0n, sweetCardRefundAmount: amount } : {}),
             reason,
             status: 'pending',
             requestKey,
             requestedBy: operator,
             approvedBy: operator,
+            externalCompletedAt: null,
+            externalRefundReference: null,
             completedAt: null,
             items: {
               create: lines.map((line) => ({
@@ -564,19 +568,25 @@ export class PaymentService {
           },
           include: { items: true },
         })
+        await prepareSweetCardRefund(tx, { refund: created, order })
+        return tx.refund.findUnique({ where: { id: created.id }, include: { items: true } })
       })
     } catch (error) {
       if (error?.code !== 'P2002') throw error
       const sameRequest = await this.prisma.refund.findUnique({ where: { requestKey } })
-      if (sameRequest) return sameRequest.status === 'pending' ? this.reconcileRefund(sameRequest.id) : this.refundResult(sameRequest.id)
+      if (sameRequest) {
+        if (sameRequest.status === 'pending' && sameRequest.providerRefundAmount === 0n && sameRequest.sweetCardRefundAmount > 0n) return this.applyRefundProviderResult(sameRequest.id, { status: 'completed' })
+        return sameRequest.status === 'pending' ? this.reconcileRefund(sameRequest.id) : this.refundResult(sameRequest.id)
+      }
       throw httpError('该订单已有退款处理中，请等待退款结果后再操作', 409)
     }
+    if (providerRefundCents(refund) === 0n) return this.applyRefundProviderResult(refund.id, { status: 'completed' })
     let providerResult
     try {
-      providerResult = await this.provider(payment.provider).refundPayment(payment, {
+      providerResult = await provider.refundPayment(payment, {
         refundNo: no,
-        refundAmount: amount,
-        totalAmount: order.payableAmount,
+        refundAmount: providerRefundCents(refund),
+        totalAmount: payment.amount,
         reason,
       })
     } catch (error) {
@@ -627,6 +637,9 @@ export class PaymentService {
     await this.prisma.$transaction(async (tx) => {
       const current = await tx.payment.findUnique({ where: { id: payment.id }, include: { order: true } })
       if (!current) throw httpError('支付记录不存在', 404)
+      if (verified.merchantTradeNo && String(verified.merchantTradeNo) !== current.merchantTradeNo) throw httpError('支付事件商户单号不匹配', 409)
+      if (verified.amount != null && BigInt(verified.amount) !== current.amount) throw httpError('支付事件金额不匹配', 409)
+      if (verified.currency && String(verified.currency) !== current.currency) throw httpError('支付事件币种不匹配', 409)
       await tx.payment.update({
         where: { id: current.id },
         data: {
@@ -661,36 +674,10 @@ export class PaymentService {
           },
         })
         if (won.count !== 1) return
-        if (current.amount !== current.order.payableAmount) throw httpError('支付金额与订单应付金额不一致', 409)
-        if (current.order.status === 'pending_payment') {
-          assertOrderTransition('pending_payment', 'paid')
-          assertOrderPaymentTransition(current.order.paymentStatus, 'paid')
-          const paid = await tx.order.updateMany({
-            where: { id: current.order.id, status: 'pending_payment', paymentStatus: current.order.paymentStatus },
-            data: {
-              status: 'paid',
-              paymentStatus: 'paid',
-              paymentMethod: current.channel,
-              paymentMode: current.provider,
-              version: { increment: 1 },
-            },
-          })
-          if (paid.count === 1) {
-            assertOrderTransition('paid', 'completed')
-            await tx.order.updateMany({
-              where: { id: current.order.id, status: 'paid' },
-              data: { status: 'completed', completedAt: new Date(), version: { increment: 1 } },
-            })
-          }
-        } else if (current.order.status === 'paid') {
-          assertOrderTransition('paid', 'completed')
-          await tx.order.updateMany({
-            where: { id: current.order.id, status: 'paid' },
-            data: { status: 'completed', completedAt: new Date(), version: { increment: 1 } },
-          })
-        } else if (current.order.status !== 'completed') {
-          throw httpError(`订单 ${current.order.status} 状态收到成功支付，需要人工核对`, 409)
-        }
+        await this.settlementCoordinator.settlePayment(tx, {
+          paymentId: current.id,
+          completedAt: verified.occurredAt ? new Date(verified.occurredAt) : new Date(),
+        })
         await this.logEvent(current, current.order, 'payment.success', {
           status: 'success',
           providerTradeNo: verified.providerTradeNo || current.providerTradeNo,

@@ -23,7 +23,14 @@ const event = (payment, status, extra = {}) => ({
 })
 
 export class MockPaymentProvider extends PaymentProvider {
-  constructor() { super('mock') }
+  constructor() {
+    super('mock', {
+      supportsQuery: true,
+      supportsCancel: true,
+      supportsRefund: true,
+      supportsCallback: true,
+    })
+  }
 
   async createPayment(payment, options = {}) {
     const scenario = String(options.scenario || 'success')

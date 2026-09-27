@@ -11,12 +11,14 @@ import {
   FolderArchive,
   ChevronDown,
   ClipboardCheck,
+  Gift,
+  Handshake,
 } from 'lucide-react'
 import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
-import logoUrl from '../assets/logo.jpg'
+import BrandSlot from './BrandSlot'
 import { APP_VERSION } from '../version'
-import { MODULE_KEYS, hasModuleAccess } from '../../shared/accountPermissions'
+import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasSweetCardCapability } from '../../shared/accountPermissions'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -24,10 +26,12 @@ const menus = [
   { key: 'staff', label: '人员管理', icon: Users },
   { key: 'store', label: '门店经营', icon: Store },
   { key: 'inventory', label: '库存调拨', icon: Warehouse },
-  { key: 'finance', label: '财务利润', icon: Wallet },
+  { key: 'partner-management', label: '合作商管理', icon: Handshake },
+  { key: 'finance', label: '报表中心', icon: Wallet },
   { key: 'finance-invoice', label: '发票开具', icon: Wallet },
   { key: 'approval', label: '审批中心', icon: ClipboardCheck },
   { key: 'asset-center', label: 'budu档案馆', icon: FolderArchive },
+  { key: 'sweet-card', label: 'budu 甜意卡', icon: Gift },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
 
@@ -45,8 +49,15 @@ const subMenus = {
     { key: 'product-center', label: '商品中心' },
   ],
   inventory: [
-    { key: 'inventory-transfer', label: '申请调货' },
+    { key: 'inventory-transfer', label: '门店调拨' },
     { key: 'inventory-purchase', label: '申请采购' },
+    { key: 'partner-supply', label: '合作商供货' },
+    { key: 'product-material-management', label: '物料管理' },
+  ],
+  'partner-management': [
+    { key: 'partner-management', label: '合作商档案' },
+    { key: 'partner-replenishment-review', label: '补货订单' },
+    { key: 'partner-after-sales', label: '售后处理', moduleKey: 'partner-management' },
   ],
 }
 
@@ -55,9 +66,11 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const groupModules = {
     staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.EMPLOYEE_PROFILE],
     store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER],
-    inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
+    inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE, MODULE_KEYS.PARTNER_SUPPLY, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT],
+    'partner-management': [MODULE_KEYS.PARTNER_MANAGEMENT, MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW],
   }
   const visibleMenus = menus.filter((item) => {
+    if (item.key === MODULE_KEYS.SWEET_CARD) return hasModuleAccess(user, item.key) && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW)
     const keys = groupModules[item.key]
     return keys ? keys.some((key) => hasModuleAccess(user, key)) : hasModuleAccess(user, item.key)
   })
@@ -80,14 +93,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-6 pb-6 pt-7">
-        <img src={logoUrl} alt="budu" className="h-11 w-11 rounded-2xl object-cover shadow-sm" />
-        <div>
-          <p className="text-xl font-bold tracking-wide text-slate-900">
-            budu
-          </p>
-          <p className="text-[11px] font-medium tracking-widest text-slate-400">{t('甜蜜治愈日常')}</p>
-        </div>
+      <div className="flex items-center px-6 pb-5 pt-6 lg:pb-6 lg:pt-7">
+        <BrandSlot />
       </div>
 
       {/* 菜单（移动端内容超出时可滚动，底部渐变提示可继续滑动） */}
@@ -98,7 +105,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         {visibleMenus.map((item) => {
           const Icon = item.icon
           // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
-          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.key))
+          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.moduleKey || sub.key))
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 

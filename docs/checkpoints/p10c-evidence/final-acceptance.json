@@ -1,0 +1,28 @@
+{
+  "verifiedAt": "2026-09-05 Asia/Shanghai",
+  "status": "PRODUCTION_COMPLETE",
+  "rollout": "CONTROLLED_ROLLOUT_ONLY",
+  "applicationSha": "02f3f8fb6431157378c583802075713dd8bde8ef",
+  "previousProductionSha": "cd5551352420b18e2347294604b51b28b4b92dda",
+  "database": "budu_bj006",
+  "migration": { "applied": 64, "failed": 0 },
+  "health": { "internal": "PASS", "public": "PASS", "writers": 1 },
+  "scope": { "stores": ["xidan"], "approvedPrincipals": 1, "ordinaryDenied": true, "otherStoreDenied": true },
+  "p10": { "httpStatuses": [201, 409], "generic500": false, "economicSuccesses": 1, "debits": 1, "deltaCents": "0" },
+  "p11": { "redemptionReplay": 200, "paymentStatuses": [201, 200], "paymentReplay": 200, "paymentFacts": 1, "duplicateEconomicEffect": false },
+  "p12": {
+    "pureSweetRefund": { "totalCents": "60", "sweetCardCents": "60", "providerCents": "0" },
+    "mixedCashRefund": { "totalCents": "30", "sweetCardCents": "20", "providerCents": "10" },
+    "partialSweetRefund": { "totalCents": "10", "sweetCardCents": "10", "providerCents": "0" }
+  },
+  "p13": { "refundFacts": 1, "sweetCardRefundFacts": 1, "refundLedgerFacts": 1, "duplicateCredit": false, "duplicateProviderRefund": false },
+  "p14": { "valueAccountUnchanged": true, "balanceCents": "90", "oldCredentialRevoked": true, "replacementActive": true, "ledgerUnchanged": true },
+  "p15": { "credentialEntropy": "PASS", "plaintextExposure": false, "revokedReplayStatus": 409, "revokedReplayEconomicEffect": false },
+  "p16": { "cards": 2, "initialCents": "150", "redemptionCents": "150", "refundCents": "90", "balanceCents": "90", "ledgerSumCents": "90", "redemptions": 8, "allocations": 9, "refunds": 3, "deltaCents": "0" },
+  "p17": { "audit": "PASS", "report": "PASS", "cashCollectedCents": "10", "cashRefundedCents": "10", "issueCountedAsPayment": false, "redemptionDoubleCountedAsCash": false },
+  "p18": { "sweetCardCredentialKey": ["PRESENT", "LOAD_PASS", "VALIDATION_PASS"], "wechatConfig": ["PRESENT", "LOAD_PASS", "VALIDATION_PASS"], "alipayConfig": ["PRESENT", "LOAD_PASS", "VALIDATION_PASS"] },
+  "p19": { "posProducts": 86, "cash": "PASS", "wechatPaymentQuery": "success", "wechatRefundQuery": "completed", "alipayPaymentQuery": "success", "alipayRefundQuery": "completed", "credentialLogLeaks": 0, "unexpectedErrors": 0, "unexpectedEconomicFacts": false },
+  "canonicalFinalBackup": "production-budu_bj006-m64-post-p19.dump",
+  "canonicalFinalBackupBytes": 37454984,
+  "canonicalRestoreEntries": 6100
+}

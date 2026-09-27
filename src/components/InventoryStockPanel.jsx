@@ -19,9 +19,9 @@ function formatTime(value) {
 
 function ModalShell({ title, subtitle, onClose, children }) {
   return (
-    <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center sm:p-4">
-      <button className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} aria-label={t('关闭')} />
-      <div className="relative max-h-[88vh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-lg sm:max-w-lg sm:rounded-2xl sm:p-6">
+    <div data-budu-overlay-root className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center sm:p-4">
+      <button className="budu-overlay-backdrop absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} aria-label={t('关闭')} />
+      <div role="dialog" aria-modal="true" aria-label={title} className="budu-overlay-scroll relative max-h-[calc(100dvh-env(safe-area-inset-top))] w-full rounded-t-3xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-lg sm:max-h-[88dvh] sm:max-w-lg sm:rounded-2xl sm:p-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{title}</h3>
