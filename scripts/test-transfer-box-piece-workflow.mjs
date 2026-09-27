@@ -19,7 +19,7 @@ try {
   const cookie = register.headers.get('set-cookie')?.split(';')[0]
   const headers = { 'Content-Type': 'application/json', Cookie: cookie }
   const productResult = await json(await fetch(`${origin}/api/v2/products`, { method: 'POST', headers, body: JSON.stringify({
-    name: '柠檬散糖', skuSource: 'BD', transferCode: 'NO.2', salePriceCents: '', costPriceCents: '', unit: '颗',
+    name: '柠檬散糖', skuSource: 'BD', salePriceCents: '', costPriceCents: '', unit: '颗',
     isActive: false, transferEnabled: true, partnerSupplyEnabled: false, sortOrder: 1,
     transferBoxEnabled: true, transferBoxWeightGrams: 2500, transferPieceEnabled: true, transferPieceWeightGrams: 6,
   }) }))

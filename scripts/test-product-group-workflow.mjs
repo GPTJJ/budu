@@ -57,8 +57,9 @@ try {
   if ((await prisma.inventoryItem.findUnique({ where: { id: blue.productId } })).productGroupId !== group.id) throw new Error('重复分组改变了原成员关系')
 
   const yellowCurrent = group.members.find((item) => item.productId === yellow.productId)
-  const disabled = await json(await fetch(`${base}/products/${yellow.productId}`, { method: 'PUT', headers: jsonHeaders(cookie), body: JSON.stringify({ ...yellowCurrent, isActive: false }) }))
-  if (disabled.status !== 200 || disabled.body.product.productId !== yellow.productId) throw new Error('停用组内 SKU 失败')
+  const { costPriceCents: _redactedCost, ...yellowEditable } = yellowCurrent
+  const disabled = await json(await fetch(`${base}/products/${yellow.productId}`, { method: 'PUT', headers: jsonHeaders(cookie), body: JSON.stringify({ ...yellowEditable, isActive: false }) }))
+  if (disabled.status !== 200 || disabled.body.product?.productId !== yellow.productId) throw new Error(`停用组内 SKU 失败：${disabled.status} ${JSON.stringify(disabled.body)}`)
 
   const posProducts = await json(await fetch(`${base}/pos/products`, { headers: { Cookie: cookie } }))
   if (posProducts.status !== 200) throw new Error('POS 商品接口失败')
