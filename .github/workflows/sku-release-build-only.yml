@@ -41,6 +41,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_REF" = refs/heads/codex/sku-authority-release-controller-v2
+          if [ -z "$(git branch --show-current)" ]; then
+            git switch -c codex/sku-authority-release-controller-v2
+          fi
+          test "$(git branch --show-current)" = codex/sku-authority-release-controller-v2
           python3 scripts/deploy-prod-sku-authority.py identity --repo "$PWD"
           python3 scripts/test-sku-release-contract.py
           python3 scripts/test-sku-release-controller.py
