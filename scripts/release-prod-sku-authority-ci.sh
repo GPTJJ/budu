@@ -16,7 +16,7 @@ test "${GITHUB_RUN_ATTEMPT:-}" = 1
 test "$DEPLOY_HOST" = 154.8.195.42
 test "$DEPLOY_USER" = ubuntu
 test "$DEPLOY_APP_DIR" = /opt/budu
-test "${GITHUB_REF:-}" = refs/heads/codex/sku-authority-release-controller-v3
+test "${GITHUB_REF:-}" = refs/heads/codex/sku-authority-release-controller-v4
 test "$RELEASE_SHA" = "${GITHUB_SHA:-}"
 test "$RELEASE_SHA" = "${AUTHORIZE_RELEASE_SHA:-}"
 test "${SKU_GATE_8_AUTHORIZED:-}" = SKU_GATE_8
@@ -62,7 +62,7 @@ python3 scripts/deploy-prod-sku-authority.py inspect-artifact --repo "$PWD" \
 python3 scripts/deploy-prod-sku-authority.py preflight --repo "$PWD" \
   --archive "$run_dir/image.tar" --migration-archive "$run_dir/migration.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519"
-timeout 25m python3 scripts/deploy-prod-sku-authority.py deploy --repo "$PWD" \
+timeout 50m python3 scripts/deploy-prod-sku-authority.py deploy --repo "$PWD" \
   --archive "$run_dir/image.tar" --migration-archive "$run_dir/migration.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" \
   --authorize-release-sha "$RELEASE_SHA" --production-gate-authorized SKU_GATE_8
