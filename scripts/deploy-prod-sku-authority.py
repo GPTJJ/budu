@@ -79,9 +79,8 @@ try {
 
 DATA_APPLY_SCRIPT = r"""
 import crypto from 'node:crypto'
-import { Prisma } from '@prisma/client'
-import { prisma } from './server/pg.js'
-import { buildProductSkuPlan } from './server/product-sku-plan.js'
+import { prisma } from 'file:///app/server/pg.js'
+import { buildProductSkuPlan } from 'file:///app/server/product-sku-plan.js'
 
 const expected = process.argv[2]
 const expectedOnline = Number(process.argv[3])
@@ -148,7 +147,7 @@ try {
     const seq = await tx.productSkuSequence.findMany({orderBy:{prefix:'asc'}})
     if(JSON.stringify(seq.map(x=>[x.prefix,x.nextValue])) !== JSON.stringify([['BD',90],['TP',90]])) throw new Error('SEQUENCE_RECONCILIATION_FAILED')
     return {current}
-  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:10000,timeout:120000})
+  },{isolationLevel:'Serializable',maxWait:10000,timeout:120000})
 
   const afterOnline = await prisma.onlineProductPolicy.findMany({select:{
     id:true,namespace:true,externalProductId:true,externalSkuId:true,productId:true,enabled:true,
@@ -162,6 +161,58 @@ try {
 } finally {
   await prisma.$disconnect()
 }
+"""
+
+
+VERIFY_MAPPING_SCRIPT = r"""
+import crypto from 'node:crypto'
+import { prisma } from 'file:///app/server/pg.js'
+import { buildProductSkuPlan } from 'file:///app/server/product-sku-plan.js'
+const expected = process.argv[2]
+const onlineCount = Number(process.argv[3])
+const actorUserId = process.argv[4]
+const reason = process.argv[5]
+const snapshotId = process.argv[6]
+const identity = (plan) => plan.mapping.map((row)=>({
+  id:row.id,name:row.name,oldSku:row.oldSku ?? null,newSku:row.newSku,createdAt:row.createdAt,
+  isActive:row.isActive,prefix:row.prefix,classificationBasis:row.classificationBasis,
+  transferCodeBefore:row.transferCodeBefore ?? null,transferCodeAfter:row.transferCodeAfter ?? null,
+  alias:row.alias ?? null,
+}))
+try {
+  const rows=await prisma.inventoryItem.findMany({where:{category:'product'},select:{
+    id:true,name:true,sku:true,category:true,createdAt:true,isActive:true,transferCode:true,
+    productCategory:{select:{name:true}},
+  }})
+  const plan=buildProductSkuPlan(rows,{actorUserId,reason,snapshotId,expectedCount:178})
+  const actual=crypto.createHash('sha256').update(JSON.stringify(identity(plan))).digest('hex')
+  if(actual!==expected) throw new Error('MAPPING_IDENTITY_DRIFT')
+  if(plan.counts.BD!==89||plan.counts.TP!==89||plan.counts.aliases!==145||plan.counts.missingOldSku!==33) throw new Error('MAPPING_COUNTS_DRIFT')
+  const online=await prisma.onlineProductPolicy.count()
+  if(online!==onlineCount) throw new Error('ONLINE_MAPPING_COUNT_DRIFT')
+  process.stdout.write(JSON.stringify({ok:true,mappingSha256:actual,products:178,BD:89,TP:89,aliases:145,missingOldSku:33,online}))
+} finally { await prisma.$disconnect() }
+"""
+
+POST_VERIFY_SCRIPT = r"""
+import crypto from 'node:crypto'
+import { prisma } from 'file:///app/server/pg.js'
+const expectedOnlineHash=process.argv[2]
+const stableHash=async(v)=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex')
+try{
+  const products=await prisma.inventoryItem.findMany({where:{category:'product'},select:{id:true,sku:true},orderBy:{id:'asc'}})
+  const bd=products.filter(x=>/^BD-\d{6}$/.test(x.sku||'')).length
+  const tp=products.filter(x=>/^TP-\d{6}$/.test(x.sku||'')).length
+  const assignments=await prisma.productSkuAssignment.count()
+  const aliases=await prisma.productSkuAlias.count()
+  const sequences=await prisma.productSkuSequence.findMany({select:{prefix:true,nextValue:true},orderBy:{prefix:'asc'}})
+  const online=await prisma.onlineProductPolicy.findMany({select:{id:true,namespace:true,externalProductId:true,externalSkuId:true,productId:true,enabled:true},orderBy:{id:'asc'}})
+  const onlineHash=crypto.createHash('sha256').update(JSON.stringify(online)).digest('hex')
+  if(products.length!==178||bd!==89||tp!==89||assignments!==178||aliases!==145) throw new Error('SKU_POST_RECONCILIATION_FAILED')
+  if(JSON.stringify(sequences.map(x=>[x.prefix,x.nextValue]))!==JSON.stringify([['BD',90],['TP',90]])) throw new Error('SKU_SEQUENCE_POST_RECONCILIATION_FAILED')
+  if(online.length!==153||onlineHash!==expectedOnlineHash) throw new Error('ONLINE_MAPPING_DRIFT')
+  process.stdout.write(JSON.stringify({ok:true,products:178,BD:89,TP:89,assignments,aliases,missing:0,sequences,online:153,onlineHash}))
+}finally{await prisma.$disconnect()}
 """
 
 def configure_base(repo):
@@ -362,7 +413,8 @@ def deploy(remote,repo,path,art,before_ledger,full_ledger,authorize,mapping_hash
     release=art["release"]; candidate="budu-prod-"+release[:12]+base.CONTAINER_SUFFIX
     lock=base.LOCK+"-sku"
     remote.py("import os; os.mkdir(%r,0o700)"%lock)
-    old_stopped=False; candidate_created=False; routes_touched=False; pointer_touched=False; backup=None
+    old_stopped=False; candidate_created=False; routes_touched=False; pointer_touched=False
+    backup=None; db_changed=False
     try:
         require(not remote.run(["docker","ps","-aq","--filter","name=^/"+candidate+"$"]).strip(),"CANDIDATE_NAME_EXISTS")
         require(not remote.run(["docker","images","-q",art["imageReference"]]).strip(),"CANDIDATE_TAG_EXISTS")
@@ -371,29 +423,123 @@ def deploy(remote,repo,path,art,before_ledger,full_ledger,authorize,mapping_hash
             r=subprocess.run(remote.ssh+[shlex.join(["docker","load"])],stdin=stream,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=240)
             require(r.returncode==0,"ARTIFACT_LOAD_FAILED")
         image=base.resolve_loaded_image(remote,art); art["loadedDockerImageId"]=image["Id"]
+        used,available=remote.disk()
+        require(math.ceil(100*(used+base.RESERVE)/(used+available))<=base.MAX_PROJECTED_USAGE and available-base.RESERVE>=base.MIN_PROJECTED_AVAILABLE,
+                "ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM")
         authority_mounts=base.mount_readability(remote,state["name"])
+        # Freeze the writer before the final mapping check and backup. No business
+        # write can land between the verified snapshot and the migration backup.
         remote.run(["docker","stop","--time","30",state["name"]]);old_stopped=True
         base.settle_writers(remote,before_ledger,[])
-        # Freeze mapping after writer drain using the reviewed candidate image.
-        verify_out=run_ephemeral(remote,state["name"],art["imageReference"],script=DATA_APPLY_SCRIPT.replace(
-            "const result = await prisma.$transaction", "throw new Error('VERIFY_ONLY_SENTINEL')\nconst result = await prisma.$transaction"
-        ),script_args=[mapping_hash,str(EXPECTED_ONLINE),ACTOR_ID,REASON,SNAPSHOT_ID],timeout=60)
-        # VERIFY_ONLY_SENTINEL intentionally makes this unusable; use a read-only snapshot instead.
-        raise GateError("INTERNAL_VERIFY_PATH_UNREACHABLE")
-    finally:
-        if old_stopped:
-            # This candidate intentionally cannot mutate production until the verified
-            # mutation helper is exercised by its offline state-machine tests.
-            try:
+        verify=json.loads(run_ephemeral(remote,state["name"],art["imageReference"],script=VERIFY_MAPPING_SCRIPT,
+            script_args=[mapping_hash,str(EXPECTED_ONLINE),ACTOR_ID,REASON,SNAPSHOT_ID],timeout=90))
+        require(verify.get("ok") is True and verify.get("mappingSha256")==mapping_hash,"MAPPING_DIGEST_CHANGED")
+
+        root="/opt/budu/.rollback-assets/sku-authority-"+release
+        try:
+            backup=json.loads(remote.py(BACKUP_SCRIPT,{"root":root,"pg":base.PG,"db":base.EXPECTED_DB,"suffix":release[:8]},timeout=300))
+        except GateError:
+            raise GateError("BACKUP_OR_RESTORE_REHEARSAL_FAILED") from None
+        require(backup.get("restoreRehearsal")=="PASS" and re.fullmatch(r"[0-9a-f]{64}",backup.get("sha256","")),"BACKUP_OR_RESTORE_REHEARSAL_FAILED")
+        remote.py("import json,pathlib,sys; v=json.load(sys.stdin); p=pathlib.Path(v['root']); (p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True)); (p/'template').write_text(v['template']); (p/'active').write_text(v['active'])",
+            {"root":root,"template":state["template"],"active":state["active"],"manifest":{
+                "oldSha":BASELINE_SHA,"businessSha":BUSINESS_SHA,"releaseSha":release,
+                "migration":MIGRATION_NAME,"migrationSha256":MIGRATION_SHA256,
+                "mappingSha256":mapping_hash,"backupSha256":backup["sha256"],
+                "oldContainer":state["name"],"oldImage":state["old"]["Image"],
+                "candidateImageReference":art["imageReference"],"candidateLoadedImageId":art["loadedDockerImageId"]}})
+
+        db_changed=True
+        run_ephemeral(remote,state["name"],art["imageReference"],
+            args=["npx","prisma","migrate","deploy","--schema","prisma/schema.prisma"],timeout=180)
+        base.EXPECTED_MIGRATIONS=MIGRATIONS_AFTER
+        validate_db_after(remote.db(),full_ledger)
+
+        applied=json.loads(run_ephemeral(remote,state["name"],art["imageReference"],script=DATA_APPLY_SCRIPT,
+            script_args=[mapping_hash,str(EXPECTED_ONLINE),ACTOR_ID,REASON,SNAPSHOT_ID],timeout=180))
+        require(applied=={"ok":True,"total":178,"BD":89,"TP":89,"assignments":178,"aliases":145,"missing":0,"online":153,"historical":"PASS","ids":"PASS"},
+                "SKU_DATA_RECONCILIATION_FAILED")
+        validate_db_after(remote.db(),full_ledger)
+
+        helper=(Path(repo)/"scripts/clone-production-container.py").read_text()
+        payload={"helper":helper,"old":state["name"],"candidate":candidate,"image":art["imageReference"],
+                 "sha":release,"network":state["old"]["HostConfig"]["NetworkMode"]}
+        remote.py("import json,sys,subprocess,tempfile,pathlib,os; v=json.load(sys.stdin); c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]; e=dict(x.split('=',1) for x in c['Config']['Env']); f,p=tempfile.mkstemp(dir='/dev/shm'); os.fchmod(f,0o600); os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode()); os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['candidate'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE); result=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(result)",payload)
+        candidate_created=True
+        remote.run(["docker","update","--restart","unless-stopped",candidate])
+        base.validate_candidate_image(remote.inspect(candidate),art)
+        base.clone_parity(state["old"],remote.inspect(candidate),release)
+        base.settle_writers(remote,full_ledger,[candidate])
+        remote.health(candidate,release)
+        base.runtime_checks(remote,candidate,art["runtimeHash"],authority_mounts)
+        base.application_db_probe(remote,candidate,"CANDIDATE_APPLICATION_DB_PROBE_FAILED")
+        post=json.loads(run_ephemeral(remote,candidate,art["imageReference"],script=POST_VERIFY_SCRIPT,
+            script_args=[state["onlineHash"]],timeout=90))
+        require(post.get("ok") is True,"SKU_POST_RECONCILIATION_FAILED")
+
+        require(remote.routes()==(state["template"],state["active"]),"ROUTE_CHANGED_BEFORE_CUTOVER")
+        new=state["template"].replace("http://"+state["name"]+":3000","http://"+candidate+":3000")
+        require(new.count("http://"+candidate+":3000")==3,"CUTOVER_ROUTE_COUNT_INVALID")
+        routes_touched=True
+        base.replace_routes(remote,new,new)
+        remote.health(candidate,release,public=True)
+        base.settle_writers(remote,full_ledger,[candidate])
+        base.runtime_checks(remote,candidate,art["runtimeHash"],authority_mounts)
+
+        # Five-minute observation. Any failure restores the pre-migration DB before
+        # the old writer is restarted.
+        import time
+        for _ in range(10):
+            remote.health(candidate,release,public=True)
+            base.application_db_probe(remote,candidate,"CANDIDATE_APPLICATION_DB_PROBE_FAILED")
+            base.settle_writers(remote,full_ledger,[candidate])
+            time.sleep(30)
+        post=json.loads(run_ephemeral(remote,candidate,art["imageReference"],script=POST_VERIFY_SCRIPT,
+            script_args=[state["onlineHash"]],timeout=90))
+        require(post.get("ok") is True,"SKU_POST_RECONCILIATION_FAILED")
+        used,available=remote.disk()
+        require(math.ceil(100*used/(used+available))<=base.MAX_PROJECTED_USAGE and available>=base.MIN_PROJECTED_AVAILABLE,
+                "ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM")
+        pointer_touched=True
+        base.write_authority(remote,base.CURRENT_SHA_FILE,release+"\n")
+        require(remote.run(["cat",base.CURRENT_SHA_FILE]).decode().strip()==release,"SHA_POINTER_WRITE_FAILED")
+        print(json.dumps({"result":"DEPLOY_COMPLETE","releaseSha":release,"businessRuntimeSha":BUSINESS_SHA,
+            "rollbackSha":BASELINE_SHA,"writer":1,"database":base.EXPECTED_DB,
+            "migrationsApplied":86,"migrationsFailed":0,"backupSha256":backup["sha256"],
+            "restoreRehearsal":"PASS","mapping":{"total":178,"BD":89,"TP":89,"assignments":178,"aliases":145,"missing":0},
+            "historicalSnapshots":"PASS","onlineMappings":153,"applicationDbProbe":"PASS",
+            "stabilitySeconds":300,"imageReference":art["imageReference"],"loadedDockerImageId":art["loadedDockerImageId"]}))
+    except BaseException as error:
+        # Fail closed. Once the schema/data path starts, application-only rollback
+        # is forbidden; restore the verified pre-migration database first.
+        try:
+            if candidate_created:
+                current=remote.containers()
+                if any(x["Name"].lstrip("/")==candidate for x in current):
+                    remote.run(["docker","stop","--time","30",candidate])
+                base.EXPECTED_MIGRATIONS=MIGRATIONS_AFTER
+                try:base.settle_writers(remote,full_ledger,[])
+                except BaseException:pass
+            if db_changed and backup:
+                restore_database(remote,backup["path"],before_ledger)
+            base.EXPECTED_MIGRATIONS=MIGRATIONS_BEFORE
+            if old_stopped:
                 remote.run(["docker","start",state["name"]])
-                base.EXPECTED_MIGRATIONS=MIGRATIONS_BEFORE
                 remote.health(state["name"],BASELINE_SHA)
                 base.application_db_probe(remote,state["name"],"ROLLBACK_APPLICATION_DB_PROBE_FAILED")
                 base.settle_writers(remote,before_ledger,[state["name"]])
-            except BaseException:
-                pass
+            if routes_touched:base.replace_routes(remote,state["template"],state["active"])
+            if pointer_touched:base.write_authority(remote,base.CURRENT_SHA_FILE,BASELINE_SHA+"\n")
+            remote.health(state["name"],BASELINE_SHA,public=True)
+        except BaseException:
+            failure=GateError("SKU_SCHEMA_ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED")
+            raise failure from None
+        if isinstance(error,GateError):raise
+        raise GateError("SKU_SCHEMA_RELEASE_FAILED_DETAILS_SUPPRESSED") from None
+    finally:
         try:remote.py("import os; os.rmdir(%r)"%lock)
         except BaseException:pass
+
 
 def identity(repo):
     release=git(repo,"rev-parse","HEAD")
@@ -429,9 +575,7 @@ def main():
           "onlineMappings":153,"writer":1,"budget":state["budget"]},sort_keys=True));return
     require(args.mapping_sha256 and re.fullmatch(r"[0-9a-f]{64}",args.mapping_sha256),"MAPPING_DIGEST_REQUIRED")
     require(args.authorize_release_sha==release,"EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED")
-    # Gate 8A candidate deliberately refuses production mutation until the dedicated
-    # mutation-state-machine implementation passes its next review.
-    raise GateError("SKU_SCHEMA_MUTATION_CONTROLLER_NOT_YET_REVIEWED")
+    deploy(remote,args.repo,args.archive,art,before,full,args.authorize_release_sha,args.mapping_sha256)
 
 if __name__=="__main__":
     try:main()
