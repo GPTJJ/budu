@@ -160,3 +160,48 @@ def write_manifest(path, phase, **extra):
         previous = json.loads(path.read_text())
         require(previous.get('phase') in ROLLBACK_MODES, 'ROLLBACK_MANIFEST_INVALID')
         require(previous['phase'] == PRE_CUTOVER or phase != PRE_CUTOVER,
+                'ROLLBACK_PHASE_REWIND_FORBIDDEN')
+        require(previous['phase'] != DATA_INTEGRITY_HOLD or phase == DATA_INTEGRITY_HOLD,
+                'ROLLBACK_PHASE_REWIND_FORBIDDEN')
+    data = manifest_payload(phase, **extra)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + '.', dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(data, stream, sort_keys=True)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return data
+
+
+def load_manifest(path):
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        raise ReleaseBlocked('ROLLBACK_MANIFEST_UNAVAILABLE') from None
+    require(data.get('allowedRollbackMode') == ROLLBACK_MODES.get(data.get('phase')),
+            'ROLLBACK_MANIFEST_INVALID')
+    return data
+
+
+def rollback_decision(manifest, failure_kind):
+    phase = manifest.get('phase')
+    require(manifest.get('allowedRollbackMode') == ROLLBACK_MODES.get(phase),
+            'ROLLBACK_MANIFEST_INVALID')
+    require(failure_kind in ('RUNTIME', 'DATA_INTEGRITY'), 'FAILURE_CLASS_INVALID')
+    if phase == PRE_CUTOVER:
+        return 'RESTORE_PRE_MIGRATION_DATABASE'
+    if phase == DATA_INTEGRITY_HOLD or failure_kind == 'DATA_INTEGRITY':
+        return DATA_INTEGRITY_HOLD
+    return 'APPLICATION_ROLLBACK_SAFE_DEGRADED'
