@@ -2,6 +2,19 @@ name: Deploy to Beijing Prod
 
 on:
   workflow_dispatch:
+    inputs:
+      expected_production_sha:
+        description: 'Post-Transfer: exact current Production SHA'
+        required: false
+        type: string
+      approved_business_sha:
+        description: 'Post-Transfer: reviewed business runtime SHA'
+        required: false
+        type: string
+      authorize_release_sha:
+        description: 'Post-Transfer: exact SHA authorized for deployment'
+        required: false
+        type: string
 
 concurrency:
   group: deploy-bj-prod
@@ -30,6 +43,9 @@ jobs:
           SSH_HOST: ${{ secrets.BJ_HOST }}
           SSH_USER: ${{ secrets.BJ_USER }}
           APP_DIR: ${{ secrets.BJ_APP_DIR }}
+          EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_production_sha }}
+          APPROVED_BUSINESS_SHA: ${{ inputs.approved_business_sha }}
+          AUTHORIZE_RELEASE_SHA: ${{ inputs.authorize_release_sha }}
         run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod
 
       - name: Notify failure

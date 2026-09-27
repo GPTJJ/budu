@@ -26,6 +26,11 @@ from urllib.parse import urlsplit, unquote
 EXPECTED_OLD_SHA = 'fc57da5a6e6611c66ed1db286336dc0e1752d69c'
 RUNTIME_SHA = '8381959e9c1d527c1f14c234338b14d117ae46f5'
 RELEASE_BASE = '90cba06afb176d002b9b924f167cd79c8268460f'
+TRANSFER_INSTALLED_SHA = '2fa28a6399c8a9f4fd70188d8df077f0b411589e'
+RELEASE_PROFILE = 'transfer-first'
+IMAGE_PREFIX = 'transfer-cas-'
+CONTAINER_SUFFIX = '-transfer-cas'
+ROLLBACK_PREFIX = 'transfer-cas-'
 MEASURE_ONLY = False  # Deployment still requires exact-SHA explicit authorization.
 EXPECTED_DB = 'budu_bj006'
 EXPECTED_MIGRATIONS = 85
@@ -44,6 +49,14 @@ ALLOWLIST = {
     'docs/checkpoints/2026-09-26-transfer-cas-release.md',
     'scripts/deploy-remote.sh',
     'scripts/release-prod-transfer-cas-ci.sh',
+    'scripts/test-transfer-cas-existing-workflow.py',
+}
+POST_TRANSFER_ENGINEERING_FILES = {
+    '.github/workflows/deploy-prod.yml',
+    'scripts/deploy-remote.sh',
+    'scripts/deploy-prod-transfer-cas.py',
+    'scripts/release-prod-post-transfer-ci.sh',
+    'scripts/test-release-path-post-transfer.py',
     'scripts/test-transfer-cas-existing-workflow.py',
 }
 CURRENT_SHA_FILE = '/opt/budu/.current-sha'
@@ -97,6 +110,57 @@ def runtime_payload(repo):
 def git(repo, *args):
     return command(['git', '-C', str(repo), *args]).decode().strip()
 
+def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None):
+    global RELEASE_PROFILE, EXPECTED_OLD_SHA, RUNTIME_SHA, OLD_V2_HASH
+    global IMAGE_PREFIX, CONTAINER_SUFFIX, ROLLBACK_PREFIX
+    require(profile in ('transfer-first', 'post-transfer'), 'RELEASE_PROFILE_INVALID')
+    if profile == 'transfer-first':
+        require(old_sha is None and business_sha is None and old_v2_hash is None,
+                'FIRST_ROLLOUT_IDENTITY_OVERRIDE_FORBIDDEN')
+        return
+    require(all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{40}', value)
+                for value in (old_sha, business_sha))
+            and isinstance(old_v2_hash, str) and re.fullmatch(r'[0-9a-f]{64}', old_v2_hash),
+            'POST_TRANSFER_IDENTITY_INVALID')
+    RELEASE_PROFILE = profile
+    EXPECTED_OLD_SHA = old_sha
+    RUNTIME_SHA = business_sha
+    OLD_V2_HASH = old_v2_hash
+    IMAGE_PREFIX = 'post-transfer-'
+    CONTAINER_SUFFIX = '-post-transfer'
+    ROLLBACK_PREFIX = 'post-transfer-'
+
+def is_ancestor(repo, ancestor, descendant):
+    return subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', ancestor, descendant],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+def transfer_cas_section(source):
+    start = b"v2Router.delete('/transfer-requests/:id'"
+    end = '// ---------- 采购 ----------'.encode()
+    require(source.count(start) == 1, 'TRANSFER_CAS_RUNTIME_CHANGED')
+    left = source.index(start)
+    require(end in source[left:], 'TRANSFER_CAS_RUNTIME_CHANGED')
+    right = source.index(end, left)
+    return source[left:right]
+
+def validate_post_transfer_identity(repo, release):
+    require(git(repo, 'branch', '--show-current') not in ('', 'codex/transfer-cas-existing-workflow'),
+            'POST_TRANSFER_BRANCH_INVALID')
+    require(release != EXPECTED_OLD_SHA
+            and is_ancestor(repo, TRANSFER_INSTALLED_SHA, EXPECTED_OLD_SHA)
+            and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
+            and is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA)
+            and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
+    require(not git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma'),
+            'SCHEMA_CHANGED')
+    deployed_transfer = command(['git','-C',str(repo),'show',TRANSFER_INSTALLED_SHA+':server/v2.js'])
+    require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
+            == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
+    files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
+    require(files <= POST_TRANSFER_ENGINEERING_FILES, 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
+
 def validate_identity(release, parent, ancestor, files, schema_files, clean):
     require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != RUNTIME_SHA, 'RELEASE_SHA_INVALID')
     require(parent == RELEASE_BASE and ancestor, 'RELEASE_ANCESTRY_INVALID')
@@ -107,6 +171,11 @@ def validate_identity(release, parent, ancestor, files, schema_files, clean):
 def identity(repo):
     require(Path(__file__).resolve() == (Path(repo)/'scripts/deploy-prod-transfer-cas.py').resolve(), 'RUNNER_REPO_MISMATCH')
     release = git(repo, 'rev-parse', 'HEAD')
+    if RELEASE_PROFILE == 'post-transfer':
+        validate_post_transfer_identity(repo, release)
+        migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
+        require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
+        return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
     parents = git(repo, 'rev-list', '--parents', '-n', '1', release).split()
     files = git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines()
@@ -126,7 +195,7 @@ def identity(repo):
 
 def image_reference(release):
     require(bool(re.fullmatch('[0-9a-f]{40}', release)), 'IMAGE_RELEASE_SHA_INVALID')
-    return 'budu-api:transfer-cas-' + release[:12]
+    return 'budu-api:' + IMAGE_PREFIX + release[:12]
 
 
 def validate_loaded_image(image, art):
@@ -228,7 +297,7 @@ No archive member is extracted to the host filesystem.
         allowed_members = {'manifest.json', item['Config'], *layers}
         if 'repositories' in by_name:
             repositories = json.loads(read('repositories',65536))
-            require(set(repositories) == {'budu-api'} and set(repositories['budu-api']) == {'transfer-cas-'+release[:12]}, 'LEGACY_TAGS_INVALID')
+            require(set(repositories) == {'budu-api'} and set(repositories['budu-api']) == {IMAGE_PREFIX+release[:12]}, 'LEGACY_TAGS_INVALID')
             allowed_members.add('repositories')
         if 'index.json' in by_name:
             index = json.loads(read('index.json',65536))
@@ -242,7 +311,7 @@ No archive member is extracted to the host filesystem.
             require(['blobs/sha256/'+x['digest'].removeprefix('sha256:') for x in image_manifest['layers']] == layers, 'OCI_LAYER_LIST_MISMATCH')
             for key,value in descriptor.get('annotations',{}).items():
                 if key in ('io.containerd.image.name','org.opencontainers.image.ref.name'):
-                    require(value in exact_tags+['transfer-cas-'+release[:12]], 'OCI_TAG_MISMATCH')
+                    require(value in exact_tags+[IMAGE_PREFIX+release[:12]], 'OCI_TAG_MISMATCH')
             require(json.loads(read('oci-layout',65536)).get('imageLayoutVersion') == '1.0.0', 'OCI_LAYOUT_INVALID')
             allowed_members.update({'index.json','oci-layout',index_name})
         require({n for n,m in by_name.items() if m.isfile()} <= allowed_members, 'UNREVIEWED_ARCHIVE_CONTENT')
@@ -609,12 +678,12 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                 'AUTHORITY_CHANGED_DURING_IMPORT')
         resolve_loaded_image(remote, art)  # Recheck exact tag before stopping old writer.
         release = art['release']
-        name = 'budu-prod-' + release[:12] + '-transfer-cas'
+        name = 'budu-prod-' + release[:12] + CONTAINER_SUFFIX
         state['candidate'] = name
         stage = 'AUTHORITY_MOUNT_SNAPSHOT'
         authority_mounts = mount_readability(remote, state['name'])
         # Fresh route snapshots, not any previous feature's rollback directory.
-        root = '/opt/budu/.rollback-assets/transfer-cas-' + release
+        root = '/opt/budu/.rollback-assets/' + ROLLBACK_PREFIX + release
         remote.py("import json,pathlib,sys,os; v=json.load(sys.stdin); p=pathlib.Path(v['root']); p.mkdir(mode=0o700); os.umask(0o077); (p/'template').write_text(v['template']); (p/'active').write_text(v['active']); (p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",
                   {'root':root,'template':state['template'],'active':state['active'],
                    'manifest':{'oldSha':EXPECTED_OLD_SHA,'runtimeSha':RUNTIME_SHA,'releaseSha':release,
@@ -743,7 +812,7 @@ def deploy(remote, repo, path, art, ledger, authorize):
                       'diskBefore':{'used':state['diskUsed'],'available':state['diskAvailable']},
                       'budget':state['budget'],'metrics':artifact_metrics(art)}), flush=True)
     release = art['release']
-    name = 'budu-prod-' + release[:12] + '-transfer-cas'
+    name = 'budu-prod-' + release[:12] + CONTAINER_SUFFIX
     remote.py('import os; os.mkdir(%r,0o700)' % LOCK)
     handed_off = False
     import_started = import_complete = False
@@ -770,13 +839,15 @@ def deploy(remote, repo, path, art, ledger, authorize):
                           'dfPk':remote.run(['df','-Pk','/']).decode(),
                           'dfHuman':remote.run(['df','-h','/']).decode(),
                           'dockerSystemDf':remote.run(['docker','system','df']).decode()}), flush=True)
-        payload = {'art':art,'ledger':ledger,
+        payload = {'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,
+                   'expectedOldSha':EXPECTED_OLD_SHA,'businessSha':RUNTIME_SHA,
+                   'oldV2Hash':OLD_V2_HASH,
                    'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
                    'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
         # Entire cutover/rollback runs in one remote process, no source/env file is
         # copied to production. Only the allowlisted summary is returned.
         code = Path(__file__).read_text().rsplit("\nif __name__ == '__main__':", 1)[0]
-        code += "\nrun_loaded_controller(json.load(sys.stdin))\n"
+        code += "\nv=json.load(sys.stdin)\nif v['profile'] == 'post-transfer': configure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
         handed_off = True
         result = remote.py(code, payload, timeout=480)
         check_controller_result(result)
@@ -1041,7 +1112,21 @@ def main():
     p.add_argument('--archive', type=Path)
     p.add_argument('--ssh-key', type=Path)
     p.add_argument('--authorize-release-sha')
+    p.add_argument('--release-profile', choices=['transfer-first','post-transfer'], default='transfer-first')
+    p.add_argument('--expected-production-sha')
+    p.add_argument('--business-base-sha')
     args = p.parse_args()
+    if args.release_profile == 'post-transfer':
+        require(args.expected_production_sha is not None and args.business_base_sha is not None,
+                'POST_TRANSFER_IDENTITY_REQUIRED')
+        require(bool(re.fullmatch(r'[0-9a-f]{40}', args.expected_production_sha)), 'POST_TRANSFER_IDENTITY_INVALID')
+        old_v2_hash = digest(command(['git','-C',str(args.repo),'show',
+                                      args.expected_production_sha+':server/v2.js']))
+        configure_profile(args.release_profile, args.expected_production_sha,
+                          args.business_base_sha, old_v2_hash)
+    else:
+        require(args.expected_production_sha is None and args.business_base_sha is None,
+                'FIRST_ROLLOUT_IDENTITY_OVERRIDE_FORBIDDEN')
     require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     release, ledger = identity(args.repo)
     if args.mode == 'identity':

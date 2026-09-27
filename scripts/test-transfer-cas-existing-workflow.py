@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Offline compatibility, dispatch, identity and fail-closed tests."""
-import hashlib
 import importlib.util
 import json
 import os
@@ -20,18 +19,21 @@ BRANCH='codex/transfer-cas-existing-workflow'
 
 
 class ExistingWorkflow(unittest.TestCase):
-    def test_workflow_is_unchanged_and_compatible(self):
+    def test_workflow_keeps_transfer_dispatch_and_binds_successor_inputs(self):
         path=ROOT/'.github/workflows/deploy-prod.yml'
-        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),'3679213363b298664d93f484b66ea474aace978d08422ec0f944fdeb5852a68e')
         w=json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',str(path)]))
-        self.assertEqual(w.get('on',w.get('true')),{'workflow_dispatch':None})
+        dispatch=w.get('on',w.get('true'))['workflow_dispatch']
+        self.assertEqual(set(dispatch['inputs']),{'expected_production_sha','approved_business_sha','authorize_release_sha'})
+        self.assertTrue(all(value['type']=='string' for value in dispatch['inputs'].values()))
         self.assertEqual(w['concurrency'],{'group':'deploy-bj-prod','cancel-in-progress':False})
         job=w['jobs']['deploy'];self.assertEqual(job['runs-on'],'ubuntu-latest')
         steps=job['steps'];self.assertEqual(steps[0]['uses'],'actions/checkout@v4')
         self.assertEqual(steps[0]['with'],{'fetch-depth':0})
         self.assertEqual(steps[2]['run'].strip(),'bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod')
         self.assertEqual(set(steps[1]['env'].values())|set(steps[2]['env'].values()),
-                         {'${{ secrets.BJ_SSH_KEY }}','${{ secrets.BJ_HOST }}','${{ secrets.BJ_USER }}','${{ secrets.BJ_APP_DIR }}'})
+                         {'${{ secrets.BJ_SSH_KEY }}','${{ secrets.BJ_HOST }}','${{ secrets.BJ_USER }}','${{ secrets.BJ_APP_DIR }}',
+                          '${{ inputs.expected_production_sha }}','${{ inputs.approved_business_sha }}',
+                          '${{ inputs.authorize_release_sha }}'})
 
     def test_shell_and_embedded_python_compile(self):
         for name in ('deploy-remote.sh','deploy-prod-transfer-cas.sh','release-prod-transfer-cas-ci.sh'):
@@ -102,16 +104,17 @@ class ExistingWorkflow(unittest.TestCase):
                 r.validate_identity(NEW,r.RELEASE_BASE,True,r.ALLOWLIST|{path},[],True)
 
     def test_dispatch_failure_never_falls_through(self):
-        prefix=(ROOT/'scripts/deploy-remote.sh').read_text().split('# Sweet Card data organization',1)[0]
+        prefix=(ROOT/'scripts/deploy-remote.sh').read_text().split('# 北京生产已使用独立权威 PostgreSQL 网络。',1)[0]
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'scripts').mkdir();(root/'bin').mkdir()
             fakegit=root/'bin/git'
             fakegit.write_text('#!/bin/sh\nexit "${FIXTURE_ANCESTOR_EXIT:-0}"\n');fakegit.chmod(0o755)
             (root/'entry.sh').write_text(prefix+'echo LEGACY_REACHED\n')
             (root/'scripts/release-prod-transfer-cas-ci.sh').write_text('echo DEDICATED_REACHED\nexit 73\n')
+            (root/'scripts/release-prod-post-transfer-ci.sh').write_text('echo POST_TRANSFER_REACHED\nexit 74\n')
             cases=[('refs/heads/'+BRANCH,'1',73,'DEDICATED_REACHED'),
-                   ('refs/heads/other','0',73,'DEDICATED_REACHED'),
-                   ('refs/heads/other','1',0,'LEGACY_REACHED')]
+                   ('refs/heads/other','0',74,'POST_TRANSFER_REACHED'),
+                   ('refs/heads/other','1',1,'POST_TRANSFER_BASE_REQUIRED')]
             for ref,ancestor,code,message in cases:
                 with self.subTest(ref=ref,ancestor=ancestor):
                     env={**os.environ,'PATH':str(root/'bin')+':'+os.environ['PATH'],'GITHUB_REF':ref,'FIXTURE_ANCESTOR_EXIT':ancestor}
