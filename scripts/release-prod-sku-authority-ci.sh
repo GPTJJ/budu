@@ -62,7 +62,7 @@ python3 scripts/deploy-prod-sku-authority.py inspect-artifact --repo "$PWD" \
 python3 scripts/deploy-prod-sku-authority.py preflight --repo "$PWD" \
   --archive "$run_dir/image.tar" --migration-archive "$run_dir/migration.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519"
-timeout 50m python3 scripts/deploy-prod-sku-authority.py deploy --repo "$PWD" \
+timeout 90m python3 scripts/deploy-prod-sku-authority.py deploy --repo "$PWD" \
   --archive "$run_dir/image.tar" --migration-archive "$run_dir/migration.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" \
   --authorize-release-sha "$RELEASE_SHA" --production-gate-authorized SKU_GATE_8
