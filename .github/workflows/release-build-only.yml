@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/release-path-post-transfer-generalization
+      - codex/release-controller-dns-empty-normalization
 
 permissions:
   contents: read
@@ -31,12 +32,17 @@ jobs:
           test "$RUNNER_OS" = Linux
           test "$RUNNER_ARCH" = X64
           test "$(uname -m)" = x86_64
-          test "$GITHUB_REF" = refs/heads/codex/release-path-post-transfer-generalization
+          branch="${GITHUB_REF#refs/heads/}"
+          case "$branch" in
+            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization) ;;
+            *) exit 1 ;;
+          esac
+          test "$GITHUB_REF" = "refs/heads/$branch"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           if [ -z "$(git branch --show-current)" ]; then
-            git switch -c codex/release-path-post-transfer-generalization
+            git switch -c "$branch"
           fi
-          test "$(git branch --show-current)" = codex/release-path-post-transfer-generalization
+          test "$(git branch --show-current)" = "$branch"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf 'CI_SOURCE_SHA=%s RUNNER_OS=%s RUNNER_ARCH=%s\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH"
           bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" \

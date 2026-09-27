@@ -476,6 +476,10 @@ def route_target(template, active):
     require(len(targets) == 3 and len(set(targets)) == 1, 'PRODUCTION_ROUTE_COUNT_INVALID')
     return targets[0]
 
+def normalize_dns(value):
+    # Docker reports an unset per-container DNS list as either null or [].
+    return [] if value is None or value == [] else value
+
 def validate_clone_source(old, image):
     c, h = old['Config'], old['HostConfig']
     for k in IDENTITY_KEYS:
@@ -489,7 +493,9 @@ def validate_clone_source(old, image):
     require(not c.get('StopSignal'), 'STOP_SIGNAL_UNSUPPORTED')
     require(h.get('NetworkMode') in old['NetworkSettings']['Networks'], 'NETWORK_MODE_UNSUPPORTED')
     require(all(not v.get('Aliases') for v in old['NetworkSettings']['Networks'].values()), 'NETWORK_ALIASES_UNSUPPORTED')
-    require(all(h.get(k) == v for k,v in HOST_DEFAULTS.items()), 'SOURCE_RESOURCE_PROFILE_CHANGED')
+    require(all(h.get(k) == v for k,v in HOST_DEFAULTS.items() if k != 'Dns')
+            and normalize_dns(h.get('Dns')) == normalize_dns(HOST_DEFAULTS['Dns']),
+            'SOURCE_RESOURCE_PROFILE_CHANGED')
     e = env(old)
     require(e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME') == 'budu'
             and e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID') == 'dh', 'EXISTING_BINDING_MISMATCH')

@@ -206,6 +206,22 @@ class Gates(unittest.TestCase):
         f=Fake();f.old['HostConfig']['PortBindings']={'3000/tcp':[{'HostPort':'9999'}]};self.fail('PORT_BINDINGS',r.preflight,f,art(),LEDGER)
     def test_resource_drift_rejected(self):
         f=Fake();f.old['HostConfig']['Memory']=1024**3;self.fail('RESOURCE_PROFILE_CHANGED',r.preflight,f,art(),LEDGER)
+    def test_dns_empty_representations_equivalent(self):
+        for expected, actual in ((None, []), ([], None), (None, None), ([], [])):
+            with self.subTest(expected=expected, actual=actual), patch.dict(r.HOST_DEFAULTS, {'Dns': expected}):
+                f=Fake();f.old['HostConfig']['Dns']=actual
+                self.assertEqual(r.preflight(f,art(),LEDGER)['name'],OLD_NAME)
+    def test_nonempty_dns_drift_rejected(self):
+        for expected, actual in ((None, ['8.8.8.8']), ([], ['8.8.8.8']),
+                                 (['8.8.8.8'], ['1.1.1.1']), (['8.8.8.8'], [])):
+            with self.subTest(expected=expected, actual=actual), patch.dict(r.HOST_DEFAULTS, {'Dns': expected}):
+                f=Fake();f.old['HostConfig']['Dns']=actual
+                self.fail('SOURCE_RESOURCE_PROFILE_CHANGED',r.preflight,f,art(),LEDGER)
+    def test_dns_empty_does_not_mask_other_resource_drift(self):
+        f=Fake();f.old['HostConfig']['Dns']=[];f.old['HostConfig']['Memory']=1024**3
+        self.fail('SOURCE_RESOURCE_PROFILE_CHANGED',r.preflight,f,art(),LEDGER)
+        f=Fake();f.old['HostConfig']['Dns']=[];f.old['HostConfig']['DnsSearch']=None
+        self.fail('SOURCE_RESOURCE_PROFILE_CHANGED',r.preflight,f,art(),LEDGER)
     def test_restart_policy_admission(self):
         f=Fake();f.old['HostConfig']['RestartPolicy']['Name']='always';self.fail('RESTART_POLICY',r.preflight,f,art(),LEDGER)
     def test_group_inheritance_enforced(self):
