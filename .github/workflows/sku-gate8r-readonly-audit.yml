@@ -1,0 +1,44 @@
+name: READ_ONLY Gate 8R Incident Audit
+
+on:
+  push:
+    branches:
+      - codex/sku-gate8r-readonly-audit
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure pinned read-only SSH identity
+        env:
+          SSH_KEY: ${{ secrets.BJ_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '154.8.195.42 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJJGZ1Kape1om+8xOhoI7IsgvKN1tw6sh8l7PGisgtb' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run Gate 8R read-only evidence collection
+        env:
+          BJ_HOST: ${{ secrets.BJ_HOST }}
+          BJ_USER: ${{ secrets.BJ_USER }}
+        run: |
+          set -euo pipefail
+          test "$BJ_HOST" = 154.8.195.42
+          test "$BJ_USER" = ubuntu
+          python3 scripts/sku-gate8r-readonly-audit.py
