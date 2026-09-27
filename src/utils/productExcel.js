@@ -127,6 +127,9 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
       if (idMatch && (idMatch.name !== name || (sku && String(idMatch.sku || '').toUpperCase() !== sku))) errors.push('商品 ID、名称或 SKU 不一致')
       if (idMatch && nameMatch && idMatch.productId !== nameMatch.productId) errors.push('商品 ID 与名称对应不同商品')
       if (!productId && nameMatch) errors.push('名称已存在；禁止按名称或 SKU 自动关联，请使用导出的商品 ID')
+      if (!productId && sku) errors.push('新商品不能沿用 Excel SKU；请清空 SKU，由服务端生成')
+      const thirdPartyCategory = /^(?:pos-)?(?:森醒|12\s*样商店)$/.test(posCategory)
+      if (!productId && !thirdPartyCategory && /森醒|12\s*样商店/.test(posCategory)) errors.push('第三方分类名称有歧义，请确认后导入')
       const matched = idMatch || null
       parsed.push({
         sourceSheet: sheet.name || '未命名工作表',
@@ -134,6 +137,7 @@ export function analyzeProductMenuSheets(sheets, existingProducts = []) {
         name,
         sku,
         posCategory,
+        skuSource: thirdPartyCategory ? 'TP' : 'BD',
         salePriceCents: sale.value || '',
         costPriceCents: cost.value || '',
         unit: String(cell('unit') ?? '').trim() || '份',

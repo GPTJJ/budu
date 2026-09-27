@@ -313,7 +313,7 @@ export default function ProductCenterPage({ onBack, user }) {
         body: JSON.stringify({
           rows: previewRows.map((row) => ({
             name: row.name,
-            ...(row.matchedProductId ? { productId: row.matchedProductId, sku: row.sku, version: row.matchedVersion } : { skuSource: /森醒|12\s*样商店/.test(row.posCategory) ? 'TP' : 'BD' }),
+            ...(row.matchedProductId ? { productId: row.matchedProductId, sku: row.sku, version: row.matchedVersion } : { skuSource: row.skuSource }),
             posCategory: row.posCategory,
             productCategoryId: productCategories.find((category) => category.name === row.posCategory)?.id || '',
             salePriceCents: row.salePriceCents,
