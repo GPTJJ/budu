@@ -568,10 +568,11 @@ approvalRouter.put('/approvals/requests/:id', wrap(async (req, res) => {
   normalized._ccUsernames = extraCc
   const title = text(body.title || request.title, 60, '标题')
   await prisma.$transaction(async (tx) => {
-    await tx.approvalRequest.update({
-      where: { id: request.id },
+    const claimed = await tx.approvalRequest.updateMany({
+      where: { id: request.id, status: request.status, updatedAt: request.updatedAt },
       data: { formData: normalized, title, amountCents: amountFromForm(template.schema, normalized) },
     })
+    if (claimed.count !== 1) throw httpError('单据状态或内容已变化，请刷新后重试', 409)
     if (Array.isArray(body.attachmentIds)) {
       const rows = await tx.approvalAttachment.findMany({ where: { id: { in: body.attachmentIds.slice(0, 10) } } })
       const seen = new Set()
@@ -607,7 +608,11 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
   // 规则抄送人（提交人 + 财务）+ 额外抄送人
   const ccNames = await ccNamesOf(template, request.submitterUsername, request.submitterName, request.formData, extraCc, ctx)
   await prisma.$transaction(async (tx) => {
-    await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'pending', approvedAt: null, archivedAt: null } })
+    const claimed = await tx.approvalRequest.updateMany({
+      where: { id: request.id, status: request.status, updatedAt: request.updatedAt },
+      data: { status: 'pending', approvedAt: null, archivedAt: null },
+    })
+    if (claimed.count !== 1) throw httpError('单据状态或内容已变化，请刷新后重试', 409)
     for (const username of approvers) {
       await tx.approvalNode.create({
         data: { id: `an-${crypto.randomUUID()}`, requestId: request.id, nodeIndex: 1, approverUsername: username },
@@ -622,16 +627,6 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
           content: `${req.user.username} 提交了${template.name}申请「${request.title}」`,
         },
       })
-      // 通知中心
-      notify({
-        username,
-        templateKey: 'approval_todo',
-        data: { title: request.title, submitterName: req.user.displayName || req.user.username, templateName: template.name },
-        priority: 'high',
-        target: 'approval',
-        refType: 'approval',
-        refId: request.id,
-      }).catch(() => {})
     }
     // 提交即建立抄送关系（提交人 + 财务 + 手动添加），审批通过后统一通知
     for (const [uname, unameName] of ccNames) {
@@ -645,6 +640,18 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
       data: { id: `al-${crypto.randomUUID()}`, requestId: request.id, action: 'submit', username: req.user.username, detail: wasRejected ? '驳回后重新提交' : '提交审批' },
     })
   })
+  // 仅在提交事务成功后发送通知中心消息，避免回滚留下虚假待办。
+  for (const username of approvers) {
+    notify({
+      username,
+      templateKey: 'approval_todo',
+      data: { title: request.title, submitterName: req.user.displayName || req.user.username, templateName: template.name },
+      priority: 'high',
+      target: 'approval',
+      refType: 'approval',
+      refId: request.id,
+    }).catch(() => {})
+  }
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })
 }))
 
@@ -773,7 +780,11 @@ approvalRouter.post('/approvals/requests/:id/archive', wrap(async (req, res) => 
   if (!request) throw httpError('审批单不存在', 404)
   if (!canArchive(req.user, request)) throw httpError('仅开发者可归档已通过/已驳回单据', 403)
   await prisma.$transaction(async (tx) => {
-    await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'archived', archivedAt: new Date() } })
+    const claimed = await tx.approvalRequest.updateMany({
+      where: { id: request.id, status: request.status, updatedAt: request.updatedAt },
+      data: { status: 'archived', archivedAt: new Date() },
+    })
+    if (claimed.count !== 1) throw httpError('单据状态或内容已变化，请刷新后重试', 409)
     await tx.approvalLog.create({ data: { id: `al-${crypto.randomUUID()}`, requestId: request.id, action: 'archive', username: req.user.username, detail: '归档单据' } })
   })
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })
@@ -785,7 +796,12 @@ approvalRouter.delete('/approvals/requests/:id', wrap(async (req, res) => {
   const request = await prisma.approvalRequest.findUnique({ where: { id: req.params.id } })
   if (!request) throw httpError('审批单不存在', 404)
   if (!canDelete(req.user, request)) throw httpError('无权限删除该审批单', 403)
-  await prisma.approvalRequest.delete({ where: { id: request.id } })
+  // 管理员仍可删除任意状态；普通提交人的草稿权限在删除时原子复核。
+  const privileged = req.user.role === 'developer' || req.user.role === 'admin'
+  const deleted = await prisma.approvalRequest.deleteMany({
+    where: { id: request.id, ...(privileged ? {} : { status: 'draft', submitterUsername: req.user.username }) },
+  })
+  if (deleted.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
   res.json({ ok: true })
 }))
 

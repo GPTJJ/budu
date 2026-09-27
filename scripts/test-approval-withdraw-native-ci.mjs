@@ -92,6 +92,27 @@ try {
   console.log(`SCHEMA_COMMAND=prisma migrate deploy host=127.0.0.1 database=${databaseName}`)
   required(path.join(root, 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy'], { env: testEnv })
 
+  // Reproduce the scoped bugs in the deployed baseline before testing the fix.
+  // Only this disposable runner database and source checkout are mutated.
+  const lifecycle = () => command(process.execPath, ['--test', 'scripts/test-approval-lifecycle-native.mjs'], {
+    env: { ...process.env, DATABASE_URL: databaseUrl, TEST_APPROVAL_DATABASE_URL: databaseUrl, TEST_APPROVAL_CASE: 'ALL' },
+    timeout: 90000,
+  })
+  try {
+    const baseline = required('git', ['show', '16faedb3afcb853a9a72434603debd4169b7ac02:server/approvals.js'])
+    fs.writeFileSync(sourcePath, baseline)
+    const reproduced = lifecycle()
+    assert.notEqual(reproduced.status, 0, 'baseline must reproduce concurrency defects')
+    for (const marker of ['L1_CONFLICT', 'L2_CONFLICT', 'L3_CONFLICT', 'L4_CONFLICT', 'L5_CONFLICT', 'L6_CONFLICT', 'L11_CONFLICT', 'L13_TRANSACTION_ROLLBACK']) {
+      assert.ok(reproduced.output.includes(marker), `baseline failed without ${marker}`)
+      console.log(`BASELINE_REPRODUCED=${marker}`)
+    }
+  } finally { fs.writeFileSync(sourcePath, original) }
+  const repaired = lifecycle()
+  process.stdout.write(repaired.output)
+  assert.equal(repaired.status, 0, 'APPROVAL_LIFECYCLE_NATIVE failed')
+  console.log('APPROVAL_LIFECYCLE_NATIVE=PASS')
+
   const normal = harness()
   process.stdout.write(normal.output)
   assert.equal(normal.status, 0, 'NATIVE_PG_TESTS failed')
