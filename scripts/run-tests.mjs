@@ -269,7 +269,10 @@ const CRITICAL_NODE_TEST = [
 // - test-startup-performance.mjs：断言 sw.js 缓存名应为 budu-shell-v12，当前代码为 v15（既有测试过时）
 // - test-item-category-integration.mjs：依赖 DATABASE_URL（外部数据库），本地不可重复运行
 
-const directFiles = (mode === 'critical' ? CRITICAL_DIRECT : DIRECT_SUITE).map((f) => path.join('scripts', f))
+const directFiles = [
+  ...(mode === 'all' && process.env.GITHUB_ACTIONS === 'true' ? ['test-approval-withdraw-native-ci.mjs'] : []),
+  ...(mode === 'critical' ? CRITICAL_DIRECT : DIRECT_SUITE),
+].map((f) => path.join('scripts', f))
 const nodeTestFiles = (mode === 'critical' ? CRITICAL_NODE_TEST : NODE_TEST_SUITE).map((f) => path.join('scripts', f))
 checkFiles([...directFiles, ...nodeTestFiles])
 
@@ -333,6 +336,7 @@ function isolatedTestDatabaseUrl(parentEnv) {
 }
 
 const testEnv = createTestEnv()
+if (process.env.GITHUB_ACTIONS === 'true') testEnv.TEST_APPROVAL_NATIVE_CI = '1'
 const testDatabaseUrl = isolatedTestDatabaseUrl(process.env)
 let suiteDatabaseUrl = ''
 let dropSuiteDatabase = null
