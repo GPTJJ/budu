@@ -121,11 +121,16 @@ SELECT json_build_object(
   'online', (SELECT count(*) FROM "OnlineProductPolicy")
 );
 COMMIT;"""
-db_out = remote(["sh", "-lc", (
-    f"u=$(docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {shlex.quote(PG)} | sed -n 's/^POSTGRES_USER=//p' | head -n1); "
-    f"docker exec -i -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c temp_file_limit=0' "
-    f"{shlex.quote(PG)} psql -X -qAt -v ON_ERROR_STOP=1 -U \"\${{u:-postgres}}\" -d {DB}"
-)], data=db_sql.encode(), sudo=True, timeout=45)
+pg_user = remote(["sh", "-lc",
+    f"docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {shlex.quote(PG)} | sed -n 's/^POSTGRES_USER=//p' | head -n1"
+], sudo=True)
+if not pg_user:
+    pg_user = "postgres"
+db_out = remote([
+    "docker", "exec", "-i",
+    "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c temp_file_limit=0",
+    PG, "psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-U", pg_user, "-d", DB
+], data=db_sql.encode(), sudo=True, timeout=45)
 db_state = json.loads(db_out)
 emit("database", db_state)
 
