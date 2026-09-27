@@ -49,8 +49,9 @@ class TransportTests(unittest.TestCase):
             with patch.object(deploy.subprocess, 'run', return_value=completed) as run,                  patch.object(deploy.time, 'monotonic', side_effect=[10.0, 15.0]),                  contextlib.redirect_stdout(output):
                 deploy.load_image_archive(Remote(), path, art, 'runtime')
             args, kwargs = run.call_args
-            self.assertEqual(args[0][-1], 'docker load')
-            self.assertGreaterEqual(kwargs['timeout'], 600)
+            self.assertIn('timeout --signal=TERM --kill-after=30s', args[0][-1])
+            self.assertTrue(args[0][-1].endswith(' docker load'))
+            self.assertGreaterEqual(kwargs['timeout'], 660)
             self.assertIn('"event": "SKU_IMAGE_LOAD_START"', output.getvalue())
             self.assertIn('"event": "SKU_IMAGE_LOAD_COMPLETE"', output.getvalue())
 
@@ -61,6 +62,19 @@ class TransportTests(unittest.TestCase):
             art = artifact(path)
             with patch.object(deploy.subprocess, 'run',
                               side_effect=subprocess.TimeoutExpired(['ssh'], 600)):
+                with self.assertRaisesRegex(
+                    deploy.core.GateError,
+                    'SKU_RUNTIME_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED'):
+                    deploy.load_image_archive(Remote(), path, art, 'runtime')
+
+    def test_remote_timeout_exit_is_explicit_and_requires_audit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'image.tar'
+            path.write_bytes(b'abc')
+            art = artifact(path)
+            with patch.object(
+                    deploy.subprocess, 'run',
+                    return_value=types.SimpleNamespace(returncode=124)):
                 with self.assertRaisesRegex(
                     deploy.core.GateError,
                     'SKU_RUNTIME_IMAGE_LOAD_TIMEOUT_AUDIT_REQUIRED'):
@@ -96,6 +110,9 @@ class TransportTests(unittest.TestCase):
         self.assertIn("load_image_archive(remote,archive,art,'runtime')", source)
         self.assertIn("load_image_archive(remote,migration_archive,migration_art,'migration')",
                       source)
+        release = (ROOT/'scripts/release-prod-sku-authority-ci.sh').read_text()
+        self.assertIn('timeout 90m python3 scripts/deploy-prod-sku-authority.py deploy',
+                      release)
 
 
 if __name__ == '__main__':
