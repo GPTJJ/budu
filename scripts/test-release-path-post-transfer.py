@@ -34,6 +34,27 @@ def route(repo, ref, sha):
 
 
 class RealShellRoute(unittest.TestCase):
+    def test_build_only_workflow_uses_exact_branch_without_production_access(self):
+        workflow=ROOT/'.github/workflows/release-build-only.yml'
+        source=workflow.read_text()
+        import json
+        parsed=json.loads(subprocess.check_output(
+            ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',str(workflow)]))
+        self.assertEqual(parsed.get('on',parsed.get('true')),
+                         {'push':{'branches':['codex/release-path-post-transfer-generalization']}})
+        self.assertEqual(parsed['permissions'],{'contents':'read'})
+        job=parsed['jobs']['artifact']
+        self.assertEqual(job['runs-on'],'ubuntu-latest')
+        self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
+        for forbidden in ('secrets.','ssh ','scp ','deploy --repo','preflight --repo',
+                          'DATABASE_URL','/opt/budu','docker push','docker system prune'):
+            self.assertNotIn(forbidden,source)
+        for required in ('git archive "$GITHUB_SHA"','--platform linux/amd64',
+                         'compression=gzip,compression-level=9,force-compression=true',
+                         'inspect-artifact --repo','docker image inspect',
+                         'docker run --rm --network none','APPROVAL_WITHDRAW_CAS_PRESENT=YES'):
+            self.assertIn(required,source)
+
     def test_t1_candidate_without_transfer_commit_denied(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)

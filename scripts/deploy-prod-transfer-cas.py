@@ -53,6 +53,7 @@ ALLOWLIST = {
 }
 POST_TRANSFER_ENGINEERING_FILES = {
     '.github/workflows/deploy-prod.yml',
+    '.github/workflows/release-build-only.yml',
     'scripts/deploy-remote.sh',
     'scripts/deploy-prod-transfer-cas.py',
     'scripts/release-prod-post-transfer-ci.sh',

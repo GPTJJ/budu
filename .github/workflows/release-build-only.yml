@@ -1,0 +1,116 @@
+name: NON_PRODUCTION BUILD_ONLY Approval Release Artifact
+
+on:
+  push:
+    branches:
+      - codex/release-path-post-transfer-generalization
+
+permissions:
+  contents: read
+
+concurrency:
+  group: approval-release-build-only-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  artifact:
+    name: Exact Docker artifact validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify source and release guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          test "$GITHUB_REF" = refs/heads/codex/release-path-post-transfer-generalization
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ -z "$(git branch --show-current)" ]; then
+            git switch -c codex/release-path-post-transfer-generalization
+          fi
+          test "$(git branch --show-current)" = codex/release-path-post-transfer-generalization
+          test -z "$(git status --porcelain --untracked-files=all)"
+          printf 'CI_SOURCE_SHA=%s RUNNER_OS=%s RUNNER_ARCH=%s\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH"
+          bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" \
+            --release-profile post-transfer \
+            --expected-production-sha 2fa28a6399c8a9f4fd70188d8df077f0b411589e \
+            --business-base-sha 2188dd17f6b80e9be27e50a9773e7269c6eabb65
+          python3 scripts/test-deploy-prod-transfer-cas.py
+          python3 scripts/test-transfer-cas-existing-workflow.py
+          python3 scripts/test-release-path-post-transfer.py
+          docker version --format 'DOCKER_VERSION={{.Server.Version}}'
+          docker buildx version
+
+      - name: Build exact production-format artifact and inspect runner image
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_dir="$(mktemp -d "$RUNNER_TEMP/approval-build-only.XXXXXX")"
+          builder="approval-build-only-$GITHUB_RUN_ID"
+          docker buildx create --name "$builder" --driver docker-container
+          docker buildx inspect "$builder" --bootstrap | tee "$run_dir/builder.txt"
+          grep -q 'linux/amd64' "$run_dir/builder.txt"
+          mkdir "$run_dir/source"
+          git archive "$GITHUB_SHA" | tar -x -C "$run_dir/source"
+          printf 'BUILD_CONTEXT_SHA=%s BUILD_CONTEXT_TREE=%s\n' "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")"
+          timeout 35m docker buildx build --builder "$builder" --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "budu-api:post-transfer-${GITHUB_SHA:0:12}" \
+            --provenance=false --sbom=false \
+            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/image.tar" \
+            "$run_dir/source"
+          bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$run_dir/image.tar" \
+            --release-profile post-transfer \
+            --expected-production-sha 2fa28a6399c8a9f4fd70188d8df077f0b411589e \
+            --business-base-sha 2188dd17f6b80e9be27e50a9773e7269c6eabb65 \
+            | tee "$run_dir/artifact.log"
+          docker load --input "$run_dir/image.tar"
+          tag="budu-api:post-transfer-${GITHUB_SHA:0:12}"
+          image_id="$(docker image inspect "$tag" --format '{{.Id}}')"
+          image_size="$(docker image inspect "$tag" --format '{{.Size}}')"
+          image_platform="$(docker image inspect "$tag" --format '{{.Os}}/{{.Architecture}}')"
+          image_revision="$(docker image inspect "$tag" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          image_repo_digests="$(docker image inspect "$tag" --format '{{json .RepoDigests}}')"
+          test "$image_platform" = linux/amd64
+          test "$image_revision" = "$GITHUB_SHA"
+          test -n "$image_id"
+          docker run --rm --network none --entrypoint cat "$tag" /app/server/approvals.js > "$run_dir/image-approvals.js"
+          docker run --rm --network none --entrypoint cat "$tag" /app/server/v2.js > "$run_dir/image-v2.js"
+          docker run --rm --network none --entrypoint node "$tag" --version
+          git show 2188dd17f6b80e9be27e50a9773e7269c6eabb65:server/approvals.js > "$run_dir/review-approvals.js"
+          git show 2fa28a6399c8a9f4fd70188d8df077f0b411589e:server/v2.js > "$run_dir/transfer-v2.js"
+          approval_source_hash="$(sha256sum "$run_dir/review-approvals.js" | cut -d' ' -f1)"
+          approval_image_hash="$(sha256sum "$run_dir/image-approvals.js" | cut -d' ' -f1)"
+          transfer_source_hash="$(sha256sum "$run_dir/transfer-v2.js" | cut -d' ' -f1)"
+          transfer_image_hash="$(sha256sum "$run_dir/image-v2.js" | cut -d' ' -f1)"
+          test "$approval_source_hash" = "$approval_image_hash"
+          test "$transfer_source_hash" = "$transfer_image_hash"
+          git diff --exit-code 2188dd17f6b80e9be27e50a9773e7269c6eabb65 "$GITHUB_SHA" -- \
+            server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
+          python3 - "$run_dir/image-approvals.js" <<'PY'
+          from pathlib import Path
+          import sys
+          source=Path(sys.argv[1]).read_text()
+          block=source.split("approvalRouter.post('/approvals/requests/:id/withdraw'",1)[1].split(
+              "approvalRouter.post('/approvals/requests/:id/decide'",1)[0]
+          order=('$transaction(async (tx) =>','approvalRequest.updateMany({',
+                 "where: { id: request.id, status: 'pending' }",
+                 'if (claimed.count !== 1)','approvalLog.create(')
+          offsets=[block.index(token) for token in order]
+          assert offsets == sorted(offsets)
+          assert '409' in block
+          print('APPROVAL_WITHDRAW_CAS_PRESENT=YES')
+          PY
+          printf 'BUILD=PASS IMAGE_ID=%s IMAGE_SIZE_BYTES=%s IMAGE_PLATFORM=%s IMAGE_REVISION=%s IMAGE_REPO_DIGESTS=%s\n' \
+            "$image_id" "$image_size" "$image_platform" "$image_revision" "$image_repo_digests"
+          printf 'APPROVAL_SOURCE_HASH=%s IMAGE_APPROVAL_HASH=%s TRANSFER_SOURCE_HASH=%s IMAGE_TRANSFER_HASH=%s\n' \
+            "$approval_source_hash" "$approval_image_hash" "$transfer_source_hash" "$transfer_image_hash"
+          printf 'TRANSFER_ARTIFACT_SIZE_BYTES=%s IMAGE_SMOKE=PASS\n' "$(stat -c%s "$run_dir/image.tar")"
