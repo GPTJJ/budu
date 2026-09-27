@@ -947,11 +947,6 @@ async function createTransferRequest(req, res, testMode = false) {
   const rows = itemRows(items)
   const productRows = rows.filter((row) => row.category === 'product')
   if (productRows.some((row) => !row.itemId)) throw bad('调拨商品必须使用稳定商品 ID，请刷新商品目录', 409)
-  if (productRows.length) {
-    const existingProducts = await prisma.inventoryItem.findMany({ where: { id: { in: productRows.map((row) => row.itemId) }, category: 'product' }, select: { id: true, name: true } })
-    const names = new Map(existingProducts.map((row) => [row.id, row.name]))
-    if (productRows.some((row) => names.get(row.itemId) !== row.name)) throw bad('调拨商品身份已变化，请刷新商品目录', 409)
-  }
   await ensureStore(fromStoreKey)
   await ensureStore(toStoreKey)
   const createItems = []
