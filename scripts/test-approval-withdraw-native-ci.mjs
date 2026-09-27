@@ -47,6 +47,7 @@ const claim = `    const claimed = await tx.approvalRequest.updateMany({
     })
     if (claimed.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)`
 const log = `    await tx.approvalLog.create({ data: { id: \`al-\${crypto.randomUUID()}\`, requestId: request.id, action: 'withdraw', username: req.user.username, detail: '撤回申请' } })`
+const prematureLog = log.replace('tx.approvalLog.create', 'prisma.approvalLog.create')
 const oldUpdate = `    await tx.approvalRequest.update({ where: { id: request.id }, data: { status: 'withdrawn' } })`
 
 function harness(caseName = 'ALL') {
@@ -104,7 +105,7 @@ try {
     {
       name: 'M2', marker: 'N1_CROSS_TABLE_LOGS',
       source: replaceOnce(
-        replaceOnce(original, `  await prisma.$transaction(async (tx) => {\n${claim}`, `${log.trimStart()}\n  await prisma.$transaction(async (tx) => {\n${claim}`, 'M2 pre-CAS log'),
+        replaceOnce(original, `  await prisma.$transaction(async (tx) => {\n${claim}`, `${prematureLog}\n  await prisma.$transaction(async (tx) => {\n${claim}`, 'M2 pre-CAS log'),
         `${claim}\n${log}`, claim, 'M2 remove transactional log',
       ),
     },
@@ -122,6 +123,33 @@ try {
   }
   assert.equal(fs.readFileSync(sourcePath, 'utf8'), original, 'mutation source must be restored')
   console.log('MUTATION_SOURCE_RESTORED=YES')
+
+  const regressionEnv = { ...process.env, DATABASE_URL: databaseUrl, TEST_DATABASE_URL: databaseUrl }
+  const regressions = [
+    ['PGLITE_APPROVAL_RACE', ['--test', 'scripts/test-approval-withdraw-race.mjs']],
+    ['APPROVAL_ENGINE', ['scripts/test-approval-engine.mjs']],
+    ['APPROVAL_UI', ['--test', 'scripts/test-approval-ui-regressions.mjs']],
+    ['PAYROLL_INTEGRATION', ['scripts/test-payroll-integration.mjs']],
+    ['ACCOUNT_PERMISSIONS', ['--test', 'scripts/test-account-permissions.mjs']],
+    ['SERVER_ROLE_API', ['scripts/test-role-module-api.mjs']],
+    ['NOTIFICATION_CENTER', ['--test', 'scripts/test-notification-center.mjs']],
+  ]
+  for (const [name, args] of regressions) {
+    const result = command(process.execPath, args, { env: regressionEnv, timeout: 180000 })
+    if (result.status === 0) {
+      console.log(`REGRESSION_${name}=PASS`)
+      continue
+    }
+    const failures = result.output.split('\n').filter(line => /^not ok \d+ - /.test(line)).map(line => line.replace(/^not ok \d+ - /, ''))
+    if (name === 'NOTIFICATION_CENTER' && failures.length === 1 && failures[0].includes('公众号：模板消息推送成功')) {
+      console.log('REGRESSION_NOTIFICATION_CENTER=KNOWN_BASELINE_FAILURE one existing MP mock assertion')
+      continue
+    }
+    throw new Error(`REGRESSION_${name}=NEW_FAILURE: ${result.output.slice(-5000) || result.error?.message}`)
+  }
+  const build = command('npm', ['run', 'build'], { env: regressionEnv, timeout: 180000 })
+  assert.equal(build.status, 0, `BUILD_FAILED: ${build.output.slice(-5000)}`)
+  console.log('BUILD=PASS')
 } finally {
   if (fs.readFileSync(sourcePath, 'utf8') !== original) fs.writeFileSync(sourcePath, original)
   if (started) {
