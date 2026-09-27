@@ -118,6 +118,11 @@ def seed(url):
 
 
 def main():
+    expected_failures = {
+        'migration': 'SIMULATED_MIGRATION_FAILURE',
+        'reconcile': 'SIMULATED_SKU_RECONCILIATION_FAILURE',
+        'db_probe': 'SIMULATED_DB_PROBE_FAILURE',
+    }
     with tempfile.TemporaryDirectory(prefix='sku-restore-ci-') as directory:
         temp=Path(directory)
         old=temp/'old-source'
@@ -135,7 +140,9 @@ def main():
                         op=NativePreOperations(name,old/'prisma/schema.prisma',Path(case),failure)
                         controller=r.ReleaseController(op,Path(case)/'phase.json')
                         try: controller.run()
-                        except Exception: pass
+                        except Exception as error:
+                            assert str(error) == expected_failures[failure], (
+                                'WRONG_FAILURE_POINT',failure,type(error).__name__,str(error))
                         else: raise RuntimeError('EXPECTED_FAILURE_NOT_TRIGGERED')
                         assert op.restore_called and op.writer=='old'
                         assert (op.ledger(),op.failed_migrations())==(85,0)
