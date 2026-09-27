@@ -1,0 +1,77 @@
+name: READ_ONLY SKU Gate 8P-C Evidence Completion
+
+on:
+  push:
+    branches: [codex/sku-gate8p-c-readonly-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout isolated audit code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Checkout frozen v5 candidate
+        uses: actions/checkout@v4
+        with:
+          repository: GPTJJ/budu
+          ref: 456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          path: candidate
+          fetch-depth: 0
+      - name: Verify exact candidate and audit isolation
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = GPTJJ/budu
+          test "$GITHUB_REF" = refs/heads/codex/sku-gate8p-c-readonly-audit
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = 456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          test -z "$(git -C candidate status --porcelain --untracked-files=all)"
+          python3 candidate/scripts/deploy-prod-sku-authority.py identity --repo "$PWD/candidate"
+          python3 -m py_compile scripts/sku-gate8p-c-readonly-audit.py
+      - name: Build exact v5 archives on the GitHub runner only
+        run: |
+          set -euo pipefail
+          release=456a07ecd0c9c1ad485d27b67ccf95f3d8bd4fec
+          run_dir="$(mktemp -d "$RUNNER_TEMP/sku-gate8p-c.XXXXXX")"
+          echo "AUDIT_RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+          mkdir "$run_dir/source"
+          git -C candidate archive "$release" | tar -x -C "$run_dir/source"
+          docker buildx create --name "sku-gate8pc-$GITHUB_RUN_ID" --driver docker-container
+          docker buildx build --builder "sku-gate8pc-$GITHUB_RUN_ID" --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$release" \
+            --tag "budu-api:sku-authority-${release:0:12}" \
+            --provenance=false --sbom=false \
+            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/image.tar" \
+            "$run_dir/source"
+          docker buildx build --builder "sku-gate8pc-$GITHUB_RUN_ID" --target builder --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$release" \
+            --tag "budu-api:sku-migration-${release:0:12}" \
+            --provenance=false --sbom=false \
+            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/migration.tar" \
+            "$run_dir/source"
+      - name: Configure pinned production read-only entry
+        env:
+          SSH_KEY: ${{ secrets.BJ_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '154.8.195.42 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJJGZ1Kape1om+8xOhoI7IsgvKN1tw6sh8l7PGisgtb' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Collect collision, tooling and exact v5 disk budget evidence
+        env:
+          BJ_HOST: ${{ secrets.BJ_HOST }}
+          BJ_USER: ${{ secrets.BJ_USER }}
+        run: |
+          set -euo pipefail
+          python3 scripts/sku-gate8p-c-readonly-audit.py \
+            --candidate "$PWD/candidate" \
+            --runtime-archive "$AUDIT_RUN_DIR/image.tar" \
+            --migration-archive "$AUDIT_RUN_DIR/migration.tar"
