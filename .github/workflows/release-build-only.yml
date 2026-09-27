@@ -6,6 +6,11 @@ on:
       - codex/release-path-post-transfer-generalization
       - codex/release-controller-dns-empty-normalization
       - codex/release-single-writer-db-probe
+      - codex/data-authority-finalization
+
+env:
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -37,7 +42,7 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
-            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization|codex/release-single-writer-db-probe) ;;
+            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization|codex/release-single-writer-db-probe|codex/data-authority-finalization) ;;
             *) exit 1 ;;
           esac
           test "$GITHUB_REF" = "refs/heads/$branch"
@@ -50,8 +55,8 @@ jobs:
           printf 'CI_SOURCE_SHA=%s RUNNER_OS=%s RUNNER_ARCH=%s\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH"
           bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" \
             --release-profile post-transfer \
-            --expected-production-sha 2fa28a6399c8a9f4fd70188d8df077f0b411589e \
-            --business-base-sha 2188dd17f6b80e9be27e50a9773e7269c6eabb65
+            --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
+            --business-base-sha "$APPROVED_BUSINESS_SHA"
           python3 scripts/test-deploy-prod-transfer-cas.py
           python3 scripts/test-transfer-cas-existing-workflow.py
           python3 scripts/test-release-path-post-transfer.py
@@ -60,6 +65,26 @@ jobs:
           printf 'WORKTREE_CLEAN_AFTER_SYNTAX_CHECK=YES\n'
           docker version --format 'DOCKER_VERSION={{.Server.Version}}'
           docker buildx version
+
+      - name: Setup Node for isolated native Approval verification
+        if: github.ref == 'refs/heads/codex/data-authority-finalization'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Prove lifecycle races and verify repairs on PostgreSQL 16
+        if: github.ref == 'refs/heads/codex/data-authority-finalization'
+        shell: bash
+        env:
+          NODE_ENV: test
+          APP_ENV: test
+          TEST_APPROVAL_NATIVE_CI: '1'
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          node scripts/test-approval-withdraw-native-ci.mjs
+          test -z "$(git status --porcelain --untracked-files=all)"
 
       - name: Build exact production-format artifact and inspect runner image
         shell: bash
@@ -82,8 +107,8 @@ jobs:
             "$run_dir/source"
           bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$run_dir/image.tar" \
             --release-profile post-transfer \
-            --expected-production-sha 2fa28a6399c8a9f4fd70188d8df077f0b411589e \
-            --business-base-sha 2188dd17f6b80e9be27e50a9773e7269c6eabb65 \
+            --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
+            --business-base-sha "$APPROVED_BUSINESS_SHA" \
             | tee "$run_dir/artifact.log"
           docker load --input "$run_dir/image.tar"
           tag="budu-api:post-transfer-${GITHUB_SHA:0:12}"
@@ -98,7 +123,7 @@ jobs:
           docker run --rm --network none --entrypoint cat "$tag" /app/server/approvals.js > "$run_dir/image-approvals.js"
           docker run --rm --network none --entrypoint cat "$tag" /app/server/v2.js > "$run_dir/image-v2.js"
           docker run --rm --network none --entrypoint node "$tag" --version
-          git show 2188dd17f6b80e9be27e50a9773e7269c6eabb65:server/approvals.js > "$run_dir/review-approvals.js"
+          git show "$APPROVED_BUSINESS_SHA:server/approvals.js" > "$run_dir/review-approvals.js"
           git show 2fa28a6399c8a9f4fd70188d8df077f0b411589e:server/v2.js > "$run_dir/transfer-v2.js"
           approval_source_hash="$(sha256sum "$run_dir/review-approvals.js" | cut -d' ' -f1)"
           approval_image_hash="$(sha256sum "$run_dir/image-approvals.js" | cut -d' ' -f1)"
@@ -106,7 +131,7 @@ jobs:
           transfer_image_hash="$(sha256sum "$run_dir/image-v2.js" | cut -d' ' -f1)"
           test "$approval_source_hash" = "$approval_image_hash"
           test "$transfer_source_hash" = "$transfer_image_hash"
-          git diff --exit-code 2188dd17f6b80e9be27e50a9773e7269c6eabb65 "$GITHUB_SHA" -- \
+          git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
             server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
           python3 - "$run_dir/image-approvals.js" <<'PY'
           from pathlib import Path

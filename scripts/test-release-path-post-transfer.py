@@ -43,8 +43,13 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(parsed.get('on',parsed.get('true')),
                          {'push':{'branches':['codex/release-path-post-transfer-generalization',
                                               'codex/release-controller-dns-empty-normalization',
-                                              'codex/release-single-writer-db-probe']}})
+                                              'codex/release-single-writer-db-probe',
+                                              'codex/data-authority-finalization']}})
         self.assertEqual(parsed['permissions'],{'contents':'read'})
+        self.assertIn('16faedb3afcb853a9a72434603debd4169b7ac02',parsed['env']['EXPECTED_PRODUCTION_SHA'])
+        native=next(step for step in parsed['jobs']['artifact']['steps'] if step.get('name','').startswith('Prove lifecycle'))
+        self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
+        self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
