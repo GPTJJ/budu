@@ -186,6 +186,34 @@ print(json.dumps(out,sort_keys=True))
 '''], sudo=True)
 emit("dbContainers", json.loads(writer_scan))
 
+network_code = r'''
+import json,subprocess
+from urllib.parse import urlsplit
+OLD=%r
+PG=%r
+old=json.loads(subprocess.check_output(["docker","inspect",OLD]))[0]
+pg=json.loads(subprocess.check_output(["docker","inspect",PG]))[0]
+env={}
+for x in old.get("Config",{}).get("Env",[]) or []:
+    if "=" in x:
+        k,v=x.split("=",1); env[k]=v
+url=env.get("DATABASE_URL","")
+try: db_host=urlsplit(url).hostname or ""
+except Exception: db_host=""
+def nets(c):
+    return {k:{"ip":v.get("IPAddress",""),"aliases":v.get("Aliases") or []}
+            for k,v in (c.get("NetworkSettings",{}).get("Networks",{}) or {}).items()}
+print(json.dumps({
+  "oldNetworkMode":old.get("HostConfig",{}).get("NetworkMode",""),
+  "oldNetworks":nets(old),
+  "pgNetworks":nets(pg),
+  "databaseHost":db_host
+},sort_keys=True))
+''' % (old, PG)
+network_raw = remote(["python3","-c",network_code], sudo=True, timeout=30)
+emit("networkAuthority", json.loads(network_raw))
+
+
 event_code = r'''
 import json,subprocess
 p=subprocess.run([
