@@ -23,7 +23,14 @@ export function validateProductSkuOverride(value, prefix, user, reason) {
   return { sku, serial }
 }
 
+
+export async function authorizeProductSkuWriter(tx) {
+  const [row] = await tx.$queryRaw`SELECT set_config('budu.sku_authority_writer', '1', true) AS value`
+  if (!row || row.value !== '1') throw httpError('SKU Authority 写入授权失败', 503)
+}
+
 export async function reserveProductSku(tx, { source, override, user, reason }) {
+  await authorizeProductSkuWriter(tx)
   const prefix = productSkuPrefix(source)
   const overrideValue = override ? validateProductSkuOverride(override, prefix, user, reason) : null
   // Row lock serializes both automatic and overridden allocations of a prefix.
