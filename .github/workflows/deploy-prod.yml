@@ -15,6 +15,10 @@ on:
         description: 'Post-Transfer: exact SHA authorized for deployment'
         required: false
         type: string
+      sku_authority_gate_8:
+        description: 'SKU schema-aware release only: type SKU_GATE_8 after separate review'
+        required: false
+        type: string
 
 concurrency:
   group: deploy-bj-prod
@@ -46,7 +50,13 @@ jobs:
           EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_production_sha }}
           APPROVED_BUSINESS_SHA: ${{ inputs.approved_business_sha }}
           AUTHORIZE_RELEASE_SHA: ${{ inputs.authorize_release_sha }}
-        run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod
+          SKU_GATE_8_AUTHORIZED: ${{ inputs.sku_authority_gate_8 }}
+        run: |
+          if [ "$SKU_GATE_8_AUTHORIZED" = SKU_GATE_8 ]; then
+            bash scripts/release-prod-sku-authority-ci.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA"
+          else
+            bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod
+          fi
 
       - name: Notify failure
         if: failure()
