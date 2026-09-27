@@ -85,6 +85,8 @@ const typeOf = value => value === null ? 'null' : value instanceof Date ? 'date'
 try {
   const started = Date.now()
   const rows = await prisma.$transaction(async tx => {
+    // Enforce read-only inside this exact transaction as well as at connection startup.
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY')
     const [guard] = await tx.$queryRawUnsafe("SELECT current_setting('transaction_read_only') AS value")
     if (guard.value !== 'on') throw Error('READ_ONLY_GUARD_FAILED')
     return tx.$queryRawUnsafe(sql)
@@ -99,7 +101,8 @@ try {
   process.stdout.write(stable({ ok: true, rows, types, originalDigest,
     elapsedMs: Date.now() - started }) + '\n')
 } catch (error) {
-  const code = String(error?.code || 'QUERY_FAILED')
+  const code = error?.message === 'READ_ONLY_GUARD_FAILED' ? 'READ_ONLY_GUARD_FAILED' :
+    String(error?.code || 'QUERY_FAILED')
   const dbCode = String(error?.meta?.code || 'UNAVAILABLE')
   process.stdout.write(JSON.stringify({ ok: false,
     code: /^[A-Z][A-Z0-9_]{0,30}$/.test(code) ? code : 'QUERY_FAILED',
