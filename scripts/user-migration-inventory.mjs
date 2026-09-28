@@ -130,7 +130,7 @@ const USERNAME_MAX_LEN = 20
 const ALL_MODULE_KEYS = new Set([
   'overview', 'analysis', 'staff', 'staff-payroll',
   'store-entry', 'store-schedule', 'store-mailing', 'store-pos', 'product-center',
-  'inventory-transfer', 'inventory-purchase', 'partner-supply', 'product-material-management',
+  'inventory-transfer', 'inventory-purchase', 'product-material-management',
   'finance', 'finance-invoice',
   'approval', 'asset-center', 'settings',
 ])
@@ -144,7 +144,7 @@ const MODULE_ASSET_CENTER = 'asset-center'
 const MANAGER_DEFAULTS = [
   'overview', 'analysis', 'staff', 'staff-payroll',
   'store-entry', 'store-schedule', 'store-mailing', 'store-pos',
-  'product-center', 'inventory-transfer', 'inventory-purchase', 'partner-supply', 'product-material-management',
+  'product-center', 'inventory-transfer', 'inventory-purchase', 'product-material-management',
   'finance-invoice', 'approval', 'settings',
 ]
 const STAFF_DEFAULTS = MANAGER_DEFAULTS.filter((k) => k !== 'product-center')
@@ -173,7 +173,7 @@ function runtimeEffectiveModules(u) {
   const p = u.permissions && typeof u.permissions === 'object' && !Array.isArray(u.permissions) ? u.permissions : null
   const source = p && p.modules && typeof p.modules === 'object' && !Array.isArray(p.modules) ? p.modules : null
   if (source) {
-    const legacyDefaultKeys = new Set(['partner-supply', 'product-material-management'])
+    const legacyDefaultKeys = new Set(['product-material-management'])
     const defaults = new Set(defaultModuleKeys(role, u.assetCenter === true))
     const modules = [...ALL_MODULE_KEYS].filter((key) => source[key] === true || (legacyDefaultKeys.has(key) && !Object.prototype.hasOwnProperty.call(source, key) && defaults.has(key)))
     return { modules, basis: 'stored' }

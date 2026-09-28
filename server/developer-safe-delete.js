@@ -11,7 +11,6 @@ const TYPES = Object.freeze({
   invoice: { delegate: 'invoice', label: '开发票订单' },
   transfer: { delegate: 'transferRequest', label: '库存调拨单', include: { items: true } },
   purchase: { delegate: 'purchaseRequest', label: '采购申请', include: { items: true } },
-  partnerSupply: { delegate: 'partnerSupplyOrder', label: '合作商供货单', include: { items: true, receipts: true } },
 })
 const REASONS = Object.freeze({ test: '测试数据', duplicate: '重复记录', input_error: '录入错误', other: '其他' })
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000
@@ -79,7 +78,6 @@ function detailFor(type, row) {
   const summary = publicSummary(type, row)
   if (type === 'transfer') return { ...summary, items: row.items.map((item) => ({ id: item.id, name: item.itemNameSnapshot, code: item.itemCodeSnapshot, quantity: item.quantity })) }
   if (type === 'purchase') return { ...summary, items: row.items.map((item) => ({ id: item.id, name: item.itemNameSnapshot, orderedQty: item.orderedQty, receivedQty: item.receivedQty })) }
-  if (type === 'partnerSupply') return { ...summary, items: row.items.map((item) => ({ id: item.id, name: item.productNameSnapshot, code: item.productCodeSnapshot, quantity: item.quantity })), receiptCount: row.receipts.length }
   return summary
 }
 

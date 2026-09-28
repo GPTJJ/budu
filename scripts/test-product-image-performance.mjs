@@ -27,7 +27,7 @@ test('product list serialization never returns the PostgreSQL Base64 original', 
   const row = serializeProduct({
     id: 'p-1', name: '测试商品', sku: 'SKU-1', posCategory: '', transferCode: '', salePriceCents: 100n,
     costPriceCents: 50n, unit: '份', image: 'data:image/jpeg;base64,ZmFrZQ==', barcode: '', isActive: true,
-    transferEnabled: false, partnerSupplyEnabled: false, productCategoryId: null, productCategory: null,
+    transferEnabled: false, productCategoryId: null, productCategory: null,
     productGroupId: null, productGroup: null, variantName: '', trackInventory: false, sortOrder: 0, version: 1,
     createdAt: new Date('2026-08-29T00:00:00Z'), updatedAt: new Date('2026-08-29T00:00:00Z'),
   })

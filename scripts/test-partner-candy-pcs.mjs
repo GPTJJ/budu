@@ -3,9 +3,8 @@ import test from 'node:test'
 import { PARTNER_CANDY_CATEGORY_IDS, isPartnerCandy } from '../shared/partnerProductUnits.js'
 import { productData } from '../server/products.js'
 import { isCatalogueEligible, quotePartnerCatalogueItem } from '../server/partner-replenishment-catalogue.js'
-import { planPartnerCatalogueInitialization, initializationReceiptAction } from './helpers/partner-catalogue-initialization.mjs'
 
-const base = { updatedAt: new Date('2026-09-20T00:00:00Z'), id: 'a', name: '任意名称', sku: 'CANDY-A', category: 'product', productCategoryId: PARTNER_CANDY_CATEGORY_IDS[0], isActive: false, unit: '份', salePriceCents: '500', partnerSupplyEnabled: true, partnerReplenishmentEnabled: false, partnerOrderUnit: null, partnerMinOrderBaseQty: null, partnerOrderStepBaseQty: null }
+const base = { updatedAt: new Date('2026-09-20T00:00:00Z'), id: 'a', name: '任意名称', sku: 'CANDY-A', category: 'product', productCategoryId: PARTNER_CANDY_CATEGORY_IDS[0], isActive: false, unit: '份', salePriceCents: '500', partnerReplenishmentEnabled: false, partnerOrderUnit: null, partnerMinOrderBaseQty: null, partnerOrderStepBaseQty: null }
 
 test('classification uses category identity, never product name or six-gram weight', () => {
   assert.equal(isPartnerCandy(base), true)
@@ -30,24 +29,4 @@ test('candy PCS quote accepts integer pieces and KG is rejected even with stale 
   assert.equal(q.finalAmountCents, '7475')
   product = { ...product, partnerOrderUnit: 'KG', partnerKgBasePriceCents: 18000n }
   await assert.rejects(quotePartnerCatalogueItem({ db, principal, body: { productId: 'a', orderUnit: 'KG', quantityGrams: 600 } }), e => e.code === 'PARTNER_CANDY_PCS_ONLY')
-})
-
-test('initializer reuses canonical SKU helper, does not alter existing SKU/other products, uses native units only for noncandy', () => {
-  const source = [{ ...base, sku: null }, { ...base, id: 'b', sku: null, productCategoryId: 'choc' }, { ...base, id: 'existing', sku: 'BUDU-12Y-77', partnerSupplyEnabled: false }]
-  const before = structuredClone(source)
-  const plan = planPartnerCatalogueInitialization(source)
-  assert.deepEqual(source, before)
-  assert.deepEqual(plan.rows.map(r => r.after.sku), ['BUDU-12Y-78', 'BUDU-12Y-79'])
-  assert.deepEqual(plan.rows.map(r => r.after.partnerOrderUnit), ['PCS', 'NATIVE'])
-  assert.equal(new Set([...source.filter(p => p.sku).map(p => p.sku), ...plan.rows.map(r => r.after.sku)]).size, 3)
-  assert.equal(plan.rows.some(r => r.id === 'existing'), false)
-})
-
-test('one-time completion never reapplies or reopens manual OFF; interrupted receipt blocks', () => {
-  assert.equal(initializationReceiptAction(null), 'APPLY')
-  const manuallyDisabled = { ...base, partnerReplenishmentEnabled: false }
-  const receipt = { status: 'COMPLETE' }
-  if (initializationReceiptAction(receipt) === 'APPLY') manuallyDisabled.partnerReplenishmentEnabled = true
-  assert.equal(manuallyDisabled.partnerReplenishmentEnabled, false)
-  assert.throws(() => initializationReceiptAction({ status: 'STARTED' }), /RECONCILIATION/)
 })

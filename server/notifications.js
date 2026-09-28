@@ -59,16 +59,15 @@ async function notificationCounts(user) {
 }
 
 async function excludeDeletedBusinessRecords(where) {
-  const [mailing, invoices, transfers, purchases, partnerOrders] = await Promise.all([
+  const [mailing, invoices, transfers, purchases] = await Promise.all([
     prisma.mailingRecord.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
     prisma.invoice.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
     prisma.transferRequest.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
     prisma.purchaseRequest.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
-    prisma.partnerSupplyOrder.findMany({ where: { deletedAt: { not: null } }, select: { id: true } }),
   ])
   const excluded = [
     ['mailing', mailing], ['invoice', invoices], ['transfer', transfers],
-    ['purchase', purchases], ['partner-supply-order', partnerOrders],
+    ['purchase', purchases],
   ].filter(([, rows]) => rows.length).map(([refType, rows]) => ({ refType, refId: { in: rows.map((row) => row.id) } }))
   return excluded.length ? { ...where, NOT: { OR: excluded } } : where
 }

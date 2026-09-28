@@ -232,7 +232,6 @@ const adminInclude = {
     include: { user: { select: { id: true, username: true, status: true, createdAt: true } } },
   },
   auditLogs: { orderBy: { createdAt: 'desc' }, take: 100 },
-  _count: { select: { supplyOrders: true } },
 }
 
 function adminPartnerDto(row) {
@@ -260,7 +259,6 @@ function adminPartnerDto(row) {
       actorUsername: log.actorUsername,
       createdAt: log.createdAt,
     })),
-    legacySupplyOrderCount: row._count?.supplyOrders || 0,
   }
 }
 
@@ -316,7 +314,7 @@ export function createPartnerDomainRouter({ db = prisma, mirrorUsers = mirrorUse
 
   router.get('/partner-management/partners', wrap(async (req, res) => {
     const rows = await db.partner.findMany({
-      include: { defaultStore: { select: { name: true } }, _count: { select: { partnerStores: true, partnerUsers: true, supplyOrders: true } } },
+      include: { defaultStore: { select: { name: true } }, _count: { select: { partnerStores: true, partnerUsers: true } } },
       orderBy: [{ status: 'asc' }, { name: 'asc' }],
       take: 500,
     })
@@ -325,7 +323,6 @@ export function createPartnerDomainRouter({ db = prisma, mirrorUsers = mirrorUse
       defaultStoreName: row.defaultStore?.name || '',
       storeCount: row._count.partnerStores,
       userCount: row._count.partnerUsers,
-      legacySupplyOrderCount: row._count.supplyOrders,
     })) })
   }))
 
@@ -467,11 +464,18 @@ export function createPartnerDomainRouter({ db = prisma, mirrorUsers = mirrorUse
   }))
 
   router.get('/partner-management/replenishment-orders', reviewWrap(async (req, res) => {
-    const result = await listReplenishmentReviewOrders({ db, actor: { id: req.user.id }, status: req.query.status })
+    const result = await listReplenishmentReviewOrders({ db, actor: { id: req.user.id }, filters: req.query })
     res.json({
       authority: { type: result.authorization.authority, businessDate: result.authorization.businessDate },
       rows: result.rows.map((row) => serializeReplenishmentOrder(row, { internal: true })),
+      total: result.total, page: result.page, pageSize: result.pageSize,
+      partners: result.partners, stores: result.stores,
     })
+  }))
+
+  router.get('/partner-management/replenishment-orders/export', reviewWrap(async (req, res) => {
+    const result = await listReplenishmentReviewOrders({ db, actor: { id: req.user.id }, filters: req.query, all: true })
+    res.json({ rows: result.rows.map((row) => serializeReplenishmentOrder(row, { internal: true })) })
   }))
 
   router.get('/partner-management/replenishment-orders/:id', reviewWrap(async (req, res) => {

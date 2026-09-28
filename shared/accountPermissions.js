@@ -21,7 +21,6 @@ export const MODULE_KEYS = Object.freeze({
   PRODUCT_CENTER: 'product-center',
   INVENTORY_TRANSFER: 'inventory-transfer',
   INVENTORY_PURCHASE: 'inventory-purchase',
-  PARTNER_SUPPLY: 'partner-supply',
   PARTNER_MANAGEMENT: 'partner-management',
   PARTNER_REPLENISHMENT_REVIEW: 'partner-replenishment-review',
   PRODUCT_MATERIAL_MANAGEMENT: 'product-material-management',
@@ -54,7 +53,6 @@ export const MODULE_GROUPS = Object.freeze([
   { key: 'inventory', label: '库存管理', modules: [
     { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
-    { key: MODULE_KEYS.PARTNER_SUPPLY, label: '合作商供货' },
     { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '物料管理' },
   ] },
   { key: 'partner', label: '合作商管理', modules: [
@@ -82,7 +80,7 @@ const MANAGER_DEFAULTS = Object.freeze([
   MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL,
   MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS,
   MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE,
-  MODULE_KEYS.PARTNER_SUPPLY, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT,
+  MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT,
   MODULE_KEYS.FINANCE_INVOICE, MODULE_KEYS.APPROVAL, MODULE_KEYS.SETTINGS,
   MODULE_KEYS.EMPLOYEE_PROFILE,
 ])
@@ -184,7 +182,7 @@ function normalizeModules(value, role, legacyAssetCenter) {
     if (key === MODULE_KEYS.PARTNER_MANAGEMENT) return [key, role === 'developer' || role === 'admin']
     return [key,
       source
-        ? ([MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.PARTNER_SUPPLY].includes(key) && !Object.prototype.hasOwnProperty.call(source, key)
+        ? (key === MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT && !Object.prototype.hasOwnProperty.call(source, key)
             ? defaults.has(key)
             : source[key] === true)
         : defaults.has(key),
@@ -419,32 +417,4 @@ export function canManageTransferStore(user, storeKey) {
   if (!user || user.role === 'public' || !hasModuleAccess(user, MODULE_KEYS.INVENTORY_TRANSFER)) return false
   if (hasInventoryTransferAll(user)) return true
   return user.role === 'manager' && canAccessTransferStore(user, storeKey)
-}
-
-export function canCreatePartnerSupply(user) {
-  return Boolean(user && ['developer', 'admin', 'finance', 'manager', 'staff'].includes(user.role) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
-}
-
-export function canAccessPartnerSupplyStore(user, storeKey) {
-  if (!user || !hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY)) return false
-  if (isSuperUser(user)) return true
-  return Array.isArray(user.storeKeys) && user.storeKeys.includes(storeKey)
-}
-
-export function canConfirmPartnerSupply(user, storeKey) {
-  return Boolean(hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY) && (isSuperUser(user) || (user?.role === 'manager' && canAccessPartnerSupplyStore(user, storeKey))))
-}
-
-export function canManagePartnerSupplyPartners(user) {
-  // Legacy Partner Supply may remain usable by its existing operational roles,
-  // but Partner master-data mutation follows the Gate 2 authority boundary.
-  return Boolean(canManagePartnerDomain(user) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
-}
-
-export function canOverridePartnerSupplyPrice(user) {
-  return Boolean(isSuperUser(user) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
-}
-
-export function canRegisterPartnerReceipt(user) {
-  return Boolean(isSuperUser(user) && hasModuleAccess(user, MODULE_KEYS.PARTNER_SUPPLY))
 }

@@ -428,13 +428,13 @@ test('每账号有效权限盘点（developer/cashier 固定；旧 source 补齐
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
   // developer：固定全模块（normalizeModules 对 developer 不看 source）
   assert.equal(byName.dev.effectiveBasis, 'fixed-all')
-  assert.equal(byName.dev.effectiveModules.length, 18)
+  assert.equal(byName.dev.effectiveModules.length, 17)
   // cashier：固定仅 store-pos（normalizeModules 对 cashier 不看 source）
   assert.equal(byName.cash.effectiveBasis, 'fixed-pos')
   assert.deepEqual(byName.cash.effectiveModules, ['store-pos'])
   // admin：旧 source 补齐本次新增的两个默认模块；其余仍严格按 source。
   assert.equal(byName.adm.effectiveBasis, 'stored')
-  assert.deepEqual(byName.adm.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
+  assert.deepEqual(byName.adm.effectiveModules, ['store-pos', 'product-material-management'])
 })
 
 test('accountAdminCheck：仅 developer 且未停用可管理账号', () => {
@@ -651,10 +651,10 @@ test('运行时默认权限：Admin/Finance/Manager/Staff/Cashier（无存储 pe
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  assert.equal(byName.adm.effectiveModules.length, 18) // admin 默认全模块
-  assert.equal(byName.fin.effectiveModules.length, 18) // finance 默认全模块
-  assert.equal(byName.mgr.effectiveModules.length, 16) // manager 默认 16 项
-  assert.equal(byName.stf.effectiveModules.length, 15) // staff 默认 15 项（无 product-center）
+  assert.equal(byName.adm.effectiveModules.length, 17) // admin 默认全模块
+  assert.equal(byName.fin.effectiveModules.length, 17) // finance 默认全模块
+  assert.equal(byName.mgr.effectiveModules.length, 15) // manager 默认 15 项
+  assert.equal(byName.stf.effectiveModules.length, 14) // staff 默认 14 项（无 product-center）
   assert.deepEqual(byName.csh.effectiveModules, ['store-pos'])
   assert.ok(!byName.stf.effectiveModules.includes('product-center'))
   assert.ok(byName.mgr.effectiveModules.includes('product-center'))
@@ -695,17 +695,17 @@ test('assetCenter legacy fallback：仅无 source 时经 defaults 生效；有 s
   ] }))
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
-  // s1：无 source + assetCenter=true → defaults 追加 asset-center（15 + 1 = 16）
+  // s1：无 source + assetCenter=true → defaults 追加 asset-center（14 + 1 = 15）
   assert.equal(byName.s1.assetCenterStored, true)
   assert.ok(byName.s1.effectiveModules.includes('asset-center'))
-  assert.equal(byName.s1.effectiveModules.length, 16)
-  // s2：无 source 无 assetCenter → 15（不含 asset-center）
+  assert.equal(byName.s1.effectiveModules.length, 15)
+  // s2：无 source 无 assetCenter → 14（不含 asset-center）
   assert.equal(byName.s2.assetCenterStored, false)
   assert.ok(!byName.s2.effectiveModules.includes('asset-center'))
-  assert.equal(byName.s2.effectiveModules.length, 15)
+  assert.equal(byName.s2.effectiveModules.length, 14)
   // s3：有 source + assetCenter=true → 不恢复 asset-center，但补齐两个新增模块。
   assert.equal(byName.s3.assetCenterStored, true)
-  assert.deepEqual(byName.s3.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
+  assert.deepEqual(byName.s3.effectiveModules, ['store-pos', 'product-material-management'])
 })
 
 test('inventoryTransferAll：stored vs effective（跨门店调拨范围，非模块访问权）', () => {
@@ -768,10 +768,10 @@ test('runtime source 语义：Admin 无 source → defaults；旧 source 补齐�
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
   assert.equal(byName['adm-none'].effectiveBasis, 'defaults')
-  assert.equal(byName['adm-none'].effectiveModules.length, 18) // 无 source → 默认全模块
+  assert.equal(byName['adm-none'].effectiveModules.length, 17) // 无 source → 默认全模块
   assert.equal(byName['adm-src'].effectiveBasis, 'stored')
-  assert.deepEqual(byName['adm-src'].effectiveModules, ['store-pos', 'partner-supply', 'product-material-management']) // finance:false 不恢复
-  assert.deepEqual(byName['adm-false'].effectiveModules, ['partner-supply', 'product-material-management'])
+  assert.deepEqual(byName['adm-src'].effectiveModules, ['store-pos', 'product-material-management']) // finance:false 不恢复
+  assert.deepEqual(byName['adm-false'].effectiveModules, ['product-material-management'])
 })
 
 test('runtime source 语义：Finance/Manager/Staff 有 source → 仅补齐新增默认模块', () => {
@@ -784,12 +784,12 @@ test('runtime source 语义：Finance/Manager/Staff 有 source → 仅补齐新�
   const out = JSON.parse(runTool(f).stdout)
   const byName = Object.fromEntries(out.perAccountPermissions.map((a) => [a.username, a]))
   // Finance：source 存在 → 不恢复其他默认项，只补齐新增模块。
-  assert.deepEqual(byName.fin.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
+  assert.deepEqual(byName.fin.effectiveModules, ['store-pos', 'product-material-management'])
   // Manager：source 存在 → 不恢复其他默认项；assetCenter=true 也不恢复 asset-center。
-  assert.deepEqual(byName.mgr.effectiveModules, ['store-pos', 'partner-supply', 'product-material-management'])
+  assert.deepEqual(byName.mgr.effectiveModules, ['store-pos', 'product-material-management'])
   assert.equal(byName.mgr.assetCenterStored, true)
   // Staff：source 存在 → overview + 两个新增默认模块。
-  assert.deepEqual(byName.stf.effectiveModules, ['overview', 'partner-supply', 'product-material-management'])
+  assert.deepEqual(byName.stf.effectiveModules, ['overview', 'product-material-management'])
 })
 
 // ================= 第四轮：accountValidations =================

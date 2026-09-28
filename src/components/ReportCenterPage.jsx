@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  ArrowLeft, BarChart3, Boxes, Building2, ChevronLeft, ChevronRight, CircleDollarSign,
+  ArrowLeft, BarChart3, Building2, ChevronLeft, ChevronRight, CircleDollarSign,
   Clock3, FileSpreadsheet, Landmark, ListFilter, ReceiptText, Search, ShoppingBag,
   TrendingUp, WalletCards, X,
 } from 'lucide-react'
@@ -467,7 +467,6 @@ export default function ReportCenterPage({ currentUser, onBack, onNavigate }) {
   const legacy = [
     { key: 'profit', label: '经营利润', icon: Landmark, enabled: hasModuleAccess(currentUser, 'finance') },
     { key: 'inventory-transfer', label: '调拨报表', icon: BarChart3, enabled: hasModuleAccess(currentUser, 'inventory-transfer') },
-    { key: 'partner-supply', label: '合作商供货', icon: Boxes, enabled: hasModuleAccess(currentUser, 'partner-supply') },
     { key: 'staff-payroll', label: '工资报表', icon: FileSpreadsheet, enabled: hasModuleAccess(currentUser, 'staff-payroll') },
   ].filter((item) => item.enabled)
 

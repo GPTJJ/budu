@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Check, ClipboardCheck, PackageCheck, RefreshCw, Truck, X } from 'lucide-react'
+import { ArrowLeft, Check, ClipboardCheck, Download, ImageDown, PackageCheck, RefreshCw, Truck, X } from 'lucide-react'
 import { api } from '../utils/api'
+import { exportReplenishmentExcel, exportReplenishmentImage } from '../utils/replenishmentExport'
+import { replenishmentQuickRange } from '../utils/replenishmentFilters'
 import { OverlayFooter, OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from './overlay/OverlayPrimitives'
 
 const FILTERS = [
@@ -137,7 +139,7 @@ function ReviewSheet({ order, onClose, onReviewed }) {
       <OverlayPanel role="dialog" aria-modal="true" aria-label={`审核补货单 ${order.orderNo}`} className="relative flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full min-w-0 max-w-4xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[28px]">
         <OverlayHeader className="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-6">
           <div className="min-w-0"><p className="truncate text-lg font-black text-slate-900">{order.orderNo}</p><p className="mt-1 text-xs text-slate-400">{order.partnerNameSnapshot} · {order.partnerStore.name}</p></div>
-          <button type="button" aria-label="关闭审核" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><X className="h-5 w-5" /></button>
+          <div className="flex shrink-0 gap-2"><button type="button" onClick={() => exportReplenishmentImage(order).catch((nextError) => setError(nextError.message || '图片导出失败'))} className="btn-secondary min-h-11"><ImageDown className="h-4 w-4" />导出图片</button><button type="button" aria-label="关闭审核" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><X className="h-5 w-5" /></button></div>
         </OverlayHeader>
         <OverlayScrollRegion className="space-y-4 px-4 py-4 sm:px-6">
           <div className="grid gap-2 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 sm:grid-cols-2">
@@ -173,23 +175,41 @@ function ReviewSheet({ order, onClose, onReviewed }) {
 }
 
 export default function PartnerReplenishmentReviewPage({ onBack }) {
-  const [filter, setFilter] = useState('SUBMITTED')
+  const [filters, setFilters] = useState({ status: 'SUBMITTED', startDate: '', endDate: '', partnerId: '', partnerStoreId: '' })
+  const [page, setPage] = useState(1)
   const [rows, setRows] = useState([])
+  const [total, setTotal] = useState(0)
+  const [partners, setPartners] = useState([])
+  const [stores, setStores] = useState([])
   const [selected, setSelected] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [authority, setAuthority] = useState(null)
+  const query = useMemo(() => new URLSearchParams({ ...filters, page: String(page), pageSize: '20' }).toString(), [filters, page])
+  const visibleStores = useMemo(() => stores.filter((store) => !filters.partnerId || store.partnerId === filters.partnerId), [stores, filters.partnerId])
+  const updateFilter = (patch) => { setPage(1); setFilters((current) => ({ ...current, ...patch })) }
 
   const load = async () => {
     setLoading(true); setError('')
     try {
-      const data = await api(`/v2/partner-management/replenishment-orders${filter ? `?status=${filter}` : ''}`)
-      setRows(data.rows || []); setAuthority(data.authority)
+      const data = await api(`/v2/partner-management/replenishment-orders?${query}`)
+      setRows(data.rows || []); setAuthority(data.authority); setTotal(data.total || 0)
+      setPartners(data.partners || []); setStores(data.stores || [])
     } catch (nextError) {
       setRows([]); setError(nextError.data?.message || nextError.message)
     } finally { setLoading(false) }
   }
-  useEffect(() => { load() }, [filter])
+  useEffect(() => { load() }, [query])
+
+  const exportExcel = async () => {
+    setExporting(true); setError('')
+    try {
+      const data = await api(`/v2/partner-management/replenishment-orders/export?${new URLSearchParams(filters)}`)
+      exportReplenishmentExcel(data.rows || [])
+    } catch (nextError) { setError(nextError.data?.message || nextError.message) }
+    finally { setExporting(false) }
+  }
 
   const open = async (id) => {
     setError('')
@@ -201,12 +221,15 @@ export default function PartnerReplenishmentReviewPage({ onBack }) {
 
   return (
     <section className="min-w-0 space-y-4" data-testid="partner-replenishment-review-page">
-      <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><button type="button" onClick={onBack} className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500"><ArrowLeft className="h-5 w-5" /></button><div><p className="text-xs font-black tracking-[0.12em] text-budu-500">PARTNER REPLENISHMENT</p><h2 className="text-xl font-black text-slate-900">补货订单</h2></div></div><button type="button" onClick={load} className="btn-secondary min-h-11"><RefreshCw className="h-4 w-4" />刷新</button></header>
+      <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><button type="button" onClick={onBack} className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500"><ArrowLeft className="h-5 w-5" /></button><div><p className="text-xs font-black tracking-[0.12em] text-budu-500">PARTNER REPLENISHMENT</p><h2 className="text-xl font-black text-slate-900">补货订单</h2></div></div><div className="flex gap-2"><button type="button" onClick={exportExcel} disabled={exporting} className="btn-secondary min-h-11 disabled:opacity-50"><Download className="h-4 w-4" />{exporting ? '导出中…' : '导出 Excel'}</button><button type="button" onClick={load} className="btn-secondary min-h-11"><RefreshCw className="h-4 w-4" />刷新</button></div></header>
       {authority && <p className="rounded-xl bg-budu-50 px-3 py-2 text-xs font-semibold text-budu-700">审核权限：{authority.type === 'GUANSHE_ON_DUTY' ? '官舍今日值班' : '开发者 / 管理员'} · 业务日期 {authority.businessDate}</p>}
-      <div className="flex gap-2 overflow-x-auto pb-1" aria-label="补货订单筛选">{FILTERS.map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-10 shrink-0 rounded-xl px-4 text-sm font-bold ${filter === value ? 'bg-budu-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><label className="text-xs font-bold text-slate-600">申请开始日期<input aria-label="申请开始日期" type="date" value={filters.startDate} onChange={(event) => updateFilter({ startDate: event.target.value })} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3" /></label><label className="text-xs font-bold text-slate-600">申请结束日期<input aria-label="申请结束日期" type="date" value={filters.endDate} onChange={(event) => updateFilter({ endDate: event.target.value })} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3" /></label><label className="text-xs font-bold text-slate-600">合作商<select aria-label="合作商筛选" value={filters.partnerId} onChange={(event) => updateFilter({ partnerId: event.target.value, partnerStoreId: '' })} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3"><option value="">全部合作商</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}</select></label><label className="text-xs font-bold text-slate-600">合作商门店<select aria-label="合作商门店筛选" value={filters.partnerStoreId} onChange={(event) => updateFilter({ partnerStoreId: event.target.value })} className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3"><option value="">全部门店</option>{visibleStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label></div>
+      <div className="flex gap-2 overflow-x-auto pb-1" aria-label="快捷日期">{[['today', '今天'], ['yesterday', '昨天'], ['week', '本周'], ['lastWeek', '上周'], ['month', '本月'], ['lastMonth', '上月']].map(([key, label]) => <button key={key} type="button" onClick={() => updateFilter(replenishmentQuickRange(key))} className="min-h-10 shrink-0 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600">{label}</button>)}</div>
+      <div className="flex gap-2 overflow-x-auto pb-1" aria-label="补货订单筛选">{FILTERS.map(([value, label]) => <button key={value} type="button" aria-pressed={filters.status === value} onClick={() => updateFilter({ status: value })} className={`min-h-10 shrink-0 rounded-xl px-4 text-sm font-bold ${filters.status === value ? 'bg-budu-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</div>
       {error && <p role="alert" className="rounded-xl bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</p>}
       {loading ? <div className="card p-8 text-center text-sm text-slate-400">加载补货订单…</div> : rows.length === 0 ? <div className="card grid min-h-56 place-items-center p-8 text-center"><div><ClipboardCheck className="mx-auto h-9 w-9 text-budu-300" /><p className="mt-3 text-sm text-slate-400">当前筛选下没有补货订单</p></div></div> : <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">{rows.map((order) => <button type="button" key={order.id} onClick={() => open(order.id)} className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:border-budu-200"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-black text-slate-800">{order.orderNo}</p><p className="mt-1 truncate text-xs text-slate-400">{order.partnerNameSnapshot} · {order.partnerStore.name}</p></div><StatusPill value={order.status} /></div><div className="mt-4 flex min-w-0 items-end justify-between gap-3"><div className="min-w-0 text-xs text-slate-500"><p>{order.items.length} 项商品</p><p className="mt-1 truncate">{new Date(order.submittedAt).toLocaleString('zh-CN', { hour12: false })}</p></div><div className="shrink-0 text-right"><p className="text-xs text-slate-400">申请金额</p><p className="font-black text-slate-800">{money(order.requestedTotalAmountCents)}</p></div></div></button>)}</div>}
       {selected && <ReviewSheet order={selected} onClose={() => setSelected(null)} onReviewed={async () => { setSelected(null); await load() }} />}
+      <div className="flex items-center justify-between text-sm text-slate-500"><span>共 {total} 单 · 第 {page} 页</span><div className="flex gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)} className="btn-secondary min-h-10 disabled:opacity-40">上一页</button><button type="button" disabled={page * 20 >= total || loading} onClick={() => setPage((value) => value + 1)} className="btn-secondary min-h-10 disabled:opacity-40">下一页</button></div></div>
       <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-xs leading-5 text-slate-400"><PackageCheck className="mb-2 h-5 w-5 text-slate-300" />审核通过后可记录一批或多批物流；确认发货只保存履约事实，不扣库存、不预占库存、不创建付款记录。</div>
     </section>
   )

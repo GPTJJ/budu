@@ -7,7 +7,7 @@ test('统一商品中心按独立业务用途、状态、分类与搜索筛选',
   await expect(page.getByText('NO.1树莓', { exact: false })).toHaveCount(0)
   await page.getByRole('button', { name: '门店调拨', exact: true }).click()
   await expect(page.getByText(/NO\.1树莓/)).toBeVisible()
-  await page.getByRole('button', { name: '合作商供货', exact: true }).click()
+  await page.getByRole('button', { name: '合作商补货', exact: true }).click()
   await expect(page.getByText(/NO\.2柠檬/)).toBeVisible()
   await page.getByLabel('商品分类筛选').selectOption('c-candy')
   await page.getByLabel('搜索商品').fill('NO.2')
@@ -19,15 +19,16 @@ test('编辑商品可独立控制各业务开关并复用正式分类', async ({
   await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
   await page.getByLabel('商品分类', { exact: true }).selectOption('c-candy')
   await page.getByLabel('门店调拨').check()
-  await page.getByLabel('合作商供货').check()
+  await page.getByLabel('合作商可补货').check()
+  await page.getByLabel('补货方式现有商品单位').check()
   await page.getByRole('button', { name: '保存商品' }).click()
   const row = page.locator('[data-product-id="p-pos"]')
   await expect(row).toContainText('太妃糖')
   await expect(row).toContainText('POS ✓')
   await expect(row).toContainText('调拨 ✓')
-  await expect(row).toContainText('合作商 ✓')
+  await expect(row).toContainText('补货 ✓')
   const request = await page.evaluate(() => window.__productCenterTest.requests.find((item) => item.path === '/api/v2/products/p-pos'))
-  expect(request.body).toMatchObject({ isActive: true, transferEnabled: true, partnerSupplyEnabled: true, productCategoryId: 'c-candy' })
+  expect(request.body).toMatchObject({ isActive: true, transferEnabled: true, partnerReplenishmentEnabled: true, productCategoryId: 'c-candy' })
   expect(request.body).not.toHaveProperty('image')
 })
 
@@ -98,7 +99,7 @@ test('商品中心列表只使用版本化 WebP 缩略图并延迟加载', async
   await expect(page.getByAltText('商品预览')).toHaveAttribute('src', /\/api\/v2\/products\/p-pos\/image\?v=2026-08-29/)
 })
 
-test('批量管理支持分类及 POS、调拨、合作商开关', async ({ page }) => {
+test('批量管理支持分类及门店调拨开关', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
   await page.getByRole('button', { name: '全部', exact: true }).click()
   await page.getByLabel('业务状态筛选').selectOption('all')
@@ -108,11 +109,11 @@ test('批量管理支持分类及 POS、调拨、合作商开关', async ({ page
   await page.getByRole('button', { name: '修改分类' }).click()
   await page.getByLabel('选择卡皮巴拉布丁').check()
   await page.getByLabel('选择NO.1树莓').check()
-  await page.getByRole('button', { name: '启用合作商' }).click()
+  await page.getByRole('button', { name: '启用调拨' }).click()
   const requests = await page.evaluate(() => window.__productCenterTest.requests.filter((item) => item.path === '/api/v2/products/bulk').map((item) => item.body))
   expect(requests).toEqual([
     expect.objectContaining({ operation: 'category', productCategoryId: 'c-candy', ids: ['p-pos', 'p-transfer'] }),
-    expect.objectContaining({ operation: 'purpose', purpose: 'partner', enabled: true, ids: ['p-pos', 'p-transfer'] }),
+    expect.objectContaining({ operation: 'purpose', purpose: 'transfer', enabled: true, ids: ['p-pos', 'p-transfer'] }),
   ])
   await expect(page.getByRole('button', { name: '启用POS' })).toHaveCount(0)
 })
@@ -182,7 +183,7 @@ test('商品中心仅按稳定 SKU 批量更新，预览后导入并上架', asy
   await expect(page.getByText('菜单导入完成：新增 1 个，更新 1 个，已全部自动上架', { exact: true })).toBeVisible()
   const payload = await page.evaluate(() => window.__productImportPayload)
   expect(payload.rows).toHaveLength(2)
-  expect(payload.rows.every((row) => row.isActive === true && row.transferEnabled === false && row.partnerSupplyEnabled === false)).toBe(true)
+  expect(payload.rows.every((row) => row.isActive === true && row.transferEnabled === false)).toBe(true)
 })
 
 test('商品中心可导出 Excel 菜单', async ({ page }) => {
@@ -204,7 +205,7 @@ for (const width of [320, 340, 375, 390, 430]) {
     await expect(row.getByTestId('product-price')).toHaveText('¥138.00')
     await expect(row.getByTestId('product-badges')).toContainText('POS ✓')
     await expect(row.getByTestId('product-badges')).toContainText('调拨 —')
-    await expect(row.getByTestId('product-badges')).toContainText('合作商 —')
+    await expect(row.getByTestId('product-badges')).toContainText('补货 —')
     await expect(row.getByTestId('product-sku')).toContainText('BUDU-CHOC-JAS-04')
     await expect(row.getByRole('button', { name: '编辑茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试' })).toBeVisible()
     const titleMetrics = await title.evaluate((element) => {
@@ -236,24 +237,17 @@ test('SKU 下沉后仍可搜索商品', async ({ page }) => {
   await expect(page.locator('[data-product-id="p-pos"]')).toHaveCount(0)
 })
 
-test('合作商可补货开关与旧供货独立，保存后显示服务端状态', async ({ page }) => {
+test('合作商可补货保存后仍显示服务端状态，旧业务用途不出现', async ({ page }) => {
   await page.goto('/tests/product-center-harness.html')
   await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
-  await page.getByRole('checkbox', { name: '合作商供货（旧业务）', exact: true }).uncheck()
+  await expect(page.getByRole('checkbox', { name: '合作商供货（旧业务）' })).toHaveCount(0)
   await page.getByRole('checkbox', { name: '合作商可补货', exact: true }).check()
   await page.getByLabel('补货方式现有商品单位').check()
   await page.getByRole('button', { name: '保存商品' }).click()
   await expect(page.locator('[data-product-id="p-pos"]')).toContainText('补货 ✓')
-  let request = await page.evaluate(() => window.__productCenterTest.requests.findLast(item => item.path === '/api/v2/products/p-pos'))
-  expect(request.body).toMatchObject({ partnerSupplyEnabled: false, partnerReplenishmentEnabled: true })
-  await page.getByRole('button', { name: '编辑卡皮巴拉布丁' }).click()
-  await expect(page.getByRole('checkbox', { name: '合作商可补货', exact: true })).toBeChecked()
-  await page.getByRole('checkbox', { name: '合作商供货（旧业务）', exact: true }).check()
-  await page.getByRole('checkbox', { name: '合作商可补货', exact: true }).uncheck()
-  await page.getByRole('button', { name: '保存商品' }).click()
-  await expect(page.locator('[data-product-id="p-pos"]')).toContainText('补货 —')
-  request = await page.evaluate(() => window.__productCenterTest.requests.findLast(item => item.path === '/api/v2/products/p-pos'))
-  expect(request.body).toMatchObject({ partnerSupplyEnabled: true, partnerReplenishmentEnabled: false })
+  const request = await page.evaluate(() => window.__productCenterTest.requests.findLast(item => item.path === '/api/v2/products/p-pos'))
+  expect(request.body).toMatchObject({ partnerReplenishmentEnabled: true })
+  expect(request.body).not.toHaveProperty('partnerSupplyEnabled')
 })
 
 test('商品中心按 canonical 分类固定糖果 PCS，不提供 KG/NATIVE 选择', async ({ page }) => {

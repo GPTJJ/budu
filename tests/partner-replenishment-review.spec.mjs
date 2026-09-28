@@ -63,3 +63,59 @@ for (const width of [320, 340, 375, 390, 430]) {
     expect(box.x + box.width).toBeLessThanOrEqual(width + 1)
   })
 }
+
+test('申请日期、合作商、门店和状态筛选与分页、全量导出使用相同参数', async ({ page }) => {
+  await page.goto('/tests/partner-replenishment-review-harness.html')
+  await page.getByLabel('申请开始日期').fill('2026-09-01')
+  await page.getByLabel('申请结束日期').fill('2026-09-30')
+  await page.getByLabel('合作商筛选').selectOption('partner-a')
+  await expect(page.getByLabel('合作商门店筛选').locator('option')).toHaveCount(2)
+  await page.getByLabel('合作商门店筛选').selectOption('store-a')
+  await page.getByRole('button', { name: '部分发货', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__partnerReviewTest.requests.filter(row => row.type === 'list').at(-1)?.query)).toMatchObject({ startDate: '2026-09-01', endDate: '2026-09-30', partnerId: 'partner-a', partnerStoreId: 'store-a', status: 'PARTIALLY_SHIPPED', page: '1' })
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(page.getByText('第 2 页')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.__partnerReviewTest.requests.filter(row => row.type === 'list').at(-1)?.query.page)).toBe('2')
+  await page.getByRole('button', { name: '导出 Excel' }).click()
+  await expect.poll(() => page.evaluate(() => window.__partnerReviewTest.requests.find(row => row.type === 'export')?.query)).toMatchObject({ startDate: '2026-09-01', endDate: '2026-09-30', partnerId: 'partner-a', partnerStoreId: 'store-a', status: 'PARTIALLY_SHIPPED' })
+})
+
+test('图片长图只绘制原申请字段，商品增多时完整增加高度', async ({ page }) => {
+  await page.goto('/tests/partner-replenishment-review-harness.html')
+  const result = await page.evaluate(async () => {
+    const { createReplenishmentImage } = await import('/src/utils/replenishmentExport.js')
+    const order = { ...window.__partnerReviewTest.order, items: Array.from({ length: 80 }, (_, index) => ({ ...window.__partnerReviewTest.order.items[0], productNameSnapshot: `商品${index + 1}号长名称测试` })) }
+    const texts = []
+    const original = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (value, ...args) { texts.push(String(value)); return original.call(this, value, ...args) }
+    try {
+      const canvas = await createReplenishmentImage(order)
+      return { texts, width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png').startsWith('data:image/png;base64,') }
+    } finally { CanvasRenderingContext2D.prototype.fillText = original }
+  })
+  expect(result.png).toBe(true)
+  expect(result.height).toBeGreaterThan(result.width * 5)
+  expect(result.texts).toContain('商品80号长名称测试')
+  expect(result.texts).toContain('商品名称')
+  expect(result.texts).toContain('申请数量')
+  expect(result.texts).toContain('已发数量')
+  expect(result.texts.join('|')).toContain('申请时间：')
+  expect(result.texts.join('|')).not.toMatch(/状态|待发|单价|小计|金额|审核|发货统计|本次发货/)
+})
+
+test('订单详情一键导出图片生成 PNG', async ({ page }) => {
+  await openReview(page)
+  await page.evaluate(() => {
+    window.__exportedPng = false
+    const original = HTMLCanvasElement.prototype.toDataURL
+    HTMLCanvasElement.prototype.toDataURL = function (...args) {
+      const result = original.apply(this, args)
+      window.__exportedPng = result.startsWith('data:image/png;base64,')
+      return result
+    }
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => false })
+    window.open = () => null
+  })
+  await page.getByRole('dialog', { name: /审核补货单/ }).getByRole('button', { name: '导出图片' }).click()
+  await expect.poll(() => page.evaluate(() => window.__exportedPng)).toBe(true)
+})

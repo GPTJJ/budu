@@ -11,10 +11,10 @@
       { id: 'c-candy', name: '太妃糖', sortOrder: 2, isActive: true, version: 1, productCount: 2 },
     ]
     let products = [
-      { productId: 'p-long', name: '茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试', sku: 'BUDU-CHOC-JAS-04', transferCode: 'CHOC-JAS-04', productCategoryId: '', productCategory: null, posCategory: '', salePriceCents: '13800', costPriceCents: '6000', unit: '盒', image: '', barcode: '', isActive: true, transferEnabled: false, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 0, version: 1 },
-      { productId: 'p-pos', name: '卡皮巴拉布丁', sku: 'BUDU-001', transferCode: '', productCategoryId: 'c-dessert', productCategory: categories[0], posCategory: '甜品', salePriceCents: '7200', costPriceCents: '2350', unit: '份', image: '', hasImage: true, updatedAt: '2026-08-29T00:00:00.000Z', barcode: '', isActive: true, transferEnabled: false, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 1, version: 1 },
-      { productId: 'p-transfer', name: 'NO.1树莓', sku: '', transferCode: 'NO.1', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: null, costPriceCents: null, unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: true, partnerSupplyEnabled: false, trackInventory: false, sortOrder: 2, version: 1 },
-      { productId: 'p-partner', name: 'NO.2柠檬', sku: 'NO2', transferCode: 'NO.2', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: '500', costPriceCents: '200', unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: false, partnerSupplyEnabled: true, trackInventory: false, sortOrder: 3, version: 1 },
+      { productId: 'p-long', name: '茉莉巧克力榛果脆片夹心礼盒装超长商品名称测试', sku: 'BUDU-CHOC-JAS-04', transferCode: 'CHOC-JAS-04', productCategoryId: '', productCategory: null, posCategory: '', salePriceCents: '13800', costPriceCents: '6000', unit: '盒', image: '', barcode: '', isActive: true, transferEnabled: false, trackInventory: false, sortOrder: 0, version: 1 },
+      { productId: 'p-pos', name: '卡皮巴拉布丁', sku: 'BUDU-001', transferCode: '', productCategoryId: 'c-dessert', productCategory: categories[0], posCategory: '甜品', salePriceCents: '7200', costPriceCents: '2350', unit: '份', image: '', hasImage: true, updatedAt: '2026-08-29T00:00:00.000Z', barcode: '', isActive: true, transferEnabled: false, trackInventory: false, sortOrder: 1, version: 1 },
+      { productId: 'p-transfer', name: 'NO.1树莓', sku: '', transferCode: 'NO.1', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: null, costPriceCents: null, unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: true, trackInventory: false, sortOrder: 2, version: 1 },
+      { productId: 'p-partner', name: 'NO.2柠檬', sku: 'NO2', transferCode: 'NO.2', productCategoryId: 'c-candy', productCategory: categories[1], posCategory: '太妃糖', salePriceCents: '500', costPriceCents: '200', unit: '盒', image: '', barcode: '', isActive: false, transferEnabled: false, partnerReplenishmentEnabled: true, trackInventory: false, sortOrder: 3, version: 1 },
     ]
     let groups = []
     const requests = []
@@ -33,14 +33,14 @@
         const body = JSON.parse(options.body); window.__productImportPayload = body; requests.push({ method, path, body })
         const imported = body.rows.map((row, index) => {
           const old = products.find((item) => item.sku && item.sku === row.sku)
-          return { ...(old || {}), ...row, productId: old?.productId || `p-import-${index}`, productCategory: categoryFor(row.productCategoryId), image: old?.image || '', barcode: row.barcode || old?.barcode || '', isActive: true, transferEnabled: old?.transferEnabled || false, partnerSupplyEnabled: old?.partnerSupplyEnabled || false, trackInventory: row.trackInventory ?? old?.trackInventory ?? false, sortOrder: Number(row.sortOrder || old?.sortOrder || 0), version: (old?.version || 0) + 1 }
+          return { ...(old || {}), ...row, productId: old?.productId || `p-import-${index}`, productCategory: categoryFor(row.productCategoryId), image: old?.image || '', barcode: row.barcode || old?.barcode || '', isActive: true, transferEnabled: old?.transferEnabled || false, trackInventory: row.trackInventory ?? old?.trackInventory ?? false, sortOrder: Number(row.sortOrder || old?.sortOrder || 0), version: (old?.version || 0) + 1 }
         })
         products = [...products.filter((item) => !imported.some((row) => row.productId === item.productId)), ...imported]
         return reply({ ok: true, created: imported.filter((row) => !['p-pos', 'p-transfer', 'p-partner'].includes(row.productId)).length, updated: imported.filter((row) => ['p-pos', 'p-transfer', 'p-partner'].includes(row.productId)).length, rows: imported })
       }
       if (path === '/api/v2/products/bulk' && method === 'PUT') {
         const body = JSON.parse(options.body); requests.push({ method, path, body })
-        const key = body.purpose === 'pos' ? 'isActive' : body.purpose === 'transfer' ? 'transferEnabled' : 'partnerSupplyEnabled'
+        const key = body.purpose === 'pos' ? 'isActive' : 'transferEnabled'
         products = products.map((item) => !body.ids.includes(item.productId) ? item : body.operation === 'category'
           ? { ...item, productCategoryId: body.productCategoryId || '', productCategory: categoryFor(body.productCategoryId), version: item.version + 1 }
           : { ...item, [key]: body.enabled, version: item.version + 1 })

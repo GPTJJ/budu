@@ -80,7 +80,6 @@ export function productData(body, existingImage = '', existing = null) {
   const transferBoxWeightGrams = optionalPositiveGrams(body.transferBoxWeightGrams, '整箱净重')
   const transferPieceEnabled = body.transferPieceEnabled === true
   const transferPieceWeightGrams = optionalPositiveGrams(body.transferPieceWeightGrams, '标准单颗重量')
-  const partnerSupplyEnabled = body.partnerSupplyEnabled === true
   const partnerReplenishmentEnabled = Object.hasOwn(body, 'partnerReplenishmentEnabled')
     ? body.partnerReplenishmentEnabled === true
     : existing?.partnerReplenishmentEnabled === true
@@ -97,7 +96,6 @@ export function productData(body, existingImage = '', existing = null) {
   if (transferEnabled && !transferCode) throw httpError('启用门店调拨前请填写 SKU 或商品编号')
   if (transferBoxEnabled && transferBoxWeightGrams === null) throw httpError('允许整箱调拨时请填写整箱净重')
   if (transferPieceEnabled && transferPieceWeightGrams === null) throw httpError('允许散颗调拨时请填写标准单颗重量')
-  if (partnerSupplyEnabled && (salePriceCents === null || salePriceCents <= 0n)) throw httpError('启用合作商供货前请填写有效零售价')
   if (partnerKgBasePriceCents !== null && partnerKgBasePriceCents <= 0n) throw httpError('KG 标准合作商补货价必须大于 0')
   if (partnerReplenishmentEnabled) {
     if (!isPartnerUnitAllowed({ productCategoryId: Object.hasOwn(body, 'productCategoryId') ? body.productCategoryId : existing?.productCategoryId }, partnerOrderUnit)) throw httpError('糖果合作商补货仅支持单颗 PCS')
@@ -126,7 +124,6 @@ export function productData(body, existingImage = '', existing = null) {
     transferBoxWeightGrams,
     transferPieceEnabled,
     transferPieceWeightGrams,
-    partnerSupplyEnabled,
     partnerReplenishmentEnabled,
     partnerOrderUnit,
     partnerKgBasePriceCents,
@@ -170,7 +167,6 @@ export const productListSelect = {
   transferBoxWeightGrams: true,
   transferPieceEnabled: true,
   transferPieceWeightGrams: true,
-  partnerSupplyEnabled: true,
   partnerReplenishmentEnabled: true,
   partnerOrderUnit: true,
   partnerKgBasePriceCents: true,
@@ -208,7 +204,6 @@ export function serializeProduct(product, { includeCost = false } = {}) {
     transferBoxWeightGrams: product.transferBoxWeightGrams,
     transferPieceEnabled: product.transferPieceEnabled,
     transferPieceWeightGrams: product.transferPieceWeightGrams,
-    partnerSupplyEnabled: product.partnerSupplyEnabled,
     partnerReplenishmentEnabled: product.partnerReplenishmentEnabled,
     partnerOrderUnit: product.partnerOrderUnit || '',
     partnerKgBasePriceCents: product.partnerKgBasePriceCents == null ? null : product.partnerKgBasePriceCents.toString(),
@@ -252,7 +247,6 @@ productsRouter.get('/products', wrap(async (req, res) => {
       ...(productCategoryId ? { productCategoryId } : {}),
       ...(purpose === 'pos' ? { isActive: active ?? true } : {}),
       ...(purpose === 'transfer' ? { transferEnabled: active ?? true } : {}),
-      ...(purpose === 'partner' ? { partnerSupplyEnabled: active ?? true } : {}),
       ...(purpose === 'replenishment' ? { partnerReplenishmentEnabled: active ?? true } : {}),
       ...(q ? { OR: [
         { name: { contains: q, mode: 'insensitive' } },
@@ -340,7 +334,6 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
       barcode: body.barcode || '',
       isActive: true,
       transferEnabled: false,
-      partnerSupplyEnabled: false,
       trackInventory: body.trackInventory === true,
       sortOrder: body.sortOrder === '' || body.sortOrder == null ? index : body.sortOrder,
     })
@@ -404,7 +397,6 @@ productsRouter.post('/products/import', wrap(async (req, res) => {
         transferBoxWeightGrams: existing.transferBoxWeightGrams,
         transferPieceEnabled: existing.transferPieceEnabled,
         transferPieceWeightGrams: existing.transferPieceWeightGrams,
-        partnerSupplyEnabled: existing.partnerSupplyEnabled,
         partnerReplenishmentEnabled: existing.partnerReplenishmentEnabled,
         partnerOrderUnit: existing.partnerOrderUnit,
         partnerKgBasePriceCents: existing.partnerKgBasePriceCents,
@@ -455,17 +447,14 @@ productsRouter.put('/products/bulk', wrap(async (req, res) => {
   } else if (operation === 'purpose') {
     const purpose = String(req.body?.purpose || '')
     const enabled = req.body?.enabled === true
-    if (!['pos', 'transfer', 'partner'].includes(purpose)) throw httpError('业务用途不正确')
+    if (!['pos', 'transfer'].includes(purpose)) throw httpError('业务用途不正确')
     if (enabled && purpose === 'pos' && rows.some((row) => !row.sku || row.salePriceCents === null || row.costPriceCents === null)) {
       throw httpError('所选商品中存在缺少 SKU、售价或成本价的商品，不能批量启用 POS', 409)
     }
     if (enabled && purpose === 'transfer' && rows.some((row) => !row.transferCode && !row.sku)) {
       throw httpError('所选商品中存在缺少 SKU 和商品编号的商品，不能批量启用调拨', 409)
     }
-    if (enabled && purpose === 'partner' && rows.some((row) => row.salePriceCents === null || row.salePriceCents <= 0n)) {
-      throw httpError('所选商品中存在未设置有效零售价的商品，不能批量启用合作商供货', 409)
-    }
-    const field = purpose === 'pos' ? 'isActive' : purpose === 'transfer' ? 'transferEnabled' : 'partnerSupplyEnabled'
+    const field = purpose === 'pos' ? 'isActive' : 'transferEnabled'
     await prisma.$transaction(rows.map((row) => prisma.inventoryItem.update({
       where: { id: row.id },
       data: {

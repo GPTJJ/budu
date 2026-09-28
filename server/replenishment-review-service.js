@@ -283,17 +283,49 @@ export async function reviewReplenishmentOrder({ db, actor, orderId, action, bod
   throw reviewError('审核发生并发冲突，请刷新', 'REPLENISHMENT_REVIEW_CONFLICT', 409)
 }
 
-export async function listReplenishmentReviewOrders({ db, actor, status = '', now = new Date() }) {
-  const authorization = await authorizeReplenishmentReviewer({ db, actor, now })
+function dateBoundary(value, label, nextDay = false) {
+  if (!value) return null
+  const raw = String(value)
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00.000Z`) : null
+  if (!date || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) throw reviewError(`${label}格式不正确`)
+  const [year, month, day] = raw.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day + Number(nextDay), -8))
+}
+
+export function replenishmentReviewWhere({ status = '', startDate = '', endDate = '', partnerId = '', partnerStoreId = '' } = {}) {
   const normalizedStatus = String(status || '').trim().toUpperCase()
   if (normalizedStatus && !Object.values(REPLENISHMENT_ORDER_STATUSES).includes(normalizedStatus)) throw reviewError('订单状态筛选不正确')
-  const rows = await db.replenishmentOrder.findMany({
-    where: normalizedStatus ? { status: normalizedStatus } : {},
-    include: orderInclude,
-    orderBy: { submittedAt: 'desc' },
-    take: 500,
-  })
-  return { authorization, rows }
+  const start = dateBoundary(startDate, '开始日期')
+  const end = dateBoundary(endDate, '结束日期', true)
+  if (start && end && start >= end) throw reviewError('开始日期不能晚于结束日期')
+  const partner = String(partnerId || '').trim()
+  const store = String(partnerStoreId || '').trim()
+  if (partner.length > 120 || store.length > 120) throw reviewError('合作商或门店筛选不正确')
+  return {
+    ...(normalizedStatus ? { status: normalizedStatus } : {}),
+    ...(start || end ? { submittedAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
+    ...(partner ? { partnerId: partner } : {}),
+    ...(store ? { partnerStoreId: store } : {}),
+  }
+}
+
+export async function listReplenishmentReviewOrders({ db, actor, status = '', filters = {}, all = false, now = new Date() }) {
+  const page = Number(filters.page || 1)
+  const pageSize = Number(filters.pageSize || 20)
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw reviewError('分页参数不正确')
+  const where = replenishmentReviewWhere({ ...filters, status: filters.status ?? status })
+  const authorization = await authorizeReplenishmentReviewer({ db, actor, now })
+  const [total, rows, partners, stores] = await Promise.all([
+    all ? Promise.resolve(null) : db.replenishmentOrder.count({ where }),
+    db.replenishmentOrder.findMany({
+      where, include: orderInclude,
+      orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
+      ...(!all ? { skip: (page - 1) * pageSize, take: pageSize } : {}),
+    }),
+    all ? Promise.resolve([]) : db.partner.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    all ? Promise.resolve([]) : db.partnerStore.findMany({ select: { id: true, partnerId: true, name: true }, orderBy: { name: 'asc' } }),
+  ])
+  return { authorization, rows, total, page, pageSize, partners, stores }
 }
 
 export async function getReplenishmentReviewOrder({ db, actor, orderId, now = new Date() }) {

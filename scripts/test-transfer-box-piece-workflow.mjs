@@ -20,7 +20,7 @@ try {
   const headers = { 'Content-Type': 'application/json', Cookie: cookie }
   const productResult = await json(await fetch(`${origin}/api/v2/products`, { method: 'POST', headers, body: JSON.stringify({
     name: '柠檬散糖', sku: 'BUDU-LEMON', transferCode: 'NO.2', salePriceCents: '', costPriceCents: '', unit: '颗',
-    isActive: false, transferEnabled: true, partnerSupplyEnabled: false, sortOrder: 1,
+    isActive: false, transferEnabled: true, sortOrder: 1,
     transferBoxEnabled: true, transferBoxWeightGrams: 2500, transferPieceEnabled: true, transferPieceWeightGrams: 6,
   }) }))
   if (productResult.status !== 201) throw new Error(`创建规格商品失败：${productResult.status} ${JSON.stringify(productResult.body)}`)

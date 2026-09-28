@@ -46,17 +46,6 @@ export function partnerLifecycleFields(value) {
   return { status, isActive: status === PARTNER_STATUSES.ACTIVE }
 }
 
-export function legacyPartnerLifecycleFields(body, current = null) {
-  if (body?.isActive !== undefined && typeof body.isActive !== 'boolean') throw bad('合作商启停状态不正确')
-  if (!current) return partnerLifecycleFields(body?.isActive === false ? PARTNER_STATUSES.PAUSED : PARTNER_STATUSES.ACTIVE)
-  const currentFields = partnerLifecycleFields(current.status)
-  if (body?.isActive === undefined || body.isActive === currentFields.isActive) return currentFields
-  if (currentFields.status === PARTNER_STATUSES.TERMINATED) {
-    throw bad('合作商已停止合作，请通过合作商管理明确变更生命周期', 409, 'PARTNER_LEGACY_STATUS_CONFLICT')
-  }
-  return partnerLifecycleFields(body.isActive ? PARTNER_STATUSES.ACTIVE : PARTNER_STATUSES.PAUSED)
-}
-
 export function validatePartnerStoreStatus(value) {
   const status = String(value || '').toUpperCase()
   if (!Object.values(PARTNER_STORE_STATUSES).includes(status)) throw bad('合作门店状态不正确')

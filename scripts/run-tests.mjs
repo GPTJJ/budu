@@ -30,6 +30,8 @@ const NODE_TEST_SUITE = [
   'test-partner-replenishment-gate3.mjs',
   'test-partner-replenishment-gate4.mjs',
   'test-partner-replenishment-gate5.mjs',
+  'test-replenishment-cleanup-export.mjs',
+  'test-retire-partner-supply-migration.mjs',
   'test-partner-replenishment-gate6.mjs',
   'test-partner-replenishment-gate7.mjs',
   'test-partner-replenishment-gate8.mjs',
@@ -95,8 +97,6 @@ const NODE_TEST_SUITE = [
   'test-transfer-actual-shipment-migration-rehearsal.mjs', // 57→58 additive 实发数量权威与历史 NULL 保护
   'test-transfer-notification-routing.mjs', // 调拨按发货门店业务日排班 employeeId 路由、fallback、幂等
   'test-transfer-delivery-recipients.mjs', // 调拨卡片只读真实 NotificationDelivery 收件人事实
-  'test-partner-supply-contract.mjs', // 合作商供货权限/分类权威/Excel 合同
-  'test-partner-supply-migration-rehearsal.mjs', // 52→53 additive migration 与历史事实保护
   'test-unified-product-center-migration-rehearsal.mjs', // 53→54 独立合作商开关默认关闭且历史身份/引用不变
   'test-product-group-migration-rehearsal.mjs', // 54→55 仅新增 POS 展示分组，所有历史 InventoryItem 引用不变
   'test-product-group-workflow.mjs', // 人工分组、互斥成员、真实 SKU 下单与跨域身份保持
@@ -154,7 +154,6 @@ const DIRECT_SUITE = [
   'test-payroll-self-scope.mjs', // Gate 29L：员工本人范围只认 User.employeeId → critical
   'test-inventory-workflow.mjs',    // Inventory 调货/采购流程（本地起服务）→ critical
   'test-purchase-receiving-workflow.mjs', // 采购收货事务、StockLedger、幂等与安全错误 → critical
-  'test-partner-supply-workflow.mjs', // 合作商供货价格快照/发货/多笔收款/通知/零库存副作用 → critical
   'test-unified-product-center-workflow.mjs', // 单一 InventoryItem、独立业务开关、批量管理与稳定身份 → critical
   'test-transfer-box-piece-workflow.mjs', // 箱/颗独立持久化、混合调拨、普通 quantity 兼容 → critical
   'test-payroll.mjs',               // Payroll 工资计算（单元）→ critical
@@ -197,7 +196,6 @@ const CRITICAL_DIRECT = [
   'test-payroll-self-scope.mjs',
   'test-inventory-workflow.mjs',
   'test-purchase-receiving-workflow.mjs',
-  'test-partner-supply-workflow.mjs',
   'test-unified-product-center-workflow.mjs',
   'test-transfer-box-piece-workflow.mjs',
   'test-schedule-batch-workflow.mjs', // 排班 draft 最终单次原子保存、并发保护、legacy 与调拨 resolver
@@ -213,6 +211,8 @@ const CRITICAL_NODE_TEST = [
   'test-partner-replenishment-gate3.mjs',
   'test-partner-replenishment-gate4.mjs',
   'test-partner-replenishment-gate5.mjs',
+  'test-replenishment-cleanup-export.mjs',
+  'test-retire-partner-supply-migration.mjs',
   'test-partner-replenishment-gate6.mjs',
   'test-partner-replenishment-gate7.mjs',
   'test-partner-replenishment-gate8.mjs',
@@ -261,8 +261,6 @@ const CRITICAL_NODE_TEST = [
   'test-product-material-contract.mjs',
   'test-product-category-migration-rehearsal.mjs',
   'test-transfer-summary-export.mjs',
-  'test-partner-supply-contract.mjs',
-  'test-partner-supply-migration-rehearsal.mjs',
   'test-unified-product-center-migration-rehearsal.mjs',
 ]
 // 已知既有失败（不纳入统一入口；原因见完成报告）

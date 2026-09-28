@@ -11,28 +11,26 @@ function db(rows) {
   return { partner: { findUnique: async () => partner }, inventoryItem: { findMany: async ({ where }) => rows.filter(r => r.category === where.category && r.partnerReplenishmentEnabled === where.partnerReplenishmentEnabled) } }
 }
 
-test('旧供货 ON / Partner 人工 OFF 不进入目录，后续旧业务保存仍保持 OFF', async () => {
-  const off = productData({ ...product, partnerSupplyEnabled: true, partnerReplenishmentEnabled: false })
-  const { partnerReplenishmentEnabled, ...oldSave } = { ...product, ...off }
-  const saved = productData(oldSave, '', off)
+test('商品中心补货开关 OFF 不进入目录，后续保存保持 OFF', async () => {
+  const off = productData({ ...product, partnerReplenishmentEnabled: false })
+  const { partnerReplenishmentEnabled, ...laterSave } = { ...product, ...off }
+  const saved = productData(laterSave, '', off)
   assert.equal(saved.partnerReplenishmentEnabled, false)
-  assert.equal(saved.partnerSupplyEnabled, true)
   assert.deepEqual(await listPartnerCatalogue({ db: db([{ ...product, ...saved }]), principal }), [])
 })
 
-test('旧供货 OFF / Partner 人工 ON 进入目录，旧业务保存不得覆盖 ON', async () => {
-  const on = productData({ ...product, partnerSupplyEnabled: false, partnerReplenishmentEnabled: true })
-  const { partnerReplenishmentEnabled, ...oldSave } = { ...product, ...on }
-  const saved = productData(oldSave, '', on)
+test('商品中心补货开关 ON 进入目录，后续保存保持 ON 和价格', async () => {
+  const on = productData({ ...product, partnerReplenishmentEnabled: true })
+  const { partnerReplenishmentEnabled, ...laterSave } = { ...product, ...on }
+  const saved = productData(laterSave, '', on)
   assert.equal(saved.partnerReplenishmentEnabled, true)
-  assert.equal(saved.partnerSupplyEnabled, false)
   const rows = await listPartnerCatalogue({ db: db([{ ...product, ...saved }]), principal })
   assert.equal(rows.length, 1)
   assert.equal(rows[0].referencePriceCents, '325')
 })
 
 test('Partner 目录直接返回商品中心分类权威，未分类商品保持 null', async () => {
-  const enabled = productData({ ...product, partnerSupplyEnabled: false, partnerReplenishmentEnabled: true })
+  const enabled = productData({ ...product, partnerReplenishmentEnabled: true })
   const category = { id: 'category-a', name: '统一分类', sortOrder: 7 }
   const [classified] = await listPartnerCatalogue({ db: db([{ ...product, ...enabled, productCategory: category }]), principal })
   const [uncategorized] = await listPartnerCatalogue({ db: db([{ ...product, ...enabled, productCategory: null }]), principal })

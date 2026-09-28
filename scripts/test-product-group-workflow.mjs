@@ -25,7 +25,7 @@ try {
   const createProduct = async (name, sku, sortOrder, price = '7900') => {
     const result = await json(await fetch(`${base}/products`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({
       name, sku, salePriceCents: price, costPriceCents: '3000', unit: '个', image: name.endsWith('蓝') ? coverImage : '', isActive: true,
-      transferEnabled: name.endsWith('蓝'), partnerSupplyEnabled: name.endsWith('蓝'), sortOrder,
+      transferEnabled: name.endsWith('蓝'), sortOrder,
     }) }))
     if (result.status !== 201) throw new Error(`创建商品失败：${result.status} ${JSON.stringify(result.body)}`)
     return result.body.product
@@ -76,8 +76,6 @@ try {
 
   const transfer = await json(await fetch(`${base}/transfer-master-items?active=true&category=product`, { headers: { Cookie: cookie } }))
   if (!transfer.body.rows.some((item) => item.id === blue.productId)) throw new Error('商品组关系破坏门店调拨真实商品选择')
-  const partner = await json(await fetch(`${base}/partner-supply-products`, { headers: { Cookie: cookie } }))
-  if (!partner.body.rows.some((item) => item.id === blue.productId)) throw new Error('商品组关系破坏合作商供货真实商品选择')
 
   const disabledGroup = await json(await fetch(`${base}/product-groups/${group.id}`, { method: 'PUT', headers: jsonHeaders(cookie), body: JSON.stringify({
     name: group.name, coverImage, sortOrder: 10, isActive: false, version: group.version,

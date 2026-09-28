@@ -109,6 +109,8 @@ function memoryDb(initial = fixtures()) {
 
   const client = (source) => ({
     user: { findUnique: async ({ where }) => include(source.users.find((row) => row.id === where.id)) },
+    partner: { findMany: async () => [{ id: 'partner-a', name: '秦皇岛合作商' }] },
+    partnerStore: { findMany: async () => [{ id: 'store-a', partnerId: 'partner-a', name: '秦皇岛一店' }] },
     store: { findUnique: async ({ where }) => include(source.stores.find((row) => row.key === where.key)) },
     employee: { findUnique: async ({ where }) => include(source.employees.find((row) => row.id === where.id)) },
     schedule: { findMany: async ({ where, take }) => source.schedules.filter((row) => row.storeKey === where.storeKey && row.date === where.date).slice(0, take).map(include) },
@@ -120,7 +122,8 @@ function memoryDb(initial = fixtures()) {
           : source.orders.find((row) => row.id === where.id))
       },
       findFirst: async ({ where }) => include(source.orders.find((row) => (!where.id || row.id === where.id) && (!where.partnerId || row.partnerId === where.partnerId))),
-      findMany: async ({ where = {} } = {}) => source.orders.filter((row) => !where.status || row.status === where.status).map(include),
+      findMany: async ({ where = {}, skip = 0, take } = {}) => source.orders.filter((row) => !where.status || row.status === where.status).slice(skip, take == null ? undefined : skip + take).map(include),
+      count: async ({ where = {} } = {}) => source.orders.filter((row) => !where.status || row.status === where.status).length,
       updateMany: async ({ where, data }) => {
         const row = source.orders.find((item) => item.id === where.id
           && (!where.partnerId || item.partnerId === where.partnerId)
@@ -369,6 +372,20 @@ test('review queue/detail authorization is dynamic and status-filtered', async (
   assert.equal(list.authorization.authority, 'GUANSHE_ON_DUTY')
   assert.equal((await getReplenishmentReviewOrder({ db, actor: { id: 'duty' }, orderId: 'order-1', now: beijingMonday })).order.id, 'order-1')
   await assert.rejects(() => listReplenishmentReviewOrders({ db, actor: { id: 'finance' }, now: beijingMonday }), /无补货审核权限/)
+})
+
+test('review list paginates while export mode returns every matching order', async () => {
+  const rows = fixtures()
+  rows.orders.push({ ...submittedOrder(), id: 'order-2', orderNo: 'RPL-2' })
+  const db = memoryDb(rows)
+  const first = await listReplenishmentReviewOrders({ db, actor: { id: 'developer' }, filters: { status: 'SUBMITTED', page: 1, pageSize: 1 }, now: beijingMonday })
+  const second = await listReplenishmentReviewOrders({ db, actor: { id: 'developer' }, filters: { status: 'SUBMITTED', page: 2, pageSize: 1 }, now: beijingMonday })
+  const exported = await listReplenishmentReviewOrders({ db, actor: { id: 'developer' }, filters: { status: 'SUBMITTED' }, all: true, now: beijingMonday })
+  assert.equal(first.total, 2)
+  assert.equal(first.rows.length, 1)
+  assert.equal(second.rows.length, 1)
+  assert.equal(exported.rows.length, 2)
+  assert.deepEqual(first.stores, [{ id: 'store-a', partnerId: 'partner-a', name: '秦皇岛一店' }])
 })
 
 test('review navigation is a narrow candidate shell and does not grant Partner master access', () => {

@@ -9,7 +9,6 @@ import { getUserById, getUserByUsername, listUsers, createUser, updateUser, dele
 import { hashPassword, verifyPassword, signToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
-import { partnerSupplyRouter } from './partner-supply.js'
 import { reportCenterRouter } from './report-center.js'
 import { developerSafeDeleteRouter } from './developer-safe-delete.js'
 import { orderPurposeRouter } from './order-purpose.js'
@@ -690,7 +689,6 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
       (/^\/transfer-requests(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/transfer-master-items(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
       (/^\/product-categories(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, MODULE_KEYS.INVENTORY_TRANSFER]) ||
-      (/^\/(?:partners|partner-supply|partner-receipts)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_SUPPLY]) ||
       (/^\/partner-management\/(?:replenishment-orders|fulfillment-stores)(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW]) ||
       (/^\/partner-management(?:\/|$)/.test(pathname) && [MODULE_KEYS.PARTNER_MANAGEMENT]) ||
       (/^\/(?:purchase-requests|suppliers)(?:\/|$)/.test(pathname) && [MODULE_KEYS.INVENTORY_PURCHASE]) ||
@@ -711,7 +709,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, partnerSupplyRouter, v2Router)
+  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

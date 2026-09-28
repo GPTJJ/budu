@@ -10,7 +10,7 @@ const { createApp } = await import('../server/app.js')
 const { prisma } = await import('../server/pg.js')
 const { hashPassword } = await import('../server/auth.js')
 const server = createApp().listen(0)
-const ids = { mailing: 'safe-mailing', invoice: 'safe-invoice', transfer: 'safe-transfer', purchase: 'safe-purchase', partnerSupply: 'safe-partner-order' }
+const ids = { mailing: 'safe-mailing', invoice: 'safe-invoice', transfer: 'safe-transfer', purchase: 'safe-purchase' }
 
 const request = (base, cookie, endpoint, options = {}) => fetch(`${base}${endpoint}`, { ...options, headers: { 'Content-Type': 'application/json', Cookie: cookie, ...(options.headers || {}) } })
 
@@ -34,12 +34,9 @@ try {
   await prisma.invoice.create({ data: { id: ids.invoice, storeKey: 'guanshe', companyName: '测试企业', amountCents: 12300n, status: 'done', createdBy: developer.username } })
   await prisma.transferRequest.create({ data: { id: ids.transfer, fromStoreKey: 'guanshe', toStoreKey: 'xidan', status: 'shipped', createdBy: developer.username, shippedAt: new Date(), items: { create: { id: 'safe-transfer-item', itemId: 'safe-product', quantity: 2, itemNameSnapshot: '安全删除测试商品' } } } })
   await prisma.purchaseRequest.create({ data: { id: ids.purchase, storeKey: 'guanshe', status: 'received', createdBy: developer.username, items: { create: { id: 'safe-purchase-item', itemId: 'safe-product', orderedQty: 3, receivedQty: 3, itemNameSnapshot: '安全删除测试商品' } } } })
-  await prisma.partner.create({ data: { id: 'safe-partner', name: '安全删除测试合作商', defaultStoreKey: 'guanshe' } })
-  await prisma.partnerSupplyOrder.create({ data: { id: ids.partnerSupply, orderNo: 'PS-SAFE-1', partnerId: 'safe-partner', partnerNameSnapshot: '安全删除测试合作商', fromStoreKey: 'guanshe', fromStoreNameSnapshot: '官舍店', businessDate: new Date('2026-08-29T00:00:00.000Z'), status: 'shipped', defaultDiscountBpsSnapshot: 6500, effectiveDiscountBps: 6500, totalAmountCents: 6500n, createdById: developer.id, createdBy: developer.username, shippedAt: new Date(), items: { create: { id: 'safe-partner-item', productId: 'safe-product', productCodeSnapshot: 'SAFE', productNameSnapshot: '安全删除测试商品', retailPriceCentsSnapshot: 10000n, discountBpsSnapshot: 6500, partnerUnitPriceCents: 6500n, quantity: 1, subtotalCents: 6500n } }, receipts: { create: { id: 'safe-receipt', amountCents: 6500n, receivedDate: new Date('2026-08-29T00:00:00.000Z'), createdById: developer.id, createdBy: developer.username } } } })
   await prisma.notification.createMany({ data: [
     ['mailing', ids.mailing, 'store-mailing'], ['invoice', ids.invoice, 'finance-invoice'],
     ['transfer', ids.transfer, 'inventory-transfer'], ['purchase', ids.purchase, 'inventory-purchase'],
-    ['partner-supply-order', ids.partnerSupply, 'partner-supply'],
   ].map(([refType, refId, target], index) => ({ id: `safe-notification-${index}`, username: developer.username, title: '安全删除测试通知', content: '测试', refType, refId, target })) })
 
   const forbidden = await request(base, adminCookie, `/v2/developer-sensitive-records/invoice/${ids.invoice}/delete`, { method: 'POST', body: JSON.stringify({ reasonCode: 'test', secondPassword: 'anything' }) })
@@ -52,29 +49,24 @@ try {
     if (!response.ok) throw new Error(`${type} delete failed: ${response.status} ${await response.text()}`)
   }
 
-  const [mailingRows, invoiceRows, transferRows, purchaseRows, partnerRows, report] = await Promise.all([
+  const [mailingRows, invoiceRows, transferRows, purchaseRows] = await Promise.all([
     request(base, developerCookie, '/v2/mailing-records').then((res) => res.json()),
     request(base, developerCookie, '/v2/invoices').then((res) => res.json()),
     request(base, developerCookie, '/v2/transfer-requests').then((res) => res.json()),
     request(base, developerCookie, '/v2/purchase-requests').then((res) => res.json()),
-    request(base, developerCookie, '/v2/partner-supply-orders').then((res) => res.json()),
-    request(base, developerCookie, '/v2/partner-supply-report').then((res) => res.json()),
   ])
-  if ([mailingRows, invoiceRows, transferRows, purchaseRows, partnerRows].some((result) => result.rows?.length)) throw new Error('deleted record remained in a normal list')
-  if (report.orders?.length || report.receipts?.length || report.summary?.length) throw new Error('deleted partner order remained in reports/statistics')
+  if ([mailingRows, invoiceRows, transferRows, purchaseRows].some((result) => result.rows?.length)) throw new Error('deleted record remained in a normal list')
   const [notifications, unread] = await Promise.all([
     request(base, developerCookie, '/v2/notifications').then((res) => res.json()),
     request(base, developerCookie, '/v2/notifications/unread-count').then((res) => res.json()),
   ])
   if (notifications.rows?.length || unread.count !== 0) throw new Error('deleted business records remained in normal notifications or unread counts')
 
-  const childCounts = await Promise.all([prisma.transferItem.count(), prisma.purchaseItem.count(), prisma.partnerSupplyItem.count(), prisma.partnerReceipt.count()])
+  const childCounts = await Promise.all([prisma.transferItem.count(), prisma.purchaseItem.count()])
   if (childCounts.some((count) => count !== 1)) throw new Error(`child records changed: ${childCounts.join(',')}`)
-  const blockedReceiptMutation = await request(base, developerCookie, '/v2/partner-receipts/safe-receipt/void', { method: 'POST', body: JSON.stringify({ reason: 'must be blocked' }) })
-  if (blockedReceiptMutation.status !== 409) throw new Error('deleted partner order still allowed child mutation')
 
   const deleted = await request(base, developerCookie, '/v2/developer-sensitive-records').then((res) => res.json())
-  if (deleted.rows?.length !== 5 || !Object.values(ids).every((id) => deleted.rows.some((row) => row.id === id))) throw new Error('deleted records center did not return all five domains')
+  if (deleted.rows?.length !== 4 || !Object.values(ids).every((id) => deleted.rows.some((row) => row.id === id))) throw new Error('deleted records center did not return all four domains')
   for (const [type, id] of Object.entries(ids)) {
     const detail = await request(base, developerCookie, `/v2/developer-sensitive-records/${type}/${id}`).then((res) => res.json())
     if (detail.record.id !== id || detail.audits.length !== 1 || JSON.stringify(detail).includes('delete-secret')) throw new Error(`${type} detail/audit is invalid or leaked a password`)
@@ -83,11 +75,11 @@ try {
   }
 
   const [activeRows, audits] = await Promise.all([
-    Promise.all(Object.entries({ mailingRecord: ids.mailing, invoice: ids.invoice, transferRequest: ids.transfer, purchaseRequest: ids.purchase, partnerSupplyOrder: ids.partnerSupply }).map(([delegate, id]) => prisma[delegate].findUnique({ where: { id } }))),
+    Promise.all(Object.entries({ mailingRecord: ids.mailing, invoice: ids.invoice, transferRequest: ids.transfer, purchaseRequest: ids.purchase }).map(([delegate, id]) => prisma[delegate].findUnique({ where: { id } }))),
     prisma.sensitiveRecordAudit.findMany(),
   ])
   if (activeRows.some((row) => row.deletedAt || row.deletedBy || row.deleteReason)) throw new Error('restore did not reactivate original records cleanly')
-  if (audits.length !== 10 || audits.filter((row) => row.action === 'DELETE').length !== 5 || audits.filter((row) => row.action === 'RESTORE').length !== 5) throw new Error('delete/restore audit chain is incomplete')
+  if (audits.length !== 8 || audits.filter((row) => row.action === 'DELETE').length !== 4 || audits.filter((row) => row.action === 'RESTORE').length !== 4) throw new Error('delete/restore audit chain is incomplete')
   if (audits.some((row) => JSON.stringify(row).includes('delete-secret'))) throw new Error('audit leaked secondary password')
   const wrongStatuses = []
   for (let attempt = 0; attempt < 5; attempt += 1) {

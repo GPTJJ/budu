@@ -23,7 +23,8 @@ window.fetch = async (url, options = {}) => {
   const parsed = new URL(url, location.origin)
   const path = parsed.pathname
   const method = options.method || 'GET'
-  if (path === '/api/v2/partner-management/replenishment-orders' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, rows: [order] })
+  if (path === '/api/v2/partner-management/replenishment-orders/export' && method === 'GET') { requests.push({ type: 'export', query: Object.fromEntries(parsed.searchParams) }); return json({ rows: [order, { ...order, id: 'order-2', orderNo: 'RPL-2' }] }) }
+  if (path === '/api/v2/partner-management/replenishment-orders' && method === 'GET') { requests.push({ type: 'list', query: Object.fromEntries(parsed.searchParams) }); return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, rows: parsed.searchParams.get('page') === '2' ? [{ ...order, id: 'order-2', orderNo: 'RPL-2' }] : [order], total: 21, page: Number(parsed.searchParams.get('page') || 1), pageSize: 20, partners: [{ id: 'partner-a', name: '秦皇岛合作商' }, { id: 'partner-b', name: '其他合作商' }], stores: [{ id: 'store-a', partnerId: 'partner-a', name: '秦皇岛一店' }, { id: 'store-b', partnerId: 'partner-b', name: '其他门店' }] }) }
   if (path === '/api/v2/partner-management/replenishment-orders/order-1' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, order })
   if (path.endsWith('/review-preview') && method === 'POST') {
     const body = JSON.parse(options.body)

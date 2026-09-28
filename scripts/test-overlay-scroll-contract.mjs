@@ -58,7 +58,6 @@ test('page-level body scroll locks have been removed', () => {
 test('critical sheets use separated header and scroll regions', () => {
   for (const relative of [
     'src/components/StoreTransferPage.jsx',
-    'src/components/PartnerSupplyPage.jsx',
     'src/components/approval/ApprovalSelectors.jsx',
   ]) {
     const source = fs.readFileSync(path.join(root, relative), 'utf8')
