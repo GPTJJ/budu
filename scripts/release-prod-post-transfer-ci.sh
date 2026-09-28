@@ -40,7 +40,7 @@ for script in scripts/deploy-remote.sh scripts/release-prod-transfer-cas-ci.sh \
 done
 
 # The checkout is exported at the authorized SHA; no workspace secrets enter
-# the build context. Production sees only the inspected archive over SSH stdin.
+# the build context. Production receives only the inspected, hash-bound archive.
 unset SSH_HOST SSH_USER APP_DIR SSH_KEY DATABASE_URL
 RUN_DIR="$(mktemp -d "$RUNNER_TEMP/post-transfer.XXXXXX")"
 export TRANSFER_CAS_KNOWN_HOSTS="$RUN_DIR/known_hosts"
@@ -66,6 +66,10 @@ chmod 600 "$TRANSFER_CAS_KNOWN_HOSTS"
 
 docker version
 docker buildx version
+if [ -n "${RETAINED_RELEASE_ARTIFACT:-}" ]; then
+  test -f "$RETAINED_RELEASE_ARTIFACT"
+  cp "$RETAINED_RELEASE_ARTIFACT" "$RUN_DIR/image.tar"
+else
 BUILDER_NAME="post-transfer-${GITHUB_RUN_ID:-$$}"
 docker buildx create --name "$BUILDER_NAME" --driver docker-container
 docker buildx inspect "$BUILDER_NAME" --bootstrap | tee "$RUN_DIR/builder.txt"
@@ -78,11 +82,13 @@ timeout 35m docker buildx build --builder "$BUILDER_NAME" --platform linux/amd64
   --provenance=false --sbom=false \
   --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUN_DIR/image.tar" \
   "$RUN_DIR/source"
+fi
 
 bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   "${PROFILE[@]}" | tee "$RUN_DIR/artifact.json"
+printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
 bash scripts/deploy-prod-transfer-cas.sh preflight --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" "${PROFILE[@]}" | tee "$RUN_DIR/preflight.json"
-timeout 35m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+timeout 290m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" --authorize-release-sha "$RELEASE_SHA" \
   "${PROFILE[@]}" | tee "$RUN_DIR/deployment.json"

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -42,6 +43,8 @@ PG = 'budu-bj-006-final-restore-20260822-055653z-pg'
 TEMPLATE = '/opt/budu/deploy/nginx/conf.d/budu.conf.template'
 ACTIVE = '/etc/nginx/conf.d/budu.conf'
 LOCK = '/run/lock/budu-transfer-cas-release'
+STAGING_ROOT = '/opt/budu/.release-staging'
+UPLOAD_TIMEOUT = 4 * 60 * 60
 ALLOWLIST = {
     'scripts/deploy-prod-transfer-cas.sh',
     'scripts/deploy-prod-transfer-cas.py',
@@ -852,6 +855,115 @@ def check_controller_result(raw):
     print(json.dumps(result), flush=True)
 
 
+STAGING_CODE = r'''import hashlib,json,os,pathlib,pwd,re,stat,sys
+v=json.load(sys.stdin)
+def check(ok,code):
+    if not ok:
+        print(json.dumps({'error':code})); raise SystemExit(0)
+check(bool(re.fullmatch('[0-9a-f]{40}',v['release'])), 'STAGING_RELEASE_INVALID')
+check(bool(re.fullmatch('[0-9a-f]{64}',v['sha256'])) and v['bytes']>0, 'STAGING_IDENTITY_INVALID')
+root=pathlib.Path('/opt/budu/.release-staging')
+account=pwd.getpwnam('ubuntu')
+if not root.exists() and not root.is_symlink():
+    root.mkdir(mode=0o700); os.chown(root,account.pw_uid,account.pw_gid)
+check(root.resolve()==root and root.is_dir(), 'STAGING_PATH_UNSAFE')
+s=root.stat()
+check(s.st_uid==account.pw_uid and stat.S_IMODE(s.st_mode)==0o700, 'STAGING_DIRECTORY_PERMISSIONS')
+part=root/(v['release']+'.tar.part'); final=root/(v['release']+'.tar'); meta=root/(v['release']+'.json')
+identity={k:v[k] for k in ('release','sha256','bytes')}
+def safe(p):
+    if not p.exists() and not p.is_symlink(): return False
+    s=p.lstat()
+    check(stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==account.pw_uid
+          and stat.S_IMODE(s.st_mode)==0o600, 'STAGING_FILE_UNSAFE')
+    return True
+def create(p,data):
+    fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'wb') as out:
+        os.fchown(out.fileno(),account.pw_uid,account.pw_gid); out.write(data)
+        out.flush(); os.fsync(out.fileno())
+if safe(meta):
+    check(json.loads(meta.read_text())==identity, 'STAGING_ARTIFACT_IDENTITY_CONFLICT')
+else:
+    check(v['action']=='prepare' and not safe(part) and not safe(final), 'STAGING_METADATA_MISSING')
+    create(meta,json.dumps(identity,sort_keys=True).encode())
+has_part,has_final=safe(part),safe(final)
+check(not (has_part and has_final), 'STAGING_AMBIGUOUS_FILES')
+if v['action']=='prepare':
+    if not has_part and not has_final: create(part,b'')
+    current=final if has_final else part
+    if current.stat().st_size>v['bytes']:
+        current.unlink(); meta.unlink()
+        check(False,'STAGING_OVERSIZED_PART')
+    print(json.dumps({'path':str(current),'bytes':current.stat().st_size,'complete':has_final}))
+else:
+    check(v['action'] in ('verify','cleanup'), 'STAGING_ACTION_INVALID')
+    current=final if has_final else part
+    check(has_part or has_final, 'STAGING_FILE_MISSING')
+    h=hashlib.sha256()
+    with current.open('rb') as src:
+        for block in iter(lambda:src.read(1024*1024),b''): h.update(block)
+    valid=current.stat().st_size==v['bytes'] and h.hexdigest()==v['sha256']
+    if not valid:
+        current.unlink(); meta.unlink()
+        check(False,'STAGING_SIZE_OR_SHA256_MISMATCH')
+    if v['action']=='cleanup':
+        current.unlink(); meta.unlink()
+        print(json.dumps({'cleaned':True}))
+    else:
+        if has_part: os.rename(part,final)
+        fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)
+        print(json.dumps({'path':str(final),'bytes':v['bytes'],'sha256':h.hexdigest(),'verified':True}))
+'''
+
+
+def staging_action(remote, art, action):
+    result = json.loads(remote.py(STAGING_CODE, {'action':action,'release':art['release'],
+                                                'sha256':art['archiveHash'],'bytes':art['archive']}, timeout=180))
+    require('error' not in result, result.get('error','STAGING_FAILED'))
+    return result
+
+
+def stage_artifact(remote, path, art):
+    require(shutil.which('rsync') is not None, 'RUNNER_RSYNC_MISSING')
+    remote.run(['rsync','--version'])
+    with open(path,'rb') as stream:
+        require(file_hash(stream)==art['archiveHash'], 'ARTIFACT_CHANGED')
+    prepared = staging_action(remote, art, 'prepare')
+    started = time.monotonic()
+    print(json.dumps({'stage':'ARTIFACT_UPLOAD_STARTED','releaseSha':art['release'],
+                      'archiveBytes':art['archive'],'resumeBytes':prepared['bytes']}), flush=True)
+    if not prepared['complete']:
+        target = STAGING_ROOT+'/'+art['release']+'.tar.part'
+        args = ['rsync','--partial','--append-verify','--chmod=F600','--timeout=300',
+                '-e',shlex.join(remote.ssh[:-1]),str(path),remote.ssh[-1]+':'+target]
+        for attempt in range(1,4):
+            remaining = UPLOAD_TIMEOUT-(time.monotonic()-started)
+            require(remaining>0, 'ARTIFACT_UPLOAD_TIMEOUT')
+            try:
+                result = subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=remaining)
+            except subprocess.TimeoutExpired:
+                raise GateError('ARTIFACT_UPLOAD_TIMEOUT') from None
+            if result.returncode==0: break
+            print(json.dumps({'stage':'ARTIFACT_UPLOAD_RETRY','attempt':attempt,
+                              'partialRetained':True,'rsyncExit':result.returncode}), flush=True)
+        require(result.returncode==0, 'ARTIFACT_UPLOAD_FAILED_PARTIAL_RETAINED')
+    verified = staging_action(remote, art, 'verify')
+    require(verified.get('verified') is True and verified.get('bytes')==art['archive']
+            and verified.get('sha256')==art['archiveHash'], 'STAGING_VERIFICATION_INVALID')
+    print(json.dumps({'stage':'ARTIFACT_UPLOAD_VERIFIED','elapsedSeconds':time.monotonic()-started,
+                      'archiveBytes':verified['bytes'],'archiveSha256':verified['sha256']}), flush=True)
+    return verified['path']
+
+
+LOCAL_IMPORT_CODE = """import json,subprocess,sys,time
+started=time.monotonic()
+result=subprocess.run(['docker','load','-i',sys.argv[1]],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+print(json.dumps({'returncode':result.returncode,'elapsedSeconds':time.monotonic()-started}))
+raise SystemExit(result.returncode)
+"""
+
+
 def deploy(remote, repo, path, art, ledger, authorize):
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     require(authorize == art['release'], 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
@@ -864,20 +976,29 @@ def deploy(remote, repo, path, art, ledger, authorize):
     remote.py('import os; os.mkdir(%r,0o700)' % LOCK)
     handed_off = False
     import_started = import_complete = False
+    staging_started = staging_complete = False
     try:
         require(not remote.run(['docker','ps','-aq','--filter','name=^/' + name + '$']).strip(), 'CANDIDATE_NAME_EXISTS')
         require(not remote.run(['docker','images','-q',art['imageReference']]).strip(), 'CANDIDATE_TAG_EXISTS')
-        with open(path, 'rb') as stream:
-            require(file_hash(stream) == art['archiveHash'], 'ARTIFACT_CHANGED')
-            stream.seek(0)
-            import_started = True
-            try:
-                r = subprocess.run(remote.ssh + [shlex.join(['docker','load'])], stdin=stream,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800)
-            except subprocess.TimeoutExpired:
-                raise GateError('ARTIFACT_LOAD_TIMEOUT') from None
-            require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
-            import_complete = True
+        staging_started = True
+        staged = stage_artifact(remote, path, art)
+        staging_complete = True
+        # Refresh authority and the unchanged conservative disk gate after a long upload.
+        fresh = preflight(remote, art, ledger)
+        require(fresh['old']['Id']==state['old']['Id'] and fresh['template']==state['template'],
+                'AUTHORITY_CHANGED_DURING_UPLOAD')
+        import_started = True
+        try:
+            r = subprocess.run(remote.ssh + [shlex.join(['python3','-c',LOCAL_IMPORT_CODE,staged])],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800)
+        except subprocess.TimeoutExpired:
+            raise GateError('ARTIFACT_LOAD_TIMEOUT') from None
+        require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
+        imported = json.loads(r.stdout)
+        require(imported.get('returncode')==0, 'ARTIFACT_LOAD_FAILED')
+        import_complete = True
+        print(json.dumps({'stage':'LOCAL_ARTIFACT_IMPORT_COMPLETE',
+                          'elapsedSeconds':imported['elapsedSeconds']}), flush=True)
         image = resolve_loaded_image(remote, art)
         art['loadedDockerImageId'] = image['Id']
         # Record post-import storage before any writer is stopped; no raw
@@ -902,12 +1023,14 @@ def deploy(remote, repo, path, art, ledger, authorize):
         handed_off = True
         result = remote.py(code, payload, timeout=480)
         check_controller_result(result)
+        require(staging_action(remote,art,'cleanup').get('cleaned') is True, 'STAGING_CLEANUP_FAILED')
+        print(json.dumps({'stage':'STAGING_CLEANUP_COMPLETE','releaseSha':release}), flush=True)
     finally:
         # A transport failure after handoff is UNKNOWN, never start the old writer
         # from this process while the remote transaction might still be running.
-        # Leave lock on an uncertain stream/import; a second load could double
+        # Leave lock on an uncertain upload/import; a second load could double
         # the disk peak while the first daemon import is still completing.
-        if not handed_off and (not import_started or import_complete):
+        if not handed_off and (not staging_started or staging_complete) and (not import_started or import_complete):
             remote.py('import os; os.rmdir(%r)' % LOCK)
 
 

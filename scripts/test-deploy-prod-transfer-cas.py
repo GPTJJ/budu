@@ -467,12 +467,16 @@ class Gates(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive=Path(directory)/'image.tar';archive.write_bytes(b'fixture archive')
             a=art();a['archiveHash']=r.digest(archive.read_bytes());a['layers']=[]
-            state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{}}
+            state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{},'old':{'Id':'old-id'},'template':ROUTES}
             with patch.object(r,'preflight',return_value=state),\
+                 patch.object(r,'stage_artifact',return_value='/opt/budu/.release-staging/'+NEW+'.tar'),\
                  patch.object(r.subprocess,'run',side_effect=r.subprocess.TimeoutExpired('docker load',1800)) as load,\
                  patch('sys.stdout',new=io.StringIO()):
                 self.fail('ARTIFACT_LOAD_TIMEOUT',r.deploy,remote,Path(directory),archive,a,LEDGER,NEW)
             self.assertEqual(load.call_args.kwargs['timeout'],1800)
+            self.assertNotIn('stdin',load.call_args.kwargs)
+            self.assertIn('/opt/budu/.release-staging/'+NEW+'.tar',load.call_args.args[0][-1])
+            self.assertIn("['docker','load','-i',sys.argv[1]]",r.LOCAL_IMPORT_CODE)
         self.assertEqual(len(remote.codes),1)
         self.assertIn('os.mkdir',remote.codes[0])
         self.assertFalse(any(cmd[:2]==['docker','stop'] for cmd in remote.commands))
@@ -491,14 +495,31 @@ class Gates(unittest.TestCase):
             a=art();a['archiveHash']=r.digest(archive.read_bytes());a['layers']=[]
             state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{},'old':{'Id':'old-id'},'template':ROUTES}
             with patch.object(r,'preflight',return_value=state),\
-                 patch.object(r.subprocess,'run',return_value=type('Result',(),{'returncode':0})()) as load,\
+                 patch.object(r,'stage_artifact',return_value='/opt/budu/.release-staging/'+NEW+'.tar'),\
+                 patch.object(r,'staging_action',return_value={'cleaned':True}) as cleanup,\
+                 patch.object(r.subprocess,'run',return_value=type('Result',(),{'returncode':0,'stdout':b'{"returncode":0,"elapsedSeconds":1.5}'})()) as load,\
                  patch.object(r,'resolve_loaded_image',return_value=loaded_image()),\
                  patch('sys.stdout',new=io.StringIO()):
                 r.deploy(remote,Path(__file__).resolve().parents[1],archive,a,LEDGER,NEW)
             self.assertEqual(load.call_args.kwargs['timeout'],1800)
+            self.assertEqual(cleanup.call_args.args[-1],'cleanup')
         self.assertEqual(len(remote.codes),2)
         self.assertIn('os.mkdir',remote.codes[0])
         self.assertIn('run_loaded_controller',remote.codes[1])
+    def test_uncertain_upload_keeps_lock_and_never_imports(self):
+        class UploadRemote:
+            def __init__(self):self.codes=[]
+            def py(self,code,value=None,timeout=60):self.codes.append(code);return b''
+            def run(self,args,data=None,timeout=60):return b''
+        remote=UploadRemote(); a=art(); a['layers']=[]
+        state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{}}
+        with patch.object(r,'preflight',return_value=state),\
+             patch.object(r,'stage_artifact',side_effect=r.GateError('ARTIFACT_UPLOAD_FAILED_PARTIAL_RETAINED')),\
+             patch.object(r.subprocess,'run',side_effect=AssertionError('IMPORT_MUST_NOT_RUN')),\
+             patch('sys.stdout',io.StringIO()):
+            self.fail('ARTIFACT_UPLOAD_FAILED_PARTIAL_RETAINED',r.deploy,remote,Path('.'),Path('fixture'),a,LEDGER,NEW)
+        self.assertEqual(len(remote.codes),1)
+        self.assertIn('os.mkdir',remote.codes[0])
     def test_forbidden_steps_absent(self):
         source=Path(r.__file__).read_text()
         for forbidden in ['pg_dump','prisma migrate','docker prune','rehearsal','076e6e0','fe4a725']:
@@ -507,6 +528,88 @@ class Gates(unittest.TestCase):
     def test_remote_payload_compiles(self):
         source=Path(r.__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
         compile(source,'remote-controller','exec')
+
+
+class StagedArtifactTests(unittest.TestCase):
+    def setUp(self):
+        import os
+        import types
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()/'stage'
+        self.code=r.STAGING_CODE.replace('/opt/budu/.release-staging',str(self.root))
+        self.account=types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        self.data=b'exact artifact fixture'
+        self.value={'release':NEW,'sha256':r.digest(self.data),'bytes':len(self.data)}
+        self.part=self.root/(NEW+'.tar.part'); self.final=self.root/(NEW+'.tar')
+
+    def stage(self,action,**changes):
+        value={**self.value,'action':action,**changes}
+        output=io.StringIO()
+        with patch('sys.stdin',io.StringIO(json.dumps(value))),patch('sys.stdout',output),\
+             patch('pwd.getpwnam',return_value=self.account):
+            try: exec(compile(self.code,'staging-helper','exec'),{})
+            except SystemExit: pass
+        return json.loads(output.getvalue())
+
+    def test_partial_bytes_are_retained_and_completed_atomically(self):
+        import stat
+        first=self.stage('prepare')
+        self.assertEqual(first['bytes'],0)
+        self.assertEqual(stat.S_IMODE(self.part.stat().st_mode),0o600)
+        self.part.write_bytes(self.data[:7])
+        resumed=self.stage('prepare')
+        self.assertEqual(resumed['bytes'],7)
+        self.assertEqual(self.part.read_bytes(),self.data[:7])
+        self.part.write_bytes(self.data)
+        result=self.stage('verify')
+        self.assertTrue(result['verified']); self.assertEqual(result['sha256'],self.value['sha256'])
+        self.assertFalse(self.part.exists()); self.assertEqual(self.final.read_bytes(),self.data)
+        self.assertTrue(self.stage('prepare')['complete'])
+        self.assertEqual(self.stage('cleanup'),{'cleaned':True})
+        self.assertFalse(self.final.exists())
+
+    def test_different_runner_artifact_cannot_reset_existing_partial(self):
+        self.stage('prepare'); self.part.write_bytes(self.data[:7])
+        result=self.stage('prepare',sha256='0'*64)
+        self.assertEqual(result['error'],'STAGING_ARTIFACT_IDENTITY_CONFLICT')
+        self.assertEqual(self.part.read_bytes(),self.data[:7])
+
+    def test_hash_or_size_mismatch_deletes_only_exact_staging_files(self):
+        for broken in (b'x'*len(self.data),self.data[:-1]):
+            self.stage('prepare'); self.part.write_bytes(broken)
+            other=self.root/'unrelated'; other.write_bytes(b'keep')
+            result=self.stage('verify')
+            self.assertEqual(result['error'],'STAGING_SIZE_OR_SHA256_MISMATCH')
+            self.assertFalse(self.part.exists()); self.assertFalse(self.final.exists())
+            self.assertEqual(other.read_bytes(),b'keep')
+
+    def test_staging_symlink_is_rejected_without_touching_target(self):
+        self.stage('prepare'); self.part.unlink()
+        other=self.root/'other'; other.write_bytes(b'keep')
+        self.part.symlink_to(other)
+        self.assertEqual(self.stage('prepare')['error'],'STAGING_FILE_UNSAFE')
+        self.assertEqual(other.read_bytes(),b'keep')
+
+    def test_rsync_retry_reuses_same_partial_and_separate_timeout(self):
+        remote=type('Remote',(),{'ssh':['ssh','-i','key','ubuntu@host'],
+                                'run':lambda *args,**kwargs:b'rsync 3.2.7'})()
+        archive=Path(self.temp.name)/'image.tar'; archive.write_bytes(self.data)
+        a={'release':NEW,'archiveHash':self.value['sha256'],'archive':len(self.data)}
+        states=[{'complete':False,'bytes':7},
+                {'verified':True,'path':str(self.final),'bytes':len(self.data),'sha256':self.value['sha256']}]
+        outcomes=[type('Result',(),{'returncode':255})(),type('Result',(),{'returncode':0})()]
+        with patch.object(r.shutil,'which',return_value='/usr/bin/rsync'),\
+             patch.object(r,'staging_action',side_effect=states),\
+             patch.object(r.subprocess,'run',side_effect=outcomes) as sync,\
+             patch('sys.stdout',io.StringIO()):
+            self.assertEqual(r.stage_artifact(remote,archive,a),str(self.final))
+        self.assertEqual(sync.call_count,2)
+        self.assertEqual(sync.call_args_list[0].args,sync.call_args_list[1].args)
+        args=sync.call_args.args[0]
+        self.assertIn('--partial',args); self.assertIn('--append-verify',args)
+        self.assertIn('--chmod=F600',args); self.assertNotIn('--delete',args)
+        self.assertTrue(args[-1].endswith(NEW+'.tar.part'))
+        self.assertGreater(sync.call_args.kwargs['timeout'],1800)
 
 
 class ArchiveTests(unittest.TestCase):

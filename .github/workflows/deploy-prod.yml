@@ -20,9 +20,14 @@ concurrency:
   group: deploy-bj-prod
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,6 +43,22 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Restore retained exact release artifact for resume
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name="release-staging-$GITHUB_SHA"
+          artifact_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name" \
+            --jq ".artifacts | map(select(.expired == false and .workflow_run.head_sha == \"$GITHUB_SHA\")) | sort_by(.id) | last | .workflow_run.id // empty")"
+          if [ -n "$artifact_run" ]; then
+            target="$RUNNER_TEMP/retained-release-$GITHUB_SHA"
+            mkdir -m 700 "$target"
+            gh run download "$artifact_run" --name "$name" --dir "$target"
+            test -f "$target/image.tar"
+            printf 'RETAINED_RELEASE_ARTIFACT=%s/image.tar\n' "$target" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy to Beijing prod
         env:
           SSH_HOST: ${{ secrets.BJ_HOST }}
@@ -47,6 +68,16 @@ jobs:
           APPROVED_BUSINESS_SHA: ${{ inputs.approved_business_sha }}
           AUTHORIZE_RELEASE_SHA: ${{ inputs.authorize_release_sha }}
         run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod
+
+      - name: Retain exact artifact for interrupted upload recovery
+        if: always() && env.RELEASE_ARTIFACT_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-staging-${{ github.sha }}
+          path: ${{ env.RELEASE_ARTIFACT_PATH }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Notify failure
         if: failure()

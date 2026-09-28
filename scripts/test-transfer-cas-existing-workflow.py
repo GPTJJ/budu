@@ -29,8 +29,9 @@ class ExistingWorkflow(unittest.TestCase):
         job=w['jobs']['deploy'];self.assertEqual(job['runs-on'],'ubuntu-latest')
         steps=job['steps'];self.assertEqual(steps[0]['uses'],'actions/checkout@v4')
         self.assertEqual(steps[0]['with'],{'fetch-depth':0})
-        self.assertEqual(steps[2]['run'].strip(),'bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod')
-        self.assertEqual(set(steps[1]['env'].values())|set(steps[2]['env'].values()),
+        deploy=next(step for step in steps if step.get('name')=='Deploy to Beijing prod')
+        self.assertEqual(deploy['run'].strip(),'bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" prod')
+        self.assertEqual(set(steps[1]['env'].values())|set(deploy['env'].values()),
                          {'${{ secrets.BJ_SSH_KEY }}','${{ secrets.BJ_HOST }}','${{ secrets.BJ_USER }}','${{ secrets.BJ_APP_DIR }}',
                           '${{ inputs.expected_production_sha }}','${{ inputs.approved_business_sha }}',
                           '${{ inputs.authorize_release_sha }}'})
