@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: partner-release-read-only-audit
@@ -38,6 +39,7 @@ jobs:
       - name: Read production authority and staged artifact progress
         env:
           PYTHONDONTWRITEBYTECODE: '1'
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/diagnose-partner-ssh.py
       - name: Retain diagnostic measurements
         if: always()
