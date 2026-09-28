@@ -68,6 +68,10 @@ jobs:
       - name: Reset disposable PostgreSQL for release adapter
         run: npx prisma migrate reset --force --skip-seed
       - name: Execute SKU release data adapter and post-cutover reconciliation
+        env:
+          SKU_TEST_SERVICE_ID: ${{ job.services.postgres.id }}
+          SKU_TEST_SERVICE_NETWORK: ${{ job.services.postgres.network }}
+          SKU_TEST_SERVICE_HOST_PORT: ${{ job.services.postgres.ports[5432] }}
         run: node scripts/test-sku-release-apply-native.mjs
       - name: Verify post-cutover Order and generic authority row preservation
         run: |

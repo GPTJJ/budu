@@ -7,9 +7,101 @@ import { PrismaClient } from '@prisma/client'
 import { analyzeSnapshot, releaseReadonlyUrl, assertReleaseReadOnly } from './sku-release-readiness-plan.mjs'
 import { reserveProductSku, recordProductSkuAssignment, appendProductSkuAudit } from '../server/product-sku-authority.js'
 
-const target = new URL(process.env.DATABASE_URL || '')
-assert.ok(['localhost','127.0.0.1'].includes(target.hostname) &&
-  /^sku_authority_test_[a-z0-9_]+$/.test(target.pathname.slice(1)))
+function testTarget(value) {
+  const url = new URL(value)
+  assert.ok(['postgresql:','postgres:'].includes(url.protocol) &&
+    ['localhost','127.0.0.1'].includes(url.hostname) && !url.searchParams.has('host'),
+  'TEST_LOCAL_ENTRY_REQUIRED')
+  assert.match(decodeURIComponent(url.pathname.slice(1)), /^sku_authority_test_[a-z0-9_]+$/,
+    'TEST_DATABASE_NAME_REQUIRED')
+  return url
+}
+
+function serviceProof(settings, inspect) {
+  const id = settings.SKU_TEST_SERVICE_ID
+  const network = settings.SKU_TEST_SERVICE_NETWORK
+  const hostPort = settings.SKU_TEST_SERVICE_HOST_PORT
+  if (!id && !network && !hostPort) return null
+  // ID/network/port come from job.services.postgres, not from the DB response.
+  assert.ok(settings.GITHUB_ACTIONS === 'true' && settings.GITHUB_REPOSITORY === 'GPTJJ/budu' &&
+    settings.GITHUB_JOB === 'build-only' && /^[0-9a-f]{64}$/.test(id || '') &&
+    /^github_network_[0-9a-f]+$/.test(network || '') && /^\d+$/.test(hostPort || ''),
+  'TEST_JOB_SERVICE_PROOF_REQUIRED')
+  const container = inspect(id)
+  assert.ok(container?.id === id && container.running === true && container.image === 'postgres:16',
+    'TEST_SERVICE_IDENTITY_MISMATCH')
+  const attachment = container.networks?.[network]
+  assert.ok(attachment?.IPAddress || attachment?.GlobalIPv6Address, 'TEST_SERVICE_NETWORK_MISSING')
+  const addresses = [attachment.IPAddress,attachment.GlobalIPv6Address].filter(Boolean)
+  const bindings = container.ports?.['5432/tcp']
+  assert.ok(Array.isArray(bindings) && bindings.some(row => row.HostPort === hostPort &&
+    ['127.0.0.1','0.0.0.0','::'].includes(row.HostIp)), 'TEST_SERVICE_PORT_MAPPING_MISMATCH')
+  return { addresses,hostPort:Number(hostPort),containerPort:5432 }
+}
+
+function validateActualTarget(target, actual, proof) {
+  assert.equal(actual.name,decodeURIComponent(target.pathname.slice(1)), 'TEST_ACTUAL_DATABASE_MISMATCH')
+  if (proof) {
+    assert.equal(Number(target.port || 5432),proof.hostPort, 'TEST_CLIENT_PORT_MISMATCH')
+    assert.ok(proof.addresses.includes(actual.host), 'TEST_CONTAINER_ADDRESS_MISMATCH')
+    assert.equal(actual.port,proof.containerPort, 'TEST_CONTAINER_PORT_MISMATCH')
+  } else {
+    assert.ok(['127.0.0.1','::1'].includes(actual.host), 'TEST_NATIVE_LOOPBACK_REQUIRED')
+    assert.equal(actual.port,Number(target.port || 5432), 'TEST_NATIVE_PORT_MISMATCH')
+  }
+}
+
+function inspectLocalService(id) {
+  // Explicit local socket: never honor a remote DOCKER_HOST/context. Select
+  // only identity, state and topology; no container environment/credentials.
+  const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"image":{{json .Config.Image}},"networks":{{json .NetworkSettings.Networks}},"ports":{{json .NetworkSettings.Ports}}}'
+  const result = spawnSync('docker',['--host','unix:///var/run/docker.sock','inspect',
+    '--type','container','--format',format,id], {
+    env:{ ...process.env,DOCKER_CONTEXT:'',DOCKER_HOST:'unix:///var/run/docker.sock' },
+    encoding:'utf8',timeout:10000,maxBuffer:64*1024,
+  })
+  assert.equal(result.status,0,'TEST_SERVICE_INSPECT_FAILED')
+  try { return JSON.parse(result.stdout) } catch { throw Error('TEST_SERVICE_INSPECT_INVALID') }
+}
+
+// Pure negative cases never connect to the targets they reject.
+function targetGuardRegression() {
+  const url = testTarget('postgresql://test@127.0.0.1:15432/sku_authority_test_guard')
+  const actual = { name:'sku_authority_test_guard',host:'172.19.0.7',port:5432 }
+  const settings = { GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'GPTJJ/budu',GITHUB_JOB:'build-only',
+    SKU_TEST_SERVICE_ID:'a'.repeat(64),SKU_TEST_SERVICE_NETWORK:'github_network_123abc',
+    SKU_TEST_SERVICE_HOST_PORT:'15432' }
+  const container = { id:settings.SKU_TEST_SERVICE_ID,running:true,image:'postgres:16',
+    networks:{ [settings.SKU_TEST_SERVICE_NETWORK]:{ IPAddress:actual.host } },
+    ports:{ '5432/tcp':[{ HostIp:'0.0.0.0',HostPort:'15432' }] } }
+  assert.throws(() => assert.ok(['127.0.0.1','::1'].includes(actual.host))) // v6 failure
+  const proof = serviceProof(settings,() => container)
+  validateActualTarget(url,actual,proof) // Different host and container ports.
+  validateActualTarget(url,{ ...actual,host:'127.0.0.1',port:15432 },null)
+  for (const value of ['postgresql://test@localhost/budu_bj006',
+    'postgresql://test@localhost/%62udu_bj006','postgresql://test@localhost/not_test',
+    'postgresql://test@192.0.2.1/sku_authority_test_guard',
+    'postgresql://test@localhost/sku_authority_test_guard?host=/unknown/socket'])
+    assert.throws(() => testTarget(value))
+  for (const row of [{ ...actual,name:'budu_bj006' },{ ...actual,host:'172.19.0.8' },
+    { ...actual,port:15432 }]) assert.throws(() => validateActualTarget(url,row,proof))
+  assert.throws(() => validateActualTarget(testTarget(url.toString().replace(':15432',':15433')),actual,proof))
+  assert.throws(() => validateActualTarget(url,{ ...actual,host:'127.0.0.1',port:5432 },null))
+  for (const flags of [{},{ CI:'true' },{ GITHUB_ACTIONS:'true' }])
+    assert.throws(() => validateActualTarget(url,actual,serviceProof(flags,() => { throw Error('must not inspect') })))
+  for (const key of ['SKU_TEST_SERVICE_ID','SKU_TEST_SERVICE_NETWORK','SKU_TEST_SERVICE_HOST_PORT','GITHUB_JOB'])
+    assert.throws(() => serviceProof({ ...settings,[key]:'' },() => container))
+  assert.throws(() => serviceProof(settings,() => { throw Error('unknown container') }))
+  for (const row of [{ ...container,id:'b'.repeat(64) },{ ...container,running:false },
+    { ...container,image:'other:16' },{ ...container,networks:{} },
+    { ...container,ports:{ '5432/tcp':[{ HostIp:'0.0.0.0',HostPort:'15433' }] } }])
+    assert.throws(() => serviceProof(settings,() => row))
+  console.log('TEST_TARGET_GUARD_REGRESSION=PASS OLD_DOCKER_ASSERTION_REPRODUCED=YES')
+}
+
+targetGuardRegression()
+const target = testTarget(process.env.DATABASE_URL || '')
+const proof = serviceProof(process.env,inspectLocalService)
 const db = new PrismaClient()
 const sha = process.env.SKU_RELEASE_CANDIDATE_SHA || 'a'.repeat(40)
 const env = { ...process.env, SKU_RELEASE_CONTROLLER: 'sku-authority-schema1',
@@ -24,9 +116,8 @@ function adapter(mode, input, extra = {}) {
 try {
   const [actual] = await db.$queryRaw`SELECT current_database() AS name,
     host(inet_server_addr()) AS host,inet_server_port() AS port`
-  assert.equal(actual.name,decodeURIComponent(target.pathname.slice(1)))
-  assert.ok(['127.0.0.1','::1'].includes(actual.host))
-  assert.equal(actual.port,Number(target.port || 5432))
+  validateActualTarget(target,actual,proof)
+  console.log('ACTUAL_TEST_TARGET='+(proof ? 'VERIFIED_JOB_POSTGRES_SERVICE' : 'VERIFIED_NATIVE_LOOPBACK'))
   const [{ version }] = await db.$queryRaw`SELECT current_setting('server_version_num')::int AS version`
   assert.equal(Math.floor(version / 10000),16)
   for (const [name, expected] of Object.entries({
