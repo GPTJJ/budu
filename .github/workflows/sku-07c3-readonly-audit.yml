@@ -1,0 +1,49 @@
+name: READ ONLY SKU 07c3 Post Timeout Audit
+
+on:
+  push:
+    branches: [codex/sku-07c3-readonly-post-timeout-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify one-time isolated audit source
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = GPTJJ/budu
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF" = refs/heads/codex/sku-07c3-readonly-post-timeout-audit
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base 07c3e6a6f782865d551f9190612b0de6c35e5afb HEAD)" = 07c3e6a6f782865d551f9190612b0de6c35e5afb
+          test "$(git diff --name-only 07c3e6a6f782865d551f9190612b0de6c35e5afb HEAD | sort)" = "$(printf '%s\n' .github/workflows/sku-07c3-readonly-audit.yml scripts/sku-07c3-readonly-audit.py | sort)"
+          python3 -B -m py_compile scripts/sku-07c3-readonly-audit.py
+      - name: Configure existing pinned read-only production entry
+        env:
+          SSH_KEY: ${{ secrets.BJ_SSH_KEY }}
+          BJ_HOST: ${{ secrets.BJ_HOST }}
+          BJ_USER: ${{ secrets.BJ_USER }}
+        run: |
+          set -euo pipefail
+          test "$BJ_HOST" = 154.8.195.42
+          test "$BJ_USER" = ubuntu
+          test -n "$SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' '154.8.195.42 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJJGZ1Kape1om+8xOhoI7IsgvKN1tw6sh8l7PGisgtb' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Audit only the 07c3 image timeout incident
+        env:
+          BJ_HOST: ${{ secrets.BJ_HOST }}
+          BJ_USER: ${{ secrets.BJ_USER }}
+        run: python3 -B scripts/sku-07c3-readonly-audit.py
