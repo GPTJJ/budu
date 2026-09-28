@@ -469,10 +469,10 @@ class Gates(unittest.TestCase):
             a=art();a['archiveHash']=r.digest(archive.read_bytes());a['layers']=[]
             state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{}}
             with patch.object(r,'preflight',return_value=state),\
-                 patch.object(r.subprocess,'run',side_effect=r.subprocess.TimeoutExpired('docker load',600)) as load,\
+                 patch.object(r.subprocess,'run',side_effect=r.subprocess.TimeoutExpired('docker load',1800)) as load,\
                  patch('sys.stdout',new=io.StringIO()):
                 self.fail('ARTIFACT_LOAD_TIMEOUT',r.deploy,remote,Path(directory),archive,a,LEDGER,NEW)
-            self.assertEqual(load.call_args.kwargs['timeout'],600)
+            self.assertEqual(load.call_args.kwargs['timeout'],1800)
         self.assertEqual(len(remote.codes),1)
         self.assertIn('os.mkdir',remote.codes[0])
         self.assertFalse(any(cmd[:2]==['docker','stop'] for cmd in remote.commands))
@@ -495,7 +495,7 @@ class Gates(unittest.TestCase):
                  patch.object(r,'resolve_loaded_image',return_value=loaded_image()),\
                  patch('sys.stdout',new=io.StringIO()):
                 r.deploy(remote,Path(__file__).resolve().parents[1],archive,a,LEDGER,NEW)
-            self.assertEqual(load.call_args.kwargs['timeout'],600)
+            self.assertEqual(load.call_args.kwargs['timeout'],1800)
         self.assertEqual(len(remote.codes),2)
         self.assertIn('os.mkdir',remote.codes[0])
         self.assertIn('run_loaded_controller',remote.codes[1])

@@ -188,6 +188,7 @@ class PostTransferIdentity(unittest.TestCase):
                   'git archive "$RELEASE_SHA"','--platform linux/amd64',
                   'compression=gzip,compression-level=9,force-compression=true',
                   '--release-profile post-transfer',' inspect-artifact --repo',' preflight --repo',
+                  'timeout 35m bash scripts/deploy-prod-transfer-cas.sh deploy --repo',
                   ' deploy --repo','--authorize-release-sha "$RELEASE_SHA"')
         for value in required:self.assertIn(value,source)
         for value in ('set -x','--build-arg','--secret','docker prune','system prune','prisma migrate','pg_dump'):

@@ -873,7 +873,7 @@ def deploy(remote, repo, path, art, ledger, authorize):
             import_started = True
             try:
                 r = subprocess.run(remote.ssh + [shlex.join(['docker','load'])], stdin=stream,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1800)
             except subprocess.TimeoutExpired:
                 raise GateError('ARTIFACT_LOAD_TIMEOUT') from None
             require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')

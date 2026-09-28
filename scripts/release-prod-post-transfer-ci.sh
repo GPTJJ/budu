@@ -83,6 +83,6 @@ bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archiv
   "${PROFILE[@]}" | tee "$RUN_DIR/artifact.json"
 bash scripts/deploy-prod-transfer-cas.sh preflight --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" "${PROFILE[@]}" | tee "$RUN_DIR/preflight.json"
-timeout 15m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
+timeout 35m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" --authorize-release-sha "$RELEASE_SHA" \
   "${PROFILE[@]}" | tee "$RUN_DIR/deployment.json"
