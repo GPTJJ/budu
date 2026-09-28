@@ -1,4 +1,4 @@
-name: Partner Release Recovery Only
+name: Partner Release Read Only Audit
 
 on:
   push:
@@ -11,11 +11,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-bj-prod
+  group: partner-release-read-only-audit
   cancel-in-progress: false
 
 jobs:
-  recovery:
+  read-only-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -35,7 +35,7 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-      - name: Verify production, recover stale lock, and back up DB
+      - name: Read production authority and staged artifact progress
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 scripts/diagnose-partner-ssh.py
