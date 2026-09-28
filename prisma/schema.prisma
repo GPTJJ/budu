@@ -146,6 +146,7 @@ model Store {
   orders                       Order[]
   customerServiceRequests      CustomerServiceRequest[]
   partnerDefaults              Partner[]                @relation("PartnerDefaultStore")
+  partnerSupplyOrders          PartnerSupplyOrder[]     @relation("PartnerSupplyStore")
   replenishmentShipments       ReplenishmentShipment[]
   rentHistories                StoreRentHistory[]
   utilityCosts                 StoreUtilityCost[]
@@ -337,6 +338,7 @@ model InventoryItem {
   transferBoxWeightGrams   Int?
   transferPieceEnabled     Boolean                    @default(false)
   transferPieceWeightGrams Int?
+  partnerSupplyEnabled     Boolean                    @default(false)
   productCategoryId        String?
   productGroupId           String?
   variantName              String                     @default("")
@@ -349,6 +351,7 @@ model InventoryItem {
   purchaseItems            PurchaseItem[]
   waste                    WasteRecord[]
   orderItems               OrderItem[]
+  partnerSupplyItems       PartnerSupplyItem[]
   costHistories            InventoryItemCostHistory[]
   productCategory          ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
   productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
@@ -363,6 +366,7 @@ model InventoryItem {
 
   @@index([productCategoryId])
   @@index([productGroupId])
+  @@index([category, partnerSupplyEnabled])
   @@index([category, partnerReplenishmentEnabled, isActive])
 }
 
@@ -432,6 +436,7 @@ model Partner {
   createdAt               DateTime                         @default(now())
   updatedAt               DateTime                         @default(now()) @updatedAt
   defaultStore            Store                            @relation("PartnerDefaultStore", fields: [defaultStoreKey], references: [key], onDelete: Restrict)
+  supplyOrders            PartnerSupplyOrder[]
   partnerUsers            PartnerUser[]
   partnerStores           PartnerStore[]
   auditLogs               PartnerAuditLog[]
@@ -669,6 +674,86 @@ model ReplenishmentAfterSalesAttachment {
 
   @@index([requestId])
   @@index([partnerId, createdAt])
+}
+
+model PartnerSupplyOrder {
+  id                         String              @id
+  orderNo                    String              @unique
+  partnerId                  String
+  partnerNameSnapshot        String
+  fromStoreKey               String
+  fromStoreNameSnapshot      String
+  businessDate               DateTime            @db.Date
+  status                     String              @default("pending")
+  defaultDiscountBpsSnapshot Int
+  effectiveDiscountBps       Int
+  totalAmountCents           BigInt
+  note                       String              @default("")
+  createdById                String              @default("")
+  createdBy                  String              @default("")
+  priceOverrideById          String              @default("")
+  priceOverrideBy            String              @default("")
+  priceOverrideAt            DateTime?
+  shippedById                String              @default("")
+  shippedBy                  String              @default("")
+  shippedAt                  DateTime?
+  withdrawnById              String              @default("")
+  withdrawnBy                String              @default("")
+  withdrawnAt                DateTime?
+  version                    Int                 @default(1)
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @default(now()) @updatedAt
+  deletedAt                  DateTime?
+  deletedBy                  String              @default("")
+  deleteReason               String              @default("")
+  partner                    Partner             @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  fromStore                  Store               @relation("PartnerSupplyStore", fields: [fromStoreKey], references: [key], onDelete: Restrict)
+  items                      PartnerSupplyItem[]
+  receipts                   PartnerReceipt[]
+
+  @@index([partnerId, businessDate])
+  @@index([fromStoreKey, businessDate])
+  @@index([status, businessDate])
+  @@index([deletedAt, businessDate])
+}
+
+model PartnerSupplyItem {
+  id                          String             @id
+  orderId                     String
+  productId                   String
+  productCodeSnapshot         String
+  productNameSnapshot         String
+  productCategoryNameSnapshot String             @default("")
+  retailPriceCentsSnapshot    BigInt
+  discountBpsSnapshot         Int
+  partnerUnitPriceCents       BigInt
+  quantity                    Int
+  subtotalCents               BigInt
+  order                       PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product                     InventoryItem      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, productId])
+  @@index([productId])
+}
+
+model PartnerReceipt {
+  id           String             @id
+  orderId      String
+  amountCents  BigInt
+  receivedDate DateTime           @db.Date
+  note         String             @default("")
+  status       String             @default("active")
+  createdById  String             @default("")
+  createdBy    String             @default("")
+  createdAt    DateTime           @default(now())
+  voidedById   String             @default("")
+  voidedBy     String             @default("")
+  voidedAt     DateTime?
+  voidReason   String             @default("")
+  order        PartnerSupplyOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@index([receivedDate])
 }
 
 model Order {
