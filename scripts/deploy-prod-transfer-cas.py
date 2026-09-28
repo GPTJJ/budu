@@ -871,8 +871,11 @@ def deploy(remote, repo, path, art, ledger, authorize):
             require(file_hash(stream) == art['archiveHash'], 'ARTIFACT_CHANGED')
             stream.seek(0)
             import_started = True
-            r = subprocess.run(remote.ssh + [shlex.join(['docker','load'])], stdin=stream,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=240)
+            try:
+                r = subprocess.run(remote.ssh + [shlex.join(['docker','load'])], stdin=stream,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+            except subprocess.TimeoutExpired:
+                raise GateError('ARTIFACT_LOAD_TIMEOUT') from None
             require(r.returncode == 0, 'ARTIFACT_LOAD_FAILED')
             import_complete = True
         image = resolve_loaded_image(remote, art)

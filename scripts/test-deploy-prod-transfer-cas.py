@@ -306,7 +306,13 @@ class Gates(unittest.TestCase):
         self.fail('CLONE_ENV',r.clone_parity,a,b,r.EXPECTED_OLD_SHA)
     def test_cutover_succeeds_single_writer(self):
         f=Fake()
-        with patch('sys.stdout',new=io.StringIO()):r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        codes=[];original_py=f.py
+        def record_py(code,value=None,timeout=60):
+            codes.append(code)
+            return original_py(code,value,timeout)
+        with patch.object(f,'py',side_effect=record_py),patch('sys.stdout',new=io.StringIO()):
+            r.execute_loaded(f,art(),LEDGER,'fixture-helper','old-id',r.digest(ROUTES.encode()))
+        self.assertTrue(any('os.rmdir' in code and r.LOCK in code for code in codes))
         self.assertEqual(f.maxwriters,1);self.assertEqual(f.running[0]['Name'],'/'+NAME)
         self.assertEqual(f.active.count(NAME),3);self.assertIn('isolated-test',f.active);self.assertEqual(f.pointer,NEW)
         self.assertEqual(f.cloneImages,[art()['imageReference']])
@@ -451,6 +457,48 @@ class Gates(unittest.TestCase):
         self.assertFalse(any(e[:2]==('docker','stop') for e in f.events))
     def test_missing_authorization_prevents_io(self):
         self.fail('AUTHORIZATION',r.deploy,Fake(),Path('.'),Path('not-present'),art(),LEDGER,None)
+    def test_artifact_import_timeout_is_explicit_and_keeps_uncertain_lock(self):
+        class ImportRemote:
+            ssh=['ssh','fixture']
+            def __init__(self):self.codes=[];self.commands=[]
+            def py(self,code,value=None,timeout=60):self.codes.append(code);return b''
+            def run(self,args,data=None,timeout=60):self.commands.append(args);return b''
+        remote=ImportRemote()
+        with tempfile.TemporaryDirectory() as directory:
+            archive=Path(directory)/'image.tar';archive.write_bytes(b'fixture archive')
+            a=art();a['archiveHash']=r.digest(archive.read_bytes());a['layers']=[]
+            state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{}}
+            with patch.object(r,'preflight',return_value=state),\
+                 patch.object(r.subprocess,'run',side_effect=r.subprocess.TimeoutExpired('docker load',600)) as load,\
+                 patch('sys.stdout',new=io.StringIO()):
+                self.fail('ARTIFACT_LOAD_TIMEOUT',r.deploy,remote,Path(directory),archive,a,LEDGER,NEW)
+            self.assertEqual(load.call_args.kwargs['timeout'],600)
+        self.assertEqual(len(remote.codes),1)
+        self.assertIn('os.mkdir',remote.codes[0])
+        self.assertFalse(any(cmd[:2]==['docker','stop'] for cmd in remote.commands))
+    def test_completed_artifact_import_hands_off_lock(self):
+        class ImportRemote:
+            ssh=['ssh','fixture']
+            def __init__(self):self.codes=[]
+            def py(self,code,value=None,timeout=60):
+                self.codes.append(code)
+                return json.dumps({'result':'DEPLOY_COMPLETE'}).encode() if value else b''
+            def run(self,args,data=None,timeout=60):return b''
+            def disk(self):return 41*r.GIB,19*r.GIB
+        remote=ImportRemote()
+        with tempfile.TemporaryDirectory() as directory:
+            archive=Path(directory)/'image.tar';archive.write_bytes(b'fixture archive')
+            a=art();a['archiveHash']=r.digest(archive.read_bytes());a['layers']=[]
+            state={'diskUsed':40*r.GIB,'diskAvailable':20*r.GIB,'budget':{},'old':{'Id':'old-id'},'template':ROUTES}
+            with patch.object(r,'preflight',return_value=state),\
+                 patch.object(r.subprocess,'run',return_value=type('Result',(),{'returncode':0})()) as load,\
+                 patch.object(r,'resolve_loaded_image',return_value=loaded_image()),\
+                 patch('sys.stdout',new=io.StringIO()):
+                r.deploy(remote,Path(__file__).resolve().parents[1],archive,a,LEDGER,NEW)
+            self.assertEqual(load.call_args.kwargs['timeout'],600)
+        self.assertEqual(len(remote.codes),2)
+        self.assertIn('os.mkdir',remote.codes[0])
+        self.assertIn('run_loaded_controller',remote.codes[1])
     def test_forbidden_steps_absent(self):
         source=Path(r.__file__).read_text()
         for forbidden in ['pg_dump','prisma migrate','docker prune','rehearsal','076e6e0','fe4a725']:
