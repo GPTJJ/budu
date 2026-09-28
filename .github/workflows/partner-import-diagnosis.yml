@@ -1,0 +1,52 @@
+name: Partner Import Diagnosis Only
+
+on:
+  push:
+    branches: [codex/partner-import-diagnosis]
+    paths:
+      - .github/workflows/partner-import-diagnosis.yml
+      - scripts/diagnose-partner-ssh.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-bj-prod
+  cancel-in-progress: false
+
+jobs:
+  ssh-throughput:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure existing production SSH identity
+        env:
+          SSH_KEY: ${{ secrets.BJ_SSH_KEY }}
+          SSH_HOST: ${{ secrets.BJ_HOST }}
+          SSH_USER: ${{ secrets.BJ_USER }}
+        run: |
+          set -euo pipefail
+          test "$SSH_HOST" = 154.8.195.42
+          test "$SSH_USER" = ubuntu
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+      - name: Measure exactly 256 MiB to production dev-null
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 scripts/diagnose-partner-ssh.py
+      - name: Retain diagnostic measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: partner-ssh-measurement-${{ github.run_id }}
+          path: ${{ runner.temp }}/partner-ssh-diagnosis/result.json
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Remove runner SSH identity
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
