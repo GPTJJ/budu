@@ -43,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: partner-ssh-measurement-${{ github.run_id }}
+          name: partner-release-audit-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/partner-ssh-diagnosis/result.json
           if-no-files-found: warn
           retention-days: 3
