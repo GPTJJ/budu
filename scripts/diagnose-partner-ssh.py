@@ -50,37 +50,40 @@ result={'result':'READ_ONLY_AUDIT_PASS','production_sha':pointer,'target_release
 print(json.dumps(result),flush=True)
 with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as out: out.write('```json\n'+json.dumps(result,indent=2)+'\n```\n')
 
-# A bounded 32 MiB HTTPS pull test; the signed URL stays in memory and SSH stdin.
-import urllib.request
-import urllib.error
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self,*args,**kwargs): return None
-request=urllib.request.Request('https://api.github.com/repos/GPTJJ/budu/actions/artifacts/10969858716/zip',
-    headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-try:
-    urllib.request.build_opener(NoRedirect).open(request,timeout=20)
-    raise SystemExit('SIGNED_DOWNLOAD_REDIRECT_MISSING')
-except urllib.error.HTTPError as e:
-    if e.code != 302: raise SystemExit('SIGNED_DOWNLOAD_UNAVAILABLE_'+str(e.code))
-    url=e.headers.get('Location','')
-assert url.startswith('https://')
-benchmark=r'''import json,sys,time,urllib.request
-v=json.load(sys.stdin); start=time.monotonic(); n=0; maximum=32*1024*1024
-try:
- req=urllib.request.Request(v['url'],headers={'Range':'bytes=0-'+str(maximum-1)})
- with urllib.request.urlopen(req,timeout=20) as response:
-  status=response.status
-  while n<maximum and time.monotonic()-start<100:
-   chunk=response.read(min(256*1024,maximum-n))
-   if not chunk: break
-   n+=len(chunk)
- elapsed=time.monotonic()-start
- print(json.dumps({'path':'BEIJING_HTTPS_PULL','bytes':n,'seconds':round(elapsed,3),
- 'MiB_per_second':round(n/1048576/elapsed,4),'http_status':status,'complete_sample':n==maximum}))
-except Exception as e:
- print(json.dumps({'path':'BEIJING_HTTPS_PULL','bytes':n,'seconds':round(time.monotonic()-start,3),'error_type':type(e).__name__}))
-'''
-measurement=json.loads(remote.py(benchmark,{'url':url},timeout=150))
+
+# Existing HK credentials are used only as an SSH transport relay, no remote files.
+import re
+import time
+host=os.environ.get('HK_HOST',''); user=os.environ.get('HK_USER','')
+key=os.environ.get('HK_SSH_KEY','')
+if not (host and user and key):
+ measurement={'path':'GITHUB_HK_BEIJING','available':False,'reason':'EXISTING_HK_CREDENTIALS_MISSING'}
+else:
+ assert re.fullmatch(r'[a-zA-Z0-9.-]+',host) and re.fullmatch(r'[a-zA-Z0-9_-]+',user)
+ hkkey=root/'hk_key'; hkkey.write_text(key+'\n'); hkkey.chmod(0o600)
+ hkknown=root/'hk_known_hosts'
+ try:
+  scan=subprocess.run(['ssh-keyscan','-T','8',host],capture_output=True,timeout=12)
+  assert scan.stdout,'HK_HOST_UNREACHABLE'
+  hkknown.write_bytes(scan.stdout); hkknown.chmod(0o600)
+  config=root/'relay_config'
+  config.write_text('Host relay\n HostName '+host+'\n User '+user+'\n IdentityFile '+str(hkkey)+'\n UserKnownHostsFile '+str(hkknown)+'\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n ConnectTimeout 10\nHost target\n HostName 154.8.195.42\n User ubuntu\n IdentityFile '+str(Path.home()/'.ssh/id_ed25519')+'\n UserKnownHostsFile '+str(known)+'\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n HostKeyAlgorithms ssh-ed25519\n ConnectTimeout 10\n ProxyJump relay\n')
+  config.chmod(0o600)
+  probe=subprocess.run(['ssh','-F',str(config),'target','true'],capture_output=True,timeout=30)
+  assert probe.returncode==0,'RELAY_ACCESS_FAILED'
+  size=32*1024*1024; start=time.monotonic()
+  process=subprocess.Popen(['ssh','-F',str(config),'-o','Compression=no','target','cat > /dev/null'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+  try:
+   process.communicate(input=b'\0'*size,timeout=100)
+   elapsed=time.monotonic()-start
+   measurement={'path':'GITHUB_HK_BEIJING','bytes':size if process.returncode==0 else 0,'seconds':round(elapsed,3),'MiB_per_second':round(size/1048576/elapsed,4) if process.returncode==0 else None,'exit':process.returncode}
+  except subprocess.TimeoutExpired:
+   process.kill(); process.communicate()
+   measurement={'path':'GITHUB_HK_BEIJING','complete_sample':False,'seconds':round(time.monotonic()-start,3),'MiB_per_second_upper_bound':0.32,'reason':'BOUNDED_SAMPLE_TIMEOUT'}
+ except Exception as e:
+  measurement={'path':'GITHUB_HK_BEIJING','available':False,'error_type':type(e).__name__,'reason':str(e) if isinstance(e,AssertionError) else 'RELAY_TEST_FAILED'}
+ finally:
+  hkkey.unlink(missing_ok=True)
 print(json.dumps(measurement),flush=True)
-result['https_benchmark']=measurement
+result['hk_benchmark']=measurement
 (root/'result.json').write_text(json.dumps(result,indent=2)+'\n')

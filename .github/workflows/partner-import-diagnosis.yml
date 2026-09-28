@@ -40,6 +40,9 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           GH_TOKEN: ${{ github.token }}
+          HK_SSH_KEY: ${{ secrets.HK_SSH_KEY || secrets.TENCENT_SSH_KEY }}
+          HK_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
+          HK_USER: ${{ secrets.HK_USER || secrets.TENCENT_USER }}
         run: python3 scripts/diagnose-partner-ssh.py
       - name: Retain diagnostic measurements
         if: always()
