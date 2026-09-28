@@ -2,17 +2,13 @@
 // The controller supplies the exact reviewed plan on stdin after a verified backup.
 import crypto from 'node:crypto'
 import { Prisma, PrismaClient } from '@prisma/client'
-import { buildProductSkuPlan } from '../server/product-sku-plan.js'
+import { buildReleaseProductSkuPlan, releaseReadonlyUrl, assertReleaseReadOnly } from './sku-release-readiness-plan.mjs'
 import { appendProductSkuAudit } from '../server/product-sku-authority.js'
 
 const mode = process.argv[2]
-const db = new PrismaClient()
+let db
 const DATABASE = 'budu_bj006'
-const target = new URL(process.env.DATABASE_URL || '')
-const targetDb = decodeURIComponent(target.pathname.slice(1))
-const testOnly = process.env.SKU_RELEASE_TEST_ONLY === 'YES' &&
-  ['localhost','127.0.0.1','::1'].includes(target.hostname) &&
-  /^sku_authority_test_[a-z0-9_]+$/.test(targetDb)
+let targetDb, testOnly
 const EXPECTED = { total: 178, BD: 89, TP: 89, missingOldSku: 33, aliases: 145 }
 // Gate 7 read-only authoritative extract. Any legitimate production change
 // requires a new reviewed baseline before this release may proceed.
@@ -71,19 +67,46 @@ async function readStdin() {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 async function main() {
-  assert(['plan', 'apply', 'reconcile'].includes(mode), 'SKU_RELEASE_MODE_INVALID')
+  assert(['plan', 'apply', 'reconcile', 'db-probe'].includes(mode), 'SKU_RELEASE_MODE_INVALID')
   assert(process.env.SKU_RELEASE_CONTROLLER === 'sku-authority-schema1', 'SKU_RELEASE_CONTROLLER_REQUIRED')
+  const target = new URL(process.env.DATABASE_URL || '')
+  targetDb = decodeURIComponent(target.pathname.slice(1))
+  testOnly = process.env.SKU_RELEASE_TEST_ONLY === 'YES' &&
+    ['localhost','127.0.0.1','::1'].includes(target.hostname) &&
+    /^sku_authority_test_[a-z0-9_]+$/.test(targetDb)
   assert(targetDb === DATABASE || testOnly, 'SKU_RELEASE_DATABASE_MISMATCH')
+  if (mode === 'apply') {
+    assert(process.env.SKU_RELEASE_READ_ONLY !== 'YES', 'SKU_RELEASE_WRITE_READONLY_CONFLICT')
+    assert(process.env.SKU_RELEASE_WRITE_AUTHORIZED === process.env.GIT_SHA &&
+      /^[0-9a-f]{40}$/.test(process.env.GIT_SHA || ''), 'SKU_RELEASE_WRITE_AUTHORIZATION_REQUIRED')
+  }
+  // Build options in this process only; never change the writer's environment.
+  db = new PrismaClient({ datasources: { db: { url:
+    mode !== 'apply' && process.env.SKU_RELEASE_READ_ONLY === 'YES'
+      ? releaseReadonlyUrl(process.env.DATABASE_URL) : process.env.DATABASE_URL } } })
+  if (mode !== 'apply') await assertReleaseReadOnly(db, true)
   const [{ name }] = await db.$queryRaw`SELECT current_database() AS name`
   assert(name === targetDb, 'SKU_RELEASE_DATABASE_MISMATCH')
+  if (mode === 'db-probe') {
+    await db.$transaction(async tx => {
+      await assertReleaseReadOnly(tx)
+      const [row] = await tx.$queryRaw`SELECT 1 AS ok`
+      assert(row?.ok === 1, 'SKU_RELEASE_DB_PROBE_FAILED')
+    })
+    process.stdout.write('DB_READ_OK\n')
+    return
+  }
   if (mode === 'plan') {
-    const state = await db.$transaction(async tx => ({
-      ...await snapshot(tx),
-      channelFlags: await tx.inventoryItem.findMany({ where: { category: 'product' },
-        select: { id: true, isActive: true, transferEnabled: true,
-          partnerSupplyEnabled: true, partnerReplenishmentEnabled: true },
-        orderBy: { id: 'asc' } }),
-    }), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
+    const state = await db.$transaction(async tx => {
+      await assertReleaseReadOnly(tx)
+      return {
+        ...await snapshot(tx),
+        channelFlags: await tx.inventoryItem.findMany({ where: { category: 'product' },
+          select: { id: true, isActive: true, transferEnabled: true,
+            partnerSupplyEnabled: true, partnerReplenishmentEnabled: true },
+          orderBy: { id: 'asc' } }),
+      }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
     assert(state.online.length === 153, 'SKU_RELEASE_ONLINE_DRIFT')
     assert(state.products.filter(row => row.isActive).length === 87,
       'SKU_RELEASE_POS_ACTIVE_DRIFT')
@@ -96,7 +119,7 @@ async function main() {
     assert(anyChannelEnabled === 113, 'SKU_RELEASE_ANY_CHANNEL_DRIFT')
     assert(testOnly || onlineIdentityDigest(state.online) === PINNED_ONLINE_DIGEST,
       'SKU_RELEASE_ONLINE_DRIFT')
-    const plan = buildProductSkuPlan(state.products, { actorUserId: 'sku-authority-release',
+    const plan = buildReleaseProductSkuPlan(state.products, { actorUserId: 'sku-authority-release',
       reason: 'SKU Authority 1.0 reviewed historical allocation',
       snapshotId: hash({ products: state.products, online: state.online }), expectedCount: 178 })
     verifyPlan(plan)
@@ -110,15 +133,13 @@ async function main() {
   const approved = await readStdin()
   verifyPlan(approved.plan)
   if (mode === 'apply') {
-    assert(process.env.SKU_RELEASE_WRITE_AUTHORIZED === process.env.GIT_SHA &&
-      /^[0-9a-f]{40}$/.test(process.env.GIT_SHA || ''), 'SKU_RELEASE_WRITE_AUTHORIZATION_REQUIRED')
     const result = await db.$transaction(async tx => {
       const locks = await tx.$queryRaw`SELECT prefix, next_value FROM product_sku_sequences ORDER BY prefix FOR UPDATE`
       assert(locks.length === 2 && locks.every(row => row.next_value === 1), 'SKU_RELEASE_SEQUENCE_DRIFT')
       assert(await tx.productSkuAssignment.count() === 0 && await tx.productSkuAlias.count() === 0,
         'SKU_RELEASE_ALREADY_APPLIED')
       const before = await snapshot(tx)
-      const current = buildProductSkuPlan(before.products, { actorUserId: approved.plan.actorUserId,
+      const current = buildReleaseProductSkuPlan(before.products, { actorUserId: approved.plan.actorUserId,
         reason: approved.plan.reason, snapshotId: approved.plan.snapshotId, expectedCount: 178 })
       assert(stable(current) === stable(approved.plan), 'SKU_RELEASE_MAPPING_DIGEST_DRIFT')
       assert(stable(before.online) === stable(approved.online) &&
@@ -150,12 +171,15 @@ async function main() {
     process.stdout.write(stable(result) + '\n')
     return
   }
-  const [state, assignments, aliases, sequences] = await Promise.all([
-    db.$transaction(snapshot, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }),
-    db.productSkuAssignment.findMany({ select: { sku: true, itemId: true }, orderBy: { sku: 'asc' } }),
-    db.productSkuAlias.findMany({ select: { alias: true, itemId: true }, orderBy: { alias: 'asc' } }),
-    db.productSkuSequence.findMany({ orderBy: { prefix: 'asc' } }),
-  ])
+  const [state, assignments, aliases, sequences] = await db.$transaction(async tx => {
+    await assertReleaseReadOnly(tx)
+    return Promise.all([
+      snapshot(tx),
+      tx.productSkuAssignment.findMany({ select: { sku: true, itemId: true }, orderBy: { sku: 'asc' } }),
+      tx.productSkuAlias.findMany({ select: { alias: true, itemId: true }, orderBy: { alias: 'asc' } }),
+      tx.productSkuSequence.findMany({ orderBy: { prefix: 'asc' } }),
+    ])
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead })
   const postCutover = process.env.SKU_RELEASE_PHASE === 'POST_CUTOVER'
   assert(state.products.length >= 178 && state.online.length >= 153 &&
     assignments.length >= 178 && aliases.length >= 145, 'SKU_RELEASE_RECONCILIATION_FAILED')
@@ -193,4 +217,4 @@ try { await main() } catch (error) {
   process.stderr.write((/^SKU_RELEASE_[A-Z_]+$/.test(error.message) ? error.message :
     'SKU_RELEASE_FAILED_DETAILS_SUPPRESSED') + '\n')
   process.exitCode = 1
-} finally { await db.$disconnect() }
+} finally { await db?.$disconnect() }

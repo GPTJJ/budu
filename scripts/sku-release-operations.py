@@ -151,11 +151,14 @@ class SkuProductionOperations:
 
     def _worker_command(self, mode, data=None, write=False, timeout=150,
                         post_cutover=False):
+        core.require(mode in ('plan','reconcile','db-probe','apply','migration') and
+                     write == (mode in ('apply','migration')),
+                     'SKU_WORKER_WRITE_MODE_MISMATCH')
         url, hostname = self._worker_database()
         variables = {'DATABASE_URL':url,'SKU_RELEASE_CONTROLLER':'sku-authority-schema1',
                      'GIT_SHA':self.release}
         if write: variables['SKU_RELEASE_WRITE_AUTHORIZED'] = self.release
-        else: variables['PGOPTIONS'] = '-c default_transaction_read_only=on -c statement_timeout=120000'
+        else: variables['SKU_RELEASE_READ_ONLY'] = 'YES'
         if post_cutover: variables['SKU_RELEASE_PHASE'] = 'POST_CUTOVER'
         network = self.resolve_database_network(hostname)
         image = self.migration_art['imageReference'] if mode == 'migration' else self.art['imageReference']
@@ -169,7 +172,6 @@ class SkuProductionOperations:
                     '--name',self.worker,'--network',network,'--env-file',env_path,
                     '--entrypoint','node',image]
             if mode == 'migration': args += ['/app/node_modules/prisma/build/index.js','migrate','deploy']
-            elif mode == 'db-probe': args += ['--input-type=module','-e',core.APPLICATION_DB_PROBE_SCRIPT]
             else: args += ['/app/scripts/sku-release-apply.mjs',mode]
             return self.remote.run(args,data=data,timeout=timeout)
         except BaseException as error:
@@ -196,10 +198,12 @@ class SkuProductionOperations:
                      'SKU_WORKER_DB_CONNECTIVITY_PREFLIGHT_FAILED')
 
     def _in_candidate(self, mode, data=None, post_cutover=False):
+        core.require(mode in ('plan','reconcile','db-probe'),
+                     'SKU_CANDIDATE_READ_MODE_REQUIRED')
         args = ['docker','exec','-i','-w','/app',
                 '-e','SKU_RELEASE_CONTROLLER=sku-authority-schema1',
                 '-e','SKU_RELEASE_PHASE='+('POST_CUTOVER' if post_cutover else 'PRE_CUTOVER'),
-                '-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000',
+                '-e','SKU_RELEASE_READ_ONLY=YES',
                 self.candidate,'node','scripts/sku-release-apply.mjs',mode]
         return self.remote.run(args,data=data,timeout=150)
 
@@ -344,7 +348,12 @@ class SkuProductionOperations:
 
     def candidate_health(self): self.remote.health(self.candidate,self.release)
     def candidate_real_db_probe(self):
-        core.application_db_probe(self.remote,self.candidate,'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+        try:
+            result = self._in_candidate('db-probe')
+        except Exception:
+            raise core.GateError('CANDIDATE_APPLICATION_DB_PROBE_FAILED') from None
+        core.require(result == core.APPLICATION_DB_PROBE_OK,
+                     'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
     def candidate_runtime_parity(self):
         core.runtime_checks(self.remote,self.candidate,self.art['runtimeHash'],self.authority_mounts)
 

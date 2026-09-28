@@ -90,14 +90,64 @@ class WorkerNetworkTests(unittest.TestCase):
         command = next(c for c in op.remote.commands if c[:2] == ['docker', 'run'])
         self.assertEqual(command[command.index('--network')+1], 'pg-network')
         self.assertEqual(command[command.index('--entrypoint')+1], 'node')
-        self.assertEqual(command[-3:], ['--input-type=module', '-e', ops.core.APPLICATION_DB_PROBE_SCRIPT])
-        self.assertIn('default_transaction_read_only=on', op.remote.worker_env)
+        self.assertEqual(command[-2:], ['/app/scripts/sku-release-apply.mjs', 'db-probe'])
+        self.assertIn('SKU_RELEASE_READ_ONLY=YES', op.remote.worker_env)
+        self.assertNotIn('PGOPTIONS', op.remote.worker_env)
         self.assertIn('DATABASE_URL=postgresql://user:secret@bj006-postgres:5432/budu_bj006',
                       op.remote.worker_env)
         self.assertNotIn('SKU_RELEASE_WRITE_AUTHORIZED', op.remote.worker_env)
         self.assertEqual(op._worker_command('plan'), ops.core.APPLICATION_DB_PROBE_OK)
         plan_command = op.remote.commands[-1]
         self.assertEqual(plan_command[plan_command.index('--network')+1], 'pg-network')
+
+    def test_readonly_marker_and_write_authority_are_separate(self):
+        for mode in ('plan', 'reconcile', 'db-probe', 'apply', 'migration'):
+            with self.subTest(mode=mode):
+                op = self.operation()
+                write = mode in ('apply', 'migration')
+                op._worker_command(mode, write=write)
+                self.assertEqual('SKU_RELEASE_READ_ONLY=YES' in op.remote.worker_env, not write)
+                self.assertEqual('SKU_RELEASE_WRITE_AUTHORIZED=' + op.release in op.remote.worker_env, write)
+                self.assertNotIn('PGOPTIONS', op.remote.worker_env)
+                self.assertIn('DATABASE_URL=postgresql://user:secret@bj006-postgres:5432/budu_bj006',
+                              op.remote.worker_env)
+                self.assertNotIn('secret', ' '.join(op.remote.commands[-1]))
+                if mode != 'migration':
+                    self.assertEqual(op.remote.commands[-1][-2:],
+                                     ['/app/scripts/sku-release-apply.mjs', mode])
+
+    def test_candidate_reconcile_uses_same_adapter_and_guard(self):
+        op = self.operation()
+        op.candidate = 'candidate-test'
+        op.remote.run = Mock(return_value=b'{}')
+        op._in_candidate('reconcile', data=b'{}', post_cutover=True)
+        args = op.remote.run.call_args.args[0]
+        self.assertIn('SKU_RELEASE_READ_ONLY=YES', args)
+        self.assertIn('SKU_RELEASE_PHASE=POST_CUTOVER', args)
+        self.assertEqual(args[-3:], ['node', 'scripts/sku-release-apply.mjs', 'reconcile'])
+        self.assertNotIn('PGOPTIONS', ' '.join(args))
+        self.assertNotIn('SKU_RELEASE_WRITE_AUTHORIZED', ' '.join(args))
+
+    def test_candidate_probe_uses_guarded_adapter(self):
+        op = self.operation()
+        op.candidate = 'candidate-test'
+        op.remote.run = Mock(return_value=ops.core.APPLICATION_DB_PROBE_OK)
+        op.candidate_real_db_probe()
+        self.assertEqual(op.remote.run.call_args.args[0][-2:],
+                         ['scripts/sku-release-apply.mjs', 'db-probe'])
+        for value in (b'', b'not-db-ok'):
+            op.remote.run.return_value = value
+            with self.assertRaisesRegex(ops.core.GateError, 'CANDIDATE_APPLICATION_DB_PROBE_FAILED'):
+                op.candidate_real_db_probe()
+
+    def test_wrong_write_mode_stops_before_worker_creation(self):
+        for mode, write in (('apply', False), ('migration', False), ('plan', True)):
+            op = self.operation()
+            with self.assertRaisesRegex(ops.core.GateError, 'SKU_WORKER_WRITE_MODE_MISMATCH'):
+                op._worker_command(mode, write=write)
+            self.assertEqual(op.remote.commands, [])
+        with self.assertRaisesRegex(ops.core.GateError, 'SKU_CANDIDATE_READ_MODE_REQUIRED'):
+            self.operation()._in_candidate('apply')
 
     def test_alias_missing_fails_closed(self):
         old, pg = topology(aliases=('different-host',))

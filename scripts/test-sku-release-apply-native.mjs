@@ -4,24 +4,29 @@ import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { PrismaClient } from '@prisma/client'
-import { analyzeSnapshot } from './sku-release-readiness-plan.mjs'
+import { analyzeSnapshot, releaseReadonlyUrl, assertReleaseReadOnly } from './sku-release-readiness-plan.mjs'
 import { reserveProductSku, recordProductSkuAssignment, appendProductSkuAudit } from '../server/product-sku-authority.js'
 
 const target = new URL(process.env.DATABASE_URL || '')
 assert.ok(['localhost','127.0.0.1'].includes(target.hostname) &&
   /^sku_authority_test_[a-z0-9_]+$/.test(target.pathname.slice(1)))
 const db = new PrismaClient()
-const sha = 'a'.repeat(40)
+const sha = process.env.SKU_RELEASE_CANDIDATE_SHA || 'a'.repeat(40)
 const env = { ...process.env, SKU_RELEASE_CONTROLLER: 'sku-authority-schema1',
   SKU_RELEASE_TEST_ONLY: 'YES', GIT_SHA: sha }
 function adapter(mode, input, extra = {}) {
   const call = spawnSync('node', ['scripts/sku-release-apply.mjs',mode], {
-    input, env: { ...env, ...extra }, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+    input, env: { ...env, SKU_RELEASE_READ_ONLY:mode === 'apply' ? '' : 'YES', ...extra }, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
   })
   assert.equal(call.status,0,call.stderr)
   return JSON.parse(call.stdout)
 }
 try {
+  const [actual] = await db.$queryRaw`SELECT current_database() AS name,
+    host(inet_server_addr()) AS host,inet_server_port() AS port`
+  assert.equal(actual.name,decodeURIComponent(target.pathname.slice(1)))
+  assert.ok(['127.0.0.1','::1'].includes(actual.host))
+  assert.equal(actual.port,Number(target.port || 5432))
   const [{ version }] = await db.$queryRaw`SELECT current_setting('server_version_num')::int AS version`
   assert.equal(Math.floor(version / 10000),16)
   for (const [name, expected] of Object.entries({
@@ -33,6 +38,60 @@ try {
     assert.equal(crypto.createHash('sha256').update(row.prosrc.trim()).digest('hex'),expected)
   }
   assert.equal(await db.inventoryItem.count({ where: { category: 'product' } }),0)
+  const probe = extra => spawnSync('node',['scripts/sku-release-apply.mjs','db-probe'],
+    { env:{ ...env,SKU_RELEASE_READ_ONLY:'',PGOPTIONS:'',...extra },encoding:'utf8' })
+  const wrong = new URL(target)
+  wrong.searchParams.set('options','-c default_transaction_read_only=off')
+  for (const extra of [{}, { DATABASE_URL:wrong.toString() },
+    { PGOPTIONS:'-c default_transaction_read_only=on' }]) {
+    const result=probe(extra)
+    assert.equal(result.status,1)
+    assert.equal(result.stderr,'SKU_RELEASE_READONLY_GUARD_FAILED\n')
+    assert.equal(result.stdout,'')
+  }
+  for (const mode of ['plan','reconcile']) {
+    const result=spawnSync('node',['scripts/sku-release-apply.mjs',mode],
+      { env:{ ...env,SKU_RELEASE_READ_ONLY:'',PGOPTIONS:'-c default_transaction_read_only=on' },encoding:'utf8' })
+    assert.equal(result.status,1)
+    assert.equal(result.stderr,'SKU_RELEASE_READONLY_GUARD_FAILED\n')
+    assert.equal(result.stdout,'')
+  }
+  const malformed=probe({ DATABASE_URL:'invalid-url-with-private-marker' })
+  assert.equal(malformed.status,1)
+  assert.equal(malformed.stderr,'SKU_RELEASE_FAILED_DETAILS_SUPPRESSED\n')
+  const duplicates = new URL(target)
+  duplicates.searchParams.append('options','-c default_transaction_read_only=off')
+  duplicates.searchParams.append('options','-c default_transaction_read_only=on -c default_transaction_read_only=off')
+  const readonlyUrl=releaseReadonlyUrl(duplicates.toString())
+  for (const extra of [{ DATABASE_URL:readonlyUrl },
+    { DATABASE_URL:duplicates.toString(),SKU_RELEASE_READ_ONLY:'YES' }]) {
+    const result=probe(extra)
+    assert.equal(result.status,0,result.stderr)
+    assert.equal(result.stdout,'DB_READ_OK\n')
+  }
+  await db.$executeRawUnsafe('CREATE TABLE sku_release_v6_readonly_test (id integer)')
+  const readonly = new PrismaClient({ datasources:{ db:{ url:readonlyUrl } } })
+  try {
+    await assertReleaseReadOnly(readonly,true)
+    await readonly.$transaction(async tx => {
+      await assertReleaseReadOnly(tx)
+      const [limits]=await tx.$queryRaw`SELECT current_setting('statement_timeout') AS timeout,
+        current_setting('temp_file_limit') AS temp`
+      assert.equal(limits.timeout,'2min')
+      assert.equal(limits.temp,'0')
+    })
+    await assert.rejects(readonly.$executeRawUnsafe('INSERT INTO sku_release_v6_readonly_test VALUES (1)'),
+      error => error.meta?.code === '25006')
+    // The same real Prisma connection passes the session guard but a deliberately
+    // writable test transaction must still fail the in-transaction guard.
+    await readonly.$transaction(async tx => {
+      await tx.$executeRawUnsafe('SET TRANSACTION READ WRITE')
+      await assert.rejects(assertReleaseReadOnly(tx),/SKU_RELEASE_READONLY_GUARD_FAILED/)
+    })
+  } finally { await readonly.$disconnect() }
+  assert.equal((await db.$queryRawUnsafe('SELECT count(*)::int AS n FROM sku_release_v6_readonly_test'))[0].n,0)
+  await db.$executeRawUnsafe('DROP TABLE sku_release_v6_readonly_test')
+  console.log('ACTUAL_PRISMA_SESSION_AND_TX=PASS MISSING_WRONG_PGOPTIONS_ONLY=BLOCKED DUPLICATE_OPTIONS=SAFE DATABASE_WRITE_REJECTED=25006')
   const bd = await db.productCategory.create({ data: { id:'gate8a-bd', name:'糖果' } })
   const tp = await db.productCategory.create({ data: { id:'gate8a-tp', name:'pos-森醒' } })
   await db.store.create({ data: { key:'gate8a-store', name:'Gate 8A store' } })
@@ -41,7 +100,7 @@ try {
     name:`Gate8A商品${String(i+1).padStart(3,'0')}`,
     sku:i<33?null:`LEGACY-${String(i+1).padStart(3,'0')}`,
     category:'product', productCategoryId:i<89?tp.id:bd.id,
-    createdAt:new Date(Date.UTC(2026,0,1+Math.floor(i/6),i%24)),
+    createdAt:new Date(Date.UTC(2026,0,1,0,0,Math.floor(i/4),999-(i%4)*211)),
     isActive:i<87,
     transferEnabled:i>=87 && i<113,
   }))
@@ -82,6 +141,17 @@ try {
       row.externalProductId,row.externalSkuId,row.productId,row.enabled]))).digest('hex'))
   assert.equal(plan.anyChannelEnabled,113)
   const approved = JSON.stringify(plan)
+  for (const extra of [{}, { SKU_RELEASE_WRITE_AUTHORIZED:'b'.repeat(40) }]) {
+    const rejected=spawnSync('node',['scripts/sku-release-apply.mjs','apply'],{
+      input:approved,env:{ ...env,SKU_RELEASE_READ_ONLY:'',SKU_RELEASE_WRITE_AUTHORIZED:'',...extra },encoding:'utf8' })
+    assert.equal(rejected.status,1)
+    assert.equal(rejected.stderr,'SKU_RELEASE_WRITE_AUTHORIZATION_REQUIRED\n')
+  }
+  const conflict=spawnSync('node',['scripts/sku-release-apply.mjs','apply'],{
+    input:approved,env:{ ...env,SKU_RELEASE_READ_ONLY:'YES',SKU_RELEASE_WRITE_AUTHORIZED:sha },encoding:'utf8' })
+  assert.equal(conflict.status,1)
+  assert.equal(conflict.stderr,'SKU_RELEASE_WRITE_READONLY_CONFLICT\n')
+  assert.equal(await db.productSkuAssignment.count(),0)
   const applied = adapter('apply',approved,{ SKU_RELEASE_WRITE_AUTHORIZED:sha })
   assert.equal(applied.digest,plan.plan.sha256)
   assert.equal(adapter('reconcile',approved).result,'PASS')

@@ -41,7 +41,8 @@ class NativePreOperations:
         return {**os.environ,'DATABASE_URL':self.url,'SKU_RELEASE_CONTROLLER':'sku-authority-schema1',
                 'SKU_RELEASE_TEST_ONLY':'YES','GIT_SHA':'a'*40,**extra}
     def adapter(self,mode,input=None,**extra):
-        return run(['node','scripts/sku-release-apply.mjs',mode],env=self.env(**extra),
+        return run(['node','scripts/sku-release-apply.mjs',mode],
+                   env=self.env(SKU_RELEASE_READ_ONLY='' if mode == 'apply' else 'YES',**extra),
                    input=input,timeout=180)
     def ledger(self):
         return int(psql(self.url,"SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL"))
