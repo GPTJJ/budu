@@ -1,4 +1,4 @@
-name: Partner Import Diagnosis Only
+name: Partner Release Recovery Only
 
 on:
   push:
@@ -15,9 +15,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ssh-throughput:
+  recovery:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +35,7 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-      - name: Measure exactly 256 MiB to production dev-null
+      - name: Verify production, recover stale lock, and back up DB
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 scripts/diagnose-partner-ssh.py
