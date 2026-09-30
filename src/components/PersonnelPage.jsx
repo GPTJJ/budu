@@ -943,7 +943,7 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
         </p>
       )}
       {/* 页面头部 / 筛选工具栏 */}
-      <section className="space-y-3" data-testid="personnel-toolbar">
+      <section className="relative space-y-3" data-testid="personnel-toolbar">
         <div className="flex items-start gap-3">
           <button
             onClick={onBack}
@@ -978,38 +978,40 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
                 : day
                   ? t(' · 当日值班查询中')
                   : ''}
+            </p>
+            <div role="status" className="flex h-6 items-start text-xs leading-5" data-testid="personnel-payroll-status">
               {payrollDisplay.status === 'loading' && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
                   {t('加载中…')}
                 </span>
               )}
               {payrollDisplay.status === 'unavailable' && (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
                   {t('工资数据暂不可用')}
                   <button type="button" className="underline" onClick={retryMonthlyPayroll}>{t('重新加载')}</button>
                 </span>
               )}
               {payrollDisplay.status === 'refreshing' && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+                <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
                   {t('正在刷新…')}
                 </span>
               )}
               {payrollDisplay.status === 'refresh_error' && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
                   {t('刷新失败，显示上次成功数据')}
                 </span>
               )}
               {(payrollDisplay.status === 'partial' || payrollDisplay.status === 'incomplete') && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
+                <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">
                   {t(payrollDisplay.status === 'partial' ? '部分工资待完善' : '工资事实待完善')}
                 </span>
               )}
               {(payrollDisplay.status === 'partial_today' || payrollDisplay.status === 'today_pending') && (
-                <span className="ml-2 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
                   {t('今日数据待确认')}
                 </span>
               )}
-            </p>
+            </div>
           </div>
         </div>
 
@@ -1106,10 +1108,12 @@ export default function PersonnelPage({ onBack, canDelete = false, canManage = f
             </div>
           )}
         </div>
+        {/* Keep background read feedback inside the existing gap, without moving cards. */}
+        <div role="status" className="absolute inset-x-0 top-full !mt-0 pt-1 text-sm leading-5" data-testid="personnel-read-status">
+          {staffRead.status.startsWith('ERROR') && <span className="text-amber-700">数据刷新失败，正在重试</span>}
+          {staffRead.status === 'REFRESHING' && <span className="text-slate-500">正在刷新人员数据…</span>}
+        </div>
       </section>
-
-      {staffRead.status.startsWith('ERROR') && <p role="status" className="text-sm text-amber-700">数据刷新失败，正在重试</p>}
-      {staffRead.status === 'REFRESHING' && <p role="status" className="text-sm text-slate-500">正在刷新人员数据…</p>}
       {day && !dayHasData && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-medium text-amber-600">
           {t('所选日期 {date} 暂无业绩录入，请先在「门店经营 → 门店业绩录入」登记当日值班人员与业绩', {

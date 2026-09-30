@@ -1,0 +1,2 @@
+import {defineConfig} from '@playwright/test'
+export default defineConfig({testDir:'./tests',testMatch:['personnel-refresh-layout.spec.mjs'],reporter:'line',workers:1,use:{baseURL:'http://127.0.0.1:5297'},projects:[{name:'chromium',use:{browserName:'chromium'}},{name:'webkit',use:{browserName:'webkit'}}],webServer:{command:'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5297 --strictPort',url:'http://127.0.0.1:5297',reuseExistingServer:false}})
