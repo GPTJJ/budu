@@ -95,13 +95,171 @@ function build(options = {}) {
   })
 }
 
-test('canonical model supports PASS, REVIEW_REQUIRED, BLOCKED and one-cent mismatch', () => {
+test('canonical model keeps missing payroll and a one-cent card mismatch blocked', () => {
   const model = build()
   assert.equal(model.summary.finalResult, 'BLOCKED')
   assert.equal(model.summary.passCount, 1)
-  assert.equal(model.summary.reviewRequiredCount, 1)
-  assert.equal(model.summary.blockedCount, 1)
+  assert.equal(model.summary.reviewRequiredCount, 0)
+  assert.equal(model.summary.blockedCount, 2)
   assert.equal(model.employeeResults.find((row) => row.employeeId === 'emp-review').differenceCents, '1')
+})
+
+function statusFixture() {
+  const employeeId = 'paid'
+  return {
+    ...executionMetadata, period, employmentTypeHistoryAvailable: false,
+    authority: {
+      employees: [{ id: employeeId, name: '测试员工', type: 'parttime' }],
+      result: {
+        payroll: { employees: [{
+          employeeId, payableHours: 8, salary: 200, basePay: 200,
+          dailyExplanations: [{ date: '2026-08-03', storeKey: 'test', payableHours: 8,
+            payableHoursSource: 'ACTUAL_HOURS', basePay: 200, finalPay: 200 }],
+        }] },
+        readiness: { employees: [{ employeeId, blockers: [] }] }, blockers: [],
+      },
+    },
+    attendanceRows: [{ employeeId, date: '2026-08-03', storeKey: 'test', actualHours: 8, payableHoursSource: 'ACTUAL_HOURS' }],
+    cardAmountCentsById: { [employeeId]: '20000' },
+  }
+}
+
+function addIdleEmployee(input, employeeId = 'idle') {
+  input.authority.employees.push({ id: employeeId, name: '未出勤员工', type: 'parttime' })
+  input.scopeEmployeeIds = input.authority.employees.map((row) => row.id)
+  return input
+}
+
+test('CASE 1: verified paid employee retains employment history warning without HOLD', () => {
+  const model = buildPayrollAuditReportModel(statusFixture())
+  assert.equal(model.employeeResults[0].status, 'PASS')
+  const warning = model.employeeResults[0].issues.find((issue) => issue.type === 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE')
+  assert.ok(warning)
+  assert.equal(warning.payrollImpact, 'NO')
+  assert.equal(model.summary.finalResult, 'PASS')
+  assert.equal(model.summary.settlementRecommendation, '可以进入独立结算复核')
+})
+
+test('CASE 2: no attendance, payroll or card uses report-only NO_PAYROLL_REQUIRED', () => {
+  for (const actualHours of [null, 0]) {
+    const input = addIdleEmployee(statusFixture())
+    if (actualHours === 0) input.attendanceRows.push({ employeeId: 'idle', date: '2026-08-04', actualHours: 0 })
+    const model = buildPayrollAuditReportModel(input)
+    const idle = model.employeeResults.find((row) => row.employeeId === 'idle')
+    assert.equal(idle.status, 'PASS')
+    assert.equal(idle.authoritativePayrollCents, null)
+    assert.equal(idle.employeeCardCents, null)
+    assert.ok(idle.issues.some((issue) => issue.rootCause === 'NO_PAYROLL_REQUIRED' && issue.payrollImpact === 'NO'))
+    assert.equal(model.summary.finalResult, 'PASS')
+    assert.match(renderPayrollAuditMarkdown(model), /本期无需结算/)
+  }
+})
+
+test('CASE 3: actual hours without payroll stay blocked even when totals match', () => {
+  const input = addIdleEmployee(statusFixture())
+  input.attendanceRows.push({ employeeId: 'idle', date: '2026-08-04', actualHours: 10 })
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.summary.differenceCents, '0')
+  assert.equal(model.employeeResults.find((row) => row.employeeId === 'idle').status, 'BLOCKED')
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+})
+
+test('CASE 4: one-cent amount mismatch blocks settlement', () => {
+  const input = statusFixture()
+  input.cardAmountCentsById.paid = '20001'
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.employeeResults[0].status, 'BLOCKED')
+  assert.equal(model.summary.settlementRecommendation, '暂不建议进入结算')
+  assert.match(renderPayrollAuditMarkdown(model), /员工薪酬卡片：不一致/)
+})
+
+test('CASE 5: mixed paid and informational-only employees allow settlement with matching conclusions', () => {
+  const model = buildPayrollAuditReportModel(addIdleEmployee(statusFixture()))
+  assert.equal(model.summary.passCount, 2)
+  assert.equal(model.summary.reviewRequiredCount, 0)
+  assert.equal(model.summary.blockedCount, 0)
+  assert.equal(model.summary.finalResult, 'PASS')
+  assert.equal(model.summary.settlementRecommendation, '可以进入独立结算复核')
+  assert.match(renderPayrollAuditMarkdown(model), /薪酬权威：通过\n员工薪酬卡片：一致/)
+  assert.match(renderPayrollAuditHtml(model), /<span>薪酬权威<\/span><b>通过<\/b>/)
+  assert.match(renderPayrollAuditHtml(model), /<span>员工薪酬卡片<\/span><b>一致<\/b>/)
+})
+
+test('CASE 6: a real amount-affecting blocker in a mixed batch keeps HOLD', () => {
+  const input = addIdleEmployee(statusFixture())
+  input.authority.result.readiness.employees[0].blockers.push({
+    type: 'CALCULATION_BLOCKER', reason: 'MISSING_ACTUAL_HOURS', detail: 'actualHours missing',
+  })
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.summary.differenceCents, '0')
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+  assert.equal(model.summary.settlementRecommendation, '暂不建议进入结算')
+  assert.match(renderPayrollAuditMarkdown(model), /薪酬权威：未通过\n员工薪酬卡片：一致/)
+})
+
+test('opposite employee card errors cannot cancel each other into a PASS', () => {
+  const input = statusFixture()
+  input.authority.employees.push({ id: 'other', type: 'parttime' })
+  input.authority.result.payroll.employees.push({ ...input.authority.result.payroll.employees[0], employeeId: 'other' })
+  input.cardAmountCentsById = { paid: '20001', other: '19999' }
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.summary.differenceCents, '0')
+  assert.equal(model.summary.blockedCount, 2)
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+})
+
+test('zero attendance never hides adjustment-only readiness or a nonzero card', () => {
+  for (const fact of ['adjustment', 'card']) {
+    const input = addIdleEmployee(statusFixture())
+    if (fact === 'adjustment') input.authority.result.readiness.employees.push({ employeeId: 'idle', days: 0, blockers: [] })
+    else input.cardAmountCentsById.idle = '100'
+    const idle = buildPayrollAuditReportModel(input).employeeResults.find((row) => row.employeeId === 'idle')
+    assert.equal(idle.status, 'BLOCKED', fact)
+    assert.ok(idle.issues.some((issue) => issue.type === 'PAYROLL_SUBJECT_OUTSIDE_RANGE' && issue.payrollImpact === 'YES'))
+  }
+})
+
+test('employee-scoped identity, contribution and global calculation blockers remain effective', () => {
+  for (const reason of ['IDENTITY_ERROR', 'LEGACY_PAY_ADJUSTMENT_IDENTITY', 'LEGACY_BIG_BONUS_IDENTITY']) {
+    const input = statusFixture()
+    input.authority.result.blockers = [{ type: 'CALCULATION_BLOCKER', reason, employeeId: 'paid' }]
+    assert.equal(buildPayrollAuditReportModel(input).summary.finalResult, 'BLOCKED', reason)
+    input.authority.result.blockers[0] = { type: 'CALCULATION_BLOCKER', reason, employeeIds: ['paid'] }
+    assert.equal(buildPayrollAuditReportModel(input).summary.finalResult, 'BLOCKED', reason)
+    delete input.authority.result.blockers[0].employeeIds
+    assert.equal(buildPayrollAuditReportModel(input).summary.finalResult, 'BLOCKED', reason)
+  }
+})
+
+test('unknown employment type keeps review but does not falsely label matching cards inconsistent', () => {
+  const input = statusFixture()
+  delete input.authority.employees[0].type
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.summary.finalResult, 'REVIEW_REQUIRED')
+  assert.match(renderPayrollAuditMarkdown(model), /员工薪酬卡片：一致/)
+  assert.match(renderPayrollAuditHtml(model), /<span>员工薪酬卡片<\/span><b>一致<\/b>/)
+})
+
+test('missing salary, explicit missing card and invalid actualHours fail closed', () => {
+  for (const missing of ['salary', 'card', 'hours', 'identity']) {
+    const input = statusFixture()
+    if (missing === 'salary') delete input.authority.result.payroll.employees[0].salary
+    if (missing === 'card') input.cardAmountCentsById.paid = null
+    if (missing === 'hours') input.attendanceRows[0].actualHours = null
+    if (missing === 'identity') input.authority.employees = []
+    assert.equal(buildPayrollAuditReportModel(input).summary.finalResult, 'BLOCKED', missing)
+  }
+})
+
+test('status classification never mutates authority amounts, hours, components or input', () => {
+  const input = addIdleEmployee(statusFixture())
+  const before = JSON.stringify(input)
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(JSON.stringify(input), before)
+  assert.equal(model.summary.authoritativePayrollCents, '20000')
+  assert.equal(model.summary.employeeCardCents, '20000')
+  assert.equal(model.employeeResults.find((row) => row.employeeId === 'paid').payableHours, 8)
+  assert.equal(model.employeeResults.find((row) => row.employeeId === 'paid').components[0].amountCents, '20000')
 })
 
 test('an explicitly empty employment-type scope never falls back to all payroll subjects', () => {

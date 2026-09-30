@@ -206,7 +206,7 @@ export async function runPayrollAuditJob(input, dependencies = {}) {
       employeeCount: result.model.summary.employeeCount, emailStatus: input.email === false ? 'NOT_SENT' : 'PENDING',
       recipients: [...PAYROLL_AUDIT_RECIPIENTS], retryCount: 0, emailAttempts: [],
       artifacts: { model: result.paths.model, markdown: result.paths.markdown, pdf: result.paths.pdf, email: result.paths.email, manifest: result.paths.manifest },
-      employmentTypeLimitation: 'No effective-dated employment type history; current Employee.employmentType is recorded and every subject is REVIEW_REQUIRED.',
+      employmentTypeLimitation: 'No effective-dated employment type history; current Employee.employmentType is recorded. This warning alone does not block verified current-period payroll.',
       actorId: input.actorId || 'system:scheduler', createdAt: now, updatedAt: now,
     })
     return { job: input.email === false ? job : await deliver(job, { send: dependencies.send }), reused: result.reused }
