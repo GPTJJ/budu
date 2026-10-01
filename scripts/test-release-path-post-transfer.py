@@ -24,6 +24,9 @@ OLD_V2 = hashlib.sha256(subprocess.check_output(['git','-C',str(ROOT),'show',OLD
 SHIPPING_BRANCH = 'codex/mailing-free-tier-shipped-sort-20261001'
 SHIPPING_OLD = '08895d4978594ea4298c43bf72f8961cf082fca6'
 SHIPPING_BUSINESS = '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe'
+PAYROLL_BRANCH = 'codex/pos-payroll-input-shipping-baseline-20261001'
+PAYROLL_OLD = 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531'
+PAYROLL_BUSINESS = '27f6280f731d258ddd078504ac4a27f33430728c'
 LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/release-controller-dns-empty-normalization',
                          'codex/release-single-writer-db-probe',
@@ -91,7 +94,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
-        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/"+SHIPPING_BRANCH+"') }}")
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"')) }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
@@ -138,6 +141,48 @@ class RealShellRoute(unittest.TestCase):
         for facts in denied:
             with self.subTest(facts=facts):
                 self.assertNotEqual(build_only_guard(**facts).returncode,0)
+
+    def test_payroll_build_requires_exact_dispatch_sha_parent_and_two_files(self):
+        base = {'GITHUB_REF':'refs/heads/'+PAYROLL_BRANCH,
+                'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD,
+                'APPROVED_BUSINESS_SHA':PAYROLL_BUSINESS,
+                'GUARD_PARENTS':PAYROLL_BUSINESS}
+        accepted=build_only_guard(**base)
+        self.assertEqual(accepted.returncode,0,accepted.stderr)
+        denied=[
+            {'GITHUB_EVENT_NAME':'push'},
+            {'GITHUB_REF':'refs/heads/codex/unreviewed'},
+            {'GITHUB_REF':'refs/tags/'+PAYROLL_BRANCH},
+            {'REQUESTED_RELEASE_SHA':''},
+            {'REQUESTED_RELEASE_SHA':'b'*40},
+            {'GITHUB_SHA':'a'*12,'REQUESTED_RELEASE_SHA':'a'*12},
+            {'GITHUB_SHA':'A'*40,'REQUESTED_RELEASE_SHA':'A'*40},
+            {'EXPECTED_PRODUCTION_SHA':SHIPPING_OLD},
+            {'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS},
+            {'GUARD_PARENTS':PAYROLL_OLD},
+            {'GUARD_PARENTS':PAYROLL_BUSINESS+' '+'b'*40},
+            {'GUARD_FILES':'.github/workflows/release-build-only.yml'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\nserver/payroll-authority.js'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\n.github/workflows/deploy-prod.yml'},
+            {'GUARD_HEAD':'b'*40},
+        ]
+        for facts in denied:
+            with self.subTest(facts=facts):
+                self.assertNotEqual(build_only_guard(**{**base,**facts}).returncode,0)
+
+    def test_payroll_build_retains_exact_artifact_and_business_payload(self):
+        workflow=build_only_workflow()
+        self.assertIn(PAYROLL_OLD,workflow['env']['EXPECTED_PRODUCTION_SHA'])
+        self.assertIn(PAYROLL_BUSINESS,workflow['env']['APPROVED_BUSINESS_SHA'])
+        steps=workflow['jobs']['artifact']['steps']
+        build=next(step for step in steps if step.get('name','').startswith('Build exact'))['run']
+        payroll=build.split('elif [ "$GITHUB_REF" = refs/heads/'+PAYROLL_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        self.assertIn('git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA"',payroll)
+        self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',payroll)
+        self.assertIn('PAYROLL_BUSINESS_PAYLOAD_UNCHANGED=YES',payroll)
+        self.assertIn(PAYROLL_BRANCH,steps[-1]['with']['name'])
+        self.assertIn("format('release-staging-{0}', github.sha)",steps[-1]['with']['name'])
+        self.assertIn("format('release-preflight-{0}', github.sha)",steps[-1]['with']['name'])
 
     def test_legacy_build_branches_keep_push_and_deny_manual_dispatch(self):
         for branch in LEGACY_BUILD_BRANCHES:
