@@ -46,6 +46,7 @@ const snapshot = await prisma.$transaction(async (tx) => {
     tx.$queryRawUnsafe('SELECT current_database() AS name'),
   ])
   const digests = {
+    PayrollSalesInput: { count: authority.salesInputs.length, sha256: hash(authority.salesInputs) },
     DailyEntry: { count: dailyEntries.length, sha256: hash(dailyEntries) },
     DailyStoreStaff: { count: attendanceRows.length, sha256: hash(attendanceRows) },
     Employee: { count: employees.length, sha256: hash(employees) },
