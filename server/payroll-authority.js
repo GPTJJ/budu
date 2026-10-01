@@ -3,6 +3,7 @@ import { buildIssueSnapshot } from '../src/utils/payrollIssue.js'
 import { payrollRangesOverlap, resolvePayrollPeriod } from '../src/utils/payrollPeriod.js'
 import { PAYROLL_ISSUANCE_SNAPSHOT_VERSION } from '../shared/payrollIssuanceContract.js'
 import crypto from 'node:crypto'
+import { effectiveSource, resolveDailyEntrySalesRows } from './daily-sales-authority.js'
 
 const isoDate = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '')
 const dbDate = (value) => new Date(`${value}T00:00:00.000Z`)
@@ -74,11 +75,12 @@ export async function loadAuthoritativePayrollRange(client, periodInput) {
       select: { id: true, username: true, employeeId: true, status: true },
       orderBy: { username: 'asc' },
     }),
-    client.store.findMany({ select: { key: true, name: true }, orderBy: { key: 'asc' } }),
+    client.store.findMany({ select: { key: true, name: true, salesDataSource: true, salesDataSourceEffectiveDate: true }, orderBy: { key: 'asc' } }),
   ])
 
   const dailyEntries = {}
-  for (const row of entries) {
+  const salesEntries = await resolveDailyEntrySalesRows(client, entries, stores)
+  for (const row of salesEntries) {
     const date = isoDate(row.date)
     dailyEntries[`${date.slice(0, 7)}|${row.storeKey}|${date.slice(5)}`] = {
       inc: Number(row.incCents) / 100,
@@ -149,6 +151,17 @@ export async function loadAuthoritativePayrollRange(client, periodInput) {
     employees: employeeDirectory,
     users,
     storeNames,
+    // Snapshot identity must include the sales projection now consumed by payroll.
+    salesInputs: salesEntries.map((row) => {
+      const store = stores.find((item) => item.key === row.storeKey)
+      return {
+        id: row.id, storeKey: row.storeKey, date: isoDate(row.date),
+        source: row.salesDataStatus === 'corrected' ? 'manual' : effectiveSource(store, isoDate(row.date)),
+        configuredSource: store.salesDataSource,
+        sourceEffectiveDate: isoDate(store.salesDataSourceEffectiveDate),
+        incCents: row.incCents.toString(), ord: row.ord,
+      }
+    }),
   }
 }
 

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { resolveDailyEntrySalesRows } from './daily-sales-authority.js'
 import { prisma, dbReady } from './pg.js'
 import { appendPurposeAudit, assertPurposeActor, cleanReason, purposeError } from './order-purpose-service.js'
 import { isTestOrderPurpose } from '../shared/orderPurpose.js'
@@ -569,8 +570,9 @@ v2Router.get('/daily-entries', wrap(async (req, res) => {
     where,
     orderBy: [{ date: 'desc' }, { storeKey: 'asc' }],
   })
+  const salesRows = await resolveDailyEntrySalesRows(prisma, rows)
   res.json({
-    rows: rows.map((r) => ({
+    rows: salesRows.map((r) => ({
       id: r.id,
       storeKey: r.storeKey,
       date: isoDate(r.date),

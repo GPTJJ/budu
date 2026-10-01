@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { buildRecognizedRevenueWhere, httpError } from './pos-core.js'
+import { effectiveSource, aggregatePosDay, resolveDailyEntrySalesRows } from './daily-sales-authority.js'
 import { resolveStoreName } from './store-names.js'
 import {
   DAILY_ENTRY_CAPABILITIES,
@@ -25,7 +26,7 @@ import { resolveDailyEntryCompleteness } from './daily-entry-completeness.js'
 
 export const dailyEntryUpgradeRouter = Router()
 
-export { dateOnly, isoDate, effectiveSource, hoursFromTimes }
+export { dateOnly, isoDate, effectiveSource, hoursFromTimes, aggregatePosDay }
 
 const ATTENDANCE_STATUSES = ['normal', 'late', 'early_leave', 'leave', 'absence', 'substitute']
 
@@ -63,13 +64,6 @@ function isoDate(value) {
   return new Date(value).toISOString().slice(0, 10)
 }
 
-function effectiveSource(store, dateStr) {
-  if (store.salesDataSource === 'manual') return 'manual'
-  const eff = store.salesDataSourceEffectiveDate ? isoDate(store.salesDataSourceEffectiveDate) : ''
-  if (eff && dateStr < eff) return 'manual'
-  return store.salesDataSource
-}
-
 function hoursFromTimes(start, end, breakMinutes) {
   if (!/^\d{1,2}:\d{2}$/.test(String(start || '')) || !/^\d{1,2}:\d{2}$/.test(String(end || ''))) return 0
   const toMin = (value) => {
@@ -98,81 +92,6 @@ async function writeAudit(tx, input) {
       operatorName: input.operatorName || '',
     },
   })
-}
-
-export async function aggregatePosDay(storeId, dateStr, prismaClient = prisma) {
-  const businessDate = dateOnly(dateStr)
-  const [orders, refunds] = await Promise.all([
-    prismaClient.order.findMany({
-      where: buildRecognizedRevenueWhere({ storeId, businessDate }),
-      include: { payments: true },
-    }),
-    prismaClient.refund.findMany({
-      where: { status: 'completed', order: { is: { storeId, businessDate } } },
-      select: { refundAmount: true },
-    }),
-  ])
-  let originalSales = 0n
-  let effectiveSales = 0n
-  const refundAmount = refunds.reduce((sum, refund) => sum + refund.refundAmount, 0n)
-  let discountAmount = 0n
-  let orderCount = 0
-  const byChannel = { wechat: 0n, alipay: 0n, cash: 0n, other: 0n }
-  for (const order of orders) {
-    originalSales += order.subtotal
-    discountAmount += order.discountAmount
-    effectiveSales += order.payableAmount
-    orderCount += 1
-    for (const pay of order.payments || []) {
-      if (pay.status === 'success') {
-        const key = ['wechat', 'alipay', 'cash'].includes(pay.channel) ? pay.channel : 'other'
-        byChannel[key] += pay.amount
-      }
-    }
-  }
-  // 已退款订单已整体排除，不能再次从干净订单营收中扣减。
-  const effectiveAfterRefund = effectiveSales
-  const toStr = (value) => value.toString()
-  return {
-    status: 'synced',
-    syncedAt: new Date().toISOString(),
-    originalSales: toStr(originalSales),
-    effectiveSales: toStr(effectiveSales),
-    effectiveAfterRefund: toStr(effectiveAfterRefund),
-    refundAmount: toStr(refundAmount),
-    discountAmount: toStr(discountAmount),
-    orderCount,
-    avgOrderCents: toStr(orderCount > 0 ? effectiveAfterRefund / BigInt(orderCount) : 0n),
-    byChannel: Object.fromEntries(Object.entries(byChannel).map(([key, value]) => [key, toStr(value)])),
-  }
-}
-
-async function aggregatePosPeriod(storeId, start, end, prismaClient = prisma) {
-  const [orders, refunds] = await Promise.all([
-    prismaClient.order.findMany({
-      where: buildRecognizedRevenueWhere({ storeId, businessDate: { gte: start, lt: end } }),
-      select: { businessDate: true, subtotal: true, payableAmount: true, discountAmount: true },
-    }),
-    prismaClient.refund.findMany({
-      where: { status: 'completed', order: { is: { storeId, businessDate: { gte: start, lt: end } } } },
-      select: { refundAmount: true, order: { select: { businessDate: true } } },
-    }),
-  ])
-  const groups = new Map()
-  const ensure = (dateStr) => {
-    const current = groups.get(dateStr) || { originalSales: 0n, effectiveSales: 0n, discountAmount: 0n, refundAmount: 0n, orderCount: 0 }
-    groups.set(dateStr, current)
-    return current
-  }
-  for (const order of orders) {
-    const group = ensure(isoDate(order.businessDate))
-    group.originalSales += order.subtotal
-    group.effectiveSales += order.payableAmount
-    group.discountAmount += order.discountAmount
-    group.orderCount += 1
-  }
-  for (const refund of refunds) ensure(isoDate(refund.order.businessDate)).refundAmount += refund.refundAmount
-  return groups
 }
 
 export function serializeEntry(entry) {
@@ -482,12 +401,11 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
   const [year, monthNo] = month.split('-').map(Number)
   const start = new Date(Date.UTC(year, monthNo - 1, 1))
   const end = new Date(Date.UTC(year, monthNo, 1))
-  const [entries, staffRows, audits, employees, posGroups] = await Promise.all([
+  const [entries, staffRows, audits, employees] = await Promise.all([
     prisma.dailyEntry.findMany({ where: { storeKey, date: { gte: start, lt: end } }, orderBy: { date: 'desc' } }),
     prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: { gte: start, lt: end } }, orderBy: [{ date: 'desc' }, { staffNameSnapshot: 'asc' }] }),
     prisma.dailyEntryAuditLog.findMany({ where: { storeId: storeKey, date: { gte: start, lt: end } }, orderBy: { createdAt: 'desc' } }),
     prisma.employee.findMany({ select: { id: true } }),
-    aggregatePosPeriod(storeKey, start, end),
   ])
   const staffByDate = new Map()
   for (const row of staffRows) {
@@ -504,17 +422,15 @@ dailyEntryUpgradeRouter.get('/daily-entry/ledger', wrap(async (req, res) => {
     auditByDate.set(dateStr, list)
   }
   const knownEmployeeIds = new Set(employees.map((employee) => employee.id))
-  let rows = entries.map((entry) => {
+  const salesEntries = await resolveDailyEntrySalesRows(prisma, entries, [store])
+  let rows = salesEntries.map((entry) => {
     const dateStr = isoDate(entry.date)
     const staff = staffByDate.get(dateStr) || []
     const entryAudits = auditByDate.get(dateStr) || []
     const revisionAudits = entryAudits.filter((audit) => isConfirmedRevisionAudit(entry, audit))
     const source = entry.salesDataStatus === 'corrected' ? 'manual' : effectiveSource(store, dateStr)
-    const pos = posGroups.get(dateStr)
-    const incCents = source === 'manual'
-      ? entry.incCents
-      : (pos?.effectiveSales || 0n) + entry.hybridAdjustmentCents
-    const ord = source === 'manual' ? entry.ord : (pos?.orderCount || 0)
+    const incCents = entry.incCents
+    const ord = entry.ord
     const completeness = resolveDailyEntryCompleteness({ entry, staffRows: staff, knownEmployeeIds })
     const derivedStatus = entry.status === 'confirmed' && revisionAudits.length > 0 ? 'revised' : entry.status
     return {
