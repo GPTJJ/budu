@@ -1,0 +1,65 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import {spawnSync} from 'node:child_process'
+import {loadAuthoritativePayrollRange} from '../server/payroll-authority.js'
+import {buildPayrollAuditReportModel} from '../server/payroll-audit-report.js'
+import {buildNaturalMonthSummary} from '../server/payroll-audit-natural-month.js'
+import {payrollAuditJobKey,prepareNaturalMonthReports} from '../server/payroll-audit-scheduler-core.js'
+import {preparePayrollConnectedDelivery,claimPayrollConnectedDelivery,reviewPayrollConnectedDelivery} from '../server/payroll-audit-delivery-bridge.js'
+const execution={actualModel:'GPT-5.6 Sol',actualReasoning:'Medium'}
+const period={periodStart:'2026-09-01',periodEnd:'2026-09-30'}
+const args={...execution,...period,allowNonProduction:true,preparationThreadId:'revision-child',parentReviewThreadId:'parent'}
+const recipients=['yuegu1995@gmail.com','970701330@qq.com','korea_jing@163.com']
+const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex')
+// Read-only DB adapter supplies real POS/attendance facts to the unchanged canonical resolver.
+export async function revisionFixture(revenue=253000n,count=2){
+ const date=new Date('2026-09-30T00:00:00Z')
+ const employees=Array.from({length:count},(_,i)=>({id:`fixture-${i}`,name:`验收员工${i+1}`,employmentType:i===count-1?'parttime':'fulltime',status:'ACTIVE',currentStoreKey:'xidan'}))
+ const attendance=(count===19?employees.slice(0,-1):employees).map(e=>({id:`dss-${e.id}`,employeeId:e.id,storeId:'xidan',date,participantType:'EMPLOYEE',staffNameSnapshot:e.name,actualHours:12,payableHoursSource:'ACTUAL_HOURS',attendanceStatus:'normal'}))
+ const rows={dailyEntry:[{id:'entry',storeKey:'xidan',date,incCents:0n,ord:0,status:'confirmed',staffNames:employees.map(e=>e.name),hybridAdjustmentCents:0n}],dailyStoreStaff:attendance,dailyPayAdjustment:[],bigOrderBonus:[],employee:employees,user:[],store:[{key:'xidan',name:'北京西单店',salesDataSource:'pos',salesDataSourceEffectiveDate:new Date('2026-09-04T00:00:00Z')}],order:[{storeId:'xidan',businessDate:date,status:'completed',paymentStatus:'paid',payableAmount:revenue,subtotal:revenue+29900n,discountAmount:29900n,payments:[{status:'success',amount:revenue}],refunds:[]}],refund:[]}
+ const client=Object.fromEntries(Object.entries(rows).map(([key,value])=>[key,{findMany:async()=>value}]))
+ const authority=await loadAuthoritativePayrollRange(client,{...period,periodType:'month'})
+ const cards=Object.fromEntries(authority.result.payroll.employees.map(e=>[e.employeeId,String(Math.round(e.salary*100))]))
+ return {generatedAt:'2026-10-01T01:00:00Z',productionSha:'ede3ee43526a39131618287d9b5447977e5c91d3',database:'revision_fixture',authorityDigest:sha(String(revenue)+String(count)),authority,cardAmountCentsById:cards,attendanceRows:attendance,schedules:[]}
+}
+function model(snapshot,revision){return buildPayrollAuditReportModel({...execution,period,authority:snapshot.authority,attendanceRows:snapshot.attendanceRows,cardAmountCentsById:snapshot.cardAmountCentsById,productionSha:snapshot.productionSha,authorityDigest:snapshot.authorityDigest,reportType:'MONTHLY_FULL_TIME_REVIEWED',scopeEmployeeIds:[snapshot.authority.employees[0].id],revision})}
+function treeHashes(root){const out={};function walk(p){for(const entry of fs.readdirSync(p,{withFileTypes:true})){const f=path.join(p,entry.name);if(entry.isDirectory())walk(f);else if(!f.endsWith('.lock'))out[f]=sha(fs.readFileSync(f))}}walk(root);return out}
+async function isolated(fn){const previous=process.env.PAYROLL_AUDIT_DATA_DIR,root=fs.mkdtempSync(path.join(os.tmpdir(),'budu-revision-'));process.env.PAYROLL_AUDIT_DATA_DIR=root;try{await fn(root)}finally{if(previous===undefined)delete process.env.PAYROLL_AUDIT_DATA_DIR;else process.env.PAYROLL_AUDIT_DATA_DIR=previous;fs.rmSync(root,{recursive:true,force:true})}}
+const delivery=jobKey=>preparePayrollConnectedDelivery({jobKey,mode:'FORMAL',recipients,expectedModel:execution.actualModel,expectedReasoning:execution.actualReasoning})
+test('V1 keeps historical keys/model/hash; V2 changes identity only, retaining canonical resolved money',async()=>{
+ const s=await revisionFixture();const implicit=model(s),v1=model(s,'V1'),v2=model(s,'V2');assert.equal(implicit.canonicalHash,v1.canonicalHash);assert.equal(implicit.runId,v1.runId);assert.ok(!('revision' in v1.metadata));assert.notEqual(v2.runId,v1.runId);assert.notEqual(v2.canonicalHash,v1.canonicalHash);assert.deepEqual(v2.employeeResults,v1.employeeResults);assert.equal(v2.summary.authoritativePayrollCents,'39600');
+ const input={...period,reportType:'MONTHLY_FULL_TIME_REVIEWED'};assert.equal(payrollAuditJobKey(input),'PAYROLL_AUDIT_MONTHLY_FULL_TIME_REVIEWED_V1:2026-09-01:2026-09-30');assert.equal(payrollAuditJobKey({...input,revision:'V1'}),payrollAuditJobKey(input));assert.match(payrollAuditJobKey({...input,revision:'V2'}),/_V2:/);assert.match(payrollAuditJobKey({...input,revision:'V2',test:true}),/^TEST:/)
+})
+test('malformed revisions including filesystem inputs reject before any snapshot or writes',async()=>{
+ for(const revision of ['',null,2,'v2','V0','V01','V1000',' V2','V2 ','../V2','V2/../../','V2\\x','V2\n','V2:month']){let captures=0;await assert.rejects(prepareNaturalMonthReports({...args,revision},{snapshot:async()=>{captures++;return revisionFixture()}}),e=>e.code==='PAYROLL_AUDIT_REVISION_INVALID');assert.equal(captures,0)}
+ assert.throws(()=>payrollAuditJobKey({...period,reportType:'MONTHLY_FULL_TIME',revision:'V2'}),e=>e.code==='PAYROLL_AUDIT_REVISION_INVALID')
+})
+test('real source revision runs coexist; old SENDING manifests/index/PDF immutable; new delivery pending and unapproved',async()=>isolated(async root=>{
+ const s=await revisionFixture();const old=await prepareNaturalMonthReports(args,{snapshot:async()=>s});
+ for(const key of old.deliveryJobKeys){const pending=await delivery(key);const job=old.results.find(r=>r.job.jobKey===key).job;const m=JSON.parse(fs.readFileSync(job.artifacts.manifest));m.deliveryBridge.deliveries[pending.deliveryId].status='SENDING';fs.writeFileSync(job.artifacts.manifest,JSON.stringify(m))}
+ const before=treeHashes(root);const changed=await revisionFixture(400000n);await assert.rejects(prepareNaturalMonthReports(args,{snapshot:async()=>changed}),e=>e.code==='NATURAL_MONTH_SOURCE_SNAPSHOT_STALE');
+ const v2=await prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:async()=>changed});assert.equal(v2.results.length,3);assert.ok(v2.results.every(r=>r.job.revision==='V2'&&r.job.emailStatus==='NOT_SENT'));assert.ok(v2.results.every((r,i)=>r.job.runId!==old.results[i].job.runId));
+ const current=treeHashes(root);for(const [file,hash]of Object.entries(before))assert.equal(current[file],hash,file)
+ const first=v2.results[0].job;const v2Model=JSON.parse(fs.readFileSync(first.artifacts.model));assert.equal(v2Model.summary.authoritativePayrollCents,'51600');
+ for(const key of v2.deliveryJobKeys){const p=await delivery(key);assert.equal(p.status,'DELIVERY_PENDING');assert.equal(p.attemptNumber,0);assert.equal(p.messageId,'');assert.equal(p.parentReview,null);await assert.rejects(claimPayrollConnectedDelivery({jobKey:key,deliveryId:p.deliveryId}),e=>e.code==='PAYROLL_PARENT_REVIEW_REQUIRED');const oldDelivery=await delivery(old.deliveryJobKeys[v2.deliveryJobKeys.indexOf(key)]);assert.notEqual(p.deliveryId,oldDelivery.deliveryId);await assert.rejects(reviewPayrollConnectedDelivery({jobKey:key,deliveryId:p.deliveryId,...period,recipients,reportId:oldDelivery.reportId,canonicalHash:oldDelivery.canonicalHash,pdfHash:oldDelivery.artifact.sha256,reviewerThreadId:'parent',preparationThreadId:'revision-child',decision:'APPROVED',evidence:'old approval'}),e=>e.code==='PAYROLL_PARENT_REVIEW_BINDING_MISMATCH')}
+ const frozen=treeHashes(root);const repeat=await prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:async()=>changed});assert.ok(repeat.results.every(r=>r.reused));assert.deepEqual(treeHashes(root),frozen)
+ const v3=await prepareNaturalMonthReports({...args,revision:'V3'},{snapshot:async()=>changed});for(let i=0;i<3;i++){assert.notEqual(v3.results[i].job.runId,v2.results[i].job.runId);assert.deepEqual(JSON.parse(fs.readFileSync(v3.results[i].job.artifacts.model)).summary,JSON.parse(fs.readFileSync(v2.results[i].job.artifacts.model)).summary)}
+}))
+test('aggregate rejects mixed revision, period, and production snapshot',async()=>isolated(async()=>{
+ const generated=await prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:()=>revisionFixture()});const models=generated.results.map(r=>JSON.parse(fs.readFileSync(r.job.artifacts.model)))
+ for(const [mutate,code]of [[m=>m.metadata.revision='V3','NATURAL_MONTH_REVISION_MISMATCH'],[m=>m.metadata.requestedPeriod.end='2026-08-31','NATURAL_MONTH_SOURCE_MISSING_OR_INVALID'],[m=>m.metadata.productionSha='other','NATURAL_MONTH_SNAPSHOT_MISMATCH']]){const part=structuredClone(models[1]);mutate(part);assert.throws(()=>buildNaturalMonthSummary({...args,revision:'V2',fullTimeSource:{model:models[0]},partTimeMonthlySource:{model:part}}),e=>e.code===code)}
+}))
+test('concurrent prepare is fail-closed/retryable; partial failure resumes same revision without touching completed source',async()=>isolated(async root=>{
+ const s=await revisionFixture();let unblock;const blocked=new Promise(resolve=>unblock=resolve);let entered;const started=new Promise(resolve=>entered=resolve);const a=prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:async()=>{entered();await blocked;return s}});await started;
+ const b=await prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:async()=>s});unblock();const aa=await a;assert.deepEqual(aa.results.map(r=>r.job.runId),b.results.map(r=>r.job.runId));
+ const concurrent=await Promise.allSettled([prepareNaturalMonthReports({...args,revision:'V4'},{snapshot:async()=>s}),prepareNaturalMonthReports({...args,revision:'V4'},{snapshot:async()=>s})]);assert.ok(concurrent.some(r=>r.status==='fulfilled'));for(const r of concurrent.filter(r=>r.status==='rejected'))assert.equal(r.reason.code,'AUDIT_RUN_LOCKED');const retry=await prepareNaturalMonthReports({...args,revision:'V4'},{snapshot:async()=>s});assert.ok(retry.results.every(r=>r.reused));
+ const v3args={...args,revision:'V3'};await assert.rejects(prepareNaturalMonthReports(v3args,{snapshot:async()=>s,loadSources:async()=>({fullTimeSource:null,partTimeMonthlySource:null})}),e=>e.code==='NATURAL_MONTH_SOURCE_MISSING_OR_INVALID');const before=treeHashes(root);const recovered=await prepareNaturalMonthReports(v3args,{snapshot:async()=>s});assert.ok(recovered.results.slice(0,2).every(r=>r.reused));const after=treeHashes(root);for(const[file,hash]of Object.entries(before))assert.equal(after[file],hash)
+}))
+test('long candidate PDF uses full real resolver fixture and validates every page with installed PDF tooling',async()=>{
+ const root=path.resolve('output/revision-qa-40-final');fs.mkdirSync(root,{recursive:true});const prev=process.env.PAYROLL_AUDIT_DATA_DIR;process.env.PAYROLL_AUDIT_DATA_DIR=root;
+ try{const result=await prepareNaturalMonthReports({...args,revision:'V2'},{snapshot:()=>revisionFixture(253000n,19)});const pdf=result.results[2].job.artifacts.pdf;const swift=path.join(root,'verify.swift');fs.writeFileSync(swift,'import Foundation\nimport PDFKit\nlet d=PDFDocument(url:URL(fileURLWithPath:CommandLine.arguments[1]))!\nvar texts=[String]()\nfor i in 0..<d.pageCount { let p=d.page(at:i)!; let s=p.string ?? ""; precondition(!s.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty); precondition(p.bounds(for:.mediaBox).width > 500); texts.append(s) }\nprint(d.pageCount)\nprint(texts.joined(separator:"\\n"))\n');const info=spawnSync('pdfinfo',[pdf],{encoding:'utf8'});let checked;if(!info.error && info.status===0){const pages=Number(info.stdout.match(/^Pages:\s+(\d+)/m)?.[1]);const text=spawnSync('pdftotext',[pdf,'-'],{encoding:'utf8',maxBuffer:8*1024*1024});assert.equal(text.status,0,text.stderr);const pageTexts=text.stdout.split('\f').filter(s=>s.trim());assert.equal(pageTexts.length,pages);checked={status:0,stdout:`${pages}\n${text.stdout}`}}else{assert.equal(process.platform,'darwin','PDF validation requires existing Poppler or native PDFKit');checked=spawnSync('swift',[swift,pdf],{encoding:'utf8',maxBuffer:8*1024*1024});assert.equal(checked.status,0,checked.stderr)};const pages=Number(checked.stdout.split('\n')[0]);assert.ok(pages>=40,`pages=${pages}`);for(let i=1;i<=19;i++)assert.ok(checked.stdout.includes(`验收员工${i}`));fs.writeFileSync(path.join(root,'qa-result.json'),JSON.stringify({pages,pdf,pdfHash:sha(fs.readFileSync(pdf)),canonicalHash:result.results[2].job.canonicalHash,employeeCount:19,source:'unchanged loadAuthoritativePayrollRange POS/attendance fixture',allPagesNonempty:true},null,2));fs.writeFileSync(path.join(root,'qa-page-text.txt'),checked.stdout)}finally{if(prev===undefined)delete process.env.PAYROLL_AUDIT_DATA_DIR;else process.env.PAYROLL_AUDIT_DATA_DIR=prev}
+})

@@ -1,3 +1,4 @@
+import { payrollAuditRevisionFields } from './payroll-audit-revision.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { fixedStoreName } from '../shared/storeDirectory.js'
@@ -554,7 +555,9 @@ export function buildPayrollAuditReportModel(input = {}) {
     finalResult,
     settlementRecommendation: finalResult === 'PASS' ? '可以进入独立结算复核' : '暂不建议进入结算',
   }
+  const revisionFields = payrollAuditRevisionFields(input.revision, input.reportType || 'MONTHLY_FULL_TIME')
   const identityInput = {
+    ...revisionFields,
     periodStart: period.periodStart, periodEnd: period.periodEnd,
     auditMode: input.auditMode || 'FINAL', scope: requested,
     reportType: input.reportType || 'MONTHLY_FULL_TIME',
@@ -570,6 +573,7 @@ export function buildPayrollAuditReportModel(input = {}) {
     schemaVersion: 6,
     runId,
     metadata: {
+      ...revisionFields,
       generatedAt: input.generatedAt || new Date().toISOString(),
       actualModel,
       actualReasoning,

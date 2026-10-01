@@ -13,10 +13,11 @@ function args(argv) {
 }
 
 const options = args(process.argv.slice(2))
+if (options.revision !== undefined && !options.prepareNaturalMonth) throw Object.assign(new Error('Revision requires --prepare-natural-month'), {code:'PAYROLL_AUDIT_REVISION_INVALID'})
 const actualModel = options.actualModel || process.env.PAYROLL_AUDIT_ACTUAL_MODEL
 const actualReasoning = options.actualReasoning || process.env.PAYROLL_AUDIT_ACTUAL_REASONING
 let result
-if (options.prepareNaturalMonth) result = await prepareNaturalMonthReports({periodStart:options.periodStart,periodEnd:options.periodEnd,actualModel,actualReasoning,email:false,actorId:options.actorId,preparationThreadId:options.preparationThreadId,parentReviewThreadId:options.parentReviewThreadId})
+if (options.prepareNaturalMonth) result = await prepareNaturalMonthReports({periodStart:options.periodStart,periodEnd:options.periodEnd,revision:options.revision,actualModel,actualReasoning,email:false,actorId:options.actorId,preparationThreadId:options.preparationThreadId,parentReviewThreadId:options.parentReviewThreadId})
 else if (options.emailHealth) {
   try { result = { ok: true, ...(await checkPayrollAuditEmailTransport()) } }
   catch (error) { result = { ok: false, diagnostic: payrollAuditEmailFailureDiagnostic(error) }; process.exitCode = 1 }

@@ -52,6 +52,7 @@ export async function runPayrollAuditFromSnapshot(options) {
     scope: options.scope || 'ALL',
     scopeEmployeeIds: options.scopeEmployeeIds,
     reportType: options.reportType,
+    revision: options.revision,
     employeeType: options.employeeType,
     employmentTypeAuthority: options.employmentTypeAuthority,
     employmentTypeHistoryAvailable: options.employmentTypeHistoryAvailable,

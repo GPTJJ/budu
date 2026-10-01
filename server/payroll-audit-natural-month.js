@@ -1,3 +1,4 @@
+import { payrollAuditRevision } from './payroll-audit-revision.js'
 import { auditHash, formatCents, renderPayrollAuditHtml, renderPayrollAuditMarkdown, renderPayrollAuditEmail } from './payroll-audit-report.js'
 
 const fail = (code) => { throw Object.assign(new Error(code), { code }) }
@@ -5,12 +6,14 @@ const sum = (rows, key) => rows.reduce((n, row) => n + BigInt(row[key] || '0'), 
 
 // Aggregate audited natural-month results; never invoke a payroll calculation here.
 export function buildNaturalMonthSummary(input) {
+  const revision = payrollAuditRevision(input.revision, 'MONTHLY_NATURAL_SUMMARY')
   const sources = [input.fullTimeSource, input.partTimeMonthlySource]
   for (const [index, source] of sources.entries()) {
     const m = source?.model
     if (!m || m.schemaVersion < 6 || m.metadata.reportType !== (index ? 'MONTHLY_PART_TIME' : 'MONTHLY_FULL_TIME_REVIEWED')
       || m.metadata.requestedPeriod.start !== input.periodStart || m.metadata.requestedPeriod.end !== input.periodEnd)
       fail('NATURAL_MONTH_SOURCE_MISSING_OR_INVALID')
+    if (payrollAuditRevision(m.metadata.revision, m.metadata.reportType) !== revision) fail('NATURAL_MONTH_REVISION_MISMATCH')
     if (m.metadata.actualModel !== input.actualModel || m.metadata.actualReasoning !== input.actualReasoning) fail('MODEL_CONFIGURATION_MISMATCH')
   }
   const [full, part] = sources.map(s => s.model)

@@ -1,3 +1,4 @@
+import { payrollAuditRevision, payrollAuditRevisionFields } from './payroll-audit-revision.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
@@ -7,6 +8,7 @@ import { loadReusableAuditRun, markEmailDelivery } from './payroll-audit-run-sto
 import { PAYROLL_AUDIT_RECIPIENTS, payrollAuditEmailFailureDiagnostic, sendPayrollAuditEmail } from './payroll-audit-email.js'
 import { archivePayrollAuditJob, listPayrollAuditJobs, payrollAuditDataRoot, readPayrollAuditJob, withPayrollAuditJobLock, writePayrollAuditJob } from './payroll-audit-job-store.js'
 import { runPayrollAuditFromSnapshot } from '../scripts/payroll-audit-runner.mjs'
+import { buildNaturalMonthSummary } from './payroll-audit-natural-month.js'
 import { runUnifiedSummaryFromSources } from '../scripts/payroll-audit-unified-runner.mjs'
 
 const exec = promisify(execFile)
@@ -70,9 +72,11 @@ export function validatePayrollAuditPeriod(reportType, periodStart, periodEnd) {
   }
 }
 
-export function payrollAuditJobKey({ reportType, periodStart, periodEnd, test = false }) {
+export function payrollAuditJobKey({ reportType, periodStart, periodEnd, test = false, revision }) {
   validatePayrollAuditPeriod(reportType, periodStart, periodEnd)
-  return `${test ? 'TEST:' : ''}${TYPES[reportType].identity}:${periodStart}:${periodEnd}`
+  const version = payrollAuditRevision(revision, reportType)
+  const identity = version === 'V1' ? TYPES[reportType].identity : TYPES[reportType].identity.replace(/_V1$/, `_${version}`)
+  return `${test ? 'TEST:' : ''}${identity}:${periodStart}:${periodEnd}`
 }
 
 async function snapshot(periodStart, periodEnd) {
@@ -111,6 +115,7 @@ function existingJobContract(job, input) {
     const model = JSON.parse(fs.readFileSync(modelPath, 'utf8'))
     if (!loadReusableAuditRun(manifestPath, model.canonicalHash)) return { sendable: false, reason: 'ARTIFACT_INTEGRITY_FAILED' }
     if (Number(model.schemaVersion || 0) < 6) return { sendable: false, reason: 'STALE_SCHEMA' }
+    if (model.runId !== job.runId || model.canonicalHash !== job.canonicalHash || model.metadata?.reportType !== job.reportType || model.metadata?.requestedPeriod?.start !== job.periodStart || model.metadata?.requestedPeriod?.end !== job.periodEnd || payrollAuditRevision(model.metadata?.revision, job.reportType) !== payrollAuditRevision(input.revision, job.reportType) || payrollAuditRevision(job.revision, job.reportType) !== payrollAuditRevision(input.revision, job.reportType)) return { sendable: false, reason: 'REPORT_IDENTITY_MISMATCH' }
     if (model.metadata?.source !== PAYROLL_AUDIT_SOURCE) return { sendable: false, reason: 'REPORT_SOURCE_MISSING' }
     if (model.metadata?.actualModel !== input.actualModel || model.metadata?.actualReasoning !== input.actualReasoning) return { sendable: false, reason: 'MODEL_CONFIGURATION_MISMATCH' }
     return { sendable: true, model }
@@ -202,14 +207,14 @@ export async function runPayrollAuditJob(input, dependencies = {}) {
     const result = await runPayrollAuditFromSnapshot({
       snapshot: captured, periodStart: input.periodStart, periodEnd: input.periodEnd,
       mode: 'FINAL', scope: config.employmentType.toUpperCase(), scopeEmployeeIds: subjects,
-      reportType: input.reportType, employeeType: config.employmentType,
+      reportType: input.reportType, ...payrollAuditRevisionFields(input.revision, input.reportType), employeeType: config.employmentType,
       employmentTypeAuthority: 'Employee.employmentType', employmentTypeHistoryAvailable: false,
       actualModel: input.actualModel, actualReasoning: input.actualReasoning,
       outputRoot: path.join(payrollAuditDataRoot(), 'runs'), allowNonProduction: input.allowNonProduction === true,
     })
     const now = new Date().toISOString()
     const job = writePayrollAuditJob({
-      jobKey, reportType: input.reportType, employeeType: config.employmentType,
+      jobKey, reportType: input.reportType, ...payrollAuditRevisionFields(input.revision, input.reportType), employeeType: config.employmentType,
       periodStart: input.periodStart, periodEnd: input.periodEnd, test: input.test === true,
       runId: result.model.runId, canonicalHash: result.model.canonicalHash,
       runStatus: result.model.summary.finalResult, anomalyCount: result.model.summary.anomalyCount,
@@ -259,7 +264,6 @@ export async function runNaturalMonthSummaryJob(input, dependencies = {}) {
     if(existing?.artifacts) {
       const contract=existingJobContract(existing,input)
       if(!contract.sendable) throw Object.assign(new Error('Existing monthly artifact requires explicit reconciliation'),{code:'NATURAL_MONTH_EXISTING_ARTIFACT_INVALID'})
-      return {job:existing,reused:true}
     }
     const load=type=>{
       const job=readPayrollAuditJob(payrollAuditJobKey({...input,reportType:type}))
@@ -269,15 +273,22 @@ export async function runNaturalMonthSummaryJob(input, dependencies = {}) {
       return {job,model:contract.model}
     }
     const sources=dependencies.loadSources ? await dependencies.loadSources(input.periodStart,input.periodEnd) : {fullTimeSource:load('MONTHLY_FULL_TIME_REVIEWED'),partTimeMonthlySource:load('MONTHLY_PART_TIME')}
+    if(existing?.artifacts) {
+      const expected = buildNaturalMonthSummary({...input,...sources})
+      if(expected.canonicalHash !== existing.canonicalHash) throw Object.assign(new Error('Existing summary differs from revision sources'), {code:'NATURAL_MONTH_SNAPSHOT_MISMATCH'})
+      return {job:existing,reused:true}
+    }
     const result=await runUnifiedSummaryFromSources({...input,...sources,naturalMonth:true,outputRoot:path.join(payrollAuditDataRoot(),'runs')})
     const now=new Date().toISOString()
-    const job=writePayrollAuditJob({jobKey,reportType:input.reportType,employeeType:'fulltime+parttime',periodStart:input.periodStart,periodEnd:input.periodEnd,test:input.test===true,runId:result.model.runId,canonicalHash:result.model.canonicalHash,runStatus:result.model.summary.finalResult,anomalyCount:result.model.summary.anomalyCount,employeeCount:result.model.summary.employeeCount,emailStatus:'NOT_SENT',recipients:[...PAYROLL_AUDIT_RECIPIENTS],retryCount:0,emailAttempts:[],sourceReferences:result.model.sourceReferences,artifacts:{model:result.paths.model,markdown:result.paths.markdown,pdf:result.paths.pdf,email:result.paths.email,manifest:result.paths.manifest},reviewContext:input.reviewContext,actorId:input.actorId||'system:scheduler',createdAt:now,updatedAt:now})
+    const job=writePayrollAuditJob({jobKey,reportType:input.reportType,...payrollAuditRevisionFields(input.revision,input.reportType),employeeType:'fulltime+parttime',periodStart:input.periodStart,periodEnd:input.periodEnd,test:input.test===true,runId:result.model.runId,canonicalHash:result.model.canonicalHash,runStatus:result.model.summary.finalResult,anomalyCount:result.model.summary.anomalyCount,employeeCount:result.model.summary.employeeCount,emailStatus:'NOT_SENT',recipients:[...PAYROLL_AUDIT_RECIPIENTS],retryCount:0,emailAttempts:[],sourceReferences:result.model.sourceReferences,artifacts:{model:result.paths.model,markdown:result.paths.markdown,pdf:result.paths.pdf,email:result.paths.email,manifest:result.paths.manifest},reviewContext:input.reviewContext,actorId:input.actorId||'system:scheduler',createdAt:now,updatedAt:now})
     return {job,reused:result.reused}
   })
 }
 
 export async function prepareNaturalMonthReports(input,dependencies={}) {
   if(!input.preparationThreadId || !input.parentReviewThreadId || input.preparationThreadId === input.parentReviewThreadId) throw Object.assign(new Error('Distinct preparation and parent review threads required'),{code:'PAYROLL_PARENT_REVIEW_CONTEXT_REQUIRED'})
+  payrollAuditJobKey({...input,reportType:'MONTHLY_NATURAL_SUMMARY'})
+  validatePayrollAuditModelConfiguration(input.actualModel,input.actualReasoning)
   input={...input,reviewContext:{preparationThreadId:input.preparationThreadId,parentReviewThreadId:input.parentReviewThreadId}}
   const captured=dependencies.snapshot ? await dependencies.snapshot(input.periodStart,input.periodEnd) : await snapshot(input.periodStart,input.periodEnd)
   const sourceDependencies={...dependencies,snapshot:async()=>captured}
@@ -285,7 +296,7 @@ export async function prepareNaturalMonthReports(input,dependencies={}) {
   for(const reportType of ['MONTHLY_FULL_TIME_REVIEWED','MONTHLY_PART_TIME']) results.push(await runPayrollAuditJob({...input,reportType,email:false},sourceDependencies))
   for(const result of results) {
     const contract=existingJobContract(result.job,input)
-    if(!contract.sendable || contract.model.metadata.authorityDigest !== captured.authorityDigest) throw Object.assign(new Error('Existing monthly source snapshot differs; preserve and reconcile explicitly'),{code:'NATURAL_MONTH_SOURCE_SNAPSHOT_STALE'})
+    if(!contract.sendable || contract.model.metadata.authorityDigest !== captured.authorityDigest || contract.model.metadata.productionSha !== captured.productionSha) throw Object.assign(new Error('Existing monthly source snapshot differs; preserve and reconcile explicitly'),{code:'NATURAL_MONTH_SOURCE_SNAPSHOT_STALE'})
   }
   results.push(await runPayrollAuditJob({...input,reportType:'MONTHLY_NATURAL_SUMMARY',email:false},dependencies))
   return {results,deliveryJobKeys:[results[0].job.jobKey,results[2].job.jobKey]}
