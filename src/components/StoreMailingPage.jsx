@@ -14,6 +14,7 @@ import {
   requiresPaymentConfirmation,
   shippingAmountCents,
   shippingPresentation,
+  sortShippedRecords,
 } from '../utils/mailingWorkflow'
 import MailingQrSheet from './MailingQrSheet'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
@@ -101,7 +102,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
   const [storeKey, setStoreKey] = useState(availableStores[0]?.key || '')
   const [method, setMethod] = useState(MAILING_METHOD.SF)
   const [postage, setPostage] = useState('包邮')
-  const [shippingTier, setShippingTier] = useState(MAILING_TIER.STANDARD)
+  const [shippingTier, setShippingTier] = useState('')
   const [paymentConfirmed, setPaymentConfirmed] = useState(false)
   const [sheetKind, setSheetKind] = useState('')
   const [qrLoading, setQrLoading] = useState(false)
@@ -172,7 +173,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
     storeKey,
     method,
     postage,
-    shippingTier: requiresPaymentConfirmation(config) ? shippingTier : undefined,
+    shippingTier: method === MAILING_METHOD.SF ? shippingTier : undefined,
     shippingAmountCents: requiresPaymentConfirmation(config) ? amountCents : undefined,
     paymentConfirmed: requiresPaymentConfirmation(config) ? paymentConfirmed : false,
   })
@@ -228,6 +229,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
   const pendingRecords = records.filter((record) => record.status === 'pending' && inRange(record.createdAt))
   const shippedRecords = records.filter((record) => record.status === 'shipped' && inRange(record.createdAt))
   const visibleRecords = activeTab === 'pending' ? pendingRecords : shippedRecords
+  const displayedRecords = activeTab === 'shipped' ? sortShippedRecords(visibleRecords) : visibleRecords
 
   const copyRecord = async (record) => {
     const copied = await copyText(buildMailingCopyText(record))
@@ -287,9 +289,12 @@ export default function StoreMailingPage({ currentUser, onBack }) {
           <ChoiceGroup label="配送方式" options={[MAILING_METHOD.SF, MAILING_METHOD.FLASH]} value={method} onChange={setMethod} />
           <ChoiceGroup label="运费承担" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
 
-          {requiresPaymentConfirmation(config) && (
+          {method === MAILING_METHOD.SF && (
+            <ChoiceGroup label="类型" options={[{ value: MAILING_TIER.STANDARD, label: postage === '包邮' ? '标准' : '标准 ¥18' }, { value: MAILING_TIER.FRESH, label: postage === '包邮' ? '生鲜' : '生鲜 ¥35' }]} value={shippingTier} onChange={setShippingTier} />
+          )}
+
+          {requiresPaymentConfirmation(config) && Object.values(MAILING_TIER).includes(shippingTier) && (
             <div className="space-y-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-3">
-              <ChoiceGroup label="顺丰类型" options={[{ value: MAILING_TIER.STANDARD, label: '标准 ¥18' }, { value: MAILING_TIER.FRESH, label: '生鲜 ¥35' }]} value={shippingTier} onChange={setShippingTier} />
               <button type="button" onClick={() => setSheetKind('payment')} className="btn-secondary min-h-12 w-full"><WalletCards className="h-4 w-4" />打开微信收款二维码</button>
               <button
                 type="button"
@@ -339,7 +344,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
           {recordsLoading ? <div className="empty-state py-12">加载中…</div>
             : recordsError ? <div className="empty-state py-12">{recordsError}</div>
               : !visibleRecords.length ? <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
-                : visibleRecords.map((record) => {
+                : displayedRecords.map((record) => {
                   const view = shippingPresentation(record)
                   const storeName = availableStores.find((store) => store.key === record.storeKey)?.name || record.storeKey || '历史记录'
                   return (

@@ -2,6 +2,7 @@
 // 业务模块只调用本模块；站内消息 + 通道派发（微信个人提醒/企微群广播），未来可扩展 APP/短信/邮件
 // 设计原则：纯增量，不改变现有业务逻辑；微信通道未配置时优雅降级为仅站内
 import crypto from 'node:crypto'
+import { MAILING_METHOD, shippingPresentation } from '../src/utils/mailingWorkflow.js'
 import { prisma, dbReady } from './pg.js'
 import { listUsers } from './user-store.js'
 import { sendWechatMarkdown } from './wechat-alert.js'
@@ -256,6 +257,7 @@ export async function deliverCustomerRequestWecom({
   type,
   storeName,
   submittedAt,
+  mailingShipping,
 }) {
   if (!notification?.id || !requestId || !['MAILING', 'INVOICE'].includes(type)) {
     return { ok: false, status: 'skipped', reason: 'invalid customer request delivery event' }
@@ -295,8 +297,10 @@ export async function deliverCustomerRequestWecom({
   const action = isMailing
     ? '顾客已提交收件信息，请进入 BUDU 核对并安排发货。'
     : '顾客已提交开票资料，请进入 BUDU 核对并处理。'
+  const shipping = isMailing && mailingShipping?.method === MAILING_METHOD.SF ? shippingPresentation(mailingShipping) : null
   const content = [
     action,
+    ...(shipping ? [`类型：${shipping.tierLabel}`, `运费：${shipping.detail}`] : []),
     `门店：${String(storeName || '未知门店').slice(0, 80)}`,
     `提交时间：${formatBeijingNotificationTime(submittedAt)}`,
   ].join('\n')

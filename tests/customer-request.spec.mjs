@@ -63,6 +63,7 @@ for (const width of widths) {
 
 test('后台 Mailing 使用共享 QR 弹层，重新生成后二维码仍可用', async ({ page }) => {
   await page.goto('/tests/mailing-harness.html')
+  await page.getByRole('radiogroup', { name: '类型' }).getByRole('radio', { name: '标准', exact: true }).click()
   await page.getByRole('button', { name: '生成顾客填写二维码' }).click()
   await expect(page.getByRole('dialog', { name: '顾客填写收件信息' })).toBeVisible()
   await expect(page.getByTestId('customer-request-qr')).toBeVisible()

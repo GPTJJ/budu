@@ -331,6 +331,11 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
         storeName: store?.name || tokenRow.request.storeKey,
         submittedAt: now,
         notification,
+        mailingShipping: tokenRow.request.type === CUSTOMER_REQUEST_TYPES.MAILING ? {
+          method: businessRecord.method, postage: businessRecord.postage,
+          shippingTier: businessRecord.shippingTier, shippingAmountCents: businessRecord.shippingAmountCents,
+          shippingPaymentMode: businessRecord.shippingPaymentMode, fee: businessRecord.fee,
+        } : undefined,
       }
     })
   } catch (error) {
@@ -344,6 +349,7 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
     type: committed.type,
     storeName: committed.storeName,
     submittedAt: committed.submittedAt,
+    mailingShipping: committed.mailingShipping,
   }).catch(() => {
     console.error('[customer-request-wecom] delivery failed')
   })

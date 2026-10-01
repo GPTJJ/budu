@@ -248,3 +248,119 @@ test('record deep link is consumed into the existing authenticated focus contrac
   delete global.window
   delete global.sessionStorage
 })
+
+for (const [tier, postage, amount, label] of [
+  ['STANDARD', '包邮', null, '标准'], ['FRESH', '包邮', null, '生鲜'],
+  ['STANDARD', '不包邮', 1800, '标准'], ['FRESH', '不包邮', 3500, '生鲜'],
+  [null, '包邮', null, '未记录'],
+]) {
+  test(`mailing notice separates ${label} and ${postage}`, async () => {
+    setWecomEnv()
+    _resetWechatTokenCaches()
+    const mock = installFetch()
+    try {
+      await deliverCustomerRequestWecom({
+        prismaClient: fakePrisma(), notification: notificationFor('MAILING'), requestId: 'summary-case',
+        type: 'MAILING', storeName: '测试门店', submittedAt: new Date(),
+        mailingShipping: { method: '顺丰邮寄', postage, shippingTier: tier, shippingAmountCents: amount },
+      })
+      const message = mock.calls.find(call => call.href.includes('/message/send')).body.textcard.description
+      assert.match(message, new RegExp(`类型：${label}`))
+      assert.ok(message.includes(`运费：${postage}${amount ? ` · ¥${amount / 100}` : ''}`))
+      assert.doesNotMatch(message, /顺丰标准|顺丰生鲜/)
+      if (postage === '包邮') assert.doesNotMatch(message, /¥18|¥35/)
+    } finally { mock.restore(); _resetWechatTokenCaches() }
+  })
+}
+
+test('real create/token/submit/record/WeCom chain uses locked shipping facts with mocked storage and provider', async (t) => {
+  const { createCustomerServiceRequest, resolvePublicCustomerRequest, submitCustomerServiceRequest } = await import('../server/customer-requests.js')
+  const now = new Date('2026-10-01T00:00:00Z')
+  const user = { id: 'dev-test', username: 'dev-test', role: 'developer', storeKeys: [], permissions: {} }
+  for (const [method, postage, tier, amount, providerFailure = false] of [
+    ['顺丰邮寄', '包邮', 'STANDARD', null], ['顺丰邮寄', '包邮', 'FRESH', null],
+    ['顺丰邮寄', '包邮', null, null],
+    ['顺丰邮寄', '不包邮', 'STANDARD', 1800], ['顺丰邮寄', '不包邮', 'FRESH', 3500],
+    ['顺丰邮寄', '包邮', 'FRESH', null, true],
+    ['同城闪送', '包邮', null, null], ['同城闪送', '不包邮', null, null],
+  ]) {
+    await t.test(`${method}/${postage}/${tier || 'legacy'}${providerFailure ? '/provider-failure' : ''}`, async () => {
+      setWecomEnv(); _resetWechatTokenCaches()
+      const mock = installFetch({ timeout: providerFailure })
+      const db = fakePrisma()
+      let request, tokenRow, official
+      let commits = 0
+      db.store = { findUnique: async () => ({ key: 'xidan', name: '测试门店', active: true }) }
+      db.customerServiceRequest = {
+        findMany: async () => [],
+        create: async ({ data }) => {
+          const { tokens, ...facts } = data
+          request = { ...facts, createdAt: now }
+          tokenRow = { ...tokens.create, requestId: request.id, request, consumedAt: null }
+          return request
+        },
+        updateMany: async ({ where, data }) => {
+          if (request.id !== where.id || request.status !== where.status) return { count: 0 }
+          Object.assign(request, data); return { count: 1 }
+        },
+        update: async ({ data }) => Object.assign(request, data),
+      }
+      db.customerServiceRequestToken = {
+        findUnique: async ({ where }) => tokenRow?.tokenHash === where.tokenHash ? tokenRow : null,
+        updateMany: async ({ where, data }) => {
+          if (tokenRow.id !== where.id || tokenRow.status !== where.status) return { count: 0 }
+          Object.assign(tokenRow, data); return { count: 1 }
+        },
+      }
+      db.mailingRecord = { create: async ({ data }) => (official = { ...data }) }
+      db.notification = { create: async ({ data }) => ({ ...data }) }
+      db.$transaction = async fn => { const result = await fn(db); commits += 1; return result }
+      try {
+        const created = await createCustomerServiceRequest({ prismaClient: db, user, now, origin: 'https://budu.example', input: {
+          type: 'MAILING', storeKey: 'xidan', method, postage, shippingTier: tier,
+          shippingAmountCents: amount, paymentConfirmed: amount !== null,
+        } })
+        const token = new URLSearchParams(new URL(created.publicUrl).hash.slice(1)).get('token')
+        assert.equal(request.requestMetadata.shippingTier, tier)
+        assert.equal(mock.calls.length, 0, 'QR creation must not send a notice')
+        assert.equal(official, undefined)
+        const publicView = await resolvePublicCustomerRequest({ prismaClient: db, token, now })
+        assert.deepEqual(Object.keys(publicView).sort(), ['expiresAt', 'status', 'type'])
+        await submitCustomerServiceRequest({ prismaClient: db, token, now, payload: {
+          recipient: '测试顾客', phone: '13800138000', address: '北京市测试区示例路1号',
+          confirmedAccurate: true, companyWebsite: '', shippingTier: tier === 'FRESH' ? 'STANDARD' : 'FRESH',
+          shippingAmountCents: 1, paymentConfirmed: true,
+        } })
+        for (let i = 0; i < 20 && !mock.calls.some(call => call.href.includes('/message/send')); i++) {
+          await new Promise(resolve => setImmediate(resolve))
+        }
+        assert.equal(commits, 2)
+        assert.equal(official.shippingTier, tier, 'customer payload cannot override locked type')
+        assert.equal(official.shippingAmountCents, amount)
+        assert.equal(official.status, 'pending')
+        assert.equal(request.linkedBusinessRecordId, official.id)
+        assert.equal(tokenRow.status, 'CONSUMED')
+        if (postage === '包邮') {
+          assert.equal(official.shippingPaymentMode, 'FREE')
+          assert.equal(official.shippingPaymentConfirmedAt, null)
+          assert.equal(official.shippingPaymentConfirmedBy, null)
+        }
+        for (let i = 0; i < 20 && ![...db.rows.values()].some(row => row.channel === 'wecom' && ['sent', 'failed'].includes(row.status)); i++) {
+          await new Promise(resolve => setImmediate(resolve))
+        }
+        assert.equal([...db.rows.values()].find(row => row.channel === 'wecom').status, providerFailure ? 'failed' : 'sent')
+        const sends = mock.calls.filter(call => call.href.includes('/message/send'))
+        assert.equal(sends.length, 1)
+        assert.equal(sends[0].body.touser, 'dh')
+        const message = sends[0].body.textcard.description
+        if (method === '顺丰邮寄') {
+          assert.ok(message.includes(`类型：${tier === 'FRESH' ? '生鲜' : tier === 'STANDARD' ? '标准' : '未记录'}`))
+          assert.ok(message.includes(`运费：${postage}${amount ? ` · ¥${amount / 100}` : ''}`))
+        } else assert.doesNotMatch(message, /类型：|运费：/)
+        assert.equal(new URL(sends[0].body.textcard.url).searchParams.get('refId'), official.id)
+        await assert.rejects(() => submitCustomerServiceRequest({ prismaClient: db, token, now, payload: {} }), /已经提交/)
+        assert.equal(mock.calls.filter(call => call.href.includes('/message/send')).length, 1)
+      } finally { mock.restore(); _resetWechatTokenCaches() }
+    })
+  }
+})

@@ -125,10 +125,13 @@ export function validateMailingMetadata(input) {
   if (!['包邮', '不包邮'].includes(postage)) throw httpError('运费选项不正确')
 
   if (postage === '包邮') {
+    const shippingTier = method === MAILING_METHOD.SF ? String(input?.shippingTier || '').toUpperCase() : ''
+    // Missing tier remains valid for historical in-flight QR requests.
+    if (shippingTier && !Object.values(MAILING_SHIPPING_TIER).includes(shippingTier)) throw httpError('请选择邮寄类型')
     return {
       method,
       postage,
-      shippingTier: null,
+      shippingTier: shippingTier || null,
       shippingAmountCents: null,
       shippingPaymentMode: MAILING_PAYMENT_MODE.FREE,
       paymentConfirmed: false,
