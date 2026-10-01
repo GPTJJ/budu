@@ -58,3 +58,11 @@ Existing build-only workflow still binds old engineering SHAs. First parent revi
 4. Use original workflow to build/hash/probe the candidate. Before any production dispatch require parent approval plus fresh actual disk budgets in two rounds, including pre-upload space and archive accounting, new 10% transfer probe and complete archive/artifact hashes. No cleanup authority granted.
 
 Only implement/test are complete here. Independent parent review, engineering adaptation, build-only dispatch, disk/probe checks, deployment, production revision generation and final delivery review remain gates. The three unrelated UI requests remain deferred.
+
+## Independent-review P2 follow-up
+
+The reviewer found that a trailing explicit `--revision` was parsed as undefined and could silently select V1. The CLI now rejects a missing next token or a following flag immediately with PAYROLL_AUDIT_REVISION_INVALID, before the snapshot extractor runs. Empty and illegal supplied values remain rejected by canonical revision validation.
+
+New real-entry subprocess tests cover trailing --revision, following flag, empty value, illegal path value, a duplicate ending without a value, omitted flag/default V1 and legal V2. Tests use an isolated cwd extractor with an invocation marker, no DB client/URL, isolated output, and the actual three-report/PDF generation path. Invalid invocations produce neither extractor calls nor job/artifact writes; V1/V2 legal invocations complete and have independent run/PDF identities. CLI suite: 8 PASS; combined report suite: 63 PASS / 0 FAIL. No further business, engineering workflow, controller or production changes.
+
+The next business B must be the final P2-fixed commit approved by the same independent reviewer, superseding 76c951da for release binding. Proposed E remains a single direct child of that approved B with exactly the original workflow and its test changed, exact branch/manual-dispatch/B/E guard and expected production ede3ee43526a39131618287d9b5447977e5c91d3. This proposal has not been implemented or dispatched.

@@ -7,7 +7,13 @@ function args(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i]
     if (key === '--prepare-natural-month' || key === '--scheduled' || key === '--dry-run' || key === '--test-email' || key === '--email-health') out[key.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = true
-    else if (key.startsWith('--')) { out[key.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = argv[++i] }
+    else if (key.startsWith('--')) {
+      const value = argv[i + 1]
+      if (key === '--revision' && (value === undefined || value.startsWith('--'))) {
+        throw Object.assign(new Error('Explicit --revision requires a value'), { code: 'PAYROLL_AUDIT_REVISION_INVALID' })
+      }
+      out[key.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = argv[++i]
+    }
   }
   return out
 }
