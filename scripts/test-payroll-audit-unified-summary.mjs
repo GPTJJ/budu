@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 import { payrollAuditJobKey, runUnifiedMonthlySummaryJob } from '../server/payroll-audit-scheduler-core.js'
-import { buildUnifiedMonthlyPayrollSummary, renderUnifiedMonthlyHtml } from '../server/payroll-audit-unified-summary.js'
+import { buildUnifiedMonthlyPayrollSummary, renderUnifiedMonthlyHtml, renderUnifiedMonthlyMarkdown, renderUnifiedMonthlyEmail } from '../server/payroll-audit-unified-summary.js'
 import { runUnifiedSummaryFromSources } from './payroll-audit-unified-runner.mjs'
 
 const executionMetadata = { actualModel: 'GPT-5.6 Sol', actualReasoning: 'Medium' }
@@ -136,4 +136,152 @@ test('unified scheduler rejects model mismatch before reading source reports', a
     (error) => error.code === 'MODEL_CONFIGURATION_MISMATCH',
   )
   assert.equal(sourceReads, 0)
+})
+
+
+test('unified classification preserves amounts, excludes new hints and normal states, and needs no daily breakdown for verified no-payroll', () => {
+  const data = sources()
+  data.partTimeSources[2].model.employeeResults[0].status = 'PASS'
+  data.partTimeSources[2].model.employeeResults[0].issues = []
+  data.partTimeSources[2].model.summary.finalResult = 'PASS'
+  const before = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+  for (const source of [data.fullTimeSource, ...data.partTimeSources]) {
+    source.model.employeeResults[0].issues.push({ type: 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', category: 'AUDIT_HINT', blockingSource: null, evidence: 'history gap', payrollImpact: 'NO' })
+    source.model.employeeResults.push({ employeeId: 'idle', employeeName: 'idle', status: 'PASS', payableHours: null, authoritativePayrollCents: null, employeeCardCents: null, dailyPayrollBreakdownComplete: false, dailyReconciliation: [], issues: [{ type: 'PAYROLL_SUBJECT_OUTSIDE_RANGE', rootCause: 'NO_PAYROLL_REQUIRED', category: 'NORMAL_STATUS', blockingSource: null, payrollImpact: 'NO', amountImpactCents: '0' }] })
+  }
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+  assert.equal(model.summary.totalPayrollCents, before.summary.totalPayrollCents)
+  assert.equal(model.partTime.totalCents, before.partTime.totalCents)
+  assert.equal(model.summary.issueCount, 0)
+  assert.equal(model.summary.auditHintCount, 6)
+  assert.equal(model.summary.normalStatusCount, 6)
+  assert.equal(model.summary.finalResult, 'PASS')
+  assert.deepEqual(model.sourceProblems, [])
+  assert.equal(model.issues.length, 12)
+  for (const output of [renderUnifiedMonthlyHtml(model), renderUnifiedMonthlyMarkdown(model), renderUnifiedMonthlyEmail(model).body]) {
+    assert.match(output, /历史资料提示/)
+    assert.match(output, /正常无需结算记录/)
+    assert.match(output, /旧来源待复核/)
+    assert.match(output, /来源完整性问题/)
+    assert.doesNotMatch(output, /异常与需要关注/)
+  }
+})
+
+test('legacy blocked sources, unknown issues and genuine payroll/card blockers cannot be washed into PASS', () => {
+  for (const type of ['EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', 'MISSING_ACTUAL_HOURS', 'PAYROLL_SUBJECT_OUTSIDE_RANGE', 'EMPLOYEE_CARD_PROJECTION_ERROR', 'UNKNOWN_NEW_ISSUE']) {
+    const data = sources()
+    const row = data.partTimeSources[0].model.employeeResults[0]
+    row.status = 'BLOCKED'
+    row.issues = [{ type, payrollImpact: 'NO' }]
+    data.partTimeSources[0].model.summary.finalResult = 'BLOCKED'
+    data.partTimeSources.pop()
+    const original = JSON.stringify(data)
+    const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+    assert.equal(model.summary.finalResult, 'BLOCKED', type)
+    assert.equal(model.issues.find(issue => issue.sourceReportId === 'week-1').category, 'ANOMALY', type)
+    assert.ok(model.summary.issueCount >= 2)
+    assert.ok(model.sourceProblems.some(problem => problem.startsWith('SOURCE_REPORT_MISSING')))
+    assert.equal(JSON.stringify(data), original)
+  }
+})
+
+test('legacy PASS information requires specific evidence; payrollImpact NO alone never downgrades an issue', () => {
+  const data = sources()
+  const row = data.fullTimeSource.model.employeeResults[0]
+  row.employmentType = 'fulltime'; row.employeeCardCents = '100000'; row.differenceCents = '0'
+  row.issues = [{ type: 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', payrollImpact: 'NO' }, { type: 'EMPLOYEE_CARD_PROJECTION_ERROR', payrollImpact: 'NO', amountImpactCents: '1' }]
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+  assert.equal(model.fullTime.issues[0].category, 'AUDIT_HINT')
+  assert.equal(model.fullTime.issues[1].category, 'ANOMALY')
+  assert.equal(model.summary.finalResult, 'REVIEW_REQUIRED')
+  const held = structuredClone(data)
+  held.fullTimeSource.model.summary.finalResult = 'BLOCKED'
+  held.fullTimeSource.model.employeeResults[0].status = 'BLOCKED'
+  const blocked = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...held })
+  assert.equal(blocked.fullTime.issues[0].category, 'ANOMALY')
+  assert.equal(blocked.summary.finalResult, 'BLOCKED')
+})
+
+test('monthly local preview clearly records actual cutoff and retains missing persisted source status', () => {
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, fullTimeSource: null, partTimeSources: [], preview: true, dataAsOf: '2026-09-30T14:47:57.422Z' })
+  assert.equal(model.summary.finalResult, 'REVIEW_REQUIRED')
+  assert.equal(model.summary.sourceProblemCount, 6)
+  assert.equal(model.summary.issueCount, 6)
+  assert.equal(model.summary.auditHintCount, 0)
+  assert.equal(model.metadata.preview, true)
+  for (const output of [renderUnifiedMonthlyHtml(model), renderUnifiedMonthlyMarkdown(model), renderUnifiedMonthlyEmail(model).body]) {
+    assert.match(output, /本地验收预览/)
+    assert.match(output, /22:47:57/)
+    assert.match(output, /不能形成9月完整应发总额/)
+  }
+})
+
+
+test('recognized synthetic legacy history stays informational while original BLOCKED source remains held', () => {
+  const data = sources()
+  const row = data.fullTimeSource.model.employeeResults[0]
+  row.status = 'BLOCKED'; row.employmentType = 'fulltime'
+  row.issues = [{ type: 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', rootCause: 'Employment type is current-state only.', errorLayer: 'Employee authority', payrollImpact: 'UNKNOWN' }]
+  data.fullTimeSource.model.summary.finalResult = 'BLOCKED'
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+  assert.equal(model.fullTime.issues[0].category, 'AUDIT_HINT')
+  assert.equal(model.summary.auditHintCount, 1)
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+  assert.equal(model.sourceStatuses[0].result, 'BLOCKED')
+})
+
+
+test('unified v4 states missing full-time values as unknown, separates record counts and shows every recorded component', () => {
+  const data = sources()
+  data.fullTimeSource = null
+  data.partTimeSources = data.partTimeSources.slice(2, 4)
+  data.partTimeSources[0].model.summary.finalResult = 'BLOCKED'
+  const row = data.partTimeSources[0].model.employeeResults[0]
+  row.status = 'BLOCKED'
+  row.issues = [{ type: 'PAYROLL_SUBJECT_OUTSIDE_RANGE', payrollImpact: 'YES' }]
+  const daily = row.dailyReconciliation[0]
+  daily.payroll.components.transferSubsidy = '8800'
+  daily.payroll.components.bigBonus = '11040'
+  daily.payroll.components.salaryAdjustment = '10000'
+  daily.payroll.totalCents = '44840'
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data, preview: true, dataAsOf: '2026-09-30T14:49:25.347Z' })
+  assert.equal(model.summary.sourceReviewIssueCount, 1)
+  assert.equal(model.summary.sourceProblemCount, 4)
+  assert.equal(model.summary.issueCount, 5)
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+  assert.equal(model.partTime.totalCents, '44840')
+  assert.equal(model.partTime.componentsMatchIncludedSubtotal, true)
+  assert.equal(model.partTime.componentTotalsCents.transferSubsidy, '8800')
+  assert.equal(model.partTime.componentTotalsCents.bigBonus, '11040')
+  assert.equal(model.partTime.componentTotalsCents.salaryAdjustment, '10000')
+  for (const output of [renderUnifiedMonthlyHtml(model), renderUnifiedMonthlyMarkdown(model), renderUnifiedMonthlyEmail(model).body]) {
+    assert.match(output, /来源未到位/)
+    assert.match(output, /旧来源待复核/)
+    assert.match(output, /来源完整性问题/)
+    assert.match(output, /这不是已证实工资算错/)
+    assert.doesNotMatch(output, /真实异常|REVIEW_REQUIRED|Mode:|Source reports read:/)
+  }
+  const html = renderUnifiedMonthlyHtml(model)
+  assert.match(html, /全职来源人数<\/span><b>来源未到位 \/ 未知/)
+  assert.match(html, /全职来源工时<\/span><b>来源未到位 \/ 未知/)
+  assert.match(html, /跨店补贴<\/span><b>¥88.00/)
+  assert.match(html, /大单奖励<\/span><b>¥110.40/)
+  assert.match(html, /工资调整<\/span><b>¥100.00/)
+})
+
+test('in-month incomplete daily source records are described as daily detail gaps, not cross-month periods', () => {
+  const data = sources()
+  const row = data.partTimeSources[2].model.employeeResults[0]
+  row.dailyPayrollBreakdownComplete = false
+  row.authoritativePayrollCents = null
+  row.dailyPayrollBreakdownReason = 'MONTH_BOUNDARY_SOURCE_INSUFFICIENT'
+  const model = buildUnifiedMonthlyPayrollSummary({ ...month, ...executionMetadata, ...data })
+  const detail = model.insufficientSourceDetails[0]
+  assert.equal(detail.period.start, '2026-09-14')
+  assert.equal(detail.employees[0].payrollMissing, true)
+  const html = renderUnifiedMonthlyHtml(model)
+  assert.match(html, /逐日工资明细完整性不足：2026-09-14～2026-09-20/)
+  assert.match(html, /本周期权威工资结果为空/)
+  assert.match(html, /不是日期跨月缺口/)
+  assert.equal(model.summary.sourceProblemCount, 1)
 })

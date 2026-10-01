@@ -41,14 +41,47 @@ function publicRecord(record) {
     messageId: record.messageId || '',
     sentAt: record.sentAt || '',
     safeErrorCode: record.safeErrorCode || '',
+    canonicalHash:record.canonicalHash,
+    parentReview:record.parentReview||null,
   }
+}
+
+// Thread identifiers are orchestration labels, not authenticated principals.
+// Only the parent orchestrator holds/uses the Gmail sending capability.
+const monthly = job => job.reportType.startsWith('MONTHLY_')
+const reviewBinding = (job, model, manifest, record) => ({reportId:model.runId,canonicalHash:model.canonicalHash,pdfHash:manifest.artifacts.pdf.sha256,periodStart:job.periodStart,periodEnd:job.periodEnd,recipients:[...record.recipients].sort()})
+function requireParentReview(job, model, manifest, record) {
+  if(!monthly(job)) return
+  if(record.mode !== 'FORMAL' || !sameSet(record.recipients,PAYROLL_AUDIT_RECIPIENTS) || record.reportId!==model.runId || record.canonicalHash!==model.canonicalHash || record.artifact.sha256!==manifest.artifacts.pdf.sha256) throw Object.assign(new Error('Monthly delivery identity or artifact changed'),{code:'PAYROLL_PARENT_REVIEW_REQUIRED'})
+  const binding=reviewBinding(job,model,manifest,record)
+  if(!record.parentReview || record.parentReview.bindingHash !== hash(binding)) throw Object.assign(new Error('Exact monthly artifact has not been parent reviewed'),{code:'PAYROLL_PARENT_REVIEW_REQUIRED'})
+}
+
+export async function reviewPayrollConnectedDelivery(input) {
+  return withPayrollAuditJobLock(input.jobKey,async()=>{
+    const {job,manifest,model}=loadAuthority(input.jobKey)
+    const record=manifest.deliveryBridge?.deliveries?.[input.deliveryId]
+    if(!record || record.mode!=='FORMAL' || !monthly(job)) throw Object.assign(new Error('Monthly formal delivery required'),{code:'PAYROLL_PARENT_REVIEW_IDENTITY_INVALID'})
+    if(['SENDING','SENT'].includes(record.status)) throw Object.assign(new Error('Delivery already active'),{code:'PAYROLL_PARENT_REVIEW_ALREADY_ACTIVE'})
+    if(!job.reviewContext || input.reviewerThreadId!==job.reviewContext.parentReviewThreadId || input.preparationThreadId!==job.reviewContext.preparationThreadId || input.reviewerThreadId===input.preparationThreadId) throw Object.assign(new Error('Independent parent review thread required'),{code:'PAYROLL_PARENT_REVIEW_NOT_INDEPENDENT'})
+    if(!sameSet(record.recipients,PAYROLL_AUDIT_RECIPIENTS)) throw Object.assign(new Error('Formal recipients changed'),{code:'PAYROLL_DELIVERY_RECIPIENTS_MISMATCH'})
+    const binding=reviewBinding(job,model,manifest,record)
+    const supplied={reportId:input.reportId,canonicalHash:input.canonicalHash,pdfHash:input.pdfHash,periodStart:input.periodStart,periodEnd:input.periodEnd,recipients:[...new Set(input.recipients||[])].sort()}
+    if(hash(binding)!==hash(supplied)) throw Object.assign(new Error('Reviewed artifact binding differs'),{code:'PAYROLL_PARENT_REVIEW_BINDING_MISMATCH'})
+    if(input.decision!=='APPROVED' || !clean(input.evidence)) throw Object.assign(new Error('Explicit reviewed-content decision required'),{code:'PAYROLL_PARENT_REVIEW_DECISION_REQUIRED'})
+    record.parentReview={...binding,bindingHash:hash(binding),reviewerThreadId:clean(input.reviewerThreadId),preparationThreadId:clean(input.preparationThreadId),evidence:clean(input.evidence),reviewedAt:new Date().toISOString(),decision:'APPROVED'}
+    writeJsonAtomic(job.artifacts.manifest,manifest)
+    return {...publicRecord(record),parentReview:record.parentReview}
+  })
 }
 
 export async function preparePayrollConnectedDelivery(input) {
   return withPayrollAuditJobLock(input.jobKey, async () => {
     const { job, manifest, model } = loadAuthority(input.jobKey)
     const mode = clean(input.mode).toUpperCase()
+    if(job.reportType==='MONTHLY_PART_TIME') throw Object.assign(new Error('Part-time monthly source is not a delivery report'),{code:'PAYROLL_SOURCE_NOT_DELIVERABLE'})
     const recipients = [...new Set((input.recipients || []).map((value) => clean(value).toLowerCase()).filter(Boolean))]
+    if(monthly(job) && mode !== 'FORMAL') throw Object.assign(new Error('Monthly reports only allow parent-reviewed formal delivery'),{code:'PAYROLL_MONTHLY_FORMAL_ONLY'})
     if (!['TEST', 'FORMAL'].includes(mode)) throw Object.assign(new Error('Invalid delivery mode'), { code: 'PAYROLL_DELIVERY_MODE_INVALID' })
     const expectedRecipients = mode === 'TEST' ? TEST_RECIPIENTS : PAYROLL_AUDIT_RECIPIENTS
     if (!sameSet(recipients, expectedRecipients)) throw Object.assign(new Error('Delivery recipients do not match the locked recipient set'), { code: 'PAYROLL_DELIVERY_RECIPIENTS_MISMATCH' })
@@ -70,16 +103,17 @@ export async function preparePayrollConnectedDelivery(input) {
       manifest.deliveryBridge.deliveries[deliveryId] = record
       writeJsonAtomic(job.artifacts.manifest, manifest)
     }
-    return { ...publicRecord(record), formalEmailStatus: job.emailStatus }
+    return { ...publicRecord(record), reviewContext:job.reviewContext||null, formalEmailStatus: job.emailStatus }
   })
 }
 
 export async function claimPayrollConnectedDelivery(input) {
   return withPayrollAuditJobLock(input.jobKey, async () => {
-    const { job, manifest } = loadAuthority(input.jobKey)
+    const { job, manifest, model } = loadAuthority(input.jobKey)
     const record = manifest.deliveryBridge?.deliveries?.[input.deliveryId]
     if (!record) throw Object.assign(new Error('Delivery identity is missing'), { code: 'PAYROLL_DELIVERY_ID_MISSING' })
     if (record.status === 'SENT') return { ...publicRecord(record), alreadySent: true, formalEmailStatus: job.emailStatus }
+    requireParentReview(job,model,manifest,record)
     if (record.status === 'SENDING') throw Object.assign(new Error('Delivery is already claimed'), { code: 'PAYROLL_DELIVERY_ALREADY_SENDING' })
     record.status = 'SENDING'; record.attemptNumber += 1; record.updatedAt = new Date().toISOString()
     record.history.push({ status: 'SENDING', at: record.updatedAt, attemptNumber: record.attemptNumber, actorId: clean(input.actorId) })
@@ -90,13 +124,14 @@ export async function claimPayrollConnectedDelivery(input) {
 
 export async function completePayrollConnectedDelivery(input) {
   return withPayrollAuditJobLock(input.jobKey, async () => {
-    const { job, manifest } = loadAuthority(input.jobKey)
+    const { job, manifest, model } = loadAuthority(input.jobKey)
     const record = manifest.deliveryBridge?.deliveries?.[input.deliveryId]
     if (!record) throw Object.assign(new Error('Delivery identity is missing'), { code: 'PAYROLL_DELIVERY_ID_MISSING' })
     if (record.status === 'SENT') return { ...publicRecord(record), alreadySent: true, formalEmailStatus: job.emailStatus }
     if (record.status !== 'SENDING') throw Object.assign(new Error('Delivery must be claimed before completion'), { code: 'PAYROLL_DELIVERY_NOT_CLAIMED' })
     const status = clean(input.status).toUpperCase()
     if (!['SENT', 'FAILED'].includes(status)) throw Object.assign(new Error('Invalid completion status'), { code: 'PAYROLL_DELIVERY_STATUS_INVALID' })
+    if(status==='SENT') requireParentReview(job,model,manifest,record)
     const now = new Date().toISOString()
     record.status = status; record.updatedAt = now
     if (status === 'SENT') {
@@ -117,4 +152,14 @@ export async function completePayrollConnectedDelivery(input) {
     writeJsonAtomic(job.artifacts.manifest, manifest)
     return { ...publicRecord(record), alreadySent: false, formalEmailStatus: job.emailStatus }
   })
+}
+
+// Read-only exact attachment snapshot. Caller receives bytes, not a mutable path.
+export function readPayrollDeliveryPdf(input) {
+  const {job,manifest,model}=loadAuthority(input.jobKey)
+  if(input.reportId!==model.runId || input.canonicalHash!==model.canonicalHash || input.pdfHash!==manifest.artifacts.pdf.sha256 || input.periodStart!==job.periodStart || input.periodEnd!==job.periodEnd) throw Object.assign(new Error('Attachment identity mismatch'),{code:'PAYROLL_ATTACHMENT_IDENTITY_MISMATCH'})
+  const bytes=fs.readFileSync(manifest.artifacts.pdf.path)
+  const pdfHash=crypto.createHash('sha256').update(bytes).digest('hex')
+  if(pdfHash!==input.pdfHash) throw Object.assign(new Error('Attachment changed during read'),{code:'PAYROLL_ATTACHMENT_BYTES_CHANGED'})
+  return {bytes,pdfHash,reportId:model.runId,canonicalHash:model.canonicalHash,periodStart:job.periodStart,periodEnd:job.periodEnd}
 }

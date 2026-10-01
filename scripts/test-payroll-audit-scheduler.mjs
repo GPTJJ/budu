@@ -60,6 +60,7 @@ test('weekly isolates current canonical PART_TIME, keeps actualHours/overtime/co
     assert.equal(first.job.emailStatus, 'FAILED')
     assert.equal(first.job.lastEmailDiagnostic.safeErrorCode, 'TEST_TRANSPORT')
     assert.equal(first.job.employeeCount, 1)
+    assert.equal(first.job.anomalyCount, 0)
     const model = JSON.parse(fs.readFileSync(path.join(root, 'runs', first.job.runId, 'canonical-report-model.json'), 'utf8'))
     assert.deepEqual(model.employeeResults.map((row) => row.employeeId), ['part'])
     assert.equal(model.employeeResults[0].employmentType, 'parttime')
@@ -207,4 +208,29 @@ test('scheduler runtime path has no Codex, ChatGPT, OpenAI or agent dependency',
   const files = ['scripts/payroll-audit-scheduler.mjs', 'scripts/run-payroll-audit-scheduler-host.sh', 'server/payroll-audit-scheduler-core.js', 'server/payroll-audit-email.js']
   const source = files.map((file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')).join('\n')
   assert.doesNotMatch(source, /codex|chatgpt|openai|agent/i)
+})
+
+
+test('scheduler records only canonical anomalies, keeping hints and normal employees out of anomalyCount', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'budu-payroll-counts-'))
+  const old = process.env.PAYROLL_AUDIT_DATA_DIR
+  process.env.PAYROLL_AUDIT_DATA_DIR = root
+  try {
+    for (const mismatch of [false, true]) {
+      const data = snapshot()
+      data.authority.employees.push({ id: 'idle', name: '无本期工资义务', type: 'parttime', status: 'ACTIVE' })
+      if (mismatch) data.cardAmountCentsById.part = '12001'
+      const result = await runPayrollAuditJob({ reportType: 'WEEKLY_PART_TIME', periodStart: '2026-09-14', periodEnd: '2026-09-20', email: false, allowNonProduction: true, test: mismatch, ...executionMetadata }, { snapshot: async () => data, send: async () => { throw new Error('must not send') } })
+      const model = JSON.parse(fs.readFileSync(result.job.artifacts.model, 'utf8'))
+      assert.equal(result.job.employeeCount, 2)
+      assert.equal(result.job.anomalyCount, mismatch ? 1 : 0)
+      assert.equal(model.summary.auditHintCount, 2)
+      assert.equal(model.summary.noPayrollRequiredCount, 1)
+      assert.equal(result.job.runStatus, mismatch ? 'BLOCKED' : 'PASS')
+      assert.equal(result.job.emailStatus, 'NOT_SENT')
+    }
+  } finally {
+    if (old === undefined) delete process.env.PAYROLL_AUDIT_DATA_DIR; else process.env.PAYROLL_AUDIT_DATA_DIR = old
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

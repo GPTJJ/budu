@@ -32,10 +32,19 @@ function extractPdfPages(pdf, firstPage, lastPage, temporaryRoot) {
   return result.stdout
 }
 
-function assertSourceMarkPlacement(pdf, temporaryRoot) {
+function pdfPageCount(pdf, temporaryRoot) {
   const info = spawnSync('pdfinfo', [pdf], { encoding: 'utf8' })
-  assert.equal(info.status, 0)
-  const pages = Number((info.stdout.match(/^Pages:\s+(\d+)/m) || [])[1])
+  if (!info.error && info.status === 0) return Number((info.stdout.match(/^Pages:\s+(\d+)/m) || [])[1])
+  if (process.platform !== 'darwin') throw info.error || new Error(info.stderr || 'pdfinfo failed')
+  const swiftFile = path.join(temporaryRoot, 'pdf-page-count.swift')
+  fs.writeFileSync(swiftFile, 'import Foundation\nimport PDFKit\nprint(PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[1]))!.pageCount)\n')
+  const result = spawnSync('swift', [swiftFile, pdf], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  return Number(result.stdout.trim())
+}
+
+function assertSourceMarkPlacement(pdf, temporaryRoot) {
+  const pages = pdfPageCount(pdf, temporaryRoot)
   assert.ok(pages >= 2, `expected multi-page PDF, got ${pages}`)
   const firstPageText = extractPdfPages(pdf, 1, 1, temporaryRoot)
   const laterPagesText = extractPdfPages(pdf, 2, pages, temporaryRoot)
@@ -434,8 +443,7 @@ test('one-page PDF renders the source mark exactly once', async () => {
   try {
     const mark = payrollAuditSourceMark({ metadata: executionMetadata })
     await renderPayrollAuditPdf(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><p>${mark}</p></body></html>`, pdf)
-    const info = spawnSync('pdfinfo', [pdf], { encoding: 'utf8' })
-    assert.match(info.stdout, /^Pages:\s+1$/m)
+    assert.equal(pdfPageCount(pdf, root), 1)
     const extracted = extractPdfPages(pdf, 1, 1, root)
     assert.equal((extracted.match(/budu Payroll Audit Automation/g) || []).length, 1)
   } finally {
@@ -449,4 +457,80 @@ test('production extractor is read-only by construction', () => {
   assert.doesNotMatch(source, /tx\.[A-Za-z0-9_]+\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/)
   assert.match(source, /DailyStoreStaff/)
   assert.match(source, /PayrollNotice/)
+})
+
+
+test('classification is consistent across model, HTML, Markdown and email for 0 anomalies / 9 hints / 2 normal employees', () => {
+  const input = statusFixture()
+  const paid = input.authority.result.payroll.employees[0]
+  input.authority.employees = []
+  input.authority.result.payroll.employees = []
+  input.authority.result.readiness.employees = []
+  input.attendanceRows = []
+  input.cardAmountCentsById = {}
+  for (let i = 0; i < 7; i += 1) {
+    const id = `paid-${i}`
+    const amount = i === 6 ? 783.4 : 600
+    input.authority.employees.push({ id, name: id, type: 'parttime' })
+    input.authority.result.payroll.employees.push({ ...paid, employeeId: id, salary: amount, basePay: amount })
+    input.authority.result.readiness.employees.push({ employeeId: id, blockers: [] })
+    input.attendanceRows.push({ employeeId: id, date: '2026-08-03', actualHours: 8 })
+    input.cardAmountCentsById[id] = String(Math.round(amount * 100))
+  }
+  addIdleEmployee(input, 'idle-1'); addIdleEmployee(input, 'idle-2')
+  const model = buildPayrollAuditReportModel(input)
+  assert.equal(model.summary.anomalyCount, 0)
+  assert.equal(model.summary.issueCount, 0)
+  assert.equal(model.summary.auditHintCount, 9)
+  assert.equal(model.summary.noPayrollRequiredCount, 2)
+  assert.equal(model.summary.authoritativePayrollCents, '438340')
+  assert.equal(model.summary.employeeCardCents, '438340')
+  assert.equal(model.summary.finalResult, 'PASS')
+  assert.equal(model.employeeResults.flatMap(row => row.issues).filter(i => i.category === 'AUDIT_HINT').length, 9)
+  const html = renderPayrollAuditHtml(model)
+  const markdown = renderPayrollAuditMarkdown(model)
+  const email = renderPayrollAuditEmail(model).body
+  for (const output of [html, markdown, email]) {
+    assert.doesNotMatch(output, /需关注问题|异常 00|异常与处理建议|请按员工明细逐项核对/)
+    assert.match(output, /阻断异常/)
+    assert.match(output, /历史资料提示/)
+    assert.match(output, /本期无需结算/)
+    assert.match(output, /4,383.40/)
+  }
+  assert.match(markdown, /阻断异常：0 项/)
+  assert.match(markdown, /历史资料提示：9 条/)
+  assert.match(markdown, /本期无需结算：2 人/)
+  assert.equal((html.match(/历史资料提示（非阻断）：/g) || []).length, 9)
+  assert.equal((html.match(/正常状态：本期无需结算/g) || []).length, 2)
+  assert.doesNotMatch(email, /重点问题/)
+})
+
+test('true blockers keep anomaly classification regardless of payrollImpact or reason spelling', () => {
+  for (const reason of ['MISSING_ACTUAL_HOURS', 'PAYROLL_AUTHORITY_AMOUNT_MISSING', 'IDENTITY_REVIEW_REQUIRED', 'EMPLOYMENT_TYPE_HISTORY_UNAVAILABLE', 'FUTURE_AUTHORITY_BLOCKER']) {
+    const input = statusFixture()
+    input.authority.result.readiness.employees[0].blockers.push({ type: 'CALCULATION_BLOCKER', reason })
+    const model = buildPayrollAuditReportModel(input)
+    const blocker = model.employeeResults[0].issues.find(issue => issue.blockingSource === 'AUTHORITY_BLOCKER')
+    assert.equal(blocker.category, 'ANOMALY', reason)
+    assert.ok(model.summary.anomalyCount > 0, reason)
+    assert.equal(model.summary.finalResult, 'BLOCKED', reason)
+  }
+  const input = statusFixture()
+  input.cardAmountCentsById.paid = '20001'
+  const model = buildPayrollAuditReportModel(input)
+  const mismatch = model.employeeResults[0].issues.find(issue => issue.type === 'EMPLOYEE_CARD_PROJECTION_ERROR')
+  assert.equal(mismatch.payrollImpact, 'NO')
+  assert.equal(mismatch.category, 'ANOMALY')
+  assert.equal(model.summary.anomalyCount, 1)
+  assert.equal(model.summary.finalResult, 'BLOCKED')
+  const missing = addIdleEmployee(statusFixture())
+  missing.attendanceRows.push({ employeeId: 'idle', date: '2026-08-04', actualHours: 10 })
+  const missingModel = buildPayrollAuditReportModel(missing)
+  assert.equal(missingModel.summary.anomalyCount, 1)
+  assert.equal(missingModel.summary.noPayrollRequiredCount, 0)
+  const unknown = statusFixture()
+  unknown.authority.employees[0].type = 'unknown'
+  const unknownModel = buildPayrollAuditReportModel(unknown)
+  assert.equal(unknownModel.summary.finalResult, 'REVIEW_REQUIRED')
+  assert.equal(unknownModel.summary.anomalyCount, 1)
 })

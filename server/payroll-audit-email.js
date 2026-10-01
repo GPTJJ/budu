@@ -110,6 +110,7 @@ function mimeMessage(payload, sender) {
 }
 
 export async function sendPayrollAuditEmail(payload, options = {}) {
+  if(String(payload.reportType || payload.metadata?.reportType || '').startsWith('MONTHLY_') || /月度|自然月|全职员工薪酬审查报告/.test(String(payload.subject || ''))) throw Object.assign(new Error('Monthly report delivery is controlled by parent Gmail Connected App'),{code:'PAYROLL_MONTHLY_PARENT_SEND_ONLY'})
   const cfg = options.credentials || credentials(options.credentialFile)
   const request = options.fetch || fetch
   const accessToken = await fetchAccessToken(cfg, request)
