@@ -1,6 +1,12 @@
 name: NON_PRODUCTION BUILD_ONLY Approval Release Artifact
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: 'Shipping build-only: exact reviewed engineering release SHA'
+        required: true
+        type: string
   push:
     branches:
       - codex/release-path-post-transfer-generalization
@@ -9,8 +15,8 @@ on:
       - codex/data-authority-finalization
 
 env:
-  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
-  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -21,6 +27,7 @@ concurrency:
 
 jobs:
   artifact:
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001') }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -35,6 +42,7 @@ jobs:
         shell: bash
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/python-pycache
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           test "$RUNNER_OS" = Linux
@@ -42,7 +50,18 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
-            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization|codex/release-single-writer-db-probe|codex/data-authority-finalization) ;;
+            codex/mailing-free-tier-shipped-sort-20261001)
+              test "$GITHUB_EVENT_NAME" = workflow_dispatch
+              test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
+              [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+              test "$EXPECTED_PRODUCTION_SHA" = 08895d4978594ea4298c43bf72f8961cf082fca6
+              test "$APPROVED_BUSINESS_SHA" = 48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $APPROVED_BUSINESS_SHA"
+              test "$(git diff --name-only "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
+              ;;
+            codex/release-path-post-transfer-generalization|codex/release-controller-dns-empty-normalization|codex/release-single-writer-db-probe|codex/data-authority-finalization)
+              test "$GITHUB_EVENT_NAME" = push
+              ;;
             *) exit 1 ;;
           esac
           test "$GITHUB_REF" = "refs/heads/$branch"
@@ -123,6 +142,11 @@ jobs:
           docker run --rm --network none --entrypoint cat "$tag" /app/server/approvals.js > "$run_dir/image-approvals.js"
           docker run --rm --network none --entrypoint cat "$tag" /app/server/v2.js > "$run_dir/image-v2.js"
           docker run --rm --network none --entrypoint node "$tag" --version
+          if [ "$GITHUB_REF" = refs/heads/codex/mailing-free-tier-shipped-sort-20261001 ]; then
+            git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
+              server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
+            printf 'SHIPPING_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
+          else
           git show "$APPROVED_BUSINESS_SHA:server/approvals.js" > "$run_dir/review-approvals.js"
           git show 2fa28a6399c8a9f4fd70188d8df077f0b411589e:server/v2.js > "$run_dir/transfer-v2.js"
           approval_source_hash="$(sha256sum "$run_dir/review-approvals.js" | cut -d' ' -f1)"
@@ -147,10 +171,11 @@ jobs:
           assert '409' in block
           print('APPROVAL_WITHDRAW_CAS_PRESENT=YES')
           PY
-          printf 'BUILD=PASS IMAGE_ID=%s IMAGE_SIZE_BYTES=%s IMAGE_PLATFORM=%s IMAGE_REVISION=%s IMAGE_REPO_DIGESTS=%s\n' \
-            "$image_id" "$image_size" "$image_platform" "$image_revision" "$image_repo_digests"
           printf 'APPROVAL_SOURCE_HASH=%s IMAGE_APPROVAL_HASH=%s TRANSFER_SOURCE_HASH=%s IMAGE_TRANSFER_HASH=%s\n' \
             "$approval_source_hash" "$approval_image_hash" "$transfer_source_hash" "$transfer_image_hash"
+          fi
+          printf 'BUILD=PASS IMAGE_ID=%s IMAGE_SIZE_BYTES=%s IMAGE_PLATFORM=%s IMAGE_REVISION=%s IMAGE_REPO_DIGESTS=%s\n' \
+            "$image_id" "$image_size" "$image_platform" "$image_revision" "$image_repo_digests"
           printf 'TRANSFER_ARTIFACT_SIZE_BYTES=%s IMAGE_SMOKE=PASS\n' "$(stat -c%s "$run_dir/image.tar")"
 
       - name: Probe application Prisma against isolated PostgreSQL
@@ -162,7 +187,7 @@ jobs:
       - name: Retain exact artifact for read-only preflight
         uses: actions/upload-artifact@v4
         with:
-          name: release-preflight-${{ github.sha }}
+          name: ${{ github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
           path: ${{ env.RELEASE_ARTIFACT_PATH }}
           if-no-files-found: error
           compression-level: 0

@@ -2,6 +2,7 @@
 """Offline post-Transfer release identity and real shell routing regressions."""
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,46 @@ OLD = '2fa28a6399c8a9f4fd70188d8df077f0b411589e'
 BUSINESS = '2188dd17f6b80e9be27e50a9773e7269c6eabb65'
 TRANSFER = '8381959e9c1d527c1f14c234338b14d117ae46f5'
 OLD_V2 = hashlib.sha256(subprocess.check_output(['git','-C',str(ROOT),'show',OLD+':server/v2.js'])).hexdigest()
+SHIPPING_BRANCH = 'codex/mailing-free-tier-shipped-sort-20261001'
+SHIPPING_OLD = '08895d4978594ea4298c43bf72f8961cf082fca6'
+SHIPPING_BUSINESS = '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe'
+LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
+                         'codex/release-controller-dns-empty-normalization',
+                         'codex/release-single-writer-db-probe',
+                         'codex/data-authority-finalization']
+SHIPPING_ENGINEERING_FILES = '.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
+
+
+def build_only_workflow():
+    return json.loads(subprocess.check_output(
+        ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',
+         str(ROOT/'.github/workflows/release-build-only.yml')]))
+
+
+def build_only_guard(**facts):
+    """Execute the real workflow admission shell with offline Git fact fixtures."""
+    job = build_only_workflow()['jobs']['artifact']
+    verify = next(step for step in job['steps'] if step.get('name') == 'Verify source and release guard')
+    admission = verify['run'].split('if [ -z', 1)[0]
+    release = 'a'*40
+    with tempfile.TemporaryDirectory() as directory:
+        bindir = Path(directory)
+        (bindir/'uname').write_text('#!/bin/sh\nprintf "x86_64\\n"\n')
+        (bindir/'git').write_text(
+            '#!/bin/sh\ncase "$1" in\n'
+            'rev-list) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;;\n'
+            'diff) printf "%s\\n" "$GUARD_FILES" ;;\n'
+            'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
+            '*) exit 99 ;;\nesac\n')
+        for stub in bindir.iterdir(): stub.chmod(0o755)
+        env = {**os.environ, 'PATH':str(bindir)+':'+os.environ['PATH'],
+               'RUNNER_OS':'Linux', 'RUNNER_ARCH':'X64',
+               'GITHUB_REF':'refs/heads/'+SHIPPING_BRANCH, 'GITHUB_EVENT_NAME':'workflow_dispatch',
+               'GITHUB_SHA':release, 'REQUESTED_RELEASE_SHA':release,
+               'EXPECTED_PRODUCTION_SHA':SHIPPING_OLD, 'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS,
+               'GUARD_PARENTS':SHIPPING_BUSINESS, 'GUARD_FILES':SHIPPING_ENGINEERING_FILES,
+               'GUARD_HEAD':release, **facts}
+        return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
 
 def route(repo, ref, sha):
@@ -37,26 +78,27 @@ class RealShellRoute(unittest.TestCase):
     def test_build_only_workflow_uses_exact_branch_without_production_access(self):
         workflow=ROOT/'.github/workflows/release-build-only.yml'
         source=workflow.read_text()
-        import json
-        parsed=json.loads(subprocess.check_output(
-            ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',str(workflow)]))
-        self.assertEqual(parsed.get('on',parsed.get('true')),
-                         {'push':{'branches':['codex/release-path-post-transfer-generalization',
-                                              'codex/release-controller-dns-empty-normalization',
-                                              'codex/release-single-writer-db-probe',
-                                              'codex/data-authority-finalization']}})
+        parsed=build_only_workflow()
+        triggers=parsed.get('on',parsed.get('true'))
+        self.assertEqual(set(triggers),{'push','workflow_dispatch'})
+        self.assertEqual(triggers['push'],{'branches':LEGACY_BUILD_BRANCHES})
+        self.assertEqual(triggers['workflow_dispatch']['inputs'],{'release_sha':{
+            'description':'Shipping build-only: exact reviewed engineering release SHA',
+            'required':True,'type':'string'}})
         self.assertEqual(parsed['permissions'],{'contents':'read'})
         self.assertIn('16faedb3afcb853a9a72434603debd4169b7ac02',parsed['env']['EXPECTED_PRODUCTION_SHA'])
         native=next(step for step in parsed['jobs']['artifact']['steps'] if step.get('name','').startswith('Prove lifecycle'))
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/"+SHIPPING_BRANCH+"') }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
         self.assertEqual(job['steps'][-1]['with']['retention-days'],1)
         verify=next(step for step in job['steps'] if step.get('name')=='Verify source and release guard')
         self.assertEqual(verify['env']['PYTHONPYCACHEPREFIX'],'${{ runner.temp }}/python-pycache')
+        self.assertEqual(verify['env']['REQUESTED_RELEASE_SHA'],'${{ inputs.release_sha }}')
         syntax='python3 -m py_compile scripts/test-candidate-db-probe-integration.py'
         after_syntax=verify['run'].split(syntax,1)[1]
         self.assertIn('test -z "$(git status --porcelain --untracked-files=all)"',after_syntax)
@@ -72,6 +114,59 @@ class RealShellRoute(unittest.TestCase):
                          'codex/release-single-writer-db-probe',
                          'scripts/test-candidate-db-probe-integration.py'):
             self.assertIn(required,source)
+
+    def test_shipping_build_requires_exact_dispatch_sha_parent_and_two_files(self):
+        accepted=build_only_guard()
+        self.assertEqual(accepted.returncode,0,accepted.stderr)
+        denied=[
+            {'GITHUB_EVENT_NAME':'push'},
+            {'GITHUB_REF':'refs/heads/codex/unreviewed'},
+            {'GITHUB_REF':'refs/tags/'+SHIPPING_BRANCH},
+            {'REQUESTED_RELEASE_SHA':''},
+            {'REQUESTED_RELEASE_SHA':'b'*40},
+            {'GITHUB_SHA':'a'*12,'REQUESTED_RELEASE_SHA':'a'*12},
+            {'GITHUB_SHA':'A'*40,'REQUESTED_RELEASE_SHA':'A'*40},
+            {'EXPECTED_PRODUCTION_SHA':OLD},
+            {'APPROVED_BUSINESS_SHA':BUSINESS},
+            {'GUARD_PARENTS':SHIPPING_OLD},
+            {'GUARD_PARENTS':SHIPPING_BUSINESS+' '+'b'*40},
+            {'GUARD_FILES':'.github/workflows/release-build-only.yml'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\nserver/customer-requests.js'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\n.github/workflows/deploy-prod.yml'},
+            {'GUARD_HEAD':'b'*40},
+        ]
+        for facts in denied:
+            with self.subTest(facts=facts):
+                self.assertNotEqual(build_only_guard(**facts).returncode,0)
+
+    def test_legacy_build_branches_keep_push_and_deny_manual_dispatch(self):
+        for branch in LEGACY_BUILD_BRANCHES:
+            with self.subTest(branch=branch):
+                facts={'GITHUB_REF':'refs/heads/'+branch,'GITHUB_EVENT_NAME':'push',
+                       'EXPECTED_PRODUCTION_SHA':OLD,'APPROVED_BUSINESS_SHA':BUSINESS,
+                       'REQUESTED_RELEASE_SHA':''}
+                accepted=build_only_guard(**facts)
+                self.assertEqual(accepted.returncode,0,accepted.stderr)
+                facts['GITHUB_EVENT_NAME']='workflow_dispatch'
+                self.assertNotEqual(build_only_guard(**facts).returncode,0)
+
+    def test_shipping_build_retains_exact_artifact_and_business_payload(self):
+        workflow=build_only_workflow()
+        self.assertIn(SHIPPING_OLD,workflow['env']['EXPECTED_PRODUCTION_SHA'])
+        self.assertIn(SHIPPING_BUSINESS,workflow['env']['APPROVED_BUSINESS_SHA'])
+        steps=workflow['jobs']['artifact']['steps']
+        build=next(step for step in steps if step.get('name','').startswith('Build exact'))['run']
+        shipping=build.split('if [ "$GITHUB_REF" = refs/heads/'+SHIPPING_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        self.assertIn('git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA"',shipping)
+        self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',shipping)
+        self.assertIn('SHIPPING_BUSINESS_PAYLOAD_UNCHANGED=YES',shipping)
+        self.assertIn("format('release-staging-{0}', github.sha)",steps[-1]['with']['name'])
+        self.assertIn("format('release-preflight-{0}', github.sha)",steps[-1]['with']['name'])
+        for step in steps:
+            if step.get('name','').startswith(('Setup Node','Prove lifecycle')):
+                self.assertEqual(step['if'],"github.ref == 'refs/heads/codex/data-authority-finalization'")
+        probe=next(step for step in steps if step.get('name','').startswith('Probe application'))
+        self.assertIn('test-candidate-db-probe-integration.py "budu-api:post-transfer-${GITHUB_SHA:0:12}"',probe['run'])
 
     def test_t1_candidate_without_transfer_commit_denied(self):
         with tempfile.TemporaryDirectory() as directory:
