@@ -15,8 +15,8 @@ on:
       - codex/data-authority-finalization
 
 env:
-  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
-  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   artifact:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001')) }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -50,6 +50,15 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
+            codex/natural-month-report-revision)
+              test "$GITHUB_EVENT_NAME" = workflow_dispatch
+              test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
+              [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+              test "$EXPECTED_PRODUCTION_SHA" = ede3ee43526a39131618287d9b5447977e5c91d3
+              test "$APPROVED_BUSINESS_SHA" = 870d1d01cc2b4fca9f216f9b3decb5e565173700
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $APPROVED_BUSINESS_SHA"
+              test "$(git diff --name-only "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
+              ;;
             codex/pos-payroll-input-shipping-baseline-20261001)
               test "$GITHUB_EVENT_NAME" = workflow_dispatch
               test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
@@ -159,6 +168,11 @@ jobs:
             git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
               server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
             printf 'PAYROLL_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
+          elif [ "$GITHUB_REF" = refs/heads/codex/natural-month-report-revision ]; then
+            git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
+              server prisma cloudfunctions src shared Dockerfile package.json package-lock.json \
+              'scripts/payroll-audit-*.mjs' scripts/render-payroll-audit-pdf.mjs
+            printf 'REPORT_REVISION_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
           else
           git show "$APPROVED_BUSINESS_SHA:server/approvals.js" > "$run_dir/review-approvals.js"
           git show 2fa28a6399c8a9f4fd70188d8df077f0b411589e:server/v2.js > "$run_dir/transfer-v2.js"
@@ -200,7 +214,7 @@ jobs:
       - name: Retain exact artifact for read-only preflight
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ (github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
+          name: ${{ (github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
           path: ${{ env.RELEASE_ARTIFACT_PATH }}
           if-no-files-found: error
           compression-level: 0

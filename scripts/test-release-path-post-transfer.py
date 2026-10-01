@@ -27,6 +27,9 @@ SHIPPING_BUSINESS = '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe'
 PAYROLL_BRANCH = 'codex/pos-payroll-input-shipping-baseline-20261001'
 PAYROLL_OLD = 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531'
 PAYROLL_BUSINESS = '27f6280f731d258ddd078504ac4a27f33430728c'
+REVISION_BRANCH = 'codex/natural-month-report-revision'
+REVISION_OLD = 'ede3ee43526a39131618287d9b5447977e5c91d3'
+REVISION_BUSINESS = '870d1d01cc2b4fca9f216f9b3decb5e565173700'
 LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/release-controller-dns-empty-normalization',
                          'codex/release-single-writer-db-probe',
@@ -94,7 +97,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
-        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"')) }}")
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
@@ -169,6 +172,71 @@ class RealShellRoute(unittest.TestCase):
         for facts in denied:
             with self.subTest(facts=facts):
                 self.assertNotEqual(build_only_guard(**{**base,**facts}).returncode,0)
+
+    def test_revision_build_requires_exact_dispatch_sha_parent_and_two_files(self):
+        base = {'GITHUB_REF':'refs/heads/'+REVISION_BRANCH,
+                'EXPECTED_PRODUCTION_SHA':REVISION_OLD,
+                'APPROVED_BUSINESS_SHA':REVISION_BUSINESS,
+                'GUARD_PARENTS':REVISION_BUSINESS}
+        accepted=build_only_guard(**base)
+        self.assertEqual(accepted.returncode,0,accepted.stderr)
+        denied=[
+            {'GITHUB_EVENT_NAME':'push'},
+            {'GITHUB_REF':'refs/heads/codex/unreviewed'},
+            {'GITHUB_REF':'refs/tags/'+REVISION_BRANCH},
+            {'REQUESTED_RELEASE_SHA':''},
+            {'REQUESTED_RELEASE_SHA':'b'*40},
+            {'GITHUB_SHA':'a'*12,'REQUESTED_RELEASE_SHA':'a'*12},
+            {'GITHUB_SHA':'A'*40,'REQUESTED_RELEASE_SHA':'A'*40},
+            {'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD},
+            {'APPROVED_BUSINESS_SHA':PAYROLL_BUSINESS},
+            {'GUARD_PARENTS':REVISION_OLD},
+            {'GUARD_PARENTS':REVISION_BUSINESS+' '+'b'*40},
+            {'GUARD_PARENTS':''},
+            {'GUARD_FILES':'.github/workflows/release-build-only.yml'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\nserver/payroll-audit-scheduler-core.js'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\nscripts/payroll-audit-scheduler.mjs'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\nscripts/deploy-prod-transfer-cas.py'},
+            {'GUARD_FILES':SHIPPING_ENGINEERING_FILES+'\n.github/workflows/deploy-prod.yml'},
+            {'GUARD_FILES':''},
+            {'GUARD_HEAD':'b'*40},
+            {'RUNNER_OS':'macOS'},
+            {'RUNNER_ARCH':'ARM64'},
+        ]
+        for facts in denied:
+            with self.subTest(facts=facts):
+                self.assertNotEqual(build_only_guard(**{**base,**facts}).returncode,0)
+
+    def test_revision_build_preserves_legacy_bindings_and_exact_business_payload(self):
+        workflow=build_only_workflow()
+        self.assertTrue(workflow['env']['EXPECTED_PRODUCTION_SHA'].startswith(
+            "${{ github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+REVISION_OLD+"' || "))
+        self.assertTrue(workflow['env']['APPROVED_BUSINESS_SHA'].startswith(
+            "${{ github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+REVISION_BUSINESS+"' || "))
+        steps=workflow['jobs']['artifact']['steps']
+        build=next(step for step in steps if step.get('name','').startswith('Build exact'))['run']
+        revision=build.split('elif [ "$GITHUB_REF" = refs/heads/'+REVISION_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        self.assertIn('git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA"',revision)
+        self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',revision)
+        self.assertIn("'scripts/payroll-audit-*.mjs' scripts/render-payroll-audit-pdf.mjs",revision)
+        self.assertIn('REPORT_REVISION_BUSINESS_PAYLOAD_UNCHANGED=YES',revision)
+        self.assertIn(REVISION_BRANCH,steps[-1]['with']['name'])
+        self.assertIn("format('release-staging-{0}', github.sha)",steps[-1]['with']['name'])
+        self.assertIn("format('release-preflight-{0}', github.sha)",steps[-1]['with']['name'])
+        source=(ROOT/'.github/workflows/release-build-only.yml').read_text()
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',
+                                       REVISION_BUSINESS+':.github/workflows/release-build-only.yml'],text=True)
+        # Exact pre-existing shell branch admission rules are retained byte for byte.
+        for branch in [SHIPPING_BRANCH,PAYROLL_BRANCH]:
+            with self.subTest(branch=branch):
+                token='            '+branch+')'
+                self.assertEqual(source.split(token,1)[1].split(';;',1)[0],
+                                 prior.split(token,1)[1].split(';;',1)[0])
+        for key in ['EXPECTED_PRODUCTION_SHA','APPROVED_BUSINESS_SHA']:
+            old_line=next(line for line in prior.splitlines() if line.startswith('  '+key+':'))
+            new_line=next(line for line in source.splitlines() if line.startswith('  '+key+':'))
+            new_prefix="github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+(REVISION_OLD if key=='EXPECTED_PRODUCTION_SHA' else REVISION_BUSINESS)+"' || "
+            self.assertEqual(new_line.replace(new_prefix,'',1),old_line)
 
     def test_payroll_build_retains_exact_artifact_and_business_payload(self):
         workflow=build_only_workflow()
