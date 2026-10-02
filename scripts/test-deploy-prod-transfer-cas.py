@@ -1239,5 +1239,54 @@ class ShippingMigrationGates(unittest.TestCase):
             self.assertNotIn(forbidden,r.SHIPPING_MIGRATOR_CREATE_CODE)
 
 
+class ShippingDiagnosticIdentity(unittest.TestCase):
+    def setUp(self):
+        names=('RELEASE_PROFILE','EXPECTED_OLD_SHA','RUNTIME_SHA','OLD_V2_HASH','IMAGE_PREFIX','CONTAINER_SUFFIX','ROLLBACK_PREFIX')
+        saved={name:getattr(r,name) for name in names}
+        self.addCleanup(lambda: [setattr(r,name,value) for name,value in saved.items()])
+        r.configure_profile('post-transfer',r.SHIPPING_OLD_SHA,r.SHIPPING_BUSINESS_SHA,'a'*64)
+        self.repo=Path(r.__file__).resolve().parent.parent
+        self.path='prisma/migrations/'+r.SHIPPING_MIGRATION+'/migration.sql'
+        self.parents={NEW:r.SHIPPING_ENGINEERING_SHA,r.SHIPPING_ENGINEERING_SHA:r.SHIPPING_BUSINESS_SHA,
+                      r.SHIPPING_BUSINESS_SHA:r.SHIPPING_OLD_SHA}
+
+    def facts(self,repo,*args):
+        if args==('branch','--show-current'):return r.SHIPPING_DIAGNOSTIC_BRANCH
+        if args==('rev-parse','HEAD'):return NEW
+        if args[:1]==('rev-list',):return args[-1]+' '+self.parents[args[-1]]
+        if args==('diff','--name-only',r.SHIPPING_ENGINEERING_SHA,NEW):return '\n'.join(sorted(r.SHIPPING_DIAGNOSTIC_FILES))
+        if args==('diff','--name-only',r.SHIPPING_BUSINESS_SHA,NEW):return '\n'.join(sorted(r.SHIPPING_ENGINEERING_FILES))
+        if args[:1]==('diff',):return self.path
+        if args[:1]==('status',):return ''
+        raise AssertionError(args)
+
+    def test_exact_diagnostic_chain_and_ledger_read_only(self):
+        with patch.object(r,'git',side_effect=self.facts),patch.object(r,'command',return_value=b''):
+            sha,ledger=r.diagnostic_identity(self.repo)
+        self.assertEqual(sha,NEW);self.assertEqual(len(ledger),86)
+        self.assertEqual(ledger[r.SHIPPING_MIGRATION],r.SHIPPING_SQL_HASH)
+
+    def test_diagnostic_rejects_wrong_branch_parents_scope_dirty_sql_and_profile(self):
+        changes=[(('branch','--show-current'),r.SHIPPING_BRANCH,'BRANCH'),
+                 (('rev-parse','HEAD'),r.SHIPPING_ENGINEERING_SHA,'SHA'),
+                 (('diff','--name-only',r.SHIPPING_ENGINEERING_SHA,NEW),'server/v2.js','SCOPE'),
+                 (('diff','--name-only',r.SHIPPING_BUSINESS_SHA,NEW),'','SCOPE'),
+                 (('status','--porcelain','--untracked-files=all'),' M server/v2.js','WORKTREE'),
+                 (('diff','--name-only',r.SHIPPING_OLD_SHA,NEW,'--','prisma'),self.path+'\nprisma/schema.prisma','MIGRATION_SCOPE')]
+        for child in self.parents:
+            changes.append((('rev-list','--parents','-n','1',child),child+' '+r.SHIPPING_OLD_SHA+' '+r.SHIPPING_BUSINESS_SHA,'PARENT'))
+        for key,value,code in changes:
+            with self.subTest(key=key),patch.object(r,'git',side_effect=lambda repo,*args: value if args==key else self.facts(repo,*args)),patch.object(r,'command',return_value=b''):
+                with self.assertRaisesRegex(r.GateError,code):r.diagnostic_identity(self.repo)
+        with patch.object(r,'git',side_effect=self.facts),patch.object(r,'digest',return_value='f'*64):
+            with self.assertRaisesRegex(r.GateError,'SQL_HASH'):r.diagnostic_identity(self.repo)
+        with patch.object(r,'shipping_migration',return_value=False):
+            with self.assertRaisesRegex(r.GateError,'PROFILE'):r.diagnostic_identity(self.repo)
+
+    def test_production_identity_still_rejects_diagnostic_branch(self):
+        with patch.object(r,'git',side_effect=self.facts):
+            with self.assertRaisesRegex(r.GateError,'SHIPPING_BRANCH_INVALID'):r.validate_shipping_identity(self.repo,NEW)
+
+
 if __name__=='__main__':
     unittest.main(verbosity=2)

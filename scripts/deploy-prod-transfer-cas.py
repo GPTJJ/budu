@@ -68,6 +68,15 @@ POST_TRANSFER_ENGINEERING_FILES = {
 SHIPPING_OLD_SHA = '68cee84efe30409e7e18e4459e08982f6c20e254'
 SHIPPING_BUSINESS_SHA = '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c'
 SHIPPING_BRANCH = 'codex/shipping-review-actual-quantity-20261002'
+SHIPPING_DIAGNOSTIC_BRANCH = 'codex/shipping-controller-diagnostic-20261002'
+SHIPPING_ENGINEERING_SHA = 'dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0'
+SHIPPING_DIAGNOSTIC_FILES = {
+    '.github/workflows/release-build-only.yml',
+    'scripts/deploy-prod-transfer-cas.py',
+    'scripts/test-candidate-db-probe-integration.py',
+    'scripts/test-deploy-prod-transfer-cas.py',
+    'scripts/test-release-path-post-transfer.py',
+}
 SHIPPING_MIGRATION = '20261002000000_transfer_actual_quantity_reference'
 SHIPPING_SQL_HASH = '9610399f90cbd364a491908462affca3138594225673edfb650c4b5170da3872'
 SHIPPING_ENGINEERING_FILES = {
@@ -246,6 +255,39 @@ def identity(repo):
     migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
     require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
     return release, migrations
+
+def diagnostic_identity(repo):
+    """Read-only admission for one diagnostic child of the public E commit.
+
+    Production identity/preflight/deploy keep their original branch rules.
+    This does not generalize production ancestry or admit another SQL payload.
+    """
+    require(Path(__file__).resolve() == (Path(repo)/'scripts/deploy-prod-transfer-cas.py').resolve(), 'RUNNER_REPO_MISMATCH')
+    require(shipping_migration(), 'SHIPPING_DIAGNOSTIC_PROFILE_INVALID')
+    require(git(repo, 'branch', '--show-current') == SHIPPING_DIAGNOSTIC_BRANCH, 'SHIPPING_DIAGNOSTIC_BRANCH_INVALID')
+    release = git(repo, 'rev-parse', 'HEAD')
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != SHIPPING_ENGINEERING_SHA,
+            'SHIPPING_DIAGNOSTIC_SHA_INVALID')
+    for child, parent in ((release, SHIPPING_ENGINEERING_SHA),
+                          (SHIPPING_ENGINEERING_SHA, SHIPPING_BUSINESS_SHA),
+                          (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
+        require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
+                'SHIPPING_DIAGNOSTIC_PARENT_INVALID')
+    for base, files in ((SHIPPING_ENGINEERING_SHA, SHIPPING_DIAGNOSTIC_FILES),
+                        (SHIPPING_BUSINESS_SHA, SHIPPING_ENGINEERING_FILES)):
+        require(set(git(repo, 'diff', '--name-only', base, release).splitlines()) == files,
+                'SHIPPING_DIAGNOSTIC_SCOPE_INVALID')
+    path = 'prisma/migrations/' + SHIPPING_MIGRATION + '/migration.sql'
+    require(git(repo, 'diff', '--name-only', SHIPPING_OLD_SHA, release, '--', 'prisma') == path
+            and git(repo, 'diff', '--diff-filter=A', '--name-only', SHIPPING_OLD_SHA, release, '--', path) == path,
+            'SHIPPING_MIGRATION_SCOPE_INVALID')
+    require(digest((Path(repo)/path).read_bytes()) == SHIPPING_SQL_HASH, 'SHIPPING_SQL_HASH_INVALID')
+    require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    command(['git', '-C', str(repo), 'diff', '--check', SHIPPING_ENGINEERING_SHA, release])
+    migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo)/'prisma/migrations').glob('*/migration.sql')}
+    before_ledger(migrations)
+    return release, migrations
+
 
 def image_reference(release):
     require(bool(re.fullmatch('[0-9a-f]{40}', release)), 'IMAGE_RELEASE_SHA_INVALID')
@@ -1694,7 +1736,8 @@ def measure_release(repo,path,art,ledger,key):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure'])
+    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure',
+                                   'identity-diagnostic','inspect-artifact-diagnostic'])
     p.add_argument('--repo', type=Path, required=True)
     p.add_argument('--archive', type=Path)
     p.add_argument('--ssh-key', type=Path)
@@ -1715,9 +1758,12 @@ def main():
         require(args.expected_production_sha is None and args.business_base_sha is None,
                 'FIRST_ROLLOUT_IDENTITY_OVERRIDE_FORBIDDEN')
     require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
-    release, ledger = identity(args.repo)
-    if args.mode == 'identity':
-        print(json.dumps({'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}))
+    diagnostic = args.mode in ('identity-diagnostic','inspect-artifact-diagnostic')
+    release, ledger = diagnostic_identity(args.repo) if diagnostic else identity(args.repo)
+    if args.mode in ('identity','identity-diagnostic'):
+        result = {'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}
+        if diagnostic:result.update(diagnosticOnly=True, productionEligible=False)
+        print(json.dumps(result))
         return
     require(args.archive is not None, 'ARCHIVE_REQUIRED')
     if args.mode == 'deploy':
@@ -1754,7 +1800,7 @@ def main():
     summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
                'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
                'migrationRequired':'YES' if shipping_migration() else MIGRATION_REQUIRED}
-    if args.mode == 'inspect-artifact':
+    if args.mode in ('inspect-artifact','inspect-artifact-diagnostic'):
         # Offline validation still rejects artifacts over the absolute peak cap.
         summary['budget'] = disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])
     else:
@@ -1769,7 +1815,8 @@ def main():
         summary['diskBefore'] = {'used':state['diskUsed'],'available':state['diskAvailable']}
         summary['dfHuman'] = state['dfHuman']
         summary['dockerSystemDf'] = state['dockerSystemDf']
-    summary['result'] = 'PREFLIGHT_PASS'
+    summary['result'] = 'DIAGNOSTIC_ARTIFACT_PASS' if diagnostic else 'PREFLIGHT_PASS'
+    if diagnostic:summary.update(diagnosticOnly=True, productionEligible=False)
     print(json.dumps(summary,sort_keys=True))
 
 if __name__ == '__main__':

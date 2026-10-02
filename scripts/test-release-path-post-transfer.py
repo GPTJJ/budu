@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline post-Transfer release identity and real shell routing regressions."""
 import hashlib
+import ast
 import importlib.util
 import json
 import os
@@ -34,6 +35,10 @@ LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/release-controller-dns-empty-normalization',
                          'codex/release-single-writer-db-probe',
                          'codex/data-authority-finalization']
+DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
+DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
+DIAGNOSTIC_FILES = '\n'.join(sorted(r.SHIPPING_DIAGNOSTIC_FILES))
+SHIPPING_CI_REFS = "(github.ref == 'refs/heads/"+r.SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"')"
 QUANTITY_BRANCH = r.SHIPPING_BRANCH
 QUANTITY_OLD = r.SHIPPING_OLD_SHA
 QUANTITY_BUSINESS = r.SHIPPING_BUSINESS_SHA
@@ -49,6 +54,9 @@ def build_only_workflow():
 
 def without_quantity_binding(value, key):
     sha = QUANTITY_OLD if key == 'EXPECTED_PRODUCTION_SHA' else QUANTITY_BUSINESS
+    diagnostic_prefix = "github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' && '"+sha+"' || "
+    if value.count(diagnostic_prefix) != 1:raise AssertionError('Exact diagnostic binding required once')
+    value=value.replace(diagnostic_prefix,'',1)
     prefix = "github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' && '"+sha+"' || "
     if value.count(prefix) != 1:
         raise AssertionError('Exact quantity binding required once')
@@ -66,8 +74,11 @@ def build_only_guard(**facts):
         (bindir/'uname').write_text('#!/bin/sh\nprintf "x86_64\\n"\n')
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
-            'rev-list) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;;\n'
-            'diff) printf "%s\\n" "$GUARD_FILES" ;;\n'
+            'rev-list) case "$5" in\n'
+            '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
+            '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
+            '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
+            'diff) if [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -77,7 +88,8 @@ def build_only_guard(**facts):
                'GITHUB_SHA':release, 'REQUESTED_RELEASE_SHA':release,
                'EXPECTED_PRODUCTION_SHA':SHIPPING_OLD, 'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS,
                'GUARD_PARENTS':SHIPPING_BUSINESS, 'GUARD_FILES':SHIPPING_ENGINEERING_FILES,
-               'GUARD_HEAD':release, **facts}
+               'GUARD_HEAD':release,'GUARD_E_PARENT':QUANTITY_BUSINESS,'GUARD_B_PARENT':QUANTITY_OLD,
+               'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
 
@@ -109,7 +121,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
-        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' || github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' || github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' || github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
@@ -300,7 +312,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertIn('"$RELEASE_ARTIFACT_PATH"',probe['run'])
         self.assertIn('sudo -n --preserve-env=',probe['run'])
         proof=next(step for step in steps if step.get('name')=='Retain isolated real shipping controller proof')
-        self.assertEqual(proof['if'],"github.ref == 'refs/heads/"+QUANTITY_BRANCH+"'")
+        self.assertEqual(proof['if'],'success() && '+SHIPPING_CI_REFS)
         self.assertEqual(proof['with']['if-no-files-found'],'error')
         self.assertEqual(proof['with']['path'],'${{ runner.temp }}/shipping-controller-proof.json')
 
@@ -450,11 +462,11 @@ class QuantityReleaseContract(unittest.TestCase):
         for key in ('EXPECTED_PRODUCTION_SHA','APPROVED_BUSINESS_SHA'):
             without_quantity_binding(workflow['env'][key],key)
         old=next(step for step in steps if step['name']=='Build exact old application for isolated shipping compatibility')
-        self.assertEqual(old['if'],"github.ref == 'refs/heads/"+QUANTITY_BRANCH+"'")
+        self.assertEqual(old['if'],'success() && '+SHIPPING_CI_REFS)
         self.assertIn('git archive '+QUANTITY_OLD,old['run']);self.assertIn('--platform linux/amd64',old['run'])
         self.assertIn('--load "$old_dir"',old['run'])
         build=next(step for step in steps if step['name'].startswith('Build exact production'))['run']
-        quantity=build.split('elif [ "$GITHUB_REF" = refs/heads/'+QUANTITY_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        quantity=build.split('elif [ "$GITHUB_REF" = refs/heads/'+QUANTITY_BRANCH+' ] || [ "$GITHUB_REF" = refs/heads/'+DIAGNOSTIC_BRANCH+' ]; then',1)[1].split('else',1)[0]
         self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',quantity)
         self.assertIn('PINNED_PRISMA_CLI_OK',quantity);self.assertIn('6.19.3',quantity)
         probe=next(step for step in steps if step['name'].startswith('Probe application'))['run']
@@ -563,6 +575,167 @@ class ShippingControllerCiIsolation(unittest.TestCase):
             self.assertIsNotNone(fixture['NetworkSettings']['Networks']['own-network']['Aliases'])
             fixture['NetworkSettings']['Networks']['own-network']['Aliases'].append('production')
             with self.assertRaisesRegex(RuntimeError,'CI_UNEXPECTED_NETWORK_ALIAS'):self.remote().inspect('own-old')
+
+
+class ShippingDiagnosticWorkflow(unittest.TestCase):
+    def test_finite_diagnostic_guard_does_not_generalize_release_ancestry(self):
+        base={'GITHUB_REF':'refs/heads/'+DIAGNOSTIC_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
+              'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':DIAGNOSTIC_E,
+              'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+        accepted=build_only_guard(**base);self.assertEqual(accepted.returncode,0,accepted.stderr)
+        for change in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'b'*40},
+                       {'GITHUB_SHA':DIAGNOSTIC_E,'REQUESTED_RELEASE_SHA':DIAGNOSTIC_E},
+                       {'GUARD_PARENTS':QUANTITY_BUSINESS},{'GUARD_PARENTS':DIAGNOSTIC_E+' '+QUANTITY_BUSINESS},
+                       {'GUARD_E_PARENT':QUANTITY_OLD},{'GUARD_B_PARENT':DIAGNOSTIC_E},
+                       {'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES+'\nserver/v2.js'},
+                       {'GUARD_DIAGNOSTIC_FILES':''},{'GUARD_FILES':DIAGNOSTIC_FILES},
+                       {'EXPECTED_PRODUCTION_SHA':'f'*40},{'APPROVED_BUSINESS_SHA':'f'*40}):
+            with self.subTest(change=change):self.assertNotEqual(build_only_guard(**{**base,**change}).returncode,0)
+
+    def test_always_failure_upload_cannot_publish_success_proof_or_production_candidate(self):
+        steps=build_only_workflow()['jobs']['artifact']['steps']
+        validate=next(x for x in steps if x['name']=='Validate isolated shipping failure diagnostics')
+        upload=next(x for x in steps if x['name']=='Retain isolated shipping failure diagnostics')
+        self.assertEqual(validate['if'],'always() && '+SHIPPING_CI_REFS)
+        self.assertEqual(upload['if'],"always() && "+SHIPPING_CI_REFS+" && steps.shipping_diagnostic.outputs.failed == 'true'")
+        self.assertEqual(upload['with']['path'],'${{ runner.temp }}/shipping-controller-diagnostic.json')
+        proof=next(x for x in steps if x['name']=='Retain isolated real shipping controller proof')
+        self.assertTrue(proof['if'].startswith('success() && '))
+        self.assertNotIn('always()',steps[-1].get('if',''))
+        self.assertIn("format('shipping-diagnostic-image-{0}', github.sha)",steps[-1]['with']['name'])
+        for status,allowed in [('FAILED',True),('UNVERIFIED',True),('PASS',False),('DEPLOY_COMPLETE',False)]:
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);out=root/'github-output'
+                row={'exactSHA':'a'*40,'case':'success','completedCases':[],
+                     'stage':'PREFLIGHT','code':'COMMAND_FAILED','result':status,'injection':['PRIMARY']}
+                (root/'shipping-controller-diagnostic.json').write_text(json.dumps([row]))
+                result=subprocess.run(['/bin/bash','-c',validate['run']],capture_output=True,
+                    env={**os.environ,'RUNNER_TEMP':directory,'GITHUB_OUTPUT':str(out),'GITHUB_SHA':'a'*40})
+                self.assertEqual(result.returncode==0,allowed)
+                self.assertEqual(out.exists(),allowed)
+
+    def test_all_production_safety_functions_constants_and_native_fixtures_unchanged_from_e(self):
+        def nodes(source):
+            return {node.name:ast.dump(node,include_attributes=False) for node in ast.parse(source).body
+                    if isinstance(node,(ast.FunctionDef,ast.ClassDef))}
+        path='scripts/deploy-prod-transfer-cas.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
+        before=nodes(old);after=nodes((ROOT/path).read_text())
+        for name,body in before.items():
+            if name!='main':self.assertEqual(after[name],body,name)
+        def assignments(source):
+            return {ast.dump(node.targets[0]):ast.dump(node.value) for node in ast.parse(source).body
+                    if isinstance(node,ast.Assign)}
+        for key,value in assignments(old).items():self.assertEqual(assignments((ROOT/path).read_text())[key],value,key)
+        path='scripts/test-candidate-db-probe-integration.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
+        before=nodes(old);after=nodes((ROOT/path).read_text())
+        for name in ('native_pg16','validate_snapshots','shipping_pg16_ci','main','LocalDocker'):
+            self.assertEqual(before[name],after[name],name)
+        for key,value in assignments(old).items():
+            self.assertEqual(assignments((ROOT/path).read_text())[key],value,key)
+        changed=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',DIAGNOSTIC_E,'--',
+            'server','src','shared','prisma','scripts/deploy-remote.sh','scripts/deploy-prod-transfer-cas.sh'],text=True)
+        self.assertEqual(changed,'')
+
+
+class ShippingDiagnosticFailures(unittest.TestCase):
+    setUp = ShippingControllerCiIsolation.setUp
+    remote = ShippingControllerCiIsolation.remote
+    def invoke(self,action,directory):
+        environment={**self.environment,'RUNNER_TEMP':directory,'GITHUB_REF':'refs/heads/'+DIAGNOSTIC_BRANCH}
+        with patch.dict(os.environ,environment,clear=True),patch.object(sys,'platform','linux'),patch.object(os,'geteuid',return_value=0),\
+             patch.object(self.ci,'_shipping_controller_ci',side_effect=action):
+            return self.ci.shipping_controller_ci('image','old','archive')
+
+    def test_unexpected_controller_failure_keeps_original_gate_object_stage_and_result(self):
+        error=self.ci.release.GateError('COMMAND_FAILED');error.failure_stage='CANDIDATE_CREATE';error.deployment_result='DEPLOY_BLOCKED'
+        with self.assertRaises(self.ci.release.GateError) as caught:
+            self.ci.verify_controller_failure(error,('PUBLIC_HEALTH','HEALTH_FAILED'))
+        self.assertIs(caught.exception,error)
+        self.assertEqual(error.failure_stage,'CANDIDATE_CREATE');self.assertEqual(str(error),'COMMAND_FAILED')
+        with tempfile.TemporaryDirectory() as directory:
+            diag=self.ci.CiFailureDiagnostics(Path(directory)/'diag.json',self.sha);diag.primary(error)
+            self.assertIn('CONTROLLER_DEPLOY_BLOCKED',diag.records[0]['injection'])
+            self.ci.validate_ci_diagnostic_records(diag.records,self.sha)
+
+    def test_diagnostic_validation_rejects_unknown_labels_codes_fields_and_claimed_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            diag=self.ci.CiFailureDiagnostics(Path(directory)/'diag.json',self.sha)
+            diag.primary(self.ci.release.GateError('COMMAND_FAILED'))
+            for changes in ({'injection':['SECRET_VALUE']},{'code':'SECRET_VALUE'},{'result':'PASS'},
+                            {'exactSHA':'f'*40},{'completedCases':['backup_limit']},{'rawstderr':'private'}):
+                with self.subTest(changes=changes),self.assertRaises(AssertionError):
+                    self.ci.validate_ci_diagnostic_records([{**diag.records[0],**changes}],self.sha)
+
+    def test_primary_is_saved_before_cleanup_and_secondary_failure_never_masks_it(self):
+        error=self.ci.release.GateError('SHIPPING_MIGRATOR_UNVERIFIED')
+        error.failure_stage='SHIPPING_CHECK_MIGRATION';error.deployment_result='DEPLOY_ROLLED_BACK'
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'shipping-controller-diagnostic.json'
+            def inner(image,old,archive,diagnostics):
+                diagnostics.case='post_l86_disk';diagnostics.completed=['success']
+                try:raise error
+                except BaseException as original:
+                    diagnostics.primary(original)
+                    self.assertEqual(json.loads(target.read_text())[0]['code'],str(error))
+                    diagnostics.cleanup(lambda: (_ for _ in ()).throw(RuntimeError('SECRET_DATABASE_URL')),'CONTAINER_CLEANUP')
+                    raise
+            with self.assertRaises(self.ci.release.GateError) as caught:self.invoke(inner,directory)
+            self.assertIs(caught.exception,error)
+            records=json.loads(target.read_text());self.assertEqual(len(records),2)
+            self.assertEqual(records[0]['completedCases'],['success']);self.assertEqual(records[0]['result'],'FAILED')
+            self.assertEqual(records[1]['result'],'UNVERIFIED');self.assertEqual(records[1]['code'],'DETAILS_SUPPRESSED')
+            self.assertNotIn('SECRET_DATABASE_URL',target.read_text())
+            self.assertFalse((Path(directory)/'shipping-controller-proof.json').exists())
+            for record in records:self.assertEqual(set(record),{'exactSHA','case','completedCases','stage','code','result','injection'})
+
+    def test_temporary_directory_cleanup_error_cannot_replace_saved_primary(self):
+        error=self.ci.release.GateError('HEALTH_FAILED');error.failure_stage='PUBLIC_HEALTH'
+        def inner(image,old,archive,diagnostics):
+            diagnostics.primary(error)
+            raise PermissionError('private cleanup path')
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(self.ci.release.GateError) as caught:self.invoke(inner,directory)
+            self.assertIs(caught.exception,error)
+            rows=json.loads((Path(directory)/'shipping-controller-diagnostic.json').read_text())
+            self.assertEqual(rows[0]['code'],'HEALTH_FAILED');self.assertIn('TEMP_DIRECTORY_CLEANUP',rows[1]['injection'])
+
+    def test_cleanup_only_failure_is_unverified_nonzero_and_never_success(self):
+        error=RuntimeError('CI_CLEANUP_OWNERSHIP_CHANGED')
+        def inner(image,old,archive,diagnostics):
+            diagnostics.cleanup(lambda: (_ for _ in ()).throw(error),'CONTAINER_CLEANUP')
+            diagnostics.raise_cleanup()
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(RuntimeError) as caught:self.invoke(inner,directory)
+            self.assertIs(caught.exception,error)
+            rows=json.loads((Path(directory)/'shipping-controller-diagnostic.json').read_text())
+            self.assertEqual(len(rows),1);self.assertEqual(rows[0]['result'],'UNVERIFIED')
+            self.assertFalse((Path(directory)/'shipping-controller-proof.json').exists())
+
+    def test_success_does_not_emit_failure_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.invoke(lambda *args:None,directory)
+            self.assertFalse((Path(directory)/'shipping-controller-diagnostic.json').exists())
+
+    def test_diagnostic_writer_failure_and_unknown_exception_do_not_replace_primary(self):
+        error=RuntimeError('SECRET_PRIVATE_KEY')
+        with tempfile.TemporaryDirectory() as directory,patch.object(self.ci.tempfile,'mkstemp',side_effect=OSError('secret path')),\
+             patch.object(sys,'stderr',new_callable=__import__('io').StringIO) as stderr:
+            def inner(image,old,archive,diagnostics):diagnostics.primary(error);raise error
+            with self.assertRaises(RuntimeError) as caught:self.invoke(inner,directory)
+            self.assertIs(caught.exception,error)
+            self.assertNotIn('SECRET_PRIVATE_KEY',stderr.getvalue());self.assertNotIn('secret path',stderr.getvalue())
+            self.assertIn('CI_DIAGNOSTIC_WRITE_FAILED',stderr.getvalue())
+
+    def test_command_failure_emits_only_bounded_operation_not_argv_or_stderr(self):
+        error=self.ci.release.GateError('COMMAND_FAILED')
+        with patch.object(self.ci.release.LocalRemote,'run',side_effect=error):
+            with self.assertRaises(self.ci.release.GateError):self.remote().run(['docker','exec','own-pg','psql','postgresql://secret'])
+        with tempfile.TemporaryDirectory() as directory:
+            diag=self.ci.CiFailureDiagnostics(Path(directory)/'diag.json',self.sha);diag.primary(error)
+            text=diag.target.read_text();self.assertIn('DATABASE_SQL',text);self.assertNotIn('postgresql://secret',text)
+            self.assertEqual(diag.records[0]['code'],'COMMAND_FAILED')
 
 
 if __name__=='__main__':

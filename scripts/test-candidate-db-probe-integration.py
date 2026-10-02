@@ -15,6 +15,7 @@ import contextlib
 import io
 import copy
 import re
+import ast
 from urllib.parse import urlsplit
 
 sys.dont_write_bytecode = True
@@ -247,11 +248,31 @@ def native_pg16():
             if cleanup_errors:raise RuntimeError('NATIVE_OWNED_DATABASE_CLEANUP_FAILED')
 
 
+def ci_operation(args):
+    """Finite operation labels; never serialize argv, env, URLs or stderr."""
+    if not args or args[0] != 'docker':return 'LOCAL_HELPER'
+    if args[1:2] == ['exec']:
+        for token,label in (('psql','DATABASE_SQL'),('node','APPLICATION_NODE'),('wget','LOCAL_HEALTH'),
+                            ('nginx','NGINX_CONTROL'),('pg_dump','DATABASE_DUMP'),('pg_restore','DATABASE_RESTORE')):
+            if token in args:return label
+        return 'DOCKER_EXEC'
+    verb=args[1] if len(args)>1 else ''
+    return {'inspect':'DOCKER_INSPECT','image':'DOCKER_IMAGE','info':'DOCKER_INFO',
+            'ps':'DOCKER_LIST','run':'DOCKER_RUN','create':'DOCKER_CREATE','start':'DOCKER_START',
+            'stop':'DOCKER_STOP','rm':'DOCKER_REMOVE','network':'DOCKER_NETWORK',
+            'pull':'DOCKER_PULL','logs':'DOCKER_LOGS','update':'DOCKER_UPDATE'}.get(verb,'DOCKER_OTHER')
+
+
 def docker(*args, timeout=30):
-    result = subprocess.run(['docker', *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=timeout, check=False)
+    try:
+        result = subprocess.run(['docker', *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=timeout, check=False)
+    except (OSError,subprocess.TimeoutExpired):
+        error=release.GateError('COMMAND_UNAVAILABLE_OR_TIMEOUT');error.ci_operation=ci_operation(['docker',*args])
+        raise error from None
     if result.returncode:
-        raise RuntimeError('ISOLATED_DOCKER_COMMAND_FAILED')
+        error=RuntimeError('ISOLATED_DOCKER_COMMAND_FAILED');error.ci_operation=ci_operation(['docker',*args])
+        raise error
     return result.stdout.decode().strip()
 
 
@@ -313,11 +334,127 @@ def controller_ci_guard():
     if (os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'Linux'
             or sys.platform != 'linux' or os.geteuid() != 0
             or os.environ.get('GITHUB_REPOSITORY') != 'GPTJJ/budu'
-            or os.environ.get('GITHUB_REF') != 'refs/heads/'+release.SHIPPING_BRANCH
+            or os.environ.get('GITHUB_REF') not in ('refs/heads/'+release.SHIPPING_BRANCH,
+                                                   'refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH)
             or os.environ.get('TEST_SHIPPING_CONTROLLER_CI') != '1'
             or os.environ.get('DOCKER_HOST') not in (None, 'unix:///var/run/docker.sock')
-            or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')):
+            or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')
+            or not re.fullmatch('[0-9a-f]{40}',os.environ.get('GITHUB_SHA',''))):
         raise RuntimeError('SHIPPING_CONTROLLER_ISOLATED_LINUX_CI_REQUIRED')
+
+
+CI_CASES = ('success','post_cutover_failure','post_l86_disk','backup_limit')
+CI_OPERATIONS = frozenset(ci_operation(['docker',verb]) for verb in
+    ('inspect','image','info','ps','run','create','start','stop','rm','network','pull','logs','update','other')) | frozenset({
+    'LOCAL_HELPER','DATABASE_SQL','APPLICATION_NODE','LOCAL_HEALTH','NGINX_CONTROL','DATABASE_DUMP',
+    'DATABASE_RESTORE','DOCKER_EXEC','BACKUP_RESTORE_HELPER','MIGRATOR_CREATE_HELPER','CLONE_HELPER',
+    'CONTAINER_CLEANUP','DATABASE_CLEANUP','NETWORK_CLEANUP','TEMP_DIRECTORY_CLEANUP','DIAGNOSTIC_WRITE',
+    'LOCK_CLEANUP_HELPER'})
+
+
+def ci_code_catalog():
+    # Only literal gate codes in the exact reviewed source are eligible. An
+    # arbitrary uppercase exception, raw subprocess output or credential is not.
+    codes=set(release.SAFE_CONTROLLER_CODES)|{'DETAILS_SUPPRESSED','CI_DIAGNOSTIC_WRITE_FAILED','ROLLBACK_APPLICATION_DB_PROBE_FAILED',
+        'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM'}
+    for path in (Path(release.__file__),Path(__file__)):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node,ast.Call):
+                name=node.func.id if isinstance(node.func,ast.Name) else getattr(node.func,'attr','')
+                index=1 if name=='require' else 0
+                if name in ('require','GateError','RuntimeError') and len(node.args)>index:
+                    value=node.args[index]
+                    if isinstance(value,ast.Constant) and isinstance(value.value,str) and re.fullmatch('[A-Z][A-Z0-9_:]{1,100}',value.value):
+                        codes.add(value.value)
+    return frozenset(codes)
+
+
+CI_CODES = ci_code_catalog()
+CI_CONTROLLER_RESULTS = ('DEPLOY_ROLLED_BACK','DEPLOY_BLOCKED','DEPLOY_ABORTED','DEPLOY_COMPLETE','UNKNOWN')
+
+
+def validate_ci_diagnostic_records(records,sha):
+    assert re.fullmatch('[0-9a-f]{40}',sha)
+    assert isinstance(records,list) and 1 <= len(records) <= 32
+    labels=CI_OPERATIONS|{'PRIMARY','CLEANUP','HOST_STORAGE_CI_ADAPTER_PRODUCTION_UNVERIFIED',
+        'DNS_CI_ADAPTER_PRODUCTION_UNVERIFIED'}|{'CONTROLLER_'+value for value in CI_CONTROLLER_RESULTS}|{
+        'REQUESTED_'+case.upper() for case in CI_CASES}|{'EXPECTED_STAGE_'+stage for stage in release.SAFE_CONTROLLER_STAGES}|{
+        'EXPECTED_CODE_'+code for code in CI_CODES}
+    for row in records:
+        assert set(row)=={'exactSHA','case','completedCases','stage','code','result','injection'}
+        assert row['exactSHA']==sha and row['case'] in (*CI_CASES,'SETUP','UNVERIFIED')
+        assert row['completedCases']==list(CI_CASES[:len(row['completedCases'])])
+        assert row['stage'] in release.SAFE_CONTROLLER_STAGES|{'CI_FIXTURE','CI_CLEANUP','CI_DIAGNOSTIC'}
+        assert row['code'] in CI_CODES and row['result'] in ('FAILED','UNVERIFIED')
+        assert isinstance(row['injection'],list) and 1 <= len(row['injection']) <= 8
+        assert all(label in labels for label in row['injection'])
+
+
+class CiFailureDiagnostics:
+    def __init__(self, target, sha):
+        self.target=Path(target);self.sha=sha if re.fullmatch('[0-9a-f]{40}',sha or '') else 'UNVERIFIED'
+        self.case='SETUP';self.completed=[];self.records=[]
+        self.primary_error=None;self.primary_traceback=None;self.cleanup_error=None
+
+    def record(self,error,source,operation=None):
+        code=str(error);stage=getattr(error,'failure_stage','CI_CLEANUP' if source=='CLEANUP' else 'CI_FIXTURE')
+        stage=stage if stage in release.SAFE_CONTROLLER_STAGES|{'CI_CLEANUP','CI_FIXTURE','CI_DIAGNOSTIC'} else 'UNKNOWN'
+        operation=operation or getattr(error,'ci_operation','LOCAL_HELPER')
+        controller=getattr(error,'deployment_result','UNKNOWN')
+        labels=[source,operation if operation in CI_OPERATIONS else 'LOCAL_HELPER',
+                'HOST_STORAGE_CI_ADAPTER_PRODUCTION_UNVERIFIED','DNS_CI_ADAPTER_PRODUCTION_UNVERIFIED',
+                'CONTROLLER_'+(controller if controller in CI_CONTROLLER_RESULTS else 'UNKNOWN')]
+        if self.case in CI_CASES:labels.append('REQUESTED_'+self.case.upper())
+        expected=getattr(error,'ci_expected_failure',None)
+        if isinstance(expected,tuple) and len(expected)==2 and expected[0] in release.SAFE_CONTROLLER_STAGES and expected[1] in CI_CODES:
+            labels.extend(('EXPECTED_STAGE_'+expected[0],'EXPECTED_CODE_'+expected[1]))
+        row={'exactSHA':self.sha,'case':self.case if self.case in (*CI_CASES,'SETUP') else 'UNVERIFIED',
+             'completedCases':[case for case in self.completed if case in CI_CASES],
+             'stage':stage,'code':code if code in CI_CODES else 'DETAILS_SUPPRESSED',
+             'result':'FAILED' if source=='PRIMARY' else 'UNVERIFIED','injection':labels}
+        if len(self.records)<32:self.records.append(row)
+        self.write()
+        return row
+
+    def write(self):
+        # Outside the owned resource directory: capture the primary BEFORE its
+        # cleanup. Recording failure cannot replace the original exception.
+        temporary=None
+        try:
+            fd,name=tempfile.mkstemp(prefix='shipping-diagnostic-',dir=self.target.parent)
+            temporary=Path(name)
+            with os.fdopen(fd,'w') as output:output.write(json.dumps(self.records,sort_keys=True,indent=2)+'\n')
+            temporary.chmod(0o644);os.replace(temporary,self.target)
+        except BaseException:
+            print(json.dumps({'exactSHA':self.sha,'case':self.case,'completedCases':self.completed,
+                'stage':'CI_DIAGNOSTIC','code':'CI_DIAGNOSTIC_WRITE_FAILED','result':'UNVERIFIED',
+                'injection':['CLEANUP','DIAGNOSTIC_WRITE']}),file=sys.stderr)
+        finally:
+            if temporary:
+                try:temporary.unlink(missing_ok=True)
+                except BaseException:pass
+
+    def primary(self,error):
+        if error is self.cleanup_error:return
+        if self.primary_error is None:
+            self.primary_error=error;self.primary_traceback=error.__traceback__
+            self.record(error,'PRIMARY')
+
+    def cleanup(self,action,operation):
+        try:action()
+        except BaseException as error:
+            if self.cleanup_error is None:self.cleanup_error=error
+            self.record(error,'CLEANUP',operation)
+
+    def raise_cleanup(self):
+        if self.cleanup_error is not None:raise self.cleanup_error
+
+
+def verify_controller_failure(error,expected):
+    if (expected != (getattr(error,'failure_stage',None),str(error))
+            or getattr(error,'deployment_result',None) != 'DEPLOY_ROLLED_BACK'):
+        error.ci_expected_failure=expected
+        raise error
 
 
 class ControllerCiRemote(release.LocalRemote):
@@ -337,7 +474,10 @@ class ControllerCiRemote(release.LocalRemote):
     def run(self, args, data=None, timeout=60):
         if args and args[0] in ('ssh','scp','curl'):
             raise RuntimeError('CI_EXTERNAL_TARGET_FORBIDDEN')
-        result=super().run(args,data,timeout)
+        try:result=super().run(args,data,timeout)
+        except BaseException as error:
+            error.ci_operation=ci_operation(args)
+            raise
         if args == ['docker','info','--format','{{json .}}']:
             info=json.loads(result)
             self.host_storage={k:info.get(k) for k in ('ServerVersion','Driver','DockerRootDir','DriverStatus')}
@@ -370,7 +510,13 @@ class ControllerCiRemote(release.LocalRemote):
         if code==release.SHIPPING_BACKUP_RESTORE_CODE and self.mode=='backup_limit':
             value={**value,'limits':{**value['limits'],'backupLimit':16}}
             self.injected=True
-        return super().py(code,value,timeout)
+        try:return super().py(code,value,timeout)
+        except BaseException as error:
+            error.ci_operation=('BACKUP_RESTORE_HELPER' if code==release.SHIPPING_BACKUP_RESTORE_CODE else
+                'MIGRATOR_CREATE_HELPER' if code==release.SHIPPING_MIGRATOR_CREATE_CODE else
+                'CLONE_HELPER' if value and 'helper' in value else
+                'LOCK_CLEANUP_HELPER' if code.startswith('import os; os.rmdir(') else 'LOCAL_HELPER')
+            raise
 
     def containers(self):
         objects=super().containers()
@@ -414,16 +560,36 @@ class ControllerCiRemote(release.LocalRemote):
 
 def shipping_controller_ci(image,old_image,archive):
     controller_ci_guard()
+    diagnostics=CiFailureDiagnostics(Path(os.environ['RUNNER_TEMP'])/'shipping-controller-diagnostic.json',os.environ.get('GITHUB_SHA'))
     # Root is needed by the SAME backup helper to inspect the restore's 0700
     # postgres-owned files. Git trust is process-scoped, including direct ancestry
     # subprocesses in identity(); no global/local Git config is changed.
     git_keys=('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0')
     git_before={key:os.environ.get(key) for key in git_keys}
     os.environ.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='safe.directory',GIT_CONFIG_VALUE_0=str(ROOT))
+    try:
+        _shipping_controller_ci(image,old_image,archive,diagnostics)
+    except BaseException as error:
+        if diagnostics.primary_error is not None and error is not diagnostics.primary_error:
+            diagnostics.cleanup(lambda: (_ for _ in ()).throw(error),'TEMP_DIRECTORY_CLEANUP')
+            raise diagnostics.primary_error.with_traceback(diagnostics.primary_traceback) from None
+        if diagnostics.primary_error is None and diagnostics.cleanup_error is not None and error is not diagnostics.cleanup_error:
+            diagnostics.cleanup(lambda: (_ for _ in ()).throw(error),'TEMP_DIRECTORY_CLEANUP')
+            raise diagnostics.cleanup_error from None
+        diagnostics.primary(error)
+        raise
+    finally:
+        for key,value in git_before.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+
+
+def _shipping_controller_ci(image,old_image,archive,diagnostics):
     release.configure_profile('post-transfer',release.SHIPPING_OLD_SHA,release.SHIPPING_BUSINESS_SHA,
         hashlib.sha256(release.command(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),
                                        'show',release.SHIPPING_OLD_SHA+':server/v2.js'])).hexdigest())
-    identity,ledger=release.identity(ROOT);sha=os.environ['GITHUB_SHA']
+    identity,ledger=(release.diagnostic_identity(ROOT) if os.environ['GITHUB_REF']=='refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH
+                     else release.identity(ROOT));sha=os.environ['GITHUB_SHA']
     if identity!=sha or image!=release.image_reference(sha):raise RuntimeError('CI_EXACT_SOURCE_REQUIRED')
     old_config=json.loads(docker('image','inspect',old_image))[0]
     if (old_image!='budu-api:shipping-old-68cee84efe30' or old_config['Config'].get('Labels',{}).get(release.REVISION)!=release.SHIPPING_OLD_SHA
@@ -468,7 +634,8 @@ def shipping_controller_ci(image,old_image,archive):
                 time.sleep(0.25)
             else:raise RuntimeError('CI_POSTGRES_NOT_READY')
             docker('pull','nginx:1.28-alpine',timeout=180)
-            for index,mode in enumerate(('success','post_cutover_failure','post_l86_disk','backup_limit')):
+            for index,mode in enumerate(CI_CASES):
+                diagnostics.case=mode
                 case_root=root/str(index);case_root.mkdir(mode=0o700);(case_root/'rollback').mkdir(mode=0o700)
                 old='shipping-ci-old-'+suffix;nginx='shipping-ci-nginx-'+suffix
                 candidate='budu-prod-'+sha[:12]+release.CONTAINER_SUFFIX
@@ -514,7 +681,7 @@ def shipping_controller_ci(image,old_image,archive):
                     with contextlib.redirect_stdout(result):
                         release.execute_loaded(remote,art,ledger,helper,remote.inspect(old)['Id'],release.digest(routes.encode()))
                 except release.GateError as error:
-                    if expected!=(error.failure_stage,str(error)) or error.deployment_result!='DEPLOY_ROLLED_BACK':raise RuntimeError('CI_CONTROLLER_ROLLBACK_RESULT_INVALID') from None
+                    verify_controller_failure(error,expected)
                 else:
                     if expected or json.loads(result.getvalue())['result']!='DEPLOY_COMPLETE':raise RuntimeError('CI_CONTROLLER_EXPECTED_FAILURE_MISSING')
                 final=remote.db();expected_ledger=release.before_ledger(ledger) if mode=='backup_limit' else ledger
@@ -540,8 +707,11 @@ def shipping_controller_ci(image,old_image,archive):
                               'hostStorageActual':remote.host_storage,'hostStorageGate':'CI_FIXTURE_ADAPTER_PRODUCTION_UNVERIFIED',
                               'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':True})
                 for name in names:
-                    remove_owned(name)
-                docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c','DROP DATABASE '+database+' WITH (FORCE)')
+                    diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
+                diagnostics.cleanup(lambda: docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c',
+                    'DROP DATABASE '+database+' WITH (FORCE)'),'DATABASE_CLEANUP')
+                diagnostics.raise_cleanup()
+                diagnostics.completed.append(mode)
             report={'scope':'ISOLATED_LINUX_CI_REAL_CONTROLLER_NOT_PRODUCTION_ADMISSION','releaseSha':sha,
                     'oldSha':release.SHIPPING_OLD_SHA,'businessSha':release.SHIPPING_BUSINESS_SHA,
                     'controllerSha256':hashlib.sha256((ROOT/'scripts/deploy-prod-transfer-cas.py').read_bytes()).hexdigest(),
@@ -549,17 +719,19 @@ def shipping_controller_ci(image,old_image,archive):
                     'realExecuteLoaded':True,'realBackupRestoreHelper':True,'realImageMigrator':True,
                     'realApplicationContainers':True,'sleepProbeIsBusinessWriterEvidence':False,
                     'productionHostStorageValidated':False,'productionActions':False}
+        except BaseException as error:
+            diagnostics.primary(error)
+            raise
         finally:
             for name in set(owned)|reserved:
-                remove_owned(name)
-            if network_id:
+                diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
+            def remove_network():
                 if json.loads(docker('network','inspect',network))[0]['Id']!=network_id:
                     raise RuntimeError('CI_NETWORK_CLEANUP_OWNERSHIP_CHANGED')
                 docker('network','rm',network)
+            if network_id:diagnostics.cleanup(remove_network,'NETWORK_CLEANUP')
             for key,value in globals_before.items():setattr(release,key,value)
-            for key,value in git_before.items():
-                if value is None:os.environ.pop(key,None)
-                else:os.environ[key]=value
+    diagnostics.raise_cleanup()
     report['ownedResourcesRemoved']=True
     target=Path(os.environ['RUNNER_TEMP'])/'shipping-controller-proof.json'
     target.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
@@ -659,9 +831,11 @@ if __name__ == '__main__':
             main(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None)
     except BaseException as error:
         if len(sys.argv)>1 and sys.argv[1]=='--shipping-controller-ci':
-            code=str(error)
-            print(json.dumps({'scope':'ISOLATED_SHIPPING_CONTROLLER_CI',
-                'code':code if re.fullmatch('[A-Z][A-Z0-9_:]{1,100}',code) else 'DETAILS_SUPPRESSED',
-                'stage':getattr(error,'failure_stage','CI_FIXTURE')}),file=sys.stderr)
+            code=str(error);stage=getattr(error,'failure_stage','CI_FIXTURE')
+            print(json.dumps({'exactSHA':os.environ.get('GITHUB_SHA','UNVERIFIED'),
+                'case':'UNVERIFIED','completedCases':[],
+                'code':code if code in CI_CODES else 'DETAILS_SUPPRESSED',
+                'stage':stage if stage in release.SAFE_CONTROLLER_STAGES else 'CI_FIXTURE',
+                'result':'FAILED','injection':['PRIMARY']}),file=sys.stderr)
         else:print('CANDIDATE_DB_PROBE_INTEGRATION_FAILED', file=sys.stderr)
         raise SystemExit(1) from None
