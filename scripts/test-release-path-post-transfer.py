@@ -63,6 +63,17 @@ QUANTITY_ENGINEERING_FILES = '\n'.join(sorted(r.SHIPPING_ENGINEERING_FILES))
 SHIPPING_ENGINEERING_FILES = '.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
 
 
+MATERIAL_SPEC = importlib.util.spec_from_file_location('material_contract_projection',ROOT/'scripts/test-material-release-contract.py')
+MATERIAL_PROJECTION = importlib.util.module_from_spec(MATERIAL_SPEC)
+MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
+
+
+def previous_release_source(source):
+    return (MATERIAL_PROJECTION.previous_controller_source(source) if 'def material_contract():' in source
+            else MATERIAL_PROJECTION.previous_ci_source(source) if 'def material_controller_ci_guard():' in source
+            else MATERIAL_PROJECTION.previous_workflow_source(source))
+
+
 def without_reviewed_disk_percent(source):
     # Only the user-approved percent and its diagnostic labels may differ.
     return (source.replace('MAX_PROJECTED_USAGE = 90', 'MAX_PROJECTED_USAGE = 85')
@@ -114,8 +125,8 @@ def without_reviewed_transport(source):
 
 def build_only_workflow():
     return json.loads(subprocess.check_output(
-        ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',
-         str(ROOT/'.github/workflows/release-build-only.yml')]))
+        ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],
+        input=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text()).encode()))
 
 
 def without_quantity_binding(value, key):
@@ -332,7 +343,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertIn(REVISION_BRANCH,steps[-1]['with']['name'])
         self.assertIn("format('release-staging-{0}', github.sha)",steps[-1]['with']['name'])
         self.assertIn("format('release-preflight-{0}', github.sha)",steps[-1]['with']['name'])
-        source=(ROOT/'.github/workflows/release-build-only.yml').read_text()
+        source=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',
                                        REVISION_BUSINESS+':.github/workflows/release-build-only.yml'],text=True)
         # Exact pre-existing shell branch admission rules are retained byte for byte.
@@ -762,7 +773,7 @@ class ShippingDiagnosticWorkflow(unittest.TestCase):
                     if isinstance(node,(ast.FunctionDef,ast.ClassDef))}
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
-        current=without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text()))
+        current=without_reviewed_disk_percent(without_reviewed_transport(previous_release_source((ROOT/path).read_text())))
         before=nodes(old);after=nodes(current)
         for name,body in before.items():
             if name not in ('main','validate_shipping_identity'):self.assertEqual(after[name],body,name)
@@ -774,13 +785,13 @@ class ShippingDiagnosticWorkflow(unittest.TestCase):
                 self.assertEqual(assignments(current)[key],value,key)
         path='scripts/test-candidate-db-probe-integration.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
-        before=nodes(old);after=nodes((ROOT/path).read_text())
+        before=nodes(old);after=nodes(previous_release_source((ROOT/path).read_text()))
         for name in ('native_pg16','validate_snapshots','shipping_pg16_ci','main','LocalDocker'):
             self.assertEqual(before[name],after[name],name)
         for key,value in assignments(old).items():
-            self.assertEqual(assignments((ROOT/path).read_text())[key],value,key)
-        changed=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',DIAGNOSTIC_E,'--',
-            'server','src','shared','prisma','scripts/deploy-remote.sh','scripts/deploy-prod-transfer-cas.sh'],text=True)
+            self.assertEqual(assignments(previous_release_source((ROOT/path).read_text()))[key],value,key)
+        changed=MATERIAL_PROJECTION.historical_diff(DIAGNOSTIC_E,'--',
+            'server','src','shared','prisma','scripts/deploy-remote.sh','scripts/deploy-prod-transfer-cas.sh')
         self.assertEqual(changed,'')
 
 
@@ -1174,15 +1185,15 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_f_production_functions_constants_preserved_except_readiness_helper(self):
         path='scripts/deploy-prod-transfer-cas.py';old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':'+path],text=True)
         def functions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        before=functions(old);after=functions(without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text())))
+        before=functions(old);after=functions(without_reviewed_disk_percent(without_reviewed_transport(previous_release_source((ROOT/path).read_text()))))
         for name,body in before.items():
             if name not in ('main','validate_shipping_identity'):self.assertEqual(body,after[name],name)
         def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
         for key,value in constants(old).items():
             if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
-                self.assertEqual(value,constants(without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text())))[key],key)
+                self.assertEqual(value,constants(without_reviewed_disk_percent(without_reviewed_transport(previous_release_source((ROOT/path).read_text()))))[key],key)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
-        workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
+        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
         for branch in (DIAGNOSTIC_BRANCH,):
             token='            '+branch+')'
@@ -1191,7 +1202,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_g_helper_ast_changes_only_restore_readiness_and_other_gates_unchanged(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':'+path],text=True)
-        current=without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text()));namespace={}
+        current=without_reviewed_disk_percent(without_reviewed_transport(previous_release_source((ROOT/path).read_text())));namespace={}
         for node in ast.parse(old).body:
             if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('SHIPPING_BOUNDED_DUMP_CODE','SHIPPING_BACKUP_RESTORE_CODE'):
                 exec(compile(ast.Module(body=[node],type_ignores=[]),'historical-helper','exec'),namespace)
@@ -1211,7 +1222,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
         for key,value in constants(old).items():
             if key!=ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):self.assertEqual(value,constants(current)[key],key)
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':.github/workflows/release-build-only.yml'],text=True)
-        workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text();tokens=['            '+BACKUP_BRANCH+')','            '+QUANTITY_BRANCH+')']
+        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text());tokens=['            '+BACKUP_BRANCH+')','            '+QUANTITY_BRANCH+')']
         def remove_admission(value):
             for token in tokens:
                 before,after=value.split(token,1);value=before+after.split(';;',1)[1]
@@ -1250,7 +1261,7 @@ class StreamedPythonTransport(unittest.TestCase):
 
     def test_complete_controller_definitions_travel_through_real_python_process(self):
         remote=self.LocalTransport()
-        code=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text().rsplit("\nif __name__ == '__main__':",1)[0]
+        code=previous_release_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()).rsplit("\nif __name__ == '__main__':",1)[0]
         code+="\nv=json.load(sys.stdin); print(json.dumps({'value':v,'maxUsage':MAX_PROJECTED_USAGE,'migration':SHIPPING_MIGRATION,'hasController':callable(run_loaded_controller)}))\n"
         output=json.loads(remote.py(code,{'exact':'fixture'},timeout=15))
         self.assertEqual(output,{'value':{'exact':'fixture'},'maxUsage':90,
@@ -1284,7 +1295,7 @@ class StreamedPythonTransport(unittest.TestCase):
         self.assertEqual(caught.exception.errno,errno.E2BIG)
 
     def test_transport_normalization_rejects_changes_to_loader_payload_and_privileges(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=previous_release_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         method=remote_py_method(source)
         for before,after in (("'sudo', '-n'","'sudo', '-S'"),
                              ('sys.stdin.buffer.readline()','sys.stdin.buffer.read()'),
@@ -1339,7 +1350,7 @@ class MeasurementTransportCompatibility(unittest.TestCase):
     def test_historical_readonly_allowlist_bytes_are_unchanged_from_m(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',TRANSPORT_BASE+':'+path],text=True)
-        new=(ROOT/path).read_text()
+        new=previous_release_source((ROOT/path).read_text())
         def measurement(source):
             return ast.get_source_segment(source,next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='MeasurementRemote'))
         self.assertEqual(measurement(old),measurement(without_reviewed_transport(new)))
@@ -1349,7 +1360,7 @@ class FormalShippingIdentity(unittest.TestCase):
     def test_l_child_preserves_all_bytes_outside_identity_and_formal_admission(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',TEST_FIX_BASE+':'+path],text=True)
-        current=without_reviewed_transport((ROOT/path).read_text())
+        current=without_reviewed_transport(previous_release_source((ROOT/path).read_text()))
         self.assertEqual(hashlib.sha256(old.encode()).hexdigest(),'44bf632deea66a349dd660487320e33495baba96c5ced1252f28a8af2574f124')
         def without_identity(source):
             node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='validate_shipping_identity')
@@ -1359,12 +1370,12 @@ class FormalShippingIdentity(unittest.TestCase):
         self.assertEqual(without_identity(old),without_identity(current))
         path='.github/workflows/release-build-only.yml'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',TEST_FIX_BASE+':'+path],text=True)
-        current=(ROOT/path).read_text();token='            '+QUANTITY_BRANCH+')'
+        current=previous_release_source((ROOT/path).read_text());token='            '+QUANTITY_BRANCH+')'
         def without_admission(source):
             before,after=source.split(token,1)
             return before+after.split(';;',1)[1]
         self.assertEqual(without_admission(old),without_admission(current))
-        files=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',TEST_FIX_BASE],text=True).splitlines()
+        files=MATERIAL_PROJECTION.historical_diff(TEST_FIX_BASE).splitlines()
         self.assertEqual(files,NETWORK_FILES.splitlines())
 
     def test_reviewed_percent_normalization_rejects_other_limits_and_labels(self):
@@ -1394,7 +1405,7 @@ class FormalShippingIdentity(unittest.TestCase):
     def test_fixed_k_policy_runtime_constants_helper_and_other_workflow_bytes_preserved(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',POLICY_BASE+':'+path],text=True)
-        current=without_reviewed_transport((ROOT/path).read_text())
+        current=without_reviewed_transport(previous_release_source((ROOT/path).read_text()))
         self.assertEqual(hashlib.sha256(old.encode()).hexdigest(),'698b8cf2edfbcb10e3d44f38c0297723e6bbc8b1ff75aaf2682869ec8ceb34b9')
         def functions(source):return {n.name:ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         before=functions(old);after=functions(current)
@@ -1410,16 +1421,16 @@ class FormalShippingIdentity(unittest.TestCase):
         self.assertEqual(r.ABSOLUTE_MAX_PEAK,6*r.GIB);self.assertEqual(r.RESERVE,512*1024**2)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',POLICY_BASE+':.github/workflows/release-build-only.yml'],text=True)
-        workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text();token='            '+QUANTITY_BRANCH+')'
+        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text());token='            '+QUANTITY_BRANCH+')'
         def remove_formal(value):
             before,after=value.split(token,1);return before+after.split(';;',1)[1]
         self.assertEqual(remove_formal(previous),remove_formal(workflow))
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE,'--',
+        self.assertEqual(MATERIAL_PROJECTION.historical_diff(POLICY_BASE,'--',
             'server','src','shared','prisma','Dockerfile','package.json','package-lock.json',
-            '.github/workflows/deploy-prod.yml','scripts/deploy-remote.sh','scripts/release-prod-post-transfer-ci.sh'],text=True),'')
+            '.github/workflows/deploy-prod.yml','scripts/deploy-remote.sh','scripts/release-prod-post-transfer-ci.sh'),'')
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE,NETWORK_BASE,'--',
             'scripts/test-candidate-db-probe-integration.py','scripts/test-deploy-prod-transfer-cas.py'],text=True),'')
-        files=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE],text=True).splitlines()
+        files=MATERIAL_PROJECTION.historical_diff(POLICY_BASE).splitlines()
         self.assertEqual(files,NETWORK_FILES.splitlines())
 
     def test_j_and_k_images_cannot_be_retagged_into_new_release(self):
@@ -1451,13 +1462,13 @@ class MigratorNetworkParity(unittest.TestCase):
     def test_only_reviewed_network_changes_extend_o_controller(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',NETWORK_BASE+':'+path],text=True)
-        new=without_reviewed_network((ROOT/path).read_text())
+        new=without_reviewed_network(previous_release_source((ROOT/path).read_text()))
         def without_identity(value):
             node=next(n for n in ast.parse(value).body if isinstance(n,ast.FunctionDef) and n.name=='validate_shipping_identity')
             return value.replace(ast.get_source_segment(value,node),'<exact child identity>',1)
         self.assertEqual(without_identity(old),without_identity(new))
         pins={'test-candidate-db-probe-integration.py': '0d340dd254dc0263fcedf33c6ff9cd6ec2a650f36e749a0045013930c4d1efd8', 'test-deploy-prod-transfer-cas.py': 'f6b3bd099126c2bda16e0ebff5ead31b9cbf86cb5321eb6fd405ca836ef60818'}
-        for name,expected in pins.items():self.assertEqual(hashlib.sha256((ROOT/'scripts'/name).read_bytes()).hexdigest(),expected)
+        for name,expected in pins.items():self.assertEqual(hashlib.sha256(previous_release_source((ROOT/'scripts'/name).read_text()).encode()).hexdigest(),expected)
 
     def test_create_attaches_only_secondary_source_networks_and_cleans_env(self):
         import types
@@ -1501,7 +1512,7 @@ class MigratorNetworkParity(unittest.TestCase):
         self.assertNotIn('fixture-secret',output.getvalue())
 
     def test_network_normalization_rejects_unreviewed_command_or_identity_changes(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=previous_release_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         for before,after in (("['docker','network','connect',network,v['name']]","['docker','network','connect','unapproved',v['name']]"),
                              ("endpoint.get('NetworkID') in ('',source_network_ids[network])","endpoint.get('NetworkID') in ('','unapproved')")):
             self.assertIn(before,source)

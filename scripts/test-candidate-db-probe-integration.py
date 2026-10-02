@@ -985,6 +985,244 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
     print('ISOLATED_REAL_CONTROLLER_CASES=4_PASS HOST_STORAGE=CI_ADAPTER_PRODUCTION_UNVERIFIED PRODUCTION_ADMISSION=NO')
 
 
+def material_controller_ci_guard():
+    # This is a test entrypoint, never a deployment adapter or SSH target.
+    if (os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'Linux'
+            or sys.platform != 'linux' or os.geteuid() != 0
+            or os.environ.get('GITHUB_REPOSITORY') != 'GPTJJ/budu'
+            or os.environ.get('GITHUB_REF') != 'refs/heads/'+release.material_contract()['branch']
+            or os.environ.get('TEST_MATERIAL_CONTROLLER_CI') != '1'
+            or os.environ.get('DOCKER_HOST') not in (None, 'unix:///var/run/docker.sock')
+            or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')
+            or not re.fullmatch('[0-9a-f]{40}',os.environ.get('GITHUB_SHA',''))):
+        raise RuntimeError('MATERIAL_CONTROLLER_ISOLATED_LINUX_CI_REQUIRED')
+
+
+MATERIAL_FIXTURE_JS = FIXTURE_JS.replace(
+    'await assert.rejects(prisma.transferItem.update({where:{id:\'ci-legacy\'},data:{shippedQuantity:6}}));',
+    "for(const id of ['ci-legacy','ci-box-row','ci-piece-row'])await prisma.transferItem.update({where:{id},data:{shippedQuantity:6}});"
+).replace("process.stdout.write('OLD_CHECK_FIXTURES_OK\\n');", r'''
+ await prisma.productCategory.create({data:{id:'pc-munt7jhp-8a5lke',name:'物料',sortOrder:10}});
+ await prisma.inventoryItem.createMany({data:Array.from({length:25},(_,i)=>({id:'ci-extra-material-'+i,name:'CI material '+i,category:'material',transferEnabled:true,isActive:false}))});
+ await prisma.inventoryItem.createMany({data:['BUDU-BALLSWL-001','BUDU-BALLSWL-002','BUDU-BWDWL-001','BUDU-BDWL-001'].map((sku,i)=>({id:'ci-protected-'+i,name:'CI protected '+i,sku,category:'product',productCategoryId:'pc-munt7jhp-8a5lke',salePriceCents:10n,costPriceCents:10n,isActive:false,transferEnabled:true,partnerReplenishmentEnabled:true,partnerOrderUnit:'NATIVE',partnerMinOrderBaseQty:1,partnerOrderStepBaseQty:1,unit:'个'}))});
+ process.stdout.write('MATERIAL_Q86_FIXTURES_OK\n');
+''')
+MATERIAL_SNAPSHOT_JS = SNAPSHOT_JS.replace('to_jsonb(t) row','(to_jsonb(t)-$$partnerMaterialPriceCents$$) row').replace('ORDER BY to_jsonb(t)::text','ORDER BY (to_jsonb(t)-$$partnerMaterialPriceCents$$)::text')
+
+
+class MaterialControllerCiRemote(ControllerCiRemote):
+    def disk(self):
+        # Preserve actual disk measurement, without the old L86 fixture's DML.
+        actual=release.LocalRemote.disk(self)
+        sample={'used':actual[0],'available':actual[1],'injected':False}
+        if self.mode=='post_l86_disk' and self.migrator_started:
+            db=super().db()
+            if db['applied']==87 and db['failed']==0:
+                self.injected=True;sample['injected']=True;self.disk_samples.append(sample)
+                return actual[0],1024**2
+        self.disk_samples.append(sample)
+        return actual
+
+
+def material_controller_ci(image,old_image,archive):
+    material_controller_ci_guard()
+    diagnostics=CiFailureDiagnostics(Path(os.environ['RUNNER_TEMP'])/'material-controller-diagnostic.json',os.environ.get('GITHUB_SHA'))
+    # Root is needed by the SAME backup helper to inspect the restore's 0700
+    # postgres-owned files. Git trust is process-scoped, including direct ancestry
+    # subprocesses in identity(); no global/local Git config is changed.
+    git_keys=('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0')
+    git_before={key:os.environ.get(key) for key in git_keys}
+    os.environ.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='safe.directory',GIT_CONFIG_VALUE_0=str(ROOT))
+    try:
+        _material_controller_ci(image,old_image,archive,diagnostics)
+    except BaseException as error:
+        if diagnostics.primary_error is not None and error is not diagnostics.primary_error:
+            diagnostics.cleanup(lambda: (_ for _ in ()).throw(error),'TEMP_DIRECTORY_CLEANUP')
+            raise diagnostics.primary_error.with_traceback(diagnostics.primary_traceback) from None
+        if diagnostics.primary_error is None and diagnostics.cleanup_error is not None and error is not diagnostics.cleanup_error:
+            diagnostics.cleanup(lambda: (_ for _ in ()).throw(error),'TEMP_DIRECTORY_CLEANUP')
+            raise diagnostics.cleanup_error from None
+        diagnostics.primary(error)
+        raise
+    finally:
+        for key,value in git_before.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+
+
+def _material_controller_ci(image,old_image,archive,diagnostics):
+    release.configure_profile('post-transfer',release.material_contract()['oldSha'],release.material_contract()['businessSha'],
+        hashlib.sha256(release.command(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),
+                                       'show',release.material_contract()['oldSha']+':server/v2.js'])).hexdigest())
+    identity,ledger=release.identity(ROOT);sha=os.environ['GITHUB_SHA']
+    if identity!=sha or image!=release.image_reference(sha):raise RuntimeError('CI_EXACT_SOURCE_REQUIRED')
+    old_config=json.loads(docker('image','inspect',old_image))[0]
+    if (old_image!='budu-api:material-old-72c780c1dbb5' or old_config['Config'].get('Labels',{}).get(release.REVISION)!=release.material_contract()['oldSha']
+            or old_config['Os']!='linux' or old_config['Architecture']!='amd64'):
+        raise RuntimeError('CI_EXACT_OLD_IMAGE_REQUIRED')
+    for tag in (image,old_image):
+        if docker('run','--rm','--network','none','--entrypoint','node',tag,'-e',release.SHIPPING_CLI_PROBE)!='PINNED_PRISMA_CLI_OK':
+            raise RuntimeError('CI_REAL_PINNED_PRISMA_CLI_REQUIRED')
+    art=release.artifact(archive,sha,ROOT)
+    ledger={p.parent.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'prisma/migrations').glob('*/migration.sql')}
+    helper=(ROOT/'scripts/clone-production-container.py').read_text()
+    cases=[]
+    with tempfile.TemporaryDirectory(prefix='shipping-controller-',dir=os.environ['RUNNER_TEMP']) as directory:
+        root=Path(directory);root.chmod(0o700)
+        suffix=root.name.removeprefix('shipping-controller-');network='shipping-ci-net-'+suffix;db_network='shipping-ci-db-net-'+suffix;pg='shipping-ci-pg-'+suffix
+        database='shipping_ci_'+suffix.replace('-','_');url='postgresql://postgres:fixture_only@'+pg+':5432/'+database
+        globals_before={key:getattr(release,key) for key in ('PG','EXPECTED_DB','NGINX','TEMPLATE','CURRENT_SHA_FILE','LOCK')}
+        release.PG=pg;release.EXPECTED_DB=database
+        owned={};reserved=set();network_id=None;db_network_id=None
+        def remove_owned(name):
+            if not docker('ps','-aq','--filter','name=^/'+name+'$'):return
+            current=json.loads(docker('inspect',name))[0]
+            if name in owned:
+                if current['Id']!=owned[name]:raise RuntimeError('CI_CLEANUP_OWNERSHIP_CHANGED')
+            elif name.startswith('budu-shipping-restore-'):
+                if (current['Config'].get('Labels',{}).get('budu.shipping-restore')!=sha
+                        or not any(m.get('Source','').startswith(str(root)+'/') for m in current['Mounts'])):
+                    raise RuntimeError('CI_RESTORE_CLEANUP_OWNERSHIP_INVALID')
+            elif (name not in reserved or current['HostConfig']['NetworkMode']!=network
+                  or current['Config'].get('Labels',{}).get(release.REVISION)!=sha
+                  or current['Image']!=art.get('loadedDockerImageId')):
+                raise RuntimeError('CI_APP_MIGRATOR_CLEANUP_OWNERSHIP_INVALID')
+            # ID protects against a name race; -v removes only its anonymous volumes.
+            docker('rm','-f','-v',current['Id'])
+        try:
+            network_id=docker('network','create','--internal',network)
+            if json.loads(docker('network','inspect',network))[0]['Internal'] is not True:raise RuntimeError('CI_NETWORK_EGRESS_NOT_BLOCKED')
+            db_network_id=docker('network','create','--internal',db_network)
+            if json.loads(docker('network','inspect',db_network))[0]['Internal'] is not True:raise RuntimeError('CI_NETWORK_EGRESS_NOT_BLOCKED')
+            owned[pg]=docker('run','-d','--name',pg,'--network',db_network,'-e','POSTGRES_PASSWORD=fixture_only','postgres:16.14',timeout=180)
+            for _ in range(60):
+                ready=subprocess.run(['docker','exec',pg,'pg_isready','-U','postgres'],capture_output=True,timeout=5)
+                if ready.returncode==0:break
+                time.sleep(0.25)
+            else:raise RuntimeError('CI_POSTGRES_NOT_READY')
+            primary_probe = "const net=require('node:net');const u=new URL(process.env.DATABASE_URL);const s=net.createConnection({host:u.hostname,port:5432});s.setTimeout(2000);s.on('connect',()=>{s.destroy();process.exit(3)});const done=()=>{s.destroy();process.stdout.write('PRIMARY_NETWORK_DB_UNREACHABLE');};s.once('error',done);s.once('timeout',done);"
+            if docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'--entrypoint','node',image,'-e',primary_probe)!='PRIMARY_NETWORK_DB_UNREACHABLE':raise RuntimeError('CI_PRIMARY_NETWORK_UNEXPECTED_DB_ACCESS')
+            docker('pull','nginx:1.28-alpine',timeout=180)
+            for index,mode in enumerate(CI_CASES):
+                diagnostics.case=mode
+                case_root=root/str(index);case_root.mkdir(mode=0o700);(case_root/'rollback').mkdir(mode=0o700)
+                old='shipping-ci-old-'+suffix;nginx='shipping-ci-nginx-'+suffix
+                candidate='budu-prod-'+sha[:12]+release.CONTAINER_SUFFIX
+                migrator='budu-shipping-migrator-'+sha[:12];restore='budu-shipping-restore-'+sha[:12]
+                names=(old,nginx,candidate,migrator,restore)
+                for name in names:
+                    if docker('ps','-aq','--filter','name=^/'+name+'$'):raise RuntimeError('CI_OWNED_NAME_EXISTS')
+                reserved.update((candidate,migrator,restore))
+                release.NGINX=nginx;release.TEMPLATE=str(case_root/'template');release.CURRENT_SHA_FILE=str(case_root/'current-sha');release.LOCK=str(case_root/'lock')
+                docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c','CREATE DATABASE '+database)
+                docker('run','--rm','--network',db_network,'-e','DATABASE_URL='+url,'--entrypoint','node',old_image,
+                       '/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma',timeout=180)
+                docker('run','--rm','--network',db_network,'-e','DATABASE_URL='+url,'-e','APP_ENV=test','--entrypoint','node',old_image,
+                       '--input-type=module','-e',MATERIAL_FIXTURE_JS)
+                data=case_root/'data';data.mkdir(mode=0o700);os.chown(data,1000,1000)
+                routes='server { listen 80; location / { proxy_pass http://'+old+':3000; } location /api/ { proxy_pass http://'+old+':3000; } location /health-proxy { proxy_pass http://'+old+':3000; } }\n'
+                (case_root/'template').write_text(routes);(case_root/'current-sha').write_text(release.material_contract()['oldSha']+'\n')
+                conf=case_root/'conf';conf.mkdir();(conf/'budu.conf').write_text(routes)
+                owned[old]=docker('create','--name',old,'--network',network,'--restart','unless-stopped','--log-driver','json-file',
+                       '--label','budu.production-role=candidate','--label',release.REVISION+'='+release.material_contract()['oldSha'],
+                       '-e','DATABASE_URL='+url,'-e','APP_ENV=test','-e','DATA_STORE=file','-e','DATA_DIR=/app/server/data',
+                       '-e','WECHAT_PAY_ENABLED=0','-e','ALIPAY_ENABLED=0','-e','GIT_SHA='+release.material_contract()['oldSha'],
+                       '-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME=budu','-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID=dh',
+                       '--mount','type=bind,source='+str(data)+',target=/app/server/data',old_image)
+                docker('network','connect',db_network,old)
+                docker('start',old)
+                for _ in range(150):
+                    info=json.loads(docker('inspect',old))[0]
+                    if info['State'].get('Health',{}).get('Status')=='healthy':break
+                    if not info['State']['Running']:raise RuntimeError('CI_REAL_OLD_APP_START_FAILED')
+                    time.sleep(0.5)
+                else:raise RuntimeError('CI_REAL_OLD_APP_NOT_HEALTHY')
+                owned[nginx]=docker('run','-d','--name',nginx,'--network',network,'--mount','type=bind,source='+str(conf)+',target=/etc/nginx/conf.d',
+                                   'nginx:1.28-alpine')
+                remote=MaterialControllerCiRemote(case_root,network,old,candidate,mode,db_network)
+                before_facts=json.loads(docker('exec','-w','/app',old,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))['facts']
+                release.application_db_probe(remote,old,'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
+                art['loadedDockerImageId']=release.resolve_loaded_image(remote,art)['Id']
+                (case_root/'lock').mkdir(mode=0o700)
+                expected={'post_cutover_failure':('PUBLIC_HEALTH','HEALTH_FAILED'),
+                          'post_l86_disk':('SHIPPING_CHECK_MIGRATION','SHIPPING_MIGRATION_DISK_GATE_FAILED'),
+                          'backup_limit':('SHIPPING_BACKUP_RESTORE','SHIPPING_BACKUP_RESTORE_UNVERIFIED')}.get(mode)
+                result=io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(result):
+                        release.execute_loaded(remote,art,ledger,helper,remote.inspect(old)['Id'],release.digest(routes.encode()))
+                except release.GateError as error:
+                    verify_controller_failure(error,expected)
+                else:
+                    if expected or json.loads(result.getvalue())['result']!='DEPLOY_COMPLETE':raise RuntimeError('CI_CONTROLLER_EXPECTED_FAILURE_MISSING')
+                writer=candidate if mode=='success' else old
+                after_facts=json.loads(docker('exec','-w','/app',writer,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))['facts']
+                if before_facts!=after_facts:raise RuntimeError('CI_MATERIAL_BUSINESS_FACTS_CHANGED')
+                final=remote.db();expected_ledger=release.before_ledger(ledger) if mode=='backup_limit' else ledger
+                release.validate_database(final,expected_ledger)
+                release.writer_check(remote.containers(),final,[writer])
+                if release.route_target(*remote.routes())!=writer or (case_root/'current-sha').read_text().strip()!=(sha if mode=='success' else release.material_contract()['oldSha']):raise RuntimeError('CI_ROUTE_OR_POINTER_NOT_RECONCILED')
+                if (case_root/'lock').exists():raise RuntimeError('CI_KNOWN_PHASE_LOCK_NOT_RELEASED')
+                if mode in ('post_cutover_failure','post_l86_disk'):
+                    docker('exec','-w','/app',old,'node','--input-type=module','-e',OLD_COMPAT_JS)
+                cleanup_count=docker('exec',pg,'psql','-X','-qAt','-U','postgres','-d',database,'-c',
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND (application_name LIKE 'budu_shipping_backup_%' OR application_name='budu_shipping_migrator') AND pid<>pg_backend_pid()")
+                if cleanup_count!='0':raise RuntimeError('CI_BACKUP_OR_MIGRATOR_CONNECTIONS_REMAIN')
+                proof_path=case_root/'rollback'/(release.ROLLBACK_PREFIX+sha)/'backup-restore-proof.json'
+                backup=json.loads(proof_path.read_text()) if proof_path.exists() else None
+                if mode!='backup_limit' and (not backup or not backup['terminationVerified'] or not backup['restoreVerified'] or remote.inspect(restore)['State']['Running']):raise RuntimeError('CI_REAL_BACKUP_RESTORE_NOT_PROVEN')
+                old_networks=remote.inspect(old)['NetworkSettings']['Networks']
+                if set(old_networks)!={network,db_network}:raise RuntimeError('CI_DUAL_NETWORK_SOURCE_REQUIRED')
+                migrator_networks=remote.inspect(migrator)['NetworkSettings']['Networks'] if mode!='backup_limit' else None
+                if migrator_networks is not None and ({k:v.get('NetworkID') for k,v in migrator_networks.items()}!={k:v.get('NetworkID') for k,v in old_networks.items()}):raise RuntimeError('CI_MIGRATOR_NETWORK_PARITY_FAILED')
+                starts=[event for event in remote.events if event=={'action':'start','container':migrator}]
+                if len(starts)!=(0 if mode=='backup_limit' else 1) or (mode!='success' and not remote.injected):raise RuntimeError('CI_MIGRATOR_OR_INJECTION_NOT_OBSERVED')
+                cases.append({'case':mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
+                              'check':final['check'],'materialSchema':final['materialSchema'],'allBusinessTableFactsUnchanged':True,'writer':writer,'writerSamples':remote.writer_samples,'events':remote.events,
+                              'diskSamples':remote.disk_samples,'backupRestoreProof':backup,'backupAndMigratorConnections':0,
+                              'actual6OldHttpSummaryXlsx':mode in ('post_cutover_failure','post_l86_disk'),'failureInjection':expected,
+                              'hostStorageActual':remote.host_storage,'hostStorageGate':'CI_FIXTURE_ADAPTER_PRODUCTION_UNVERIFIED',
+                              'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':True,
+                              'secondaryDbNetworkTopology':True,'migratorNetworksMatchOld':migrator_networks is not None,
+                              'migratorPreStartNetworks':remote.migrator_prestart_networks})
+                for name in names:
+                    diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
+                diagnostics.cleanup(lambda: docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c',
+                    'DROP DATABASE '+database+' WITH (FORCE)'),'DATABASE_CLEANUP')
+                diagnostics.raise_cleanup()
+                diagnostics.completed.append(mode)
+            report={'scope':'ISOLATED_MATERIAL_Q86_L87_REAL_CONTROLLER_NOT_PRODUCTION_ADMISSION','releaseSha':sha,
+                    'primaryOnlyDbProbe':'PRIMARY_NETWORK_DB_UNREACHABLE','secondaryDbNetworkTopology':True,
+                    'oldSha':release.material_contract()['oldSha'],'businessSha':release.material_contract()['businessSha'],
+                    'controllerSha256':hashlib.sha256((ROOT/'scripts/deploy-prod-transfer-cas.py').read_bytes()).hexdigest(),
+                    'archiveSha256':art['archiveHash'],'loadedImageId':art['loadedDockerImageId'],'cases':cases,
+                    'realExecuteLoaded':True,'realBackupRestoreHelper':True,'realImageMigrator':True,
+                    'realApplicationContainers':True,'sleepProbeIsBusinessWriterEvidence':False,
+                    'productionHostStorageValidated':False,'productionActions':False}
+        except BaseException as error:
+            diagnostics.primary(error)
+            raise
+        finally:
+            for name in set(owned)|reserved:
+                diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
+            def remove_network():
+                if json.loads(docker('network','inspect',network))[0]['Id']!=network_id:
+                    raise RuntimeError('CI_NETWORK_CLEANUP_OWNERSHIP_CHANGED')
+                docker('network','rm',network)
+            if network_id:diagnostics.cleanup(remove_network,'NETWORK_CLEANUP')
+            def remove_db_network():
+                if json.loads(docker('network','inspect',db_network))[0]['Id']!=db_network_id:
+                    raise RuntimeError('CI_NETWORK_CLEANUP_OWNERSHIP_CHANGED')
+                docker('network','rm',db_network)
+            if db_network_id:diagnostics.cleanup(remove_db_network,'NETWORK_CLEANUP')
+            for key,value in globals_before.items():setattr(release,key,value)
+    diagnostics.raise_cleanup()
+    report['ownedResourcesRemoved']=True
+    target=Path(os.environ['RUNNER_TEMP'])/'material-controller-proof.json'
+    target.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
+    print('ISOLATED_MATERIAL_REAL_CONTROLLER_CASES=4_PASS HOST_STORAGE=CI_ADAPTER_PRODUCTION_UNVERIFIED PRODUCTION_ADMISSION=NO')
+
+
 def main(image, old_image=None):
     if (os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_OS') != 'Linux'
             or os.environ.get('DOCKER_HOST') not in (None, 'unix:///var/run/docker.sock')
@@ -1071,6 +1309,9 @@ if __name__ == '__main__':
     try:
         if sys.argv[1] == '--native-pg16':
             native_pg16()
+        elif sys.argv[1] == '--material-controller-ci':
+            if len(sys.argv)!=5:raise RuntimeError('CI_CONTROLLER_ARGUMENTS_INVALID')
+            material_controller_ci(*sys.argv[2:])
         elif sys.argv[1] == '--shipping-controller-ci':
             if len(sys.argv)!=5:raise RuntimeError('CI_CONTROLLER_ARGUMENTS_INVALID')
             shipping_controller_ci(*sys.argv[2:])

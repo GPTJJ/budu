@@ -188,7 +188,98 @@ def shipping_migration():
             and RUNTIME_SHA == SHIPPING_BUSINESS_SHA)
 
 
+def material_contract():
+    # One reviewed release only. No schema, count, SQL, branch or authority override.
+    return {'oldSha':'72c780c1dbb5ff8b4502b97984d44660532f181a',
+            'businessSha':'a9e9c58510af4ef38b4bcaf378ec0a77895f61bc',
+            'branch':'codex/material-center-integration-20261002',
+            'migration':'20261002160000_material_replenishment_quote',
+            'sqlHash':'6df611abb494068f88e9d5929cdbc0839864e240e53032e55e091a6ab25abe4a',
+            'categoryId':'pc-munt7jhp-8a5lke',
+            'engineeringFiles':{'.github/workflows/release-build-only.yml',
+                'scripts/deploy-prod-transfer-cas.py','scripts/test-candidate-db-probe-integration.py',
+                'scripts/test-release-path-post-transfer.py','scripts/test-material-release-contract.py'}}
+
+
+def material_migration():
+    c=material_contract()
+    return (RELEASE_PROFILE=='post-transfer' and EXPECTED_OLD_SHA==c['oldSha']
+            and RUNTIME_SHA==c['businessSha'])
+
+
+def migration_before_phase():
+    return 'L86' if material_migration() else 'L85'
+
+
+def migration_after_phase():
+    return 'L87' if material_migration() else 'L86'
+
+
+def migration_target():
+    return material_contract()['migration'] if material_migration() else SHIPPING_MIGRATION
+
+
+def migration_sql_hash():
+    return material_contract()['sqlHash'] if material_migration() else SHIPPING_SQL_HASH
+
+
+def migration_before_count():
+    return 86 if material_migration() else 85
+
+
+def migration_rollback_contract():
+    return ('APPLICATION_ONLY_KEEP_L87_NULLABLE_COLUMN_AND_ALL_FACTS' if material_migration()
+            else 'APPLICATION_ONLY_KEEP_L86_AND_ACTUAL_FACTS')
+
+
+def validate_material_identity(repo, release):
+    c=material_contract()
+    require(git(repo,'branch','--show-current')==c['branch'],'MATERIAL_BRANCH_INVALID')
+    require(git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['businessSha']
+            and git(repo,'rev-list','--parents','-n','1',c['businessSha'])==c['businessSha']+' '+c['oldSha'],
+            'MATERIAL_ENGINEERING_PARENT_INVALID')
+    require(set(git(repo,'diff','--name-only',c['businessSha'],release).splitlines())==c['engineeringFiles'],
+            'MATERIAL_ENGINEERING_SCOPE_INVALID')
+    path='prisma/migrations/'+c['migration']+'/migration.sql'
+    require(set(git(repo,'diff','--name-only',c['oldSha'],release,'--','prisma').splitlines())
+            =={'prisma/schema.prisma',path}
+            and git(repo,'diff','--diff-filter=A','--name-only',c['oldSha'],release,'--',path)==path,
+            'MATERIAL_SCHEMA_SCOPE_INVALID')
+    require(digest((Path(repo)/path).read_bytes())==c['sqlHash'],'MATERIAL_SQL_HASH_INVALID')
+    # All business files, including the schema and reviewed SQL, are immutable:
+    # the exact single engineering commit may only touch the five files above.
+
+
+def material_database_details(remote, db):
+    if not material_migration():
+        return db
+    code=r'''import subprocess,json
+m=json.loads(subprocess.check_output(['docker','inspect',%r]))[0]
+e=dict(x.split('=',1) for x in m['Config']['Env'] if '=' in x)
+sql="""BEGIN READ ONLY;
+SELECT json_build_object(
+ 'column',(SELECT json_build_object('type',data_type,'nullable',is_nullable,'default',column_default) FROM information_schema.columns WHERE table_schema='public' AND table_name='InventoryItem' AND column_name='partnerMaterialPriceCents'),
+ 'check',(SELECT json_build_object('validated',convalidated,'definition',pg_get_constraintdef(oid)) FROM pg_constraint WHERE conrelid='\"InventoryItem\"'::regclass AND conname='InventoryItem_material_quote_nonnegative'),
+ 'nonNullQuotes',(SELECT count(*) FROM \"InventoryItem\" i WHERE to_jsonb(i)->>'partnerMaterialPriceCents' IS NOT NULL),
+ 'materialCount',(SELECT count(*) FROM \"InventoryItem\" WHERE category='material'),
+ 'protectedProductCount',(SELECT count(*) FROM \"InventoryItem\" WHERE category='product' AND \"productCategoryId\"='pc-munt7jhp-8a5lke' AND sku IN ('BUDU-BALLSWL-001','BUDU-BALLSWL-002','BUDU-BWDWL-001','BUDU-BDWL-001')),
+ 'categoryCount',(SELECT count(*) FROM \"ProductCategory\" WHERE name='物料'),
+ 'categoryId',(SELECT min(id) FROM \"ProductCategory\" WHERE name='物料'),
+ 'factHash',(SELECT md5(string_agg((to_jsonb(i)-'partnerMaterialPriceCents')::text,'|' ORDER BY id COLLATE \"C\")) FROM \"InventoryItem\" i WHERE category='material' OR (category='product' AND sku IN ('BUDU-BALLSWL-001','BUDU-BALLSWL-002','BUDU-BWDWL-001','BUDU-BDWL-001'))));
+COMMIT;"""
+r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c temp_file_limit=0',%r,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',e.get('POSTGRES_USER','postgres'),'-d',%r],input=sql.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+if r.returncode:raise SystemExit(1)
+print(r.stdout.decode().strip())
+''' % (PG,PG,EXPECTED_DB)
+    return {**db,'materialSchema':json.loads(remote.py(code))}
+
+
 def before_ledger(ledger):
+    if material_migration():
+        c=material_contract()
+        require(len(ledger)==87 and ledger.get(c['migration'])==c['sqlHash'],
+                'MIGRATION_LEDGER_INVALID')
+        return {name:checksum for name,checksum in ledger.items() if name!=c['migration']}
     if not shipping_migration():
         return ledger
     require(len(ledger) == 86 and ledger.get(SHIPPING_MIGRATION) == SHIPPING_SQL_HASH,
@@ -262,7 +353,9 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA)
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    if shipping_migration():
+    if material_migration():
+        validate_material_identity(repo, release)
+    elif shipping_migration():
         validate_shipping_identity(repo, release)
     else:
         require(not git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma'),
@@ -271,7 +364,7 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= POST_TRANSFER_ENGINEERING_FILES, 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= (material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
@@ -288,7 +381,7 @@ def identity(repo):
     if RELEASE_PROFILE == 'post-transfer':
         validate_post_transfer_identity(repo, release)
         migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
-        require(len(migrations) == (86 if shipping_migration() else EXPECTED_MIGRATIONS), 'LOCAL_MIGRATION_COUNT_INVALID')
+        require(len(migrations) == (87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
         before_ledger(migrations)
         return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
@@ -548,11 +641,11 @@ No archive member is extracted to the host filesystem.
                         parent = name.rsplit('/',1)[0]+'/' if '/' in name else ''
                         affected = parent if basename == '.wh..wh..opq' else parent+basename[4:]
                         require(not any(k == affected or k.startswith(affected if affected.endswith('/') else affected+'/') for k in expected_payload), 'RUNTIME_WHITEOUT_UNSUPPORTED')
-                        if shipping_migration():
+                        if shipping_migration() or material_migration():
                             require(not any(k == affected or k.startswith(affected.rstrip('/')+'/') for k in
                                             ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js')),
                                     'SHIPPING_PRISMA_CLI_INVALID')
-                    if shipping_migration() and name in ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js'):
+                    if (shipping_migration() or material_migration()) and name in ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js'):
                         require(member.isfile() and 0 < member.size < 4 * 1024 ** 2, 'SHIPPING_PRISMA_CLI_INVALID')
                         content = layer.extractfile(member).read()
                         prisma_files[name] = json.loads(content)['version'] if name.endswith('package.json') else digest(content)
@@ -586,7 +679,7 @@ No archive member is extracted to the host filesystem.
         require(v2_bytes is not None and v2_bytes == digest((Path(repo) / 'server/v2.js').read_bytes()),
                 'ARTIFACT_BUSINESS_CODE_MISMATCH')
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
-        if shipping_migration():
+        if shipping_migration() or material_migration():
             pinned = json.loads((Path(repo)/'package-lock.json').read_text())['packages']['node_modules/prisma']['version']
             require(pinned == '6.19.3' and prisma_files.get('app/node_modules/prisma/package.json') == pinned
                     and bool(prisma_files.get('app/node_modules/prisma/build/index.js')), 'SHIPPING_PRISMA_CLI_INVALID')
@@ -638,7 +731,7 @@ r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c default_transaction_re
 if r.returncode: raise SystemExit(1)
 print(r.stdout.decode().strip())
 ''' % (PG, PG, EXPECTED_DB)
-        return json.loads(self.py(code))
+        return material_database_details(self, json.loads(self.py(code)))
     def health(self, name, sha, public=False):
         args = ['curl', '--fail', '--silent', '--max-time', '10', 'https://buducandy.cn/api/health'] if public else ['docker', 'exec', name, 'wget', '-qO-', 'http://127.0.0.1:3000/api/health']
         for _ in range(20):
@@ -674,6 +767,27 @@ def writer_check(containers, database, expected_names):
 
 def validate_database(db, ledger):
     require(db['database'] == EXPECTED_DB, 'DATABASE_AUTHORITY_MISMATCH')
+    if material_migration():
+        c=material_contract(); count=87 if c['migration'] in ledger else 86
+        require(len(ledger)==count and db['applied']==count and db['failed']==0
+                and db.get('rolledBack')==0,'MIGRATION_LEDGER_INVALID')
+        require(db['ledger']==ledger and ledger.get(SHIPPING_MIGRATION)==SHIPPING_SQL_HASH
+                and (count==86 or ledger.get(c['migration'])==c['sqlHash']), 'MIGRATION_CHECKSUM_MISMATCH')
+        require(db.get('check')=={'validated':True,'definition':SHIPPING_CHECK_NEW}
+                and db.get('invalidFacts')==0,'SHIPPING_DATABASE_PHASE_INVALID')
+        m=db.get('materialSchema',{})
+        require(m.get('materialCount')==26 and m.get('protectedProductCount')==4
+                and m.get('categoryCount')==1 and m.get('categoryId')==c['categoryId'],
+                'DATABASE_AUTHORITY_MISMATCH')
+        if count==86:
+            require(m.get('column') is None and m.get('check') is None,'MIGRATION_LEDGER_INVALID')
+        else:
+            check=m.get('check') or {}; definition=re.sub(r'[\s"()]','',check.get('definition',''))
+            require(m.get('column')=={'type':'bigint','nullable':'YES','default':None}
+                    and check.get('validated') is True
+                    and definition=='CHECKpartnerMaterialPriceCentsISNULLORpartnerMaterialPriceCents>=0',
+                    'MIGRATION_LEDGER_INVALID')
+        return
     count = 86 if shipping_migration() and ledger.get(SHIPPING_MIGRATION) == SHIPPING_SQL_HASH else EXPECTED_MIGRATIONS
     require(len(ledger) == count and db['applied'] == count and db['failed'] == 0, 'MIGRATION_LEDGER_INVALID')
     require(db['ledger'] == ledger, 'MIGRATION_CHECKSUM_MISMATCH')
@@ -988,7 +1102,11 @@ def shipping_migrate(remote, state, art, ledger):
         require(current['State'].get('ExitCode') == 0, 'SHIPPING_MIGRATOR_UNVERIFIED')
         settle_writers(remote, ledger, [])
         break
-    state['migration_phase'] = 'L86'
+    if material_migration():
+        db=remote.db(); material=db['materialSchema']
+        require(material['nonNullQuotes']==0 and material['factHash']==state['material_fact_hash'],
+                'MIGRATION_CHECKSUM_MISMATCH')
+    state['migration_phase'] = migration_after_phase()
     shipping_disk_gate(remote, {'walLimit':state['migrationResources']['walLimit'],
                                 'migratorLimit':state['migrationResources']['migratorLimit']})
 
@@ -1040,7 +1158,7 @@ def preflight(remote, art, ledger, imported=False):
     require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
             'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM')
     resources = None
-    if shipping_migration():
+    if shipping_migration() or material_migration():
         resources = shipping_resources(db)
         budget.update(shipping_disk_gate(remote, resources, None if imported else art))
         if imported:
@@ -1050,7 +1168,7 @@ def preflight(remote, art, ledger, imported=False):
     remote.inspect(old['Image'], image=True)  # rollback image exists
     return dict(old=old, name=name, template=template, active=active, budget=budget,
                 diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df,
-                migrationResources=resources, migration_phase='L85' if shipping_migration() else None)
+                migrationResources=resources, migration_phase=migration_before_phase() if (shipping_migration() or material_migration()) else None)
 
 
 def mount_identity(mount):
@@ -1179,18 +1297,18 @@ def application_db_probe(remote, name, failure_code):
 
 
 def rollback(remote, state, ledger):
-    if shipping_migration():
+    if shipping_migration() or material_migration():
         require(not state.get('backup_attempted') or state.get('backup_termination_verified') is True,
                 'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
-        require(state.get('migration_phase') in ('L85', 'L86'), 'SHIPPING_MIGRATION_STATE_UNKNOWN')
-        ledger = before_ledger(ledger) if state['migration_phase'] == 'L85' else ledger
+        require(state.get('migration_phase') in (migration_before_phase(), migration_after_phase()), 'SHIPPING_MIGRATION_STATE_UNKNOWN')
+        ledger = before_ledger(ledger) if state['migration_phase'] == migration_before_phase() else ledger
     # Do not start the previous writer if candidate termination is unproven.
     if state.get('candidate_attempted'):
         current = remote.containers()
         if any(c['Name'].lstrip('/') == state['candidate'] for c in current):
             remote.run(['docker','stop','--time','30',state['candidate']])
         settle_writers(remote, ledger, [])
-    elif shipping_migration() and state.get('old_stop_attempted'):
+    elif (shipping_migration() or material_migration()) and state.get('old_stop_attempted'):
         settle_writers(remote, ledger, [])
     if state.get('old_stop_attempted'):
         remote.run(['docker','start',state['name']])
@@ -1214,7 +1332,7 @@ class LocalRemote(Remote):
     def __init__(self):
         pass
     def py(self, code, value=None, timeout=60):
-        if shipping_migration() and code == SHIPPING_BACKUP_RESTORE_CODE:
+        if (shipping_migration() or material_migration()) and code == SHIPPING_BACKUP_RESTORE_CODE:
             # Keep this long, cancellable operation in the ONE control process.
             # No sudo child can outlive a killed off-host timeout or swallow HUP.
             previous_in, previous_out = sys.stdin, sys.stdout
@@ -1275,20 +1393,22 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                                'candidate':name,'candidateImageReference':art['imageReference'],
                                'candidateLoadedImageId':art['loadedDockerImageId'],
                                'candidateArchiveConfigDigest':art['archiveConfigDigest'],
-                               'templateHash':digest(state['template'].encode()),'migrations':85,
-                               'migrationTarget':SHIPPING_MIGRATION if shipping_migration() else None,
-                               'migrationSqlHash':SHIPPING_SQL_HASH if shipping_migration() else None,
-                               'rollbackContract':'APPLICATION_ONLY_KEEP_L86_AND_ACTUAL_FACTS' if shipping_migration() else 'UNCHANGED_L85',
+                               'templateHash':digest(state['template'].encode()),'migrations':migration_before_count(),
+                               'migrationTarget':migration_target() if (shipping_migration() or material_migration()) else None,
+                               'migrationSqlHash':migration_sql_hash() if (shipping_migration() or material_migration()) else None,
+                               'rollbackContract':migration_rollback_contract() if (shipping_migration() or material_migration()) else 'UNCHANGED_L85',
                                'authorityMountReadability':authority_mounts}})
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_STOP')
         state['old_stop_attempted'] = True
         stage = 'OLD_WRITER_DRAIN'
         remote.run(['docker','stop','--time','30',state['name']])
         settle_writers(remote, before_ledger(ledger), [])
-        if shipping_migration():
+        if shipping_migration() or material_migration():
             stage = 'SHIPPING_BACKUP_RESTORE'
             state['backupProof'] = shipping_backup_restore(remote, state, root, art)
             settle_writers(remote, before_ledger(ledger), [])
+            if material_migration():
+                state['material_fact_hash']=remote.db()['materialSchema']['factHash']
             stage = 'SHIPPING_CHECK_MIGRATION'
             shipping_migrate(remote, state, art, ledger)
         state['candidate_attempted'] = True
@@ -1340,7 +1460,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)
-        if shipping_migration() and state and state.get('migration_phase') == 'UNKNOWN':
+        if (shipping_migration() or material_migration()) and state and state.get('migration_phase') == 'UNKNOWN':
             retain_lock = True
             try:
                 current = remote.inspect(state['migrator'])
@@ -1353,7 +1473,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
             try:
                 rollback(remote, state, ledger)
             except BaseException:
-                if shipping_migration():
+                if shipping_migration() or material_migration():
                     retain_lock = True
                 code = ('CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED'
                         if stage == 'CANDIDATE_APPLICATION_DB_PROBE'
@@ -1923,7 +2043,7 @@ def main():
         return
     summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
                'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
-               'migrationRequired':'YES' if shipping_migration() else MIGRATION_REQUIRED}
+               'migrationRequired':'YES' if (shipping_migration() or material_migration()) else MIGRATION_REQUIRED}
     if args.mode in ('inspect-artifact','inspect-artifact-diagnostic','inspect-artifact-backup-diagnostic'):
         # Offline validation still rejects artifacts over the absolute peak cap.
         summary['budget'] = disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])

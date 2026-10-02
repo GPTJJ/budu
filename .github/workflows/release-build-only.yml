@@ -15,8 +15,8 @@ on:
       - codex/data-authority-finalization
 
 env:
-  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
-  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/material-center-integration-20261002' && '72c780c1dbb5ff8b4502b97984d44660532f181a' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/material-center-integration-20261002' && 'a9e9c58510af4ef38b4bcaf378ec0a77895f61bc' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   artifact:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -50,6 +50,16 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
+            codex/material-center-integration-20261002)
+              test "$GITHUB_EVENT_NAME" = workflow_dispatch
+              test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
+              [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+              test "$EXPECTED_PRODUCTION_SHA" = 72c780c1dbb5ff8b4502b97984d44660532f181a
+              test "$APPROVED_BUSINESS_SHA" = a9e9c58510af4ef38b4bcaf378ec0a77895f61bc
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $APPROVED_BUSINESS_SHA"
+              test "$(git rev-list --parents -n 1 "$APPROVED_BUSINESS_SHA")" = "$APPROVED_BUSINESS_SHA $EXPECTED_PRODUCTION_SHA"
+              test "$(git diff --name-only "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-material-release-contract.py\nscripts/test-release-path-post-transfer.py'
+              ;;
             codex/shipping-backup-diagnostic-20261002)
               test "$GITHUB_EVENT_NAME" = workflow_dispatch
               test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
@@ -168,9 +178,14 @@ jobs:
             --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
             --business-base-sha "$APPROVED_BUSINESS_SHA"
           fi
-          python3 scripts/test-deploy-prod-transfer-cas.py
-          python3 scripts/test-transfer-cas-existing-workflow.py
-          python3 scripts/test-release-path-post-transfer.py
+          if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+            python3 scripts/test-material-release-contract.py --legacy-q-regressions
+            python3 scripts/test-material-release-contract.py
+          else
+            python3 scripts/test-deploy-prod-transfer-cas.py
+            python3 scripts/test-transfer-cas-existing-workflow.py
+            python3 scripts/test-release-path-post-transfer.py
+          fi
           python3 -m py_compile scripts/test-candidate-db-probe-integration.py
           test -z "$(git status --porcelain --untracked-files=all)"
           printf 'WORKTREE_CLEAN_AFTER_SYNTAX_CHECK=YES\n'
@@ -246,7 +261,11 @@ jobs:
           docker run --rm --network none --entrypoint cat "$tag" /app/server/approvals.js > "$run_dir/image-approvals.js"
           docker run --rm --network none --entrypoint cat "$tag" /app/server/v2.js > "$run_dir/image-v2.js"
           docker run --rm --network none --entrypoint node "$tag" --version
-          if [ "$GITHUB_REF" = refs/heads/codex/mailing-free-tier-shipped-sort-20261001 ]; then
+          if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+            git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
+              server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
+            printf 'MATERIAL_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
+          elif [ "$GITHUB_REF" = refs/heads/codex/mailing-free-tier-shipped-sort-20261001 ]; then
             git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
               server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
             printf 'SHIPPING_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
@@ -308,13 +327,29 @@ jobs:
             --platform linux/amd64 --label "org.opencontainers.image.revision=68cee84efe30409e7e18e4459e08982f6c20e254" \
             --tag "budu-api:shipping-old-68cee84efe30" --provenance=false --sbom=false --load "$old_dir"
 
+      - name: Build exact Q application for isolated material compatibility
+        if: success() && github.ref == 'refs/heads/codex/material-center-integration-20261002'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_dir="$(mktemp -d "$RUNNER_TEMP/material-old.XXXXXX")"
+          git archive 72c780c1dbb5ff8b4502b97984d44660532f181a | tar -x -C "$old_dir"
+          timeout 35m docker buildx build --builder "approval-build-only-$GITHUB_RUN_ID" \
+            --platform linux/amd64 --label "org.opencontainers.image.revision=72c780c1dbb5ff8b4502b97984d44660532f181a" \
+            --tag "budu-api:material-old-72c780c1dbb5" --provenance=false --sbom=false --load "$old_dir"
+
       - name: Probe application Prisma against isolated PostgreSQL
         shell: bash
         env:
           TEST_SHIPPING_CONTROLLER_CI: '1'
+          TEST_MATERIAL_CONTROLLER_CI: '1'
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
+          if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+            sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,DOCKER_HOST,DOCKER_CONTEXT,TEST_MATERIAL_CONTROLLER_CI \
+              python3 scripts/test-candidate-db-probe-integration.py --material-controller-ci \
+              "budu-api:post-transfer-${GITHUB_SHA:0:12}" "budu-api:material-old-72c780c1dbb5" "$RELEASE_ARTIFACT_PATH"
+          elif [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
             sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,DOCKER_HOST,DOCKER_CONTEXT,TEST_SHIPPING_CONTROLLER_CI \
               python3 scripts/test-candidate-db-probe-integration.py --shipping-controller-ci \
               "budu-api:post-transfer-${GITHUB_SHA:0:12}" "budu-api:shipping-old-68cee84efe30" "$RELEASE_ARTIFACT_PATH"
@@ -357,10 +392,28 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Retain isolated material migration controller proof
+        if: success() && github.ref == 'refs/heads/codex/material-center-integration-20261002'
+        uses: actions/upload-artifact@v4
+        with:
+          name: material-controller-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/material-controller-proof.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Retain isolated material migration failure diagnostics
+        if: failure() && github.ref == 'refs/heads/codex/material-center-integration-20261002'
+        uses: actions/upload-artifact@v4
+        with:
+          name: material-controller-diagnostic-${{ github.sha }}
+          path: ${{ runner.temp }}/material-controller-diagnostic.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: Retain exact artifact for read-only preflight
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
+          name: ${{ github.ref == 'refs/heads/codex/material-center-integration-20261002' && format('release-staging-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
           path: ${{ env.RELEASE_ARTIFACT_PATH }}
           if-no-files-found: error
           compression-level: 0
