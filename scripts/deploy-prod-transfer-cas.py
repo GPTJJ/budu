@@ -198,9 +198,10 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'e59deb2d3b1f822e5231243c45e9943a95af3a8c',
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != '7bf1c98488e27785c2cb2c15f91746620bcdd5e1',
             'SHIPPING_ENGINEERING_PARENT_INVALID')
-    for child, parent in ((release, 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
+    for child, parent in ((release, '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'),
+                          ('7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
                           ('e59deb2d3b1f822e5231243c45e9943a95af3a8c', SHIPPING_POLICY_BASE),
                           (SHIPPING_POLICY_BASE, SHIPPING_POLICY_PARENT),
                           (SHIPPING_POLICY_PARENT, SHIPPING_FORMAL_BASE),
@@ -211,7 +212,9 @@ def validate_shipping_identity(repo, release):
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_ENGINEERING_PARENT_INVALID')
-    require(set(git(repo, 'diff', '--name-only', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c', release).splitlines())
+    require(set(git(repo, 'diff', '--name-only', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1', release).splitlines())
+            == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_POLICY_BASE, release).splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
@@ -593,8 +596,13 @@ class Remote:
     def run(self, args, data=None, timeout=60):
         return command(self.ssh + [shlex.join(args)], data, timeout)
     def py(self, code, value=None, timeout=60):
-        return self.run(['sudo', '-n', 'python3', '-c', code],
-                        json.dumps(value).encode() if value is not None else None, timeout)
+        # Send code as one JSON line, leaving the original payload on stdin.
+        # The full quoted controller exceeds Linux's single-argument limit.
+        loader = "import json,sys; exec(compile(json.loads(sys.stdin.buffer.readline()), '<budu-remote>', 'exec'))"
+        data = json.dumps(code).encode() + b'\n'
+        if value is not None:
+            data += json.dumps(value).encode()
+        return self.run(['sudo', '-n', 'python3', '-c', loader], data, timeout)
     def inspect(self, name, image=False):
         objects = json.loads(self.run(['docker', 'image' if image else 'container', 'inspect', name]))
         require(isinstance(objects, list) and len(objects) == 1, 'DOCKER_IDENTITY_NOT_UNIQUE')

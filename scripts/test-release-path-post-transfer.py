@@ -5,6 +5,8 @@ import ast
 import importlib.util
 import json
 import os
+import errno
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -44,6 +46,7 @@ POLICY_BASE = r.SHIPPING_POLICY_BASE
 POLICY_PARENT = r.SHIPPING_POLICY_PARENT
 POLICY_FILES = '\n'.join(sorted(r.SHIPPING_POLICY_FILES))
 TEST_FIX_BASE = 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'
+TRANSPORT_BASE = '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'
 BACKUP_FILES = '\n'.join(sorted(r.SHIPPING_BACKUP_DIAGNOSTIC_FILES))
 DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
 DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
@@ -61,6 +64,22 @@ def without_reviewed_disk_percent(source):
     return (source.replace('MAX_PROJECTED_USAGE = 90', 'MAX_PROJECTED_USAGE = 85')
             .replace("f'WITHIN_{MAX_PROJECTED_USAGE}_PERCENT_AND_10_GIB'", "'WITHIN_85_PERCENT_AND_10_GIB'")
             .replace("f'Model A <=6GiB AND projected usage <={MAX_PROJECTED_USAGE}%", "'Model A <=6GiB AND projected usage <=85%"))
+
+
+def remote_py_method(source):
+    remote = next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='Remote')
+    method = next(n for n in remote.body if isinstance(n,ast.FunctionDef) and n.name=='py')
+    return ast.get_source_segment(source,method)
+
+
+def without_reviewed_transport(source):
+    # Normalize only the exact reviewed stdin transport; all other Remote bytes stay checked.
+    method = remote_py_method(source)
+    if hashlib.sha256(method.encode()).hexdigest() != 'f525608dcc0ad6a614aea506469fb301bcb4dd82c6e2af8a28856d25c5cdc6c3':
+        raise AssertionError('Unreviewed Remote.py transport change')
+    old = subprocess.check_output(['git','-C',str(ROOT),'show',TRANSPORT_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    if source.count(method) != 1:raise AssertionError('Transport method must occur once')
+    return source.replace(method,remote_py_method(old),1)
 
 
 def build_only_workflow():
@@ -95,6 +114,7 @@ def build_only_guard(**facts):
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
             'rev-list) case "$5" in\n'
+            '  '+TRANSPORT_BASE+') printf "%s %s\\n" "$5" "$GUARD_M_PARENT" ;;\n'
             '  '+TEST_FIX_BASE+') printf "%s %s\\n" "$5" "$GUARD_L_PARENT" ;;\n'
             '  '+POLICY_BASE+') printf "%s %s\\n" "$5" "$GUARD_K_PARENT" ;;\n'
             '  '+POLICY_PARENT+') printf "%s %s\\n" "$5" "$GUARD_J_PARENT" ;;\n'
@@ -104,7 +124,7 @@ def build_only_guard(**facts):
             '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
             '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
             '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
-            'diff) if [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ] || [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
+            'diff) if [ "$3" = "'+TRANSPORT_BASE+'" ]; then printf "%s\\n" "$GUARD_TRANSPORT_FILES"; elif [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ] || [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -117,6 +137,7 @@ def build_only_guard(**facts):
                'GUARD_HEAD':release,'GUARD_E_PARENT':QUANTITY_BUSINESS,'GUARD_B_PARENT':QUANTITY_OLD,
                'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES,'GUARD_F_PARENT':DIAGNOSTIC_E,'GUARD_G_PARENT':BACKUP_PARENT,'GUARD_BACKUP_FILES':BACKUP_FILES,'GUARD_H_PARENT':BACKUP_READINESS_BASE,'GUARD_FORMAL_FILES':FORMAL_FILES,
                'GUARD_L_PARENT':POLICY_BASE,'GUARD_TEST_FIX_FILES':FORMAL_FILES,
+               'GUARD_M_PARENT':TEST_FIX_BASE,'GUARD_TRANSPORT_FILES':FORMAL_FILES,
                'GUARD_K_PARENT':POLICY_PARENT,'GUARD_J_PARENT':FORMAL_BASE,'GUARD_POLICY_FILES':POLICY_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
@@ -470,12 +491,17 @@ class QuantityReleaseContract(unittest.TestCase):
     def test_real_build_guard_accepts_only_exact_six_file_single_parent(self):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,
                'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,
-               'GUARD_PARENTS':TEST_FIX_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+               'GUARD_PARENTS':TRANSPORT_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
         self.assertEqual(build_only_guard(**facts).returncode,0)
         denied=[{'GITHUB_EVENT_NAME':'push'}, {'REQUESTED_RELEASE_SHA':''},
                 {'REQUESTED_RELEASE_SHA':'b'*40}, {'GITHUB_SHA':'short'},
                 {'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD}, {'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS},
-                {'GUARD_PARENTS':QUANTITY_BUSINESS}, {'GUARD_PARENTS':TEST_FIX_BASE+' '+'b'*40},
+                {'GUARD_PARENTS':QUANTITY_BUSINESS}, {'GUARD_PARENTS':TEST_FIX_BASE},
+                {'GUARD_PARENTS':TRANSPORT_BASE+' '+'b'*40}, {'GUARD_M_PARENT':POLICY_BASE},
+                {'GUARD_M_PARENT':TEST_FIX_BASE+' '+'b'*40},
+                {'GUARD_TRANSPORT_FILES':''}, {'GUARD_TRANSPORT_FILES':POLICY_FILES},
+                {'GUARD_TRANSPORT_FILES':FORMAL_FILES+'\nserver/v2.js'},
+                {'GUARD_TRANSPORT_FILES':FORMAL_FILES+'\n.github/workflows/deploy-prod.yml'},
                 {'GUARD_PARENTS':POLICY_BASE}, {'GUARD_L_PARENT':POLICY_PARENT},
                 {'GUARD_L_PARENT':POLICY_BASE+' '+'b'*40},
                 {'GUARD_TEST_FIX_FILES':''}, {'GUARD_TEST_FIX_FILES':POLICY_FILES},
@@ -533,11 +559,12 @@ class QuantityReleaseContract(unittest.TestCase):
             def facts(repo,*args):
                 if args==('branch','--show-current'):return QUANTITY_BRANCH
                 if args[:1]==('rev-list',):
-                    parents={candidate:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
+                    parents={candidate:TRANSPORT_BASE,TRANSPORT_BASE:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
                              FORMAL_BASE:BACKUP_READINESS_BASE,BACKUP_READINESS_BASE:BACKUP_PARENT,
                              BACKUP_PARENT:DIAGNOSTIC_E,DIAGNOSTIC_E:QUANTITY_BUSINESS,QUANTITY_BUSINESS:QUANTITY_OLD}
                     return args[-1]+' '+parents[args[-1]]
-                if args==('diff','--name-only',TEST_FIX_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',TRANSPORT_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',TEST_FIX_BASE,TRANSPORT_BASE):return FORMAL_FILES
                 if args==('diff','--name-only',POLICY_BASE,candidate):return FORMAL_FILES
                 if args==('diff','--name-only',POLICY_PARENT,POLICY_BASE):return POLICY_FILES
                 if args==('diff','--name-only',FORMAL_BASE,POLICY_PARENT):return FORMAL_FILES
@@ -551,11 +578,11 @@ class QuantityReleaseContract(unittest.TestCase):
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
+                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
                      (('rev-list','--parents','-n','1',TEST_FIX_BASE),TEST_FIX_BASE+' '+POLICY_BASE+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     (('diff','--name-only',TEST_FIX_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     (('diff','--name-only',TEST_FIX_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     *[(('diff','--name-only',TEST_FIX_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
+                     (('diff','--name-only',TRANSPORT_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     (('diff','--name-only',TRANSPORT_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     *[(('diff','--name-only',TRANSPORT_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
                      (('diff','--name-only',POLICY_BASE,candidate),FORMAL_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',POLICY_PARENT,POLICY_BASE),POLICY_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',FORMAL_BASE,POLICY_PARENT),FORMAL_FILES+'\n.github/workflows/deploy-prod.yml','SHIPPING_ENGINEERING_SCOPE_INVALID'),
@@ -688,7 +715,7 @@ class ShippingDiagnosticWorkflow(unittest.TestCase):
                     if isinstance(node,(ast.FunctionDef,ast.ClassDef))}
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
-        current=without_reviewed_disk_percent((ROOT/path).read_text())
+        current=without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text()))
         before=nodes(old);after=nodes(current)
         for name,body in before.items():
             if name not in ('main','validate_shipping_identity'):self.assertEqual(after[name],body,name)
@@ -1100,13 +1127,13 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_f_production_functions_constants_preserved_except_readiness_helper(self):
         path='scripts/deploy-prod-transfer-cas.py';old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':'+path],text=True)
         def functions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        before=functions(old);after=functions(without_reviewed_disk_percent((ROOT/path).read_text()))
+        before=functions(old);after=functions(without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text())))
         for name,body in before.items():
             if name not in ('main','validate_shipping_identity'):self.assertEqual(body,after[name],name)
         def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
         for key,value in constants(old).items():
             if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
-                self.assertEqual(value,constants(without_reviewed_disk_percent((ROOT/path).read_text()))[key],key)
+                self.assertEqual(value,constants(without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text())))[key],key)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
         workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
@@ -1117,7 +1144,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_g_helper_ast_changes_only_restore_readiness_and_other_gates_unchanged(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':'+path],text=True)
-        current=without_reviewed_disk_percent((ROOT/path).read_text());namespace={}
+        current=without_reviewed_disk_percent(without_reviewed_transport((ROOT/path).read_text()));namespace={}
         for node in ast.parse(old).body:
             if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('SHIPPING_BOUNDED_DUMP_CODE','SHIPPING_BACKUP_RESTORE_CODE'):
                 exec(compile(ast.Module(body=[node],type_ignores=[]),'historical-helper','exec'),namespace)
@@ -1144,11 +1171,89 @@ class BackupDiagnosticIdentity(unittest.TestCase):
             return value
         self.assertEqual(remove_admission(previous),remove_admission(workflow))
 
+class StreamedPythonTransport(unittest.TestCase):
+    class LocalTransport(r.Remote):
+        def __init__(self):self.calls=[]
+        def run(self,args,data=None,timeout=60):
+            self.calls.append((args,data,timeout))
+            if args[:4] != ['sudo','-n','python3','-c']:raise AssertionError('Original privilege boundary changed')
+            if max(len(arg.encode()) for arg in args) >= 4096:raise AssertionError('Code leaked into command arguments')
+            return r.command([sys.executable,*args[3:]],data,timeout)
+
+    def test_large_quoted_unicode_code_preserves_json_payload_and_short_argv(self):
+        remote=self.LocalTransport()
+        code=("# quotes ' \\\" 演示\n"*30000)+"import json,sys; print(json.dumps(json.load(sys.stdin),ensure_ascii=False))"
+        value={'text':"第一行\n'\\\"第二行",'actual':6,'nested':[0,None,False,{'a':'b'}]}
+        self.assertGreater(len(code.encode()),131072)
+        self.assertEqual(json.loads(remote.py(code,value,timeout=7)),value)
+        args,data,timeout=remote.calls[0]
+        self.assertEqual(timeout,7)
+        self.assertNotIn('第一行',str(args))
+        first,payload=data.split(b'\n',1)
+        self.assertEqual(json.loads(first),code)
+        self.assertEqual(json.loads(payload),value)
+
+    def test_absent_and_falsey_payloads_keep_original_stdin_semantics(self):
+        remote=self.LocalTransport()
+        self.assertEqual(remote.py("import sys; assert sys.stdin.buffer.read()==b''; print('EMPTY')"),b'EMPTY\n')
+        for value in (False,0,'',[],{},'秘密值'):
+            with self.subTest(value=value):
+                result=remote.py('import json,sys; print(json.dumps(json.load(sys.stdin)))',value)
+                self.assertEqual(json.loads(result),value)
+
+    def test_complete_controller_definitions_travel_through_real_python_process(self):
+        remote=self.LocalTransport()
+        code=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text().rsplit("\nif __name__ == '__main__':",1)[0]
+        code+="\nv=json.load(sys.stdin); print(json.dumps({'value':v,'maxUsage':MAX_PROJECTED_USAGE,'migration':SHIPPING_MIGRATION,'hasController':callable(run_loaded_controller)}))\n"
+        output=json.loads(remote.py(code,{'exact':'fixture'},timeout=15))
+        self.assertEqual(output,{'value':{'exact':'fixture'},'maxUsage':90,
+            'migration':r.SHIPPING_MIGRATION,'hasController':True})
+
+    def test_existing_remote_shell_quoting_executes_only_short_loader(self):
+        remote=self.LocalTransport()
+        remote.py("import json,sys; print(json.dumps(json.load(sys.stdin)))",{'key':'value'})
+        args,data,_=remote.calls[0]
+        shell=shlex.join([sys.executable,*args[3:]])
+        self.assertLess(len(shell.encode()),4096)
+        self.assertEqual(json.loads(r.command(['/bin/sh','-c',shell],data,5)),{'key':'value'})
+
+    def test_failures_and_timeouts_keep_existing_fixed_errors(self):
+        remote=self.LocalTransport()
+        with self.assertRaisesRegex(r.GateError,'^COMMAND_FAILED$'):
+            remote.py("raise RuntimeError('PRIVATE_DIAGNOSTIC')")
+        with self.assertRaisesRegex(r.GateError,'^COMMAND_UNAVAILABLE_OR_TIMEOUT$'):
+            remote.py('import time; time.sleep(5)',timeout=0.05)
+
+    @unittest.skipUnless(sys.platform=='linux','The failed runner uses the Linux per-argument limit')
+    def test_original_m_command_exceeds_linux_single_argument_limit(self):
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',TRANSPORT_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        code=old.rsplit("\nif __name__ == '__main__':",1)[0]
+        code+="\nv=json.load(sys.stdin)\nif v['profile'] == 'post-transfer': configure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
+        argument=shlex.join(['sudo','-n','python3','-c',code])
+        self.assertEqual(len(argument.encode())+1,137751)
+        self.assertEqual(os.sysconf('SC_PAGE_SIZE'),4096)
+        with self.assertRaises(OSError) as caught:
+            subprocess.run(['/bin/true',argument],check=True,timeout=5)
+        self.assertEqual(caught.exception.errno,errno.E2BIG)
+
+    def test_transport_normalization_rejects_changes_to_loader_payload_and_privileges(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        method=remote_py_method(source)
+        for before,after in (("'sudo', '-n'","'sudo', '-S'"),
+                             ('sys.stdin.buffer.readline()','sys.stdin.buffer.read()'),
+                             ('data += json.dumps(value).encode()','data += b\"changed\"'),
+                             ('loader], data, timeout','loader], data, None')):
+            with self.subTest(after=after):
+                self.assertIn(before,method)
+                with self.assertRaisesRegex(AssertionError,'Unreviewed Remote.py'):
+                    without_reviewed_transport(source.replace(method,method.replace(before,after)))
+
+
 class FormalShippingIdentity(unittest.TestCase):
     def test_l_child_preserves_all_bytes_outside_identity_and_formal_admission(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',TEST_FIX_BASE+':'+path],text=True)
-        current=(ROOT/path).read_text()
+        current=without_reviewed_transport((ROOT/path).read_text())
         self.assertEqual(hashlib.sha256(old.encode()).hexdigest(),'44bf632deea66a349dd660487320e33495baba96c5ced1252f28a8af2574f124')
         def without_identity(source):
             node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='validate_shipping_identity')
@@ -1193,7 +1298,7 @@ class FormalShippingIdentity(unittest.TestCase):
     def test_fixed_k_policy_runtime_constants_helper_and_other_workflow_bytes_preserved(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',POLICY_BASE+':'+path],text=True)
-        current=(ROOT/path).read_text()
+        current=without_reviewed_transport((ROOT/path).read_text())
         self.assertEqual(hashlib.sha256(old.encode()).hexdigest(),'698b8cf2edfbcb10e3d44f38c0297723e6bbc8b1ff75aaf2682869ec8ceb34b9')
         def functions(source):return {n.name:ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         before=functions(old);after=functions(current)
@@ -1222,7 +1327,7 @@ class FormalShippingIdentity(unittest.TestCase):
 
     def test_j_and_k_images_cannot_be_retagged_into_new_release(self):
         candidate='f'*40
-        for old in (TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
+        for old in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
             with self.subTest(old=old),patch.object(r,'IMAGE_PREFIX','post-transfer-'):
                 tag=r.image_reference(candidate);config={'Labels':{r.REVISION:old}}
                 image={'RepoTags':[tag],'Id':'sha256:'+'1'*64,'Os':'linux','Architecture':'amd64','Config':config}
@@ -1231,7 +1336,7 @@ class FormalShippingIdentity(unittest.TestCase):
 
     def test_l_itself_old_k_j_h_and_short_sha_are_outside_new_identity(self):
         with patch.object(r,'git',return_value=QUANTITY_BRANCH):
-            for release in (TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
+            for release in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
                 with self.subTest(release=release),self.assertRaisesRegex(r.GateError,'SHIPPING_ENGINEERING_PARENT_INVALID'):
                     r.validate_shipping_identity(ROOT,release)
 
@@ -1239,7 +1344,7 @@ class FormalShippingIdentity(unittest.TestCase):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
                'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':POLICY_BASE,
                'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
-        for old in (TEST_FIX_BASE,POLICY_BASE):
+        for old in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE):
             with self.subTest(old=old):
                 self.assertNotEqual(build_only_guard(**{**facts,'GITHUB_SHA':old,
                     'GUARD_HEAD':old,'REQUESTED_RELEASE_SHA':old}).returncode,0)
