@@ -65,6 +65,21 @@ POST_TRANSFER_ENGINEERING_FILES = {
     'scripts/test-release-path-post-transfer.py',
     'scripts/test-transfer-cas-existing-workflow.py',
 }
+SHIPPING_OLD_SHA = '68cee84efe30409e7e18e4459e08982f6c20e254'
+SHIPPING_BUSINESS_SHA = '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c'
+SHIPPING_BRANCH = 'codex/shipping-review-actual-quantity-20261002'
+SHIPPING_MIGRATION = '20261002000000_transfer_actual_quantity_reference'
+SHIPPING_SQL_HASH = '9610399f90cbd364a491908462affca3138594225673edfb650c4b5170da3872'
+SHIPPING_ENGINEERING_FILES = {
+    'scripts/deploy-prod-transfer-cas.py',
+    'scripts/test-deploy-prod-transfer-cas.py',
+    'scripts/test-release-path-post-transfer.py',
+    'scripts/test-transfer-cas-existing-workflow.py',
+    'scripts/test-candidate-db-probe-integration.py',
+    '.github/workflows/release-build-only.yml',
+}
+SHIPPING_CHECK_OLD = 'CHECK ((("shippedQuantity" IS NULL) OR (("shippedQuantity" >= 0) AND ("shippedQuantity" <= quantity))))'
+SHIPPING_CHECK_NEW = 'CHECK ((("shippedQuantity" IS NULL) OR (("shippedQuantity" >= 0) AND ("shippedQuantity" <= 999999))))'
 CURRENT_SHA_FILE = '/opt/budu/.current-sha'
 HOST_DEFAULTS = {'Memory': 0, 'MemoryReservation': 0, 'MemorySwap': 0, 'MemorySwappiness': None, 'NanoCpus': 0, 'CpuShares': 0, 'CpuPeriod': 0, 'CpuQuota': 0, 'CpusetCpus': '', 'CpusetMems': '', 'PidsLimit': None, 'Ulimits': [], 'ShmSize': 67108864, 'IpcMode': 'private', 'PidMode': '', 'UTSMode': '', 'CgroupnsMode': 'private', 'ExtraHosts': None, 'Dns': None, 'DnsOptions': [], 'DnsSearch': [], 'Devices': [], 'DeviceRequests': None, 'Sysctls': None, 'OomKillDisable': None, 'AutoRemove': False}
 GIB = 1024 ** 3
@@ -136,6 +151,35 @@ def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None
     CONTAINER_SUFFIX = '-post-transfer'
     ROLLBACK_PREFIX = 'post-transfer-'
 
+def shipping_migration():
+    # This is one reviewed business pair, never a count/schema override.
+    return (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == SHIPPING_OLD_SHA
+            and RUNTIME_SHA == SHIPPING_BUSINESS_SHA)
+
+
+def before_ledger(ledger):
+    if not shipping_migration():
+        return ledger
+    require(len(ledger) == 86 and ledger.get(SHIPPING_MIGRATION) == SHIPPING_SQL_HASH,
+            'SHIPPING_MIGRATION_CONTRACT_INVALID')
+    return {name: checksum for name, checksum in ledger.items() if name != SHIPPING_MIGRATION}
+
+
+def validate_shipping_identity(repo, release):
+    require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
+    require(release != SHIPPING_BUSINESS_SHA and
+            git(repo, 'rev-list', '--parents', '-n', '1', release).split() == [release, SHIPPING_BUSINESS_SHA],
+            'SHIPPING_ENGINEERING_PARENT_INVALID')
+    require(set(git(repo, 'diff', '--name-only', SHIPPING_BUSINESS_SHA, release).splitlines())
+            == SHIPPING_ENGINEERING_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+    path = 'prisma/migrations/' + SHIPPING_MIGRATION + '/migration.sql'
+    require(git(repo, 'diff', '--name-only', SHIPPING_OLD_SHA, release, '--', 'prisma') == path,
+            'SHIPPING_MIGRATION_SCOPE_INVALID')
+    require(git(repo, 'diff', '--diff-filter=A', '--name-only', SHIPPING_OLD_SHA, release, '--', path) == path,
+            'SHIPPING_MIGRATION_SCOPE_INVALID')
+    require(digest((Path(repo)/path).read_bytes()) == SHIPPING_SQL_HASH, 'SHIPPING_SQL_HASH_INVALID')
+
+
 def is_ancestor(repo, ancestor, descendant):
     return subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', ancestor, descendant],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
@@ -157,8 +201,11 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA)
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    require(not git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma'),
-            'SCHEMA_CHANGED')
+    if shipping_migration():
+        validate_shipping_identity(repo, release)
+    else:
+        require(not git(repo, 'diff', '--name-only', EXPECTED_OLD_SHA, release, '--', 'prisma'),
+                'SCHEMA_CHANGED')
     deployed_transfer = command(['git','-C',str(repo),'show',TRANSFER_INSTALLED_SHA+':server/v2.js'])
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
@@ -180,7 +227,8 @@ def identity(repo):
     if RELEASE_PROFILE == 'post-transfer':
         validate_post_transfer_identity(repo, release)
         migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
-        require(len(migrations) == EXPECTED_MIGRATIONS, 'LOCAL_MIGRATION_COUNT_INVALID')
+        require(len(migrations) == (86 if shipping_migration() else EXPECTED_MIGRATIONS), 'LOCAL_MIGRATION_COUNT_INVALID')
+        before_ledger(migrations)
         return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
     parents = git(repo, 'rev-list', '--parents', '-n', '1', release).split()
@@ -327,6 +375,7 @@ No archive member is extracted to the host filesystem.
         expected_payload = runtime_payload(repo)
         observed_payload = {}
         v2_bytes = None
+        prisma_files = {}
         layer_metrics = []
         chain = None
         histories = [h.get('created_by','') for h in config.get('history',[]) if not h.get('empty_layer')]
@@ -367,6 +416,14 @@ No archive member is extracted to the host filesystem.
                         parent = name.rsplit('/',1)[0]+'/' if '/' in name else ''
                         affected = parent if basename == '.wh..wh..opq' else parent+basename[4:]
                         require(not any(k == affected or k.startswith(affected if affected.endswith('/') else affected+'/') for k in expected_payload), 'RUNTIME_WHITEOUT_UNSUPPORTED')
+                        if shipping_migration():
+                            require(not any(k == affected or k.startswith(affected.rstrip('/')+'/') for k in
+                                            ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js')),
+                                    'SHIPPING_PRISMA_CLI_INVALID')
+                    if shipping_migration() and name in ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js'):
+                        require(member.isfile() and 0 < member.size < 4 * 1024 ** 2, 'SHIPPING_PRISMA_CLI_INVALID')
+                        content = layer.extractfile(member).read()
+                        prisma_files[name] = json.loads(content)['version'] if name.endswith('package.json') else digest(content)
                     if member.isfile() and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/')):
                         require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
                     if name in expected_payload:
@@ -397,6 +454,10 @@ No archive member is extracted to the host filesystem.
         require(v2_bytes is not None and v2_bytes == digest((Path(repo) / 'server/v2.js').read_bytes()),
                 'ARTIFACT_BUSINESS_CODE_MISMATCH')
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
+        if shipping_migration():
+            pinned = json.loads((Path(repo)/'package-lock.json').read_text())['packages']['node_modules/prisma']['version']
+            require(pinned == '6.19.3' and prisma_files.get('app/node_modules/prisma/package.json') == pinned
+                    and bool(prisma_files.get('app/node_modules/prisma/build/index.js')), 'SHIPPING_PRISMA_CLI_INVALID')
         return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
                     archiveHash=archive_hash, archiveConfigDigest='sha256:' + digest(config_bytes),
                     imageReference=tag, rootfsDiffIds=diffs,
@@ -434,7 +495,7 @@ class Remote:
 m=json.loads(subprocess.check_output(['docker','inspect',%r]))[0]
 e=dict(x.split('=',1) for x in m['Config']['Env'] if '=' in x)
 sql="""BEGIN READ ONLY;
-SELECT json_build_object('database',current_database(),'applied',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'failed',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL),'ledger',(SELECT json_object_agg(migration_name,checksum) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'clients',(SELECT coalesce(json_agg(distinct coalesce(host(client_addr),'LOCAL_SOCKET')),'[]') FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()));
+SELECT json_build_object('database',current_database(),'applied',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'failed',(SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL),'rolledBack',(SELECT count(*) FROM _prisma_migrations WHERE rolled_back_at IS NOT NULL),'check',(SELECT json_build_object('validated',convalidated,'definition',pg_get_constraintdef(oid)) FROM pg_constraint WHERE conrelid='\"TransferItem\"'::regclass AND conname='TransferItem_shippedQuantity_valid'),'invalidFacts',(SELECT count(*) FROM \"TransferItem\" WHERE \"shippedQuantity\"<0 OR \"shippedQuantity\">999999),'dbBytes',pg_database_size(current_database()),'pgVersion',current_setting('server_version'),'ledger',(SELECT json_object_agg(migration_name,checksum) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),'clients',(SELECT coalesce(json_agg(distinct coalesce(host(client_addr),'LOCAL_SOCKET')),'[]') FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()));
 COMMIT;"""
 r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c temp_file_limit=0',%r,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',e.get('POSTGRES_USER','postgres'),'-d',%r],input=sql.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 if r.returncode: raise SystemExit(1)
@@ -457,7 +518,7 @@ print(r.stdout.decode().strip())
 def env(c):
     return dict(x.split('=', 1) for x in c['Config']['Env'])
 
-def writer_check(containers, database, expected_names):
+def writer_names(containers):
     names = []
     for c in containers:
         url = env(c).get('DATABASE_URL', '')
@@ -465,6 +526,10 @@ def writer_check(containers, database, expected_names):
             # Conservative: count all same-name DB connections, regardless of URL
             # spelling/query parameters/read-only flags. Unknown aliases fail closed.
             names.append(c['Name'].lstrip('/'))
+    return names
+
+def writer_check(containers, database, expected_names):
+    names = writer_names(containers)
     require(sorted(names) == sorted(expected_names), 'WRITER_COUNT_INVALID')
     ips = {v['IPAddress'] for c in containers if c['Name'].lstrip('/') in expected_names
            for v in c['NetworkSettings']['Networks'].values() if v.get('IPAddress')}
@@ -472,8 +537,14 @@ def writer_check(containers, database, expected_names):
 
 def validate_database(db, ledger):
     require(db['database'] == EXPECTED_DB, 'DATABASE_AUTHORITY_MISMATCH')
-    require(db['applied'] == EXPECTED_MIGRATIONS and db['failed'] == 0, 'MIGRATION_LEDGER_INVALID')
+    count = 86 if shipping_migration() and ledger.get(SHIPPING_MIGRATION) == SHIPPING_SQL_HASH else EXPECTED_MIGRATIONS
+    require(len(ledger) == count and db['applied'] == count and db['failed'] == 0, 'MIGRATION_LEDGER_INVALID')
     require(db['ledger'] == ledger, 'MIGRATION_CHECKSUM_MISMATCH')
+    if shipping_migration():
+        expected = SHIPPING_CHECK_NEW if count == 86 else SHIPPING_CHECK_OLD
+        require(db.get('check') == {'validated': True, 'definition': expected}
+                and db.get('invalidFacts') == 0 and db.get('rolledBack') == 0,
+                'SHIPPING_DATABASE_PHASE_INVALID')
 
 def route_target(template, active):
     require(template == active, 'NGINX_AUTHORITY_CONFLICT')
@@ -484,6 +555,283 @@ def route_target(template, active):
 def normalize_dns(value):
     # Docker reports an unset per-container DNS list as either null or [].
     return [] if value is None or value == [] else value
+
+
+SHIPPING_CLI_PROBE = (
+    "const fs=require('fs'); const p='/app/node_modules/prisma/'; "
+    "const lock=JSON.parse(fs.readFileSync('/app/package-lock.json')); "
+    "const version=JSON.parse(fs.readFileSync(p+'package.json')).version; "
+    "if(version!=='6.19.3'||version!==lock.packages['node_modules/prisma'].version||"
+    "!fs.lstatSync(p+'build/index.js').isFile()) process.exit(1); "
+    "process.stdout.write('PINNED_PRISMA_CLI_OK\\n');"
+)
+
+
+def shipping_resources(db):
+    require(db.get('pgVersion', '').split()[0] == '16.14' and
+            isinstance(db.get('dbBytes'), int) and db['dbBytes'] > 0, 'SHIPPING_PG16_REQUIRED')
+    size = db['dbBytes']
+    # Independent limits for the custom dump, isolated restore (including its
+    # WAL), live WAL growth and the one migrator. No reuse/disk discount.
+    return {'backupLimit': 2*size + 64*1024**2, 'restoreLimit': 3*size + 256*1024**2,
+            'walLimit': size + 64*1024**2, 'migratorLimit': 128*1024**2}
+
+
+def shipping_disk_gate(remote, resources, art=None):
+    used, available = remote.disk()
+    extra = sum(resources.values())
+    if art is not None:
+        budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest'])
+        extra += budget['peakIncrement']
+        require(extra <= ABSOLUTE_MAX_PEAK, 'SHIPPING_MIGRATION_DISK_GATE_FAILED')
+    else:
+        extra += RESERVE
+    require(math.ceil(100*(used+extra)/(used+available)) <= MAX_PROJECTED_USAGE
+            and available-extra >= MIN_PROJECTED_AVAILABLE, 'SHIPPING_MIGRATION_DISK_GATE_FAILED')
+    return {'migrationResourceLimits': resources, 'projectedAvailableWithMigration': available-extra,
+            'projectedUsageWithMigration': math.ceil(100*(used+extra)/(used+available))}
+
+
+# The backup is retained. The restore is an exact owned, network-none PG16.14
+# container and never a production restore. Neither raw rows nor credentials
+# cross the controller boundary. Failure here is still the known L85 phase.
+SHIPPING_BOUNDED_DUMP_CODE = r'''
+import os,select,signal,subprocess,time,hashlib
+def stop_backup_process(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill();process.wait(timeout=5)
+    if process.poll() is None:raise RuntimeError('BACKUP_CHILD_TERMINATION_UNVERIFIED')
+
+def bounded_backup_dump(args,path,limit,deadline):
+    # A readiness wait precedes os.read, including when the child emits NOTHING.
+    # Cleanup is bounded and protects only terminate/wait, never the dump itself.
+    total=0;h=hashlib.sha256();process=None
+    with path.open('xb') as out:
+        try:
+            process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+            while True:
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise TimeoutError('BACKUP_TOTAL_DEADLINE')
+                ready,_,_=select.select([process.stdout],[],[],min(1,remaining))
+                if not ready:continue
+                block=os.read(process.stdout.fileno(),65536)
+                if not block:break
+                total+=len(block)
+                if total>limit:raise RuntimeError('BACKUP_LIMIT')
+                h.update(block);out.write(block)
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise TimeoutError('BACKUP_TOTAL_DEADLINE')
+            if process.wait(timeout=min(5,remaining)):raise RuntimeError('BACKUP_FAILED')
+            out.flush();os.fsync(out.fileno())
+        finally:
+            if process is not None:
+                previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+                try:
+                    stop_backup_process(process)
+                    process.stdout.close()
+                finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+    return total,h.hexdigest()
+'''
+exec(SHIPPING_BOUNDED_DUMP_CODE, globals())
+
+SHIPPING_BACKUP_RESTORE_CODE = SHIPPING_BOUNDED_DUMP_CODE + r'''
+import json,pathlib,sys
+v=json.load(sys.stdin);root=pathlib.Path(v['root']);os.umask(0o077)
+deadline=time.monotonic()+600
+marker='budu_shipping_backup_'+v['release'][:12]
+def run(args,data=None,timeout=30,cleanup=False,critical=False):
+    remaining=timeout if cleanup else min(timeout,deadline-time.monotonic())
+    if remaining<=0:raise TimeoutError('BACKUP_TOTAL_DEADLINE')
+    previous=None
+    if critical:previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+    try:
+        p=subprocess.run(args,input=data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=remaining)
+        if p.returncode:raise RuntimeError('BACKUP_RESTORE_COMMAND_FAILED')
+        return p.stdout
+    finally:
+        if previous is not None:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+pg=json.loads(run(['docker','inspect',v['pg']]))[0]
+e=dict(x.split('=',1) for x in pg['Config']['Env'] if '=' in x);user=e.get('POSTGRES_USER','postgres')
+options='PGOPTIONS=-c application_name='+marker+' -c statement_timeout=8000 -c lock_timeout=8000 -c idle_in_transaction_session_timeout=8000 -c TimeZone=UTC'
+def sql(container,database,text,role=user,cleanup=False):
+    return run(['docker','exec','-i','-e',options,container,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',role,'-d',database],text.encode(),cleanup=cleanup)
+def fingerprints(container,database,role=user):
+    tables=sorted(json.loads(sql(container,database,"BEGIN READ ONLY; SELECT coalesce(json_agg(tablename),'[]') FROM pg_tables WHERE schemaname='public'; COMMIT;",role)))
+    result=[]
+    for table in tables:
+        quoted='"'+table.replace('"','""')+'"'
+        text="BEGIN READ ONLY; SELECT count(*)::text||':'||md5(coalesce(string_agg(h,'' ORDER BY h COLLATE \"C\"),'')) FROM (SELECT md5(row_to_json(t)::text) h FROM "+quoted+" t) s; COMMIT;"
+        result.append([table,sql(container,database,text,role).decode().strip()])
+    seq=sql(container,database,"BEGIN READ ONLY; SELECT coalesce(json_agg(row_to_json(s) ORDER BY sequencename COLLATE \"C\"),'[]') FROM (SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public') s; COMMIT;",role).decode().strip()
+    return hashlib.sha256(json.dumps([result,seq],sort_keys=True).encode()).hexdigest(),len(tables)
+name=v['restore'];data=root/'restore-pg';created=False;restore_process=None;cleanup_complete=False
+try:
+    before,tables=fingerprints(v['pg'],v['database'])
+    dump=root/'database-L85.dump'
+    total,backup_hash=bounded_backup_dump(['docker','exec','-e',options,v['pg'],'pg_dump','-U',user,'-d',v['database'],'-Fc','--no-owner','--no-acl','--lock-wait-timeout=8s'],dump,v['limits']['backupLimit'],deadline)
+    data.mkdir(mode=0o700)
+    def allocated():return sum(p.stat().st_blocks*512 for p in data.rglob('*') if p.is_file())
+    # Only Docker create/start transitions defer signals, each with a real 30s bound.
+    if run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip():raise RuntimeError('RESTORE_NAME_EXISTS')
+    created=True
+    run(['docker','create','--name',name,'--network','none','--restart','no',
+         '--label','budu.shipping-restore='+v['release'],
+         '-e','POSTGRES_HOST_AUTH_METHOD=trust','-e','POSTGRES_DB=restore_fixture',
+         '-v',str(data)+':/var/lib/postgresql/data',pg['Image']],critical=True)
+    run(['docker','start',name],critical=True)
+    for _ in range(60):
+        try:
+            run(['docker','exec',name,'pg_isready','-U','postgres','-d','restore_fixture'],timeout=5);break
+        except RuntimeError:time.sleep(0.2)
+    else:raise RuntimeError('RESTORE_NOT_READY')
+    if sql(name,'restore_fixture',"SELECT current_setting('server_version');",'postgres').decode().split()[0]!='16.14':raise RuntimeError('RESTORE_VERSION')
+    with dump.open('rb') as source:
+        restore_process=subprocess.Popen(['docker','exec','-i',name,'pg_restore','-U','postgres','-d','restore_fixture','--exit-on-error','--no-owner','--no-acl'],stdin=source,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:
+            while restore_process.poll() is None:
+                if allocated()>v['limits']['restoreLimit']:raise RuntimeError('RESTORE_LIMIT')
+                if time.monotonic()>deadline:raise TimeoutError('BACKUP_TOTAL_DEADLINE')
+                time.sleep(0.2)
+            if restore_process.returncode:raise RuntimeError('RESTORE_FAILED')
+        finally:
+            previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+            try:stop_backup_process(restore_process)
+            finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+    after,after_tables=fingerprints(name,'restore_fixture','postgres')
+    if before!=after or tables!=after_tables:raise RuntimeError('RESTORE_FACTS_MISMATCH')
+finally:
+    # End only this backup's local PG connections, then prove termination. A
+    # failure leaves rollback's zero-client gate closed; no other client is killed.
+    previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+    try:
+        quoted_user=user.replace("'","''");quoted_db=v['database'].replace("'","''")
+        predicate="datname='"+quoted_db+"' AND usename='"+quoted_user+"' AND application_name='"+marker+"' AND pid<>pg_backend_pid()"
+        sql(v['pg'],v['database'],'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE '+predicate+';',cleanup=True)
+        remaining=sql(v['pg'],v['database'],'SELECT count(*) FROM pg_stat_activity WHERE '+predicate+';',cleanup=True)
+        if remaining.strip()!=b'0':raise RuntimeError('BACKUP_CONNECTION_TERMINATION_UNVERIFIED')
+        if created:
+            restored=json.loads(run(['docker','inspect',name],cleanup=True))[0]
+            if (restored['Image']!=pg['Image'] or restored['Config'].get('Labels',{}).get('budu.shipping-restore')!=v['release']
+                or not any(m.get('Source')==str(data) and m.get('Destination')=='/var/lib/postgresql/data' for m in restored['Mounts'])):
+                raise RuntimeError('RESTORE_IDENTITY_UNVERIFIED')
+            run(['docker','stop','--time','10',name],timeout=20,cleanup=True)
+            if json.loads(run(['docker','inspect',name],cleanup=True))[0]['State']['Running']:raise RuntimeError('RESTORE_STOP_UNVERIFIED')
+        cleanup_complete=True
+    finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+extent=allocated()
+if extent>v['limits']['restoreLimit']:raise RuntimeError('RESTORE_LIMIT')
+proof={'backupBytes':total,'backupSha256':backup_hash,'restoreAllocatedBytes':extent,
+       'tableCount':tables,'factsFingerprint':before,'restoreVerified':True,'pgVersion':'16.14',
+       'restoreContainer':name,'releaseSha':v['release'],'terminationVerified':True}
+(root/'backup-restore-proof.json').write_text(json.dumps(proof,sort_keys=True))
+print(json.dumps(proof))
+'''
+
+
+def shipping_backup_restore(remote, state, root, art):
+    limits = state['migrationResources']
+    state['backup_attempted'] = True
+    state['backup_termination_verified'] = False
+    try:
+        result = json.loads(remote.py(SHIPPING_BACKUP_RESTORE_CODE,
+            {'root':root, 'pg':PG, 'database':EXPECTED_DB, 'limits':limits,
+             'release':art['release'], 'restore':'budu-shipping-restore-'+art['release'][:12]}, timeout=600))
+    except BaseException as error:
+        state['backup_termination_verified'] = getattr(error, 'backup_termination_verified', False)
+        raise
+    state['backup_termination_verified'] = result.get('terminationVerified') is True
+    require(result.get('restoreVerified') is True and result.get('pgVersion') == '16.14'
+            and state['backup_termination_verified']
+            and result.get('releaseSha') == art['release'] and result.get('tableCount', 0) > 0
+            and 0 < result.get('backupBytes', 0) <= limits['backupLimit']
+            and 0 < result.get('restoreAllocatedBytes', 0) <= limits['restoreLimit'],
+            'SHIPPING_BACKUP_RESTORE_UNVERIFIED')
+    # The dump and stopped restore are now charged to actual used space. Only
+    # future live WAL and migrator allocations remain in the projection.
+    shipping_disk_gate(remote, {k:limits[k] for k in ('walLimit','migratorLimit')})
+    return result
+
+
+SHIPPING_MIGRATOR_CREATE_CODE = r'''
+import json,os,pathlib,subprocess,sys,tempfile
+v=json.load(sys.stdin)
+old=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]
+e=dict(x.split('=',1) for x in old['Config']['Env'] if '=' in x)
+fd,p=tempfile.mkstemp(dir='/dev/shm');os.fchmod(fd,0o600)
+try:
+    os.write(fd,('DATABASE_URL='+e['DATABASE_URL']+'\nPGOPTIONS=-c application_name=budu_shipping_migrator\n').encode());os.close(fd)
+    r=subprocess.run(['docker','create','--name',v['name'],'--restart','no',
+        '--network',old['HostConfig']['NetworkMode'],'--read-only','--tmpfs','/tmp:rw,nosuid,size=128m',
+        '--log-opt','max-size=1m','--log-opt','max-file=1',
+        '--label','budu.production-role=migrator','--label','org.opencontainers.image.revision='+v['release'],
+        '--env-file',p,'--workdir','/app','--entrypoint','node',v['image'],
+        '/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma'],
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    if r.returncode:raise SystemExit(1)
+finally:
+    pathlib.Path(p).unlink()
+'''
+
+
+def shipping_migrate(remote, state, art, ledger):
+    name = 'budu-shipping-migrator-'+art['release'][:12]
+    state['migrator'] = name
+    require(not remote.run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip(), 'SHIPPING_MIGRATOR_IDENTITY_INVALID')
+    remote.py(SHIPPING_MIGRATOR_CREATE_CODE, {'old':state['name'],'name':name,
+        'release':art['release'],'image':art['imageReference']})
+    container = remote.inspect(name)
+    require(not container['State']['Running'] and container['Image'] == art['loadedDockerImageId']
+            and container['Config'].get('Image') == art['imageReference']
+            and container['Config'].get('Labels') == {'budu.production-role':'migrator',REVISION:art['release']}
+            and env(container) == {**dict(x.split('=',1) for x in art['config'].get('Env', []) if '=' in x),
+                'DATABASE_URL':env(state['old'])['DATABASE_URL'],
+                'PGOPTIONS':'-c application_name=budu_shipping_migrator'}
+            and container['Config']['Entrypoint'] == ['node']
+            and container['Config']['Cmd'] == ['/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma']
+            and container['HostConfig']['ReadonlyRootfs'] is True
+            and container['HostConfig']['RestartPolicy'] == {'Name':'no','MaximumRetryCount':0}
+            and container['HostConfig']['NetworkMode'] == state['old']['HostConfig']['NetworkMode']
+            and container['HostConfig'].get('Tmpfs') == {'/tmp':'rw,nosuid,size=128m'}
+            and container['HostConfig'].get('LogConfig') == {'Type':'json-file','Config':{'max-size':'1m','max-file':'1'}}
+            and not container['HostConfig'].get('PortBindings')
+            and all(m['Type'] == 'tmpfs' and m['Destination'] == '/tmp' for m in container['Mounts']),
+            'SHIPPING_MIGRATOR_IDENTITY_INVALID')
+    settle_writers(remote, before_ledger(ledger), [])
+    # From this point through verified L86+new CHECK+zero writers, the state is
+    # deliberately UNKNOWN. A signal, SQL/ledger gap or any failure retains lock
+    # and never starts the old application or restores production data.
+    state['migration_phase'] = 'UNKNOWN'
+    remote.run(['docker','start',name])
+    deadline = time.monotonic()+180
+    while True:
+        current = remote.inspect(name)
+        db = remote.db()
+        containers = remote.containers()
+        if current['State']['Running']:
+            ips = {v['IPAddress'] for v in current['NetworkSettings']['Networks'].values() if v.get('IPAddress')}
+            require(set(db['clients']) <= ips, 'UNKNOWN_DB_CLIENT_OR_OLD_WRITER')
+            names = writer_names(containers)
+            require(names in ([name], []), 'WRITER_COUNT_INVALID')
+            if names == [name]:
+                writer_check(containers, db, [name])
+                require(time.monotonic() < deadline, 'SHIPPING_MIGRATOR_UNVERIFIED')
+                time.sleep(0.2)
+                continue
+            # The short DDL may finish between inspect and the DB/container
+            # snapshots. Only this same successful, stopped migrator may settle
+            # to exact L86 and zero; unknown clients were already rejected.
+            current = remote.inspect(name)
+        require(not current['State']['Running'], 'SHIPPING_MIGRATOR_UNVERIFIED')
+        require(current['State'].get('ExitCode') == 0, 'SHIPPING_MIGRATOR_UNVERIFIED')
+        settle_writers(remote, ledger, [])
+        break
+    state['migration_phase'] = 'L86'
+    shipping_disk_gate(remote, {'walLimit':state['migrationResources']['walLimit'],
+                                'migratorLimit':state['migrationResources']['migratorLimit']})
 
 def validate_clone_source(old, image):
     c, h = old['Config'], old['HostConfig']
@@ -517,7 +865,7 @@ def preflight(remote, art, ledger, imported=False):
     remote.health(name, EXPECTED_OLD_SHA)
     remote.health(name, EXPECTED_OLD_SHA, public=True)
     db = remote.db()
-    validate_database(db, ledger)
+    validate_database(db, before_ledger(ledger))
     writer_check(remote.containers(), db, [name])
     validate_clone_source(old, art['config'])
     info = json.loads(remote.run(['docker','info','--format','{{json .}}']))
@@ -532,9 +880,18 @@ def preflight(remote, art, ledger, imported=False):
     budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest']) if not imported else {'projectedUsage':math.ceil(100*(used+RESERVE)/(used+available)), 'projectedAvailable':available-RESERVE}
     require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
             'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM')
+    resources = None
+    if shipping_migration():
+        resources = shipping_resources(db)
+        budget.update(shipping_disk_gate(remote, resources, None if imported else art))
+        if imported:
+            require(remote.run(['docker','run','--rm','--network','none','--entrypoint','node',
+                                art['imageReference'],'-e',SHIPPING_CLI_PROBE]) == b'PINNED_PRISMA_CLI_OK\n',
+                    'SHIPPING_PRISMA_CLI_INVALID')
     remote.inspect(old['Image'], image=True)  # rollback image exists
     return dict(old=old, name=name, template=template, active=active, budget=budget,
-                diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df)
+                diskUsed=used, diskAvailable=available, dfHuman=df_h, dockerSystemDf=docker_df,
+                migrationResources=resources, migration_phase='L85' if shipping_migration() else None)
 
 
 def mount_identity(mount):
@@ -663,11 +1020,18 @@ def application_db_probe(remote, name, failure_code):
 
 
 def rollback(remote, state, ledger):
+    if shipping_migration():
+        require(not state.get('backup_attempted') or state.get('backup_termination_verified') is True,
+                'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
+        require(state.get('migration_phase') in ('L85', 'L86'), 'SHIPPING_MIGRATION_STATE_UNKNOWN')
+        ledger = before_ledger(ledger) if state['migration_phase'] == 'L85' else ledger
     # Do not start the previous writer if candidate termination is unproven.
     if state.get('candidate_attempted'):
         current = remote.containers()
         if any(c['Name'].lstrip('/') == state['candidate'] for c in current):
             remote.run(['docker','stop','--time','30',state['candidate']])
+        settle_writers(remote, ledger, [])
+    elif shipping_migration() and state.get('old_stop_attempted'):
         settle_writers(remote, ledger, [])
     if state.get('old_stop_attempted'):
         remote.run(['docker','start',state['name']])
@@ -690,6 +1054,26 @@ class LocalRemote(Remote):
     """
     def __init__(self):
         pass
+    def py(self, code, value=None, timeout=60):
+        if shipping_migration() and code == SHIPPING_BACKUP_RESTORE_CODE:
+            # Keep this long, cancellable operation in the ONE control process.
+            # No sudo child can outlive a killed off-host timeout or swallow HUP.
+            previous_in, previous_out = sys.stdin, sys.stdout
+            output = io.StringIO()
+            namespace = {'__name__':'shipping_backup_restore'}
+            try:
+                sys.stdin, sys.stdout = io.StringIO(json.dumps(value)), output
+                exec(compile(code, 'shipping-backup-restore', 'exec'), namespace)
+                return output.getvalue().encode()
+            except BaseException as error:
+                verified = namespace.get('cleanup_complete') is True
+                failure = error if verified and isinstance(error, GateError) else GateError(
+                    'SHIPPING_BACKUP_RESTORE_UNVERIFIED' if verified else 'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
+                failure.backup_termination_verified = verified
+                raise failure from None
+            finally:
+                sys.stdin, sys.stdout = previous_in, previous_out
+        return super().py(code, value, timeout)
     def run(self, args, data=None, timeout=60):
         mutation = args[0] == 'sudo' or args[:2] in (['docker','stop'],['docker','start'],['docker','update']) or (args[:2] == ['docker','exec'] and ('nginx' in args or 'sh' in args))
         if not mutation:
@@ -707,6 +1091,7 @@ class LocalRemote(Remote):
 def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     state = None
+    retain_lock = False
     stage = 'PREFLIGHT'
     def interrupted(*_):
         raise GateError('INTERRUPTED')
@@ -732,12 +1117,21 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                                'candidateLoadedImageId':art['loadedDockerImageId'],
                                'candidateArchiveConfigDigest':art['archiveConfigDigest'],
                                'templateHash':digest(state['template'].encode()),'migrations':85,
+                               'migrationTarget':SHIPPING_MIGRATION if shipping_migration() else None,
+                               'migrationSqlHash':SHIPPING_SQL_HASH if shipping_migration() else None,
+                               'rollbackContract':'APPLICATION_ONLY_KEEP_L86_AND_ACTUAL_FACTS' if shipping_migration() else 'UNCHANGED_L85',
                                'authorityMountReadability':authority_mounts}})
         require(remote.routes() == (state['template'],state['active']), 'ROUTE_CHANGED_BEFORE_STOP')
         state['old_stop_attempted'] = True
         stage = 'OLD_WRITER_DRAIN'
         remote.run(['docker','stop','--time','30',state['name']])
-        settle_writers(remote, ledger, [])
+        settle_writers(remote, before_ledger(ledger), [])
+        if shipping_migration():
+            stage = 'SHIPPING_BACKUP_RESTORE'
+            state['backupProof'] = shipping_backup_restore(remote, state, root, art)
+            settle_writers(remote, before_ledger(ledger), [])
+            stage = 'SHIPPING_CHECK_MIGRATION'
+            shipping_migrate(remote, state, art, ledger)
         state['candidate_attempted'] = True
         stage = 'CANDIDATE_CREATE'
         # Existing cloner is sent via stdin; binding comes only from existing env.
@@ -781,15 +1175,27 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                           'loadedDockerImageId':art['loadedDockerImageId'],'rootfsIdentityMatch':True,
                           'mountReadabilityParity':'PASS','authorityMountReadability':authority_mounts,
                           'diskAfterUsed':used,'diskAfterAvailable':available,
-                          'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True}))
+                          'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True,
+                          'migrationPhase':state.get('migration_phase')}))
     except BaseException as error:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, signal.SIG_IGN)
+        if shipping_migration() and state and state.get('migration_phase') == 'UNKNOWN':
+            retain_lock = True
+            try:
+                current = remote.inspect(state['migrator'])
+                if current['State']['Running']:
+                    remote.run(['docker','stop','--time','30',state['migrator']])
+                writer_check(remote.containers(), remote.db(), [])
+            except BaseException:
+                pass  # Unproven termination stays closed; never start old writer.
         if state and state.get('old_stop_attempted'):
             try:
                 rollback(remote, state, ledger)
             except BaseException:
+                if shipping_migration():
+                    retain_lock = True
                 code = ('CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED'
                         if stage == 'CANDIDATE_APPLICATION_DB_PROBE'
                         else 'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED')
@@ -801,7 +1207,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         error.deployment_result = 'DEPLOY_ROLLED_BACK' if state and state.get('old_stop_attempted') else 'DEPLOY_BLOCKED'
         raise
     finally:
-        remote.py('import os; os.rmdir(%r)' % LOCK)
+        if not retain_lock:
+            remote.py('import os; os.rmdir(%r)' % LOCK)
 
 
 SAFE_CONTROLLER_CODES = frozenset({
@@ -817,11 +1224,17 @@ SAFE_CONTROLLER_CODES = frozenset({
     'CANDIDATE_DB_PROBE_FAILED_AND_ROLLBACK_FAILED',
     'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED',
     'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED',
+    'SHIPPING_MIGRATION_STATE_UNKNOWN','SHIPPING_MIGRATOR_UNVERIFIED',
+    'SHIPPING_MIGRATOR_IDENTITY_INVALID','SHIPPING_BACKUP_RESTORE_UNVERIFIED',
+    'SHIPPING_DATABASE_PHASE_INVALID','SHIPPING_MIGRATION_DISK_GATE_FAILED',
+    'SHIPPING_PG16_REQUIRED','SHIPPING_PRISMA_CLI_INVALID',
+    'SHIPPING_BACKUP_TERMINATION_UNVERIFIED',
 })
 SAFE_CONTROLLER_STAGES = frozenset({
     'PREFLIGHT','AUTHORITY_MOUNT_SNAPSHOT','OLD_WRITER_DRAIN','CANDIDATE_CREATE',
     'CANDIDATE_CLONE_PARITY','CANDIDATE_INTERNAL_HEALTH','CANDIDATE_RUNTIME_CHECKS',
     'CANDIDATE_APPLICATION_DB_PROBE',
+    'SHIPPING_BACKUP_RESTORE','SHIPPING_CHECK_MIGRATION',
     'NGINX_CUTOVER','PUBLIC_HEALTH','FINAL_RUNTIME_CHECKS','FINAL_DISK','SHA_POINTER','UNKNOWN',
 })
 
@@ -1110,7 +1523,7 @@ def production_measurement(remote, art, ledger):
     require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == EXPECTED_OLD_SHA, 'CURRENT_SHA_POINTER_MISMATCH')
     require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0] == OLD_V2_HASH, 'OLD_RUNTIME_SOURCE_MISMATCH')
     remote.health(name,EXPECTED_OLD_SHA);remote.health(name,EXPECTED_OLD_SHA,public=True)
-    db=remote.db();validate_database(db,ledger);writer_check(remote.containers(),db,[name])
+    db=remote.db();validate_database(db,before_ledger(ledger));writer_check(remote.containers(),db,[name])
     image=remote.inspect(old['Image'],image=True)
     info=json.loads(remote.run(['docker','info','--format','{{json .}}']))
     version=json.loads(remote.run(['docker','version','--format','{{json .Server}}']))
@@ -1340,7 +1753,7 @@ def main():
         return
     summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':EXPECTED_OLD_SHA,
                'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
-               'migrationRequired':MIGRATION_REQUIRED}
+               'migrationRequired':'YES' if shipping_migration() else MIGRATION_REQUIRED}
     if args.mode == 'inspect-artifact':
         # Offline validation still rejects artifacts over the absolute peak cap.
         summary['budget'] = disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])

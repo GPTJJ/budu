@@ -34,6 +34,10 @@ LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/release-controller-dns-empty-normalization',
                          'codex/release-single-writer-db-probe',
                          'codex/data-authority-finalization']
+QUANTITY_BRANCH = r.SHIPPING_BRANCH
+QUANTITY_OLD = r.SHIPPING_OLD_SHA
+QUANTITY_BUSINESS = r.SHIPPING_BUSINESS_SHA
+QUANTITY_ENGINEERING_FILES = '\n'.join(sorted(r.SHIPPING_ENGINEERING_FILES))
 SHIPPING_ENGINEERING_FILES = '.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
 
 
@@ -41,6 +45,14 @@ def build_only_workflow():
     return json.loads(subprocess.check_output(
         ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',
          str(ROOT/'.github/workflows/release-build-only.yml')]))
+
+
+def without_quantity_binding(value, key):
+    sha = QUANTITY_OLD if key == 'EXPECTED_PRODUCTION_SHA' else QUANTITY_BUSINESS
+    prefix = "github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' && '"+sha+"' || "
+    if value.count(prefix) != 1:
+        raise AssertionError('Exact quantity binding required once')
+    return value.replace(prefix,'',1)
 
 
 def build_only_guard(**facts):
@@ -97,7 +109,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
-        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' || github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
@@ -209,9 +221,9 @@ class RealShellRoute(unittest.TestCase):
 
     def test_revision_build_preserves_legacy_bindings_and_exact_business_payload(self):
         workflow=build_only_workflow()
-        self.assertTrue(workflow['env']['EXPECTED_PRODUCTION_SHA'].startswith(
+        self.assertTrue(without_quantity_binding(workflow['env']['EXPECTED_PRODUCTION_SHA'],'EXPECTED_PRODUCTION_SHA').startswith(
             "${{ github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+REVISION_OLD+"' || "))
-        self.assertTrue(workflow['env']['APPROVED_BUSINESS_SHA'].startswith(
+        self.assertTrue(without_quantity_binding(workflow['env']['APPROVED_BUSINESS_SHA'],'APPROVED_BUSINESS_SHA').startswith(
             "${{ github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+REVISION_BUSINESS+"' || "))
         steps=workflow['jobs']['artifact']['steps']
         build=next(step for step in steps if step.get('name','').startswith('Build exact'))['run']
@@ -236,7 +248,7 @@ class RealShellRoute(unittest.TestCase):
             old_line=next(line for line in prior.splitlines() if line.startswith('  '+key+':'))
             new_line=next(line for line in source.splitlines() if line.startswith('  '+key+':'))
             new_prefix="github.ref == 'refs/heads/"+REVISION_BRANCH+"' && '"+(REVISION_OLD if key=='EXPECTED_PRODUCTION_SHA' else REVISION_BUSINESS)+"' || "
-            self.assertEqual(new_line.replace(new_prefix,'',1),old_line)
+            self.assertEqual(without_quantity_binding(new_line,key).replace(new_prefix,'',1),old_line)
 
     def test_payroll_build_retains_exact_artifact_and_business_payload(self):
         workflow=build_only_workflow()
@@ -280,6 +292,17 @@ class RealShellRoute(unittest.TestCase):
                 self.assertEqual(step['if'],"github.ref == 'refs/heads/codex/data-authority-finalization'")
         probe=next(step for step in steps if step.get('name','').startswith('Probe application'))
         self.assertIn('test-candidate-db-probe-integration.py "budu-api:post-transfer-${GITHUB_SHA:0:12}"',probe['run'])
+
+    def test_quantity_ci_calls_exact_controller_and_retains_scoped_proof(self):
+        steps=build_only_workflow()['jobs']['artifact']['steps']
+        probe=next(step for step in steps if step.get('name','').startswith('Probe application'))
+        self.assertIn('test-candidate-db-probe-integration.py --shipping-controller-ci',probe['run'])
+        self.assertIn('"$RELEASE_ARTIFACT_PATH"',probe['run'])
+        self.assertIn('sudo -n --preserve-env=',probe['run'])
+        proof=next(step for step in steps if step.get('name')=='Retain isolated real shipping controller proof')
+        self.assertEqual(proof['if'],"github.ref == 'refs/heads/"+QUANTITY_BRANCH+"'")
+        self.assertEqual(proof['with']['if-no-files-found'],'error')
+        self.assertEqual(proof['with']['path'],'${{ runner.temp }}/shipping-controller-proof.json')
 
     def test_t1_candidate_without_transfer_commit_denied(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -401,6 +424,145 @@ class PostTransferIdentity(unittest.TestCase):
         for value in required:self.assertIn(value,source)
         for value in ('set -x','--build-arg','--secret','docker prune','system prune','prisma migrate','pg_dump'):
             self.assertNotIn(value,source)
+
+
+class QuantityReleaseContract(unittest.TestCase):
+    def test_real_build_guard_accepts_only_exact_six_file_single_parent(self):
+        facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,
+               'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,
+               'GUARD_PARENTS':QUANTITY_BUSINESS,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+        self.assertEqual(build_only_guard(**facts).returncode,0)
+        denied=[{'GITHUB_EVENT_NAME':'push'}, {'REQUESTED_RELEASE_SHA':''},
+                {'REQUESTED_RELEASE_SHA':'b'*40}, {'GITHUB_SHA':'short'},
+                {'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD}, {'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS},
+                {'GUARD_PARENTS':QUANTITY_OLD}, {'GUARD_PARENTS':QUANTITY_BUSINESS+' '+'b'*40},
+                {'GUARD_FILES':QUANTITY_ENGINEERING_FILES+'\nserver/v2.js'},
+                {'GUARD_FILES':QUANTITY_ENGINEERING_FILES+'\nprisma/schema.prisma'},
+                {'GUARD_FILES':QUANTITY_ENGINEERING_FILES+'\n.github/workflows/deploy-prod.yml'},
+                {'GUARD_FILES':SHIPPING_ENGINEERING_FILES}, {'GUARD_HEAD':'b'*40},
+                {'RUNNER_ARCH':'ARM64'}, {'RUNNER_OS':'macOS'},
+                {'GITHUB_REF':'refs/heads/codex/unreviewed-shipping'}]
+        for changed in denied:
+            with self.subTest(changed=changed):self.assertNotEqual(build_only_guard(**{**facts,**changed}).returncode,0)
+
+    def test_quantity_ci_retains_old_source_and_exact_cli_real_pg16_proof(self):
+        workflow=build_only_workflow();steps=workflow['jobs']['artifact']['steps']
+        for key in ('EXPECTED_PRODUCTION_SHA','APPROVED_BUSINESS_SHA'):
+            without_quantity_binding(workflow['env'][key],key)
+        old=next(step for step in steps if step['name']=='Build exact old application for isolated shipping compatibility')
+        self.assertEqual(old['if'],"github.ref == 'refs/heads/"+QUANTITY_BRANCH+"'")
+        self.assertIn('git archive '+QUANTITY_OLD,old['run']);self.assertIn('--platform linux/amd64',old['run'])
+        self.assertIn('--load "$old_dir"',old['run'])
+        build=next(step for step in steps if step['name'].startswith('Build exact production'))['run']
+        quantity=build.split('elif [ "$GITHUB_REF" = refs/heads/'+QUANTITY_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',quantity)
+        self.assertIn('PINNED_PRISMA_CLI_OK',quantity);self.assertIn('6.19.3',quantity)
+        probe=next(step for step in steps if step['name'].startswith('Probe application'))['run']
+        self.assertIn('"budu-api:shipping-old-'+QUANTITY_OLD[:12]+'"',probe)
+        module=(ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()
+        for token in ("'postgres:16.14'",'validate_snapshots(before,after)','OLD_COMPAT_JS',
+                      "'migrate','deploy'",'createTransferExportWorkbook','XLSX.read',
+                      'SHIPPING_CI_COMMIT_LEDGER_GAP_FAILED'):
+            self.assertIn(token,module)
+
+    def test_controller_finite_identity_rejects_wrong_parent_scope_and_sql(self):
+        names=('RELEASE_PROFILE','EXPECTED_OLD_SHA','RUNTIME_SHA','OLD_V2_HASH','IMAGE_PREFIX','CONTAINER_SUFFIX','ROLLBACK_PREFIX')
+        saved=[getattr(r,k) for k in names]
+        try:
+            r.configure_profile('post-transfer',QUANTITY_OLD,QUANTITY_BUSINESS,'a'*64)
+            candidate='e'*40;path='prisma/migrations/'+r.SHIPPING_MIGRATION+'/migration.sql'
+            def facts(repo,*args):
+                if args==('branch','--show-current'):return QUANTITY_BRANCH
+                if args[:1]==('rev-list',):return candidate+' '+QUANTITY_BUSINESS
+                if args==('diff','--name-only',QUANTITY_BUSINESS,candidate):return QUANTITY_ENGINEERING_FILES
+                if args[:2]==('diff','--name-only') or args[:2]==('diff','--diff-filter=A'):return path
+                raise AssertionError(args)
+            with patch.object(r,'git',side_effect=facts):r.validate_shipping_identity(ROOT,candidate)
+            changes=[(('branch','--show-current'),'main','SHIPPING_BRANCH_INVALID'),
+                     (('rev-list','--parents','-n','1',candidate),candidate+' '+QUANTITY_OLD,'SHIPPING_ENGINEERING_PARENT_INVALID'),
+                     (('diff','--name-only',QUANTITY_BUSINESS,candidate),QUANTITY_ENGINEERING_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     (('diff','--name-only',QUANTITY_OLD,candidate,'--','prisma'),path+'\nprisma/schema.prisma','SHIPPING_MIGRATION_SCOPE_INVALID'),
+                     (('diff','--diff-filter=A','--name-only',QUANTITY_OLD,candidate,'--',path),'','SHIPPING_MIGRATION_SCOPE_INVALID')]
+            for key,value,code in changes:
+                with self.subTest(code=code),patch.object(r,'git',side_effect=lambda repo,*args: value if args==key else facts(repo,*args)):
+                    with self.assertRaisesRegex(r.GateError,code):r.validate_shipping_identity(ROOT,candidate)
+            with patch.object(r,'git',side_effect=facts),patch.object(r,'digest',return_value='f'*64):
+                with self.assertRaisesRegex(r.GateError,'SHIPPING_SQL_HASH_INVALID'):r.validate_shipping_identity(ROOT,candidate)
+        finally:
+            for key,value in zip(names,saved):setattr(r,key,value)
+
+
+class ShippingControllerCiIsolation(unittest.TestCase):
+    def setUp(self):
+        spec=importlib.util.spec_from_file_location('isolated_ci',ROOT/'scripts/test-candidate-db-probe-integration.py')
+        self.ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.ci)
+        self.ci.release.configure_profile('post-transfer',QUANTITY_OLD,QUANTITY_BUSINESS,'a'*64)
+        self.sha='e'*40
+        self.environment={'GITHUB_ACTIONS':'true','RUNNER_OS':'Linux','GITHUB_REPOSITORY':'GPTJJ/budu',
+                          'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,'TEST_SHIPPING_CONTROLLER_CI':'1',
+                          'RUNNER_TEMP':'/tmp/owned-fixture','GITHUB_SHA':self.sha}
+
+    def remote(self,mode='success'):
+        return self.ci.ControllerCiRemote('/tmp/owned-fixture','own-network','own-old','own-candidate',mode)
+
+    def test_ci_entrypoint_denies_local_production_remote_and_wrong_scope(self):
+        with patch.dict(os.environ,self.environment,clear=True),patch.object(sys,'platform','linux'),patch.object(os,'geteuid',return_value=0):
+            self.ci.controller_ci_guard()
+            for key,value in [('GITHUB_ACTIONS','false'),('RUNNER_OS','macOS'),('GITHUB_REPOSITORY','other/repo'),
+                              ('GITHUB_REF','refs/heads/main'),('TEST_SHIPPING_CONTROLLER_CI','0'),
+                              ('RUNNER_TEMP',''),('DOCKER_HOST','tcp://remote:2375'),('DOCKER_CONTEXT','production')]:
+                with self.subTest(key=key),patch.dict(os.environ,{key:value}):
+                    with self.assertRaisesRegex(RuntimeError,'ISOLATED_LINUX_CI_REQUIRED'):self.ci.controller_ci_guard()
+            with patch.object(sys,'platform','darwin'):
+                with self.assertRaises(RuntimeError):self.ci.controller_ci_guard()
+            with patch.object(os,'geteuid',return_value=1000):
+                with self.assertRaises(RuntimeError):self.ci.controller_ci_guard()
+
+    def test_adapter_rejects_external_commands_before_execution(self):
+        with patch.object(self.ci.release.LocalRemote,'run',side_effect=AssertionError('PROCESS_FORBIDDEN')):
+            for command in (['ssh','production'],['scp','file','production'],['curl','https://buducandy.cn']):
+                with self.assertRaisesRegex(RuntimeError,'CI_EXTERNAL_TARGET_FORBIDDEN'):self.remote().run(command)
+
+    def test_backup_root_escape_denied_and_only_dump_limit_is_injected(self):
+        remote=self.remote('backup_limit');r=self.ci.release
+        limits={'backupLimit':100,'restoreLimit':200,'walLimit':300,'migratorLimit':400}
+        with patch.dict(os.environ,self.environment,clear=True),patch.object(r.LocalRemote,'py',return_value=b'{}') as execute:
+            with self.assertRaisesRegex(RuntimeError,'CI_ROLLBACK_PATH_ESCAPE'):
+                remote.py(r.SHIPPING_BACKUP_RESTORE_CODE,{'root':'/opt/other','limits':limits})
+            self.assertFalse(execute.called)
+            root='/opt/budu/.rollback-assets/'+r.ROLLBACK_PREFIX+self.sha
+            remote.py(r.SHIPPING_BACKUP_RESTORE_CODE,{'root':root,'limits':limits})
+            code,value,_=execute.call_args.args
+            self.assertEqual(code,r.SHIPPING_BACKUP_RESTORE_CODE)
+            self.assertTrue(value['root'].startswith('/tmp/owned-fixture/rollback/'))
+            self.assertEqual(value['limits'],{**limits,'backupLimit':16})
+            self.assertEqual(limits['backupLimit'],100)
+
+    def test_resource_failure_is_only_injected_after_real_l86_observation(self):
+        remote=self.remote('post_l86_disk');r=self.ci.release
+        with patch.object(r.LocalRemote,'disk',return_value=(20*r.GIB,40*r.GIB)),\
+             patch.object(r.LocalRemote,'db',return_value={'applied':85,'failed':0}) as database,\
+             patch.object(self.ci,'docker',return_value='') as docker_call:
+            self.assertEqual(remote.disk(),(20*r.GIB,40*r.GIB))
+            remote.migrator_started=True
+            self.assertEqual(remote.disk(),(20*r.GIB,40*r.GIB))
+            self.assertFalse(docker_call.called)
+            database.return_value={'applied':86,'failed':0}
+            with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):
+                r.shipping_disk_gate(remote,{'walLimit':1,'migratorLimit':1})
+            self.assertTrue(remote.disk_samples[-1]['injected'])
+            self.assertEqual(remote.disk_samples[-1]['available'],40*r.GIB)
+            self.assertEqual(docker_call.call_args.args[-2],'-c')
+
+    def test_alias_adapter_denies_extra_aliases_and_networks(self):
+        fixture={'Id':'f'*64,'NetworkSettings':{'Networks':{'own-network':{'Aliases':['own-old','f'*12],'IPAddress':'172.20.0.2'}}}}
+        with patch.object(self.ci.release.LocalRemote,'inspect',return_value=fixture):
+            result=self.remote().inspect('own-old')
+            self.assertIsNone(result['NetworkSettings']['Networks']['own-network']['Aliases'])
+            self.assertEqual(result['NetworkSettings']['Networks']['own-network']['IPAddress'],'172.20.0.2')
+            self.assertIsNotNone(fixture['NetworkSettings']['Networks']['own-network']['Aliases'])
+            fixture['NetworkSettings']['Networks']['own-network']['Aliases'].append('production')
+            with self.assertRaisesRegex(RuntimeError,'CI_UNEXPECTED_NETWORK_ALIAS'):self.remote().inspect('own-old')
 
 
 if __name__=='__main__':

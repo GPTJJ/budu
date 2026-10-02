@@ -12,7 +12,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 SPEC = importlib.util.spec_from_file_location('release', Path(__file__).with_name('deploy-prod-transfer-cas.py'))
 r = importlib.util.module_from_spec(SPEC)
@@ -522,8 +522,11 @@ class Gates(unittest.TestCase):
         self.assertIn('os.mkdir',remote.codes[0])
     def test_forbidden_steps_absent(self):
         source=Path(r.__file__).read_text()
-        for forbidden in ['pg_dump','prisma migrate','docker prune','rehearsal','076e6e0','fe4a725']:
+        for forbidden in ['prisma migrate','docker prune','076e6e0','fe4a725']:
             self.assertNotIn(forbidden,source)
+        helper_body=r.SHIPPING_BACKUP_RESTORE_CODE[len(r.SHIPPING_BOUNDED_DUMP_CODE):]
+        self.assertNotIn('pg_dump',source.replace(helper_body,''))
+        self.assertFalse(r.shipping_migration())
         self.assertEqual(r.MIGRATION_REQUIRED,'NO')
     def test_remote_payload_compiles(self):
         source=Path(r.__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
@@ -978,6 +981,262 @@ class MountParityTests(unittest.TestCase):
             out=io.StringIO()
             with patch('sys.stdout',new=out):self.fail('RESULT_INVALID',r.check_controller_result,json.dumps(payload))
             self.assertEqual(out.getvalue(),'')
+
+
+class ShippingFake(Fake):
+    def __init__(self):
+        super().__init__()
+        self.phase='L85';self.migrator=None;self.migration_poll=0;self.migration_failure=None
+        self.retained_actual=6;self.lock_removed=False
+    def disk(self):return 20*r.GIB,60*r.GIB
+    def db(self):
+        if self.migration_failure=='fast-exit' and self.migrator and self.migrator['State']['Running']:
+            self.phase='L86';self.running=[];self.migrator['State']={'Running':False,'ExitCode':0}
+        after=self.phase!='L85'
+        return {'database':r.EXPECTED_DB,'applied':86 if self.phase=='L86' else 85,
+                'failed':1 if self.phase=='FAILED' else 0,'rolledBack':0,
+                'ledger':{**LEDGER,r.SHIPPING_MIGRATION:r.SHIPPING_SQL_HASH} if self.phase=='L86' else LEDGER,
+                'check':{'validated':True,'definition':r.SHIPPING_CHECK_NEW if after else r.SHIPPING_CHECK_OLD},
+                'invalidFacts':0,'pgVersion':'16.14','dbBytes':16*1024**2,
+                'clients':[c['NetworkSettings']['Networks']['net']['IPAddress'] for c in self.running],**self.db_override}
+    def inspect(self,name,image=False):
+        if self.migrator and name==self.migrator['Name'].lstrip('/'):
+            if self.migrator['State']['Running']:
+                self.migration_poll+=1
+                if self.migration_failure=='signal':
+                    self.migration_failure=None
+                    raise r.GateError('INTERRUPTED')
+                if self.migration_poll>1:
+                    self.migrator['State']={'Running':False,'ExitCode':0}
+                    self.running=[]
+                    self.phase=self.migration_failure or 'L86'
+            return copy.deepcopy(self.migrator)
+        return super().inspect(name,image)
+    def run(self,args,data=None,timeout=60):
+        if args[:3]==['docker','run','--rm'] and r.SHIPPING_CLI_PROBE in args:
+            self.events.append(('pinned-cli',));return b'PINNED_PRISMA_CLI_OK\n'
+        if self.migrator and args[:2]==['docker','start'] and args[-1]==self.migrator['Name'].lstrip('/'):
+            self.events.append(('migrator-start',));assert not self.running
+            self.migrator['State']['Running']=True;self.running=[self.migrator];return b''
+        if self.migrator and args[:2]==['docker','stop'] and args[-1]==self.migrator['Name'].lstrip('/'):
+            self.events.append(('migrator-stop',));self.migrator['State']['Running']=False;self.running=[];return b''
+        return super().run(args,data,timeout)
+    def py(self,code,value=None,timeout=60):
+        if code==r.SHIPPING_MIGRATOR_CREATE_CODE:
+            assert not self.running
+            self.events.append(('migrator-create',))
+            self.migrator={'Name':'/'+value['name'],'Image':art()['loadedDockerImageId'],
+                'State':{'Running':False,'ExitCode':0},'Config':{
+                    'Image':value['image'],'Labels':{'budu.production-role':'migrator',r.REVISION:NEW},
+                    'Env':['NODE_ENV=production','PATH=/fixture','DATABASE_URL='+env_url(self.old),
+                           'PGOPTIONS=-c application_name=budu_shipping_migrator'],
+                    'Entrypoint':['node'],'Cmd':['/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma']},
+                'HostConfig':{'ReadonlyRootfs':True,'RestartPolicy':{'Name':'no','MaximumRetryCount':0},
+                              'NetworkMode':'net','PortBindings':{},'Tmpfs':{'/tmp':'rw,nosuid,size=128m'},
+                              'LogConfig':{'Type':'json-file','Config':{'max-size':'1m','max-file':'1'}}},
+                'Mounts':[],'NetworkSettings':{'Networks':{'net':{'IPAddress':'172.20.0.5'}}}}
+            return b''
+        if 'os.rmdir' in code:self.lock_removed=True
+        return super().py(code,value,timeout)
+
+
+def env_url(container):return r.env(container)['DATABASE_URL']
+
+
+class ShippingMigrationGates(unittest.TestCase):
+    def setUp(self):
+        names=('RELEASE_PROFILE','EXPECTED_OLD_SHA','RUNTIME_SHA','OLD_V2_HASH','IMAGE_PREFIX','CONTAINER_SUFFIX','ROLLBACK_PREFIX')
+        values=[getattr(r,k) for k in names]
+        self.addCleanup(lambda: [setattr(r,k,v) for k,v in zip(names,values)])
+        r.configure_profile('post-transfer',r.SHIPPING_OLD_SHA,r.SHIPPING_BUSINESS_SHA,'1'*64)
+        self.name_patch=patch.dict(globals(),{'NAME':'budu-prod-'+NEW[:12]+'-post-transfer'})
+        self.name_patch.start();self.addCleanup(self.name_patch.stop)
+        for obj,key in ((r.subprocess,'run'),(r.signal,'signal'),(r.time,'sleep')):
+            mock=patch.object(obj,key,side_effect=AssertionError('REAL_PROCESS_FORBIDDEN') if obj is r.subprocess else None)
+            mock.start();self.addCleanup(mock.stop)
+        self.ledger={**LEDGER,r.SHIPPING_MIGRATION:r.SHIPPING_SQL_HASH}
+        self.art=art();self.art['config']['Env']=['NODE_ENV=production','PATH=/fixture']
+
+    def execute(self,f,backup_error=False):
+        def backup(remote,state,root,image):
+            self.assertFalse(remote.running);self.assertEqual(state['migration_phase'],'L85')
+            remote.events.append(('backup-restore',))
+            if backup_error:raise r.GateError('SHIPPING_BACKUP_RESTORE_UNVERIFIED')
+            return {'restoreVerified':True}
+        with patch.object(r,'shipping_backup_restore',side_effect=backup),patch('sys.stdout',io.StringIO()):
+            return r.execute_loaded(f,self.art,self.ledger,'fixture','old-id',r.digest(ROUTES.encode()))
+
+    def test_exact_contract_only(self):
+        self.assertTrue(r.shipping_migration());self.assertEqual(r.before_ledger(self.ledger),LEDGER)
+        for ledger in (LEDGER,{**self.ledger,r.SHIPPING_MIGRATION:'a'*64},{**self.ledger,'unexpected':'b'*64}):
+            with self.subTest(ledgerCount=len(ledger)),self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_CONTRACT_INVALID'):
+                r.before_ledger(ledger)
+        r.RUNTIME_SHA='f'*40;self.assertFalse(r.shipping_migration())
+        with self.assertRaisesRegex(r.GateError,'MIGRATION_LEDGER_INVALID'):
+            r.validate_database(ShippingFake().db(),self.ledger)
+
+    def test_both_phases_require_exact_check_ledger_and_validation(self):
+        f=ShippingFake();r.validate_database(f.db(),LEDGER);f.phase='L86';r.validate_database(f.db(),self.ledger)
+        cases=[{'applied':85},{'failed':1},{'rolledBack':1},{'check':{'validated':False,'definition':r.SHIPPING_CHECK_NEW}},
+               {'check':{'validated':True,'definition':r.SHIPPING_CHECK_OLD}},{'invalidFacts':1},
+               {'ledger':{**self.ledger,r.SHIPPING_MIGRATION:'f'*64}}]
+        for change in cases:
+            with self.subTest(change=change),self.assertRaises(r.GateError):r.validate_database({**f.db(),**change},self.ledger)
+        f.phase='GAP'
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_DATABASE_PHASE_INVALID'):r.validate_database(f.db(),LEDGER)
+
+    def test_backup_and_migrator_are_inside_original_disk_gate(self):
+        f=ShippingFake();resources=r.shipping_resources(f.db());r.shipping_disk_gate(f,resources,self.art)
+        f.disk=lambda:(60*r.GIB,11*r.GIB)
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):r.shipping_disk_gate(f,resources)
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_PG16_REQUIRED'):r.shipping_resources({**f.db(),'pgVersion':'18.3'})
+        self.assertEqual(r.MAX_PROJECTED_USAGE,85);self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*r.GIB)
+
+    def test_success_backup_zero_unique_migrator_zero_candidate(self):
+        f=ShippingFake();self.execute(f)
+        self.assertEqual(f.phase,'L86');self.assertEqual(f.retained_actual,6);self.assertTrue(f.lock_removed)
+        events=[e[0] for e in f.events]
+        self.assertLess(events.index('backup-restore'),events.index('migrator-create'))
+        self.assertLess(events.index('migrator-start'),events.index('create-start'))
+        self.assertEqual([c['Name'] for c in f.running],['/'+NAME])
+        self.assertFalse(any(e[:2]==('docker','start') and e[-1]==OLD_NAME for e in f.events))
+
+    def test_backup_failure_rolls_back_only_known_l85(self):
+        f=ShippingFake()
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_BACKUP_RESTORE_UNVERIFIED'):self.execute(f,True)
+        self.assertEqual(f.phase,'L85');self.assertTrue(f.lock_removed)
+        self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME])
+        self.assertFalse(any(e[0]=='migrator-start' for e in f.events))
+
+    def test_short_migration_exit_between_snapshots_still_requires_exact_l86_zero(self):
+        f=ShippingFake();f.migration_failure='fast-exit';self.execute(f)
+        self.assertEqual(f.phase,'L86');self.assertTrue(f.lock_removed)
+        self.assertEqual([c['Name'] for c in f.running],['/'+NAME])
+
+    def test_sql_commit_ledger_gap_failed_ledger_and_signal_remain_closed(self):
+        for failure in ('GAP','FAILED','signal'):
+            with self.subTest(failure=failure):
+                f=ShippingFake();f.migration_failure=failure
+                with self.assertRaisesRegex(r.GateError,'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED') as error:self.execute(f)
+                self.assertEqual(error.exception.deployment_result,'DEPLOY_BLOCKED')
+                self.assertFalse(f.lock_removed);self.assertEqual(f.retained_actual,6);self.assertFalse(f.running)
+                self.assertFalse(any(e[:2]==('docker','start') and e[-1]==OLD_NAME for e in f.events))
+                self.assertFalse(any(e[0]=='create-start' for e in f.events))
+
+    def test_post_migration_health_cutover_and_probe_failure_keep_l86_and_actual6(self):
+        for failure in ('health','public','db-dns','reload','pointer-after'):
+            with self.subTest(failure=failure):
+                f=ShippingFake();f.fail=failure
+                with self.assertRaises(r.GateError):self.execute(f)
+                self.assertEqual(f.phase,'L86');self.assertEqual(f.retained_actual,6)
+                self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME]);self.assertTrue(f.lock_removed)
+                r.validate_database(f.db(),self.ledger)
+                self.assertEqual(f.routes(),(ROUTES,ROUTES))
+
+    def test_wrong_migrator_identity_never_runs_migration(self):
+        f=ShippingFake();original_inspect=f.inspect
+        def wrong(name,image=False):
+            result=original_inspect(name,image)
+            if f.migrator and name==f.migrator['Name'].lstrip('/'):result['Image']='sha256:wrong'
+            return result
+        f.inspect=wrong
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATOR_IDENTITY_INVALID'):self.execute(f)
+        self.assertEqual(f.phase,'L85');self.assertTrue(f.lock_removed)
+        self.assertFalse(any(e[0]=='migrator-start' for e in f.events))
+
+    def test_verified_l86_disk_failure_rolls_back_old_app_preserving_actual6(self):
+        f=ShippingFake()
+        def gate(*args,**kwargs):
+            if f.phase=='L86':raise r.GateError('SHIPPING_MIGRATION_DISK_GATE_FAILED')
+            return {}
+        with patch.object(r,'shipping_disk_gate',side_effect=gate):
+            with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED') as error:self.execute(f)
+        self.assertEqual(error.exception.deployment_result,'DEPLOY_ROLLED_BACK')
+        self.assertEqual(f.phase,'L86');self.assertEqual(f.retained_actual,6);self.assertTrue(f.lock_removed)
+        self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME]);r.validate_database(f.db(),self.ledger)
+
+    def test_backup_timeout_signal_restore_l85_only_after_confirmed_termination(self):
+        for code,verified in [('SHIPPING_BACKUP_RESTORE_UNVERIFIED',True),('INTERRUPTED',True),
+                              ('SHIPPING_BACKUP_TERMINATION_UNVERIFIED',False)]:
+            with self.subTest(code=code,verified=verified):
+                f=ShippingFake();original_py=f.py
+                def cancelled(helper,value=None,timeout=60):
+                    if helper==r.SHIPPING_BACKUP_RESTORE_CODE:
+                        error=r.GateError(code);error.backup_termination_verified=verified;raise error
+                    return original_py(helper,value,timeout)
+                f.py=cancelled
+                with patch('sys.stdout',io.StringIO()):
+                    with self.assertRaises(r.GateError) as error:r.execute_loaded(f,self.art,self.ledger,'fixture','old-id',r.digest(ROUTES.encode()))
+                self.assertEqual(f.phase,'L85')
+                if verified:
+                    self.assertEqual(error.exception.deployment_result,'DEPLOY_ROLLED_BACK')
+                    self.assertTrue(f.lock_removed);self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME])
+                else:
+                    self.assertEqual(error.exception.deployment_result,'DEPLOY_BLOCKED')
+                    self.assertFalse(f.lock_removed);self.assertFalse(f.running)
+                    self.assertFalse(any(e[:2]==('docker','start') and e[-1]==OLD_NAME for e in f.events))
+                self.assertFalse(any(e[0]=='migrator-start' for e in f.events))
+
+    def test_backup_no_output_total_deadline_terminates_and_waits_child(self):
+        process=Mock();process.poll.side_effect=[None,0];process.wait.return_value=0
+        with tempfile.TemporaryDirectory() as directory,patch.object(r.subprocess,'Popen',return_value=process),\
+             patch.object(r.select,'select',return_value=([],[],[])) as readiness,\
+             patch.object(r.time,'monotonic',side_effect=[0,2]),\
+             patch.object(r.os,'read',side_effect=AssertionError('BLOCKING_READ_FORBIDDEN')),\
+             patch.object(r.signal,'pthread_sigmask',return_value=set()):
+            with self.assertRaisesRegex(TimeoutError,'BACKUP_TOTAL_DEADLINE'):
+                r.bounded_backup_dump(['fixture'],Path(directory)/'backup',100,1)
+        readiness.assert_called_once();self.assertEqual(readiness.call_args.args[-1],1)
+        process.terminate.assert_called_once();process.wait.assert_called_once_with(timeout=5)
+        process.stdout.close.assert_called_once()
+
+    def test_backup_signal_cancels_child_and_only_cleanup_defers_signals(self):
+        process=Mock();process.poll.side_effect=[None,0];process.wait.return_value=0
+        with tempfile.TemporaryDirectory() as directory,patch.object(r.subprocess,'Popen',return_value=process),\
+             patch.object(r.select,'select',side_effect=r.GateError('INTERRUPTED')),\
+             patch.object(r.time,'monotonic',return_value=0),\
+             patch.object(r.signal,'pthread_sigmask',return_value=set()) as masking:
+            with self.assertRaisesRegex(r.GateError,'INTERRUPTED'):
+                r.bounded_backup_dump(['fixture'],Path(directory)/'backup',100,1)
+        self.assertEqual([call.args[0] for call in masking.call_args_list],[r.signal.SIG_BLOCK,r.signal.SIG_SETMASK])
+        process.terminate.assert_called_once();process.wait.assert_called_once_with(timeout=5)
+
+    def test_backup_eof_wait_timeout_escalates_terminate_to_kill_and_wait(self):
+        process=Mock();process.poll.side_effect=[None,0]
+        process.wait.side_effect=[r.subprocess.TimeoutExpired('fixture',1),r.subprocess.TimeoutExpired('fixture',5),0]
+        with tempfile.TemporaryDirectory() as directory,patch.object(r.subprocess,'Popen',return_value=process),\
+             patch.object(r.select,'select',return_value=([process.stdout],[],[])),\
+             patch.object(r.os,'read',return_value=b''),patch.object(r.time,'monotonic',return_value=0),\
+             patch.object(r.signal,'pthread_sigmask',return_value=set()):
+            with self.assertRaises(r.subprocess.TimeoutExpired):r.bounded_backup_dump(['fixture'],Path(directory)/'backup',100,1)
+        process.terminate.assert_called_once();process.kill.assert_called_once();self.assertEqual(process.wait.call_count,3)
+
+    def test_long_backup_stays_in_controller_with_verified_cleanup_error_only(self):
+        for verified in (True,False):
+            helper='cleanup_complete='+str(verified)+'\nraise RuntimeError("PRIVATE_DETAILS")'
+            with patch.object(r,'SHIPPING_BACKUP_RESTORE_CODE',helper),\
+                 patch.object(r.signal,'pthread_sigmask',side_effect=AssertionError('LONG_OPERATION_MUST_NOT_BLOCK_SIGNALS')):
+                with self.assertRaises(r.GateError) as error:r.LocalRemote().py(helper,{})
+            self.assertEqual(error.exception.backup_termination_verified,verified)
+            self.assertNotIn('PRIVATE_DETAILS',str(error.exception))
+
+    def test_unknown_client_cannot_be_admitted_as_migrator(self):
+        f=ShippingFake();original_db=f.db
+        def unknown():
+            result=original_db()
+            if f.migrator and f.migrator['State']['Running']:result['clients'].append('192.0.2.1')
+            return result
+        f.db=unknown
+        with self.assertRaisesRegex(r.GateError,'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED'):self.execute(f)
+        self.assertFalse(f.lock_removed);self.assertFalse(any(e[0]=='create-start' for e in f.events))
+
+    def test_backup_helper_is_private_exclusive_isolated_and_compiles(self):
+        compile(r.SHIPPING_BACKUP_RESTORE_CODE,'shipping-backup','exec')
+        compile(r.SHIPPING_MIGRATOR_CREATE_CODE,'shipping-migrator','exec')
+        for token in ("path.open('xb')","os.umask(0o077)","'--network','none'","before!=after","process.terminate()","'pg_restore'","'restoreVerified':True"):
+            self.assertIn(token,r.SHIPPING_BACKUP_RESTORE_CODE)
+        for forbidden in ('migrate resolve','npx','pg_restore','server/index.js'):
+            self.assertNotIn(forbidden,r.SHIPPING_MIGRATOR_CREATE_CODE)
 
 
 if __name__=='__main__':

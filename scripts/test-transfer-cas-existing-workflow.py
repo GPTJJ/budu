@@ -84,8 +84,16 @@ class ExistingWorkflow(unittest.TestCase):
 
     def test_valid_release_identity(self):
         with patch.object(r,'git',side_effect=self.mock_git()),patch.object(r,'command',return_value=b''):
-            sha,ledger=r.identity(ROOT)
+            paths=[p for p in (ROOT/'prisma/migrations').glob('*/migration.sql') if p.parent.name != r.SHIPPING_MIGRATION]
+            with patch.object(Path,'glob',return_value=paths):
+                sha,ledger=r.identity(ROOT)
         self.assertEqual(sha,NEW);self.assertEqual(len(ledger),85)
+
+
+    def test_first_rollout_does_not_accept_shipping_migration(self):
+        with patch.object(r,'git',side_effect=self.mock_git()),patch.object(r,'command',return_value=b''):
+            with self.assertRaisesRegex(r.GateError,'LOCAL_MIGRATION_COUNT_INVALID'):
+                r.identity(ROOT)
 
     def test_wrong_business_ancestor_fails(self):
         with patch.object(r,'git',side_effect=self.mock_git(ancestor=False)),patch.object(r,'command',side_effect=AssertionError('UNEXPECTED_IO')):
