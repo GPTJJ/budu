@@ -51,11 +51,14 @@ function memoryDb(initial = fixtures()) {
 
   const includeItems = (order, source = state) => order ? { ...structuredClone(order), items: structuredClone(source.orders.find((row) => row.id === order.id)?.items || order.items || []) } : null
   const client = (source) => ({
-    partner: { findUnique: async ({ where }) => structuredClone(source.partners.find((row) => row.id === where.id) || null) },
-    partnerStore: { findFirst: async ({ where }) => structuredClone(source.stores.find((row) => row.id === where.id && (!where.partnerId || row.partnerId === where.partnerId)) || null) },
+    // Current Q checks deleted test-order replay tombstones before all submissions.
+    orderPurposeAudit: { findFirst: async () => null },
+    partner: { findUnique: async ({ where }) => structuredClone(source.partners.find((row) => row.id === where.id) || null), findMany: async () => structuredClone(source.partners) },
+    partnerStore: { findFirst: async ({ where }) => structuredClone(source.stores.find((row) => row.id === where.id && (!where.partnerId || row.partnerId === where.partnerId)) || null), findMany: async () => structuredClone(source.stores) },
     inventoryItem: { findMany: async ({ where }) => structuredClone(source.products.filter((row) => where.id.in.includes(row.id))) },
     user: { findUnique: async ({ where }) => structuredClone(source.users.find((row) => row.id === where.id) || null) },
     replenishmentOrder: {
+      count: async () => source.orders.length,
       findUnique: async ({ where }) => {
         const compound = where.idempotencyScope_idempotencyKey
         const row = compound
@@ -158,6 +161,26 @@ test('creation re-reads current KG price, PCS price and one Partner discount', a
     [600n, 6000, 7200n],
   ])
   assert.equal(order.requestedTotalAmountCents, 18900n)
+})
+
+test('物料真实提交读取独立报价、保留物料ID，未显式启用或无报价时拒绝', async () => {
+  const data = fixtures()
+  const material = { id: 'material-ice', name: '冰袋', sku: 'BUDU-MAT-ICE', transferCode: 'BUDU-MAT-ICE', category: 'material', isActive: false, salePriceCents: 10n, costPriceCents: 10n, partnerReplenishmentEnabled: true, partnerOrderUnit: 'NATIVE', unit: '包', partnerMaterialPriceCents: 200n, updatedAt: now }
+  data.products.push(material)
+  const body = { items: [{ inventoryItemId: material.id, orderUnit: 'NATIVE', quantity: 2 }] }
+  const db = memoryDb(data)
+  const result = await createPartner(db, 'material-order-0001', body)
+  assert.equal(result.order.requestedTotalAmountCents, 260n)
+  assert.equal(result.order.items[0].inventoryItemId, material.id)
+  assert.equal(result.order.items[0].basePriceSnapshotCents, 200n)
+  material.partnerMaterialPriceCents = 500n
+  assert.equal(result.order.items[0].basePriceSnapshotCents, 200n)
+  for (const change of [{ partnerReplenishmentEnabled: false }, { partnerMaterialPriceCents: null }, { partnerMaterialPriceCents: 0n }, { sku: null }, { isActive: true }]) {
+    const blocked = fixtures(); blocked.products.push({ ...material, ...change })
+    await assert.rejects(() => createPartner(memoryDb(blocked), 'material-block-0001', body), /不可补货|不在.*目录|不可用/)
+  }
+  await assert.rejects(() => createPartner(memoryDb(data), 'material-tenant-0001', { ...body, partnerStoreId: 'store-b' }), /门店/)
+  await assert.rejects(() => createPartner(memoryDb(data), 'material-unit-000001', { items: [{ inventoryItemId: material.id, orderUnit: 'PCS', quantity: 2 }] }), /单位/)
 })
 
 test('lifecycle, PartnerStore tenant/state and current Catalogue all fail closed', async () => {

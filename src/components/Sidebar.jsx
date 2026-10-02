@@ -18,7 +18,7 @@ import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
 import BrandSlot from './BrandSlot'
 import { APP_VERSION } from '../version'
-import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasSweetCardCapability } from '../../shared/accountPermissions'
+import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasPageAccess, hasSweetCardCapability } from '../../shared/accountPermissions'
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -51,7 +51,6 @@ const subMenus = {
   inventory: [
     { key: 'inventory-transfer', label: '门店调拨' },
     { key: 'inventory-purchase', label: '申请采购' },
-    { key: 'product-material-management', label: '物料管理' },
   ],
   'partner-management': [
     { key: 'partner-management', label: '合作商档案' },
@@ -64,8 +63,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const [expandedKeys, setExpandedKeys] = useState({})
   const groupModules = {
     staff: [MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL, MODULE_KEYS.EMPLOYEE_PROFILE],
-    store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER],
-    inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT],
+    store: [MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS, MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT],
+    inventory: [MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE],
     'partner-management': [MODULE_KEYS.PARTNER_MANAGEMENT, MODULE_KEYS.PARTNER_REPLENISHMENT_REVIEW],
   }
   const visibleMenus = menus.filter((item) => {
@@ -104,7 +103,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         {visibleMenus.map((item) => {
           const Icon = item.icon
           // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
-          const subs = (subMenus[item.key] || []).filter((sub) => hasModuleAccess(user, sub.moduleKey || sub.key))
+          const subs = (subMenus[item.key] || []).filter((sub) => hasPageAccess(user, sub.moduleKey || sub.key))
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 

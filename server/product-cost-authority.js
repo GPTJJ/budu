@@ -70,9 +70,9 @@ export async function appendProductCostVersion(client, input) {
   if (!reason) throw httpError('请填写成本变更原因')
 
   return client.$transaction(async (tx) => {
-    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`product-cost:${inventoryItemId}`}))`)
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`product-cost:${inventoryItemId}`}))`)
     const product = await tx.inventoryItem.findUnique({ where: { id: inventoryItemId } })
-    if (!product || product.category !== 'product') throw httpError('商品不存在', 404)
+    if (!product || product.category !== (input.category || 'product')) throw httpError('商品或物料不存在', 404)
     const latest = await tx.inventoryItemCostHistory.findFirst({
       where: { inventoryItemId },
       orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],

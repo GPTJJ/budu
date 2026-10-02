@@ -6,7 +6,8 @@ import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
 import { analyzeProductMenuSheets, applyAutoSku } from '../utils/productExcel'
 import LazyImage from './LazyImage'
-import { hasReportCostManage, hasReportCostView } from '../../shared/accountPermissions'
+import MaterialEditor from './MaterialEditor'
+import { hasModuleAccess, hasReportCostManage, hasReportCostView } from '../../shared/accountPermissions'
 
 const emptyForm = {
   productId: '',
@@ -153,11 +154,17 @@ function ProductGroupManager({ groups, products, onClose, onSaved }) {
   return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品组管理"><div className="my-4 flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"><div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4"><div><h3 className="font-black text-slate-900">商品组管理</h3><p className="text-xs text-slate-400">只组织 POS 展示，真实 SKU 身份保持不变</p></div><button onClick={onClose} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400" aria-label="关闭商品组管理"><X className="h-5 w-5" /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{error && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-600">{error}</p>}{!editor ? <div className="space-y-3"><div className="flex justify-end"><button onClick={() => startEditor()} className="btn-primary min-h-10 px-4"><Plus className="h-4 w-4" />新建商品组</button></div><div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">{groups.length === 0 ? <p className="p-8 text-center text-sm text-slate-400">暂无商品组</p> : groups.map((group) => <div key={group.id} data-product-group-id={group.id} className="flex items-start gap-3 px-3 py-4"><div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100">{group.hasCoverImage ? <LazyImage src={groupThumbnailUrl(group)} alt="" className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-slate-300" />}</div><div className="min-w-0 flex-1"><p className="truncate font-black text-slate-800">{group.name}</p><p className="mt-1 text-xs text-slate-400">{group.memberCount} 个款式 · 排序 {group.sortOrder} · {group.isActive ? 'POS 聚合 ✓' : '已停用'}</p><p className="mt-1 truncate text-xs text-slate-400">{(group.members || []).map((member) => member.variantName).filter(Boolean).join(' · ') || '尚未添加款式'}</p></div><button onClick={() => startEditor(group)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑商品组${group.name}`}><Pencil className="h-4 w-4" /></button></div>)}</div></div> : <div className="space-y-4"><button onClick={() => setEditor(null)} className="text-xs font-bold text-slate-400">← 返回商品组列表</button><div className="grid gap-4 sm:grid-cols-[140px_1fr]"><div><div className="aspect-square overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50">{editorPreview ? <img src={editorPreview} alt="商品组主图" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-center text-slate-400"><ImagePlus className="h-7 w-7" /><span className="text-xs">可选主图</span></div>}</div><label className="mt-2 block cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-center text-xs font-bold text-slate-600">选择主图<input type="file" accept="image/*" className="hidden" onChange={(event) => handleCover(event.target.files?.[0])} /></label>{editorPreview && <button onClick={() => setEditor((current) => ({ ...current, coverImage: '', coverImageDirty: true, hasCoverImage: false }))} className="mt-2 w-full text-xs text-slate-400">移除主图</button>}</div><div className="space-y-3"><label className="block text-xs font-bold text-slate-500">商品组名称<input aria-label="商品组名称" value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} className={inputClass} /></label><label className="block text-xs font-bold text-slate-500">商品组排序<input aria-label="商品组排序" type="number" value={editor.sortOrder} onChange={(event) => setEditor({ ...editor, sortOrder: event.target.value })} className={inputClass} /></label><label className="flex items-center justify-between rounded-xl bg-budu-50 p-3 text-sm font-bold text-slate-600">启用 POS 聚合<input aria-label="启用商品组" type="checkbox" checked={editor.isActive} onChange={(event) => setEditor({ ...editor, isActive: event.target.checked })} className="h-5 w-5 accent-budu-500" /></label></div></div><div className="rounded-2xl border border-slate-200 p-3"><label className="relative block"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索组内商品" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索商品名称 / SKU" className="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none" /></label><div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{candidates.map((product) => { const member = selected.get(product.productId); return <div key={product.productId} className="rounded-xl bg-slate-50 p-3"><label className="flex items-start gap-2"><input aria-label={`加入商品组${product.name}`} type="checkbox" checked={Boolean(member)} onChange={() => toggleMember(product)} className="mt-1 h-4 w-4 accent-budu-500" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-700">{product.name}</span><span className="block truncate text-[11px] text-slate-400">SKU {product.sku || '—'}</span></span></label>{member && <label className="mt-2 block pl-6 text-[11px] font-bold text-slate-500">款式名称<input aria-label={`${product.name}款式名称`} value={member.variantName} onChange={(event) => updateVariant(product.productId, event.target.value)} placeholder="例如 蓝" className={inputClass} /></label>}</div> })}</div></div><button onClick={save} disabled={busy || !editor.name.trim()} className="btn-primary min-h-11 w-full"><Check className="h-4 w-4" />{busy ? '保存中…' : '保存商品组'}</button></div>}</div></div></div>
 }
 
-export default function ProductCenterPage({ onBack, user }) {
-  const canManage = Boolean(user && ['developer', 'admin', 'finance', 'manager'].includes(user.role))
+export default function ProductCenterPage({ onBack, user, initialMaterials = false }) {
+  const canViewProducts = hasModuleAccess(user, 'product-center')
+  const canViewMaterials = hasModuleAccess(user, 'product-material-management')
+  const writer = Boolean(user && ['developer', 'admin', 'finance', 'manager'].includes(user.role))
+  const canManage = writer && canViewProducts
+  const canManageMaterials = writer && canViewMaterials
   const canViewCost = hasReportCostView(user)
   const canManageCost = hasReportCostManage(user)
   const [products, setProducts] = useState([])
+  const [materials, setMaterials] = useState([])
+  const [materialEditor, setMaterialEditor] = useState(null)
   const [productCategories, setProductCategories] = useState([])
   const [productGroups, setProductGroups] = useState([])
   const [loading, setLoading] = useState(true)
@@ -192,15 +199,28 @@ export default function ProductCenterPage({ onBack, user }) {
     return m
   }, [previewRows])
   const fileInputRef = useRef(null)
+  const materialCategories = productCategories.filter((item) => item.name === '物料')
+  const materialCategoryAmbiguous = materialCategories.length > 1
+  const materialCategory = materialCategories.length === 1 ? materialCategories[0] : null
+  const materialRows = (materialCategoryAmbiguous ? [] : materials).map((item) => ({ ...item, productId: item.id, _material: true, transferCode: item.code || '', transferEnabled: item.enabled, isActive: false, productCategoryId: item.productCategoryId || materialCategory?.id || '', productCategory: item.productCategory || materialCategory || null }))
 
   const loadProducts = async () => {
+    if (!canViewProducts && !canViewMaterials) { setLoading(false); return }
     setLoading(true)
     setError('')
     try {
-      const [data, categoryData, groupData] = await Promise.all([api('/v2/products'), api('/v2/product-categories'), api('/v2/product-groups')])
+      const [data, categoryData, groupData, materialData] = await Promise.all([canViewProducts ? api('/v2/products') : { rows: [] }, api('/v2/product-categories'), canViewProducts ? api('/v2/product-groups') : { rows: [] }, canViewMaterials ? api('/v2/transfer-master-items?category=material') : { rows: [] }])
       setProducts(data.rows || [])
       setProductCategories(categoryData.rows || [])
       setProductGroups(groupData.rows || [])
+      const matchingMaterialCategories = (categoryData.rows || []).filter((item) => item.name === '物料')
+      setMaterials(matchingMaterialCategories.length > 1 ? [] : materialData.rows || [])
+      if (matchingMaterialCategories.length > 1 && canViewMaterials) setError('物料分类存在同名歧义，已暂停物料展示和编辑，请核对分类 ID')
+      if (initialMaterials || !canViewProducts) {
+        const existingCategory = matchingMaterialCategories.length === 1 ? matchingMaterialCategories[0] : null
+        if (existingCategory) setCategory(existingCategory.id)
+        setPurpose('all')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -212,14 +232,30 @@ export default function ProductCenterPage({ onBack, user }) {
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return products.filter((item) => {
+    return [...products, ...materialRows].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN')).filter((item) => {
       if (category === 'uncategorized' && item.productCategoryId) return false
       if (!['all', 'uncategorized'].includes(category) && item.productCategoryId !== category) return false
       if (status === 'active' && !purposeEnabled(item, purpose)) return false
       if (status === 'inactive' && purposeEnabled(item, purpose)) return false
       return !q || [item.name, item.sku, item.transferCode, item.barcode].some((value) => String(value || '').toLowerCase().includes(q))
     })
-  }, [products, search, category, purpose, status])
+  }, [products, materials, materialCategory, materialCategoryAmbiguous, search, category, purpose, status])
+
+  const editMaterial = (item = null) => {
+    setError('')
+    setMaterialEditor({ ...(item || {}), id: item?.id || '', name: item?.name || '', sku: item?.sku || '', code: item?.code || '', enabled: item?.enabled ?? true, sortOrder: String(item?.sortOrder ?? 0), salePrice: centsToYuan(item?.salePriceCents ?? '10'), costPrice: centsToYuan(item?.costPriceCents ?? '10'), partnerReplenishmentEnabled: item?.partnerReplenishmentEnabled === true, partnerOrderUnit: item?.partnerOrderUnit || '', partnerMaterialPrice: centsToYuan(item?.partnerMaterialPriceCents), unit: item?.unit || '', productCategoryId: item?.productCategoryId || materialCategory?.id || '' })
+  }
+
+  const saveMaterial = async () => {
+    if (!materialEditor || saving) return
+    setSaving(true); setError('')
+    try {
+      const body = { category: 'material', name: materialEditor.name, enabled: materialEditor.enabled, sortOrder: Number(materialEditor.sortOrder), productCategoryId: materialEditor.productCategoryId, salePriceCents: yuanToCents(materialEditor.salePrice), ...(!materialEditor.id || materialEditor.costVisible ? { costPriceCents: yuanToCents(materialEditor.costPrice) } : {}), partnerReplenishmentEnabled: materialEditor.partnerReplenishmentEnabled, partnerOrderUnit: materialEditor.partnerOrderUnit, partnerMaterialPriceCents: materialEditor.partnerMaterialPrice ? yuanToCents(materialEditor.partnerMaterialPrice) : '', unit: materialEditor.unit, ...(materialEditor.id ? { version: materialEditor.version } : {}) }
+      const data = await api(materialEditor.id ? `/v2/transfer-master-items/${materialEditor.id}` : '/v2/transfer-master-items', { method: materialEditor.id ? 'PUT' : 'POST', body: JSON.stringify(body) })
+      setMaterials((current) => materialEditor.id ? current.map((item) => item.id === data.item.id ? data.item : item) : [...current, data.item])
+      setMaterialEditor(null); setNotice('物料资料已保存')
+    } catch (error) { setError(error.message) } finally { setSaving(false) }
+  }
 
   const update = (key, value) => setForm((current) => {
     const next = { ...current, [key]: value }
@@ -233,7 +269,7 @@ export default function ProductCenterPage({ onBack, user }) {
   const openCostEditor = async (product) => {
     setSaving(true); setError('')
     try {
-      const data = await api(`/v2/products/${product.productId}/cost-history`)
+      const data = await api(`${product._material ? '/v2/transfer-master-items' : '/v2/products'}/${product.productId}/cost-history`)
       setCostEditor({ product, rows: data.rows || [], costPriceCents: product.costPriceCents || '', effectiveFrom: new Date().toISOString().slice(0, 10), reason: '' })
     } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
@@ -241,7 +277,7 @@ export default function ProductCenterPage({ onBack, user }) {
   const saveCost = async () => {
     setSaving(true); setError('')
     try {
-      await api(`/v2/products/${costEditor.product.productId}/cost-history`, { method: 'POST', body: JSON.stringify({ costPriceCents: costEditor.costPriceCents, effectiveFrom: costEditor.effectiveFrom, reason: costEditor.reason }) })
+      await api(`${costEditor.product._material ? '/v2/transfer-master-items' : '/v2/products'}/${costEditor.product.productId}/cost-history`, { method: 'POST', body: JSON.stringify({ costPriceCents: costEditor.costPriceCents, effectiveFrom: costEditor.effectiveFrom, reason: costEditor.reason }) })
       setCostEditor(null); await loadProducts(); setNotice('商品成本版本已追加')
     } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
@@ -438,7 +474,7 @@ export default function ProductCenterPage({ onBack, user }) {
         </button>
         <div>
           <h2 className="text-xl font-bold text-slate-900">商品中心</h2>
-          <p className="mt-0.5 text-xs text-slate-400">全门店共享商品主档 · 订单统一引用 product_id</p>
+          <p className="mt-0.5 text-xs text-slate-400">全门店共享商品与物料资料</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {canManage && <button onClick={() => setGroupManagerOpen(true)} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm"><Package className="h-4 w-4" />商品组管理</button>}
@@ -447,12 +483,13 @@ export default function ProductCenterPage({ onBack, user }) {
             <Upload className="h-4 w-4" />导入菜单
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => handleMenuFile(e.target.files?.[0])} />
           </label>}
-          <button onClick={exportMenu} disabled={loading} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm hover:border-budu-200 hover:text-budu-600 disabled:opacity-50">
+          {canViewProducts && <button onClick={exportMenu} disabled={loading} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm hover:border-budu-200 hover:text-budu-600 disabled:opacity-50">
             <Download className="h-4 w-4" />导出菜单
-          </button>
+          </button>}
           {canManage && <button onClick={() => setForm({ ...emptyForm })} className="flex items-center gap-2 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-budu-600">
             <Plus className="h-4 w-4" />新增商品
           </button>}
+          {canManageMaterials && <button disabled={!materialCategory?.isActive} onClick={() => editMaterial()} className="btn-primary min-h-11 px-4 disabled:opacity-40"><Plus className="h-4 w-4" />新增物料</button>}
         </div>
       </div>
 
@@ -465,7 +502,7 @@ export default function ProductCenterPage({ onBack, user }) {
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input aria-label="搜索商品" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="商品名称 / SKU / 编号" className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-budu-400" />
           </label>
-          <select aria-label="商品分类筛选" value={category} onChange={(e) => setCategory(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 outline-none">
+          <select aria-label="商品分类筛选" value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value === materialCategory?.id) setPurpose('all') }} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 outline-none">
             <option value="all">全部分类</option>
             <option value="uncategorized">未分类</option>
             {productCategories.map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : '（停用）'}</option>)}
@@ -482,12 +519,12 @@ export default function ProductCenterPage({ onBack, user }) {
       {selectedIds.length > 0 && <section className="sticky top-2 z-20 space-y-2 rounded-2xl border border-budu-100 bg-white/95 p-3 shadow-lg backdrop-blur" data-testid="product-bulk-bar"><div className="flex flex-wrap items-center gap-2"><span className="mr-auto text-sm font-black text-budu-700">已选择 {selectedIds.length} 项</span><button onClick={() => setSelectedIds([])} className="text-xs font-bold text-slate-400">取消选择</button></div><div className="flex flex-wrap gap-2"><select aria-label="批量目标分类" value={bulkCategoryId} onChange={(event) => setBulkCategoryId(event.target.value)} className="min-h-10 min-w-36 flex-1 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-600"><option value="">未分类</option>{productCategories.filter((item) => item.isActive).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button disabled={bulkBusy} onClick={() => applyBulk({ operation: 'category' })} className="btn-secondary min-h-10 px-3 text-xs">修改分类</button>{[['pos', 'POS'], ['transfer', '调拨']].flatMap(([key, label]) => [<button key={`${key}-on`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: true })} className="min-h-10 rounded-xl bg-emerald-50 px-3 text-xs font-bold text-emerald-700">启用{label}</button>, <button key={`${key}-off`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: false })} className="min-h-10 rounded-xl bg-slate-100 px-3 text-xs font-bold text-slate-500">停用{label}</button>])}</div></section>}
 
       <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold text-slate-400">当前筛选 {rows.length} 个商品</div>
+        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold text-slate-400">当前筛选 {rows.length} 项</div>
         {loading ? <p className="py-14 text-center text-sm text-slate-400">正在加载商品…</p> : rows.length === 0 ? <div className="px-5 py-14 text-center text-sm text-slate-400"><Package className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p>暂无符合条件的商品</p></div> : (
           <div className="divide-y divide-slate-100">
             {rows.map((item) => (
               <article key={item.productId} data-product-id={item.productId} className="flex items-start gap-2.5 px-3 py-3 sm:gap-3 sm:px-4">
-                <input aria-label={`选择${item.name}`} type="checkbox" checked={selectedIds.includes(item.productId)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, item.productId])] : current.filter((id) => id !== item.productId))} className="mt-3 h-4 w-4 shrink-0 accent-budu-500" />
+                {!item._material && canManage && <input aria-label={`选择${item.name}`} type="checkbox" checked={selectedIds.includes(item.productId)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...new Set([...current, item.productId])] : current.filter((id) => id !== item.productId))} className="mt-3 h-4 w-4 shrink-0 accent-budu-500" />}
                 {item.hasImage ? <LazyImage src={productThumbnailUrl(item)} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-300"><Package className="h-5 w-5" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="product-title-line">
@@ -498,7 +535,7 @@ export default function ProductCenterPage({ onBack, user }) {
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
                   <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>
-                <div className="flex shrink-0 flex-col gap-1">{canViewCost && <button onClick={() => openCostEditor(item)} className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-700" aria-label={`${item.name}成本历史`}><History className="h-4 w-4" /></button>}{canManage ? <button onClick={() => setForm(toForm(item))} className="grid h-10 w-10 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑${item.name}`}><Pencil className="h-4 w-4" /></button> : <span className="text-xs text-slate-300">只读</span>}</div>
+                <div className="flex shrink-0 flex-col gap-1">{canViewCost && <button onClick={() => openCostEditor(item)} className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-700" aria-label={`${item.name}成本历史`}><History className="h-4 w-4" /></button>}{(item._material ? canManageMaterials : canManage) ? <button onClick={() => item._material ? editMaterial(item) : setForm(toForm(item))} className="grid h-10 w-10 place-items-center rounded-xl bg-budu-50 text-budu-600" aria-label={`编辑${item.name}`}><Pencil className="h-4 w-4" /></button> : <span className="text-xs text-slate-300">只读</span>}</div>
               </article>
             ))}
           </div>
@@ -591,6 +628,7 @@ export default function ProductCenterPage({ onBack, user }) {
         </div>
       )}
       {categoryManagerOpen && <CategoryManager categories={productCategories} onClose={() => setCategoryManagerOpen(false)} onSaved={saveCategory} />}
+      {materialEditor && <MaterialEditor value={materialEditor} busy={saving} error={error} onChange={setMaterialEditor} onClose={() => { setMaterialEditor(null); setError('') }} onSave={saveMaterial} />}
       {groupManagerOpen && <ProductGroupManager groups={productGroups} products={products} onClose={() => setGroupManagerOpen(false)} onSaved={saveProductGroup} />}
       {costEditor && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-900/45 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="商品成本历史"><div className="my-4 w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"><div className="flex items-start gap-3"><div><h3 className="font-black text-slate-900">{costEditor.product.name} · 成本历史</h3><p className="mt-1 text-xs text-slate-400">新版本只影响生效日后的新订单；历史订单成本快照不变。</p></div><button onClick={() => setCostEditor(null)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-slate-400"><X className="h-4 w-4" /></button></div><div className="mt-4 max-h-52 space-y-2 overflow-y-auto">{costEditor.rows.map((row) => <div key={row.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs"><span>{row.effectiveFrom}{row.effectiveTo ? ` → ${row.effectiveTo}` : ' 起'}</span><strong>{formatCents(row.costPriceCents)}</strong></div>)}</div>{canManageCost && <div className="mt-4 grid gap-2"><label className="text-xs font-bold text-slate-500">新成本（分）<input aria-label="新成本分" value={costEditor.costPriceCents} onChange={(e)=>setCostEditor((v)=>({...v,costPriceCents:e.target.value}))} className={inputClass} /></label><label className="text-xs font-bold text-slate-500">生效日期<input aria-label="成本生效日期" type="date" value={costEditor.effectiveFrom} onChange={(e)=>setCostEditor((v)=>({...v,effectiveFrom:e.target.value}))} className={inputClass} /></label><label className="text-xs font-bold text-slate-500">变更原因<input aria-label="成本变更原因" value={costEditor.reason} onChange={(e)=>setCostEditor((v)=>({...v,reason:e.target.value}))} className={inputClass} /></label><button onClick={saveCost} disabled={saving || !costEditor.reason.trim()} className="mt-2 min-h-11 rounded-xl bg-budu-600 text-sm font-bold text-white disabled:opacity-40">追加成本版本</button></div>}</div></div>}
     </div>

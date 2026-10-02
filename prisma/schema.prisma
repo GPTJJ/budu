@@ -360,6 +360,7 @@ model InventoryItem {
   partnerReplenishmentEnabled Boolean                    @default(false)
   partnerOrderUnit            String?
   partnerKgBasePriceCents     BigInt?
+  partnerMaterialPriceCents   BigInt?
   partnerMinOrderBaseQty      Int?
   partnerOrderStepBaseQty     Int?
   replenishmentItems          ReplenishmentOrderItem[]

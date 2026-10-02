@@ -1,41 +1,40 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>BUDU Material Test</title></head>
-  <body class="m-0"><div id="root"></div><script type="module">
-    import React from 'react'
-    import { createRoot } from 'react-dom/client'
-    import ProductMaterialManagementPage from '/src/components/ProductMaterialManagementPage.jsx'
-    import '/src/index.css'
-
-    const rows = [
-      { id: 'm-used', category: 'material', name: '冰袋', code: '', enabled: true, sortOrder: 1, version: 1, used: true },
-      { id: 'm-off', category: 'material', name: '旧纸箱', code: '', enabled: false, sortOrder: 9, version: 1, used: false },
-    ]
-    const requests = []
-    window.__productMaterialTest = { rows, requests }
-    window.fetch = async (url, options = {}) => {
-      const parsed = new URL(url, location.origin)
-      const path = parsed.pathname
-      const method = options.method || 'GET'
-      const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
-      if (path === '/api/v2/transfer-master-items' && method === 'GET') {
-        requests.push({ method, path: `${path}${parsed.search}` })
-        return json({ rows: rows.filter((item) => item.category === parsed.searchParams.get('category')) })
-      }
-      if (path === '/api/v2/transfer-master-items' && method === 'POST') {
-        const body = JSON.parse(options.body); requests.push({ method, path, body })
-        const item = { ...body, id: `new-${rows.length}`, version: 1, used: false }
-        rows.push(item); return json({ ok: true, item }, 201)
-      }
-      const update = path.match(/^\/api\/v2\/transfer-master-items\/([^/]+)$/)
-      if (update && method === 'PUT') {
-        const body = JSON.parse(options.body); requests.push({ method, path, body })
-        const index = rows.findIndex((item) => item.id === update[1])
-        rows[index] = { ...rows[index], ...body, version: rows[index].version + 1 }
-        return json({ ok: true, item: rows[index] })
-      }
-      return json({ error: `未模拟接口 ${method} ${path}` }, 404)
-    }
-    createRoot(document.getElementById('root')).render(React.createElement(ProductMaterialManagementPage, { onBack: () => {} }))
-  </script></body>
-</html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>物料整合本地验收（示例数据）</title></head><body><div class="bg-amber-50 p-2 text-xs text-amber-800">本地验收 · 示例数据，ID及历史引用为测试夹具</div><div id="root" class="mx-auto max-w-6xl p-3"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import ProductCenterPage from '/src/components/ProductCenterPage.jsx'
+import { ALL_MODULE_KEYS } from '/shared/accountPermissions.js'
+import '/src/index.css'
+const category = {id:'c-material', name:'物料', isActive:true, sortOrder:3, version:1}
+const names = ['balls 礼盒-物料','balls 礼盒手提袋','保温袋 1','冰袋 1']
+const skus = ['BUDU-BALLSWL-001','BUDU-BALLSWL-002','BUDU-BWDWL-001','BUDU-BDWL-001']
+const products = names.map((name,i)=>({productId:`p-${i}`, name, sku:skus[i], transferCode:['ballswl001','ballswl002','bwdwl001','bdwl001'][i], productCategoryId:category.id,productCategory:category, isActive:false,transferEnabled:true,partnerReplenishmentEnabled:true,salePriceCents:'10',costPriceCents:'10',sortOrder:0,version:1,unit:'个',image:`protected-${i}`}))
+const rows = [{id:'m-used',category:'material',name:'冰袋',sku:'BUDU-MAT-TEST-ICE',code:'BUDU-MAT-TEST-ICE',enabled:true,sortOrder:1,version:1,used:true,salePriceCents:'10',costPriceCents:'10',costVisible:true,partnerReplenishmentEnabled:false,unit:'包'}, {id:'m-off',category:'material',name:'旧纸箱',sku:'BUDU-MAT-TEST-BOX',code:'BUDU-MAT-TEST-BOX',enabled:false,sortOrder:9,version:1,used:false,salePriceCents:'10',costPriceCents:'10',costVisible:true,partnerReplenishmentEnabled:false,unit:'个'}]
+const requests=[]
+window.__productMaterialTest={rows,products,requests}
+const reply=(body,status=200)=>Promise.resolve(new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}}))
+window.fetch=async(url,options={})=>{
+ const parsed=new URL(url,location.origin);const path=parsed.pathname;const method=options.method||'GET';const body=options.body?JSON.parse(options.body):null
+ requests.push({method,path:`${path}${parsed.search}`,body})
+ if(path==='/api/v2/products' && method==='GET')return reply({rows:products})
+ if(path==='/api/v2/product-categories' && method==='GET')return reply({rows:new URLSearchParams(location.search).has('ambiguous')?[category,{...category,id:'c-material-duplicate'}]:[category]})
+ if(path==='/api/v2/product-groups' && method==='GET')return reply({rows:[]})
+ if(path==='/api/v2/transfer-master-items' && method==='GET')return reply({rows})
+ if(path==='/api/v2/transfer-master-items' && method==='POST'){
+  const id=`new-${rows.length}`;const item={...body,id,sku:`BUDU-MAT-${id}`,code:`BUDU-MAT-${id}`,version:1,costVisible:true,category:'material'};rows.push(item);return reply({ok:true,item},201)
+ }
+ const update=path.match(/^\/api\/v2\/transfer-master-items\/([^/]+)$/)
+ if(update && method==='PUT'){
+  const i=rows.findIndex(item=>item.id===update[1]);if(body.version!==rows[i].version)return reply({error:'资料已被其他人修改，请刷新后重试'},409)
+  rows[i]={...rows[i],...body,version:rows[i].version+1};return reply({ok:true,item:rows[i]})
+ }
+ if(path.endsWith('/cost-history') && method==='GET')return reply({rows:[{id:'cost-test',effectiveFrom:'2026-10-02',costPriceCents:'10'}]})
+ return reply({error:`未模拟接口 ${method} ${path}`},404)
+}
+const scope=new URLSearchParams(location.search).get('scope')||'both'
+const modules=Object.fromEntries(ALL_MODULE_KEYS.map(key=>[key,false]))
+modules['product-center']=scope==='both'||scope==='product'
+modules['product-material-management']=scope==='both'||scope==='material'
+const user={id:'test-manager',role:'manager',status:'active',permissions:{modules}}
+createRoot(document.getElementById('root')).render(React.createElement(ProductCenterPage,{user,initialMaterials:true,onBack:()=>{}}))
+</script></body></html>

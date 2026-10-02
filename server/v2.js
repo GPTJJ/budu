@@ -13,6 +13,8 @@ import { correlateOcrRequest } from './ocr-integrity.js'
 import { FIXED_OPTION_NAMES } from './fixedOptions.js'
 import { CHANGELOG } from './changelog.js'
 import { normalizeItemCategory } from './productCategories.js'
+import { materialData, materialExtras, materialIdentifiers } from './material-master.js'
+import { appendProductCostVersion, listProductCostHistory } from './product-cost-authority.js'
 import { resolveStoreName } from './store-names.js'
 import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
 import {
@@ -23,6 +25,8 @@ import {
   hasDailyEntryCapability,
   hasModuleAccess,
   hasInventoryTransferAll,
+  hasReportCostManage,
+  hasReportCostView,
   isSuperUser,
   MODULE_KEYS,
 } from '../shared/accountPermissions.js'
@@ -692,7 +696,7 @@ function transferMasterData(body, category) {
   return { name, code: code || null, enabled: body?.enabled !== false, sortOrder, productCategoryId }
 }
 
-function serializeTransferMasterItem(item) {
+function serializeTransferMasterItem(item, user) {
   return {
     id: item.id,
     category: item.category,
@@ -714,6 +718,7 @@ function serializeTransferMasterItem(item) {
     } : null,
     version: item.version,
     used: Boolean(item._count?.transferItems || item._count?.purchaseItems),
+    ...(item.category === 'material' ? materialExtras(item, hasReportCostView(user)) : {}),
   }
 }
 
@@ -815,7 +820,7 @@ v2Router.get('/transfer-master-items', wrap(async (req, res) => {
     orderBy: [{ category: 'asc' }, { transferSortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
   })
-  res.json({ rows: rows.map(serializeTransferMasterItem) })
+  res.json({ rows: rows.map((row) => serializeTransferMasterItem(row, req.user)) })
 }))
 
 v2Router.post('/transfer-master-items', wrap(async (req, res) => {
@@ -824,6 +829,18 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
   if (!['product', 'material'].includes(category)) throw bad('货品类型不正确')
   if (category === 'product') requireProductCategoryManager(req.user)
   else requireTransferMasterManager(req.user)
+  if (category === 'material') {
+    const data = materialData(req.body)
+    if (!data.productCategoryId) data.productCategoryId = (await prisma.productCategory.findUnique({ where: { name: '物料' } }))?.id || null
+    await requireAssignableProductCategory(data.productCategoryId)
+    const id = uid('it')
+    const row = await prisma.$transaction(async (tx) => {
+      const identifiers = await materialIdentifiers(tx, { id })
+      const created = await tx.inventoryItem.create({ data: { id, category: 'material', ...data, ...identifiers }, include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } } })
+      return created
+    }).catch((error) => { if (error.code === 'P2002') throw bad('名称或物料编号已存在，请编辑原资料', 409); throw error })
+    return res.status(201).json({ ok: true, item: serializeTransferMasterItem(row, req.user) })
+  }
   const data = transferMasterData(req.body, category)
   await requireAssignableProductCategory(data.productCategoryId)
   const duplicate = await prisma.inventoryItem.findFirst({
@@ -845,7 +862,7 @@ v2Router.post('/transfer-master-items', wrap(async (req, res) => {
     },
     include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
   })
-  res.status(201).json({ ok: true, item: serializeTransferMasterItem(row) })
+  res.status(201).json({ ok: true, item: serializeTransferMasterItem(row, req.user) })
 }))
 
 v2Router.put('/transfer-master-items/bulk-category', wrap(async (req, res) => {
@@ -872,14 +889,16 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
   else requireTransferMasterManager(req.user)
   const version = Number(req.body?.version)
   if (!Number.isInteger(version) || version < 1) throw bad('资料版本不正确，请刷新后重试')
-  const data = transferMasterData(req.body, existing.category)
+  const material = existing.category === 'material'
+  const data = material ? materialData(req.body, existing) : transferMasterData(req.body, existing.category)
+  if (material && !data.productCategoryId) data.productCategoryId = (await prisma.productCategory.findUnique({ where: { name: '物料' } }))?.id || null
   await requireAssignableProductCategory(data.productCategoryId, existing.productCategoryId || '')
   const duplicate = await prisma.inventoryItem.findFirst({
     where: {
       id: { not: existing.id },
       OR: [
         { name: data.name },
-        ...(data.code ? [{ transferCode: data.code }] : []),
+        ...(!material && data.code ? [{ transferCode: data.code }] : []),
       ],
     },
   })
@@ -890,14 +909,17 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
       await tx.transferItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
       await tx.purchaseItem.updateMany({ where: { itemId: existing.id, itemNameSnapshot: '' }, data: { itemNameSnapshot: existing.name } })
     }
+    const identifiers = material ? await materialIdentifiers(tx, existing) : null
     const updated = await tx.inventoryItem.updateMany({
       where: { id: existing.id, version },
       data: {
+        ...(material ? { ...data, ...identifiers } : {
         name: data.name,
         transferCode: data.code,
         transferEnabled: data.enabled,
         transferSortOrder: data.sortOrder,
         productCategoryId: data.productCategoryId,
+        }),
         version: { increment: 1 },
       },
     })
@@ -906,8 +928,24 @@ v2Router.put('/transfer-master-items/:id', wrap(async (req, res) => {
       where: { id: existing.id },
       include: { productCategory: true, _count: { select: { transferItems: true, purchaseItems: true } } },
     })
-  })
-  res.json({ ok: true, item: serializeTransferMasterItem(row) })
+  }).catch((error) => { if (error.code === 'P2002') throw bad('名称或物料编号已存在，请刷新后重试', 409); throw error })
+  res.json({ ok: true, item: serializeTransferMasterItem(row, req.user) })
+}))
+
+v2Router.get('/transfer-master-items/:id/cost-history', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!hasModuleAccess(req.user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT) || !hasReportCostView(req.user)) throw bad('无物料成本查看权限', 403)
+  const product = await prisma.inventoryItem.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, category: true } })
+  if (!product || product.category !== 'material') throw bad('物料不存在', 404)
+  res.json({ product, rows: await listProductCostHistory(prisma, product.id) })
+}))
+
+v2Router.post('/transfer-master-items/:id/cost-history', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  requireTransferMasterManager(req.user)
+  if (!hasReportCostManage(req.user)) throw bad('无物料成本配置权限', 403)
+  const row = await appendProductCostVersion(prisma, { inventoryItemId: req.params.id, category: 'material', costPriceCents: req.body?.costPriceCents, effectiveFrom: req.body?.effectiveFrom, reason: req.body?.reason, createdBy: req.user.id })
+  res.status(201).json({ ok: true, row: { ...row, costPriceCents: row.costPriceCents.toString(), effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10), effectiveTo: null } })
 }))
 
 async function createTransferRequest(req, res, testMode = false) {

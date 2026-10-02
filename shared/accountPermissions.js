@@ -49,11 +49,11 @@ export const MODULE_GROUPS = Object.freeze([
     { key: MODULE_KEYS.STORE_MAILING, label: '门店邮寄' },
     { key: MODULE_KEYS.STORE_POS, label: 'POS 点单（含订单记录）' },
     { key: MODULE_KEYS.PRODUCT_CENTER, label: '商品中心' },
+    { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '商品中心 · 物料管理' },
   ] },
   { key: 'inventory', label: '库存管理', modules: [
     { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
     { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
-    { key: MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT, label: '物料管理' },
   ] },
   { key: 'partner', label: '合作商管理', modules: [
     { key: MODULE_KEYS.PARTNER_MANAGEMENT, label: '合作商档案' },
@@ -399,6 +399,8 @@ export function canManageAccounts(user) {
 
 /** 页面访问判定：账号治理是开发者保留能力，不属于可授权业务版块。 */
 export function hasPageAccess(user, pageKey) {
+  // Shell/navigation access only: keep the API module capabilities separate.
+  if (pageKey === MODULE_KEYS.PRODUCT_CENTER) return hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER) || hasModuleAccess(user, MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT)
   if (pageKey === 'account-admin') return canManageAccounts(user)
   if (pageKey === 'partner-after-sales') return hasModuleAccess(user, MODULE_KEYS.PARTNER_MANAGEMENT)
   if (pageKey === MODULE_KEYS.STORE_ENTRY) {

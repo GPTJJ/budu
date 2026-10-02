@@ -8,7 +8,7 @@ const product = { id: 'product-a', name: '独立开关测试', sku: 'CAT-A', uni
 const partner = { id: 'partner-a', status: 'ACTIVE', defaultDiscountBps: 6500 }
 const principal = { partnerId: partner.id }
 function db(rows) {
-  return { partner: { findUnique: async () => partner }, inventoryItem: { findMany: async ({ where }) => rows.filter(r => r.category === where.category && r.partnerReplenishmentEnabled === where.partnerReplenishmentEnabled) } }
+  return { partner: { findUnique: async () => partner }, inventoryItem: { findMany: async ({ where }) => rows.filter(r => (typeof where.category === 'string' ? r.category === where.category : where.category.in.includes(r.category)) && r.partnerReplenishmentEnabled === where.partnerReplenishmentEnabled) } }
 }
 
 test('商品中心补货开关 OFF 不进入目录，后续保存保持 OFF', async () => {

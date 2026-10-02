@@ -8,14 +8,15 @@ import { defaultModuleKeys, MODULE_KEYS } from '../shared/accountPermissions.js'
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('统一商品中心独立存在，库存导航仅保留物料管理且默认只向管理角色开放', () => {
+test('商品中心包含物料入口，独立物料菜单移除且原能力仍只向管理角色开放', () => {
   const sidebar = read('src/components/Sidebar.jsx')
   const productCenter = sidebar.indexOf("{ key: 'product-center', label: '商品中心' }")
   const transfer = sidebar.indexOf("{ key: 'inventory-transfer', label: '门店调拨' }")
   const purchase = sidebar.indexOf("{ key: 'inventory-purchase', label: '申请采购' }")
   const material = sidebar.indexOf("{ key: 'product-material-management', label: '物料管理' }")
   assert.ok(productCenter >= 0)
-  assert.ok(transfer >= 0 && transfer < purchase && purchase < material)
+  assert.ok(transfer >= 0 && transfer < purchase)
+  assert.equal(material, -1)
   assert.ok(defaultModuleKeys('manager').includes(MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT))
   assert.ok(!defaultModuleKeys('staff').includes(MODULE_KEYS.PRODUCT_MATERIAL_MANAGEMENT))
 })
@@ -37,14 +38,16 @@ test('主数据 API 没有物理删除路径且服务端拒绝停用货品新调
 
 test('统一商品中心与调拨选择器共同读取 PostgreSQL 产品分类且物料页面不承担产品权威', () => {
   const management = read('src/components/ProductCenterPage.jsx')
-  const materials = read('src/components/ProductMaterialManagementPage.jsx')
+  const dashboard = read('src/components/Dashboard.jsx')
   const transfer = read('src/components/StoreTransferPage.jsx')
   const server = read('server/v2.js')
   const app = read('server/app.js')
   assert.match(management, /\/v2\/product-categories/)
   assert.match(management, /\/v2\/products/)
-  assert.match(materials, /transfer-master-items\?category=material/)
-  assert.doesNotMatch(materials, /product-categories|category: 'product'/)
+  assert.match(management, /transfer-master-items\?category=material/)
+  assert.match(management, /MaterialEditor/)
+  assert.match(dashboard, /initialMaterials=\{view === 'product-material-management'\}/)
+  assert.equal(fs.existsSync(path.join(root, 'src/components/ProductMaterialManagementPage.jsx')), false)
   assert.match(transfer, /\/v2\/product-categories\?active=true/)
   assert.match(server, /prisma\.productCategory/)
   assert.match(app, /product-categories[\s\S]*MODULE_KEYS\.PRODUCT_CENTER/)

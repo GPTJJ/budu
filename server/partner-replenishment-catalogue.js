@@ -21,6 +21,7 @@ export const partnerCatalogueSelect = Object.freeze({
   partnerReplenishmentEnabled: true,
   partnerOrderUnit: true,
   partnerKgBasePriceCents: true,
+  partnerMaterialPriceCents: true,
   partnerMinOrderBaseQty: true,
   partnerOrderStepBaseQty: true,
   updatedAt: true,
@@ -29,6 +30,7 @@ export const partnerCatalogueSelect = Object.freeze({
 const AUTHORITY_INPUT_KEYS = Object.freeze([
   'partnerId', 'discountBps', 'defaultDiscountBps', 'basePriceCents',
   'kgBasePriceCents', 'partnerKgBasePriceCents', 'piecePriceCents',
+  'partnerMaterialPriceCents',
   'salePriceCents', 'unitPriceCents', 'finalAmountCents', 'amountCents',
 ])
 
@@ -46,7 +48,12 @@ export function assertNoQuoteAuthorityInput(body) {
 }
 
 export function isCatalogueEligible(product) {
-  if (!product || product.category !== 'product' || product.partnerReplenishmentEnabled !== true || !product.sku) return false
+  if (!product || !['product', 'material'].includes(product.category) || product.partnerReplenishmentEnabled !== true || !product.sku) return false
+  if (product.category === 'material') {
+    return product.isActive !== true && ['KG', 'PCS', 'NATIVE'].includes(product.partnerOrderUnit)
+      && (product.partnerOrderUnit !== 'NATIVE' || Boolean(String(product.unit || '').trim()))
+      && product.partnerMaterialPriceCents != null && BigInt(product.partnerMaterialPriceCents) > 0n
+  }
   if (!isPartnerUnitAllowed(product)) return false
   if (product.partnerOrderUnit === PARTNER_ORDER_UNITS.KG) return product.partnerKgBasePriceCents != null && BigInt(product.partnerKgBasePriceCents) > 0n
   if (product.partnerOrderUnit === PARTNER_ORDER_UNITS.PCS) return product.salePriceCents != null && BigInt(product.salePriceCents) > 0n
@@ -55,6 +62,7 @@ export function isCatalogueEligible(product) {
 }
 
 export function partnerBasePriceCents(product) {
+  if (product.category === 'material') return BigInt(product.partnerMaterialPriceCents)
   return product.partnerOrderUnit === PARTNER_ORDER_UNITS.KG
     ? BigInt(product.partnerKgBasePriceCents)
     : BigInt(product.salePriceCents)
@@ -97,7 +105,7 @@ export async function listPartnerCatalogue({ db, principal }) {
   if (!partner) throw quoteError('合作商不存在', 'PARTNER_NOT_FOUND', 404)
   assertPartnerCanCreateBusiness(partner)
   const products = await db.inventoryItem.findMany({
-    where: { category: 'product', partnerReplenishmentEnabled: true },
+    where: { category: { in: ['product', 'material'] }, partnerReplenishmentEnabled: true },
     select: partnerCatalogueSelect,
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     take: 1000,
@@ -116,7 +124,7 @@ export async function quotePartnerCatalogueItem({ db, principal, body }) {
   ])
   if (!partner) throw quoteError('合作商不存在', 'PARTNER_NOT_FOUND', 404)
   assertPartnerCanCreateBusiness(partner)
-  if (product && !isPartnerUnitAllowed(product, requestedUnit)) throw quoteError('糖果合作商补货仅支持单颗 PCS', 'PARTNER_CANDY_PCS_ONLY', 409)
+  if (product?.category === 'product' && !isPartnerUnitAllowed(product, requestedUnit)) throw quoteError('糖果合作商补货仅支持单颗 PCS', 'PARTNER_CANDY_PCS_ONLY', 409)
   if (!isCatalogueEligible(product)) throw quoteError('商品当前不可补货', 'PARTNER_QUOTE_PRODUCT_UNAVAILABLE', 409)
   if (requestedUnit !== product.partnerOrderUnit) throw quoteError('请求单位与商品补货单位不一致', 'PARTNER_QUOTE_UNIT_MISMATCH', 409)
   const quantityKey = product.partnerOrderUnit === PARTNER_ORDER_UNITS.KG ? 'quantityGrams' : product.partnerOrderUnit === PARTNER_ORDER_UNITS.PCS ? 'quantityPieces' : 'quantityUnits'

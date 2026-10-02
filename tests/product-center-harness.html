@@ -27,6 +27,7 @@
       const path = parsed.pathname
       const method = options.method || 'GET'
       if (path === '/api/v2/products' && method === 'GET') return reply({ rows: products })
+      if (path === '/api/v2/transfer-master-items' && method === 'GET') return reply({ rows: [] })
       if (path === '/api/v2/product-categories' && method === 'GET') return reply({ rows: categories })
       if (path === '/api/v2/product-groups' && method === 'GET') return reply({ rows: groups })
       if (path === '/api/v2/products/import' && method === 'POST') {
