@@ -73,6 +73,12 @@ SHIPPING_ENGINEERING_SHA = 'dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0'
 SHIPPING_BACKUP_DIAGNOSTIC_BRANCH = 'codex/shipping-backup-diagnostic-20261002'
 SHIPPING_BACKUP_DIAGNOSTIC_PARENT = '58d952b4e206c9eb4cea8f86fd4d51635b36a8fb'
 SHIPPING_BACKUP_READINESS_BASE = '904478e7287d7e2f3a6648ba6cc27712a7ae973e'
+SHIPPING_FORMAL_BASE = 'a9dcd888a425d1717e01dd066e0921f695480135'
+SHIPPING_FORMAL_FILES = {
+    '.github/workflows/release-build-only.yml',
+    'scripts/deploy-prod-transfer-cas.py',
+    'scripts/test-release-path-post-transfer.py',
+}
 SHIPPING_BACKUP_DIAGNOSTIC_FILES = {
     '.github/workflows/release-build-only.yml',
     'scripts/deploy-prod-transfer-cas.py',
@@ -185,9 +191,18 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(release != SHIPPING_BUSINESS_SHA and
-            git(repo, 'rev-list', '--parents', '-n', '1', release).split() == [release, SHIPPING_BUSINESS_SHA],
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != SHIPPING_FORMAL_BASE,
             'SHIPPING_ENGINEERING_PARENT_INVALID')
+    for child, parent in ((release, SHIPPING_FORMAL_BASE),
+                          (SHIPPING_FORMAL_BASE, SHIPPING_BACKUP_READINESS_BASE),
+                          (SHIPPING_BACKUP_READINESS_BASE, SHIPPING_BACKUP_DIAGNOSTIC_PARENT),
+                          (SHIPPING_BACKUP_DIAGNOSTIC_PARENT, SHIPPING_ENGINEERING_SHA),
+                          (SHIPPING_ENGINEERING_SHA, SHIPPING_BUSINESS_SHA),
+                          (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
+        require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
+                'SHIPPING_ENGINEERING_PARENT_INVALID')
+    require(set(git(repo, 'diff', '--name-only', SHIPPING_FORMAL_BASE, release).splitlines())
+            == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_BUSINESS_SHA, release).splitlines())
             == SHIPPING_ENGINEERING_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     path = 'prisma/migrations/' + SHIPPING_MIGRATION + '/migration.sql'
