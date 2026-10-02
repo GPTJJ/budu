@@ -335,7 +335,8 @@ def controller_ci_guard():
             or sys.platform != 'linux' or os.geteuid() != 0
             or os.environ.get('GITHUB_REPOSITORY') != 'GPTJJ/budu'
             or os.environ.get('GITHUB_REF') not in ('refs/heads/'+release.SHIPPING_BRANCH,
-                                                   'refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH)
+                                                   'refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH,
+                                                   'refs/heads/'+release.SHIPPING_BACKUP_DIAGNOSTIC_BRANCH)
             or os.environ.get('TEST_SHIPPING_CONTROLLER_CI') != '1'
             or os.environ.get('DOCKER_HOST') not in (None, 'unix:///var/run/docker.sock')
             or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')
@@ -343,6 +344,32 @@ def controller_ci_guard():
         raise RuntimeError('SHIPPING_CONTROLLER_ISOLATED_LINUX_CI_REQUIRED')
 
 
+BACKUP_HELPER_SHA = '13f11ee93623d67ccb752b7406ba62ec4b1a4207cff81e3d4d117a98ae414951'
+HELPER_FUNCTIONS = {'<module>':'MODULE','run':'RUN','sql':'SQL','fingerprints':'FINGERPRINTS',
+    'bounded_backup_dump':'DUMP','stop_backup_process':'STOP_CHILD','allocated':'ALLOCATED','<genexpr>':'ALLOCATION_SCAN'}
+HELPER_MODULE_PHASES = {57:'SOURCE_INSPECT',73:'SOURCE_FINGERPRINT',75:'DUMP',76:'RESTORE_DIRECTORY',
+    79:'RESTORE_NAME',81:'RESTORE_CREATE',85:'RESTORE_START',88:'RESTORE_READY',90:'RESTORE_READY',
+    91:'RESTORE_VERSION',92:'RESTORE_INPUT',93:'RESTORE_LOAD_START',96:'RESTORE_ALLOCATION',97:'RESTORE_DEADLINE',
+    99:'RESTORE_EXIT',102:'RESTORE_CHILD_STOP',104:'RESTORED_FINGERPRINT',105:'FACTS_COMPARE',
+    113:'SOURCE_CONNECTION_TERMINATE',114:'SOURCE_CONNECTION_COUNT',115:'SOURCE_CONNECTION_COUNT',
+    117:'RESTORE_INSPECT',120:'RESTORE_IDENTITY',121:'RESTORE_STOP',122:'RESTORE_STOP_VERIFY',
+    125:'FINAL_ALLOCATION',126:'FINAL_ALLOCATION',130:'PROOF_WRITE',131:'PROOF_OUTPUT'}
+HELPER_DUMP_PHASES = {16:'DUMP_FILE_OPEN',18:'DUMP_START',21:'DUMP_DEADLINE',22:'DUMP_READ',24:'DUMP_READ',
+    27:'DUMP_LIMIT',30:'DUMP_DEADLINE',31:'DUMP_EXIT',32:'DUMP_FSYNC',37:'DUMP_CHILD_STOP',38:'DUMP_STDOUT_CLOSE'}
+HELPER_PHASES = frozenset(HELPER_MODULE_PHASES.values())|frozenset(HELPER_DUMP_PHASES.values())|{
+    'SOURCE_TABLE_LIST','SOURCE_TABLE_FINGERPRINT','SOURCE_SEQUENCE_FINGERPRINT',
+    'RESTORED_TABLE_LIST','RESTORED_TABLE_FINGERPRINT','RESTORED_SEQUENCE_FINGERPRINT',
+    'PROOF_VALIDATION','SPACE_GATE','HELPER_UNKNOWN'}
+HELPER_CODES = frozenset(node.args[0].value for node in ast.walk(ast.parse(release.SHIPPING_BACKUP_RESTORE_CODE))
+    if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id in ('RuntimeError','TimeoutError')
+    and node.args and isinstance(node.args[0],ast.Constant) and isinstance(node.args[0].value,str))|{
+    'HELPER_PERMISSION_DENIED','HELPER_FILE_IO_FAILED','HELPER_FILE_NOT_FOUND','HELPER_COMMAND_TIMEOUT',
+    'HELPER_DECODE_FAILED','HELPER_DETAILS_SUPPRESSED','HELPER_CAPTURE_UNVERIFIED','HELPER_STDERR_CLASSIFIED','INTERRUPTED'}
+STDERR_CLASSES = frozenset({'DATABASE_MISSING','CONNECTION_FAILED','PERMISSION_DENIED','SQL_SYNTAX',
+    'RESTORE_ERRORS','VERSION_MISMATCH','EMPTY','OTHER'})
+HELPER_META_INTS = {'tableCount','restoredTableCount','backupBytes','restoreAllocatedBytes','remainingConnections'}
+HELPER_META_BOOLS = {'cleanupComplete','restoreCreated','fingerprintsMatch','tableCountsMatch','restoreVerified',
+    'terminationVerified','versionMatches','releaseMatches','dumpWithinLimit','restoreWithinLimit'}
 CI_CASES = ('success','post_cutover_failure','post_l86_disk','backup_limit')
 CI_OPERATIONS = frozenset(ci_operation(['docker',verb]) for verb in
     ('inspect','image','info','ps','run','create','start','stop','rm','network','pull','logs','update','other')) | frozenset({
@@ -369,7 +396,7 @@ def ci_code_catalog():
     return frozenset(codes)
 
 
-CI_CODES = ci_code_catalog()
+CI_CODES = ci_code_catalog()|HELPER_CODES
 CI_CONTROLLER_RESULTS = ('DEPLOY_ROLLED_BACK','DEPLOY_BLOCKED','DEPLOY_ABORTED','DEPLOY_COMPLETE','UNKNOWN')
 
 
@@ -387,7 +414,187 @@ def validate_ci_diagnostic_records(records,sha):
         assert row['stage'] in release.SAFE_CONTROLLER_STAGES|{'CI_FIXTURE','CI_CLEANUP','CI_DIAGNOSTIC'}
         assert row['code'] in CI_CODES and row['result'] in ('FAILED','UNVERIFIED')
         assert isinstance(row['injection'],list) and 1 <= len(row['injection']) <= 8
-        assert all(label in labels for label in row['injection'])
+        for label in row['injection']:
+            if isinstance(label,str):
+                assert label in labels|{'HELPER_PRIMARY','HELPER_CLEANUP','BACKUP_HELPER_SHA_'+BACKUP_HELPER_SHA}
+            else:validate_helper_label(label)
+
+
+def validate_helper_label(value):
+    assert isinstance(value,dict)
+    kind=value.get('kind')
+    if kind=='HELPER_FRAME':
+        assert set(value)=={'kind','function','line','phase'}
+        assert value['function'] in set(HELPER_FUNCTIONS.values())|{'PROOF','SPACE'}
+        assert type(value['line']) is int and 1 <= value['line'] <= 4000 and value['phase'] in HELPER_PHASES
+    elif kind=='HELPER_META':
+        assert set(value) <= {'kind','returnCode'}|HELPER_META_INTS|HELPER_META_BOOLS
+        for key,item in value.items():
+            if key in HELPER_META_INTS:assert type(item) is int and 0 <= item <= 2**63-1
+            if key in HELPER_META_BOOLS:assert type(item) is bool
+            if key=='returnCode':assert type(item) is int and -64 <= item <= 255
+    elif kind=='HELPER_STDERR':
+        assert set(value)=={'kind','stream','classes','retainedBytes','truncated','drainComplete'}
+        assert value['stream'] in ('DUMP','RESTORE','COMMAND')
+        assert isinstance(value['classes'],list) and 1 <= len(value['classes']) <= 8
+        assert all(item in STDERR_CLASSES for item in value['classes'])
+        assert type(value['retainedBytes']) is int and 0 <= value['retainedBytes'] <= 65536
+        assert type(value['truncated']) is bool and type(value['drainComplete']) is bool
+    else:raise AssertionError('HELPER_LABEL_INVALID')
+
+
+def stderr_classes(data):
+    # Match bounded bytes directly; never decode, print or persist stderr.
+    patterns=((rb'database .{0,128} does not exist','DATABASE_MISSING'),
+        (rb'connection.*(?:failed|refused)|could not connect|no such file or directory','CONNECTION_FAILED'),
+        (rb'permission denied|operation not permitted','PERMISSION_DENIED'),
+        (rb'syntax error','SQL_SYNTAX'),(rb'errors ignored on restore|pg_restore: error','RESTORE_ERRORS'),
+        (rb'version mismatch|server version.*pg_dump version','VERSION_MISMATCH'))
+    return [code for pattern,code in patterns if re.search(pattern,data,re.I)] or ['EMPTY' if not data else 'OTHER']
+
+
+class HelperStderrCapture:
+    """CI-only tee for the two helper clients whose stderr is discarded.
+
+    Total retained bytes <=56KiB, two 4KiB readers. Drain beyond the cap to
+    avoid pipe deadlock. No argv, stdout, gates, deadlines or signals change.
+    """
+    def __init__(self):
+        self.original=subprocess.Popen;self.streams=[];self.lock=threading.Lock();self.retained=0
+        self.final=[];self.closed=False
+
+    def __enter__(self):
+        if hashlib.sha256(release.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest()!=BACKUP_HELPER_SHA:
+            raise RuntimeError('CI_BACKUP_HELPER_HASH_CHANGED')
+        subprocess.Popen=self.popen
+        return self
+
+    def popen(self,*args,**kwargs):
+        frame=sys._getframe(1);stream=None
+        if frame.f_code.co_filename=='shipping-backup-restore' and kwargs.get('stderr')==subprocess.DEVNULL:
+            if frame.f_code.co_name=='bounded_backup_dump' and frame.f_lineno==18:stream='DUMP'
+            elif frame.f_code.co_name=='<module>' and frame.f_lineno==93:stream='RESTORE'
+        if not stream:return self.original(*args,**kwargs)
+        kwargs={**kwargs,'stderr':subprocess.PIPE};process=self.original(*args,**kwargs)
+        entry={'stream':stream,'data':bytearray(),'truncated':False,'done':False,'process':process}
+        def drain():
+            try:
+                while True:
+                    block=os.read(process.stderr.fileno(),4096)
+                    if not block:entry['done']=True;break
+                    with self.lock:
+                        retained=0 if self.closed else min(len(block),max(0,57344-self.retained))
+                        entry['data'].extend(block[:retained]);self.retained+=retained
+                        entry['truncated']|=retained<len(block)
+            except (OSError,ValueError):pass
+        entry['thread']=threading.Thread(target=drain,daemon=True);self.streams.append(entry);entry['thread'].start()
+        return process
+
+    def snapshot(self):
+        rows=[]
+        for entry in self.streams:
+            entry['thread'].join(timeout=1)
+        with self.lock:
+            self.closed=True
+            for entry in self.streams:
+                rows.append({'kind':'HELPER_STDERR','stream':entry['stream'],'classes':stderr_classes(entry['data']),
+                    'retainedBytes':len(entry['data']),'truncated':entry['truncated'],'drainComplete':entry['done']})
+                entry['data'].clear()
+        self.final=rows
+        return rows
+
+    def __exit__(self,*unused):
+        subprocess.Popen=self.original
+        try:self.snapshot()
+        except BaseException:pass
+        for entry in self.streams:
+            if entry['done']:
+                try:entry['process'].stderr.close()
+                except OSError:pass
+
+
+def helper_metadata(frames):
+    values={'kind':'HELPER_META'}
+    for frame in frames:
+        scope=frame.f_locals
+        for old,new in (('tables','tableCount'),('after_tables','restoredTableCount'),('total','backupBytes'),('extent','restoreAllocatedBytes')):
+            item=scope.get(old)
+            if type(item) is int and 0<=item<=2**63-1:values[new]=item
+        for old,new in (('cleanup_complete','cleanupComplete'),('created','restoreCreated')):
+            item=scope.get(old)
+            if type(item) is bool:values[new]=item
+        before,after=scope.get('before'),scope.get('after')
+        if all(isinstance(item,str) and re.fullmatch('[0-9a-f]{64}',item) for item in (before,after)):
+            values['fingerprintsMatch']=before==after
+        if type(scope.get('tables')) is int and type(scope.get('after_tables')) is int:
+            values['tableCountsMatch']=scope['tables']==scope['after_tables']
+        remaining=scope.get('remaining')
+        if isinstance(remaining,bytes) and re.fullmatch(rb'[0-9]{1,8}\s*',remaining):values['remainingConnections']=int(remaining)
+        for name in ('p','process','restore_process'):
+            item=scope.get(name);rc=getattr(item,'returncode',None)
+            if type(rc) is int and -64<=rc<=255:values['returnCode']=rc
+        result=scope.get('result');limits=scope.get('limits');art=scope.get('art')
+        if frame.f_code.co_name=='shipping_backup_restore' and isinstance(result,dict):
+            for key in ('restoreVerified','terminationVerified'):
+                if type(result.get(key)) is bool:values[key]=result[key]
+            values['versionMatches']=result.get('pgVersion')=='16.14'
+            values['releaseMatches']=isinstance(art,dict) and result.get('releaseSha')==art.get('release')
+            for key in ('tableCount','backupBytes','restoreAllocatedBytes'):
+                if type(result.get(key)) is int and 0<=result[key]<=2**63-1:values[key]=result[key]
+            if isinstance(limits,dict):
+                for key,bound,label in (('backupBytes','backupLimit','dumpWithinLimit'),('restoreAllocatedBytes','restoreLimit','restoreWithinLimit')):
+                    if type(result.get(key)) is int and type(limits.get(bound)) is int:values[label]=0<result[key]<=limits[bound]
+    return values
+
+
+def helper_failures(error):
+    """Read exception contexts even after raise-from-None; never serialize locals."""
+    if hashlib.sha256(release.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest()!=BACKUP_HELPER_SHA:return []
+    chain=[];seen=set();current=error
+    while current is not None and id(current) not in seen and len(chain)<8:
+        seen.add(id(current));chain.append(current);current=current.__context__ or current.__cause__
+    records=[]
+    for original in reversed(chain):
+        frames=[];details=[];tb=original.__traceback__;module=None
+        while tb is not None:
+            frame=tb.tb_frame;name=frame.f_code.co_name
+            if frame.f_code.co_filename=='shipping-backup-restore' and name in HELPER_FUNCTIONS:
+                frames.append(frame)
+                if name=='<module>':module=tb.tb_lineno
+                details.append({'kind':'HELPER_FRAME','function':HELPER_FUNCTIONS[name],'line':tb.tb_lineno,'phase':'HELPER_UNKNOWN'})
+            elif frame.f_code.co_filename==release.__file__ and name in ('shipping_backup_restore','shipping_disk_gate'):
+                frames.append(frame);details.append({'kind':'HELPER_FRAME','function':'PROOF' if name=='shipping_backup_restore' else 'SPACE',
+                    'line':tb.tb_lineno,'phase':'PROOF_VALIDATION' if name=='shipping_backup_restore' else 'SPACE_GATE'})
+            tb=tb.tb_next
+        if not frames:continue
+        if not any(frame.f_code.co_filename=='shipping-backup-restore' for frame in frames):
+            # A wrapper rethrow at shipping_backup_restore is not a second
+            # cleanup error. Keep direct returned-proof/space failures only.
+            if not any(frame.f_code.co_name=='shipping_disk_gate' or isinstance(frame.f_locals.get('result'),dict)
+                       for frame in frames):continue
+        phase=HELPER_MODULE_PHASES.get(module,'HELPER_UNKNOWN')
+        for detail in details:
+            if detail['function']=='DUMP':phase=HELPER_DUMP_PHASES.get(detail['line'],phase)
+            if detail['function']=='FINGERPRINTS' and module in (73,104):
+                phase=('SOURCE_' if module==73 else 'RESTORED_')+{63:'TABLE_LIST',68:'TABLE_FINGERPRINT',69:'SEQUENCE_FINGERPRINT'}.get(detail['line'],'FINGERPRINT')
+        for detail in details:
+            if detail['phase']=='HELPER_UNKNOWN':detail['phase']=phase if phase in HELPER_PHASES else 'HELPER_UNKNOWN'
+        code=str(original)
+        if code not in HELPER_CODES|release.SAFE_CONTROLLER_CODES:
+            code=('HELPER_PERMISSION_DENIED' if isinstance(original,OSError) and original.errno in (1,13) else
+                  'HELPER_FILE_NOT_FOUND' if isinstance(original,FileNotFoundError) else
+                  'HELPER_FILE_IO_FAILED' if isinstance(original,OSError) else
+                  'HELPER_COMMAND_TIMEOUT' if isinstance(original,subprocess.TimeoutExpired) else
+                  'HELPER_DECODE_FAILED' if isinstance(original,(json.JSONDecodeError,UnicodeError)) else 'HELPER_DETAILS_SUPPRESSED')
+        labels=['HELPER_PRIMARY' if not records else 'HELPER_CLEANUP','BACKUP_HELPER_SHA_'+BACKUP_HELPER_SHA,*details[-4:],helper_metadata(frames)]
+        for frame in frames:
+            value=frame.f_locals.get('p');data=getattr(value,'stderr',None)
+            if isinstance(data,bytes):
+                bounded=memoryview(data)[:65536]
+                labels.append({'kind':'HELPER_STDERR','stream':'COMMAND','classes':stderr_classes(bounded),
+                    'retainedBytes':len(bounded),'truncated':len(data)>65536,'drainComplete':True});break
+        records.append({'code':code,'injection':labels[:8]})
+    return records
 
 
 class CiFailureDiagnostics:
@@ -439,6 +646,18 @@ class CiFailureDiagnostics:
         if self.primary_error is None:
             self.primary_error=error;self.primary_traceback=error.__traceback__
             self.record(error,'PRIMARY')
+            try:
+                for detail in helper_failures(error):
+                    row={'exactSHA':self.sha,'case':self.case,'completedCases':self.completed.copy(),
+                        'stage':'SHIPPING_BACKUP_RESTORE','code':detail['code'],'result':'UNVERIFIED','injection':detail['injection']}
+                    if len(self.records)<32:self.records.append(row)
+                for detail in getattr(error,'ci_helper_stderr',[]):
+                    row={'exactSHA':self.sha,'case':self.case,'completedCases':self.completed.copy(),
+                        'stage':'SHIPPING_BACKUP_RESTORE','code':'HELPER_STDERR_CLASSIFIED','result':'UNVERIFIED',
+                        'injection':['BACKUP_HELPER_SHA_'+BACKUP_HELPER_SHA,detail]}
+                    if len(self.records)<32:self.records.append(row)
+                self.write()
+            except BaseException:pass
 
     def cleanup(self,action,operation):
         try:action()
@@ -510,8 +729,11 @@ class ControllerCiRemote(release.LocalRemote):
         if code==release.SHIPPING_BACKUP_RESTORE_CODE and self.mode=='backup_limit':
             value={**value,'limits':{**value['limits'],'backupLimit':16}}
             self.injected=True
-        try:return super().py(code,value,timeout)
+        capture=HelperStderrCapture() if code==release.SHIPPING_BACKUP_RESTORE_CODE else contextlib.nullcontext()
+        try:
+            with capture:return super().py(code,value,timeout)
         except BaseException as error:
+            if isinstance(capture,HelperStderrCapture):error.ci_helper_stderr=capture.final
             error.ci_operation=('BACKUP_RESTORE_HELPER' if code==release.SHIPPING_BACKUP_RESTORE_CODE else
                 'MIGRATOR_CREATE_HELPER' if code==release.SHIPPING_MIGRATOR_CREATE_CODE else
                 'CLONE_HELPER' if value and 'helper' in value else
@@ -588,7 +810,8 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
     release.configure_profile('post-transfer',release.SHIPPING_OLD_SHA,release.SHIPPING_BUSINESS_SHA,
         hashlib.sha256(release.command(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),
                                        'show',release.SHIPPING_OLD_SHA+':server/v2.js'])).hexdigest())
-    identity,ledger=(release.diagnostic_identity(ROOT) if os.environ['GITHUB_REF']=='refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH
+    identity,ledger=(release.backup_diagnostic_identity(ROOT) if os.environ['GITHUB_REF']=='refs/heads/'+release.SHIPPING_BACKUP_DIAGNOSTIC_BRANCH else
+                     release.diagnostic_identity(ROOT) if os.environ['GITHUB_REF']=='refs/heads/'+release.SHIPPING_DIAGNOSTIC_BRANCH
                      else release.identity(ROOT));sha=os.environ['GITHUB_SHA']
     if identity!=sha or image!=release.image_reference(sha):raise RuntimeError('CI_EXACT_SOURCE_REQUIRED')
     old_config=json.loads(docker('image','inspect',old_image))[0]

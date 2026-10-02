@@ -35,10 +35,13 @@ LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/release-controller-dns-empty-normalization',
                          'codex/release-single-writer-db-probe',
                          'codex/data-authority-finalization']
+BACKUP_BRANCH = r.SHIPPING_BACKUP_DIAGNOSTIC_BRANCH
+BACKUP_PARENT = r.SHIPPING_BACKUP_DIAGNOSTIC_PARENT
+BACKUP_FILES = '\n'.join(sorted(r.SHIPPING_BACKUP_DIAGNOSTIC_FILES))
 DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
 DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
 DIAGNOSTIC_FILES = '\n'.join(sorted(r.SHIPPING_DIAGNOSTIC_FILES))
-SHIPPING_CI_REFS = "(github.ref == 'refs/heads/"+r.SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"')"
+SHIPPING_CI_REFS = "(github.ref == 'refs/heads/"+r.SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' || github.ref == 'refs/heads/"+BACKUP_BRANCH+"')"
 QUANTITY_BRANCH = r.SHIPPING_BRANCH
 QUANTITY_OLD = r.SHIPPING_OLD_SHA
 QUANTITY_BUSINESS = r.SHIPPING_BUSINESS_SHA
@@ -54,6 +57,9 @@ def build_only_workflow():
 
 def without_quantity_binding(value, key):
     sha = QUANTITY_OLD if key == 'EXPECTED_PRODUCTION_SHA' else QUANTITY_BUSINESS
+    backup_prefix = "github.ref == 'refs/heads/"+BACKUP_BRANCH+"' && '"+sha+"' || "
+    if value.count(backup_prefix) != 1:raise AssertionError('Exact backup diagnostic binding required once')
+    value=value.replace(backup_prefix,'',1)
     diagnostic_prefix = "github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' && '"+sha+"' || "
     if value.count(diagnostic_prefix) != 1:raise AssertionError('Exact diagnostic binding required once')
     value=value.replace(diagnostic_prefix,'',1)
@@ -75,10 +81,11 @@ def build_only_guard(**facts):
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
             'rev-list) case "$5" in\n'
+            '  '+BACKUP_PARENT+') printf "%s %s\\n" "$5" "$GUARD_F_PARENT" ;;\n'
             '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
             '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
             '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
-            'diff) if [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
+            'diff) if [ "$3" = "'+BACKUP_PARENT+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -89,7 +96,7 @@ def build_only_guard(**facts):
                'EXPECTED_PRODUCTION_SHA':SHIPPING_OLD, 'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS,
                'GUARD_PARENTS':SHIPPING_BUSINESS, 'GUARD_FILES':SHIPPING_ENGINEERING_FILES,
                'GUARD_HEAD':release,'GUARD_E_PARENT':QUANTITY_BUSINESS,'GUARD_B_PARENT':QUANTITY_OLD,
-               'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES, **facts}
+               'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES,'GUARD_F_PARENT':DIAGNOSTIC_E,'GUARD_BACKUP_FILES':BACKUP_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
 
@@ -121,7 +128,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertEqual(native['env'],{'NODE_ENV':'test','APP_ENV':'test','TEST_APPROVAL_NATIVE_CI':'1'})
         self.assertIn('test-approval-withdraw-native-ci.mjs',native['run'])
         job=parsed['jobs']['artifact']
-        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' || github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' || github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
+        self.assertEqual(job['if'],"${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/"+BACKUP_BRANCH+"' || github.ref == 'refs/heads/"+DIAGNOSTIC_BRANCH+"' || github.ref == 'refs/heads/"+QUANTITY_BRANCH+"' || github.ref == 'refs/heads/"+SHIPPING_BRANCH+"' || github.ref == 'refs/heads/"+PAYROLL_BRANCH+"' || github.ref == 'refs/heads/"+REVISION_BRANCH+"')) }}")
         self.assertEqual(job['runs-on'],'ubuntu-latest')
         self.assertEqual(job['steps'][0]['with']['ref'],'${{ github.sha }}')
         self.assertEqual(job['steps'][-1]['uses'],'actions/upload-artifact@v4')
@@ -466,7 +473,7 @@ class QuantityReleaseContract(unittest.TestCase):
         self.assertIn('git archive '+QUANTITY_OLD,old['run']);self.assertIn('--platform linux/amd64',old['run'])
         self.assertIn('--load "$old_dir"',old['run'])
         build=next(step for step in steps if step['name'].startswith('Build exact production'))['run']
-        quantity=build.split('elif [ "$GITHUB_REF" = refs/heads/'+QUANTITY_BRANCH+' ] || [ "$GITHUB_REF" = refs/heads/'+DIAGNOSTIC_BRANCH+' ]; then',1)[1].split('else',1)[0]
+        quantity=build.split('elif [ "$GITHUB_REF" = refs/heads/'+QUANTITY_BRANCH+' ] || [ "$GITHUB_REF" = refs/heads/'+DIAGNOSTIC_BRANCH+' ] || [ "$GITHUB_REF" = refs/heads/'+BACKUP_BRANCH+' ]; then',1)[1].split('else',1)[0]
         self.assertIn('server prisma cloudfunctions src shared Dockerfile package.json package-lock.json',quantity)
         self.assertIn('PINNED_PRISMA_CLI_OK',quantity);self.assertIn('6.19.3',quantity)
         probe=next(step for step in steps if step['name'].startswith('Probe application'))['run']
@@ -737,6 +744,217 @@ class ShippingDiagnosticFailures(unittest.TestCase):
             text=diag.target.read_text();self.assertIn('DATABASE_SQL',text);self.assertNotIn('postgresql://secret',text)
             self.assertEqual(diag.records[0]['code'],'COMMAND_FAILED')
 
+
+class BackupHelperDiagnostics(unittest.TestCase):
+    setUp = ShippingControllerCiIsolation.setUp
+
+    def execute_fixture(self,fault):
+        ci=self.ci;code=ci.release.SHIPPING_BACKUP_RESTORE_CODE
+        phase={'restoreRunning':True};sha=self.sha
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);value={'root':directory,'pg':'source','database':'fixture_only','release':sha,'restore':'restore',
+                'limits':{'backupLimit':16 if fault in ('dump_cap','cap_cleanup') else 1000,'restoreLimit':1 if fault=='restore_limit' else 100000}}
+            image={'Image':'own-image','Config':{'Env':['POSTGRES_USER=postgres']}}
+            def response(args,data=None,**kwargs):
+                data=kwargs.get('input',data)
+                failed=False;stdout=b'';stderr=b''
+                verb=args[1]
+                if verb=='inspect':
+                    if args[2]=='source':failed=fault=='inspect';stdout=json.dumps([image]).encode()
+                    else:
+                        obj={'Image':'own-image','Config':{'Labels':{'budu.shipping-restore':sha}},
+                            'Mounts':[{'Source':str(root/'restore-pg'),'Destination':'/var/lib/postgresql/data'}],
+                            'State':{'Running':phase['restoreRunning']}}
+                        if fault=='identity':obj['Image']='wrong'
+                        stdout=json.dumps([obj]).encode()
+                elif verb=='ps':stdout=b''
+                elif verb=='create':
+                    failed=fault=='create';(root/'restore-pg'/'allocated-fixture').write_bytes(b'x'*1024)
+                elif verb=='start':failed=fault=='start'
+                elif verb=='stop':
+                    failed=fault=='stop';phase['restoreRunning']=fault=='stop_verify'
+                elif verb=='exec':
+                    if 'pg_isready' in args:failed=fault=='ready'
+                    else:
+                        query=(data or b'').decode();restored=args[5]=='restore'
+                        if 'server_version' in query:
+                            failed=fault=='version_connection';stdout=b'16.13' if fault=='version' else b'16.14'
+                            if failed:stderr=b'FATAL: database "PRIVATE_FIXTURE_NAME" does not exist'
+                        elif 'pg_terminate_backend' in query:failed=fault=='connection_terminate';stdout=b''
+                        elif 'pg_stat_activity' in query:
+                            failed=fault=='connection_count';stdout=b'1' if fault=='cap_cleanup' else b'0'
+                        elif 'pg_tables' in query:
+                            failed=fault==('restored_list' if restored else 'source_list')
+                            stdout=json.dumps(['Sample','Second'] if restored and fault=='table_count' else ['Sample']).encode()
+                        elif 'pg_sequences' in query:
+                            failed=fault==('restored_sequence' if restored else 'source_sequence');stdout=b'[]'
+                        else:
+                            failed=fault==('restored_table' if restored else 'source_table')
+                            stdout=b'1:different' if restored and fault=='facts' else b'1:stable'
+                if failed and not stderr:stderr=b'PRIVATE_CREDENTIAL_PRIVATE_PATH permission denied'
+                return subprocess.CompletedProcess(args,1 if failed else 0,stdout,stderr)
+            class Process:
+                def __init__(self,args,**kwargs):
+                    self.restore='pg_restore' in args;self.returncode=(1 if fault==('restore_exit' if self.restore else 'dump_exit') else 0)
+                    self.running=self.restore and fault in ('restore_limit','restore_timeout')
+                    if self.running:self.returncode=None
+                    def pipe(body):
+                        reader,writer=os.pipe();os.write(writer,body);os.close(writer);return os.fdopen(reader,'rb')
+                    self.stdout=pipe(b'archive'*8) if not self.restore else None
+                    self.stderr=pipe(b'PRIVATE_CREDENTIAL permission denied') if kwargs.get('stderr')==subprocess.PIPE else None
+                def poll(self):return None if self.running else self.returncode
+                def wait(self,timeout=None):return self.returncode
+                def terminate(self):self.running=False;self.returncode=-15
+                def kill(self):self.running=False;self.returncode=-9
+            def clock():
+                frame=sys._getframe(1)
+                for _ in range(8):
+                    if frame.f_code.co_filename=='shipping-backup-restore':
+                        if fault=='dump_timeout' and frame.f_code.co_name=='bounded_backup_dump':return 1000
+                        if fault=='restore_timeout' and frame.f_code.co_name=='<module>' and frame.f_lineno==97:return 1000
+                        break
+                    if not frame.f_back:break
+                    frame=frame.f_back
+                return 0
+            original_mkdir=Path.mkdir;original_write=Path.write_text
+            def mkdir(path,*args,**kwargs):
+                if fault=='directory' and path.name=='restore-pg':raise PermissionError(13,'PRIVATE_CREDENTIAL_PATH')
+                return original_mkdir(path,*args,**kwargs)
+            def write(path,*args,**kwargs):
+                if fault=='proof_write' and path.name=='backup-restore-proof.json':raise PermissionError(13,'PRIVATE_CREDENTIAL_PATH')
+                return original_write(path,*args,**kwargs)
+            original_popen=ci.subprocess.Popen
+            with patch.object(ci.subprocess,'run',side_effect=response),patch.object(ci.subprocess,'Popen',side_effect=Process) as factory,\
+                 patch.object(ci.time,'monotonic',side_effect=clock),patch.object(ci.time,'sleep',return_value=None),\
+                 patch.object(Path,'mkdir',new=mkdir),patch.object(Path,'write_text',new=write):
+                capture=ci.HelperStderrCapture();caught=None
+                try:
+                    with capture:result=ci.release.LocalRemote().py(code,value)
+                except ci.release.GateError as error:caught=error
+                self.assertIs(ci.subprocess.Popen,factory)
+            self.assertIs(ci.subprocess.Popen,original_popen)
+            if caught is None:return json.loads(result),capture.final
+            caught.failure_stage='SHIPPING_BACKUP_RESTORE';caught.ci_helper_stderr=capture.final
+            diagnostics=ci.CiFailureDiagnostics(root/'diagnostic.json',sha);diagnostics.case='success';diagnostics.primary(caught)
+            ci.validate_ci_diagnostic_records(diagnostics.records,sha)
+            serialized=json.dumps(diagnostics.records)
+            self.assertNotIn('PRIVATE_CREDENTIAL',serialized);self.assertNotIn(directory,serialized)
+            self.assertNotIn('PRIVATE_FIXTURE_NAME',serialized)
+            return caught,diagnostics.records
+
+    def test_original_helper_success_and_all_fault_branches_have_precise_safe_evidence(self):
+        result,stderr=self.execute_fixture('success');self.assertTrue(result['restoreVerified']);self.assertTrue(result['terminationVerified'])
+        fixtures={'inspect':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_INSPECT'),
+            'source_list':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_TABLE_LIST'),
+            'source_table':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_TABLE_FINGERPRINT'),
+            'source_sequence':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_SEQUENCE_FINGERPRINT'),
+            'dump_cap':('BACKUP_LIMIT','DUMP_LIMIT'),'dump_timeout':('BACKUP_TOTAL_DEADLINE','DUMP_DEADLINE'),
+            'dump_exit':('BACKUP_FAILED','DUMP_EXIT'),'directory':('HELPER_PERMISSION_DENIED','RESTORE_DIRECTORY'),
+            'create':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_CREATE'),'start':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_START'),
+            'ready':('RESTORE_NOT_READY','RESTORE_READY'),'version':('RESTORE_VERSION','RESTORE_VERSION'),
+            'version_connection':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_VERSION'),
+            'restore_exit':('RESTORE_FAILED','RESTORE_EXIT'),'restore_limit':('RESTORE_LIMIT','RESTORE_ALLOCATION'),
+            'restore_timeout':('BACKUP_TOTAL_DEADLINE','RESTORE_DEADLINE'),
+            'restored_list':('BACKUP_RESTORE_COMMAND_FAILED','RESTORED_TABLE_LIST'),
+            'restored_table':('BACKUP_RESTORE_COMMAND_FAILED','RESTORED_TABLE_FINGERPRINT'),
+            'restored_sequence':('BACKUP_RESTORE_COMMAND_FAILED','RESTORED_SEQUENCE_FINGERPRINT'),
+            'facts':('RESTORE_FACTS_MISMATCH','FACTS_COMPARE'),'table_count':('RESTORE_FACTS_MISMATCH','FACTS_COMPARE'),
+            'connection_terminate':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_CONNECTION_TERMINATE'),
+            'connection_count':('BACKUP_RESTORE_COMMAND_FAILED','SOURCE_CONNECTION_COUNT'),
+            'identity':('RESTORE_IDENTITY_UNVERIFIED','RESTORE_IDENTITY'),
+            'stop':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_STOP'),'stop_verify':('RESTORE_STOP_UNVERIFIED','RESTORE_STOP_VERIFY'),
+            'proof_write':('HELPER_PERMISSION_DENIED','PROOF_WRITE')}
+        for fault,(code,phase) in fixtures.items():
+            with self.subTest(fault=fault):
+                caught,rows=self.execute_fixture(fault)
+                details=[row for row in rows if row['code']==code]
+                self.assertTrue(details,(fault,rows))
+                frames=[label for row in details for label in row['injection'] if isinstance(label,dict) and label['kind']=='HELPER_FRAME']
+                self.assertIn(phase,[frame['phase'] for frame in frames],(fault,rows))
+                self.assertTrue(all(type(frame['line']) is int for frame in frames))
+                if fault=='version_connection':self.assertIn('DATABASE_MISSING',json.dumps(rows))
+                if fault=='facts':self.assertIn('"fingerprintsMatch": false',json.dumps(rows))
+                if fault=='table_count':self.assertIn('"tableCountsMatch": false',json.dumps(rows))
+
+    def test_cleanup_masking_preserves_both_original_helper_codes_and_stage_frames(self):
+        error,rows=self.execute_fixture('cap_cleanup')
+        self.assertEqual(str(error),'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
+        codes=[row['code'] for row in rows]
+        self.assertIn('BACKUP_LIMIT',codes);self.assertIn('BACKUP_CONNECTION_TERMINATION_UNVERIFIED',codes)
+        self.assertLess(codes.index('BACKUP_LIMIT'),codes.index('BACKUP_CONNECTION_TERMINATION_UNVERIFIED'))
+
+    def test_bounded_stderr_drains_real_child_without_deadlock_and_discards_raw_bytes(self):
+        ci=self.ci;original=ci.subprocess.Popen
+        nodes=[node for node in ast.parse(ci.release.SHIPPING_BACKUP_RESTORE_CODE).body if isinstance(node,ast.FunctionDef) and node.name in ('bounded_backup_dump','stop_backup_process')]
+        namespace={name:getattr(ci,name) for name in ('os','subprocess','time','hashlib','signal')};namespace['select']=__import__('select')
+        exec(compile(ast.Module(body=nodes,type_ignores=[]),'shipping-backup-restore','exec'),namespace)
+        with tempfile.TemporaryDirectory() as directory:
+            capture=ci.HelperStderrCapture()
+            with capture:
+                total,_=namespace['bounded_backup_dump']([sys.executable,'-c',
+                    "import sys;sys.stderr.write('permission denied PRIVATE_SECRET\\n'+('x'*1048576));sys.stderr.flush();sys.stdout.write('dump')"],
+                    Path(directory)/'dump',1000,ci.time.monotonic()+15)
+            self.assertEqual(total,4);self.assertIs(ci.subprocess.Popen,original)
+            self.assertLessEqual(capture.retained,57344);self.assertTrue(capture.final[0]['truncated'])
+            self.assertTrue(capture.final[0]['drainComplete']);self.assertIn('PERMISSION_DENIED',capture.final[0]['classes'])
+            self.assertTrue(all(not entry['data'] for entry in capture.streams))
+            self.assertNotIn('PRIVATE_SECRET',json.dumps(capture.final))
+
+    def test_helper_hash_binding_and_label_validator_reject_unreviewed_or_private_values(self):
+        ci=self.ci
+        with patch.object(ci.release,'SHIPPING_BACKUP_RESTORE_CODE','changed'):
+            with self.assertRaisesRegex(RuntimeError,'CI_BACKUP_HELPER_HASH_CHANGED'):
+                with ci.HelperStderrCapture():pass
+        for label in ({'kind':'HELPER_FRAME','function':'MODULE','line':1,'phase':'PRIVATE'},
+                      {'kind':'HELPER_META','credential':'PRIVATE'},{'kind':'HELPER_META','returnCode':True},
+                      {'kind':'HELPER_FRAME','function':'PRIVATE','line':1,'phase':'DUMP'}):
+            with self.subTest(label=label),self.assertRaises(AssertionError):ci.validate_helper_label(label)
+
+    def test_proof_and_space_failures_have_boolean_validation_details(self):
+        ci=self.ci;r=ci.release;art={'release':self.sha};limits={'backupLimit':1000,'restoreLimit':10000,'walLimit':1,'migratorLimit':1}
+        proof={'restoreVerified':True,'terminationVerified':True,'pgVersion':'16.14','releaseSha':self.sha,
+               'tableCount':1,'backupBytes':1,'restoreAllocatedBytes':1}
+        remote=__import__('unittest.mock',fromlist=['Mock']).Mock()
+        for changes in ({'restoreVerified':False},{'terminationVerified':False},{'pgVersion':'16.13'},
+                        {'releaseSha':'f'*40},{'tableCount':0},{'backupBytes':0},{'restoreAllocatedBytes':20000}):
+            with self.subTest(changes=changes):
+                remote.py.return_value=json.dumps({**proof,**changes}).encode()
+                try:r.shipping_backup_restore(remote,{'migrationResources':limits},'unused',art)
+                except r.GateError as error:
+                    details=ci.helper_failures(error)
+                    self.assertTrue(details);self.assertIn('PROOF_VALIDATION',json.dumps(details))
+                else:self.fail('INVALID_PROOF_ACCEPTED')
+        remote.py.return_value=json.dumps(proof).encode()
+        remote.disk.return_value=(20*r.GIB,1)
+        try:r.shipping_backup_restore(remote,{'migrationResources':limits},'unused',art)
+        except r.GateError as error:self.assertIn('SPACE_GATE',json.dumps(ci.helper_failures(error)))
+        else:self.fail('SPACE_GATE_NOT_EXERCISED')
+
+
+class BackupDiagnosticIdentity(unittest.TestCase):
+    def test_new_diagnostic_shell_admission_requires_exact_f_parent_chain_and_four_files(self):
+        base={'GITHUB_REF':'refs/heads/'+BACKUP_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
+              'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':BACKUP_PARENT,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+        accepted=build_only_guard(**base);self.assertEqual(accepted.returncode,0,accepted.stderr)
+        for change in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'f'*40},{'GUARD_PARENTS':DIAGNOSTIC_E},
+                       {'GUARD_F_PARENT':QUANTITY_BUSINESS},{'GUARD_E_PARENT':QUANTITY_OLD},
+                       {'GUARD_BACKUP_FILES':BACKUP_FILES+'\nserver/v2.js'},{'GUARD_FILES':BACKUP_FILES}):
+            with self.subTest(change=change):self.assertNotEqual(build_only_guard(**{**base,**change}).returncode,0)
+
+    def test_public_f_production_functions_constants_and_helper_still_unchanged(self):
+        path='scripts/deploy-prod-transfer-cas.py';old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':'+path],text=True)
+        def functions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        before=functions(old);after=functions((ROOT/path).read_text())
+        for name,body in before.items():
+            if name!='main':self.assertEqual(body,after[name],name)
+        def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
+        for key,value in constants(old).items():self.assertEqual(value,constants((ROOT/path).read_text())[key],key)
+        self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'13f11ee93623d67ccb752b7406ba62ec4b1a4207cff81e3d4d117a98ae414951')
+        workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
+        previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
+        for branch in (QUANTITY_BRANCH,DIAGNOSTIC_BRANCH):
+            token='            '+branch+')'
+            self.assertEqual(workflow.split(token,1)[1].split(';;',1)[0],previous.split(token,1)[1].split(';;',1)[0])
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

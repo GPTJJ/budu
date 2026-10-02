@@ -15,8 +15,8 @@ on:
       - codex/data-authority-finalization
 
 env:
-  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
-  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   artifact:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -50,6 +50,20 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
+            codex/shipping-backup-diagnostic-20261002)
+              test "$GITHUB_EVENT_NAME" = workflow_dispatch
+              test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
+              [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+              test "$GITHUB_SHA" != 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb
+              test "$EXPECTED_PRODUCTION_SHA" = 68cee84efe30409e7e18e4459e08982f6c20e254
+              test "$APPROVED_BUSINESS_SHA" = 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb"
+              test "$(git rev-list --parents -n 1 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb)" = "58d952b4e206c9eb4cea8f86fd4d51635b36a8fb dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0"
+              test "$(git rev-list --parents -n 1 dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0)" = "dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c"
+              test "$(git rev-list --parents -n 1 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c)" = "7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c 68cee84efe30409e7e18e4459e08982f6c20e254"
+              test "$(git diff --name-only 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py\nscripts/test-transfer-cas-existing-workflow.py'
+              ;;
             codex/shipping-controller-diagnostic-20261002)
               test "$GITHUB_EVENT_NAME" = workflow_dispatch
               test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
@@ -112,7 +126,12 @@ jobs:
           test "$(git branch --show-current)" = "$branch"
           test -z "$(git status --porcelain --untracked-files=all)"
           printf 'CI_SOURCE_SHA=%s RUNNER_OS=%s RUNNER_ARCH=%s\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH"
-          if [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
+          if [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
+            bash scripts/deploy-prod-transfer-cas.sh identity-backup-diagnostic --repo "$PWD" \
+              --release-profile post-transfer \
+              --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
+              --business-base-sha "$APPROVED_BUSINESS_SHA"
+          elif [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
             bash scripts/deploy-prod-transfer-cas.sh identity-diagnostic --repo "$PWD" \
               --release-profile post-transfer \
               --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
@@ -171,7 +190,12 @@ jobs:
             --provenance=false --sbom=false \
             --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/image.tar" \
             "$run_dir/source"
-          if [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
+          if [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
+            bash scripts/deploy-prod-transfer-cas.sh inspect-artifact-backup-diagnostic --repo "$PWD" --archive "$run_dir/image.tar" \
+              --release-profile post-transfer \
+              --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
+              --business-base-sha "$APPROVED_BUSINESS_SHA" | tee "$run_dir/artifact.log"
+          elif [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
             bash scripts/deploy-prod-transfer-cas.sh inspect-artifact-diagnostic --repo "$PWD" --archive "$run_dir/image.tar" \
               --release-profile post-transfer \
               --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
@@ -209,7 +233,7 @@ jobs:
               server prisma cloudfunctions src shared Dockerfile package.json package-lock.json \
               'scripts/payroll-audit-*.mjs' scripts/render-payroll-audit-pdf.mjs
             printf 'REPORT_REVISION_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
-          elif [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
+          elif [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
             git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
               server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
             docker run --rm --network none --entrypoint node "$tag" -e \
@@ -248,7 +272,7 @@ jobs:
           printf 'TRANSFER_ARTIFACT_SIZE_BYTES=%s IMAGE_SMOKE=PASS\n' "$(stat -c%s "$run_dir/image.tar")"
 
       - name: Build exact old application for isolated shipping compatibility
-        if: success() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002')
+        if: success() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002')
         shell: bash
         run: |
           set -euo pipefail
@@ -264,7 +288,7 @@ jobs:
           TEST_SHIPPING_CONTROLLER_CI: '1'
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ]; then
+          if [ "$GITHUB_REF" = refs/heads/codex/shipping-review-actual-quantity-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-controller-diagnostic-20261002 ] || [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
             sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,DOCKER_HOST,DOCKER_CONTEXT,TEST_SHIPPING_CONTROLLER_CI \
               python3 scripts/test-candidate-db-probe-integration.py --shipping-controller-ci \
               "budu-api:post-transfer-${GITHUB_SHA:0:12}" "budu-api:shipping-old-68cee84efe30" "$RELEASE_ARTIFACT_PATH"
@@ -274,7 +298,7 @@ jobs:
 
       - name: Validate isolated shipping failure diagnostics
         id: shipping_diagnostic
-        if: always() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002')
+        if: always() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002')
         shell: bash
         run: |
           python3 - <<'PYDIAG'
@@ -290,7 +314,7 @@ jobs:
           PYDIAG
 
       - name: Retain isolated shipping failure diagnostics
-        if: always() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002') && steps.shipping_diagnostic.outputs.failed == 'true'
+        if: always() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && steps.shipping_diagnostic.outputs.failed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: shipping-controller-diagnostic-${{ github.sha }}
@@ -299,10 +323,10 @@ jobs:
           retention-days: 1
 
       - name: Retain isolated real shipping controller proof
-        if: success() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002')
+        if: success() && (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002')
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && format('shipping-diagnostic-proof-{0}', github.sha) || format('shipping-controller-proof-{0}', github.sha) }}
+          name: ${{ (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-proof-{0}', github.sha) || format('shipping-controller-proof-{0}', github.sha) }}
           path: ${{ runner.temp }}/shipping-controller-proof.json
           if-no-files-found: error
           retention-days: 1
@@ -310,7 +334,7 @@ jobs:
       - name: Retain exact artifact for read-only preflight
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
+          name: ${{ (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
           path: ${{ env.RELEASE_ARTIFACT_PATH }}
           if-no-files-found: error
           compression-level: 0
