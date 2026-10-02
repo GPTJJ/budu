@@ -198,9 +198,10 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != '7bf1c98488e27785c2cb2c15f91746620bcdd5e1',
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'd128f905d909b65810afe712792752fb4c3b9714',
             'SHIPPING_ENGINEERING_PARENT_INVALID')
-    for child, parent in ((release, '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'),
+    for child, parent in ((release, 'd128f905d909b65810afe712792752fb4c3b9714'),
+                          ('d128f905d909b65810afe712792752fb4c3b9714', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'),
                           ('7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
                           ('e59deb2d3b1f822e5231243c45e9943a95af3a8c', SHIPPING_POLICY_BASE),
                           (SHIPPING_POLICY_BASE, SHIPPING_POLICY_PARENT),
@@ -212,7 +213,9 @@ def validate_shipping_identity(repo, release):
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_ENGINEERING_PARENT_INVALID')
-    require(set(git(repo, 'diff', '--name-only', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1', release).splitlines())
+    require(set(git(repo, 'diff', '--name-only', 'd128f905d909b65810afe712792752fb4c3b9714', release).splitlines())
+            == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'd128f905d909b65810afe712792752fb4c3b9714').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
@@ -1618,6 +1621,10 @@ print(json.dumps(result))
 
 class MeasurementRemote(Remote):
     """Only the enumerated production reads are admitted in this audit."""
+    def py(self, code, value=None, timeout=60):
+        # Keep these small read scripts visible to the existing command allowlist.
+        return self.run(['sudo', '-n', 'python3', '-c', code],
+                        json.dumps(value).encode() if value is not None else None, timeout)
     def db(self):
         self._db_read = True
         try:

@@ -47,6 +47,7 @@ POLICY_PARENT = r.SHIPPING_POLICY_PARENT
 POLICY_FILES = '\n'.join(sorted(r.SHIPPING_POLICY_FILES))
 TEST_FIX_BASE = 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'
 TRANSPORT_BASE = '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'
+MEASUREMENT_BASE = 'd128f905d909b65810afe712792752fb4c3b9714'
 BACKUP_FILES = '\n'.join(sorted(r.SHIPPING_BACKUP_DIAGNOSTIC_FILES))
 DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
 DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
@@ -79,7 +80,15 @@ def without_reviewed_transport(source):
         raise AssertionError('Unreviewed Remote.py transport change')
     old = subprocess.check_output(['git','-C',str(ROOT),'show',TRANSPORT_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
     if source.count(method) != 1:raise AssertionError('Transport method must occur once')
-    return source.replace(method,remote_py_method(old),1)
+    source=source.replace(method,remote_py_method(old),1)
+    measurement=next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='MeasurementRemote')
+    adapter=next(n for n in measurement.body if isinstance(n,ast.FunctionDef) and n.name=='py')
+    body=ast.get_source_segment(source,adapter)
+    if hashlib.sha256(body.encode()).hexdigest()!='1b1ccf91646d522e37b12be8f0f0af4cb510745a8e7ea74926b38e143922ff6a':
+        raise AssertionError('Unreviewed MeasurementRemote.py compatibility change')
+    exact='    '+body+'\n'
+    if source.count(exact)!=1:raise AssertionError('Measurement adapter must occur once')
+    return source.replace(exact,'',1)
 
 
 def build_only_workflow():
@@ -114,6 +123,7 @@ def build_only_guard(**facts):
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
             'rev-list) case "$5" in\n'
+            '  '+MEASUREMENT_BASE+') printf "%s %s\\n" "$5" "$GUARD_N_PARENT" ;;\n'
             '  '+TRANSPORT_BASE+') printf "%s %s\\n" "$5" "$GUARD_M_PARENT" ;;\n'
             '  '+TEST_FIX_BASE+') printf "%s %s\\n" "$5" "$GUARD_L_PARENT" ;;\n'
             '  '+POLICY_BASE+') printf "%s %s\\n" "$5" "$GUARD_K_PARENT" ;;\n'
@@ -124,7 +134,7 @@ def build_only_guard(**facts):
             '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
             '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
             '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
-            'diff) if [ "$3" = "'+TRANSPORT_BASE+'" ]; then printf "%s\\n" "$GUARD_TRANSPORT_FILES"; elif [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ] || [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
+            'diff) if [ "$3" = "'+MEASUREMENT_BASE+'" ]; then printf "%s\\n" "$GUARD_MEASUREMENT_FILES"; elif [ "$3" = "'+TRANSPORT_BASE+'" ]; then printf "%s\\n" "$GUARD_TRANSPORT_FILES"; elif [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ] || [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -138,6 +148,7 @@ def build_only_guard(**facts):
                'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES,'GUARD_F_PARENT':DIAGNOSTIC_E,'GUARD_G_PARENT':BACKUP_PARENT,'GUARD_BACKUP_FILES':BACKUP_FILES,'GUARD_H_PARENT':BACKUP_READINESS_BASE,'GUARD_FORMAL_FILES':FORMAL_FILES,
                'GUARD_L_PARENT':POLICY_BASE,'GUARD_TEST_FIX_FILES':FORMAL_FILES,
                'GUARD_M_PARENT':TEST_FIX_BASE,'GUARD_TRANSPORT_FILES':FORMAL_FILES,
+               'GUARD_N_PARENT':TRANSPORT_BASE,'GUARD_MEASUREMENT_FILES':FORMAL_FILES,
                'GUARD_K_PARENT':POLICY_PARENT,'GUARD_J_PARENT':FORMAL_BASE,'GUARD_POLICY_FILES':POLICY_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
@@ -491,12 +502,17 @@ class QuantityReleaseContract(unittest.TestCase):
     def test_real_build_guard_accepts_only_exact_six_file_single_parent(self):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,
                'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,
-               'GUARD_PARENTS':TRANSPORT_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+               'GUARD_PARENTS':MEASUREMENT_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
         self.assertEqual(build_only_guard(**facts).returncode,0)
         denied=[{'GITHUB_EVENT_NAME':'push'}, {'REQUESTED_RELEASE_SHA':''},
                 {'REQUESTED_RELEASE_SHA':'b'*40}, {'GITHUB_SHA':'short'},
                 {'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD}, {'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS},
                 {'GUARD_PARENTS':QUANTITY_BUSINESS}, {'GUARD_PARENTS':TEST_FIX_BASE},
+                {'GUARD_PARENTS':TRANSPORT_BASE}, {'GUARD_PARENTS':MEASUREMENT_BASE+' '+'b'*40},
+                {'GUARD_N_PARENT':TEST_FIX_BASE}, {'GUARD_N_PARENT':TRANSPORT_BASE+' '+'b'*40},
+                {'GUARD_MEASUREMENT_FILES':''}, {'GUARD_MEASUREMENT_FILES':POLICY_FILES},
+                {'GUARD_MEASUREMENT_FILES':FORMAL_FILES+'\nserver/v2.js'},
+                {'GUARD_MEASUREMENT_FILES':FORMAL_FILES+'\n.github/workflows/deploy-prod.yml'},
                 {'GUARD_PARENTS':TRANSPORT_BASE+' '+'b'*40}, {'GUARD_M_PARENT':POLICY_BASE},
                 {'GUARD_M_PARENT':TEST_FIX_BASE+' '+'b'*40},
                 {'GUARD_TRANSPORT_FILES':''}, {'GUARD_TRANSPORT_FILES':POLICY_FILES},
@@ -559,11 +575,12 @@ class QuantityReleaseContract(unittest.TestCase):
             def facts(repo,*args):
                 if args==('branch','--show-current'):return QUANTITY_BRANCH
                 if args[:1]==('rev-list',):
-                    parents={candidate:TRANSPORT_BASE,TRANSPORT_BASE:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
+                    parents={candidate:MEASUREMENT_BASE,MEASUREMENT_BASE:TRANSPORT_BASE,TRANSPORT_BASE:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
                              FORMAL_BASE:BACKUP_READINESS_BASE,BACKUP_READINESS_BASE:BACKUP_PARENT,
                              BACKUP_PARENT:DIAGNOSTIC_E,DIAGNOSTIC_E:QUANTITY_BUSINESS,QUANTITY_BUSINESS:QUANTITY_OLD}
                     return args[-1]+' '+parents[args[-1]]
-                if args==('diff','--name-only',TRANSPORT_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',MEASUREMENT_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',TRANSPORT_BASE,MEASUREMENT_BASE):return FORMAL_FILES
                 if args==('diff','--name-only',TEST_FIX_BASE,TRANSPORT_BASE):return FORMAL_FILES
                 if args==('diff','--name-only',POLICY_BASE,candidate):return FORMAL_FILES
                 if args==('diff','--name-only',POLICY_PARENT,POLICY_BASE):return POLICY_FILES
@@ -578,11 +595,11 @@ class QuantityReleaseContract(unittest.TestCase):
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
+                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
                      (('rev-list','--parents','-n','1',TEST_FIX_BASE),TEST_FIX_BASE+' '+POLICY_BASE+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     (('diff','--name-only',TRANSPORT_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     (('diff','--name-only',TRANSPORT_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     *[(('diff','--name-only',TRANSPORT_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
+                     (('diff','--name-only',MEASUREMENT_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     (('diff','--name-only',MEASUREMENT_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     *[(('diff','--name-only',MEASUREMENT_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
                      (('diff','--name-only',POLICY_BASE,candidate),FORMAL_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',POLICY_PARENT,POLICY_BASE),POLICY_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',FORMAL_BASE,POLICY_PARENT),FORMAL_FILES+'\n.github/workflows/deploy-prod.yml','SHIPPING_ENGINEERING_SCOPE_INVALID'),
@@ -1249,6 +1266,55 @@ class StreamedPythonTransport(unittest.TestCase):
                     without_reviewed_transport(source.replace(method,method.replace(before,after)))
 
 
+class MeasurementTransportCompatibility(unittest.TestCase):
+    def test_allowlisted_metadata_reaches_transport_with_original_read_script(self):
+        remote=r.MeasurementRemote('fixture-key')
+        value={'imageId':'sha256:fixture','digests':[],'chains':[]}
+        with patch.object(r,'command',return_value=b'{}') as call:
+            self.assertEqual(remote.py(r.MEASUREMENT_METADATA_SCRIPT,value,timeout=11),b'{}')
+        args,data,timeout=call.call_args.args
+        self.assertEqual(shlex.split(args[-1]),['sudo','-n','python3','-c',r.MEASUREMENT_METADATA_SCRIPT])
+        self.assertEqual(json.loads(data),value);self.assertEqual(timeout,11)
+        self.assertLess(len(args[-1].encode())+1,65536)
+
+    def test_db_read_uses_original_readonly_sql_and_clears_scoped_permission(self):
+        remote=r.MeasurementRemote('fixture-key');calls=[]
+        def reply(args,data=None,timeout=60):
+            command=shlex.split(args[-1]);calls.append(command)
+            self.assertTrue(remote._db_read)
+            self.assertEqual(command[:4],['sudo','-n','python3','-c'])
+            self.assertIn('BEGIN READ ONLY;',command[4])
+            self.assertIn('default_transaction_read_only=on',command[4])
+            self.assertLess(len(args[-1].encode())+1,65536)
+            return json.dumps({'database':r.EXPECTED_DB}).encode()
+        with patch.object(r,'command',side_effect=reply):
+            self.assertEqual(remote.db(),{'database':r.EXPECTED_DB})
+        self.assertEqual(len(calls),1);self.assertFalse(remote._db_read)
+        with patch.object(r,'command',side_effect=r.GateError('COMMAND_FAILED')):
+            with self.assertRaisesRegex(r.GateError,'COMMAND_FAILED'):remote.db()
+        self.assertFalse(remote._db_read)
+
+    def test_arbitrary_code_and_stream_loader_cannot_bypass_measurement_allowlist(self):
+        remote=r.MeasurementRemote('fixture-key')
+        class Capture(r.Remote):
+            def run(self,args,data=None,timeout=60):return args,data
+        framed=Capture('fixture').py(r.MEASUREMENT_METADATA_SCRIPT,{})
+        with patch.object(r,'command',side_effect=AssertionError('REMOTE_IO_FORBIDDEN')):
+            for code in ('open("/tmp/unwanted","w")','print("BEGIN READ ONLY; default_transaction_read_only=on")'):
+                with self.subTest(code=code),self.assertRaisesRegex(r.GateError,'MEASUREMENT_REMOTE_MUTATION_FORBIDDEN'):
+                    remote.py(code,{})
+            with self.assertRaisesRegex(r.GateError,'MEASUREMENT_REMOTE_MUTATION_FORBIDDEN'):
+                remote.run(*framed)
+
+    def test_historical_readonly_allowlist_bytes_are_unchanged_from_m(self):
+        path='scripts/deploy-prod-transfer-cas.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',TRANSPORT_BASE+':'+path],text=True)
+        new=(ROOT/path).read_text()
+        def measurement(source):
+            return ast.get_source_segment(source,next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='MeasurementRemote'))
+        self.assertEqual(measurement(old),measurement(without_reviewed_transport(new)))
+
+
 class FormalShippingIdentity(unittest.TestCase):
     def test_l_child_preserves_all_bytes_outside_identity_and_formal_admission(self):
         path='scripts/deploy-prod-transfer-cas.py'
@@ -1327,7 +1393,7 @@ class FormalShippingIdentity(unittest.TestCase):
 
     def test_j_and_k_images_cannot_be_retagged_into_new_release(self):
         candidate='f'*40
-        for old in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
+        for old in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
             with self.subTest(old=old),patch.object(r,'IMAGE_PREFIX','post-transfer-'):
                 tag=r.image_reference(candidate);config={'Labels':{r.REVISION:old}}
                 image={'RepoTags':[tag],'Id':'sha256:'+'1'*64,'Os':'linux','Architecture':'amd64','Config':config}
@@ -1336,7 +1402,7 @@ class FormalShippingIdentity(unittest.TestCase):
 
     def test_l_itself_old_k_j_h_and_short_sha_are_outside_new_identity(self):
         with patch.object(r,'git',return_value=QUANTITY_BRANCH):
-            for release in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
+            for release in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
                 with self.subTest(release=release),self.assertRaisesRegex(r.GateError,'SHIPPING_ENGINEERING_PARENT_INVALID'):
                     r.validate_shipping_identity(ROOT,release)
 
@@ -1344,7 +1410,7 @@ class FormalShippingIdentity(unittest.TestCase):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
                'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':POLICY_BASE,
                'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
-        for old in (TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE):
+        for old in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE):
             with self.subTest(old=old):
                 self.assertNotEqual(build_only_guard(**{**facts,'GITHUB_SHA':old,
                     'GUARD_HEAD':old,'REQUESTED_RELEASE_SHA':old}).returncode,0)
