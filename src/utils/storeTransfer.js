@@ -177,12 +177,12 @@ export function validateTransferShipmentDraft(request, shipmentItems) {
     if (isPackagedTransferItem(item) || item?.quantity === null) {
       const box = Number(actual.shippedBoxQuantity)
       const piece = Number(actual.shippedPieceQuantity)
-      if (!Number.isInteger(box) || box < 0 || box > Number(item.boxQuantity || 0)) return `「${item.productName}」实发箱数不能超过申请`
-      if (!Number.isInteger(piece) || piece < 0 || piece > Number(item.pieceQuantity || 0)) return `「${item.productName}」实发颗数不能超过申请`
+      if (!Number.isInteger(box) || box < 0 || box > (Number(item.boxQuantity || 0) > 0 ? 999999 : 0)) return `「${item.productName}」实发箱数应为合法非负整数`
+      if (!Number.isInteger(piece) || piece < 0 || piece > (Number(item.pieceQuantity || 0) > 0 ? 999999 : 0)) return `「${item.productName}」实发颗数应为合法非负整数`
       total += box + piece
     } else {
       const quantity = Number(actual.shippedQuantity)
-      if (!Number.isInteger(quantity) || quantity < 0 || quantity > Number(item.quantity || 0)) return `「${item.productName}」实发数量不能超过申请`
+      if (!Number.isInteger(quantity) || quantity < 0 || quantity > 999999) return `「${item.productName}」实发数量应为 0-999999 的整数`
       total += quantity
     }
   }

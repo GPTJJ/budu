@@ -16,19 +16,38 @@ const order = {
   ],
 }
 const requests = []
-window.__partnerShipmentTest = { order, requests }
+const params = new URLSearchParams(location.search)
+if (params.has('partial')) { order.status = 'PARTIALLY_SHIPPED'; order.items[0].shippedQuantityBase = 4000; order.items[0].remainingQuantityBase = 6000 }
+if (params.has('multi')) {
+  order.items.push({ ...order.items[1], id: 'pcs-approved', productNameSnapshot: 'NO.2柠檬', approvedQuantityBase: 100, shippedQuantityBase: 20, remainingQuantityBase: 80 })
+  order.items.push({ ...order.items[1], id: 'native-approved', productNameSnapshot: '散糖袋', orderUnitSnapshot: 'NATIVE', nativeUnitSnapshot: '袋', approvedQuantityBase: 2, requestedQuantityBase: 2, shippedQuantityBase: 0, remainingQuantityBase: 2 })
+}
+const otherOrder = structuredClone(order)
+otherOrder.id = 'order-other'; otherOrder.orderNo = 'RPL-OTHER'; otherOrder.items[0].remainingQuantityBase = 2000
+const orders = [order, otherOrder]
+window.__partnerShipmentTest = { order, orders, requests, holdDetails: false, detailPending: [], holdShipments: false, shipmentPending: [], error: '' }
 const json = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }))
 window.fetch = async (url, options = {}) => {
   const parsed = new URL(url, location.origin)
   const method = options.method || 'GET'
-  if (parsed.pathname === '/api/v2/partner-management/replenishment-orders' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, rows: [order] })
-  if (parsed.pathname === '/api/v2/partner-management/replenishment-orders/order-ship' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, order })
+  if (parsed.pathname === '/api/v2/partner-management/replenishment-orders' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, rows: orders })
+  const detail = parsed.pathname.match(/\/replenishment-orders\/(order-ship|order-other)$/)
+  if (detail && method === 'GET') {
+    const snapshot = structuredClone(orders.find(row => row.id === detail[1]))
+    if (window.__partnerShipmentTest.holdDetails) await new Promise(resolve => window.__partnerShipmentTest.detailPending.push(resolve))
+    return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, order: snapshot })
+  }
   if (parsed.pathname === '/api/v2/partner-management/fulfillment-stores' && method === 'GET') return json({ authority: { type: 'GUANSHE_ON_DUTY', businessDate: '2026-09-07' }, defaultStoreKey: 'guanshe', rows: [{ key: 'guanshe', name: '北京官舍店' }, { key: 'tongying', name: '北京通盈中心店' }] })
   if (parsed.pathname.endsWith('/shipments') && method === 'POST') {
     const body = JSON.parse(options.body)
     requests.push({ body, idempotencyKey: options.headers['Idempotency-Key'] })
+    if (window.__partnerShipmentTest.holdShipments) await new Promise(resolve => window.__partnerShipmentTest.shipmentPending.push(resolve))
+    if (window.__partnerShipmentTest.error) return json({ message: window.__partnerShipmentTest.error }, 409)
+    if (body.items.some(input => input.shippedQuantityBase > order.items.find(row => row.id === input.orderItemId).remainingQuantityBase)) return json({ message: '发货数量超过剩余确认数量' }, 409)
     const shipment = { id: 'shipment-1', carrier: body.carrier, trackingNumber: body.trackingNumber, freightType: body.freightType, fulfillmentStoreKey: body.fulfillmentStoreKey, fulfillmentStoreName: body.fulfillmentStoreKey === 'tongying' ? '北京通盈中心店' : '北京官舍店', shippedAt: '2026-09-07T04:00:00.000Z', items: [{ orderItemId: 'kg-line', productNameSnapshot: 'KG 糖', orderUnitSnapshot: 'KG', shippedQuantityBase: body.items[0].shippedQuantityBase }] }
-    return json({ ok: true, reused: false, order: { ...order, status: 'PARTIALLY_SHIPPED', version: 3, shipments: [shipment], items: [{ ...order.items[0], shippedQuantityBase: body.items[0].shippedQuantityBase, remainingQuantityBase: 10000 - body.items[0].shippedQuantityBase }, order.items[1]] } }, 201)
+    for (const input of body.items) { const item = order.items.find(row => row.id === input.orderItemId); item.shippedQuantityBase += input.shippedQuantityBase; item.remainingQuantityBase -= input.shippedQuantityBase }
+    order.status = order.items.some(item => item.remainingQuantityBase > 0) ? 'PARTIALLY_SHIPPED' : 'SHIPPED'; order.version += 1; order.shipments.push(shipment)
+    return json({ ok: true, reused: false, order }, 201)
   }
   return json({ error: 'NOT_MOCKED', message: `${method} ${parsed.pathname}` }, 404)
 }

@@ -6,12 +6,13 @@ async function openQhd(page) {
   await expect(page.getByRole('heading', { name: '秦皇岛合作商' })).toBeVisible()
 }
 
-test('开发者管理台展示 Partner 唯一档案、门店、账号与审计，不提供删除', async ({ page }) => {
+test('开发者管理台展示档案、门店与账号，隐藏操作审计', async ({ page }) => {
   await openQhd(page)
   await expect(page.getByText('65.00%')).toBeVisible()
   await expect(page.getByText('秦皇岛一店')).toBeVisible()
   await expect(page.getByText('qhd-partner')).toBeVisible()
-  await expect(page.getByText('PARTNER_CREATED')).toBeVisible()
+  await expect(page.getByText('操作审计')).toHaveCount(0)
+  await expect(page.getByText('PARTNER_CREATED')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /删除/ })).toHaveCount(0)
 })
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, ClipboardCheck, Download, ImageDown, PackageCheck, RefreshCw, Truck, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { exportReplenishmentExcel, exportReplenishmentImage } from '../utils/replenishmentExport'
@@ -40,8 +40,11 @@ function ShipmentSection({ order, onShipped }) {
   const [carrier, setCarrier] = useState('')
   const [trackingNumber, setTrackingNumber] = useState('')
   const [freightType, setFreightType] = useState('PREPAID')
-  const [quantities, setQuantities] = useState(() => Object.fromEntries(order.items.map((item) => [item.id, '0'])))
+  // Initialize once per opened order; refreshes of the same order must not
+  // overwrite quantities the shipper is editing. The server validates on submit.
+  const [quantities, setQuantities] = useState(() => Object.fromEntries(order.items.map((item) => [item.id, String(Math.max(0, item.remainingQuantityBase ?? ((item.approvedQuantityBase || 0) - (item.shippedQuantityBase || 0))))])))
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
   const [error, setError] = useState('')
   const [idempotencyKey] = useState(newShipmentKey)
 
@@ -53,7 +56,14 @@ function ShipmentSection({ order, onShipped }) {
   }, [shippable])
 
   const submit = async () => {
+    if (submitting.current) return
+    const invalid = order.items.some((item) => {
+      const value = Number(quantities[item.id] || 0)
+      return !Number.isSafeInteger(value) || value < 0 || value > Number(item.remainingQuantityBase || 0)
+    })
+    if (invalid) return setError('本次发货数量应为不超过待发量的非负整数')
     const items = order.items.map((item) => ({ orderItemId: item.id, shippedQuantityBase: Number(quantities[item.id] || 0) })).filter((item) => item.shippedQuantityBase > 0)
+    submitting.current = true
     setBusy(true); setError('')
     try {
       const data = await api(`/v2/partner-management/replenishment-orders/${order.id}/shipments`, {
@@ -64,7 +74,7 @@ function ShipmentSection({ order, onShipped }) {
       await onShipped(data.order)
     } catch (nextError) {
       setError(nextError.data?.message || nextError.message)
-    } finally { setBusy(false) }
+    } finally { submitting.current = false; setBusy(false) }
   }
 
   return (
@@ -72,6 +82,7 @@ function ShipmentSection({ order, onShipped }) {
       <div className="flex items-center gap-2"><Truck className="h-5 w-5 text-sky-600" /><h3 className="font-black text-slate-800">物流履约</h3></div>
       {(order.shipments || []).map((shipment) => <article key={shipment.id} className="rounded-xl bg-white p-3 text-sm text-slate-600"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-slate-800">{shipment.carrier} · {shipment.trackingNumber}</strong><span className="text-xs text-slate-400">{shipment.freightType === 'COLLECT' ? '到付' : '寄付'}</span></div><p className="mt-1 text-xs text-slate-400">{new Date(shipment.shippedAt).toLocaleString('zh-CN', { hour12: false })} · {shipment.fulfillmentStoreName}</p><div className="mt-2 space-y-1">{shipment.items.map((item) => <p key={item.orderItemId}>{item.productNameSnapshot}：{quantity(item.shippedQuantityBase, item.orderUnitSnapshot, item.nativeUnitSnapshot)}</p>)}</div></article>)}
       {shippable && <div className="space-y-3 rounded-xl bg-white p-3">
+        <p className="text-xs text-slate-500">已按当前待发量预填，可修改差异项；核对后点击确认发货。</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs font-bold text-slate-500">发货门店<select aria-label="发货门店" value={storeKey} onChange={(event) => setStoreKey(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">{stores.map((store) => <option key={store.key} value={store.key}>{store.name}（{store.key}）</option>)}</select></label>
           <label className="text-xs font-bold text-slate-500">运费方式<select aria-label="运费方式" value={freightType} onChange={(event) => setFreightType(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="PREPAID">寄付</option><option value="COLLECT">到付</option></select></label>
@@ -182,6 +193,8 @@ export default function PartnerReplenishmentReviewPage({ onBack }) {
   const [partners, setPartners] = useState([])
   const [stores, setStores] = useState([])
   const [selected, setSelected] = useState(null)
+  const [selectionRequest, setSelectionRequest] = useState(0)
+  const openRequest = useRef(0)
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
@@ -212,12 +225,14 @@ export default function PartnerReplenishmentReviewPage({ onBack }) {
   }
 
   const open = async (id) => {
+    const request = ++openRequest.current
     setError('')
     try {
       const data = await api(`/v2/partner-management/replenishment-orders/${id}`)
-      setSelected(data.order)
-    } catch (nextError) { setError(nextError.data?.message || nextError.message) }
+      if (request === openRequest.current) { setSelectionRequest(request); setSelected(data.order) }
+    } catch (nextError) { if (request === openRequest.current) setError(nextError.data?.message || nextError.message) }
   }
+  const closeSelected = () => { openRequest.current += 1; setSelected(null) }
 
   return (
     <section className="min-w-0 space-y-4" data-testid="partner-replenishment-review-page">
@@ -228,7 +243,7 @@ export default function PartnerReplenishmentReviewPage({ onBack }) {
       <div className="flex gap-2 overflow-x-auto pb-1" aria-label="补货订单筛选">{FILTERS.map(([value, label]) => <button key={value} type="button" aria-pressed={filters.status === value} onClick={() => updateFilter({ status: value })} className={`min-h-10 shrink-0 rounded-xl px-4 text-sm font-bold ${filters.status === value ? 'bg-budu-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{label}</button>)}</div>
       {error && <p role="alert" className="rounded-xl bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</p>}
       {loading ? <div className="card p-8 text-center text-sm text-slate-400">加载补货订单…</div> : rows.length === 0 ? <div className="card grid min-h-56 place-items-center p-8 text-center"><div><ClipboardCheck className="mx-auto h-9 w-9 text-budu-300" /><p className="mt-3 text-sm text-slate-400">当前筛选下没有补货订单</p></div></div> : <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">{rows.map((order) => <button type="button" key={order.id} onClick={() => open(order.id)} className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:border-budu-200"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-black text-slate-800">{order.orderNo}</p><p className="mt-1 truncate text-xs text-slate-400">{order.partnerNameSnapshot} · {order.partnerStore.name}</p></div><StatusPill value={order.status} /></div><div className="mt-4 flex min-w-0 items-end justify-between gap-3"><div className="min-w-0 text-xs text-slate-500"><p>{order.items.length} 项商品</p><p className="mt-1 truncate">{new Date(order.submittedAt).toLocaleString('zh-CN', { hour12: false })}</p></div><div className="shrink-0 text-right"><p className="text-xs text-slate-400">申请金额</p><p className="font-black text-slate-800">{money(order.requestedTotalAmountCents)}</p></div></div></button>)}</div>}
-      {selected && <ReviewSheet order={selected} onClose={() => setSelected(null)} onReviewed={async () => { setSelected(null); await load() }} />}
+      {selected && <ReviewSheet key={selected.id} order={selected} onClose={closeSelected} onReviewed={async () => { if (selectionRequest === openRequest.current) closeSelected(); await load() }} />}
       <div className="flex items-center justify-between text-sm text-slate-500"><span>共 {total} 单 · 第 {page} 页</span><div className="flex gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)} className="btn-secondary min-h-10 disabled:opacity-40">上一页</button><button type="button" disabled={page * 20 >= total || loading} onClick={() => setPage((value) => value + 1)} className="btn-secondary min-h-10 disabled:opacity-40">下一页</button></div></div>
       <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-xs leading-5 text-slate-400"><PackageCheck className="mb-2 h-5 w-5 text-slate-300" />审核通过后可记录一批或多批物流；确认发货只保存履约事实，不扣库存、不预占库存、不创建付款记录。</div>
     </section>

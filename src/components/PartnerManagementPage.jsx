@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Building2, History, KeyRound, MapPin, Plus, Store, UserRound, X } from 'lucide-react'
+import { ArrowLeft, Building2, KeyRound, MapPin, Plus, Store, UserRound, X } from 'lucide-react'
 import { api } from '../utils/api'
 import { allStores } from '../utils/selectors'
 import { OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from './overlay/OverlayPrimitives'
@@ -156,7 +156,6 @@ export default function PartnerManagementPage({ onBack }) {
 
             <div className="card p-5"><div className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-budu-500" /><h3 className="font-black text-slate-800">登录账号</h3></div><div className="mt-4 space-y-2">{selected.users.map((row) => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 p-4"><div><div className="flex items-center gap-2"><UserRound className="h-4 w-4 text-slate-400" /><p className="font-bold text-slate-700">{row.username}</p><Pill status={row.status} /></div><p className="mt-1 text-xs text-slate-400">User 状态：{row.userStatus}</p></div><button type="button" onClick={() => changeAccount(row, row.status === 'active' ? 'disabled' : 'active')} className="btn-secondary min-h-10">{row.status === 'active' ? '禁用绑定' : '启用绑定'}</button></div>)}</div>{!activeUser && selected.status !== 'TERMINATED' && <button type="button" onClick={() => { setAccount({ username: '', password: '' }); setError(''); setDialog('account') }} className="btn-primary mt-4 min-h-11">创建登录账号</button>}<p className="mt-3 text-xs text-slate-400">User 是唯一凭证权威；1.0 当前最多一个启用账号，底层支持未来多个 PartnerUser。</p></div>
 
-            <div className="card p-5"><div className="flex items-center gap-2"><History className="h-5 w-5 text-budu-500" /><h3 className="font-black text-slate-800">操作审计</h3></div><div className="mt-4 space-y-2">{selected.audits.slice(0, 20).map((log) => <div key={log.id} className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500"><div className="flex justify-between gap-2"><span className="font-bold text-slate-700">{log.action}</span><span>{new Date(log.createdAt).toLocaleString('zh-CN', { hour12: false })}</span></div><p className="mt-1">{log.actorUsername || log.actorUserId}</p></div>)}</div></div>
           </div>}
         </div>
       </div>

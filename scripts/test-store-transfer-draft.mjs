@@ -67,7 +67,7 @@ test('可靠历史状态只在展示层映射', () => {
   assert.equal(transferStatusLabel('rejected'), '已驳回')
 })
 
-test('发货草稿默认等于申请，允许减量但拒绝超量、缺项和全零', () => {
+test('发货草稿默认等于申请，允许少/等/多，拒绝非法数量、缺项和全零', () => {
   const request = {
     items: [
       { itemId: 'mixed', productName: 'NO.2 柠檬', quantity: null, boxQuantity: 1, pieceQuantity: 166 },
@@ -84,10 +84,14 @@ test('发货草稿默认等于申请，允许减量但拒绝超量、缺项和�
     { itemId: 'mixed', shippedBoxQuantity: 1, shippedPieceQuantity: 100 },
     { itemId: 'material', shippedQuantity: 80 },
   ]), '')
-  assert.match(validateTransferShipmentDraft(request, [
+  assert.equal(validateTransferShipmentDraft(request, [
     { itemId: 'mixed', shippedBoxQuantity: 2, shippedPieceQuantity: 100 },
     { itemId: 'material', shippedQuantity: 80 },
-  ]), /不能超过申请/)
+  ]), '')
+  for (const quantity of [-1, 1.5, 1000000, NaN]) {
+    assert.match(validateTransferShipmentDraft(request, [defaults[0], { itemId: 'material', shippedQuantity: quantity }]), /整数/)
+  }
+  assert.equal(validateTransferShipmentDraft(request, [defaults[0], { itemId: 'material', shippedQuantity: 0 }]), '')
   assert.match(validateTransferShipmentDraft(request, [{ itemId: 'mixed', shippedBoxQuantity: 1, shippedPieceQuantity: 100 }]), /完全一致/)
   assert.equal(validateTransferShipmentDraft(request, [
     { itemId: 'mixed', shippedBoxQuantity: 0, shippedPieceQuantity: 0 },

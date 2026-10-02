@@ -263,11 +263,11 @@ function serializeTransfer(r) {
   }
 }
 
-function parseShippedQuantity(value, label, requested) {
+function parseShippedQuantity(value, label, max = 999999) {
   if (value === undefined || value === null || value === '') throw bad(`${label}不能为空`)
   const quantity = Number(value)
-  if (!Number.isInteger(quantity) || quantity < 0 || quantity > requested) {
-    throw bad(`${label}应为 0-${requested} 的整数`)
+  if (!Number.isInteger(quantity) || quantity < 0 || quantity > max) {
+    throw bad(`${label}应为 0-${max} 的整数`)
   }
   return quantity
 }
@@ -301,8 +301,7 @@ function transferShipmentUpdates(inputItems, storedItems) {
       if (Object.prototype.hasOwnProperty.call(input, 'shippedBoxQuantity') || Object.prototype.hasOwnProperty.call(input, 'shippedPieceQuantity')) {
         throw bad('普通件数货品不得提交箱/颗实发数量')
       }
-      const requested = rows.reduce((sum, row) => sum + row.quantity, 0)
-      const shipped = parseShippedQuantity(input.shippedQuantity, '实发数量', requested)
+      const shipped = parseShippedQuantity(input.shippedQuantity, '实发数量')
       if (rows.length !== 1) throw bad('历史调拨单位事实不唯一', 409)
       updates.push({ id: rows[0].id, shippedQuantity: shipped })
       totalShipped += shipped
@@ -310,10 +309,10 @@ function transferShipmentUpdates(inputItems, storedItems) {
     }
 
     if (Object.prototype.hasOwnProperty.call(input, 'shippedQuantity')) throw bad('箱/颗货品不得提交普通件数')
-    const requestedBox = rows.filter((row) => row.quantityUnit === 'box').reduce((sum, row) => sum + row.quantity, 0)
-    const requestedPiece = rows.filter((row) => row.quantityUnit === 'piece').reduce((sum, row) => sum + row.quantity, 0)
-    const shippedBox = parseShippedQuantity(input.shippedBoxQuantity, '实发箱数', requestedBox)
-    const shippedPiece = parseShippedQuantity(input.shippedPieceQuantity, '实发颗数', requestedPiece)
+    // Keep the existing physical units; an absent unit cannot acquire an
+    // unrecorded shipment fact. Requested quantities are reference values.
+    const shippedBox = parseShippedQuantity(input.shippedBoxQuantity, '实发箱数', rows.some((row) => row.quantityUnit === 'box') ? 999999 : 0)
+    const shippedPiece = parseShippedQuantity(input.shippedPieceQuantity, '实发颗数', rows.some((row) => row.quantityUnit === 'piece') ? 999999 : 0)
     for (const row of rows) {
       updates.push({ id: row.id, shippedQuantity: row.quantityUnit === 'box' ? shippedBox : shippedPiece })
     }

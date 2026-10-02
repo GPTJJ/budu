@@ -18,6 +18,7 @@
       { id: 'tr-partial', type: 'transfer', fromStoreKey: 'tongying', storeKey: 'guanshe', status: 'pending', note: '', createdBy: 'requester', createdAt: '2026-08-26T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'sent' }, { key: 'user:sui', type: 'individual', label: '隋晓', status: 'sent' }], undelivered: [{ key: 'user:shu', type: 'individual', label: '舒敏', status: 'skipped', reason: 'NO_WECOM_BINDING' }] }, items: [{ id: 'ti-5', itemId: 'it-5', category: 'product', productName: '树莓', quantity: 1, note: '' }] },
       { id: 'tr-failed', type: 'transfer', fromStoreKey: 'tongying', storeKey: 'guanshe', status: 'pending', note: '', createdBy: 'requester', createdAt: '2026-08-25T06:00:00.000Z', deliveryRecipients: { source: 'notification_delivery', successful: [], undelivered: [{ key: 'user:chen', type: 'individual', label: '陈文慧', status: 'failed', reason: 'DELIVERY_FAILED' }] }, items: [{ id: 'ti-6', itemId: 'it-6', category: 'product', productName: '树莓', quantity: 1, note: '' }] },
     ] : []
+    if (new URLSearchParams(location.search).has('reference')) records[0].items = [{ id: 'ti-ref', itemId: 'material-ref', category: 'material', productName: '丝带-红', quantity: 4, note: '' }]
     seedCachedDataForTest({ inventoryRequests: records })
     const categories = [
       { id: 'c-candy', name: '糖果', sortOrder: 1, isActive: true, version: 1 },
@@ -40,7 +41,7 @@
     }
     window.open = () => { imageExports += 1; return null }
     const shipments = []
-    window.__transferTest = { records, requests, shipments, get imageExports() { return imageExports } }
+    window.__transferTest = { records, requests, shipments, holdShipments: false, shipmentPending: [], get imageExports() { return imageExports } }
     window.fetch = async (url, options = {}) => {
       const requestUrl = new URL(url, location.origin)
       const path = requestUrl.pathname
@@ -62,6 +63,7 @@
         const row = records.find((item) => item.id === ship[1])
         const body = JSON.parse(options.body)
         shipments.push(body)
+        if (window.__transferTest.holdShipments) await new Promise(resolve => window.__transferTest.shipmentPending.push(resolve))
         for (const actual of body.items || []) {
           const item = row.items.find((candidate) => candidate.itemId === actual.itemId)
           if (!item) continue
