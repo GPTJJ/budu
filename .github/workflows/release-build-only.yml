@@ -57,11 +57,16 @@ jobs:
               test "$GITHUB_SHA" != 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb
               test "$EXPECTED_PRODUCTION_SHA" = 68cee84efe30409e7e18e4459e08982f6c20e254
               test "$APPROVED_BUSINESS_SHA" = 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c
-              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb"
+              backup_base=58d952b4e206c9eb4cea8f86fd4d51635b36a8fb
+              if [ "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA 904478e7287d7e2f3a6648ba6cc27712a7ae973e" ]; then
+                backup_base=904478e7287d7e2f3a6648ba6cc27712a7ae973e
+                test "$(git rev-list --parents -n 1 "$backup_base")" = "$backup_base 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb"
+              fi
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $backup_base"
               test "$(git rev-list --parents -n 1 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb)" = "58d952b4e206c9eb4cea8f86fd4d51635b36a8fb dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0"
               test "$(git rev-list --parents -n 1 dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0)" = "dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c"
               test "$(git rev-list --parents -n 1 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c)" = "7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c 68cee84efe30409e7e18e4459e08982f6c20e254"
-              test "$(git diff --name-only 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only "$backup_base" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-release-path-post-transfer.py'
               test "$(git diff --name-only 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py\nscripts/test-transfer-cas-existing-workflow.py'
               ;;
             codex/shipping-controller-diagnostic-20261002)

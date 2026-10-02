@@ -344,16 +344,16 @@ def controller_ci_guard():
         raise RuntimeError('SHIPPING_CONTROLLER_ISOLATED_LINUX_CI_REQUIRED')
 
 
-BACKUP_HELPER_SHA = '13f11ee93623d67ccb752b7406ba62ec4b1a4207cff81e3d4d117a98ae414951'
+BACKUP_HELPER_SHA = '08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4'
 HELPER_FUNCTIONS = {'<module>':'MODULE','run':'RUN','sql':'SQL','fingerprints':'FINGERPRINTS',
     'bounded_backup_dump':'DUMP','stop_backup_process':'STOP_CHILD','allocated':'ALLOCATED','<genexpr>':'ALLOCATION_SCAN'}
 HELPER_MODULE_PHASES = {57:'SOURCE_INSPECT',73:'SOURCE_FINGERPRINT',75:'DUMP',76:'RESTORE_DIRECTORY',
-    79:'RESTORE_NAME',81:'RESTORE_CREATE',85:'RESTORE_START',88:'RESTORE_READY',90:'RESTORE_READY',
-    91:'RESTORE_VERSION',92:'RESTORE_INPUT',93:'RESTORE_LOAD_START',96:'RESTORE_ALLOCATION',97:'RESTORE_DEADLINE',
-    99:'RESTORE_EXIT',102:'RESTORE_CHILD_STOP',104:'RESTORED_FINGERPRINT',105:'FACTS_COMPARE',
-    113:'SOURCE_CONNECTION_TERMINATE',114:'SOURCE_CONNECTION_COUNT',115:'SOURCE_CONNECTION_COUNT',
-    117:'RESTORE_INSPECT',120:'RESTORE_IDENTITY',121:'RESTORE_STOP',122:'RESTORE_STOP_VERIFY',
-    125:'FINAL_ALLOCATION',126:'FINAL_ALLOCATION',130:'PROOF_WRITE',131:'PROOF_OUTPUT'}
+    79:'RESTORE_NAME',81:'RESTORE_CREATE',85:'RESTORE_START',88:'RESTORE_READY',93:'RESTORE_READY',
+    91:'RESTORE_VERSION',94:'RESTORE_INPUT',95:'RESTORE_LOAD_START',98:'RESTORE_ALLOCATION',99:'RESTORE_DEADLINE',
+    101:'RESTORE_EXIT',104:'RESTORE_CHILD_STOP',106:'RESTORED_FINGERPRINT',107:'FACTS_COMPARE',
+    115:'SOURCE_CONNECTION_TERMINATE',116:'SOURCE_CONNECTION_COUNT',117:'SOURCE_CONNECTION_COUNT',
+    119:'RESTORE_INSPECT',122:'RESTORE_IDENTITY',123:'RESTORE_STOP',124:'RESTORE_STOP_VERIFY',
+    127:'FINAL_ALLOCATION',128:'FINAL_ALLOCATION',132:'PROOF_WRITE',133:'PROOF_OUTPUT'}
 HELPER_DUMP_PHASES = {16:'DUMP_FILE_OPEN',18:'DUMP_START',21:'DUMP_DEADLINE',22:'DUMP_READ',24:'DUMP_READ',
     27:'DUMP_LIMIT',30:'DUMP_DEADLINE',31:'DUMP_EXIT',32:'DUMP_FSYNC',37:'DUMP_CHILD_STOP',38:'DUMP_STDOUT_CLOSE'}
 HELPER_PHASES = frozenset(HELPER_MODULE_PHASES.values())|frozenset(HELPER_DUMP_PHASES.values())|{
@@ -473,7 +473,7 @@ class HelperStderrCapture:
         frame=sys._getframe(1);stream=None
         if frame.f_code.co_filename=='shipping-backup-restore' and kwargs.get('stderr')==subprocess.DEVNULL:
             if frame.f_code.co_name=='bounded_backup_dump' and frame.f_lineno==18:stream='DUMP'
-            elif frame.f_code.co_name=='<module>' and frame.f_lineno==93:stream='RESTORE'
+            elif frame.f_code.co_name=='<module>' and HELPER_MODULE_PHASES.get(frame.f_lineno)=='RESTORE_LOAD_START':stream='RESTORE'
         if not stream:return self.original(*args,**kwargs)
         kwargs={**kwargs,'stderr':subprocess.PIPE};process=self.original(*args,**kwargs)
         entry={'stream':stream,'data':bytearray(),'truncated':False,'done':False,'process':process}
@@ -575,8 +575,8 @@ def helper_failures(error):
         phase=HELPER_MODULE_PHASES.get(module,'HELPER_UNKNOWN')
         for detail in details:
             if detail['function']=='DUMP':phase=HELPER_DUMP_PHASES.get(detail['line'],phase)
-            if detail['function']=='FINGERPRINTS' and module in (73,104):
-                phase=('SOURCE_' if module==73 else 'RESTORED_')+{63:'TABLE_LIST',68:'TABLE_FINGERPRINT',69:'SEQUENCE_FINGERPRINT'}.get(detail['line'],'FINGERPRINT')
+            if detail['function']=='FINGERPRINTS' and HELPER_MODULE_PHASES.get(module) in ('SOURCE_FINGERPRINT','RESTORED_FINGERPRINT'):
+                phase=('SOURCE_' if HELPER_MODULE_PHASES[module]=='SOURCE_FINGERPRINT' else 'RESTORED_')+{63:'TABLE_LIST',68:'TABLE_FINGERPRINT',69:'SEQUENCE_FINGERPRINT'}.get(detail['line'],'FINGERPRINT')
         for detail in details:
             if detail['phase']=='HELPER_UNKNOWN':detail['phase']=phase if phase in HELPER_PHASES else 'HELPER_UNKNOWN'
         code=str(original)

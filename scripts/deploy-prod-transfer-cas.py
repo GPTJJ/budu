@@ -72,6 +72,7 @@ SHIPPING_DIAGNOSTIC_BRANCH = 'codex/shipping-controller-diagnostic-20261002'
 SHIPPING_ENGINEERING_SHA = 'dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0'
 SHIPPING_BACKUP_DIAGNOSTIC_BRANCH = 'codex/shipping-backup-diagnostic-20261002'
 SHIPPING_BACKUP_DIAGNOSTIC_PARENT = '58d952b4e206c9eb4cea8f86fd4d51635b36a8fb'
+SHIPPING_BACKUP_READINESS_BASE = '904478e7287d7e2f3a6648ba6cc27712a7ae973e'
 SHIPPING_BACKUP_DIAGNOSTIC_FILES = {
     '.github/workflows/release-build-only.yml',
     'scripts/deploy-prod-transfer-cas.py',
@@ -298,22 +299,30 @@ def diagnostic_identity(repo):
 
 
 def backup_diagnostic_identity(repo):
-    """One read-only diagnostic child of public F; production identity unchanged."""
+    """Read-only diagnostic child of public F or the fixed public G readiness base."""
     require(Path(__file__).resolve() == (Path(repo)/'scripts/deploy-prod-transfer-cas.py').resolve(), 'RUNNER_REPO_MISMATCH')
     require(shipping_migration(), 'SHIPPING_DIAGNOSTIC_PROFILE_INVALID')
     require(git(repo, 'branch', '--show-current') == SHIPPING_BACKUP_DIAGNOSTIC_BRANCH, 'SHIPPING_DIAGNOSTIC_BRANCH_INVALID')
     release = git(repo, 'rev-parse', 'HEAD')
     require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != SHIPPING_BACKUP_DIAGNOSTIC_PARENT,
             'SHIPPING_DIAGNOSTIC_SHA_INVALID')
-    for child, parent in ((release, SHIPPING_BACKUP_DIAGNOSTIC_PARENT),
+    ancestry = git(repo, 'rev-list', '--parents', '-n', '1', release).split()
+    require(len(ancestry) == 2 and ancestry[0] == release
+            and ancestry[1] in (SHIPPING_BACKUP_DIAGNOSTIC_PARENT, SHIPPING_BACKUP_READINESS_BASE),
+            'SHIPPING_DIAGNOSTIC_PARENT_INVALID')
+    base = ancestry[1]
+    if base == SHIPPING_BACKUP_READINESS_BASE:
+        require(git(repo, 'rev-list', '--parents', '-n', '1', base).split()
+                == [base, SHIPPING_BACKUP_DIAGNOSTIC_PARENT], 'SHIPPING_DIAGNOSTIC_PARENT_INVALID')
+    for child, parent in ((release, base),
                           (SHIPPING_BACKUP_DIAGNOSTIC_PARENT, SHIPPING_ENGINEERING_SHA),
                           (SHIPPING_ENGINEERING_SHA, SHIPPING_BUSINESS_SHA),
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_DIAGNOSTIC_PARENT_INVALID')
-    for base, files in ((SHIPPING_BACKUP_DIAGNOSTIC_PARENT, SHIPPING_BACKUP_DIAGNOSTIC_FILES),
-                        (SHIPPING_BUSINESS_SHA, SHIPPING_ENGINEERING_FILES)):
-        require(set(git(repo, 'diff', '--name-only', base, release).splitlines()) == files,
+    for scope_base, files in ((base, SHIPPING_BACKUP_DIAGNOSTIC_FILES),
+                              (SHIPPING_BUSINESS_SHA, SHIPPING_ENGINEERING_FILES)):
+        require(set(git(repo, 'diff', '--name-only', scope_base, release).splitlines()) == files,
                 'SHIPPING_DIAGNOSTIC_SCOPE_INVALID')
     path = 'prisma/migrations/' + SHIPPING_MIGRATION + '/migration.sql'
     require(git(repo, 'diff', '--name-only', SHIPPING_OLD_SHA, release, '--', 'prisma') == path
@@ -321,7 +330,7 @@ def backup_diagnostic_identity(repo):
             'SHIPPING_MIGRATION_SCOPE_INVALID')
     require(digest((Path(repo)/path).read_bytes()) == SHIPPING_SQL_HASH, 'SHIPPING_SQL_HASH_INVALID')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
-    command(['git', '-C', str(repo), 'diff', '--check', SHIPPING_BACKUP_DIAGNOSTIC_PARENT, release])
+    command(['git', '-C', str(repo), 'diff', '--check', base, release])
     migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo)/'prisma/migrations').glob('*/migration.sql')}
     before_ledger(migrations)
     return release, migrations
@@ -765,10 +774,12 @@ try:
     run(['docker','start',name],critical=True)
     for _ in range(60):
         try:
-            run(['docker','exec',name,'pg_isready','-U','postgres','-d','restore_fixture'],timeout=5);break
-        except RuntimeError:time.sleep(0.2)
+            version=run(['docker','exec','-e',options,name,'psql','-h','127.0.0.1','-X','-qAt','-v','ON_ERROR_STOP=1','-U','postgres','-d','restore_fixture','-c',"SELECT current_setting('server_version');"],timeout=5).decode().split()
+        except (RuntimeError,subprocess.TimeoutExpired):
+            time.sleep(0.2);continue
+        if not version or version[0]!='16.14':raise RuntimeError('RESTORE_VERSION')
+        break
     else:raise RuntimeError('RESTORE_NOT_READY')
-    if sql(name,'restore_fixture',"SELECT current_setting('server_version');",'postgres').decode().split()[0]!='16.14':raise RuntimeError('RESTORE_VERSION')
     with dump.open('rb') as source:
         restore_process=subprocess.Popen(['docker','exec','-i',name,'pg_restore','-U','postgres','-d','restore_fixture','--exit-on-error','--no-owner','--no-acl'],stdin=source,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:

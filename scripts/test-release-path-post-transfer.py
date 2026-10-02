@@ -37,6 +37,7 @@ LEGACY_BUILD_BRANCHES = ['codex/release-path-post-transfer-generalization',
                          'codex/data-authority-finalization']
 BACKUP_BRANCH = r.SHIPPING_BACKUP_DIAGNOSTIC_BRANCH
 BACKUP_PARENT = r.SHIPPING_BACKUP_DIAGNOSTIC_PARENT
+BACKUP_READINESS_BASE = r.SHIPPING_BACKUP_READINESS_BASE
 BACKUP_FILES = '\n'.join(sorted(r.SHIPPING_BACKUP_DIAGNOSTIC_FILES))
 DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
 DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
@@ -81,11 +82,12 @@ def build_only_guard(**facts):
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
             'rev-list) case "$5" in\n'
+            '  '+BACKUP_READINESS_BASE+') printf "%s %s\\n" "$5" "$GUARD_G_PARENT" ;;\n'
             '  '+BACKUP_PARENT+') printf "%s %s\\n" "$5" "$GUARD_F_PARENT" ;;\n'
             '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
             '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
             '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
-            'diff) if [ "$3" = "'+BACKUP_PARENT+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
+            'diff) if [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -96,7 +98,7 @@ def build_only_guard(**facts):
                'EXPECTED_PRODUCTION_SHA':SHIPPING_OLD, 'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS,
                'GUARD_PARENTS':SHIPPING_BUSINESS, 'GUARD_FILES':SHIPPING_ENGINEERING_FILES,
                'GUARD_HEAD':release,'GUARD_E_PARENT':QUANTITY_BUSINESS,'GUARD_B_PARENT':QUANTITY_OLD,
-               'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES,'GUARD_F_PARENT':DIAGNOSTIC_E,'GUARD_BACKUP_FILES':BACKUP_FILES, **facts}
+               'GUARD_DIAGNOSTIC_FILES':DIAGNOSTIC_FILES,'GUARD_F_PARENT':DIAGNOSTIC_E,'GUARD_G_PARENT':BACKUP_PARENT,'GUARD_BACKUP_FILES':BACKUP_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
 
@@ -633,7 +635,9 @@ class ShippingDiagnosticWorkflow(unittest.TestCase):
         def assignments(source):
             return {ast.dump(node.targets[0]):ast.dump(node.value) for node in ast.parse(source).body
                     if isinstance(node,ast.Assign)}
-        for key,value in assignments(old).items():self.assertEqual(assignments((ROOT/path).read_text())[key],value,key)
+        for key,value in assignments(old).items():
+            if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
+                self.assertEqual(assignments((ROOT/path).read_text())[key],value,key)
         path='scripts/test-candidate-db-probe-integration.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',DIAGNOSTIC_E+':'+path],text=True)
         before=nodes(old);after=nodes((ROOT/path).read_text())
@@ -750,7 +754,8 @@ class BackupHelperDiagnostics(unittest.TestCase):
 
     def execute_fixture(self,fault):
         ci=self.ci;code=ci.release.SHIPPING_BACKUP_RESTORE_CODE
-        phase={'restoreRunning':True};sha=self.sha
+        phase={'restoreRunning':True,'readyAttempts':0,'readyCalls':[],'restoreStarted':False,'events':[]};sha=self.sha
+        self.fixture_state=phase
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);value={'root':directory,'pg':'source','database':'fixture_only','release':sha,'restore':'restore',
                 'limits':{'backupLimit':16 if fault in ('dump_cap','cap_cleanup') else 1000,'restoreLimit':1 if fault=='restore_limit' else 100000}}
@@ -772,15 +777,19 @@ class BackupHelperDiagnostics(unittest.TestCase):
                     failed=fault=='create';(root/'restore-pg'/'allocated-fixture').write_bytes(b'x'*1024)
                 elif verb=='start':failed=fault=='start'
                 elif verb=='stop':
-                    failed=fault=='stop';phase['restoreRunning']=fault=='stop_verify'
+                    failed=fault=='stop';phase['restoreRunning']=fault=='stop_verify';phase['events'].append('restore-stop')
                 elif verb=='exec':
                     if 'pg_isready' in args:failed=fault=='ready'
                     else:
-                        query=(data or b'').decode();restored=args[5]=='restore'
+                        query=args[args.index('-c')+1] if '-c' in args else (data or b'').decode();restored=args[5]=='restore'
                         if 'server_version' in query:
-                            failed=fault=='version_connection';stdout=b'16.13' if fault=='version' else b'16.14'
-                            if failed:stderr=b'FATAL: database "PRIVATE_FIXTURE_NAME" does not exist'
-                        elif 'pg_terminate_backend' in query:failed=fault=='connection_terminate';stdout=b''
+                            phase['readyAttempts']+=1;phase['readyCalls'].append(args);phase['events'].append('ready-query')
+                            failed=fault in ('ready','version_connection','ready_total_deadline') or (fault in ('socket_ready_database_missing','tcp_delayed') and phase['readyAttempts']<3)
+                            if fault=='ready_query_timeout':raise subprocess.TimeoutExpired(args,kwargs['timeout'])
+                            stdout=b'' if fault=='version_empty' else b'16.13' if fault=='version' else b'16.14'
+                            if failed:stderr=(b'FATAL: database "PRIVATE_FIXTURE_NAME" does not exist' if fault in ('version_connection','socket_ready_database_missing') else b'connection refused PRIVATE_FIXTURE_NAME')
+                        elif 'pg_terminate_backend' in query:
+                            failed=fault=='connection_terminate';stdout=b'';phase['events'].append('source-terminate')
                         elif 'pg_stat_activity' in query:
                             failed=fault=='connection_count';stdout=b'1' if fault=='cap_cleanup' else b'0'
                         elif 'pg_tables' in query:
@@ -796,6 +805,7 @@ class BackupHelperDiagnostics(unittest.TestCase):
             class Process:
                 def __init__(self,args,**kwargs):
                     self.restore='pg_restore' in args;self.returncode=(1 if fault==('restore_exit' if self.restore else 'dump_exit') else 0)
+                    if self.restore:phase['restoreStarted']=True;phase['events'].append('restore-load')
                     self.running=self.restore and fault in ('restore_limit','restore_timeout')
                     if self.running:self.returncode=None
                     def pipe(body):
@@ -811,7 +821,8 @@ class BackupHelperDiagnostics(unittest.TestCase):
                 for _ in range(8):
                     if frame.f_code.co_filename=='shipping-backup-restore':
                         if fault=='dump_timeout' and frame.f_code.co_name=='bounded_backup_dump':return 1000
-                        if fault=='restore_timeout' and frame.f_code.co_name=='<module>' and frame.f_lineno==97:return 1000
+                        if fault=='restore_timeout' and frame.f_code.co_name=='<module>' and ci.HELPER_MODULE_PHASES.get(frame.f_lineno)=='RESTORE_DEADLINE':return 1000
+                        if fault=='ready_total_deadline' and frame.f_code.co_name=='run' and phase['readyAttempts']>=1:return 1000
                         break
                     if not frame.f_back:break
                     frame=frame.f_back
@@ -852,7 +863,7 @@ class BackupHelperDiagnostics(unittest.TestCase):
             'dump_exit':('BACKUP_FAILED','DUMP_EXIT'),'directory':('HELPER_PERMISSION_DENIED','RESTORE_DIRECTORY'),
             'create':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_CREATE'),'start':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_START'),
             'ready':('RESTORE_NOT_READY','RESTORE_READY'),'version':('RESTORE_VERSION','RESTORE_VERSION'),
-            'version_connection':('BACKUP_RESTORE_COMMAND_FAILED','RESTORE_VERSION'),
+            'version_connection':('RESTORE_NOT_READY','RESTORE_READY'),
             'restore_exit':('RESTORE_FAILED','RESTORE_EXIT'),'restore_limit':('RESTORE_LIMIT','RESTORE_ALLOCATION'),
             'restore_timeout':('BACKUP_TOTAL_DEADLINE','RESTORE_DEADLINE'),
             'restored_list':('BACKUP_RESTORE_COMMAND_FAILED','RESTORED_TABLE_LIST'),
@@ -872,9 +883,52 @@ class BackupHelperDiagnostics(unittest.TestCase):
                 frames=[label for row in details for label in row['injection'] if isinstance(label,dict) and label['kind']=='HELPER_FRAME']
                 self.assertIn(phase,[frame['phase'] for frame in frames],(fault,rows))
                 self.assertTrue(all(type(frame['line']) is int for frame in frames))
-                if fault=='version_connection':self.assertIn('DATABASE_MISSING',json.dumps(rows))
                 if fault=='facts':self.assertIn('"fingerprintsMatch": false',json.dumps(rows))
                 if fault=='table_count':self.assertIn('"tableCountsMatch": false',json.dumps(rows))
+
+    def test_socket_ready_cannot_replace_tcp_target_database_query(self):
+        for fault,attempts in (('success',1),('socket_ready_database_missing',3),('tcp_delayed',3)):
+            with self.subTest(fault=fault):
+                result,_=self.execute_fixture(fault)
+                self.assertTrue(result['restoreVerified']);self.assertTrue(result['terminationVerified'])
+                state=self.fixture_state;self.assertEqual(state['readyAttempts'],attempts)
+                self.assertTrue(state['restoreStarted']);self.assertFalse(state['restoreRunning'])
+                self.assertLess(max(i for i,event in enumerate(state['events']) if event=='ready-query'),state['events'].index('restore-load'))
+                for args in state['readyCalls']:
+                    self.assertIn('psql',args);self.assertNotIn('pg_isready',args)
+                    self.assertEqual(args[args.index('-h')+1],'127.0.0.1')
+                    self.assertEqual(args[args.index('-d')+1],'restore_fixture')
+                    self.assertEqual(args[args.index('-c')+1],"SELECT current_setting('server_version');")
+
+    def test_tcp_database_timeout_and_version_fail_closed_with_confirmed_cleanup(self):
+        for fault,code,attempts in (('ready','RESTORE_NOT_READY',60),('version_connection','RESTORE_NOT_READY',60),
+                ('ready_query_timeout','RESTORE_NOT_READY',60),('ready_total_deadline','BACKUP_TOTAL_DEADLINE',1),
+                ('version','RESTORE_VERSION',1),('version_empty','RESTORE_VERSION',1)):
+            with self.subTest(fault=fault):
+                error,rows=self.execute_fixture(fault);self.assertTrue(error.backup_termination_verified)
+                self.assertIn(code,[row['code'] for row in rows]);state=self.fixture_state
+                self.assertEqual(state['readyAttempts'],attempts);self.assertFalse(state['restoreStarted'])
+                self.assertFalse(state['restoreRunning']);self.assertIn('source-terminate',state['events'])
+                self.assertIn('restore-stop',state['events']);self.assertIn('"cleanupComplete": true',json.dumps(rows))
+
+    def test_readiness_timeout_rolls_controller_back_only_to_verified_l85(self):
+        error,_=self.execute_fixture('ready_query_timeout');self.assertTrue(error.backup_termination_verified)
+        spec=importlib.util.spec_from_file_location('readiness_rollback_fixture',ROOT/'scripts/test-deploy-prod-transfer-cas.py')
+        fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
+        case=fixture.ShippingMigrationGates();case.setUp()
+        try:
+            remote=fixture.ShippingFake()
+            def fail_backup(*args):
+                self.assertFalse(remote.running);self.assertEqual(remote.phase,'L85')
+                normalized=fixture.r.GateError(str(error));normalized.backup_termination_verified=error.backup_termination_verified
+                raise normalized
+            with patch.object(fixture.r,'shipping_backup_restore',side_effect=fail_backup),patch('sys.stdout',__import__('io').StringIO()):
+                with self.assertRaises(fixture.r.GateError) as caught:
+                    fixture.r.execute_loaded(remote,case.art,case.ledger,'fixture','old-id',fixture.r.digest(fixture.ROUTES.encode()))
+            self.assertEqual(caught.exception.deployment_result,'DEPLOY_ROLLED_BACK');self.assertEqual(remote.phase,'L85')
+            self.assertTrue(remote.lock_removed);self.assertEqual([c['Name'] for c in remote.running],['/'+fixture.OLD_NAME])
+            self.assertFalse(any(e[0] in ('migrator-create','migrator-start','create-start') for e in remote.events))
+        finally:case.doCleanups()
 
     def test_cleanup_masking_preserves_both_original_helper_codes_and_stage_frames(self):
         error,rows=self.execute_fixture('cap_cleanup')
@@ -932,6 +986,48 @@ class BackupHelperDiagnostics(unittest.TestCase):
 
 
 class BackupDiagnosticIdentity(unittest.TestCase):
+    def test_readiness_shell_admits_only_child_of_fixed_public_g_with_same_four_files(self):
+        base={'GITHUB_REF':'refs/heads/'+BACKUP_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
+              'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':BACKUP_READINESS_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+        accepted=build_only_guard(**base);self.assertEqual(accepted.returncode,0,accepted.stderr)
+        for change in ({'GUARD_G_PARENT':DIAGNOSTIC_E},{'GUARD_G_PARENT':BACKUP_PARENT+' '+DIAGNOSTIC_E},
+                       {'GUARD_PARENTS':BACKUP_READINESS_BASE+' '+BACKUP_PARENT},{'GUARD_PARENTS':'b'*40},
+                       {'GUARD_BACKUP_FILES':BACKUP_FILES+'\nprisma/schema.prisma'},
+                       {'GUARD_BACKUP_FILES':BACKUP_FILES+'\n.github/workflows/deploy-prod.yml'},
+                       {'GUARD_FILES':BACKUP_FILES},{'GITHUB_EVENT_NAME':'push'},
+                       {'REQUESTED_RELEASE_SHA':'f'*40}):
+            with self.subTest(change=change):self.assertNotEqual(build_only_guard(**{**base,**change}).returncode,0)
+
+    def test_readonly_identity_requires_fixed_parent_chain_clean_scope_and_original_sql(self):
+        release='a'*40;path='prisma/migrations/'+r.SHIPPING_MIGRATION+'/migration.sql'
+        parents={release:BACKUP_READINESS_BASE,BACKUP_READINESS_BASE:BACKUP_PARENT,BACKUP_PARENT:DIAGNOSTIC_E,
+                 DIAGNOSTIC_E:QUANTITY_BUSINESS,QUANTITY_BUSINESS:QUANTITY_OLD}
+        changes={}
+        def facts(repo,*args):
+            if args in changes:return changes[args]
+            if args==('branch','--show-current'):return BACKUP_BRANCH
+            if args==('rev-parse','HEAD'):return release
+            if args[:1]==('rev-list',):return args[-1]+' '+parents[args[-1]]
+            if args==('diff','--name-only',BACKUP_READINESS_BASE,release):return BACKUP_FILES
+            if args==('diff','--name-only',QUANTITY_BUSINESS,release):return QUANTITY_ENGINEERING_FILES
+            if args[:1]==('diff',):return path
+            if args[:1]==('status',):return ''
+            raise AssertionError(args)
+        with patch.object(r,'git',side_effect=facts),patch.object(r,'command'),\
+             patch.object(r,'shipping_migration',return_value=True),patch.object(r,'before_ledger'):
+            self.assertEqual(r.backup_diagnostic_identity(ROOT)[0],release)
+            for args,value in ((('rev-list','--parents','-n','1',release),release+' '+BACKUP_READINESS_BASE+' '+BACKUP_PARENT),
+                    (('rev-list','--parents','-n','1',BACKUP_READINESS_BASE),BACKUP_READINESS_BASE+' '+DIAGNOSTIC_E),
+                    (('diff','--name-only',BACKUP_READINESS_BASE,release),BACKUP_FILES+'\nserver/v2.js'),
+                    (('status','--porcelain','--untracked-files=all'),' M server/v2.js'),
+                    (('branch','--show-current'),QUANTITY_BRANCH)):
+                with self.subTest(args=args):
+                    changes[args]=value
+                    with self.assertRaises(r.GateError):r.backup_diagnostic_identity(ROOT)
+                    changes.clear()
+            with patch.object(r,'digest',return_value='f'*64),self.assertRaisesRegex(r.GateError,'SQL_HASH'):
+                r.backup_diagnostic_identity(ROOT)
+
     def test_new_diagnostic_shell_admission_requires_exact_f_parent_chain_and_four_files(self):
         base={'GITHUB_REF':'refs/heads/'+BACKUP_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
               'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':BACKUP_PARENT,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
@@ -941,20 +1037,50 @@ class BackupDiagnosticIdentity(unittest.TestCase):
                        {'GUARD_BACKUP_FILES':BACKUP_FILES+'\nserver/v2.js'},{'GUARD_FILES':BACKUP_FILES}):
             with self.subTest(change=change):self.assertNotEqual(build_only_guard(**{**base,**change}).returncode,0)
 
-    def test_public_f_production_functions_constants_and_helper_still_unchanged(self):
+    def test_public_f_production_functions_constants_preserved_except_readiness_helper(self):
         path='scripts/deploy-prod-transfer-cas.py';old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':'+path],text=True)
         def functions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         before=functions(old);after=functions((ROOT/path).read_text())
         for name,body in before.items():
             if name!='main':self.assertEqual(body,after[name],name)
         def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
-        for key,value in constants(old).items():self.assertEqual(value,constants((ROOT/path).read_text())[key],key)
-        self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'13f11ee93623d67ccb752b7406ba62ec4b1a4207cff81e3d4d117a98ae414951')
+        for key,value in constants(old).items():
+            if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
+                self.assertEqual(value,constants((ROOT/path).read_text())[key],key)
+        self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
         workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
         for branch in (QUANTITY_BRANCH,DIAGNOSTIC_BRANCH):
             token='            '+branch+')'
             self.assertEqual(workflow.split(token,1)[1].split(';;',1)[0],previous.split(token,1)[1].split(';;',1)[0])
+
+    def test_public_g_helper_ast_changes_only_restore_readiness_and_other_gates_unchanged(self):
+        path='scripts/deploy-prod-transfer-cas.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':'+path],text=True)
+        current=(ROOT/path).read_text();namespace={}
+        for node in ast.parse(old).body:
+            if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('SHIPPING_BOUNDED_DUMP_CODE','SHIPPING_BACKUP_RESTORE_CODE'):
+                exec(compile(ast.Module(body=[node],type_ignores=[]),'historical-helper','exec'),namespace)
+        self.assertEqual(namespace['SHIPPING_BOUNDED_DUMP_CODE'],r.SHIPPING_BOUNDED_DUMP_CODE)
+        def without_readiness(code,removed_count):
+            tree=ast.parse(code);outer=next(n for n in tree.body if isinstance(n,ast.Try))
+            removed=[n for n in outer.body if (isinstance(n,ast.For) and ast.dump(n.iter)==ast.dump(ast.parse('range(60)',mode='eval').body))
+                or (isinstance(n,ast.If) and 'RESTORE_VERSION' in ast.dump(n))]
+            self.assertEqual(len(removed),removed_count)
+            outer.body=[n for n in outer.body if n not in removed]
+            return ast.dump(tree,include_attributes=False)
+        self.assertEqual(without_readiness(namespace['SHIPPING_BACKUP_RESTORE_CODE'],2),without_readiness(r.SHIPPING_BACKUP_RESTORE_CODE,1))
+        def definitions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        for name,body in definitions(old).items():
+            if name!='backup_diagnostic_identity':self.assertEqual(body,definitions(current)[name],name)
+        def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
+        for key,value in constants(old).items():
+            if key!=ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):self.assertEqual(value,constants(current)[key],key)
+        previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':.github/workflows/release-build-only.yml'],text=True)
+        workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text();token='            '+BACKUP_BRANCH+')'
+        def remove_admission(value):
+            before,after=value.split(token,1);return before+after.split(';;',1)[1]
+        self.assertEqual(remove_admission(previous),remove_admission(workflow))
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
