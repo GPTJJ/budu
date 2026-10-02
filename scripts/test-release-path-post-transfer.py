@@ -52,6 +52,13 @@ QUANTITY_ENGINEERING_FILES = '\n'.join(sorted(r.SHIPPING_ENGINEERING_FILES))
 SHIPPING_ENGINEERING_FILES = '.github/workflows/release-build-only.yml\nscripts/test-release-path-post-transfer.py'
 
 
+def without_reviewed_disk_percent(source):
+    # Only the user-approved percent and its diagnostic labels may differ.
+    return (source.replace('MAX_PROJECTED_USAGE = 90', 'MAX_PROJECTED_USAGE = 85')
+            .replace("f'WITHIN_{MAX_PROJECTED_USAGE}_PERCENT_AND_10_GIB'", "'WITHIN_85_PERCENT_AND_10_GIB'")
+            .replace("f'Model A <=6GiB AND projected usage <={MAX_PROJECTED_USAGE}%", "'Model A <=6GiB AND projected usage <=85%"))
+
+
 def build_only_workflow():
     return json.loads(subprocess.check_output(
         ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load_file(ARGV[0]))',
@@ -1057,13 +1064,13 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_f_production_functions_constants_preserved_except_readiness_helper(self):
         path='scripts/deploy-prod-transfer-cas.py';old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':'+path],text=True)
         def functions(source):return {n.name:ast.dump(n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        before=functions(old);after=functions((ROOT/path).read_text())
+        before=functions(old);after=functions(without_reviewed_disk_percent((ROOT/path).read_text()))
         for name,body in before.items():
             if name not in ('main','validate_shipping_identity'):self.assertEqual(body,after[name],name)
         def constants(source):return {ast.dump(n.targets[0]):ast.dump(n.value) for n in ast.parse(source).body if isinstance(n,ast.Assign)}
         for key,value in constants(old).items():
             if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
-                self.assertEqual(value,constants((ROOT/path).read_text())[key],key)
+                self.assertEqual(value,constants(without_reviewed_disk_percent((ROOT/path).read_text()))[key],key)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
         workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
@@ -1074,7 +1081,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
     def test_public_g_helper_ast_changes_only_restore_readiness_and_other_gates_unchanged(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':'+path],text=True)
-        current=(ROOT/path).read_text();namespace={}
+        current=without_reviewed_disk_percent((ROOT/path).read_text());namespace={}
         for node in ast.parse(old).body:
             if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('SHIPPING_BOUNDED_DUMP_CODE','SHIPPING_BACKUP_RESTORE_CODE'):
                 exec(compile(ast.Module(body=[node],type_ignores=[]),'historical-helper','exec'),namespace)
@@ -1102,10 +1109,27 @@ class BackupDiagnosticIdentity(unittest.TestCase):
         self.assertEqual(remove_admission(previous),remove_admission(workflow))
 
 class FormalShippingIdentity(unittest.TestCase):
+    def test_policy_candidate_changes_only_percent_labels_and_offline_tests_since_public_j(self):
+        parent='5e9fed3402157d57e4d3ac38b99c220c6cb98521'
+        path='scripts/deploy-prod-transfer-cas.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',parent+':'+path],text=True)
+        current=(ROOT/path).read_text()
+        self.assertEqual(without_reviewed_disk_percent(current),old)
+        self.assertEqual(r.MAX_PROJECTED_USAGE,90)
+        files=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',parent],text=True).splitlines()
+        self.assertEqual(files,['scripts/deploy-prod-transfer-cas.py','scripts/test-deploy-prod-transfer-cas.py',
+                                'scripts/test-release-path-post-transfer.py'])
+        candidate='f'*40
+        config={'Labels':{r.REVISION:parent}}
+        image={'RepoTags':[r.image_reference(candidate)],'Id':'sha256:'+'1'*64,
+               'Os':'linux','Architecture':'amd64','Config':config}
+        a={'release':candidate,'imageReference':r.image_reference(candidate),'config':config}
+        with self.assertRaisesRegex(r.GateError,'LOADED_ARTIFACT_MISMATCH'):r.validate_loaded_image(image,a)
+
     def test_public_h_operational_functions_constants_helper_and_workflow_remain_byte_exact(self):
         path='scripts/deploy-prod-transfer-cas.py'
         old=subprocess.check_output(['git','-C',str(ROOT),'show',FORMAL_BASE+':'+path],text=True)
-        current=(ROOT/path).read_text()
+        current=without_reviewed_disk_percent((ROOT/path).read_text())
         def functions(source):return {n.name:ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         for name,body in functions(old).items():
             if name!='validate_shipping_identity':self.assertEqual(body,functions(current)[name],name)
@@ -1120,7 +1144,7 @@ class FormalShippingIdentity(unittest.TestCase):
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',FORMAL_BASE,'--',
             'server','src','shared','prisma','Dockerfile','package.json','package-lock.json',
             '.github/workflows/deploy-prod.yml','scripts/deploy-remote.sh','scripts/release-prod-post-transfer-ci.sh',
-            'scripts/test-candidate-db-probe-integration.py','scripts/test-deploy-prod-transfer-cas.py'],text=True),'')
+            'scripts/test-candidate-db-probe-integration.py'],text=True),'')
 
     def test_h_image_cannot_be_retagged_into_new_formal_candidate(self):
         candidate='f'*40

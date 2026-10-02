@@ -1090,7 +1090,7 @@ class ShippingMigrationGates(unittest.TestCase):
         f.disk=lambda:(60*r.GIB,11*r.GIB)
         with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):r.shipping_disk_gate(f,resources)
         with self.assertRaisesRegex(r.GateError,'SHIPPING_PG16_REQUIRED'):r.shipping_resources({**f.db(),'pgVersion':'18.3'})
-        self.assertEqual(r.MAX_PROJECTED_USAGE,85);self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*r.GIB)
+        self.assertEqual(r.MAX_PROJECTED_USAGE,90);self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*r.GIB)
 
     def test_success_backup_zero_unique_migrator_zero_candidate(self):
         f=ShippingFake();self.execute(f)
@@ -1286,6 +1286,119 @@ class ShippingDiagnosticIdentity(unittest.TestCase):
     def test_production_identity_still_rejects_diagnostic_branch(self):
         with patch.object(r,'git',side_effect=self.facts):
             with self.assertRaisesRegex(r.GateError,'SHIPPING_BRANCH_INVALID'):r.validate_shipping_identity(self.repo,NEW)
+
+
+class DiskPolicy90Tests(unittest.TestCase):
+    setUp = Gates.setUp
+    MEASURED_J = (566711296, 566691107, 2095185920, 1155686400)
+
+    def image(self):
+        return dict(zip(('archive','blobs','expanded','largest'),self.MEASURED_J))
+
+    def peak(self):return sum(self.MEASURED_J)+r.RESERVE
+
+    def disk(self,used,available):
+        return type('Disk',(),{'disk':lambda _:(used,available)})()
+
+    def resources(self):
+        return r.shipping_resources({'pgVersion':'16.14','dbBytes':162741271})
+
+    def test_ceil_ninety_accepts_equal_and_rejects_one_byte_over_without_ten_gib_conflict(self):
+        peak=self.peak();used=108*r.GIB-peak;available=12*r.GIB+peak
+        for delta in (-1,0):
+            b=r.disk_budget(used+delta,available-delta,*self.MEASURED_J)
+            self.assertEqual(b['projectedUsage'],90);self.assertGreater(b['projectedAvailable'],10*r.GIB)
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            r.disk_budget(used+1,available-1,*self.MEASURED_J)
+
+    def test_ten_gib_accepts_equal_and_rejects_one_byte_less_below_ninety(self):
+        peak=self.peak();used=70*r.GIB-peak;available=10*r.GIB+peak
+        b=r.disk_budget(used,available,*self.MEASURED_J)
+        self.assertEqual(b['projectedAvailable'],10*r.GIB);self.assertLess(b['projectedUsage'],90)
+        with self.assertRaisesRegex(r.GateError,'DYNAMIC_HEADROOM'):
+            r.disk_budget(used,available-1,*self.MEASURED_J)
+
+    def test_image_absolute_six_gib_accepts_equal_and_rejects_one_byte_over(self):
+        values=list(self.MEASURED_J)
+        values[2]=6*r.GIB-values[0]-values[1]-values[3]-r.RESERVE
+        self.assertEqual(r.disk_budget(20*r.GIB,100*r.GIB,*values)['peakIncrement'],6*r.GIB)
+        values[2]+=1
+        with self.assertRaisesRegex(r.GateError,'ABSOLUTE_PEAK'):
+            r.disk_budget(20*r.GIB,100*r.GIB,*values)
+
+    def test_combined_migration_six_gib_accepts_equal_and_rejects_one_byte_over(self):
+        resources=self.resources();resources['restoreLimit']+=6*r.GIB-self.peak()-sum(resources.values())
+        self.assertEqual(self.peak()+sum(resources.values()),6*r.GIB)
+        r.shipping_disk_gate(self.disk(20*r.GIB,100*r.GIB),resources,self.image())
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):
+            r.shipping_disk_gate(self.disk(20*r.GIB,100*r.GIB),
+                                 {**resources,'restoreLimit':resources['restoreLimit']+1},self.image())
+
+    def test_migration_percent_and_ten_gib_boundaries_for_both_pre_and_post_import(self):
+        resources=self.resources()
+        for image,extra in ((self.image(),self.peak()+sum(resources.values())),
+                            (None,r.RESERVE+sum(resources.values()))):
+            with self.subTest(imported=image is None):
+                b=r.shipping_disk_gate(self.disk(108*r.GIB-extra,12*r.GIB+extra),resources,image)
+                self.assertEqual(b['projectedUsageWithMigration'],90)
+                with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):
+                    r.shipping_disk_gate(self.disk(108*r.GIB-extra+1,12*r.GIB+extra-1),resources,image)
+                b=r.shipping_disk_gate(self.disk(70*r.GIB-extra,10*r.GIB+extra),resources,image)
+                self.assertEqual(b['projectedAvailableWithMigration'],10*r.GIB)
+                with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):
+                    r.shipping_disk_gate(self.disk(70*r.GIB-extra,10*r.GIB+extra-1),resources,image)
+
+    def test_resident_archive_is_still_counted_in_df_and_in_full_model_a(self):
+        used,available=61765632000,19098456064
+        image=self.image();resources=self.resources()
+        resident=self.disk(used+image['archive'],available-image['archive'])
+        b=r.shipping_disk_gate(resident,resources,image)
+        self.assertEqual(b['projectedUsageWithMigration'],86)
+        self.assertEqual(b['projectedAvailableWithMigration'],12097280595)
+        combined=self.peak()+sum(resources.values())
+        self.assertEqual(6*r.GIB-combined,7986771)
+        self.assertEqual(resident.disk()[1]-b['projectedAvailableWithMigration'],combined)
+        with patch.object(r,'MAX_PROJECTED_USAGE',85),self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATION_DISK_GATE_FAILED'):
+            r.shipping_disk_gate(resident,resources,image)
+
+    def test_post_import_preflight_uses_same_ninety_percent_and_ten_gib_policy(self):
+        f=Fake();f.disk=lambda:(86*r.GIB,14*r.GIB)
+        b=r.preflight(f,art(),LEDGER,imported=True)['budget']
+        self.assertEqual(b['projectedUsage'],87)
+        with patch.object(r,'MAX_PROJECTED_USAGE',85),self.assertRaisesRegex(r.GateError,'POST_IMPORT_HEADROOM'):
+            r.preflight(f,art(),LEDGER,imported=True)
+
+    def test_final_cutover_ninety_boundary_and_one_byte_over_rollback(self):
+        for delta in (0,1):
+            with self.subTest(delta=delta):
+                f=Fake();samples=iter(((40*r.GIB,60*r.GIB),(108*r.GIB+delta,12*r.GIB-delta)))
+                f.disk=lambda:next(samples)
+                with patch('sys.stdout',io.StringIO()):
+                    if delta:
+                        with self.assertRaisesRegex(r.GateError,'POST_DEPLOY_HEADROOM'):
+                            r.execute_loaded(f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+                        self.assertEqual(f.pointer,r.EXPECTED_OLD_SHA)
+                        self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME])
+                    else:
+                        r.execute_loaded(f,art(),LEDGER,'fixture','old-id',r.digest(ROUTES.encode()))
+                        self.assertEqual(f.pointer,NEW)
+
+    def test_diagnostic_percent_label_matches_fixed_policy(self):
+        image={**self.image(),'layers':[]}
+        production={'rootfsDiffIds':[],'metadata':{'metadataAvailable':False,'snapshotProof':{},'contentProof':{}},
+                    'diskUsed':20*r.GIB,'diskAvailable':100*r.GIB}
+        for value in r.disk_models(image,production)['models'].values():
+            self.assertTrue(value['WITHIN_90_PERCENT_AND_10_GIB'])
+            self.assertNotIn('WITHIN_85_PERCENT_AND_10_GIB',value)
+
+    def test_percentage_change_has_no_cli_override_and_other_admission_bounds_remain_fixed(self):
+        self.assertEqual(r.MAX_PROJECTED_USAGE,90)
+        self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*r.GIB)
+        self.assertEqual(r.ABSOLUTE_MAX_PEAK,6*r.GIB)
+        self.assertEqual(r.RESERVE,512*1024**2)
+        source=Path(r.__file__).read_text()
+        self.assertNotIn('--max-projected',source)
+        self.assertNotIn("os.environ.get('MAX_PROJECTED_USAGE'",source)
 
 
 if __name__=='__main__':

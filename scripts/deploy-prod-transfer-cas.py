@@ -112,7 +112,7 @@ MAX_ARCHIVE = 768 * 1024 ** 2
 ABSOLUTE_MAX_PEAK = 6 * GIB
 MAX_LAYER_STREAM = 4 * GIB  # Existing independent expansion bound is unchanged.
 MAX_IMAGE_SIZE = 4 * GIB
-MAX_PROJECTED_USAGE = 85
+MAX_PROJECTED_USAGE = 90
 MIN_PROJECTED_AVAILABLE = 10 * GIB
 RESERVE = 512 * 1024 ** 2
 MAX_MEMBERS = 150000
@@ -1688,7 +1688,7 @@ def disk_models(art, production):
                       'PROJECTED_USED_GIB':used/GIB,'PROJECTED_AVAILABLE_GIB':available/GIB,
                       'PROJECTED_USAGE_PERCENT':pct,
                       'PROJECTED_USAGE_CONTINUOUS_PERCENT':100*used/(production['diskUsed']+production['diskAvailable']),
-                      'WITHIN_85_PERCENT_AND_10_GIB':pct<=MAX_PROJECTED_USAGE and available>=MIN_PROJECTED_AVAILABLE}
+                      f'WITHIN_{MAX_PROJECTED_USAGE}_PERCENT_AND_10_GIB':pct<=MAX_PROJECTED_USAGE and available>=MIN_PROJECTED_AVAILABLE}
     return {'layers':inventory,'CANDIDATE_LAYER_COUNT':len(inventory),'SHARED_LAYER_COUNT':shared_count,
             'UNIQUE_CANDIDATE_LAYER_COUNT':len(inventory)-shared_count,'REUSABLE_SNAPSHOT_LAYER_COUNT':reused_count,
             'SHARED_EXPANDED_BYTES':shared_expanded,'UNIQUE_CANDIDATE_EXPANDED_BYTES':unique_expanded,
@@ -1779,8 +1779,8 @@ def measure_release(repo,path,art,ledger,key):
                         and production['storage'].get('Driver') == 'overlayfs'
                         and ['driver-type','io.containerd.snapshotter.v1'] in production['storage'].get('DriverStatus',[])
                         and production.get('containerdVersion') == '2.2.1')
-    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE']['WITHIN_85_PERCENT_AND_10_GIB']
-    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK']['WITHIN_85_PERCENT_AND_10_GIB']
+    model_b_safe=reuse['models']['MODEL_B_STREAMING_NO_ARCHIVE_FILE'][f'WITHIN_{MAX_PROJECTED_USAGE}_PERCENT_AND_10_GIB']
+    model_c_safe=reuse['models']['MODEL_C_INGEST_STAGING_CHECK'][f'WITHIN_{MAX_PROJECTED_USAGE}_PERCENT_AND_10_GIB']
     feasibility=('SAFE' if streaming_evidence and (model_b_safe or model_c_safe)
                  else 'UNSAFE' if streaming_evidence and production['metadata']['metadataAvailable'] and not model_c_safe
                  else 'INCONCLUSIVE')
@@ -1792,7 +1792,7 @@ def measure_release(repo,path,art,ledger,key):
             'PRODUCTION_OPERATIONAL_CHANGES':0,'BUSINESS_DATA_WRITE_OPERATIONS':0,'PRODUCTION_DEPLOYED':False,
             'DISK_FEASIBILITY':feasibility,'ABSOLUTE_MAX_PEAK':ABSOLUTE_MAX_PEAK,
             'RECOMMENDED_PEAK_FORMULA':'unique blobs + unique chain snapshots + max(largest unique expanded layer, largest shared blob ingest) + 512MiB; unknown counted unique',
-            'RECOMMENDED_MAX_ARTIFACT_POLICY':'Model A <=6GiB AND projected usage <=85% AND available >=10GiB; 512MiB reserve retained; B/C metrics cannot authorize deployment',
+            'RECOMMENDED_MAX_ARTIFACT_POLICY':f'Model A <=6GiB AND projected usage <={MAX_PROJECTED_USAGE}% AND available >=10GiB; 512MiB reserve retained; B/C metrics cannot authorize deployment',
             'RECOMMENDED_NEXT_ACTION':('Review a future disk-admission policy separately; deployment still forbidden'
                                        if feasibility=='SAFE' else 'EXPAND_PRODUCTION_SYSTEM_DISK'),
             'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
