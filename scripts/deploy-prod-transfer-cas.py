@@ -198,9 +198,10 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != SHIPPING_POLICY_BASE,
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'e59deb2d3b1f822e5231243c45e9943a95af3a8c',
             'SHIPPING_ENGINEERING_PARENT_INVALID')
-    for child, parent in ((release, SHIPPING_POLICY_BASE),
+    for child, parent in ((release, 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
+                          ('e59deb2d3b1f822e5231243c45e9943a95af3a8c', SHIPPING_POLICY_BASE),
                           (SHIPPING_POLICY_BASE, SHIPPING_POLICY_PARENT),
                           (SHIPPING_POLICY_PARENT, SHIPPING_FORMAL_BASE),
                           (SHIPPING_FORMAL_BASE, SHIPPING_BACKUP_READINESS_BASE),
@@ -210,6 +211,8 @@ def validate_shipping_identity(repo, release):
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_ENGINEERING_PARENT_INVALID')
+    require(set(git(repo, 'diff', '--name-only', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c', release).splitlines())
+            == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_POLICY_BASE, release).splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_POLICY_PARENT, SHIPPING_POLICY_BASE).splitlines())
