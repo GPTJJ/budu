@@ -688,11 +688,14 @@ class ControllerCiRemote(release.LocalRemote):
     def __init__(self, root, network, old, candidate, mode, db_network=None):
         self.root=Path(root);self.network=network;self.db_network=db_network or network;self.old=old;self.candidate=candidate;self.mode=mode
         self.events=[];self.writer_samples=[];self.disk_samples=[];self.host_storage=None
-        self.alias_adaptations=[];self.migrator_started=False;self.injected=False
+        self.alias_adaptations=[];self.migrator_started=False;self.injected=False;self.migrator_prestart_networks=None
 
     def run(self, args, data=None, timeout=60):
         if args and args[0] in ('ssh','scp','curl'):
             raise RuntimeError('CI_EXTERNAL_TARGET_FORBIDDEN')
+        if args[:2]==['docker','start'] and args[-1]=='budu-shipping-migrator-'+os.environ['GITHUB_SHA'][:12]:
+            created=super().inspect(args[-1])
+            self.migrator_prestart_networks={k:v.get('NetworkID') for k,v in created['NetworkSettings']['Networks'].items()}
         try:result=super().run(args,data,timeout)
         except BaseException as error:
             error.ci_operation=ci_operation(args)
@@ -719,6 +722,10 @@ class ControllerCiRemote(release.LocalRemote):
                     raise RuntimeError('CI_UNEXPECTED_NETWORK_ALIAS')
                 if aliases:self.alias_adaptations.append(aliases)
                 endpoint['Aliases']=None
+        if not image and name=='budu-shipping-migrator-'+os.environ.get('GITHUB_SHA','')[:12] and value['State'].get('Status')=='created':
+            print(json.dumps({'scope':'ISOLATED_CI_MIGRATOR_NETWORK_METADATA','releaseSha':os.environ['GITHUB_SHA'],
+                'networkMode':value['HostConfig']['NetworkMode'],
+                'networkIds':{k:v.get('NetworkID') for k,v in value['NetworkSettings']['Networks'].items()}}),file=sys.stderr)
         return value
 
     def py(self, code, value=None, timeout=60):
@@ -938,7 +945,8 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                               'actual6OldHttpSummaryXlsx':mode in ('post_cutover_failure','post_l86_disk'),'failureInjection':expected,
                               'hostStorageActual':remote.host_storage,'hostStorageGate':'CI_FIXTURE_ADAPTER_PRODUCTION_UNVERIFIED',
                               'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':True,
-                              'secondaryDbNetworkTopology':True,'migratorNetworksMatchOld':migrator_networks is not None})
+                              'secondaryDbNetworkTopology':True,'migratorNetworksMatchOld':migrator_networks is not None,
+                              'migratorPreStartNetworks':remote.migrator_prestart_networks})
                 for name in names:
                     diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
                 diagnostics.cleanup(lambda: docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c',

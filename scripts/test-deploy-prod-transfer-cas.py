@@ -986,6 +986,7 @@ class MountParityTests(unittest.TestCase):
 class ShippingFake(Fake):
     def __init__(self):
         super().__init__()
+        for index,endpoint in enumerate(self.old['NetworkSettings']['Networks'].values()):endpoint['NetworkID']=str(index+1)*64
         self.phase='L85';self.migrator=None;self.migration_poll=0;self.migration_failure=None
         self.retained_actual=6;self.lock_removed=False
     def disk(self):return 20*r.GIB,60*r.GIB
@@ -1013,10 +1014,14 @@ class ShippingFake(Fake):
             return copy.deepcopy(self.migrator)
         return super().inspect(name,image)
     def run(self,args,data=None,timeout=60):
+        if args[:3]==['docker','network','inspect']:
+            return json.dumps([{'Name':name,'Id':self.old['NetworkSettings']['Networks'][name]['NetworkID']} for name in args[3:]]).encode()
         if args[:3]==['docker','run','--rm'] and r.SHIPPING_CLI_PROBE in args:
             self.events.append(('pinned-cli',));return b'PINNED_PRISMA_CLI_OK\n'
         if self.migrator and args[:2]==['docker','start'] and args[-1]==self.migrator['Name'].lstrip('/'):
             self.events.append(('migrator-start',));assert not self.running
+            for network,endpoint in self.migrator['NetworkSettings']['Networks'].items():
+                if endpoint.get('NetworkID')=='':endpoint['NetworkID']=self.old['NetworkSettings']['Networks'][network]['NetworkID']
             self.migrator['State']['Running']=True;self.running=[self.migrator];return b''
         if self.migrator and args[:2]==['docker','stop'] and args[-1]==self.migrator['Name'].lstrip('/'):
             self.events.append(('migrator-stop',));self.migrator['State']['Running']=False;self.running=[];return b''
@@ -1119,6 +1124,37 @@ class ShippingMigrationGates(unittest.TestCase):
                 self.assertEqual(f.phase,'L85');self.assertTrue(f.lock_removed)
                 self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME])
                 self.assertFalse(any(e[0]=='migrator-start' for e in f.events))
+
+    def test_created_endpoint_id_may_be_pending_only_after_network_objects_match(self):
+        class PendingEndpoint(ShippingFake):
+            def py(inner,code,value=None,timeout=60):
+                result=super().py(code,value,timeout)
+                if code==r.SHIPPING_MIGRATOR_CREATE_CODE:inner.migrator['NetworkSettings']['Networks']['net']['NetworkID']=''
+                return result
+        f=PendingEndpoint();self.execute(f)
+        self.assertEqual(f.phase,'L86');self.assertTrue(f.lock_removed)
+        self.assertEqual(f.migrator['NetworkSettings']['Networks']['net']['NetworkID'],f.old['NetworkSettings']['Networks']['net']['NetworkID'])
+        class WrongObject(PendingEndpoint):
+            def run(inner,args,data=None,timeout=60):
+                result=super().run(args,data,timeout)
+                if args[:3]==['docker','network','inspect']:
+                    values=json.loads(result);values[0]['Id']='f'*64;return json.dumps(values).encode()
+                return result
+        f=WrongObject()
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATOR_IDENTITY_INVALID'):self.execute(f)
+        self.assertEqual(f.phase,'L85');self.assertTrue(f.lock_removed)
+        self.assertFalse(any(e[0]=='migrator-create' for e in f.events))
+
+    def test_started_migrator_network_ids_must_still_match_source(self):
+        class ChangedOnStart(ShippingFake):
+            def run(inner,args,data=None,timeout=60):
+                result=super().run(args,data,timeout)
+                if args[:2]==['docker','start'] and inner.migrator and args[-1]==inner.migrator['Name'].lstrip('/'):
+                    inner.migrator['NetworkSettings']['Networks']['net']['NetworkID']='f'*64
+                return result
+        f=ChangedOnStart()
+        with self.assertRaisesRegex(r.GateError,'ROLLBACK_UNVERIFIED_MANUAL_ATTENTION_REQUIRED'):self.execute(f)
+        self.assertFalse(f.lock_removed);self.assertFalse(f.running)
 
     def test_backup_failure_rolls_back_only_known_l85(self):
         f=ShippingFake()

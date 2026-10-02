@@ -88,8 +88,9 @@ jobs:
               [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
               test "$EXPECTED_PRODUCTION_SHA" = 68cee84efe30409e7e18e4459e08982f6c20e254
               test "$APPROVED_BUSINESS_SHA" = 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c
-              test "$GITHUB_SHA" != aafbbaf4db9c3191b1427183472246d31121f099
-              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA aafbbaf4db9c3191b1427183472246d31121f099"
+              test "$GITHUB_SHA" != a876bc3c8ccac7674f99ad112020db29a21e7ec9
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA a876bc3c8ccac7674f99ad112020db29a21e7ec9"
+              test "$(git rev-list --parents -n 1 a876bc3c8ccac7674f99ad112020db29a21e7ec9)" = "a876bc3c8ccac7674f99ad112020db29a21e7ec9 aafbbaf4db9c3191b1427183472246d31121f099"
               test "$(git rev-list --parents -n 1 aafbbaf4db9c3191b1427183472246d31121f099)" = "aafbbaf4db9c3191b1427183472246d31121f099 d128f905d909b65810afe712792752fb4c3b9714"
               test "$(git rev-list --parents -n 1 d128f905d909b65810afe712792752fb4c3b9714)" = "d128f905d909b65810afe712792752fb4c3b9714 7bf1c98488e27785c2cb2c15f91746620bcdd5e1"
               test "$(git rev-list --parents -n 1 7bf1c98488e27785c2cb2c15f91746620bcdd5e1)" = "7bf1c98488e27785c2cb2c15f91746620bcdd5e1 e59deb2d3b1f822e5231243c45e9943a95af3a8c"
@@ -101,7 +102,8 @@ jobs:
               test "$(git rev-list --parents -n 1 58d952b4e206c9eb4cea8f86fd4d51635b36a8fb)" = "58d952b4e206c9eb4cea8f86fd4d51635b36a8fb dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0"
               test "$(git rev-list --parents -n 1 dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0)" = "dc1fe91f74af41a34bcc30ba65caf8548cb1a3d0 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c"
               test "$(git rev-list --parents -n 1 7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c)" = "7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c 68cee84efe30409e7e18e4459e08982f6c20e254"
-              test "$(git diff --name-only aafbbaf4db9c3191b1427183472246d31121f099 "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only a876bc3c8ccac7674f99ad112020db29a21e7ec9 "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only aafbbaf4db9c3191b1427183472246d31121f099 a876bc3c8ccac7674f99ad112020db29a21e7ec9)" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'
               test "$(git diff --name-only d128f905d909b65810afe712792752fb4c3b9714 aafbbaf4db9c3191b1427183472246d31121f099)" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'
               test "$(git diff --name-only 7bf1c98488e27785c2cb2c15f91746620bcdd5e1 d128f905d909b65810afe712792752fb4c3b9714)" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'
               test "$(git diff --name-only e59deb2d3b1f822e5231243c45e9943a95af3a8c 7bf1c98488e27785c2cb2c15f91746620bcdd5e1)" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-release-path-post-transfer.py'

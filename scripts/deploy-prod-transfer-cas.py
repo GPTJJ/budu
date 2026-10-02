@@ -198,9 +198,10 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'aafbbaf4db9c3191b1427183472246d31121f099',
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'a876bc3c8ccac7674f99ad112020db29a21e7ec9',
             'SHIPPING_ENGINEERING_PARENT_INVALID')
-    for child, parent in ((release, 'aafbbaf4db9c3191b1427183472246d31121f099'),
+    for child, parent in ((release, 'a876bc3c8ccac7674f99ad112020db29a21e7ec9'),
+                          ('a876bc3c8ccac7674f99ad112020db29a21e7ec9', 'aafbbaf4db9c3191b1427183472246d31121f099'),
                           ('aafbbaf4db9c3191b1427183472246d31121f099', 'd128f905d909b65810afe712792752fb4c3b9714'),
                           ('d128f905d909b65810afe712792752fb4c3b9714', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'),
                           ('7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
@@ -214,7 +215,9 @@ def validate_shipping_identity(repo, release):
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_ENGINEERING_PARENT_INVALID')
-    require(set(git(repo, 'diff', '--name-only', 'aafbbaf4db9c3191b1427183472246d31121f099', release).splitlines())
+    require(set(git(repo, 'diff', '--name-only', 'a876bc3c8ccac7674f99ad112020db29a21e7ec9', release).splitlines())
+            == SHIPPING_FORMAL_FILES | {'scripts/test-candidate-db-probe-integration.py', 'scripts/test-deploy-prod-transfer-cas.py'}, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', 'aafbbaf4db9c3191b1427183472246d31121f099', 'a876bc3c8ccac7674f99ad112020db29a21e7ec9').splitlines())
             == SHIPPING_FORMAL_FILES | {'scripts/test-candidate-db-probe-integration.py', 'scripts/test-deploy-prod-transfer-cas.py'}, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', 'd128f905d909b65810afe712792752fb4c3b9714', 'aafbbaf4db9c3191b1427183472246d31121f099').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
@@ -922,6 +925,13 @@ finally:
 def shipping_migrate(remote, state, art, ledger):
     name = 'budu-shipping-migrator-'+art['release'][:12]
     state['migrator'] = name
+    source_network_ids = {network: endpoint.get('NetworkID')
+                          for network, endpoint in state['old']['NetworkSettings']['Networks'].items()}
+    network_objects = json.loads(remote.run(['docker','network','inspect',*sorted(source_network_ids)]))
+    require(all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) for value in source_network_ids.values())
+            and len(network_objects) == len(source_network_ids)
+            and {network['Name']:network['Id'] for network in network_objects} == source_network_ids,
+            'SHIPPING_MIGRATOR_IDENTITY_INVALID')
     require(not remote.run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip(), 'SHIPPING_MIGRATOR_IDENTITY_INVALID')
     remote.py(SHIPPING_MIGRATOR_CREATE_CODE, {'old':state['name'],'name':name,
         'release':art['release'],'image':art['imageReference']})
@@ -938,7 +948,9 @@ def shipping_migrate(remote, state, art, ledger):
             and container['HostConfig']['RestartPolicy'] == {'Name':'no','MaximumRetryCount':0}
             and container['HostConfig']['NetworkMode'] == state['old']['HostConfig']['NetworkMode']
             and set(container['NetworkSettings']['Networks']) == set(state['old']['NetworkSettings']['Networks'])
-            and all(endpoint.get('NetworkID') == state['old']['NetworkSettings']['Networks'][network].get('NetworkID')
+            # Docker may defer a created container's endpoint ID until start.
+            # The named network objects were independently bound above.
+            and all(endpoint.get('NetworkID') in ('',source_network_ids[network])
                     for network, endpoint in container['NetworkSettings']['Networks'].items())
             and container['HostConfig'].get('Tmpfs') == {'/tmp':'rw,nosuid,size=128m'}
             and container['HostConfig'].get('LogConfig') == {'Type':'json-file','Config':{'max-size':'1m','max-file':'1'}}
@@ -954,6 +966,8 @@ def shipping_migrate(remote, state, art, ledger):
     deadline = time.monotonic()+180
     while True:
         current = remote.inspect(name)
+        require({network:endpoint.get('NetworkID') for network,endpoint in current['NetworkSettings']['Networks'].items()}
+                == source_network_ids, 'SHIPPING_MIGRATOR_IDENTITY_INVALID')
         db = remote.db()
         containers = remote.containers()
         if current['State']['Running']:
