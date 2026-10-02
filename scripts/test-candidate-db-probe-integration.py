@@ -685,8 +685,8 @@ class ControllerCiRemote(release.LocalRemote):
     neither is production admission evidence. Disk bytes are real except for
     the one labelled post-L86 insufficient-space injection.
     """
-    def __init__(self, root, network, old, candidate, mode):
-        self.root=Path(root);self.network=network;self.old=old;self.candidate=candidate;self.mode=mode
+    def __init__(self, root, network, old, candidate, mode, db_network=None):
+        self.root=Path(root);self.network=network;self.db_network=db_network or network;self.old=old;self.candidate=candidate;self.mode=mode
         self.events=[];self.writer_samples=[];self.disk_samples=[];self.host_storage=None
         self.alias_adaptations=[];self.migrator_started=False;self.injected=False
 
@@ -715,7 +715,7 @@ class ControllerCiRemote(release.LocalRemote):
             value=copy.deepcopy(value)
             for key,endpoint in value['NetworkSettings']['Networks'].items():
                 aliases=endpoint.get('Aliases') or []
-                if key!=self.network or set(aliases)-{self.old,value['Id'][:12]}:
+                if key not in (self.network,self.db_network) or set(aliases)-{self.old,value['Id'][:12]}:
                     raise RuntimeError('CI_UNEXPECTED_NETWORK_ALIAS')
                 if aliases:self.alias_adaptations.append(aliases)
                 endpoint['Aliases']=None
@@ -827,11 +827,11 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
     cases=[]
     with tempfile.TemporaryDirectory(prefix='shipping-controller-',dir=os.environ['RUNNER_TEMP']) as directory:
         root=Path(directory);root.chmod(0o700)
-        suffix=root.name.removeprefix('shipping-controller-');network='shipping-ci-net-'+suffix;pg='shipping-ci-pg-'+suffix
+        suffix=root.name.removeprefix('shipping-controller-');network='shipping-ci-net-'+suffix;db_network='shipping-ci-db-net-'+suffix;pg='shipping-ci-pg-'+suffix
         database='shipping_ci_'+suffix.replace('-','_');url='postgresql://postgres:fixture_only@'+pg+':5432/'+database
         globals_before={key:getattr(release,key) for key in ('PG','EXPECTED_DB','NGINX','TEMPLATE','CURRENT_SHA_FILE','LOCK')}
         release.PG=pg;release.EXPECTED_DB=database
-        owned={};reserved=set();network_id=None
+        owned={};reserved=set();network_id=None;db_network_id=None
         def remove_owned(name):
             if not docker('ps','-aq','--filter','name=^/'+name+'$'):return
             current=json.loads(docker('inspect',name))[0]
@@ -850,12 +850,16 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
         try:
             network_id=docker('network','create','--internal',network)
             if json.loads(docker('network','inspect',network))[0]['Internal'] is not True:raise RuntimeError('CI_NETWORK_EGRESS_NOT_BLOCKED')
-            owned[pg]=docker('run','-d','--name',pg,'--network',network,'-e','POSTGRES_PASSWORD=fixture_only','postgres:16.14',timeout=180)
+            db_network_id=docker('network','create','--internal',db_network)
+            if json.loads(docker('network','inspect',db_network))[0]['Internal'] is not True:raise RuntimeError('CI_NETWORK_EGRESS_NOT_BLOCKED')
+            owned[pg]=docker('run','-d','--name',pg,'--network',db_network,'-e','POSTGRES_PASSWORD=fixture_only','postgres:16.14',timeout=180)
             for _ in range(60):
                 ready=subprocess.run(['docker','exec',pg,'pg_isready','-U','postgres'],capture_output=True,timeout=5)
                 if ready.returncode==0:break
                 time.sleep(0.25)
             else:raise RuntimeError('CI_POSTGRES_NOT_READY')
+            primary_probe = "const net=require('node:net');const u=new URL(process.env.DATABASE_URL);const s=net.createConnection({host:u.hostname,port:5432});s.setTimeout(2000);s.on('connect',()=>{s.destroy();process.exit(3)});const done=()=>{s.destroy();process.stdout.write('PRIMARY_NETWORK_DB_UNREACHABLE');};s.once('error',done);s.once('timeout',done);"
+            if docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'--entrypoint','node',image,'-e',primary_probe)!='PRIMARY_NETWORK_DB_UNREACHABLE':raise RuntimeError('CI_PRIMARY_NETWORK_UNEXPECTED_DB_ACCESS')
             docker('pull','nginx:1.28-alpine',timeout=180)
             for index,mode in enumerate(CI_CASES):
                 diagnostics.case=mode
@@ -869,9 +873,9 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                 reserved.update((candidate,migrator,restore))
                 release.NGINX=nginx;release.TEMPLATE=str(case_root/'template');release.CURRENT_SHA_FILE=str(case_root/'current-sha');release.LOCK=str(case_root/'lock')
                 docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c','CREATE DATABASE '+database)
-                docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'--entrypoint','node',old_image,
+                docker('run','--rm','--network',db_network,'-e','DATABASE_URL='+url,'--entrypoint','node',old_image,
                        '/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma',timeout=180)
-                docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'-e','APP_ENV=test','--entrypoint','node',old_image,
+                docker('run','--rm','--network',db_network,'-e','DATABASE_URL='+url,'-e','APP_ENV=test','--entrypoint','node',old_image,
                        '--input-type=module','-e',FIXTURE_JS)
                 data=case_root/'data';data.mkdir(mode=0o700);os.chown(data,1000,1000)
                 routes='server { listen 80; location / { proxy_pass http://'+old+':3000; } location /api/ { proxy_pass http://'+old+':3000; } location /health-proxy { proxy_pass http://'+old+':3000; } }\n'
@@ -883,6 +887,7 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                        '-e','WECHAT_PAY_ENABLED=0','-e','ALIPAY_ENABLED=0','-e','GIT_SHA='+release.SHIPPING_OLD_SHA,
                        '-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME=budu','-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID=dh',
                        '--mount','type=bind,source='+str(data)+',target=/app/server/data',old_image)
+                docker('network','connect',db_network,old)
                 docker('start',old)
                 for _ in range(150):
                     info=json.loads(docker('inspect',old))[0]
@@ -892,7 +897,7 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                 else:raise RuntimeError('CI_REAL_OLD_APP_NOT_HEALTHY')
                 owned[nginx]=docker('run','-d','--name',nginx,'--network',network,'--mount','type=bind,source='+str(conf)+',target=/etc/nginx/conf.d',
                                    'nginx:1.28-alpine')
-                remote=ControllerCiRemote(case_root,network,old,candidate,mode)
+                remote=ControllerCiRemote(case_root,network,old,candidate,mode,db_network)
                 release.application_db_probe(remote,old,'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
                 art['loadedDockerImageId']=release.resolve_loaded_image(remote,art)['Id']
                 (case_root/'lock').mkdir(mode=0o700)
@@ -921,6 +926,10 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                 proof_path=case_root/'rollback'/(release.ROLLBACK_PREFIX+sha)/'backup-restore-proof.json'
                 backup=json.loads(proof_path.read_text()) if proof_path.exists() else None
                 if mode!='backup_limit' and (not backup or not backup['terminationVerified'] or not backup['restoreVerified'] or remote.inspect(restore)['State']['Running']):raise RuntimeError('CI_REAL_BACKUP_RESTORE_NOT_PROVEN')
+                old_networks=remote.inspect(old)['NetworkSettings']['Networks']
+                if set(old_networks)!={network,db_network}:raise RuntimeError('CI_DUAL_NETWORK_SOURCE_REQUIRED')
+                migrator_networks=remote.inspect(migrator)['NetworkSettings']['Networks'] if mode!='backup_limit' else None
+                if migrator_networks is not None and ({k:v.get('NetworkID') for k,v in migrator_networks.items()}!={k:v.get('NetworkID') for k,v in old_networks.items()}):raise RuntimeError('CI_MIGRATOR_NETWORK_PARITY_FAILED')
                 starts=[event for event in remote.events if event=={'action':'start','container':migrator}]
                 if len(starts)!=(0 if mode=='backup_limit' else 1) or (mode!='success' and not remote.injected):raise RuntimeError('CI_MIGRATOR_OR_INJECTION_NOT_OBSERVED')
                 cases.append({'case':mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
@@ -928,7 +937,8 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                               'diskSamples':remote.disk_samples,'backupRestoreProof':backup,'backupAndMigratorConnections':0,
                               'actual6OldHttpSummaryXlsx':mode in ('post_cutover_failure','post_l86_disk'),'failureInjection':expected,
                               'hostStorageActual':remote.host_storage,'hostStorageGate':'CI_FIXTURE_ADAPTER_PRODUCTION_UNVERIFIED',
-                              'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':True})
+                              'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':True,
+                              'secondaryDbNetworkTopology':True,'migratorNetworksMatchOld':migrator_networks is not None})
                 for name in names:
                     diagnostics.cleanup(lambda name=name: remove_owned(name),'CONTAINER_CLEANUP')
                 diagnostics.cleanup(lambda: docker('exec',pg,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-c',
@@ -936,6 +946,7 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                 diagnostics.raise_cleanup()
                 diagnostics.completed.append(mode)
             report={'scope':'ISOLATED_LINUX_CI_REAL_CONTROLLER_NOT_PRODUCTION_ADMISSION','releaseSha':sha,
+                    'primaryOnlyDbProbe':'PRIMARY_NETWORK_DB_UNREACHABLE','secondaryDbNetworkTopology':True,
                     'oldSha':release.SHIPPING_OLD_SHA,'businessSha':release.SHIPPING_BUSINESS_SHA,
                     'controllerSha256':hashlib.sha256((ROOT/'scripts/deploy-prod-transfer-cas.py').read_bytes()).hexdigest(),
                     'archiveSha256':art['archiveHash'],'loadedImageId':art['loadedDockerImageId'],'cases':cases,
@@ -953,6 +964,11 @@ def _shipping_controller_ci(image,old_image,archive,diagnostics):
                     raise RuntimeError('CI_NETWORK_CLEANUP_OWNERSHIP_CHANGED')
                 docker('network','rm',network)
             if network_id:diagnostics.cleanup(remove_network,'NETWORK_CLEANUP')
+            def remove_db_network():
+                if json.loads(docker('network','inspect',db_network))[0]['Id']!=db_network_id:
+                    raise RuntimeError('CI_NETWORK_CLEANUP_OWNERSHIP_CHANGED')
+                docker('network','rm',db_network)
+            if db_network_id:diagnostics.cleanup(remove_db_network,'NETWORK_CLEANUP')
             for key,value in globals_before.items():setattr(release,key,value)
     diagnostics.raise_cleanup()
     report['ownedResourcesRemoved']=True

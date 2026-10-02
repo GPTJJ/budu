@@ -1034,7 +1034,8 @@ class ShippingFake(Fake):
                 'HostConfig':{'ReadonlyRootfs':True,'RestartPolicy':{'Name':'no','MaximumRetryCount':0},
                               'NetworkMode':'net','PortBindings':{},'Tmpfs':{'/tmp':'rw,nosuid,size=128m'},
                               'LogConfig':{'Type':'json-file','Config':{'max-size':'1m','max-file':'1'}}},
-                'Mounts':[],'NetworkSettings':{'Networks':{'net':{'IPAddress':'172.20.0.5'}}}}
+                'Mounts':[],'NetworkSettings':{'Networks':copy.deepcopy(self.old['NetworkSettings']['Networks'])}}
+            self.migrator['NetworkSettings']['Networks']['net']['IPAddress']='172.20.0.5'
             return b''
         if 'os.rmdir' in code:self.lock_removed=True
         return super().py(code,value,timeout)
@@ -1100,6 +1101,24 @@ class ShippingMigrationGates(unittest.TestCase):
         self.assertLess(events.index('migrator-start'),events.index('create-start'))
         self.assertEqual([c['Name'] for c in f.running],['/'+NAME])
         self.assertFalse(any(e[:2]==('docker','start') and e[-1]==OLD_NAME for e in f.events))
+
+    def test_migrator_requires_exact_source_networks_before_start(self):
+        for change in ('missing-secondary','unexpected-network','wrong-network-id'):
+            with self.subTest(change=change):
+                class ChangedNetwork(ShippingFake):
+                    def py(inner,code,value=None,timeout=60):
+                        result=super().py(code,value,timeout)
+                        if code==r.SHIPPING_MIGRATOR_CREATE_CODE:
+                            networks=inner.migrator['NetworkSettings']['Networks']
+                            if change=='missing-secondary':networks.pop('web')
+                            elif change=='unexpected-network':networks['unapproved']={'NetworkID':'other'}
+                            else:networks['web']['NetworkID']='replaced-network'
+                        return result
+                f=ChangedNetwork()
+                with self.assertRaisesRegex(r.GateError,'SHIPPING_MIGRATOR_IDENTITY_INVALID'):self.execute(f)
+                self.assertEqual(f.phase,'L85');self.assertTrue(f.lock_removed)
+                self.assertEqual([c['Name'] for c in f.running],['/'+OLD_NAME])
+                self.assertFalse(any(e[0]=='migrator-start' for e in f.events))
 
     def test_backup_failure_rolls_back_only_known_l85(self):
         f=ShippingFake()

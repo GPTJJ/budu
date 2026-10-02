@@ -198,9 +198,10 @@ def before_ledger(ledger):
 
 def validate_shipping_identity(repo, release):
     require(git(repo, 'branch', '--show-current') == SHIPPING_BRANCH, 'SHIPPING_BRANCH_INVALID')
-    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'd128f905d909b65810afe712792752fb4c3b9714',
+    require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != 'aafbbaf4db9c3191b1427183472246d31121f099',
             'SHIPPING_ENGINEERING_PARENT_INVALID')
-    for child, parent in ((release, 'd128f905d909b65810afe712792752fb4c3b9714'),
+    for child, parent in ((release, 'aafbbaf4db9c3191b1427183472246d31121f099'),
+                          ('aafbbaf4db9c3191b1427183472246d31121f099', 'd128f905d909b65810afe712792752fb4c3b9714'),
                           ('d128f905d909b65810afe712792752fb4c3b9714', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'),
                           ('7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'),
                           ('e59deb2d3b1f822e5231243c45e9943a95af3a8c', SHIPPING_POLICY_BASE),
@@ -213,14 +214,16 @@ def validate_shipping_identity(repo, release):
                           (SHIPPING_BUSINESS_SHA, SHIPPING_OLD_SHA)):
         require(git(repo, 'rev-list', '--parents', '-n', '1', child).split() == [child, parent],
                 'SHIPPING_ENGINEERING_PARENT_INVALID')
-    require(set(git(repo, 'diff', '--name-only', 'd128f905d909b65810afe712792752fb4c3b9714', release).splitlines())
+    require(set(git(repo, 'diff', '--name-only', 'aafbbaf4db9c3191b1427183472246d31121f099', release).splitlines())
+            == SHIPPING_FORMAL_FILES | {'scripts/test-candidate-db-probe-integration.py', 'scripts/test-deploy-prod-transfer-cas.py'}, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', 'd128f905d909b65810afe712792752fb4c3b9714', 'aafbbaf4db9c3191b1427183472246d31121f099').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1', 'd128f905d909b65810afe712792752fb4c3b9714').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', 'e59deb2d3b1f822e5231243c45e9943a95af3a8c', '7bf1c98488e27785c2cb2c15f91746620bcdd5e1').splitlines())
             == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_POLICY_BASE, release).splitlines())
-            == SHIPPING_FORMAL_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
+            == SHIPPING_FORMAL_FILES | {'scripts/test-candidate-db-probe-integration.py', 'scripts/test-deploy-prod-transfer-cas.py'}, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_POLICY_PARENT, SHIPPING_POLICY_BASE).splitlines())
             == SHIPPING_POLICY_FILES, 'SHIPPING_ENGINEERING_SCOPE_INVALID')
     require(set(git(repo, 'diff', '--name-only', SHIPPING_FORMAL_BASE, SHIPPING_POLICY_PARENT).splitlines())
@@ -905,6 +908,12 @@ try:
         '/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma'],
         stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     if r.returncode:raise SystemExit(1)
+    # Match only the source application's already-attached networks. The
+    # authoritative PostgreSQL may be on a secondary network.
+    for network in sorted(old['NetworkSettings']['Networks']):
+        if network != old['HostConfig']['NetworkMode']:
+            subprocess.run(['docker','network','connect',network,v['name']],
+                check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 finally:
     pathlib.Path(p).unlink()
 '''
@@ -928,6 +937,9 @@ def shipping_migrate(remote, state, art, ledger):
             and container['HostConfig']['ReadonlyRootfs'] is True
             and container['HostConfig']['RestartPolicy'] == {'Name':'no','MaximumRetryCount':0}
             and container['HostConfig']['NetworkMode'] == state['old']['HostConfig']['NetworkMode']
+            and set(container['NetworkSettings']['Networks']) == set(state['old']['NetworkSettings']['Networks'])
+            and all(endpoint.get('NetworkID') == state['old']['NetworkSettings']['Networks'][network].get('NetworkID')
+                    for network, endpoint in container['NetworkSettings']['Networks'].items())
             and container['HostConfig'].get('Tmpfs') == {'/tmp':'rw,nosuid,size=128m'}
             and container['HostConfig'].get('LogConfig') == {'Type':'json-file','Config':{'max-size':'1m','max-file':'1'}}
             and not container['HostConfig'].get('PortBindings')

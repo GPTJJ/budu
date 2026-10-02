@@ -48,6 +48,8 @@ POLICY_FILES = '\n'.join(sorted(r.SHIPPING_POLICY_FILES))
 TEST_FIX_BASE = 'e59deb2d3b1f822e5231243c45e9943a95af3a8c'
 TRANSPORT_BASE = '7bf1c98488e27785c2cb2c15f91746620bcdd5e1'
 MEASUREMENT_BASE = 'd128f905d909b65810afe712792752fb4c3b9714'
+NETWORK_BASE = 'aafbbaf4db9c3191b1427183472246d31121f099'
+NETWORK_FILES = '\n'.join(sorted(r.SHIPPING_FORMAL_FILES | {'scripts/test-candidate-db-probe-integration.py','scripts/test-deploy-prod-transfer-cas.py'}))
 BACKUP_FILES = '\n'.join(sorted(r.SHIPPING_BACKUP_DIAGNOSTIC_FILES))
 DIAGNOSTIC_BRANCH = r.SHIPPING_DIAGNOSTIC_BRANCH
 DIAGNOSTIC_E = r.SHIPPING_ENGINEERING_SHA
@@ -73,7 +75,25 @@ def remote_py_method(source):
     return ast.get_source_segment(source,method)
 
 
+def without_reviewed_network(source):
+    old=subprocess.check_output(['git','-C',str(ROOT),'show',NETWORK_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    def selected(value):
+        result={}
+        for node in ast.parse(value).body:
+            key=node.name if isinstance(node,ast.FunctionDef) else node.targets[0].id if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) else None
+            if key in ('shipping_migrate','SHIPPING_MIGRATOR_CREATE_CODE'):result[key]=ast.get_source_segment(value,node)
+        return result
+    before=selected(old);after=selected(source)
+    pins={'SHIPPING_MIGRATOR_CREATE_CODE': 'df1f46773b7d0f661549f01fe85fa9b6a5b06f405ca6d04f42bc6240830cc8d4', 'shipping_migrate': '586f06accb650a47b96255301082c4a88d291835fe978e112b87c352c01615b0'}
+    for key,body in after.items():
+        if hashlib.sha256(body.encode()).hexdigest()!=pins[key] or source.count(body)!=1:
+            raise AssertionError('Unreviewed migrator network change: '+key)
+        source=source.replace(body,before[key],1)
+    return source
+
+
 def without_reviewed_transport(source):
+    source=without_reviewed_network(source)
     # Normalize only the exact reviewed stdin transport; all other Remote bytes stay checked.
     method = remote_py_method(source)
     if hashlib.sha256(method.encode()).hexdigest() != 'f525608dcc0ad6a614aea506469fb301bcb4dd82c6e2af8a28856d25c5cdc6c3':
@@ -123,6 +143,7 @@ def build_only_guard(**facts):
         (bindir/'git').write_text(
             '#!/bin/sh\ncase "$1" in\n'
             'rev-list) case "$5" in\n'
+            '  '+NETWORK_BASE+') printf "%s %s\\n" "$5" "$GUARD_O_PARENT" ;;\n'
             '  '+MEASUREMENT_BASE+') printf "%s %s\\n" "$5" "$GUARD_N_PARENT" ;;\n'
             '  '+TRANSPORT_BASE+') printf "%s %s\\n" "$5" "$GUARD_M_PARENT" ;;\n'
             '  '+TEST_FIX_BASE+') printf "%s %s\\n" "$5" "$GUARD_L_PARENT" ;;\n'
@@ -134,7 +155,7 @@ def build_only_guard(**facts):
             '  '+DIAGNOSTIC_E+') printf "%s %s\\n" "$5" "$GUARD_E_PARENT" ;;\n'
             '  '+QUANTITY_BUSINESS+') printf "%s %s\\n" "$5" "$GUARD_B_PARENT" ;;\n'
             '  *) printf "%s %s\\n" "$GITHUB_SHA" "$GUARD_PARENTS" ;; esac ;;\n'
-            'diff) if [ "$3" = "'+MEASUREMENT_BASE+'" ]; then printf "%s\\n" "$GUARD_MEASUREMENT_FILES"; elif [ "$3" = "'+TRANSPORT_BASE+'" ]; then printf "%s\\n" "$GUARD_TRANSPORT_FILES"; elif [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ] || [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
+            'diff) if [ "$3" = "'+NETWORK_BASE+'" ]; then printf "%s\\n" "$GUARD_NETWORK_FILES"; elif [ "$3" = "'+MEASUREMENT_BASE+'" ]; then printf "%s\\n" "$GUARD_MEASUREMENT_FILES"; elif [ "$3" = "'+TRANSPORT_BASE+'" ]; then printf "%s\\n" "$GUARD_TRANSPORT_FILES"; elif [ "$3" = "'+TEST_FIX_BASE+'" ]; then printf "%s\\n" "$GUARD_TEST_FIX_FILES"; elif [ "$3" = "'+POLICY_BASE+'" ]; then printf "%s\\n" "$GUARD_NETWORK_FILES"; elif [ "$3" = "'+FORMAL_BASE+'" ]; then printf "%s\\n" "$GUARD_FORMAL_FILES"; elif [ "$3" = "'+POLICY_PARENT+'" ]; then printf "%s\\n" "$GUARD_POLICY_FILES"; elif [ "$3" = "'+BACKUP_PARENT+'" ] || [ "$3" = "'+BACKUP_READINESS_BASE+'" ]; then printf "%s\\n" "$GUARD_BACKUP_FILES"; elif [ "$3" = "'+DIAGNOSTIC_E+'" ]; then printf "%s\\n" "$GUARD_DIAGNOSTIC_FILES"; else printf "%s\\n" "$GUARD_FILES"; fi ;;\n'
             'rev-parse) printf "%s\\n" "$GUARD_HEAD" ;;\n'
             '*) exit 99 ;;\nesac\n')
         for stub in bindir.iterdir(): stub.chmod(0o755)
@@ -149,6 +170,7 @@ def build_only_guard(**facts):
                'GUARD_L_PARENT':POLICY_BASE,'GUARD_TEST_FIX_FILES':FORMAL_FILES,
                'GUARD_M_PARENT':TEST_FIX_BASE,'GUARD_TRANSPORT_FILES':FORMAL_FILES,
                'GUARD_N_PARENT':TRANSPORT_BASE,'GUARD_MEASUREMENT_FILES':FORMAL_FILES,
+               'GUARD_O_PARENT':MEASUREMENT_BASE,'GUARD_NETWORK_FILES':NETWORK_FILES,
                'GUARD_K_PARENT':POLICY_PARENT,'GUARD_J_PARENT':FORMAL_BASE,'GUARD_POLICY_FILES':POLICY_FILES, **facts}
         return subprocess.run(['/bin/bash','-c',admission],env=env,capture_output=True,text=True)
 
@@ -502,13 +524,15 @@ class QuantityReleaseContract(unittest.TestCase):
     def test_real_build_guard_accepts_only_exact_six_file_single_parent(self):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,
                'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,
-               'GUARD_PARENTS':MEASUREMENT_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
+               'GUARD_PARENTS':NETWORK_BASE,'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
         self.assertEqual(build_only_guard(**facts).returncode,0)
         denied=[{'GITHUB_EVENT_NAME':'push'}, {'REQUESTED_RELEASE_SHA':''},
                 {'REQUESTED_RELEASE_SHA':'b'*40}, {'GITHUB_SHA':'short'},
                 {'EXPECTED_PRODUCTION_SHA':PAYROLL_OLD}, {'APPROVED_BUSINESS_SHA':SHIPPING_BUSINESS},
                 {'GUARD_PARENTS':QUANTITY_BUSINESS}, {'GUARD_PARENTS':TEST_FIX_BASE},
-                {'GUARD_PARENTS':TRANSPORT_BASE}, {'GUARD_PARENTS':MEASUREMENT_BASE+' '+'b'*40},
+                {'GUARD_PARENTS':TRANSPORT_BASE}, {'GUARD_PARENTS':NETWORK_BASE+' '+'b'*40},
+                {'GUARD_PARENTS':MEASUREMENT_BASE}, {'GUARD_O_PARENT':TRANSPORT_BASE},
+                {'GUARD_NETWORK_FILES':FORMAL_FILES}, {'GUARD_NETWORK_FILES':NETWORK_FILES+'\nserver/v2.js'},
                 {'GUARD_N_PARENT':TEST_FIX_BASE}, {'GUARD_N_PARENT':TRANSPORT_BASE+' '+'b'*40},
                 {'GUARD_MEASUREMENT_FILES':''}, {'GUARD_MEASUREMENT_FILES':POLICY_FILES},
                 {'GUARD_MEASUREMENT_FILES':FORMAL_FILES+'\nserver/v2.js'},
@@ -575,14 +599,15 @@ class QuantityReleaseContract(unittest.TestCase):
             def facts(repo,*args):
                 if args==('branch','--show-current'):return QUANTITY_BRANCH
                 if args[:1]==('rev-list',):
-                    parents={candidate:MEASUREMENT_BASE,MEASUREMENT_BASE:TRANSPORT_BASE,TRANSPORT_BASE:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
+                    parents={candidate:NETWORK_BASE,NETWORK_BASE:MEASUREMENT_BASE,MEASUREMENT_BASE:TRANSPORT_BASE,TRANSPORT_BASE:TEST_FIX_BASE,TEST_FIX_BASE:POLICY_BASE,POLICY_BASE:POLICY_PARENT,POLICY_PARENT:FORMAL_BASE,
                              FORMAL_BASE:BACKUP_READINESS_BASE,BACKUP_READINESS_BASE:BACKUP_PARENT,
                              BACKUP_PARENT:DIAGNOSTIC_E,DIAGNOSTIC_E:QUANTITY_BUSINESS,QUANTITY_BUSINESS:QUANTITY_OLD}
                     return args[-1]+' '+parents[args[-1]]
-                if args==('diff','--name-only',MEASUREMENT_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',NETWORK_BASE,candidate):return NETWORK_FILES
+                if args==('diff','--name-only',MEASUREMENT_BASE,NETWORK_BASE):return FORMAL_FILES
                 if args==('diff','--name-only',TRANSPORT_BASE,MEASUREMENT_BASE):return FORMAL_FILES
                 if args==('diff','--name-only',TEST_FIX_BASE,TRANSPORT_BASE):return FORMAL_FILES
-                if args==('diff','--name-only',POLICY_BASE,candidate):return FORMAL_FILES
+                if args==('diff','--name-only',POLICY_BASE,candidate):return NETWORK_FILES
                 if args==('diff','--name-only',POLICY_PARENT,POLICY_BASE):return POLICY_FILES
                 if args==('diff','--name-only',FORMAL_BASE,POLICY_PARENT):return FORMAL_FILES
                 if args==('diff','--name-only',QUANTITY_BUSINESS,candidate):return QUANTITY_ENGINEERING_FILES
@@ -595,11 +620,11 @@ class QuantityReleaseContract(unittest.TestCase):
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE+' '+QUANTITY_BUSINESS,'SHIPPING_ENGINEERING_PARENT_INVALID'),
                      (('rev-list','--parents','-n','1',candidate),candidate+' '+POLICY_BASE,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
+                     *[(('rev-list','--parents','-n','1',child),child+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID') for child in (NETWORK_BASE,MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,BACKUP_READINESS_BASE,BACKUP_PARENT,DIAGNOSTIC_E,QUANTITY_BUSINESS)],
                      (('rev-list','--parents','-n','1',TEST_FIX_BASE),TEST_FIX_BASE+' '+POLICY_BASE+' '+'b'*40,'SHIPPING_ENGINEERING_PARENT_INVALID'),
-                     (('diff','--name-only',MEASUREMENT_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     (('diff','--name-only',MEASUREMENT_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
-                     *[(('diff','--name-only',MEASUREMENT_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
+                     (('diff','--name-only',NETWORK_BASE,candidate),'','SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     (('diff','--name-only',NETWORK_BASE,candidate),POLICY_FILES,'SHIPPING_ENGINEERING_SCOPE_INVALID'),
+                     *[(('diff','--name-only',NETWORK_BASE,candidate),FORMAL_FILES+'\n'+path,'SHIPPING_ENGINEERING_SCOPE_INVALID') for path in ('server/v2.js','prisma/schema.prisma','.github/workflows/deploy-prod.yml')],
                      (('diff','--name-only',POLICY_BASE,candidate),FORMAL_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',POLICY_PARENT,POLICY_BASE),POLICY_FILES+'\nserver/v2.js','SHIPPING_ENGINEERING_SCOPE_INVALID'),
                      (('diff','--name-only',FORMAL_BASE,POLICY_PARENT),FORMAL_FILES+'\n.github/workflows/deploy-prod.yml','SHIPPING_ENGINEERING_SCOPE_INVALID'),
@@ -1335,7 +1360,7 @@ class FormalShippingIdentity(unittest.TestCase):
             return before+after.split(';;',1)[1]
         self.assertEqual(without_admission(old),without_admission(current))
         files=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',TEST_FIX_BASE],text=True).splitlines()
-        self.assertEqual(files,FORMAL_FILES.splitlines())
+        self.assertEqual(files,NETWORK_FILES.splitlines())
 
     def test_reviewed_percent_normalization_rejects_other_limits_and_labels(self):
         path='scripts/deploy-prod-transfer-cas.py'
@@ -1386,14 +1411,15 @@ class FormalShippingIdentity(unittest.TestCase):
         self.assertEqual(remove_formal(previous),remove_formal(workflow))
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE,'--',
             'server','src','shared','prisma','Dockerfile','package.json','package-lock.json',
-            '.github/workflows/deploy-prod.yml','scripts/deploy-remote.sh','scripts/release-prod-post-transfer-ci.sh',
+            '.github/workflows/deploy-prod.yml','scripts/deploy-remote.sh','scripts/release-prod-post-transfer-ci.sh'],text=True),'')
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE,NETWORK_BASE,'--',
             'scripts/test-candidate-db-probe-integration.py','scripts/test-deploy-prod-transfer-cas.py'],text=True),'')
         files=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',POLICY_BASE],text=True).splitlines()
-        self.assertEqual(files,FORMAL_FILES.splitlines())
+        self.assertEqual(files,NETWORK_FILES.splitlines())
 
     def test_j_and_k_images_cannot_be_retagged_into_new_release(self):
         candidate='f'*40
-        for old in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
+        for old in (NETWORK_BASE,MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_PARENT,POLICY_BASE,FORMAL_BASE):
             with self.subTest(old=old),patch.object(r,'IMAGE_PREFIX','post-transfer-'):
                 tag=r.image_reference(candidate);config={'Labels':{r.REVISION:old}}
                 image={'RepoTags':[tag],'Id':'sha256:'+'1'*64,'Os':'linux','Architecture':'amd64','Config':config}
@@ -1402,7 +1428,7 @@ class FormalShippingIdentity(unittest.TestCase):
 
     def test_l_itself_old_k_j_h_and_short_sha_are_outside_new_identity(self):
         with patch.object(r,'git',return_value=QUANTITY_BRANCH):
-            for release in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
+            for release in (NETWORK_BASE,MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE,POLICY_PARENT,FORMAL_BASE,'short'):
                 with self.subTest(release=release),self.assertRaisesRegex(r.GateError,'SHIPPING_ENGINEERING_PARENT_INVALID'):
                     r.validate_shipping_identity(ROOT,release)
 
@@ -1410,10 +1436,56 @@ class FormalShippingIdentity(unittest.TestCase):
         facts={'GITHUB_REF':'refs/heads/'+QUANTITY_BRANCH,'EXPECTED_PRODUCTION_SHA':QUANTITY_OLD,
                'APPROVED_BUSINESS_SHA':QUANTITY_BUSINESS,'GUARD_PARENTS':POLICY_BASE,
                'GUARD_FILES':QUANTITY_ENGINEERING_FILES}
-        for old in (MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE):
+        for old in (NETWORK_BASE,MEASUREMENT_BASE,TRANSPORT_BASE,TEST_FIX_BASE,POLICY_BASE):
             with self.subTest(old=old):
                 self.assertNotEqual(build_only_guard(**{**facts,'GITHUB_SHA':old,
                     'GUARD_HEAD':old,'REQUESTED_RELEASE_SHA':old}).returncode,0)
+
+
+class MigratorNetworkParity(unittest.TestCase):
+    def test_only_reviewed_network_changes_extend_o_controller(self):
+        path='scripts/deploy-prod-transfer-cas.py'
+        old=subprocess.check_output(['git','-C',str(ROOT),'show',NETWORK_BASE+':'+path],text=True)
+        new=without_reviewed_network((ROOT/path).read_text())
+        def without_identity(value):
+            node=next(n for n in ast.parse(value).body if isinstance(n,ast.FunctionDef) and n.name=='validate_shipping_identity')
+            return value.replace(ast.get_source_segment(value,node),'<exact child identity>',1)
+        self.assertEqual(without_identity(old),without_identity(new))
+        pins={'test-candidate-db-probe-integration.py': 'e952720cbb4627377a900418f0ade17aa40830080eb21bc35fdbae33e8eec50d', 'test-deploy-prod-transfer-cas.py': 'e0802ac3475289c375495a6d92684e9e7f793df78558ba8f37feb3b77cfda07e'}
+        for name,expected in pins.items():self.assertEqual(hashlib.sha256((ROOT/'scripts'/name).read_bytes()).hexdigest(),expected)
+
+    def test_create_attaches_only_secondary_source_networks_and_cleans_env(self):
+        import types
+        original_mkstemp=tempfile.mkstemp
+        source={'Config':{'Env':['DATABASE_URL=postgresql://fixture:fixture@fixture-db/fixture']},
+                'HostConfig':{'NetworkMode':'app-net'},'NetworkSettings':{'Networks':{'app-net':{'NetworkID':'app-id'},'db-net':{'NetworkID':'db-id'}}}}
+        value={'old':'fixture-old','name':'fixture-migrator','release':'f'*40,'image':'fixture-image'}
+        for connect_fails in (False,True):
+            with self.subTest(connect_fails=connect_fails),tempfile.TemporaryDirectory() as directory:
+                calls=[];paths=[]
+                def temporary(**kwargs):
+                    self.assertEqual(kwargs,{'dir':'/dev/shm'})
+                    fd,path=original_mkstemp(dir=directory);paths.append(Path(path));return fd,path
+                def run(args,**kwargs):
+                    calls.append(args)
+                    if args[:3]==['docker','network','connect'] and connect_fails:raise subprocess.CalledProcessError(1,args)
+                    return types.SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
+                with patch('sys.stdin',__import__('io').StringIO(json.dumps(value))),patch.object(subprocess,'check_output',return_value=json.dumps([source]).encode()),patch.object(subprocess,'run',side_effect=run),patch.object(tempfile,'mkstemp',side_effect=temporary):
+                    if connect_fails:
+                        with self.assertRaises(subprocess.CalledProcessError):exec(compile(r.SHIPPING_MIGRATOR_CREATE_CODE,'network-helper','exec'),{})
+                    else:exec(compile(r.SHIPPING_MIGRATOR_CREATE_CODE,'network-helper','exec'),{})
+                self.assertEqual(len(calls),2)
+                self.assertEqual(calls[0][calls[0].index('--network')+1],'app-net')
+                self.assertEqual(calls[1],['docker','network','connect','db-net','fixture-migrator'])
+                self.assertTrue(paths and all(not path.exists() for path in paths))
+                self.assertFalse(any(args[:2]==['docker','start'] for args in calls))
+
+    def test_network_normalization_rejects_unreviewed_command_or_identity_changes(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for before,after in (("['docker','network','connect',network,v['name']]","['docker','network','connect','unapproved',v['name']]"),
+                             ("endpoint.get('NetworkID') == state['old']","endpoint.get('NetworkID') != state['old']")):
+            self.assertIn(before,source)
+            with self.assertRaises(AssertionError):without_reviewed_network(source.replace(before,after,1))
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
