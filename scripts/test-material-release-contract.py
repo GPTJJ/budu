@@ -164,9 +164,11 @@ class MaterialContract(unittest.TestCase):
             with patch.object(self.r,key,'f'*40):self.assertFalse(self.r.material_migration())
     def test_identity_requires_single_exact_parent_branch_files_schema_and_sql(self):
         release='f'*40;c=self.c;path='prisma/migrations/'+c['migration']+'/migration.sql'
-        facts={('branch','--show-current'):c['branch'],('rev-list','--parents','-n','1',release):release+' '+c['businessSha'],
+        facts={('branch','--show-current'):c['branch'],('rev-list','--parents','-n','1',release):release+' '+c['engineeringBaseSha'],
+               ('rev-list','--parents','-n','1',c['engineeringBaseSha']):c['engineeringBaseSha']+' '+c['businessSha'],
                ('rev-list','--parents','-n','1',c['businessSha']):c['businessSha']+' '+c['oldSha'],
                ('diff','--name-only',c['businessSha'],release):'\n'.join(sorted(c['engineeringFiles'])),
+               ('diff','--name-only',c['engineeringBaseSha'],release):'\n'.join(sorted(c['correctionFiles'])),
                ('diff','--name-only',c['oldSha'],release,'--','prisma'):'prisma/schema.prisma\n'+path,
                ('diff','--diff-filter=A','--name-only',c['oldSha'],release,'--',path):path}
         def git(repo,*args):return facts[args]
@@ -224,7 +226,7 @@ class MaterialContract(unittest.TestCase):
         self.assertLessEqual(changed,self.c['engineeringFiles'])
         parent=subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',self.c['businessSha']],text=True).strip()
         self.assertEqual(parent,self.c['businessSha']+' '+self.c['oldSha'])
-    def test_real_material_workflow_shell_accepts_only_exact_requested_single_commit(self):
+    def test_real_material_workflow_shell_accepts_only_exact_requested_correction_child(self):
         job=workflow()['jobs']['artifact'];verify=next(x for x in job['steps'] if x.get('name')=='Verify source and release guard')
         admission=verify['run'].split('if [ -z',1)[0];c=self.c;release='f'*40
         with tempfile.TemporaryDirectory() as directory:
@@ -233,16 +235,58 @@ class MaterialContract(unittest.TestCase):
 import os,sys
 args=sys.argv[1:]
 if args[0]=='rev-list':
- sha=args[-1];parent=os.environ['BUSINESS_PARENT'] if sha==os.environ['APPROVED_BUSINESS_SHA'] else os.environ['RELEASE_PARENT'];print(sha+' '+parent)
-elif args[0]=='diff':print(os.environ['ENGINEERING_FILES'])
+ sha=args[-1]
+ parent=os.environ['BUSINESS_PARENT'] if sha==os.environ['APPROVED_BUSINESS_SHA'] else os.environ['ENGINEERING_PARENT'] if sha==os.environ['ENGINEERING_BASE_SHA'] else os.environ['RELEASE_PARENT'];print(sha+' '+parent)
+elif args[0]=='diff':print(os.environ['CORRECTION_FILES'] if args[2]==os.environ['ENGINEERING_BASE_SHA'] else os.environ['ENGINEERING_FILES'])
 elif args[0]=='rev-parse':print(os.environ['GITHUB_SHA'])
 else:raise SystemExit(2)
 ''');git.chmod(0o755);uname.write_text('#!/bin/sh\nprintf "x86_64\\n"\n');uname.chmod(0o755)
-            base={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],'RUNNER_OS':'Linux','RUNNER_ARCH':'X64','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/'+c['branch'],'GITHUB_SHA':release,'REQUESTED_RELEASE_SHA':release,'EXPECTED_PRODUCTION_SHA':c['oldSha'],'APPROVED_BUSINESS_SHA':c['businessSha'],'BUSINESS_PARENT':c['oldSha'],'RELEASE_PARENT':c['businessSha'],'ENGINEERING_FILES':'\n'.join(sorted(c['engineeringFiles']))}
+            base={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],'RUNNER_OS':'Linux','RUNNER_ARCH':'X64','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/'+c['branch'],'GITHUB_SHA':release,'REQUESTED_RELEASE_SHA':release,'EXPECTED_PRODUCTION_SHA':c['oldSha'],'APPROVED_BUSINESS_SHA':c['businessSha'],'BUSINESS_PARENT':c['oldSha'],'ENGINEERING_BASE_SHA':c['engineeringBaseSha'],'ENGINEERING_PARENT':c['businessSha'],'RELEASE_PARENT':c['engineeringBaseSha'],'ENGINEERING_FILES':'\n'.join(sorted(c['engineeringFiles'])),'CORRECTION_FILES':'\n'.join(sorted(c['correctionFiles']))}
             def run(extra):return subprocess.run(['bash','-c',admission],env={**base,**extra},capture_output=True).returncode
             self.assertEqual(run({}),0)
-            for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'e'*40},{'EXPECTED_PRODUCTION_SHA':'e'*40},{'APPROVED_BUSINESS_SHA':'e'*40},{'BUSINESS_PARENT':'e'*40},{'RELEASE_PARENT':c['businessSha']+' '+c['oldSha']},{'ENGINEERING_FILES':base['ENGINEERING_FILES']+'\nserver/v2.js'}):
+            for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'e'*40},{'EXPECTED_PRODUCTION_SHA':'e'*40},{'APPROVED_BUSINESS_SHA':'e'*40},{'BUSINESS_PARENT':'e'*40},{'ENGINEERING_PARENT':'e'*40},{'RELEASE_PARENT':c['businessSha']},{'GITHUB_SHA':c['engineeringBaseSha'],'REQUESTED_RELEASE_SHA':c['engineeringBaseSha']},{'ENGINEERING_FILES':base['ENGINEERING_FILES']+'\nserver/v2.js'},{'CORRECTION_FILES':base['CORRECTION_FILES']+'\nserver/v2.js'}):
                 with self.subTest(extra=extra):self.assertNotEqual(run(extra),0)
+    def test_formal_runner_only_material_test_entrypoint_changed(self):
+        path='scripts/release-prod-post-transfer-ci.sh';source=(ROOT/path).read_text()
+        start=source.index('if [ "$GITHUB_REF" = refs/heads/'+self.c['branch']+' ]; then')
+        end=source.index('\nfor script ',start)
+        block=source[start:end]
+        original='python3 scripts/test-deploy-prod-transfer-cas.py\npython3 scripts/test-transfer-cas-existing-workflow.py\npython3 scripts/test-release-path-post-transfer.py'
+        q=subprocess.check_output(['git','-C',str(ROOT),'show',self.c['oldSha']+':'+path],text=True)
+        self.assertEqual(source[:start]+original+source[end:],q)
+        subprocess.run(['bash','-n',str(ROOT/path)],check=True)
+        with tempfile.TemporaryDirectory() as directory:
+            fake=Path(directory)/'python3';fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*"\n');fake.chmod(0o755)
+            def run(branch):return subprocess.check_output(['bash','-c',block],env={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],'GITHUB_REF':'refs/heads/'+branch},text=True).splitlines()
+            self.assertEqual(run(self.c['branch']),['scripts/test-material-release-contract.py --legacy-q-regressions','scripts/test-material-release-contract.py'])
+            self.assertEqual(run('codex/other-existing-branch'),original.replace('python3 ','').splitlines())
+    def test_material_difference_diagnostic_retains_fields_without_values(self):
+        ci=module(ROOT/'scripts/test-candidate-db-probe-integration.py','material_difference_test')
+        before={'facts':[['InventoryItem',2,'a'*64],['notification_templates',1,'b'*64]],'rowDetails':{'InventoryItem':{'primaryKey':True,'rows':{'1'*64:{'sku':'4'*64,'password_hash':'5'*64}}},'notification_templates':{'primaryKey':True,'rows':{'2'*64:{'updated_at':'6'*64}}}}}
+        after=copy.deepcopy(before);after['facts'][0][2]='c'*64;after['facts'][1][2]='d'*64
+        after['rowDetails']['InventoryItem']['rows']['1'*64]['sku']='7'*64
+        after['rowDetails']['notification_templates']['rows']['2'*64]['updated_at']='8'*64
+        difference=ci.material_fact_difference(before,after)
+        self.assertEqual(difference['totalChangedTables'],2)
+        self.assertEqual(difference['tables'][0]['changedFields'],[{'field':'sku','rowCount':1}])
+        self.assertEqual(difference['tables'][1]['changedFields'],[{'field':'updated_at','rowCount':1}])
+        serialized=json.dumps(difference)
+        for hidden in ('1'*64,'2'*64,'4'*64,'5'*64,'6'*64,'7'*64,'8'*64,'password_hash'):
+            self.assertNotIn(hidden,serialized)
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'diagnostic.json';diagnostic=ci.MaterialCiFailureDiagnostics(target,'f'*40);diagnostic.case='success'
+            error=RuntimeError('CI_MATERIAL_BUSINESS_FACTS_CHANGED');error.material_fact_difference=difference;diagnostic.primary(error)
+            persisted=json.loads(target.read_text())
+            self.assertEqual(persisted[0]['materialFactDifference'],difference)
+            self.assertEqual(persisted[0]['code'],'CI_MATERIAL_BUSINESS_FACTS_CHANGED')
+    def test_material_diagnostic_added_removed_rows_without_primary_key(self):
+        ci=module(ROOT/'scripts/test-candidate-db-probe-integration.py','material_rows_test')
+        before={'facts':[['_join',1,'a'*64]],'rowDetails':{'_join':{'primaryKey':False,'rows':{'1'*64:{'left':'3'*64}}}}}
+        after={'facts':[['_join',1,'b'*64]],'rowDetails':{'_join':{'primaryKey':False,'rows':{'2'*64:{'left':'4'*64}}}}}
+        row=ci.material_fact_difference(before,after)['tables'][0]
+        self.assertEqual((row['addedRows'],row['removedRows']),(None,None))
+        self.assertEqual((row['unmatchedRowFingerprintsAdded'],row['unmatchedRowFingerprintsRemoved']),(1,1))
+        self.assertFalse(row['primaryKeyAvailable']);self.assertIsNone(row['matchedRowsChanged']);self.assertEqual(row['changedFields'],[])
     def test_material_ci_isolation_and_fixture_contract(self):
         ci=module(ROOT/'scripts/test-candidate-db-probe-integration.py','material_ci_test')
         env={'GITHUB_ACTIONS':'true','RUNNER_OS':'Linux','GITHUB_REPOSITORY':'GPTJJ/budu','GITHUB_REF':'refs/heads/'+self.c['branch'],'TEST_MATERIAL_CONTROLLER_CI':'1','GITHUB_SHA':'f'*40,'RUNNER_TEMP':'/tmp/material-fixture'}
@@ -345,6 +389,20 @@ def native_pg16():
                 sql('postgres','CREATE DATABASE '+name+';');created.append(name)
             migrate(names[0],before_source/'prisma/schema.prisma');node(names[0],ci.MATERIAL_FIXTURE_JS)
             before=json.loads(node(names[0],ci.MATERIAL_SNAPSHOT_JS));phase(names[0],baseline)
+            assert set(before['rowDetails'])=={row[0] for row in before['facts']}
+            items=before['rowDetails']['InventoryItem']
+            assert items['primaryKey'] is True and len(items['rows'])==31
+            assert all('category' in fields and 'partnerMaterialPriceCents' not in fields
+                       and all(re.fullmatch('[0-9a-f]{64}',value) for value in fields.values())
+                       for fields in items['rows'].values())
+            # Verify field localization with real SQL-derived metadata, without
+            # changing a database row or publishing any captured row value.
+            changed=copy.deepcopy(before)
+            next(row for row in changed['facts'] if row[0]=='InventoryItem')[2]='0'*64
+            key=next(iter(items['rows']));changed['rowDetails']['InventoryItem']['rows'][key]['category']='0'*64
+            difference=ci.material_fact_difference(before,changed)
+            assert difference['totalChangedTables']==1
+            assert difference['tables'][0]['changedFields']==[{'field':'category','rowCount':1}]
             backup=checked([bindir/'pg_dump',url(names[0]),'-Fc','--no-owner','--no-acl'])
             for name in names[1:]:
                 checked([bindir/'pg_restore','--dbname',url(name),'--exit-on-error','--no-owner','--no-acl'],backup)
@@ -361,6 +419,7 @@ def native_pg16():
             sql(names[2],(ROOT/'prisma/migrations'/c['migration']/'migration.sql').read_text())
             phase(names[2],baseline,'MIGRATION_LEDGER_INVALID')
             proof={'scope':'TASK_OWNED_NATIVE_PG16_ONLY','oldSha':c['oldSha'],'businessSha':c['businessSha'],'oldMigrations':86,'targetMigrations':87,'sqlSha256':c['sqlHash'],'backupRestore':'PASS','allBusinessTableFactsUnchanged':True,'businessTables':len(before['facts']),'materialCount':26,'protectedProductCount':4,'newColumnInitiallyAllNull':True,'oldQPrismaRead':'PASS','oldQHttpSummaryXlsx':'PASS','committedSQLLedgerGap':'REJECTED','productionActions':False}
+            proof.update(materialRowMetadata='118 tables; InventoryItem stable primary keys; no quote field or raw row values',fieldDiagnosticAgainstRealSnapshot='PASS metadata-only in-memory mutation')
         finally:
             for name in reversed(created):sql('postgres','DROP DATABASE '+name+' WITH (FORCE);')
     proof['ownedDatabasesRemoved']=True

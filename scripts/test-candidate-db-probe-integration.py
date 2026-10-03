@@ -1008,6 +1008,69 @@ MATERIAL_FIXTURE_JS = FIXTURE_JS.replace(
  process.stdout.write('MATERIAL_Q86_FIXTURES_OK\n');
 ''')
 MATERIAL_SNAPSHOT_JS = SNAPSHOT_JS.replace('to_jsonb(t) row','(to_jsonb(t)-$$partnerMaterialPriceCents$$) row').replace('ORDER BY to_jsonb(t)::text','ORDER BY (to_jsonb(t)-$$partnerMaterialPriceCents$$)::text')
+# Retain the complete original facts hash. Additional detail derives from the
+# SAME captured rows; only hashes travel to Python, never values to diagnostics.
+MATERIAL_ROW_DETAIL_JS = r'''
+ const primary=(await prisma.$queryRawUnsafe(`SELECT k.column_name FROM information_schema.table_constraints c JOIN information_schema.key_column_usage k ON k.constraint_name=c.constraint_name AND k.table_schema=c.table_schema AND k.table_name=c.table_name WHERE c.constraint_type='PRIMARY KEY' AND c.table_schema='public' AND c.table_name=$1 ORDER BY k.ordinal_position`,tablename)).map(v=>v.column_name);
+ const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+ const details=Object.create(null);
+ for(const {row} of rows){
+  const key=digest(primary.length?primary.map(field=>[field,row[field]]):row);
+  const fields=Object.create(null);
+  for(const field of Object.keys(row))fields[field]=digest(row[field]);
+  details[key]=fields;
+ }
+ rowDetails[tablename]={primaryKey:primary.length>0,rows:details};
+'''
+MATERIAL_SNAPSHOT_JS = MATERIAL_SNAPSHOT_JS.replace('const facts=[];','const facts=[];const rowDetails=Object.create(null);').replace(
+ "facts.push([tablename,rows.length,createHash('sha256').update(JSON.stringify(rows)).digest('hex')]);",
+ "facts.push([tablename,rows.length,createHash('sha256').update(JSON.stringify(rows)).digest('hex')]);"+MATERIAL_ROW_DETAIL_JS
+).replace('JSON.stringify({facts,ledger,check,version})','JSON.stringify({facts,ledger,check,version,rowDetails})')
+
+
+def material_fact_difference(before,after):
+    """Metadata-only diagnostic; comparison still rejects EVERY facts mismatch."""
+    left={name:(count,fingerprint) for name,count,fingerprint in before['facts']}
+    right={name:(count,fingerprint) for name,count,fingerprint in after['facts']}
+    changed=[name for name in sorted(set(left)|set(right)) if left.get(name)!=right.get(name)]
+    report={'totalChangedTables':len(changed),'truncated':len(changed)>128,'tables':[]}
+    def identifier(value):
+        return value if isinstance(value,str) and re.fullmatch('[A-Za-z_][A-Za-z0-9_]{0,127}',value) else 'UNVERIFIED_IDENTIFIER'
+    def fingerprint(value):
+        return value if isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) else 'UNVERIFIED'
+    for name in changed[:128]:
+        a=before.get('rowDetails',{}).get(name,{})
+        b=after.get('rowDetails',{}).get(name,{})
+        old=a.get('rows',{});new=b.get('rows',{})
+        fields={};changed_rows=0
+        primary=a.get('primaryKey') is True and b.get('primaryKey') is True
+        if primary:
+            for key in set(old)&set(new):
+                columns=[field for field in set(old[key])|set(new[key]) if old[key].get(field)!=new[key].get(field)]
+                if columns:changed_rows+=1
+                for column in columns:fields[column]=fields.get(column,0)+1
+        row={'table':identifier(name),'beforeCount':left.get(name,(None,None))[0],
+             'afterCount':right.get(name,(None,None))[0],
+             'beforeFingerprint':fingerprint(left.get(name,(None,None))[1]),
+             'afterFingerprint':fingerprint(right.get(name,(None,None))[1]),
+             'addedRows':len(set(new)-set(old)) if primary else None,
+             'removedRows':len(set(old)-set(new)) if primary else None,
+             'unmatchedRowFingerprintsAdded':len(set(new)-set(old)),
+             'unmatchedRowFingerprintsRemoved':len(set(old)-set(new)),
+             'primaryKeyAvailable':primary,'matchedRowsChanged':changed_rows if primary else None,
+             'changedFields':[{'field':identifier(field),'rowCount':fields[field]} for field in sorted(fields)[:128]],
+             'fieldsTruncated':len(fields)>128}
+        report['tables'].append(row)
+    return report
+
+
+class MaterialCiFailureDiagnostics(CiFailureDiagnostics):
+    def record(self,error,source,operation=None):
+        row=super().record(error,source,operation)
+        if hasattr(error,'material_fact_difference'):
+            row['materialFactDifference']=error.material_fact_difference
+            self.write()
+        return row
 
 
 class MaterialControllerCiRemote(ControllerCiRemote):
@@ -1026,7 +1089,7 @@ class MaterialControllerCiRemote(ControllerCiRemote):
 
 def material_controller_ci(image,old_image,archive):
     material_controller_ci_guard()
-    diagnostics=CiFailureDiagnostics(Path(os.environ['RUNNER_TEMP'])/'material-controller-diagnostic.json',os.environ.get('GITHUB_SHA'))
+    diagnostics=MaterialCiFailureDiagnostics(Path(os.environ['RUNNER_TEMP'])/'material-controller-diagnostic.json',os.environ.get('GITHUB_SHA'))
     # Root is needed by the SAME backup helper to inspect the restore's 0700
     # postgres-owned files. Git trust is process-scoped, including direct ancestry
     # subprocesses in identity(); no global/local Git config is changed.
@@ -1140,7 +1203,8 @@ def _material_controller_ci(image,old_image,archive,diagnostics):
                 owned[nginx]=docker('run','-d','--name',nginx,'--network',network,'--mount','type=bind,source='+str(conf)+',target=/etc/nginx/conf.d',
                                    'nginx:1.28-alpine')
                 remote=MaterialControllerCiRemote(case_root,network,old,candidate,mode,db_network)
-                before_facts=json.loads(docker('exec','-w','/app',old,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))['facts']
+                before_snapshot=json.loads(docker('exec','-w','/app',old,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))
+                before_facts=before_snapshot['facts']
                 release.application_db_probe(remote,old,'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
                 art['loadedDockerImageId']=release.resolve_loaded_image(remote,art)['Id']
                 (case_root/'lock').mkdir(mode=0o700)
@@ -1156,8 +1220,12 @@ def _material_controller_ci(image,old_image,archive,diagnostics):
                 else:
                     if expected or json.loads(result.getvalue())['result']!='DEPLOY_COMPLETE':raise RuntimeError('CI_CONTROLLER_EXPECTED_FAILURE_MISSING')
                 writer=candidate if mode=='success' else old
-                after_facts=json.loads(docker('exec','-w','/app',writer,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))['facts']
-                if before_facts!=after_facts:raise RuntimeError('CI_MATERIAL_BUSINESS_FACTS_CHANGED')
+                after_snapshot=json.loads(docker('exec','-w','/app',writer,'node','--input-type=module','-e',MATERIAL_SNAPSHOT_JS))
+                after_facts=after_snapshot['facts']
+                if before_facts!=after_facts:
+                    error=RuntimeError('CI_MATERIAL_BUSINESS_FACTS_CHANGED')
+                    error.material_fact_difference=material_fact_difference(before_snapshot,after_snapshot)
+                    raise error
                 final=remote.db();expected_ledger=release.before_ledger(ledger) if mode=='backup_limit' else ledger
                 release.validate_database(final,expected_ledger)
                 release.writer_check(remote.containers(),final,[writer])

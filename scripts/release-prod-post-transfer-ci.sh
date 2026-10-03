@@ -31,9 +31,14 @@ PROFILE=(--release-profile post-transfer
   --expected-production-sha "${EXPECTED_PRODUCTION_SHA:-}"
   --business-base-sha "${APPROVED_BUSINESS_SHA:-}")
 bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" "${PROFILE[@]}"
-python3 scripts/test-deploy-prod-transfer-cas.py
-python3 scripts/test-transfer-cas-existing-workflow.py
-python3 scripts/test-release-path-post-transfer.py
+if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+  python3 scripts/test-material-release-contract.py --legacy-q-regressions
+  python3 scripts/test-material-release-contract.py
+else
+  python3 scripts/test-deploy-prod-transfer-cas.py
+  python3 scripts/test-transfer-cas-existing-workflow.py
+  python3 scripts/test-release-path-post-transfer.py
+fi
 for script in scripts/deploy-remote.sh scripts/release-prod-transfer-cas-ci.sh \
               scripts/release-prod-post-transfer-ci.sh scripts/deploy-prod-transfer-cas.sh; do
   bash -n "$script"

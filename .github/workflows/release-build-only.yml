@@ -56,9 +56,11 @@ jobs:
               [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
               test "$EXPECTED_PRODUCTION_SHA" = 72c780c1dbb5ff8b4502b97984d44660532f181a
               test "$APPROVED_BUSINESS_SHA" = a9e9c58510af4ef38b4bcaf378ec0a77895f61bc
-              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $APPROVED_BUSINESS_SHA"
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA e4d2859b7c85a0a76a3360acb891e90bb10e6b48"
+              test "$(git rev-list --parents -n 1 e4d2859b7c85a0a76a3360acb891e90bb10e6b48)" = "e4d2859b7c85a0a76a3360acb891e90bb10e6b48 $APPROVED_BUSINESS_SHA"
               test "$(git rev-list --parents -n 1 "$APPROVED_BUSINESS_SHA")" = "$APPROVED_BUSINESS_SHA $EXPECTED_PRODUCTION_SHA"
-              test "$(git diff --name-only "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/test-candidate-db-probe-integration.py\nscripts/test-material-release-contract.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/release-prod-post-transfer-ci.sh\nscripts/test-candidate-db-probe-integration.py\nscripts/test-material-release-contract.py\nscripts/test-release-path-post-transfer.py'
+              test "$(git diff --name-only e4d2859b7c85a0a76a3360acb891e90bb10e6b48 "$GITHUB_SHA")" = $'.github/workflows/release-build-only.yml\nscripts/deploy-prod-transfer-cas.py\nscripts/release-prod-post-transfer-ci.sh\nscripts/test-candidate-db-probe-integration.py\nscripts/test-material-release-contract.py'
               ;;
             codex/shipping-backup-diagnostic-20261002)
               test "$GITHUB_EVENT_NAME" = workflow_dispatch
