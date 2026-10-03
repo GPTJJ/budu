@@ -164,11 +164,13 @@ class MaterialContract(unittest.TestCase):
             with patch.object(self.r,key,'f'*40):self.assertFalse(self.r.material_migration())
     def test_identity_requires_single_exact_parent_branch_files_schema_and_sql(self):
         release='f'*40;c=self.c;path='prisma/migrations/'+c['migration']+'/migration.sql'
-        facts={('branch','--show-current'):c['branch'],('rev-list','--parents','-n','1',release):release+' '+c['engineeringBaseSha'],
+        facts={('branch','--show-current'):c['branch'],('rev-list','--parents','-n','1',release):release+' '+c['timestampBaseSha'],
+               ('rev-list','--parents','-n','1',c['timestampBaseSha']):c['timestampBaseSha']+' '+c['engineeringBaseSha'],
                ('rev-list','--parents','-n','1',c['engineeringBaseSha']):c['engineeringBaseSha']+' '+c['businessSha'],
                ('rev-list','--parents','-n','1',c['businessSha']):c['businessSha']+' '+c['oldSha'],
                ('diff','--name-only',c['businessSha'],release):'\n'.join(sorted(c['engineeringFiles'])),
-               ('diff','--name-only',c['engineeringBaseSha'],release):'\n'.join(sorted(c['correctionFiles'])),
+               ('diff','--name-only',c['engineeringBaseSha'],c['timestampBaseSha']):'\n'.join(sorted(c['correctionFiles'])),
+               ('diff','--name-only',c['timestampBaseSha'],release):'\n'.join(sorted(c['timestampCorrectionFiles'])),
                ('diff','--name-only',c['oldSha'],release,'--','prisma'):'prisma/schema.prisma\n'+path,
                ('diff','--diff-filter=A','--name-only',c['oldSha'],release,'--',path):path}
         def git(repo,*args):return facts[args]
@@ -236,15 +238,15 @@ import os,sys
 args=sys.argv[1:]
 if args[0]=='rev-list':
  sha=args[-1]
- parent=os.environ['BUSINESS_PARENT'] if sha==os.environ['APPROVED_BUSINESS_SHA'] else os.environ['ENGINEERING_PARENT'] if sha==os.environ['ENGINEERING_BASE_SHA'] else os.environ['RELEASE_PARENT'];print(sha+' '+parent)
-elif args[0]=='diff':print(os.environ['CORRECTION_FILES'] if args[2]==os.environ['ENGINEERING_BASE_SHA'] else os.environ['ENGINEERING_FILES'])
+ parent=os.environ['BUSINESS_PARENT'] if sha==os.environ['APPROVED_BUSINESS_SHA'] else os.environ['ENGINEERING_PARENT'] if sha==os.environ['ENGINEERING_BASE_SHA'] else os.environ['TIMESTAMP_PARENT'] if sha==os.environ['TIMESTAMP_BASE_SHA'] else os.environ['RELEASE_PARENT'];print(sha+' '+parent)
+elif args[0]=='diff':print(os.environ['CORRECTION_FILES'] if args[2]==os.environ['ENGINEERING_BASE_SHA'] else os.environ['TIMESTAMP_FILES'] if args[2]==os.environ['TIMESTAMP_BASE_SHA'] else os.environ['ENGINEERING_FILES'])
 elif args[0]=='rev-parse':print(os.environ['GITHUB_SHA'])
 else:raise SystemExit(2)
 ''');git.chmod(0o755);uname.write_text('#!/bin/sh\nprintf "x86_64\\n"\n');uname.chmod(0o755)
-            base={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],'RUNNER_OS':'Linux','RUNNER_ARCH':'X64','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/'+c['branch'],'GITHUB_SHA':release,'REQUESTED_RELEASE_SHA':release,'EXPECTED_PRODUCTION_SHA':c['oldSha'],'APPROVED_BUSINESS_SHA':c['businessSha'],'BUSINESS_PARENT':c['oldSha'],'ENGINEERING_BASE_SHA':c['engineeringBaseSha'],'ENGINEERING_PARENT':c['businessSha'],'RELEASE_PARENT':c['engineeringBaseSha'],'ENGINEERING_FILES':'\n'.join(sorted(c['engineeringFiles'])),'CORRECTION_FILES':'\n'.join(sorted(c['correctionFiles']))}
+            base={**os.environ,'PATH':directory+os.pathsep+os.environ['PATH'],'RUNNER_OS':'Linux','RUNNER_ARCH':'X64','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/'+c['branch'],'GITHUB_SHA':release,'REQUESTED_RELEASE_SHA':release,'EXPECTED_PRODUCTION_SHA':c['oldSha'],'APPROVED_BUSINESS_SHA':c['businessSha'],'BUSINESS_PARENT':c['oldSha'],'ENGINEERING_BASE_SHA':c['engineeringBaseSha'],'ENGINEERING_PARENT':c['businessSha'],'TIMESTAMP_BASE_SHA':c['timestampBaseSha'],'TIMESTAMP_PARENT':c['engineeringBaseSha'],'RELEASE_PARENT':c['timestampBaseSha'],'ENGINEERING_FILES':'\n'.join(sorted(c['engineeringFiles'])),'CORRECTION_FILES':'\n'.join(sorted(c['correctionFiles'])),'TIMESTAMP_FILES':'\n'.join(sorted(c['timestampCorrectionFiles']))}
             def run(extra):return subprocess.run(['bash','-c',admission],env={**base,**extra},capture_output=True).returncode
             self.assertEqual(run({}),0)
-            for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'e'*40},{'EXPECTED_PRODUCTION_SHA':'e'*40},{'APPROVED_BUSINESS_SHA':'e'*40},{'BUSINESS_PARENT':'e'*40},{'ENGINEERING_PARENT':'e'*40},{'RELEASE_PARENT':c['businessSha']},{'GITHUB_SHA':c['engineeringBaseSha'],'REQUESTED_RELEASE_SHA':c['engineeringBaseSha']},{'ENGINEERING_FILES':base['ENGINEERING_FILES']+'\nserver/v2.js'},{'CORRECTION_FILES':base['CORRECTION_FILES']+'\nserver/v2.js'}):
+            for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'e'*40},{'EXPECTED_PRODUCTION_SHA':'e'*40},{'APPROVED_BUSINESS_SHA':'e'*40},{'BUSINESS_PARENT':'e'*40},{'ENGINEERING_PARENT':'e'*40},{'TIMESTAMP_PARENT':c['businessSha']},{'RELEASE_PARENT':c['engineeringBaseSha']},{'RELEASE_PARENT':c['businessSha']},{'GITHUB_SHA':c['timestampBaseSha'],'REQUESTED_RELEASE_SHA':c['timestampBaseSha']},{'GITHUB_SHA':c['engineeringBaseSha'],'REQUESTED_RELEASE_SHA':c['engineeringBaseSha']},{'ENGINEERING_FILES':base['ENGINEERING_FILES']+'\nserver/v2.js'},{'CORRECTION_FILES':base['CORRECTION_FILES']+'\nserver/v2.js'},{'TIMESTAMP_FILES':base['TIMESTAMP_FILES']+'\nserver/v2.js'}):
                 with self.subTest(extra=extra):self.assertNotEqual(run(extra),0)
     def test_formal_runner_only_material_test_entrypoint_changed(self):
         path='scripts/release-prod-post-transfer-ci.sh';source=(ROOT/path).read_text()
@@ -300,6 +302,81 @@ else:raise SystemExit(2)
         for code in (ci.MATERIAL_FIXTURE_JS,ci.MATERIAL_SNAPSHOT_JS):
             subprocess.run(['node','--check','--input-type=module','-'],input=code.encode(),check=True,capture_output=True)
         previous_ci_source((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text())
+
+
+def template_timestamp_proof():
+    """Run the actual snapshot SQL on SELECT-only PostgreSQL fixtures after npm ci.
+
+    Offline identity tests run before npm ci in the existing workflow. This proof
+    uses the already declared PGlite dependency, without writing any fixture rows.
+    """
+    ci=module(ROOT/'scripts/test-candidate-db-probe-integration.py','material_timestamp_sql_proof')
+    baseline={name:[{'id':name+str(i),'content':{'name':'template '+str(i),'steps':['review']},
+                    'updated_at':'2026-10-02T00:00:00Z','updatedAt':'preserved'} for i in range(count)]
+              for name,count in [('approval_templates',2),('notification_templates',14),('InventoryItem',1),
+                                 ('approval_templates_archive',1),('ApprovalTemplates',1)]}
+    cases=[baseline];labels=['baseline'];expected=[]
+    timestamps=copy.deepcopy(baseline)
+    for name in ('approval_templates','notification_templates'):
+        for row in timestamps[name]:row['updated_at']='2026-10-03T00:00:00Z'
+    cases.append(timestamps);labels.append('exact two timestamps allowed')
+    for name in ('approval_templates','notification_templates'):
+        for mode in ('content','add','remove','replace-member','updatedAt'):
+            changed=copy.deepcopy(baseline)
+            if mode=='content':changed[name][0]['content']['steps'].append('changed')
+            elif mode=='add':changed[name].append({**changed[name][0],'id':'new-member'})
+            elif mode=='remove':changed[name].pop()
+            elif mode=='replace-member':changed[name][0]['id']='replacement-member'
+            else:changed[name][0]['updatedAt']='changed'
+            cases.append(changed);labels.append(name+' '+mode);expected.append((name,mode))
+    for name,field in [('InventoryItem','updated_at'),('InventoryItem','updatedAt'),
+                       ('approval_templates_archive','updated_at'),('ApprovalTemplates','updated_at')]:
+        changed=copy.deepcopy(baseline);changed[name][0][field]='changed'
+        cases.append(changed);labels.append(name+' '+field);expected.append((name,field))
+    prefix=r'''
+import {PGlite} from '@electric-sql/pglite';import {createHash} from 'node:crypto';import {readFileSync} from 'node:fs';
+const db=new PGlite();const snapshots=[];
+for(const fixture of JSON.parse(readFileSync(0,'utf8'))){
+ const prisma={
+  async $queryRawUnsafe(sql,...parameters){
+   if(sql.includes('FROM pg_tables'))return Object.keys(fixture).sort().map(tablename=>({tablename}));
+   if(sql.startsWith('SELECT k.column_name'))return [{column_name:'id'}];
+   if(sql.startsWith('SELECT migration_name'))return [];
+   if(sql.startsWith('SELECT convalidated'))return [{convalidated:true,definition:'unchanged'}];
+   if(sql.startsWith('SELECT current_setting'))return [{version:'PostgreSQL SELECT-only proof'}];
+   const match=sql.match(/ FROM "((?:""|[^"])*)" t /);if(!match)throw Error('Unexpected snapshot query');
+   const table=match[1].replaceAll('""','"');const rows=fixture[table];
+   const columns=[...new Set(rows.flatMap(row=>Object.keys(row)))].sort();
+   const declarations=columns.map(name=>'"'+name.replaceAll('"','""')+'" jsonb').join(',');
+   // The unchanged generated SELECT executes in PostgreSQL over a CTE; no DDL/DML.
+   return (await db.query('WITH "'+match[1]+'" AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS fixture('+declarations+')) '+sql,[JSON.stringify(rows)])).rows;
+  },async $disconnect(){}
+ };
+ const process={stdout:{write:value=>snapshots.push(JSON.parse(value))}};
+'''
+    snapshot=ci.MATERIAL_SNAPSHOT_JS.replace("import {prisma} from './server/pg.js';import {createHash} from 'node:crypto';",'',1)
+    script=prefix+snapshot+"\n}\nawait db.close();process.stdout.write(JSON.stringify(snapshots));\n"
+    result=subprocess.run(['node','--input-type=module','-e',script],cwd=ROOT,input=json.dumps(cases),text=True,capture_output=True,check=True)
+    snapshots=json.loads(result.stdout);assert len(snapshots)==len(cases)
+    assert snapshots[0]==snapshots[1],labels[1]
+    print('ALLOW exact two template updated_at fields: 2+14 rows; all projected facts and metadata identical')
+    for index,(name,mode) in enumerate(expected,2):
+        before=snapshots[0];after=snapshots[index]
+        assert before['facts']!=after['facts'],labels[index]
+        difference=ci.material_fact_difference(before,after)
+        assert difference['totalChangedTables']==1,labels[index]
+        table=difference['tables'][0];assert table['table']==name,labels[index]
+        if mode in ('content','updated_at','updatedAt'):
+            assert table['changedFields']==[{'field':mode,'rowCount':1}],labels[index]
+        elif mode=='add':assert table['addedRows']==1 and table['afterCount']==table['beforeCount']+1,labels[index]
+        elif mode=='remove':assert table['removedRows']==1 and table['afterCount']==table['beforeCount']-1,labels[index]
+        else:assert table['addedRows']==table['removedRows']==1 and table['afterCount']==table['beforeCount'],labels[index]
+        print('REJECT '+labels[index])
+    source=(ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()
+    original=subprocess.check_output(['git','-C',str(ROOT),'show','f2a76c01eb62f50a344e0e0c34be37a581a0796c:scripts/test-candidate-db-probe-integration.py'],text=True)
+    def gate(text):return text[text.index('                if before_facts!=after_facts:'):text.index('                final=remote.db();expected_ledger=')]
+    assert gate(source)==gate(original),'Existing complete facts rejection changed'
+    print('TEMPLATE_TIMESTAMP_SQL_PROOF=PASS allowed=1 rejected=14 original_fact_rejection=unchanged fixture_writes=0')
 
 
 def legacy_q_regressions():
@@ -429,5 +506,6 @@ def native_pg16():
 
 if __name__=='__main__':
     if len(sys.argv)==2 and sys.argv[1]=='--legacy-q-regressions':legacy_q_regressions()
+    elif len(sys.argv)==2 and sys.argv[1]=='--template-timestamp-proof':template_timestamp_proof()
     elif len(sys.argv)==2 and sys.argv[1]=='--native-pg16':native_pg16()
     else:unittest.main()

@@ -193,6 +193,7 @@ def material_contract():
     return {'oldSha':'72c780c1dbb5ff8b4502b97984d44660532f181a',
             'businessSha':'a9e9c58510af4ef38b4bcaf378ec0a77895f61bc',
             'engineeringBaseSha':'e4d2859b7c85a0a76a3360acb891e90bb10e6b48',
+            'timestampBaseSha':'f2a76c01eb62f50a344e0e0c34be37a581a0796c',
             'branch':'codex/material-center-integration-20261002',
             'migration':'20261002160000_material_replenishment_quote',
             'sqlHash':'6df611abb494068f88e9d5929cdbc0839864e240e53032e55e091a6ab25abe4a',
@@ -203,7 +204,9 @@ def material_contract():
                 'scripts/release-prod-post-transfer-ci.sh'},
             'correctionFiles':{'.github/workflows/release-build-only.yml','scripts/deploy-prod-transfer-cas.py',
                 'scripts/test-candidate-db-probe-integration.py','scripts/test-material-release-contract.py',
-                'scripts/release-prod-post-transfer-ci.sh'}}
+                'scripts/release-prod-post-transfer-ci.sh'},
+            'timestampCorrectionFiles':{'.github/workflows/release-build-only.yml','scripts/deploy-prod-transfer-cas.py',
+                'scripts/test-candidate-db-probe-integration.py','scripts/test-material-release-contract.py'}}
 
 
 def material_migration():
@@ -240,12 +243,14 @@ def migration_rollback_contract():
 def validate_material_identity(repo, release):
     c=material_contract()
     require(git(repo,'branch','--show-current')==c['branch'],'MATERIAL_BRANCH_INVALID')
-    require(git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['engineeringBaseSha']
+    require(git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['timestampBaseSha']
+            and git(repo,'rev-list','--parents','-n','1',c['timestampBaseSha'])==c['timestampBaseSha']+' '+c['engineeringBaseSha']
             and git(repo,'rev-list','--parents','-n','1',c['engineeringBaseSha'])==c['engineeringBaseSha']+' '+c['businessSha']
             and git(repo,'rev-list','--parents','-n','1',c['businessSha'])==c['businessSha']+' '+c['oldSha'],
             'MATERIAL_ENGINEERING_PARENT_INVALID')
     require(set(git(repo,'diff','--name-only',c['businessSha'],release).splitlines())==c['engineeringFiles']
-            and set(git(repo,'diff','--name-only',c['engineeringBaseSha'],release).splitlines())==c['correctionFiles'],
+            and set(git(repo,'diff','--name-only',c['engineeringBaseSha'],c['timestampBaseSha']).splitlines())==c['correctionFiles']
+            and set(git(repo,'diff','--name-only',c['timestampBaseSha'],release).splitlines())==c['timestampCorrectionFiles'],
             'MATERIAL_ENGINEERING_SCOPE_INVALID')
     path='prisma/migrations/'+c['migration']+'/migration.sql'
     require(set(git(repo,'diff','--name-only',c['oldSha'],release,'--','prisma').splitlines())
@@ -254,7 +259,7 @@ def validate_material_identity(repo, release):
             'MATERIAL_SCHEMA_SCOPE_INVALID')
     require(digest((Path(repo)/path).read_bytes())==c['sqlHash'],'MATERIAL_SQL_HASH_INVALID')
     # All business files, including the schema and reviewed SQL, are immutable:
-    # the correction is one exact child of reviewed E, with six total files.
+    # the timestamp correction is one exact child of reviewed F, with six total files.
 
 
 def material_database_details(remote, db):

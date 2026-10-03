@@ -1007,8 +1007,13 @@ MATERIAL_FIXTURE_JS = FIXTURE_JS.replace(
  await prisma.inventoryItem.createMany({data:['BUDU-BALLSWL-001','BUDU-BALLSWL-002','BUDU-BWDWL-001','BUDU-BDWL-001'].map((sku,i)=>({id:'ci-protected-'+i,name:'CI protected '+i,sku,category:'product',productCategoryId:'pc-munt7jhp-8a5lke',salePriceCents:10n,costPriceCents:10n,isActive:false,transferEnabled:true,partnerReplenishmentEnabled:true,partnerOrderUnit:'NATIVE',partnerMinOrderBaseQty:1,partnerOrderStepBaseQty:1,unit:'个'}))});
  process.stdout.write('MATERIAL_Q86_FIXTURES_OK\n');
 ''')
-MATERIAL_SNAPSHOT_JS = SNAPSHOT_JS.replace('to_jsonb(t) row','(to_jsonb(t)-$$partnerMaterialPriceCents$$) row').replace('ORDER BY to_jsonb(t)::text','ORDER BY (to_jsonb(t)-$$partnerMaterialPriceCents$$)::text')
-# Retain the complete original facts hash. Additional detail derives from the
+# Run 37082232871 proved startup refreshes only these two template timestamps.
+# Preserve every other field and row; keep the existing additive quote projection.
+MATERIAL_SNAPSHOT_JS = SNAPSHOT_JS.replace(
+ "const rows=await prisma.$queryRawUnsafe('SELECT to_jsonb(t) row FROM \"'+tablename.replaceAll('\"','\"\"')+'\" t ORDER BY to_jsonb(t)::text');",
+ "const projection='(to_jsonb(t)-$$partnerMaterialPriceCents$$'+(['approval_templates','notification_templates'].includes(tablename)?'-$$updated_at$$':'')+')';\n  const rows=await prisma.$queryRawUnsafe('SELECT '+projection+' row FROM \"'+tablename.replaceAll('\"','\"\"')+'\" t ORDER BY '+projection+'::text');"
+)
+# Retain the complete projected facts hash. Additional detail derives from the
 # SAME captured rows; only hashes travel to Python, never values to diagnostics.
 MATERIAL_ROW_DETAIL_JS = r'''
  const primary=(await prisma.$queryRawUnsafe(`SELECT k.column_name FROM information_schema.table_constraints c JOIN information_schema.key_column_usage k ON k.constraint_name=c.constraint_name AND k.table_schema=c.table_schema AND k.table_name=c.table_name WHERE c.constraint_type='PRIMARY KEY' AND c.table_schema='public' AND c.table_name=$1 ORDER BY k.ordinal_position`,tablename)).map(v=>v.column_name);
