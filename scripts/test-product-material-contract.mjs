@@ -12,7 +12,7 @@ test('商品中心包含物料入口，独立物料菜单移除且原能力仍�
   const sidebar = read('src/components/Sidebar.jsx')
   const productCenter = sidebar.indexOf("{ key: 'product-center', label: '商品中心' }")
   const transfer = sidebar.indexOf("{ key: 'inventory-transfer', label: '门店调拨' }")
-  const purchase = sidebar.indexOf("{ key: 'inventory-purchase', label: '申请采购' }")
+  const purchase = sidebar.indexOf("{ key: 'inventory-purchase', label: '采购入库' }")
   const material = sidebar.indexOf("{ key: 'product-material-management', label: '物料管理' }")
   assert.ok(productCenter >= 0)
   assert.ok(transfer >= 0 && transfer < purchase)

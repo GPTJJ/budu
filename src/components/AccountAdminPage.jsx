@@ -429,6 +429,7 @@ function RoleBindingModal({ user, role, onClose, onSaved }) {
 function PermissionModal({ user, onClose, onSaved }) {
   const initialModules = user.permissions?.modules || {}
   const [modules, setModules] = useState(initialModules)
+  const [purchaseManage, setPurchaseManage] = useState(user.permissions?.purchaseManage === true)
   const [transferAll, setTransferAll] = useState(user.permissions?.inventoryTransferAll === true)
   const [dailyEntry, setDailyEntry] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).dailyEntry)
   const [sweetCard, setSweetCard] = useState(() => normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
@@ -459,6 +460,7 @@ function PermissionModal({ user, onClose, onSaved }) {
     setDailyEntry(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true).dailyEntry)
     setSweetCard(normalizeAccountPermissions({ modules: nextModules }, user.role, user.assetCenter === true)[ACCOUNT_PERMISSION_KEYS.SWEET_CARD])
     setExternalOrderCreate(false)
+    setPurchaseManage(false)
     setExternalSettlementConfirm(false)
     setManualExternalRefundRecord(false)
     setManualExternalRefundConfirm(false)
@@ -477,6 +479,7 @@ function PermissionModal({ user, onClose, onSaved }) {
         body: JSON.stringify({
           modules,
           inventoryTransferAll: transferAll,
+          purchaseManage,
           dailyEntry,
           sweetCard,
           externalOrderCreate,
@@ -536,6 +539,7 @@ function PermissionModal({ user, onClose, onSaved }) {
             )
           })}
         </div>
+        <label className="mt-3 flex items-start gap-3 rounded-xl border bg-budu-50 p-3 text-sm"><input aria-label="采购管理（备单与供应商维护）" type="checkbox" checked={purchaseManage} onChange={e=>setPurchaseManage(e.target.checked)}/><span>采购管理（备单与供应商维护）<span className="mt-1 block text-xs text-slate-500">仅授权门店；不授予核准、退回、撤核、结束、重开或商品管理权。</span></span></label>
         {modules['inventory-transfer'] === true && (
           <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 text-xs font-semibold text-amber-700">
             <input type="checkbox" checked={transferAll} onChange={(e) => setTransferAll(e.target.checked)} className="h-4 w-4 accent-amber-500" />

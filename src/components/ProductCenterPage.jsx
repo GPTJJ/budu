@@ -78,8 +78,9 @@ function groupOriginalUrl(group) {
 function purposeEnabled(product, purpose) {
   if (purpose === 'pos') return product.isActive
   if (purpose === 'transfer') return product.transferEnabled
+  if (purpose === 'purchase') return product.purchaseEnabled
   if (purpose === 'replenishment') return product.partnerReplenishmentEnabled
-  return product.isActive || product.transferEnabled || product.partnerReplenishmentEnabled
+  return product.isActive || product.transferEnabled || product.partnerReplenishmentEnabled || product.purchaseEnabled
 }
 
 function CategoryManager({ categories, onClose, onSaved }) {
@@ -513,7 +514,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
             <option value="inactive">停用</option>
           </select>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1" aria-label="业务用途筛选">{[['all', '全部'], ['pos', 'POS'], ['transfer', '门店调拨'], ['replenishment', '合作商补货']].map(([key, label]) => <button key={key} type="button" onClick={() => setPurpose(key)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold ${purpose === key ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{label}</button>)}</div>
+        <div className="flex gap-2 overflow-x-auto pb-1" aria-label="业务用途筛选">{[['all', '全部'], ['pos', 'POS'], ['transfer', '门店调拨'], ['replenishment', '合作商补货'], ['purchase', '采购']].map(([key, label]) => <button key={key} type="button" onClick={() => setPurpose(key)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold ${purpose === key ? 'bg-budu-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{label}</button>)}</div>
       </section>
 
       {selectedIds.length > 0 && <section className="sticky top-2 z-20 space-y-2 rounded-2xl border border-budu-100 bg-white/95 p-3 shadow-lg backdrop-blur" data-testid="product-bulk-bar"><div className="flex flex-wrap items-center gap-2"><span className="mr-auto text-sm font-black text-budu-700">已选择 {selectedIds.length} 项</span><button onClick={() => setSelectedIds([])} className="text-xs font-bold text-slate-400">取消选择</button></div><div className="flex flex-wrap gap-2"><select aria-label="批量目标分类" value={bulkCategoryId} onChange={(event) => setBulkCategoryId(event.target.value)} className="min-h-10 min-w-36 flex-1 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-600"><option value="">未分类</option>{productCategories.filter((item) => item.isActive).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button disabled={bulkBusy} onClick={() => applyBulk({ operation: 'category' })} className="btn-secondary min-h-10 px-3 text-xs">修改分类</button>{[['pos', 'POS'], ['transfer', '调拨']].flatMap(([key, label]) => [<button key={`${key}-on`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: true })} className="min-h-10 rounded-xl bg-emerald-50 px-3 text-xs font-bold text-emerald-700">启用{label}</button>, <button key={`${key}-off`} disabled={bulkBusy} onClick={() => applyBulk({ operation: 'purpose', purpose: key, enabled: false })} className="min-h-10 rounded-xl bg-slate-100 px-3 text-xs font-bold text-slate-500">停用{label}</button>])}</div></section>}
@@ -531,7 +532,8 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
                     <h3 data-testid="product-title" className="product-mobile-title font-black text-slate-800">{item.name}</h3>
                     <span data-testid="product-price" className="mt-1 block shrink-0 text-sm font-black text-budu-700">{item.salePriceCents == null ? '未设零售价' : formatCents(item.salePriceCents)}</span>
                   </div>
-                  <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['补货', item.partnerReplenishmentEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
+                  <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['补货', item.partnerReplenishmentEnabled], ['采购', item.purchaseEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
+                  {(item._material ? canManageMaterials : canManage) && <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" aria-label={item.name+'可用于采购'} checked={item.purchaseEnabled===true} onChange={e=>{const enabled=e.target.checked;setError('');api('/v2/procurement/items/'+item.productId+'/purchase-purpose',{method:'PATCH',body:JSON.stringify({purchaseEnabled:enabled,version:item.version,requestKey:crypto.randomUUID()})}).then(()=>loadProducts()).catch(e=>setError(e.message));}}/>可用于采购</label>}
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
                   <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>

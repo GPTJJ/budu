@@ -122,6 +122,7 @@ model SweetCardControl {
 }
 
 model Store {
+  procurementOrders ProcurementOrder[]
   key                          String                   @id
   operationType                StoreOperationType       @default(UNKNOWN) @map("operation_type")
   name                         String                   @unique
@@ -317,6 +318,10 @@ model DailyEntryAuditLog {
 }
 
 model InventoryItem {
+  purchaseEnabled Boolean @default(false)
+  procurementSupplierId String?
+  procurementSupplier ProcurementSupplier? @relation(fields: [procurementSupplierId], references: [id], onDelete: Restrict)
+  procurementLines ProcurementOrderLine[]
   id                       String                     @id
   name                     String                     @unique
   unit                     String                     @default("")
@@ -2698,4 +2703,127 @@ model OnlineWechatShippingSync {
   settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
   @@index([status, availableAt])
   @@map("online_wechat_shipping_sync")
+}
+
+model ProcurementSupplier {
+  id          String             @id
+  name        String
+  version     Int                @default(1)
+  createdById String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  products    InventoryItem[]
+  orders      ProcurementOrder[]
+}
+
+model ProcurementOrder {
+  id                   String                 @id
+  storeKey             String?
+  supplierId           String?
+  supplierNameSnapshot String                 @default("")
+  storeNameSnapshot    String                 @default("")
+  status               String                 @default("DRAFT")
+  version              Int                    @default(1)
+  orderRevision        Int                    @default(1)
+  createdById          String
+  createdByName        String
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  orderedAt            DateTime?
+  closedAt             DateTime?
+  draftContent         Json                   @default("{}")
+  createRequestKey     String                 @unique
+  createPayloadHash    String
+  store                Store?                 @relation(fields: [storeKey], references: [key], onDelete: Restrict)
+  supplier             ProcurementSupplier?   @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  lines                ProcurementOrderLine[]
+  receipts             ProcurementReceipt[]
+
+  @@index([storeKey, status, createdAt])
+}
+
+model ProcurementOrderLine {
+  id                  String                   @id
+  orderId             String
+  inventoryItemId     String
+  productNameSnapshot String
+  unitSnapshot        String
+  orderedQty          Decimal                  @db.Decimal(18, 3)
+  linePosition        Int
+  order               ProcurementOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  item                InventoryItem            @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  receiptLines        ProcurementReceiptLine[]
+
+  @@unique([orderId, inventoryItemId])
+  @@unique([id, orderId])
+}
+
+model ProcurementReceipt {
+  id                String                         @id
+  orderId           String
+  sequence          Int
+  status            String                         @default("PENDING")
+  receivedDate      DateTime                       @db.Date
+  revision          Int                            @default(1)
+  version           Int                            @default(1)
+  registeredById    String
+  submittedById     String
+  submittedByName   String
+  submittedAt       DateTime                       @default(now())
+  approvedById      String?
+  approvedAt        DateTime?
+  createRequestKey  String
+  createPayloadHash String
+  order             ProcurementOrder               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  lines             ProcurementReceiptLine[]
+  events            ProcurementNotificationEvent[]
+
+  @@unique([orderId, sequence])
+  @@unique([orderId, createRequestKey])
+  @@unique([id, orderId])
+  @@index([orderId, status])
+}
+
+model ProcurementReceiptLine {
+  id          String               @id
+  orderId     String
+  receiptId   String
+  orderLineId String
+  receivedQty Decimal              @db.Decimal(18, 3)
+  receipt     ProcurementReceipt   @relation(fields: [receiptId, orderId], references: [id, orderId], onDelete: Restrict)
+  orderLine   ProcurementOrderLine @relation(fields: [orderLineId, orderId], references: [id, orderId], onDelete: Restrict)
+
+  @@unique([receiptId, orderLineId])
+}
+
+model ProcurementAudit {
+  id           String   @id
+  entityId     String
+  orderId      String?
+  action       String
+  actorId      String
+  actorName    String
+  reason       String   @default("")
+  before       Json?
+  after        Json?
+  operationKey String   @unique
+  payloadHash  String
+  createdAt    DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model ProcurementNotificationEvent {
+  id                 String             @id
+  receiptId          String
+  submissionRevision Int
+  recipientUserId    String
+  notificationId     String             @unique
+  status             String             @default("PENDING")
+  attemptCount       Int                @default(0)
+  errorCode          String             @default("")
+  updatedAt          DateTime           @updatedAt
+  receipt            ProcurementReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, submissionRevision, recipientUserId])
 }

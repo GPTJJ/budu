@@ -153,6 +153,8 @@ async function requireProductGroup(productGroupId, currentGroupId = '') {
 
 export const productListSelect = {
   id: true,
+  purchaseEnabled: true,
+  procurementSupplierId: true,
   name: true,
   sku: true,
   posCategory: true,
@@ -187,6 +189,8 @@ export const productListSelect = {
 export function serializeProduct(product, { includeCost = false } = {}) {
   return {
     productId: product.id,
+    purchaseEnabled: product.purchaseEnabled,
+    procurementSupplierId: product.procurementSupplierId,
     name: product.name,
     sku: product.sku,
     posCategory: product.posCategory,

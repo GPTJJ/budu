@@ -9,6 +9,7 @@ import { getUserById, getUserByUsername, listUsers, createUser, updateUser, dele
 import { hashPassword, verifyPassword, signToken } from './auth.js'
 import { parseAnalysis } from './analysis.js'
 import { v2Router } from './v2.js'
+import { purchaseReceiptRouter } from './purchase-receipt.js'
 import { reportCenterRouter } from './report-center.js'
 import { developerSafeDeleteRouter } from './developer-safe-delete.js'
 import { orderPurposeRouter } from './order-purpose.js'
@@ -709,7 +710,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, v2Router)
+  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

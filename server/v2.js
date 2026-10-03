@@ -718,6 +718,8 @@ function serializeTransferMasterItem(item, user) {
     } : null,
     version: item.version,
     used: Boolean(item._count?.transferItems || item._count?.purchaseItems),
+    purchaseEnabled: item.purchaseEnabled,
+    procurementSupplierId: item.procurementSupplierId,
     ...(item.category === 'material' ? materialExtras(item, hasReportCostView(user)) : {}),
   }
 }
@@ -1143,6 +1145,7 @@ v2Router.post('/transfer-requests/:id/receive', wrap(async (req, res) => {
 
 // ---------- 采购 ----------
 v2Router.post('/purchase-requests', wrap(async (req, res) => {
+  throw bad('旧采购创建已停用，请使用采购入库备单', 410)
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, items, supplier, supplierId, expectedAt, note } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
@@ -1418,6 +1421,7 @@ v2Router.get('/suppliers', wrap(async (req, res) => {
 }))
 
 v2Router.post('/suppliers', wrap(async (req, res) => {
+  throw bad('旧采购供应商维护已停用，历史资料继续保留', 410)
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const { name, phone, contact, note } = req.body || {}
@@ -1438,6 +1442,7 @@ v2Router.post('/suppliers', wrap(async (req, res) => {
 }))
 
 v2Router.put('/suppliers/:id', wrap(async (req, res) => {
+  throw bad('旧采购供应商维护已停用，历史资料继续保留', 410)
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canWrite(req.user)) throw bad('无权限', 403)
   const { name, phone, contact, note } = req.body || {}

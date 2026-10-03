@@ -53,7 +53,7 @@ export const MODULE_GROUPS = Object.freeze([
   ] },
   { key: 'inventory', label: '库存管理', modules: [
     { key: MODULE_KEYS.INVENTORY_TRANSFER, label: '门店调拨' },
-    { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '申请采购' },
+    { key: MODULE_KEYS.INVENTORY_PURCHASE, label: '采购入库' },
   ] },
   { key: 'partner', label: '合作商管理', modules: [
     { key: MODULE_KEYS.PARTNER_MANAGEMENT, label: '合作商档案' },
@@ -89,6 +89,7 @@ const STAFF_DEFAULTS = Object.freeze(MANAGER_DEFAULTS.filter((key) => key !== MO
 
 export const ACCOUNT_PERMISSION_KEYS = Object.freeze({
   INVENTORY_TRANSFER_ALL: 'inventoryTransferAll',
+  PURCHASE_MANAGE: 'purchaseManage',
   EXTERNAL_ORDER_CREATE: 'externalOrderCreate',
   EXTERNAL_SETTLEMENT_CONFIRM: 'externalSettlementConfirm',
   MANUAL_EXTERNAL_REFUND_RECORD: 'manualExternalRefundRecord',
@@ -195,6 +196,7 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
   const modules = normalizeModules(source.modules, role, legacyAssetCenter)
   return {
     modules,
+    purchaseManage: role === 'developer' || source.purchaseManage === true,
     [ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]:
       source[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL] === true,
     [ACCOUNT_PERMISSION_KEYS.EXTERNAL_ORDER_CREATE]:
@@ -419,4 +421,17 @@ export function canManageTransferStore(user, storeKey) {
   if (!user || user.role === 'public' || !hasModuleAccess(user, MODULE_KEYS.INVENTORY_TRANSFER)) return false
   if (hasInventoryTransferAll(user)) return true
   return user.role === 'manager' && canAccessTransferStore(user, storeKey)
+}
+
+export function isProcurementDeveloper(user) {
+  return Boolean(user?.role === 'developer' && user.status === 'active')
+}
+export function canUseProcurement(user) {
+  return Boolean(user && user.status === 'active' && ['developer','admin','finance','manager','staff'].includes(user.role) && hasModuleAccess(user, MODULE_KEYS.INVENTORY_PURCHASE))
+}
+export function canManageProcurement(user) {
+  return canUseProcurement(user) && (isProcurementDeveloper(user) || user.permissions?.purchaseManage === true)
+}
+export function canAccessProcurementStore(user, storeKey) {
+  return canUseProcurement(user) && (isProcurementDeveloper(user) || (Array.isArray(user.storeKeys) && user.storeKeys.includes(storeKey)))
 }
