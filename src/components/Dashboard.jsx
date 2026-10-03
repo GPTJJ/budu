@@ -31,6 +31,7 @@ const AccountAdminPage = lazy(() => import('./AccountAdminPage'))
 const ProductCenterPage = lazy(() => import('./ProductCenterPage'))
 const PosPage = lazyRetry(() => import('./PosPage'))
 const InventoryRequestPage = lazy(() => import('./InventoryRequestPage'))
+const PurchaseRollbackHistoryPage = lazy(() => import('./PurchaseRollbackHistoryPage'))
 const PartnerManagementPage = lazy(() => import('./PartnerManagementPage'))
 const PartnerReplenishmentReviewPage = lazy(() => import('./PartnerReplenishmentReviewPage'))
 const PartnerAfterSalesPage = lazy(() => import('./PartnerAfterSalesPage'))
@@ -52,7 +53,7 @@ const pageTitles = {
   'store-pos': 'POS 点单',
   'product-center': '商品中心',
   'inventory-transfer': '门店调拨',
-  'inventory-purchase': '申请采购',
+  'inventory-purchase': '采购历史',
   'partner-management': '合作商档案',
   'partner-replenishment-review': '补货订单',
   'partner-after-sales': '售后处理',
@@ -395,11 +396,7 @@ export default function Dashboard({ user, onLogout, onUserChange }) {
                   onBack={returnToOverview}
                 />
               ) : isInventoryPurchaseView && hasModuleAccess(user, 'inventory-purchase') ? (
-                <InventoryRequestPage
-                  type="purchase"
-                  currentUser={user}
-                  onBack={returnToOverview}
-                />
+                <PurchaseRollbackHistoryPage onBack={returnToOverview} />
               ) : isPartnerManagementView && hasModuleAccess(user, 'partner-management') ? (
                 <PartnerManagementPage currentUser={user} onBack={returnToOverview} />
               ) : isPartnerReplenishmentReviewView && hasModuleAccess(user, 'partner-replenishment-review') ? (

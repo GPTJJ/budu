@@ -258,8 +258,38 @@ function normalizeInventory(raw) {
   return out
 }
 
-export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers } = {}) {
+// C11 compatibility gate: classify only procurement paths, including encoded
+// Express parameters. Other business routers retain their original behavior.
+export function compatibilityProcurementPath(rawPath) {
+  let pathname
+  try { pathname = decodeURIComponent(String(rawPath || '')) } catch {
+    return /^\/(?:purchase-requests|suppliers|procurement)(?:\/|$)/i.test(String(rawPath || '')) ? 'invalid' : 'other'
+  }
+  if (/^\/(?:purchase-requests|suppliers)(?:\/|$)/i.test(pathname)) return 'legacy'
+  if (/^\/developer-sensitive-records\/purchase(?:\/|$)/i.test(pathname)) return 'legacy'
+  if (/^\/procurement(?:\/|$)/i.test(pathname)) return 'new'
+  return 'other'
+}
+
+export function createCompatibilityProcurementGate(requireBusiness, requireModule) {
+  return (req, res, next) => {
+    const domain = compatibilityProcurementPath(req.path)
+    if (domain === 'other') return next()
+    return requireBusiness(req, res, () => requireModule('inventory-purchase')(req, res, () => {
+      if (domain === 'invalid') return res.status(400).json({ error: '采购路径编码无效' })
+      if (domain === 'new') return res.status(503).json({ error: '新版采购暂只读，数据已保留', code: 'PROCUREMENT_ROLLBACK_READ_ONLY' })
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        return res.status(410).json({ error: '旧采购写入已停用，历史数据保留', code: 'LEGACY_PROCUREMENT_RETIRED' })
+      }
+      return next()
+    }))
+  }
+}
+
+export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers, disableStartupTasks = false } = {}) {
+  if (disableStartupTasks && APP_ENV !== 'test') throw new Error('C11 startup-task suppression requires APP_ENV=test')
   const app = express()
+  app.locals.c11StartupTasks = disableStartupTasks ? 'DISABLED' : 'ENABLED'
   onlineCheckoutRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
@@ -704,6 +734,9 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     if (!rule) return next()
     return requireAnyModule(rule)(req, res, next)
   })
+  // Authentication and module checks above run first. The gate is before every
+  // legacy writer, including developer-sensitive-records purchase actions.
+  app.use('/api/v2', createCompatibilityProcurementGate(requireBusiness, requireModule))
   app.use('/api/v2', posRouter)
   app.use('/api/v2', requireBusiness, orderPurposeRouter)
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
@@ -1410,11 +1443,13 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
       console.error('[store-names-sync]', error.message)
     }
   }
-  syncStoreNames()
-  startAssetReminderJob()
-  // 审批模板种子（数据库未配置时跳过，下次启动自动补）
-  ensureApprovalTemplates().catch((error) => console.error('[approval-templates]', error.message))
-  ensureNotificationTemplates().catch((error) => console.error('[notification-templates]', error.message))
+  if (!disableStartupTasks) {
+    syncStoreNames()
+    startAssetReminderJob()
+    // 审批模板种子（数据库未配置时跳过，下次启动自动补）
+    ensureApprovalTemplates().catch((error) => console.error('[approval-templates]', error.message))
+    ensureNotificationTemplates().catch((error) => console.error('[notification-templates]', error.message))
+  }
 
   if (process.env.SENTRY_DSN) {
     Sentry.setupExpressErrorHandler(app)
