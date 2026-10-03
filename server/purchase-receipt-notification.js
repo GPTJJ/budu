@@ -90,7 +90,7 @@ export async function deliverReceiptNotice(eventId, {
   const binding = developerWecomRecipientBinding(),
     cfg = wechatPersonalConfig();
   const deliveryId = event.id + '-wecom';
-  if (!nt || developer?.role !== 'developer' || developer.status !== 'active' || !binding || binding.username !== nt.username || !cfg && !testSender) {
+  if (!nt || developer?.role !== 'developer' || developer.status !== 'active' || !binding || binding.username !== nt.username) {
     await prisma.procurementNotificationEvent.update({
       where: {
         id: eventId
@@ -99,6 +99,15 @@ export async function deliverReceiptNotice(eventId, {
         status: 'FAILED',
         errorCode: 'CHANNEL_OR_DEVELOPER_NOT_CONFIGURED'
       }
+    });
+    return;
+  }
+  // The recipient is an enterprise WeChat userid. Never reinterpret it as
+  // an MP openId when the enterprise channel configuration is unavailable.
+  if (!cfg || cfg.channel !== 'wecom') {
+    await prisma.procurementNotificationEvent.update({
+      where: { id: eventId },
+      data: { status: 'FAILED', errorCode: 'WECOM_CHANNEL_UNAVAILABLE' }
     });
     return;
   }

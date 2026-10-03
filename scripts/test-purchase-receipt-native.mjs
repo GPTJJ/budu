@@ -59,6 +59,10 @@ export async function startFixture() {
   process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME = 'budu';
   process.env.CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID = 'dh';
   process.env.PUBLIC_BASE_URL = 'http://127.0.0.1:5217';
+  // Explicit synthetic Wecom config; the sender remains a guarded test stub.
+  process.env.WXWORK_CORP_ID = 'synthetic-c11-corp';
+  process.env.WXWORK_AGENT_ID = '1';
+  process.env.WXWORK_SECRET = 'synthetic-c11-wecom-secret';
   const {
     prisma
   } = await import('../server/pg.js');
@@ -260,7 +264,7 @@ export async function startFixture() {
     audits: await prisma.procurementAudit.findMany(),
     events: await prisma.procurementNotificationEvent.findMany()
   }));
-  wrapper.use(createApp());
+  wrapper.use(createApp({ disableStartupTasks: true }));
   const server = wrapper.listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r));
   const base = 'http://127.0.0.1:' + server.address().port;
