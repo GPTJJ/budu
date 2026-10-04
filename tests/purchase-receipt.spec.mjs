@@ -513,3 +513,19 @@ test('A02 真实账号页授予再撤销采购管理，既有员工会话即时�
     await staff.close();
   }
 });
+
+test('retired old purchase entry is absent and its API cannot return history', async ({ page }, testInfo) => {
+  await visit(page);
+  await expect(page.getByRole('button', {name: '旧采购历史', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '新建备单', exact: true})).toBeVisible();
+  await expect(page.getByRole('button', {name: '采购供应商', exact: true})).toBeVisible();
+  for (const path of ['/purchase-requests', '/suppliers']) {
+    expect((await page.request.get('/api/v2' + path)).status()).toBe(410);
+  }
+  const widths = testInfo.project.name === 'mobile-webkit' ? [320, 340, 375, 390, 430] : [testInfo.project.use.viewport.width];
+  for (const width of widths) {
+    await page.setViewportSize({width, height: testInfo.project.use.viewport.height});
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await snap(page, 'old-entry-removed', testInfo);
+});

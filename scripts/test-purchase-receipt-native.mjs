@@ -1286,7 +1286,8 @@ export async function runNative() {
       assert.equal((await request('dev', '/suppliers', {
         name: 'x'
       })).status, 410);
-      assert.equal((await ok('dev', '/purchase-requests')).rows.length, 1);
+      assert.equal((await request('dev', '/purchase-requests')).status, 410);
+      assert.equal((await request('dev', '/suppliers')).status, 410);
       assert.equal(await prisma.purchaseRequest.count(), 1);
     });
     await test('C07', async () => {

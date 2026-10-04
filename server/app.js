@@ -278,10 +278,7 @@ export function createCompatibilityProcurementGate(requireBusiness, requireModul
     if (domain === 'other' || domain === 'new') return next()
     return requireBusiness(req, res, () => requireModule('inventory-purchase')(req, res, () => {
       if (domain === 'invalid') return res.status(400).json({ error: '采购路径编码无效' })
-      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-        return res.status(410).json({ error: '旧采购写入已停用，历史数据保留', code: 'LEGACY_PROCUREMENT_RETIRED' })
-      }
-      return next()
+      return res.status(410).json({ error: '旧采购板块已移除', code: 'LEGACY_PROCUREMENT_RETIRED' })
     }))
   }
 }

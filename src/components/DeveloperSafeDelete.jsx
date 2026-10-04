@@ -239,7 +239,6 @@ export function DeletedRecordsCenter({ user }) {
           <option value="mailing">门店邮寄</option>
           <option value="invoice">开发票</option>
           <option value="transfer">库存调拨</option>
-          <option value="purchase">采购申请</option>
         </select>
         <input aria-label="删除开始日期" type="date" className="input" value={filters.start} onChange={(e) => setFilters((s) => ({ ...s, start: e.target.value }))} />
         <input aria-label="删除结束日期" type="date" className="input" value={filters.end} onChange={(e) => setFilters((s) => ({ ...s, end: e.target.value }))} />
