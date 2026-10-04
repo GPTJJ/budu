@@ -50,7 +50,7 @@ const subMenus = {
   ],
   inventory: [
     { key: 'inventory-transfer', label: '门店调拨' },
-    { key: 'inventory-purchase', label: '申请采购' },
+    { key: 'inventory-purchase', label: '采购入库' },
   ],
   'partner-management': [
     { key: 'partner-management', label: '合作商档案' },
