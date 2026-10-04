@@ -1518,5 +1518,77 @@ class MigratorNetworkParity(unittest.TestCase):
             self.assertIn(before,source)
             with self.assertRaises(AssertionError):without_reviewed_network(source.replace(before,after,1))
 
+class ProcurementReleaseRoutingTests(unittest.TestCase):
+    def workflow(self):
+        return json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],input=(ROOT/'.github/workflows/release-build-only.yml').read_bytes()))
+    def guard(self,**overrides):
+        workflow=self.workflow();source=next(step['run'] for step in workflow['jobs']['artifact']['steps'] if step['name']=='Verify source and release guard')
+        source=source.split("          printf 'CI_SOURCE_SHA",1)[0] if "          printf 'CI_SOURCE_SHA" in source else source.split("printf 'CI_SOURCE_SHA",1)[0]
+        c=r.procurement_contract()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'uname').write_text('#!/bin/sh\nprintf "x86_64\\n"\n')
+            (root/'git').write_text('''#!/bin/sh
+case "$1" in
+fetch) exit 0 ;;
+branch) printf '%s\n' "$GUARD_BRANCH" ;;
+rev-list) printf '%s %s\n' "$GITHUB_SHA" "$GUARD_PARENT" ;;
+rev-parse) if [ "$2" = FETCH_HEAD ]; then printf '%s\n' "$GUARD_COMPATIBLE"; else printf '%s\n' "$GITHUB_SHA"; fi ;;
+status) exit 0 ;;
+*) exit 99 ;;
+esac
+''')
+            for file in root.iterdir():file.chmod(0o755)
+            env={**os.environ,'PATH':str(root)+':'+os.environ['PATH'],'RUNNER_OS':'Linux','RUNNER_ARCH':'X64',
+                 'GITHUB_REF':'refs/heads/'+c['branch'],'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_SHA':'a'*40,
+                 'REQUESTED_RELEASE_SHA':'a'*40,'EXPECTED_PRODUCTION_SHA':c['oldSha'],'APPROVED_BUSINESS_SHA':c['businessSha'],
+                 'GUARD_BRANCH':c['branch'],'GUARD_PARENT':c['businessSha'],'GUARD_COMPATIBLE':c['rollbackSha'],**overrides}
+            return subprocess.run(['/bin/bash','-c',source],env=env,capture_output=True,text=True)
+    def test_build_guard_accepts_only_exact_sha_pair_branch(self):
+        self.assertEqual(self.guard().returncode,0)
+        for override in ({'REQUESTED_RELEASE_SHA':'b'*40},{'GITHUB_EVENT_NAME':'push'},{'GUARD_PARENT':'b'*40},
+                         {'GUARD_COMPATIBLE':'87be0d1bd32a0c6e325a95b5a1fa9d18e3bf43bb'},
+                         {'EXPECTED_PRODUCTION_SHA':'b'*40},{'GITHUB_REF':'refs/heads/unreviewed'}):
+            with self.subTest(override=override):self.assertNotEqual(self.guard(**override).returncode,0)
+    def test_no_automatic_procurement_push_deploy_or_new_permissions(self):
+        workflow=self.workflow()
+        original=json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],input=subprocess.check_output(['git','-C',str(ROOT),'show',r.procurement_contract()['businessSha']+':.github/workflows/release-build-only.yml'])))
+        for key in ('permissions','concurrency','name','true'):
+            self.assertEqual(workflow[key],original[key])
+        self.assertEqual(workflow['jobs']['artifact']['runs-on'],'ubuntu-latest')
+        self.assertNotIn('secrets.',json.dumps(workflow))
+    def test_exact_two_artifacts_and_real_controller_proof(self):
+        workflow=self.workflow();steps=workflow['jobs']['artifact']['steps']
+        build=next(s['run'] for s in steps if s['name'].startswith('Build exact production-format'))
+        self.assertIn('git archive e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e',build)
+        self.assertIn('--compatibility-archive "$run_dir/compatible.tar"',build)
+        self.assertIn('RELEASE_ARTIFACT_PATH=%s/*.tar',build)
+        probe=next(s['run'] for s in steps if s['name'].startswith('Probe application'))
+        self.assertIn('--procurement-controller-ci',probe)
+        self.assertIn('"$PROCUREMENT_IMAGE_ARCHIVE" "$PROCUREMENT_COMPATIBILITY_ARCHIVE"',probe)
+        proof=next(s for s in steps if s['name']=='Retain isolated procurement controller proof')
+        self.assertEqual(proof['with']['path'],'${{ runner.temp }}/procurement-controller-proof.json')
+        self.assertEqual(proof['with']['if-no-files-found'],'error')
+    def test_existing_formal_workflow_preserves_failure_notification(self):
+        expected=subprocess.check_output(['git','-C',str(ROOT),'show',r.procurement_contract()['businessSha']+':.github/workflows/deploy-prod.yml'])
+        self.assertEqual((ROOT/'.github/workflows/deploy-prod.yml').read_bytes(),expected)
+    def test_actual_shell_route_still_existing_post_transfer_adapter(self):
+        sha=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip()
+        result=route(ROOT,'refs/heads/'+r.procurement_contract()['branch'],sha)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'ROUTE=scripts/release-prod-post-transfer-ci.sh')
+    def test_ci_adapter_requires_retained_compatible_tar_and_binds_both(self):
+        source=(ROOT/'scripts/release-prod-post-transfer-ci.sh').read_text()
+        self.assertIn('test -f "$(dirname "$RETAINED_RELEASE_ARTIFACT")/compatible.tar"',source)
+        self.assertIn('test "$(git rev-parse FETCH_HEAD)" = '+r.procurement_contract()['rollbackSha'],source)
+        for mode in ('inspect-artifact','preflight','deploy'):
+            section=source.split('bash scripts/deploy-prod-transfer-cas.sh '+mode+' --repo',1)[1].split('| tee',1)[0]
+            self.assertIn('"${COMPATIBILITY_ARGS[@]}"',section)
+    def test_all_workflow_shell_steps_parse(self):
+        for step in self.workflow()['jobs']['artifact']['steps']:
+            if 'run' in step:
+                result=subprocess.run(['/bin/bash','-n'],input=step['run'],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,step['name']+result.stderr)
+
 if __name__=='__main__':
     unittest.main(verbosity=2)

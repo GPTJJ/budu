@@ -27,6 +27,15 @@ test "$(uname -m)" = x86_64
 test -n "${RUNNER_TEMP:-}"
 test -f "$HOME/.ssh/id_ed25519"
 
+# This one procurement release needs the reviewed compatibility object as well.
+PROCUREMENT_RELEASE=false
+COMPATIBILITY_ARGS=()
+if [ "${APPROVED_BUSINESS_SHA:-}" = 9049339f75d106ac02ebb0d109da2862e997a545 ]; then
+  PROCUREMENT_RELEASE=true
+  git fetch --no-tags origin codex/purchase-receipt-001-legacy-retirement-compat
+  test "$(git rev-parse FETCH_HEAD)" = e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e
+fi
+
 PROFILE=(--release-profile post-transfer
   --expected-production-sha "${EXPECTED_PRODUCTION_SHA:-}"
   --business-base-sha "${APPROVED_BUSINESS_SHA:-}")
@@ -34,6 +43,9 @@ bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" "${PROFILE[@]}"
 if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
   python3 scripts/test-material-release-contract.py --legacy-q-regressions
   python3 scripts/test-material-release-contract.py
+elif [ "$PROCUREMENT_RELEASE" = true ]; then
+  python3 scripts/test-purchase-receipt-release-contract.py
+  python3 scripts/test-release-path-post-transfer.py ProcurementReleaseRoutingTests
 else
   python3 scripts/test-deploy-prod-transfer-cas.py
   python3 scripts/test-transfer-cas-existing-workflow.py
@@ -89,11 +101,31 @@ timeout 35m docker buildx build --builder "$BUILDER_NAME" --platform linux/amd64
   "$RUN_DIR/source"
 fi
 
+if [ "$PROCUREMENT_RELEASE" = true ]; then
+  if [ -n "${RETAINED_RELEASE_ARTIFACT:-}" ]; then
+    test -f "$(dirname "$RETAINED_RELEASE_ARTIFACT")/compatible.tar"
+    cp "$(dirname "$RETAINED_RELEASE_ARTIFACT")/compatible.tar" "$RUN_DIR/compatible.tar"
+  else
+    mkdir "$RUN_DIR/compatible-source"
+    git archive e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e | tar -x -C "$RUN_DIR/compatible-source"
+    timeout 35m docker buildx build --builder "$BUILDER_NAME" --platform linux/amd64 \
+      --label org.opencontainers.image.revision=e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e \
+      --tag budu-api:post-transfer-e3ecebcb94c4 --provenance=false --sbom=false \
+      --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUN_DIR/compatible.tar" \
+      "$RUN_DIR/compatible-source"
+  fi
+  COMPATIBILITY_ARGS=(--compatibility-archive "$RUN_DIR/compatible.tar")
+fi
+
 bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$RUN_DIR/image.tar" \
-  "${PROFILE[@]}" | tee "$RUN_DIR/artifact.json"
-printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
+  "${PROFILE[@]}" "${COMPATIBILITY_ARGS[@]}" | tee "$RUN_DIR/artifact.json"
+if [ "$PROCUREMENT_RELEASE" = true ]; then
+  printf 'RELEASE_ARTIFACT_PATH=%s/*.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
+else
+  printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
+fi
 bash scripts/deploy-prod-transfer-cas.sh preflight --repo "$PWD" --archive "$RUN_DIR/image.tar" \
-  --ssh-key "$HOME/.ssh/id_ed25519" "${PROFILE[@]}" | tee "$RUN_DIR/preflight.json"
+  --ssh-key "$HOME/.ssh/id_ed25519" "${PROFILE[@]}" "${COMPATIBILITY_ARGS[@]}" | tee "$RUN_DIR/preflight.json"
 timeout 290m bash scripts/deploy-prod-transfer-cas.sh deploy --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   --ssh-key "$HOME/.ssh/id_ed25519" --authorize-release-sha "$RELEASE_SHA" \
-  "${PROFILE[@]}" | tee "$RUN_DIR/deployment.json"
+  "${PROFILE[@]}" "${COMPATIBILITY_ARGS[@]}" | tee "$RUN_DIR/deployment.json"
