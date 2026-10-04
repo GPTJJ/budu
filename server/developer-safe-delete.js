@@ -10,7 +10,6 @@ const TYPES = Object.freeze({
   mailing: { delegate: 'mailingRecord', label: '门店邮寄订单' },
   invoice: { delegate: 'invoice', label: '开发票订单' },
   transfer: { delegate: 'transferRequest', label: '库存调拨单', include: { items: true } },
-  purchase: { delegate: 'purchaseRequest', label: '采购申请', include: { items: true } },
 })
 const REASONS = Object.freeze({ test: '测试数据', duplicate: '重复记录', input_error: '录入错误', other: '其他' })
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000
@@ -139,6 +138,7 @@ developerSafeDeleteRouter.post('/developer-sensitive-records/:type/:id/restore',
 
 developerSafeDeleteRouter.get('/developer-sensitive-records', wrap(async (req, res) => {
   requireDeveloper(req.user)
+  if (req.query.type === 'purchase') throw bad('旧采购板块已移除', 410)
   const requestedTypes = req.query.type && TYPES[req.query.type] ? [req.query.type] : Object.keys(TYPES)
   const start = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.start || '')) ? new Date(`${req.query.start}T00:00:00.000Z`) : null
   const end = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.end || '')) ? new Date(`${req.query.end}T23:59:59.999Z`) : null
