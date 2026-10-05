@@ -1198,20 +1198,30 @@ class B2ArtifactReuseTests(unittest.TestCase):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'RUNNER_TEMP':td}):
             archive=Path(td)/'image.tar';archive.write_bytes(b'x'*70000)
-            for fault in ('residual','clear','failed-open','dirty-baseline'):
+            for fault in ('residual','clear','failed-open','dirty-baseline','ended','not-active','wrong-transport'):
+                ref='b2-owned-ingest-'+'12'*8
                 remote=types.SimpleNamespace(run=Mock(side_effect=[b'REF SIZE AGE\n'+(b'owned 1 1s\n' if fault=='dirty-baseline' else b''),
-                    b'REF SIZE AGE\n'+(b'owned 1 1s\n' if fault!='clear' else b'')]))
+                    b'REF SIZE AGE\n'+(b'owned 1 1s\n' if fault!='clear' else b''),
+                    *([b'REF SIZE AGE\n'+(ref+' 4096 1s\n').encode()] if fault!='not-active' else [b'REF SIZE AGE\n']*50)]),
+                    ssh=['docker','exec','-i','owned-fixture','sh','-c'] if fault!='wrong-transport' else ['ssh','denied'])
                 stream=Mock(side_effect=_CI.release.GateError('B2_IMPORT_UNKNOWN'))
                 storage=Mock(side_effect=None if fault=='failed-open' else _CI.release.GateError('B1_IMPORT_UNKNOWN'))
-                with self.subTest(fault=fault),patch.object(_CI.release,'b2_stream',stream),patch.object(_CI.release,'b1_storage',storage):
-                    if fault in ('failed-open','dirty-baseline'):
-                        with self.assertRaisesRegex(RuntimeError,'B2_RESIDUAL_INGEST_NOT_REJECTED|B2_FAULT_BASELINE_INGEST_NOT_CLEAR'):
+                writer=Mock();writer.poll.return_value=0 if fault=='ended' else None
+                with self.subTest(fault=fault),patch.object(_CI.release,'b2_stream',stream),patch.object(_CI.release,'b1_storage',storage),\
+                        patch.object(_CI.subprocess,'Popen',return_value=writer) as popen,\
+                        patch.object(_CI.os,'urandom',return_value=b'\x12'*8),patch.object(_CI.time,'sleep'):
+                    if fault not in ('residual','clear'):
+                        with self.assertRaisesRegex(RuntimeError,'B2_RESIDUAL_INGEST_NOT_REJECTED|B2_FAULT_BASELINE_INGEST_NOT_CLEAR|B2_OWNED_INGEST_'):
                             _CI.b2_truncated_stream_ci(remote,archive,{})
                     else:
                         result=_CI.b2_truncated_stream_ci(remote,archive,{})
                         self.assertTrue(result['truncatedStreamRejected'])
-                        self.assertEqual(result['residualIngestRejected'],fault=='residual')
-                        self.assertEqual(storage.call_count,1 if fault=='residual' else 0)
+                        self.assertTrue(result['residualIngestRejected'])
+                        self.assertTrue(result['heldOwnedIngestGuardVerified'])
+                        self.assertEqual(storage.call_count,1)
+                        self.assertIn(ref,popen.call_args[0][0][-1])
+                    if fault not in ('dirty-baseline','wrong-transport'):
+                        writer.stdin.close.assert_called_once();writer.wait.assert_called_once_with(timeout=10)
         body=ast.get_source_segment((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text(),
             next(n for n in ast.parse((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()).body
                  if isinstance(n,ast.FunctionDef) and n.name=='b2_owned_import_steps'))

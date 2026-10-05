@@ -1910,19 +1910,21 @@ def b2_purchase_runtime_ci(image,sha):
             '-e','POSTGRES_USER=apple','-e','POSTGRES_DB=postgres','-e','POSTGRES_HOST_AUTH_METHOD=trust',
             'postgres:16.14','-p','55463',timeout=180)
         for _ in range(120):
-            probe=subprocess.run(['docker','exec',pg,'pg_isready','-U','apple','-p','55463'],capture_output=True)
+            probe=subprocess.run(['docker','exec',pg,'pg_isready','-U','apple','-d','postgres','-p','55463'],capture_output=True)
             if probe.returncode==0:break
             time.sleep(0.25)
         else:raise RuntimeError('B2_PURCHASE_PG_NOT_READY')
-        version=docker('exec',pg,'psql','-U','apple','-p','55463','-X','-qAt','-c','SHOW server_version_num')
+        version=docker('exec',pg,'psql','-U','apple','-d','postgres','-p','55463','-X','-qAt','-c','SHOW server_version_num')
         command="set -eu; test \"$(id -u)\" = 1000; node --test scripts/test-purchase-receipt-core.mjs; node scripts/test-purchase-receipt-native.mjs; node scripts/test-purchase-receiving-workflow.mjs"
         owned[candidate]=docker('create','--name',candidate,'--network','container:'+pg,
             '--label','budu.b2-purchase='+sha,'--read-only','--tmpfs','/tmp:mode=1777',
             '--tmpfs','/app/output:uid=1000,gid=1000,mode=0755','--tmpfs','/home/node:uid=1000,gid=1000,mode=0755',
             '-e','APP_ENV=test','-e','NODE_ENV=test','-e','TEST_DATABASE_URL=postgresql://apple@127.0.0.1:55463/postgres',
             '-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME=budu','-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID=dh',
-            '--entrypoint','sh',config['Id'],'-c',command)
-        try:result=subprocess.run(['docker','start','--attach',candidate],capture_output=True,text=True,timeout=900)
+            '--entrypoint','sleep',config['Id'],'1800')
+        # Keep the owned runtime alive until its tmpfs result has been read.
+        docker('start',candidate)
+        try:result=subprocess.run(['docker','exec',candidate,'sh','-c',command],capture_output=True,text=True,timeout=900)
         except subprocess.TimeoutExpired as error:
             partial=(error.stdout or b'')+(error.stderr or b'')
             if isinstance(partial,bytes):partial=partial.decode(errors='replace')
@@ -1940,7 +1942,7 @@ def b2_purchase_runtime_ci(image,sha):
             member=archive.getmembers()[0]
             if not member.isfile():raise RuntimeError('B2_PURCHASE_RESULT_INVALID')
             native=json.load(archive.extractfile(member))
-        leftovers=docker('exec',pg,'psql','-U','apple','-p','55463','-X','-qAt','-c',
+        leftovers=docker('exec',pg,'psql','-U','apple','-d','postgres','-p','55463','-X','-qAt','-c',
             "SELECT count(*) FROM pg_database WHERE datname LIKE 'budu_fullcritical_%'")
         proof=b2_validate_purchase_runtime(native,version,leftovers)
         proof.update(imageId=config['Id'],revision=sha,readOnlyRuntime=True,internalNetwork=True)
@@ -2112,13 +2114,35 @@ def b2_truncated_stream_ci(remote,archive,art):
         else:raise RuntimeError('B2_TRUNCATED_STREAM_NOT_REJECTED')
     after=remote.run(base).decode().splitlines()
     if not after or after[0].split()!=['REF','SIZE','AGE']:raise RuntimeError('B2_FAULT_INGEST_ADAPTER_INVALID')
-    if len(after)>1:
+    # A rejected truncated import may be garbage-collected before the guard
+    # runs. Hold a separate owned ingest open to test residual rejection
+    # deterministically; never delete an unknown ingest to make it pass.
+    if remote.ssh[:3]!=['docker','exec','-i'] or remote.ssh[-2:]!=['sh','-c']:
+        raise RuntimeError('B2_OWNED_INGEST_TRANSPORT_REQUIRED')
+    ref='b2-owned-ingest-'+os.urandom(8).hex()
+    args=base[:-1]+['ingest','--expected-size','65536',ref]
+    writer=subprocess.Popen(remote.ssh+[release.shlex.join(args)],stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    try:
+        writer.stdin.write(b'x'*4096);writer.stdin.flush()
+        for _ in range(50):
+            rows=remote.run(base).decode().splitlines()
+            if not rows or rows[0].split()!=['REF','SIZE','AGE']:raise RuntimeError('B2_FAULT_INGEST_ADAPTER_INVALID')
+            if writer.poll() is not None:raise RuntimeError('B2_OWNED_INGEST_ENDED_EARLY')
+            if any(row.split()[0]==ref for row in rows[1:] if row.split()):break
+            time.sleep(.2)
+        else:raise RuntimeError('B2_OWNED_INGEST_NOT_ACTIVE')
         try:release.b1_storage(remote)
         except release.GateError as error:
             if str(error)!='B1_IMPORT_UNKNOWN':raise
         else:raise RuntimeError('B2_RESIDUAL_INGEST_NOT_REJECTED')
+        if writer.poll() is not None:raise RuntimeError('B2_OWNED_INGEST_ENDED_EARLY')
+    finally:
+        writer.stdin.close()
+        try:writer.wait(timeout=10)
+        except subprocess.TimeoutExpired:writer.kill();writer.wait(timeout=10)
     return {'truncatedStreamRejected':True,'activeIngestBefore':0,'activeIngestAfter':len(after)-1,
-            'residualIngestRejected':len(after)>1,'fixtureDisposedAfterFault':True}
+            'residualIngestRejected':True,'heldOwnedIngestGuardVerified':True,'fixtureDisposedAfterFault':True}
 
 
 def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
