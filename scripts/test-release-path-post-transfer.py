@@ -84,11 +84,11 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'artifact': '03b0098e266a202b76fe81c1b42487731ebe41ea2c396d770bf0fdc4e38bacc2',
                                          'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
                                          'b1_capacity_gate': 'cc34c1bd8d110d965f032e4733e6e9547cbebc9070cbcb51daaeda7529f02756',
-                                         'b1_db_gate': '066cf4db5a0cd9e3793e8dc551703f872b5329bf0533e7c7aa0469f88139ded1',
+                                         'b1_db_gate': 'f257f0295008d9f5ddd68bd6c6600b11c7e967493a80727b99fd830d1f04630a',
                                          'b1_deploy': '25ef55e0e5d3d64b2a3f8447fe3e407ffee4b2ad3ddf1a93d77c22fd0b81e7d8',
                                          'b1_envelope': '7a781d2c0db5c4ec7ae8b99bf7cbff12fe4d01ba1f1d6020f8ffa8a54a5f54e1',
                                          'b1_fixed_r': 'a22da289519d7ac18cd3632a0c85a16a5d314c6cbf2cf1b88416bbc19ccc9961',
-                                         'b1_preflight': '39ed4876d19c41732bafcd740863ec8e377c22bddbe7c455aba4bfff32e6b08d',
+                                         'b1_preflight': '3639c3e294760faebf5bac193b8faa7ba910c548b497b9d82b05d59b92a6e4fc',
                                          'b1_stage': 'e226cebaae1ab5948a7dbab9c9ea8b095ba68409e0335f34d4c3cae2668b4a0d',
                                          'b1_storage': '8957503b18c4dcb187fc02d070861dd8c6274c09fd1d0056357080612513ae8d',
                                          'deploy': 'b56001e2f0426ace2ba81e9541d59a3615acfe0433051dab02cafc06830fdab5',
@@ -98,8 +98,8 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_procurement_identity': 'e1df78fd075531594abdb28cab109d118bfbff02bf9d521199478059c06d602a'},
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
-                                                    '_procurement_controller_ci': 'ae8b5d71ec82be67f1ad257fd34313a380e5c74c87f41778ffc7b06d4618f770',
-                                                    'b1_import_ci': '952e0fada2a284e2db613b1dfbb3f47b9800be5b4113d4cae6452c4db2a95c1b',
+                                                    '_procurement_controller_ci': 'c8f56c79de64837489e61df3362df5c8d374ba71147cde77ddfa3f8a43f1ffcf',
+                                                    'b1_import_ci': '834455473f9bcefef87e5d777f7fba910a52805d7fac208abd699bb2711ec1bd',
                                                     'procurement_controller_ci_guard': '51b08403c15b71935b578d1e8aa6146db238680e75cb1e650ca29b6df8b59e9b'}}
 
 

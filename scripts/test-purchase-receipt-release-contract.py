@@ -633,7 +633,7 @@ class B1CapacityTests(unittest.TestCase):
     ART={'archive':566876672,'blobs':566856143,'expanded':2096529408,'largest':1155686400}
     DB={'dbBytes':164142103,'pgVersion':'16.14'}
     def ledger(self,used=60*r.GIB,free=15964217344):
-        return {'baselineUsed':used,'baselineAvailable':free,'phase':'PRE_IMPORT','peak':0}
+        return {'baselineUsed':used,'baselineAvailable':free,'phase':'PRE_IMPORT','peak':0,'retainedArtifactBudget':self.ART['blobs']+self.ART['expanded']}
     def test_old_model_fail_and_b1_both_envelopes_without_budget_reduction(self):
         limits=r.shipping_resources(self.DB)
         old=sum(self.ART.values())+r.RESERVE+sum(limits.values())
@@ -687,6 +687,11 @@ class B1CapacityTests(unittest.TestCase):
         with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):r.b1_db_gate(remote)
         cap['phase']='UPLOADED'
         with self.assertRaisesRegex(r.GateError,'B1_PHASE_INVALID'):r.b1_db_gate(remote)
+    def test_unrelated_free_cannot_mask_fresh_db_growth(self):
+        cap=self.ledger(free=30*r.GIB);cap['phase']='DB';cap['peak']=5154070502
+        remote=types.SimpleNamespace(b1_capacity=cap,db=lambda:{'dbBytes':700*1024**2,'pgVersion':'16.14'},
+            disk=lambda:(cap['baselineUsed']-r.GIB,cap['baselineAvailable']+r.GIB))
+        with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):r.b1_db_gate(remote)
     def test_retained_backup_restore_counted_actual_not_future_twice(self):
         cap=self.ledger();cap['phase']='DB';limits=r.shipping_resources(self.DB)
         h=self.ART['blobs']+self.ART['expanded'];used=cap['baselineUsed']+h+limits['backupLimit']+limits['restoreLimit']
@@ -743,7 +748,7 @@ class B1CapacityTests(unittest.TestCase):
 class B1ImportBarrierTests(unittest.TestCase):
     def attempt(self,fault=None):
         art={**B1CapacityTests.ART,'archiveHash':'c'*64,'release':'a'*40}
-        cap={'baselineUsed':60*r.GIB,'baselineAvailable':15964217344,'phase':'UPLOADED','peak':5154070502,
+        cap={'baselineUsed':60*r.GIB,'baselineAvailable':15964217344,'phase':'UPLOADED','peak':5154070502,'retainedArtifactBudget':art['blobs']+art['expanded'],
              'importReceipt':{'serverWaitComplete':True,'returncode':0,'archiveHash':art['archiveHash'],'archiveBytes':art['archive'],'archiveInode':17}}
         art['capacityLedger']=cap;events=[];released=False
         if fault=='receipt':cap['importReceipt']['serverWaitComplete']=False

@@ -1116,7 +1116,13 @@ def b1_db_gate(remote, resources=None):
     # Already consumed growth stays in actual Used; no speculative WAL credit.
     keys=('walLimit','migratorLimit') if cap['phase']=='DB_RETAINED' else tuple(limits)
     used,available=remote.disk()
-    result=b1_capacity_gate(cap,used,available,sum(limits[k] for k in keys)+RESERVE)
+    retained_budget=cap.get('retainedArtifactBudget')
+    require(type(retained_budget) is int and retained_budget >= 0, 'B1_CAPACITY_INVALID')
+    # Keep the full, freshly sized DB envelope as a cumulative lower bound.
+    # An unrelated deletion must not hide E bytes or allow DB growth to pass
+    # merely because the net filesystem Used delta became smaller.
+    planned=retained_budget+sum(limits.values())+RESERVE
+    result=b1_capacity_gate(cap,used,available,sum(limits[k] for k in keys)+RESERVE,planned)
     cap['dbBytes']=db['dbBytes'];cap['resourceLimits']=limits
     return {**result,'migrationResourceLimits':limits,'projectedUsage':
             math.ceil(100*(used+result['future'])/(used+available))}
@@ -1184,6 +1190,7 @@ def b1_preflight(remote, art, ledger, imported=False):
         # R must be present before this df baseline; B1 never imports R.
         used,available=remote.disk()
         cap={'baselineUsed':used,'baselineAvailable':available,'fixedRImageId':rid,
+             'retainedArtifactBudget':art['blobs']+art['expanded'],
              'phase':'PRE_IMPORT','token':os.urandom(16).hex(),'storage':storage,'peak':0}
         art['capacityLedger']=cap
     remote.b1_capacity=cap

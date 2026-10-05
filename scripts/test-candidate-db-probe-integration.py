@@ -1579,7 +1579,7 @@ def b1_import_ci(archive, compatible_archive, sha):
             print('B1_FIXED_R_BASELINE_IMPORT',flush=True)
             remote.run(['docker','load','-i','/fixture-r.tar'],timeout=240)
             rid=release.b1_fixed_r(remote,art);storage=release.b1_storage(remote)
-            u,f=remote.disk();cap={'baselineUsed':u,'baselineAvailable':f,'fixedRImageId':rid,'phase':'PRE_IMPORT','peak':0,'token':os.urandom(16).hex()}
+            u,f=remote.disk();cap={'baselineUsed':u,'baselineAvailable':f,'fixedRImageId':rid,'phase':'PRE_IMPORT','peak':0,'token':os.urandom(16).hex(),'retainedArtifactBudget':art['blobs']+art['expanded']}
             remote.b1_capacity=cap;art['capacityLedger']=cap
             envelope=release.b1_envelope(art,remote.db())
             release.b1_capacity_gate(cap,u,f,envelope['import'],max(envelope.values()))
@@ -1758,6 +1758,7 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
                     used,available=remote.disk()
                     art['capacityLedger']={'baselineUsed':used,'baselineAvailable':available,
                         'phase':'DB','peak':0,'fixedRImageId':art['compatibility']['loadedDockerImageId'],
+                        'retainedArtifactBudget':art['blobs']+art['expanded'],
                         'fixture':'PRELOADED_DB_STAGE_ONLY'}
                 result=io.StringIO()
                 try:
