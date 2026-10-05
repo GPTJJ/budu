@@ -1835,6 +1835,32 @@ def b2_compare_images(reference,candidate,sha):
             docker('rm',ident)
 
 
+def b2_fixed_r_oci(archive,directory,fixed):
+    """Expose verified R's original compressed blobs to the container builder."""
+    import tarfile
+    directory.mkdir()
+    with tarfile.open(archive) as outer:
+        for member in outer:
+            name=release.safe_name(member.name)
+            if name not in ('index.json','oci-layout') and not re.fullmatch(r'blobs/sha256/[0-9a-f]{64}',name):continue
+            if not member.isfile():raise RuntimeError('B2_FIXED_R_OCI_MEMBER_INVALID')
+            target=directory/name;target.parent.mkdir(parents=True,exist_ok=True)
+            with target.open('wb') as output:shutil.copyfileobj(outer.extractfile(member),output)
+            if name.startswith('blobs/'):
+                with target.open('rb') as content:
+                    if release.file_hash(content)!=name.split('/')[-1]:raise RuntimeError('B2_FIXED_R_OCI_BLOB_INVALID')
+    index=json.loads((directory/'index.json').read_text())
+    if len(index.get('manifests',[]))!=1:raise RuntimeError('B2_FIXED_R_OCI_IDENTITY_INVALID')
+    descriptor=index['manifests'][0];digest=descriptor['digest']
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}',digest):raise RuntimeError('B2_FIXED_R_OCI_IDENTITY_INVALID')
+    manifest=json.loads((directory/'blobs/sha256'/digest.split(':')[1]).read_text())
+    if (manifest['config']['digest']!=fixed['archiveConfigDigest']
+            or [layer['digest'] for layer in manifest['layers']]!=[layer['contentDigest'] for layer in fixed['layers']]
+            or json.loads((directory/'oci-layout').read_text())!={'imageLayoutVersion':'1.0.0'}):
+        raise RuntimeError('B2_FIXED_R_OCI_IDENTITY_INVALID')
+    return 'oci-layout://'+str(directory)+'@'+digest
+
+
 def b2_build_reusing_r_ci(directory,compatible_archive):
     """A real exact-R cache attempt, then B runtime derivation if A cannot fit."""
     procurement_controller_ci_guard()
@@ -1863,15 +1889,19 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
         if proc.wait()!=0:raise RuntimeError('B2_EXACT_BUILD_CONTEXT_FAILED')
     docker('load','-i',str(compatible_archive))
     rimage=json.loads(docker('image','inspect',rtag))[0];release.validate_loaded_image(rimage,fixed)
+    rlayout=root/'fixed-r-oci';rcontext=b2_fixed_r_oci(compatible_archive,rlayout,fixed)
+    builder='b2-reuse-'+sha[:12]
+    subprocess.run(['docker','buildx','create','--name',builder,'--driver','docker-container'],check=True)
     report={'sourceSha':sha,'fixedRSha':rsha,'fixedRArchiveHash':fixed['archiveHash'],
             'productionAccess':False,'attempts':[],'result':'RUNNING'}
     output=Path(os.environ['RUNNER_TEMP'])/'b2-artifact-reuse-proof.json'
     def save():output.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');output.chmod(0o644)
-    def build(dockerfile,destination,cache=False):
-        args=['docker','buildx','build','--builder','default','--platform','linux/amd64',
+    def build(dockerfile,destination,cache=False,derived=False):
+        args=['docker','buildx','build','--builder',builder,'--platform','linux/amd64',
               '--label',release.REVISION+'='+sha,'--tag',tag,'--provenance=false','--sbom=false',
               '--file',str(dockerfile),'--output','type=docker,compression=gzip,compression-level=9,force-compression=false,dest='+str(destination)]
-        if cache:args+=['--cache-from',rtag]
+        if cache:args+=['--cache-from','type=local,src='+str(rlayout)]
+        if derived:args+=['--build-context',rtag+'='+rcontext]
         subprocess.run([*args,str(source)],check=True,timeout=1200)
     def allocation(path):
         try:return b1_import_ci(path,compatible_archive,sha,b2=True)
@@ -1909,7 +1939,7 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
                 'COPY --from=builder /app/dist ./dist\nCOPY server ./server\nCOPY brand/web ./brand/web\n'
                 'COPY shared ./shared\nCOPY src/utils ./src/utils\nCOPY prisma ./prisma\nCOPY scripts ./scripts\n'
                 'RUN npx prisma generate\nRUN mkdir -p /app/server/data && chown -R node:node /app/server\nUSER node\n')
-            final=root/'derived-candidate.tar';build(derived,final)
+            final=root/'derived-candidate.tar';build(derived,final,derived=True)
             b=release.artifact(final,sha,ROOT)
             if b['rootfsDiffIds'][:len(fixed['rootfsDiffIds'])]!=fixed['rootfsDiffIds']:
                 raise RuntimeError('B2_EXACT_R_BASE_LAYER_PREFIX_REQUIRED')

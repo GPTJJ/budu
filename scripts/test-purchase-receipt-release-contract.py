@@ -1176,6 +1176,32 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_fixed_r_oci_keeps_exact_compressed_blobs_and_rejects_identity_drift(self):
+        import tarfile,gzip
+        layer=gzip.compress(b'exact R layer',mtime=0);blob=r.digest(layer)
+        config=b'fixed R config';config_digest='sha256:'+r.digest(config)
+        manifest=json.dumps({'config':{'digest':config_digest},'layers':[{'digest':'sha256:'+blob}]}).encode()
+        manifest_digest='sha256:'+r.digest(manifest)
+        files={'blobs/sha256/'+blob:layer,'blobs/sha256/'+r.digest(config):config,
+               'blobs/sha256/'+r.digest(manifest):manifest,
+               'index.json':json.dumps({'manifests':[{'digest':manifest_digest}]}).encode(),
+               'oci-layout':b'{"imageLayoutVersion":"1.0.0"}'}
+        fixed={'archiveConfigDigest':config_digest,'layers':[{'contentDigest':'sha256:'+blob}]}
+        for fault in (None,'config','layer','corrupt-blob'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as td:
+                root=Path(td);archive=root/'R.tar';bad=copy.deepcopy(fixed)
+                if fault=='config':bad['archiveConfigDigest']='sha256:'+'0'*64
+                if fault=='layer':bad['layers'][0]['contentDigest']='sha256:'+'0'*64
+                with tarfile.open(archive,mode='w') as out:
+                    for name,value in files.items():
+                        if fault=='corrupt-blob' and name=='blobs/sha256/'+blob:value=b'corrupt'
+                        member=tarfile.TarInfo(name);member.size=len(value);out.addfile(member,io.BytesIO(value))
+                if fault:
+                    with self.assertRaisesRegex(RuntimeError,'B2_FIXED_R_OCI_'): _CI.b2_fixed_r_oci(archive,root/'layout',bad)
+                else:
+                    context=_CI.b2_fixed_r_oci(archive,root/'layout',fixed)
+                    self.assertEqual(context,'oci-layout://'+str(root/'layout')+'@'+manifest_digest)
+                    self.assertEqual((root/'layout/blobs/sha256'/blob).read_bytes(),layer)
     def test_final_manifests_reject_stale_missing_content_type_mode_and_owner(self):
         original={'app/server/v2.js':{'type':'file','size':3,'sha256':'abc','mode':0o644,'uid':1000,'gid':1000},
                   'app/scripts/tool':{'type':'symlink','target':'real','mode':0o777,'uid':0,'gid':0}}
