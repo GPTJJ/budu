@@ -119,6 +119,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ -z "$(git branch --show-current)" ]; then
+            git switch -c codex/purchase-receipt-b2-capacity-fasttrack
+          fi
+          test "$(git branch --show-current)" = codex/purchase-receipt-b2-capacity-fasttrack
           python3 scripts/test-purchase-receipt-release-contract.py B2FormalPathTests
           python3 scripts/test-release-path-post-transfer.py B2WorkflowTests
       - name: Restore immutable fixed R

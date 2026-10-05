@@ -1770,6 +1770,13 @@ def b2_retained_ci(archive, compatible_archive):
         proof=b1_import_ci(archive,compatible_archive,sha,b2=True)
         target=Path(os.environ['RUNNER_TEMP'])/'b2-retained-proof.json'
         target.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
+    except BaseException as error:
+        code=str(error) if isinstance(error,release.GateError) else 'ISOLATED_FOCUSED_SETUP_FAILED'
+        target=Path(os.environ['RUNNER_TEMP'])/'b2-retained-proof.json'
+        target.write_text(json.dumps({'result':'FAILED','code':code,'sourceSha':os.environ['GITHUB_SHA'],
+            'productionAccess':False},sort_keys=True,indent=2)+'\n');target.chmod(0o644)
+        print('B2_FOCUSED_FAILURE='+code,file=sys.stderr)
+        raise
     finally:
         for key,value in before.items():
             if value is None:os.environ.pop(key,None)

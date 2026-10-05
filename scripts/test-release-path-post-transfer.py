@@ -72,7 +72,7 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # the current module. Only reviewed additive/modified top-level nodes may be
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
-PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '27a10d22fea38fe98ba5b6e090a93303ec1a2ff628822e8911ef5b846d000d32',
+PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '5b687899e6ec289947ee5b24796fc5d1a026f217b34b09f61e1649c8fa384df8',
  'scripts/deploy-prod-transfer-cas.py': {'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
                                          'B1_FILES': 'd7e937654876cabce73ad897944517769806465b7b0ee8513f8d749917068b31',
@@ -109,7 +109,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '27a10
                                          'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
- 'scripts/test-candidate-db-probe-integration.py': {'b2_retained_ci': '993823def4f4fa44687a0e4766ef249693714c97ecbb34bc73c130e0c161fa7c',
+ 'scripts/test-candidate-db-probe-integration.py': {'b2_retained_ci': 'ffa22e7fa74d32dc0c7970defb0fbdf77962e0794229b81cc40861654be759c0',
 "Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '__entrypoint__': '2e3ddb8f510b85ba376c5f77855d905c5d05bee1e6241b461f6d8481608dfc35',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
@@ -1765,6 +1765,9 @@ class B2WorkflowTests(unittest.TestCase):
         self.assertEqual(job['permissions'],{'contents':'read','actions':'read'})
         source='\n'.join(step.get('run','') for step in job['steps'])
         self.assertIn('test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"',source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',source)
+        self.assertIn('git switch -c '+r.B2_BRANCH,source)
+        self.assertIn('test "$(git branch --show-current)" = '+r.B2_BRANCH,source)
         self.assertIn('--b2-retained-ci',source)
         self.assertIn('fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed',source)
         for token in ('--procurement-controller-ci','ssh ','secrets.','deploy-prod.yml'):
