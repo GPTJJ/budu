@@ -1555,7 +1555,12 @@ def b2_allocation_ci(archive, compatible_archive):
                 if hashlib.file_digest(stream,'sha256').hexdigest()!=expected[role]:raise RuntimeError('B2_EXACT_ARCHIVE_REQUIRED')
         release.configure_profile('post-transfer',release.procurement_contract()['oldSha'],release.procurement_contract()['businessSha'],
             hashlib.sha256(release.command(['git','-C',str(ROOT),'show',release.procurement_contract()['oldSha']+':server/v2.js'])).hexdigest())
-        arts={'E':release.artifact(paths['E'],exact,ROOT),'R':release.compatibility_artifact(ROOT,paths['R'])}
+        # The measured E contains its exact 7364 scripts, not this new harness.
+        # Validate the entire payload against an immutable exact Git checkout.
+        with tempfile.TemporaryDirectory(prefix='b2-exact-source-',dir=os.environ['RUNNER_TEMP']) as source:
+            subprocess.run(['git','clone','--quiet','--no-hardlinks','--no-checkout',str(ROOT),source],check=True)
+            subprocess.run(['git','-C',source,'checkout','--quiet','--detach',exact],check=True)
+            arts={'E':release.artifact(paths['E'],exact,source),'R':release.compatibility_artifact(source,paths['R'])}
         proof['artifacts']={role:{k:a[k] for k in ('release','archive','archiveHash','archiveConfigDigest','blobs','expanded','largest','layers','imageReference')} for role,a in arts.items()}
         with tempfile.TemporaryDirectory(prefix='b2-model-',dir=os.environ['RUNNER_TEMP']) as td:
             root=Path(td);tag=root.name+':fixture'
