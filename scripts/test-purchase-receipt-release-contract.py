@@ -1176,6 +1176,29 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_truncated_fault_requires_residual_ingest_rejection_and_is_terminal(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'RUNNER_TEMP':td}):
+            archive=Path(td)/'image.tar';archive.write_bytes(b'x'*70000)
+            for fault in ('residual','clear','failed-open','dirty-baseline'):
+                remote=types.SimpleNamespace(run=Mock(side_effect=[b'REF SIZE AGE\n'+(b'owned 1 1s\n' if fault=='dirty-baseline' else b''),
+                    b'REF SIZE AGE\n'+(b'owned 1 1s\n' if fault!='clear' else b'')]))
+                stream=Mock(side_effect=_CI.release.GateError('B2_IMPORT_UNKNOWN'))
+                storage=Mock(side_effect=None if fault=='failed-open' else _CI.release.GateError('B1_IMPORT_UNKNOWN'))
+                with self.subTest(fault=fault),patch.object(_CI.release,'b2_stream',stream),patch.object(_CI.release,'b1_storage',storage):
+                    if fault in ('failed-open','dirty-baseline'):
+                        with self.assertRaisesRegex(RuntimeError,'B2_RESIDUAL_INGEST_NOT_REJECTED|B2_FAULT_BASELINE_INGEST_NOT_CLEAR'):
+                            _CI.b2_truncated_stream_ci(remote,archive,{})
+                    else:
+                        result=_CI.b2_truncated_stream_ci(remote,archive,{})
+                        self.assertTrue(result['truncatedStreamRejected'])
+                        self.assertEqual(result['residualIngestRejected'],fault=='residual')
+                        self.assertEqual(storage.call_count,1 if fault=='residual' else 0)
+        body=ast.get_source_segment((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text(),
+            next(n for n in ast.parse((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()).body
+                 if isinstance(n,ast.FunctionDef) and n.name=='b2_owned_import_steps'))
+        after=body.split('terminal_fault=b2_truncated_stream_ci',1)[1]
+        for token in ('b1_storage(','b1_db_gate(','b2_barrier(','content\',\'delete'):self.assertNotIn(token,after)
     def test_exact_source_context_matches_official_umask_without_losing_executable_bits(self):
         import tarfile
         data=io.BytesIO()

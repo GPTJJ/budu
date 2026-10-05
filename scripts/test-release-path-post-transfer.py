@@ -109,10 +109,11 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
- 'scripts/test-candidate-db-probe-integration.py': {'b2_source_from_tar': '8a743eae4571cdc9cf9e0d054b4919d5295f49bdc2ac6f88cd8e8f3c81e743f0',
+ 'scripts/test-candidate-db-probe-integration.py': {'b2_truncated_stream_ci': 'dfe00fa0f801288e0806489f294f4e60cd1345184922b4021e15fc6677663ace',
+'b2_source_from_tar': '8a743eae4571cdc9cf9e0d054b4919d5295f49bdc2ac6f88cd8e8f3c81e743f0',
 'ci_fixture_image_tag': 'f2599630b7befa4f0f8f3e861e41126de9a106711b272295a53a1db9b909a6bb',
 'b2_fixed_r_oci': '58e5530fdff1740b9032eb4574a16a34ab1bc85c1df32ef6bd5143a34d6615d5',
-'b2_build_reusing_r_ci': '77ab4244861a048f8cc4b2e8b09832fb323186f64b79e91ec2bfab093015ee54',
+'b2_build_reusing_r_ci': '0aeb62ae3eaa4b07cface038e38ef3f550324ab8b0363d55f1cb6487fc7a923c',
 'b2_compare_images': '73e450a0f0dc88d7f81d2a10894d69e9ee1ef004e05e239dc1f273c24a673a30',
 'b2_compare_manifests': '846baad82121c64168796c8cbdf669ea792fe57d3255206975868f83433bcb9e',
 'b2_manifest_from_tar': '39c63746e9b0ecf87f2678c8e09c079a6b296e1a06627f6df8f7f08621ed0507',
@@ -122,7 +123,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
                                                     'b1_import_ci': '759e3016e396ca041a20ea18be34be9b2bab17db6342745661d2e6b888bf901e',
                                                     'b2_allocation_ci': '55d47cbc30413819e6fa31ad2640b7702739b560fae4ec6a15b98e1ca214a0f6',
-                                                    'b2_owned_import_steps': 'a5040907648a2677c2eb2382bef4810eb68266b3c6a2725cc2392e7c21dd5c03',
+                                                    'b2_owned_import_steps': '12354a587312bb03131799319a99c417cb66e8b0d3f4301346e3e186fccbc14e',
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 

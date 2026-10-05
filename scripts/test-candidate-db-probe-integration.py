@@ -1960,6 +1960,7 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
             if b['rootfsDiffIds'][:len(fixed['rootfsDiffIds'])]!=fixed['rootfsDiffIds']:
                 raise RuntimeError('B2_EXACT_R_BASE_LAYER_PREFIX_REQUIRED')
             docker('load','-i',str(final));equivalence=b2_compare_images(reference,tag,sha)
+            report.update(strategy='B_R_DERIVED_RUNTIME',equivalence=equivalence);save()
             proof=allocation(final)
             report['attempts'].append({'strategy':'B_R_DERIVED_RUNTIME','result':proof['result'],
                 'allocation':proof.get('userSampleCapacity'),'code':proof.get('code')})
@@ -2014,6 +2015,28 @@ def b2_retained_ci(archive, compatible_archive):
         for key,value in before.items():
             if value is None:os.environ.pop(key,None)
             else:os.environ[key]=value
+
+
+def b2_truncated_stream_ci(remote,archive,art):
+    """Destructive terminal fault: prove rejection, then dispose the fixture."""
+    base=['ctr','--address','/run/containerd/containerd.sock','--namespace','moby','content','active']
+    before=remote.run(base).decode().splitlines()
+    if len(before)!=1 or before[0].split()!=['REF','SIZE','AGE']:raise RuntimeError('B2_FAULT_BASELINE_INGEST_NOT_CLEAR')
+    with tempfile.NamedTemporaryFile(dir=os.environ['RUNNER_TEMP']) as partial:
+        with Path(archive).open('rb') as source:partial.write(source.read(65536));partial.flush()
+        try:release.b2_stream(remote,partial.name,art)
+        except release.GateError as error:
+            if str(error)!='B2_IMPORT_UNKNOWN':raise
+        else:raise RuntimeError('B2_TRUNCATED_STREAM_NOT_REJECTED')
+    after=remote.run(base).decode().splitlines()
+    if not after or after[0].split()!=['REF','SIZE','AGE']:raise RuntimeError('B2_FAULT_INGEST_ADAPTER_INVALID')
+    if len(after)>1:
+        try:release.b1_storage(remote)
+        except release.GateError as error:
+            if str(error)!='B1_IMPORT_UNKNOWN':raise
+        else:raise RuntimeError('B2_RESIDUAL_INGEST_NOT_REJECTED')
+    return {'truncatedStreamRejected':True,'activeIngestBefore':0,'activeIngestAfter':len(after)-1,
+            'residualIngestRejected':len(after)>1,'fixtureDisposedAfterFault':True}
 
 
 def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
@@ -2091,12 +2114,6 @@ def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
         except release.GateError as error:
             assert str(error)=='B2_IMPORT_UNKNOWN';faults.append('E:REAL_SERVER_HASH_FAILURE')
         else:raise RuntimeError('B2_BAD_STREAM_NOT_REJECTED')
-        with tempfile.NamedTemporaryFile(dir=os.environ['RUNNER_TEMP']) as partial:
-            with Path(archive).open('rb') as source:partial.write(source.read(65536));partial.flush()
-            try:release.b2_stream(remote,partial.name,art)
-            except release.GateError as error:
-                assert str(error)=='B2_IMPORT_UNKNOWN';faults.append('E:REAL_TRUNCATED_STREAM')
-            else:raise RuntimeError('B2_TRUNCATED_STREAM_NOT_REJECTED')
         with patch.object(remote,'db',return_value={'dbBytes':release.GIB,'pgVersion':'16.14'}):
             try:release.b1_db_gate(remote)
             except release.GateError as error:
@@ -2113,9 +2130,13 @@ def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
         except release.GateError as error:
             assert str(error)=='B2_STORAGE_UNKNOWN';faults.append('REAL_RESIDUAL_COMMITTED_SNAPSHOT')
         else:raise RuntimeError('B2_COMMITTED_RESIDUAL_NOT_REJECTED')
+        # This fault may leave an active content ingest. No valid admission or
+        # clean-state check may run afterward; the owned daemon is disposed.
+        terminal_fault=b2_truncated_stream_ci(remote,archive,art);faults.append('E:REAL_TRUNCATED_STREAM')
+        if terminal_fault['residualIngestRejected']:faults.append('REAL_RESIDUAL_INGEST_REJECTED')
         proof.update(result='PASS',phaseAuthorityChecks=phases,capacityLedger=cap,finalStorage=final_storage,
                      fixedRPreserved=True,noTargetEArchive=True,realServerStream=True,
-                     sharedCreditSource=cap['sharedProof']['source'],failureTests=faults)
+                     sharedCreditSource=cap['sharedProof']['source'],failureTests=faults,terminalFault=terminal_fault)
     except BaseException as error:
         code=str(error) if isinstance(error,release.GateError) else 'ISOLATED_HELPER_FAILED'
         proof.update(result='FAILED',code=code,capacityLedger=art.get('capacityLedger'),
