@@ -1176,6 +1176,24 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_native_runtime_proof_requires_full_suite_pg16_14_real_lock_barriers_and_cleanup(self):
+        import re
+        ids=re.findall(r"await test\('([^']+)'",(ROOT/'scripts/test-purchase-receipt-native.mjs').read_text())
+        native={'results':[{'id':name,'status':'PASS'} for name in ids],
+                'raceEvidence':[{'label':'real-row-lock','waiting':2}],'externalAttempts':[]}
+        self.assertEqual(_CI.b2_validate_purchase_runtime(native,'160014','0')['nativeCases'],len(ids))
+        for fault in ('missing','duplicate','failed','external','no-race','unblocked','pg-version','database-remains'):
+            value=copy.deepcopy(native);version='160014';leftovers='0'
+            if fault=='missing':value['results'].pop()
+            elif fault=='duplicate':value['results'].append(value['results'][0])
+            elif fault=='failed':value['results'][0]['status']='FAIL'
+            elif fault=='external':value['externalAttempts']=[{'origin':'https://denied.invalid'}]
+            elif fault=='no-race':value['raceEvidence']=[]
+            elif fault=='unblocked':value['raceEvidence'][0]['waiting']=1
+            elif fault=='pg-version':version='160013'
+            else:leftovers='1'
+            with self.subTest(fault=fault),self.assertRaisesRegex(RuntimeError,'B2_PURCHASE_RUNTIME_PROOF_INVALID'):
+                _CI.b2_validate_purchase_runtime(value,version,leftovers)
     def test_truncated_fault_requires_residual_ingest_rejection_and_is_terminal(self):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'RUNNER_TEMP':td}):

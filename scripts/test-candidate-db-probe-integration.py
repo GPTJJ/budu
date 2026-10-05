@@ -1878,6 +1878,87 @@ def b2_source_from_tar(stream,directory):
             archive.extract(member,directory)
 
 
+def b2_validate_purchase_runtime(native,version,leftovers):
+    expected=re.findall(r"await test\('([^']+)'",(ROOT/'scripts/test-purchase-receipt-native.mjs').read_text())
+    results=native.get('results',[]);races=native.get('raceEvidence',[])
+    if (version!='160014' or leftovers!='0' or not expected
+            or sorted(row.get('id','') for row in results)!=sorted(expected)
+            or any(row.get('status')!='PASS' for row in results)
+            or native.get('externalAttempts')!=[] or not races
+            or any(row.get('waiting',0)<2 for row in races)):
+        raise RuntimeError('B2_PURCHASE_RUNTIME_PROOF_INVALID')
+    return {'result':'PASS','pgVersion':'16.14','nativeCases':len(results),'nativeResults':results,
+            'deterministicRaceEvidence':races,'externalAttempts':0,'remainingOwnedDatabases':0,
+            'core':'PASS','existingReceivingWorkflow':'PASS','runtimeUserId':1000}
+
+
+def b2_purchase_runtime_ci(image,sha):
+    """Existing business suites in final E, with PG loopback inside one namespace."""
+    procurement_controller_ci_guard()
+    if os.environ['GITHUB_REF']!='refs/heads/'+release.B2_BRANCH or sha!=os.environ['GITHUB_SHA']:
+        raise RuntimeError('B2_ISOLATED_RUNNER_REQUIRED')
+    config=json.loads(docker('image','inspect',image))[0]
+    if config['Config'].get('Labels',{}).get(release.REVISION)!=sha or config['Config'].get('User')!='node':
+        raise RuntimeError('B2_PURCHASE_EXACT_RUNTIME_REQUIRED')
+    network='b2-purchase-'+sha[:12];pg=network+'-pg';candidate=network+'-runtime'
+    owned={};network_id=None
+    try:
+        network_id=docker('network','create','--internal','--label','budu.b2-purchase='+sha,network)
+        if json.loads(docker('network','inspect',network))[0]['Internal'] is not True:
+            raise RuntimeError('B2_PURCHASE_EGRESS_NOT_BLOCKED')
+        owned[pg]=docker('run','-d','--name',pg,'--network',network,'--label','budu.b2-purchase='+sha,
+            '-e','POSTGRES_USER=apple','-e','POSTGRES_DB=postgres','-e','POSTGRES_HOST_AUTH_METHOD=trust',
+            'postgres:16.14','-p','55463',timeout=180)
+        for _ in range(120):
+            probe=subprocess.run(['docker','exec',pg,'pg_isready','-U','apple','-p','55463'],capture_output=True)
+            if probe.returncode==0:break
+            time.sleep(0.25)
+        else:raise RuntimeError('B2_PURCHASE_PG_NOT_READY')
+        version=docker('exec',pg,'psql','-U','apple','-p','55463','-X','-qAt','-c','SHOW server_version_num')
+        command="set -eu; test \"$(id -u)\" = 1000; node --test scripts/test-purchase-receipt-core.mjs; node scripts/test-purchase-receipt-native.mjs; node scripts/test-purchase-receiving-workflow.mjs"
+        owned[candidate]=docker('create','--name',candidate,'--network','container:'+pg,
+            '--label','budu.b2-purchase='+sha,'--read-only','--tmpfs','/tmp:mode=1777',
+            '--tmpfs','/app/output:uid=1000,gid=1000,mode=0755','--tmpfs','/home/node:uid=1000,gid=1000,mode=0755',
+            '-e','APP_ENV=test','-e','NODE_ENV=test','-e','TEST_DATABASE_URL=postgresql://apple@127.0.0.1:55463/postgres',
+            '-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME=budu','-e','CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID=dh',
+            '--entrypoint','sh',config['Id'],'-c',command)
+        try:result=subprocess.run(['docker','start','--attach',candidate],capture_output=True,text=True,timeout=900)
+        except subprocess.TimeoutExpired as error:
+            partial=(error.stdout or b'')+(error.stderr or b'')
+            if isinstance(partial,bytes):partial=partial.decode(errors='replace')
+            partial=re.sub(r'postgres(?:ql)?://[^\s\"\'<>]+','[ISOLATED_DATABASE_URL_REDACTED]',partial)
+            print('B2_PURCHASE_RUNTIME_TIMEOUT='+json.dumps(partial.splitlines()[-35:]),file=sys.stderr)
+            raise RuntimeError('B2_PURCHASE_RUNTIME_TIMEOUT') from None
+        log=re.sub(r'postgres(?:ql)?://[^\s\"\'<>]+','[ISOLATED_DATABASE_URL_REDACTED]',result.stdout+result.stderr)
+        logpath=Path(os.environ['RUNNER_TEMP'])/'b2-purchase-runtime.log';logpath.write_text(log);logpath.chmod(0o644)
+        if result.returncode!=0:
+            print('B2_PURCHASE_RUNTIME_FAILURE='+json.dumps(log.splitlines()[-35:]),file=sys.stderr)
+            raise RuntimeError('B2_PURCHASE_RUNTIME_REGRESSION_FAILED')
+        import tarfile
+        output=subprocess.check_output(['docker','cp',candidate+':/app/output/purchase-receipt/native-results.json','-'],timeout=30)
+        with tarfile.open(fileobj=io.BytesIO(output)) as archive:
+            member=archive.getmembers()[0]
+            if not member.isfile():raise RuntimeError('B2_PURCHASE_RESULT_INVALID')
+            native=json.load(archive.extractfile(member))
+        leftovers=docker('exec',pg,'psql','-U','apple','-p','55463','-X','-qAt','-c',
+            "SELECT count(*) FROM pg_database WHERE datname LIKE 'budu_fullcritical_%'")
+        proof=b2_validate_purchase_runtime(native,version,leftovers)
+        proof.update(imageId=config['Id'],revision=sha,readOnlyRuntime=True,internalNetwork=True)
+        print('B2_PURCHASE_NATIVE_PG16_14_PASS='+json.dumps(proof,sort_keys=True),flush=True)
+        return proof
+    finally:
+        for name,ident in reversed(list(owned.items())):
+            current=json.loads(docker('inspect',name))[0]
+            if current['Id']!=ident or current['Config']['Labels'].get('budu.b2-purchase')!=sha:
+                raise RuntimeError('B2_PURCHASE_CLEANUP_OWNERSHIP_CHANGED')
+            docker('rm','-f','-v',ident)
+        if network_id:
+            current=json.loads(docker('network','inspect',network))[0]
+            if current['Id']!=network_id or current['Labels'].get('budu.b2-purchase')!=sha:
+                raise RuntimeError('B2_PURCHASE_NETWORK_OWNERSHIP_CHANGED')
+            docker('network','rm',network_id)
+
+
 def b2_build_reusing_r_ci(directory,compatible_archive):
     """A real exact-R cache attempt, then B runtime derivation if A cannot fit."""
     procurement_controller_ci_guard()
@@ -1967,10 +2048,11 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
             if proof['result']!='PASS':raise RuntimeError('B2_MAXIMUM_R_REUSE_CAPACITY_FAILED')
             report['strategy']='B_R_DERIVED_RUNTIME'
         shutil.copyfile(final,root/'image.tar')
+        purchase_runtime=b2_purchase_runtime_ci(tag,sha)
         cap=proof['capacityLedger'];sample=proof['userSampleCapacity']
         ready=next(o for o in cap['observations'] if o['phase']=='R_READY')
         complete=next(o for o in cap['observations'] if o['phase']=='E_IMPORT_COMPLETE')
-        report.update(result='PASS',equivalence=equivalence,capacity=sample,
+        report.update(result='PASS',equivalence=equivalence,capacity=sample,purchaseReceiptRuntime=purchase_runtime,
             historicalSample90='HISTORICAL_SAMPLE_90_UNVERIFIED',
             rRetainedAllocation=ready['retained'],eIncrementalAllocation=complete['retained']-ready['retained'],
             sharedCreditedBytes=cap['sharedProof']['creditedBytes'],maximumPeak=cap['peak'],
