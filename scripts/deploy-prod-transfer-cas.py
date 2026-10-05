@@ -1470,7 +1470,7 @@ def b2_deploy(remote, repo, path, art, ledger, authorize):
     owned=b1_stage(remote,r,'inspect');require(owned['inode']==receipt.get('archiveInode'),'B1_ARCHIVE_UNVERIFIED')
     cap['phase']='R_IMPORT_COMPLETE';u0,f0=remote.disk();limits=shipping_resources(remote.db())
     b1_capacity_gate(cap,u0,f0,RESERVE+limits['walLimit'])
-    b1_stage(remote,r,'cleanup');b1_stage(remote,r,'released');b1_storage(remote);u,f=remote.disk()
+    b1_stage(remote,r,'cleanup',owned);b1_stage(remote,r,'released',owned);b1_storage(remote);u,f=remote.disk()
     require(f-f0>=owned['allocated'] and u0-u>=owned['allocated'],'B1_ARCHIVE_RELEASE_NOT_OBSERVED')
     cap['rArchiveRelease']={'allocated':owned['allocated'],'beforeAvailable':f0,'afterAvailable':f,'verified':True}
     cap['phase']='R_READY';b1_capacity_gate(cap,u,f,RESERVE+shipping_resources(remote.db())['walLimit'])

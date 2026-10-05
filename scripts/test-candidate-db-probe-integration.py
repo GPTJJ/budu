@@ -1764,7 +1764,7 @@ def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
     art.update(capacityProfile='B2',compatibility=release.compatibility_artifact(ROOT,compatible_archive),
                compatibilityPath=str(compatible_archive))
     before=(release.STAGING_ROOT,release.LOCK);release.STAGING_ROOT='/fixture/staging';release.LOCK='/fixture/staging/b2-lock'
-    phases=[];original_py=remote.py;original_db=remote.db;handoff=[]
+    phases=[];original_py=remote.py;handoff=[]
     state={'old':{'Id':'EXPLICIT_SYNTHETIC_AUTHORITY_ADAPTER'},'template':'ISOLATED_IMPORT_ONLY'}
     def fixture_preflight(target,artifact,ledger,imported=False):
         if imported:
@@ -1839,6 +1839,15 @@ def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
         proof.update(result='PASS',phaseAuthorityChecks=phases,capacityLedger=cap,finalStorage=final_storage,
                      fixedRPreserved=True,noTargetEArchive=True,realServerStream=True,
                      sharedCreditSource=cap['sharedProof']['source'],failureTests=faults)
+    except BaseException as error:
+        code=str(error) if isinstance(error,release.GateError) else 'ISOLATED_HELPER_FAILED'
+        proof.update(result='FAILED',code=code,capacityLedger=art.get('capacityLedger'),
+            eArtifact={k:art[k] for k in ('archive','blobs','expanded','largest','archiveHash','rootfsDiffIds')},
+            rArtifact={k:art['compatibility'][k] for k in ('archive','blobs','expanded','largest','archiveHash')})
+        target=Path(os.environ['RUNNER_TEMP'])/'b2-controller-import-diagnostic.json'
+        target.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
+        print('B2_ISOLATED_CAPACITY_PROOF='+json.dumps(proof,sort_keys=True),flush=True)
+        raise
     finally:release.STAGING_ROOT,release.LOCK=before
     print('B2_ACTUAL_CONTROLLER_IMPORT_DB_BARRIER_PASS',flush=True)
     return proof

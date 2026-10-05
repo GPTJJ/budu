@@ -1002,7 +1002,9 @@ class B2FormalPathTests(unittest.TestCase):
                 if code==r.B1_STAGE_CODE:
                     action=value['action'];self.order.append(action)
                     if action=='cleanup':
-                        assert self.r_imported and not self.e_imported and self.old['State']['Running'];self.cleaned=True;self.archive_present=False
+                        assert self.r_imported and not self.e_imported and self.old['State']['Running']
+                        assert value['inode']==17 and value['device']==1 and value['allocated']==self.art['compatibility']['archive']
+                        self.cleaned=True;self.archive_present=False
                     return json.dumps({'claimed':True} if action=='claim' else {'released':True} if action=='released' else {'inode':18 if fault=='inode' else 17,'device':1,'allocated':self.art['compatibility']['archive'],'path':'fixture'})
                 return super().py(code,value,timeout)
         model=Model()

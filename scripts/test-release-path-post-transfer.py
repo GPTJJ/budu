@@ -72,7 +72,7 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # the current module. Only reviewed additive/modified top-level nodes may be
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
-PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'ddf47dec62d97a4b212d8ea0418e9918cc42c3b67c3ab302f1153f0bf6a55819',
+PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'dd608e73ecd0da7d6bc13def6dd41880be33d29791d1625e0e949b0b55de0aeb',
  'scripts/deploy-prod-transfer-cas.py': {'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
                                          'B1_FILES': 'd7e937654876cabce73ad897944517769806465b7b0ee8513f8d749917068b31',
@@ -100,7 +100,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'ddf47
                                          'b2_absent': '73b2ea25318dc887e1d16f49287ca55afef556b4fd0bb783c2e0764b715a99eb',
                                          'b2_barrier': 'a8ad62d04b2ffcbbb01e104cf721386bd9596db8f4b1f88668ceb732119cf38a',
                                          'b2_committed': '13e5b68255eed62c432995a67ae279d6c8320b1e087fe66a84d5865e6ce39e41',
-                                         'b2_deploy': '7a22eba3941185a67e92844a583c0b9845cddbc2f5d0007bbf7abdfbe2f2721b',
+                                         'b2_deploy': 'c5152f6619973248764f1db7de8d8dd6f6f5c0cb2876dffb7de47c5bc56c4401',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
@@ -114,7 +114,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'ddf47
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
                                                     'b1_import_ci': '4b782bccc23927002c8255fa06a7b183af6c3913e87ce03611f23c342ddde5bc',
                                                     'b2_allocation_ci': 'c0fc35937406280ca0a57146faf4af66dae67a442a8baa8b4b69c4c5ea1847c2',
-                                                    'b2_owned_import_steps': 'edc193cd7d59b343ccbb8f26542c892b0abfbd4a736b5987806c2aaef0a267ec',
+                                                    'b2_owned_import_steps': '79950b1f2ece7545fb79bdc9c5342d7cb1121ee87d8554063fdc8b88949e35ff',
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 

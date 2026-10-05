@@ -582,11 +582,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: procurement-controller-diagnostic-${{ github.sha }}
-          path: ${{ runner.temp }}/procurement-controller-diagnostic.json
+          path: |
+            ${{ runner.temp }}/procurement-controller-diagnostic.json
+            ${{ runner.temp }}/b2-controller-import-diagnostic.json
           if-no-files-found: warn
           retention-days: 1
 
       - name: Retain exact artifact for read-only preflight
+        if: success() || (always() && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && env.RELEASE_ARTIFACT_PATH != '')
         uses: actions/upload-artifact@v4
         with:
           name: ${{ ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002') && format('release-staging-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
