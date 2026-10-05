@@ -1089,6 +1089,50 @@ class B2GuardTests(unittest.TestCase):
                 if fault:
                     with self.assertRaises(r.GateError):r.validate_procurement_identity(ROOT,r.B2_BASE if fault=='same-e' else 'a'*40)
                 else:r.validate_procurement_identity(ROOT,'a'*40)
+    def test_real_shared_helper_preserves_owned_container_id_and_committed_parent(self):
+        # Execute the actual helper against synthetic API/filesystem boundaries.
+        # This checks ownership cleanup and credit proof, not a duplicate helper.
+        import stat
+        cid='c'*64;token='fixture';release='a'*40
+        data={'a':b'layer-a','b':b'layer-b','config':b'config','manifest':b'manifest'}
+        digests={k:'sha256:'+hashlib.sha256(v).hexdigest() for k,v in data.items()}
+        layers=[{'chainId':name,'index':i,'diffId':name,'contentDigest':digests[name],
+                 'expandedPhysicalBytes':16384,'blobBytes':len(data[name])} for i,name in enumerate(('a','b'))]
+        value={'tag':'synthetic-r','imageId':digests['manifest'],'configDigest':digests['config'],
+               'token':token,'release':release,'rLayers':layers,'eLayers':layers[:1]}
+        for fault in (None,'parent','ownership'):
+            events=[];output=io.StringIO()
+            def run(args,**kw):
+                self.assertTrue(all(isinstance(x,str) for x in args),'OWNED_CONTAINER_ID_WAS_REPLACED')
+                events.append(args)
+                if args[:2]==['docker','inspect']:
+                    obj={'Id':digests['manifest']} if args[-1]=='synthetic-r' else {'Id':cid,'State':{'Pid':321,'Running':True},'Config':{'Labels':{'budu.b2-proof':'wrong' if fault=='ownership' else release}}}
+                    return json.dumps([obj]).encode()
+                if args[:2]==['docker','ps']:return b''
+                if args[:2]==['docker','create']:return cid.encode()
+                if args[:2] in (['docker','start'],['docker','rm']):return b''
+                if args[-3:]==['content','list','--quiet']:return '\n'.join(digests.values()).encode()
+                if args[-2]=='info':return json.dumps({'Kind':'Committed','Parent':'wrong' if fault=='parent' else '' if args[-1]=='a' else 'a'}).encode()
+                if args[0]=='du':return b'4096 path'
+                raise AssertionError(args)
+            def info(path):
+                number=int(str(path).split('/snapshots/')[1].split('/')[0]) if '/snapshots/' in str(path) else 9
+                return types.SimpleNamespace(st_dev=1,st_ino=number,st_blocks=8,st_nlink=1,st_mode=stat.S_IFREG|0o600,st_size=7,st_mtime_ns=1,st_ctime_ns=1)
+            def read(path,*args,**kw):
+                self.assertEqual(str(path),'/proc/321/mountinfo')
+                return '1 0 0:1 / / ro - overlay overlay ro,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/2/fs:/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1/fs\n'
+            def opened(path,*args,**kw):
+                digest='sha256:'+path.name
+                return io.BytesIO(next(v for k,v in data.items() if digests[k]==digest))
+            with patch('sys.stdin',io.StringIO(json.dumps(value))),patch('sys.stdout',output),patch('subprocess.check_output',side_effect=run),patch.object(Path,'read_text',read),patch.object(Path,'stat',info),patch.object(Path,'lstat',info),patch.object(Path,'resolve',lambda p:p),patch.object(Path,'open',opened),patch('os.stat',side_effect=info),patch('os.lstat',side_effect=info),patch('os.walk',return_value=[('/var/lib/containerd',[],[])]):
+                if fault:
+                    with self.assertRaises(AssertionError):exec(compile(r.B2_SHARED_CODE,'b2-real-shared-helper','exec'),{})
+                else:
+                    exec(compile(r.B2_SHARED_CODE,'b2-real-shared-helper','exec'),{})
+                    proof=json.loads(output.getvalue());self.assertTrue(proof['verified']);self.assertEqual(proof['creditedBytes'],8192+len(data['a']))
+                    self.assertEqual(len(proof['ownedLayers']),2)
+            removals=[a for a in events if a[:2]==['docker','rm']]
+            self.assertEqual(removals,[] if fault=='ownership' else [['docker','rm','-f',cid]])
     def test_real_import_fixture_initializes_private_dind_without_production_adapter(self):
         source=(ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()
         body=next(ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='b1_import_ci')

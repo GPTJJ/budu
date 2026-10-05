@@ -1703,7 +1703,7 @@ def b1_import_ci(archive, compatible_archive, sha, b2=False):
                         # This daemon has only synthetic/public artifacts and
                         # no secrets. Preserve a bounded helper traceback;
                         # production transport remains redacted and unchanged.
-                        print(json.dumps({'b1OwnedFixtureHelperFailure':error.stderr.decode(errors='replace').splitlines()[-6:]}),file=sys.stderr)
+                        print(json.dumps({'b1OwnedFixtureHelperFailure':error.stderr.decode(errors='replace').splitlines()[-(24 if b2 else 6):]}),file=sys.stderr)
                         raise
                 def inspect(self,ref,image=False):return json.loads(self.run(['docker',*(['image'] if image else []),'inspect',ref]))[0]
                 def disk(self):

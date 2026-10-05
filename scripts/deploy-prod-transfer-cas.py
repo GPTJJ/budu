@@ -1351,11 +1351,11 @@ try:
         assert (p.stat().st_dev,p.stat().st_ino) not in seen;seen.add((p.stat().st_dev,p.stat().st_ino))
         allocated=blob_allocated(match['contentDigest'])
         owned_layers.append({'chainId':chain,'contentDigest':match['contentDigest'],'snapshotPath':str(p),'snapshotAllocated':snap,'blobAllocated':allocated})
-    owned={x['chainId']:x for x in owned_layers}
+    owned_by_chain={x['chainId']:x for x in owned_layers}
     for layer in v['eLayers']:
         chain=layer['chainId'];match=r.get(chain)
         if not match or match['contentDigest']!=layer['contentDigest'] or match['diffId']!=layer['diffId']:continue
-        allocated=owned[chain]
+        allocated=owned_by_chain[chain]
         value=min(allocated['snapshotAllocated'],layer['expandedPhysicalBytes'])+min(allocated['blobAllocated'],layer['blobBytes'])
         credit+=value;rows.append({**allocated,'credited':value})
     extras={digest:blob_allocated(digest) for digest in set((v['configDigest'],v['imageId']))}
