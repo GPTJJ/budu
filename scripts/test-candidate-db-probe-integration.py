@@ -1753,6 +1753,29 @@ def b1_import_ci(archive, compatible_archive, sha, b2=False):
     return proof
 
 
+
+def b2_retained_ci(archive, compatible_archive):
+    """Focused real fresh-candidate proof; no production transport or full CI."""
+    procurement_controller_ci_guard()
+    if os.environ['GITHUB_REF']!='refs/heads/'+release.B2_BRANCH:
+        raise RuntimeError('B2_ISOLATED_RUNNER_REQUIRED')
+    keys=('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0')
+    before={key:os.environ.get(key) for key in keys}
+    os.environ.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='safe.directory',GIT_CONFIG_VALUE_0=str(ROOT))
+    try:
+        release.configure_profile('post-transfer',release.procurement_contract()['oldSha'],release.procurement_contract()['businessSha'],
+            hashlib.sha256(release.command(['git','-C',str(ROOT),'show',release.procurement_contract()['oldSha']+':server/v2.js'])).hexdigest())
+        sha,_=release.identity(ROOT)
+        if sha!=os.environ['GITHUB_SHA']:raise RuntimeError('CI_EXACT_SOURCE_REQUIRED')
+        proof=b1_import_ci(archive,compatible_archive,sha,b2=True)
+        target=Path(os.environ['RUNNER_TEMP'])/'b2-retained-proof.json'
+        target.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
+    finally:
+        for key,value in before.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+
+
 def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
     """Actual B2 import through DB barrier, on the owned nested filesystem.
 
@@ -2230,6 +2253,9 @@ if __name__ == '__main__':
     try:
         if sys.argv[1] == '--native-pg16':
             native_pg16()
+        elif sys.argv[1] == '--b2-retained-ci':
+            if len(sys.argv)!=4:raise RuntimeError('B2_FOCUSED_ARGUMENTS_INVALID')
+            b2_retained_ci(*sys.argv[2:])
         elif sys.argv[1] == '--b2-allocation-ci':
             if len(sys.argv)!=4:raise RuntimeError('B2_MODEL_ARGUMENTS_INVALID')
             b2_allocation_ci(*sys.argv[2:])

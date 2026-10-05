@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      b2_retained_only:
+        description: 'B2 focused only: fresh candidate forward and retained allocation proof'
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - codex/release-path-post-transfer-generalization
@@ -32,7 +37,7 @@ concurrency:
 
 jobs:
   b2-model:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && !inputs.b2_retained_only
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -96,9 +101,71 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+  b2-retained:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && inputs.b2_retained_only && !inputs.b2_model_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify exact focused source and regression
+        env:
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"
+          python3 scripts/test-purchase-receipt-release-contract.py B2FormalPathTests
+          python3 scripts/test-release-path-post-transfer.py B2WorkflowTests
+      - name: Restore immutable fixed R
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/b2-retained-artifacts"
+          gh run download 37341224668 --repo GPTJJ/budu \
+            --name b2-fixed-r-13a3af1466f7d7b3c1477ad541d1cda2893057c2 \
+            --dir "$RUNNER_TEMP/b2-retained-artifacts"
+          printf '%s  %s\n' fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed \
+            "$RUNNER_TEMP/b2-retained-artifacts/compatible.tar" | sha256sum -c -
+      - name: Build exact focused candidate artifact
+        run: |
+          set -euo pipefail
+          builder="b2-retained-$GITHUB_RUN_ID"
+          docker buildx create --name "$builder" --driver docker-container
+          docker buildx inspect "$builder" --bootstrap
+          mkdir "$RUNNER_TEMP/b2-retained-artifacts/source"
+          git archive "$GITHUB_SHA" | tar -x -C "$RUNNER_TEMP/b2-retained-artifacts/source"
+          timeout 15m docker buildx build --builder "$builder" --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "budu-api:post-transfer-${GITHUB_SHA:0:12}" --provenance=false --sbom=false \
+            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUNNER_TEMP/b2-retained-artifacts/image.tar" \
+            "$RUNNER_TEMP/b2-retained-artifacts/source"
+      - name: Prove actual forward and reverse retained allocation
+        env:
+          TEST_PROCUREMENT_CONTROLLER_CI: '1'
+        run: |
+          set -euo pipefail
+          sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,TEST_PROCUREMENT_CONTROLLER_CI \
+            python3 scripts/test-candidate-db-probe-integration.py --b2-retained-ci \
+            "$RUNNER_TEMP/b2-retained-artifacts/image.tar" "$RUNNER_TEMP/b2-retained-artifacts/compatible.tar"
+      - name: Retain focused proof or diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b2-retained-focused-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/b2-retained-proof.json
+            ${{ runner.temp }}/b2-controller-import-diagnostic.json
+          if-no-files-found: error
+          retention-days: 3
   artifact:
     needs: b2-model
-    if: ${{ always() && ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision'))) && github.ref != 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && !inputs.b2_model_only && needs.b2-model.result == 'success')) }}
+    if: ${{ always() && ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision'))) && github.ref != 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && !inputs.b2_model_only && !inputs.b2_retained_only && needs.b2-model.result == 'success')) }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
     timeout-minutes: 60

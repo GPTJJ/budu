@@ -950,7 +950,7 @@ class B1ArchiveTests(unittest.TestCase):
 
 
 class B2FormalPathTests(unittest.TestCase):
-    def attempt(self,fault=None):
+    def attempt(self,fault=None,fresh_artifact=False):
         r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
         class Model(ProcurementModel):
             def __init__(self):
@@ -959,6 +959,10 @@ class B2FormalPathTests(unittest.TestCase):
                 self.art['layers']=[{'chainId':'common'},{'chainId':'e-only'}]
                 self.art['compatibility'].update(archive=566753792,blobs=566730271,expanded=2095460288,largest=1155686400,
                     layers=[{'chainId':'common'},{'chainId':'r-only'}])
+                self.e_image=super().inspect(self.art['imageReference'],True)
+                if fresh_artifact:self.art.pop('loadedDockerImageId')
+                if fault=='stale-e-id':self.art['loadedDockerImageId']='sha256:'+'0'*64
+                self.shared_inputs=[]
             def disk(self):
                 self.order.append('fresh-df')
                 growth=(self.art['compatibility']['archive'] if self.archive_present or self.cleaned and fault=='no-free' else 0)
@@ -971,7 +975,8 @@ class B2FormalPathTests(unittest.TestCase):
                 if image and name==self.art['compatibility']['imageReference'] and (not self.r_imported or self.e_imported and fault=='r-lost'):
                     raise r.GateError('LOADED_ARTIFACT_MISMATCH')
                 if image and name==self.art['imageReference'] and self.e_imported and fault=='wrong-e':
-                    image=super().inspect(name,True);image['RootFS']['Layers']=['wrong'];return image
+                    image=copy.deepcopy(self.e_image);image['RootFS']['Layers']=['wrong'];return image
+                if image and name==self.art['imageReference']:return copy.deepcopy(self.e_image)
                 return super().inspect(name,image)
             def run(self,args,data=None,timeout=60):
                 if args[:3]==['docker','images','-q'] and args[-1]==self.art['imageReference'] and not self.e_imported:return b''
@@ -988,7 +993,8 @@ class B2FormalPathTests(unittest.TestCase):
                     self.order.append('r-absent');return json.dumps({'absent':fault not in ('r-present','wrong-r')})
                 if code==r.B2_SHARED_CODE:
                     self.order.append('shared-proof')
-                    if fault=='shared-unknown':raise r.GateError('COMMAND_FAILED')
+                    self.shared_inputs.append(copy.deepcopy(value))
+                    if fault=='shared-unknown' or self.e_imported and fault=='retained-unknown':raise r.GateError('COMMAND_FAILED')
                     role='r' if not self.e_imported else 'e'
                     shared=1985757184;unique=2177372160-shared if role=='r' else 2178584576-shared
                     return json.dumps({'verified':True,'creditedBytes':0 if fault=='no-shared' else shared,'source':'SYNTHETIC_FRESH_ALLOCATION_FIXTURE',
@@ -1031,6 +1037,27 @@ class B2FormalPathTests(unittest.TestCase):
         self.assertEqual(cap['eAdmission']['dbBytes'],164142103)
         self.assertLessEqual(cap['eAdmission']['planned'],cap['peak'])
         self.assertEqual(r.writer_names(model.containers()),[model.ename])
+    def test_fresh_artifact_pins_validated_e_identity_before_retained_proof(self):
+        model,error=self.attempt(fresh_artifact=True)
+        self.assertIsNone(error)
+        self.assertEqual(model.art['loadedDockerImageId'],model.e_image['Id'])
+        self.assertEqual(model.order.count('shared-proof'),2)
+        self.assertEqual(model.phase,88)
+        forward,retained=model.shared_inputs
+        self.assertEqual(retained['imageId'],model.e_image['Id'])
+        self.assertEqual(retained['rLayers'],forward['eLayers'])
+        self.assertEqual(retained['eLayers'],forward['rLayers'])
+        self.assertEqual(retained['configDigest'],model.art['archiveConfigDigest'])
+    def test_stale_identity_and_retained_unknown_fail_closed_after_e_import(self):
+        for fault,code,count in [('stale-e-id','LOADED_IMAGE_CHANGED',1),('retained-unknown','B2_SHARED_UNKNOWN',2)]:
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault)
+                self.assertEqual(error,code)
+                self.assertTrue(model.e_imported)
+                self.assertEqual(model.order.count('shared-proof'),count)
+                self.assertNotIn('stop-old',model.order)
+                self.assertTrue(model.old['State']['Running'])
+                self.assertTrue(model.lock)
     def test_r_present_wrong_r_stop_before_lock_or_upload(self):
         for fault in ('r-present','wrong-r'):
             model,error=self.attempt(fault);self.assertEqual(error,'B2_R_NOT_ABSENT')
