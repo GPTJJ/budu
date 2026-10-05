@@ -1889,7 +1889,7 @@ def b2_validate_purchase_runtime(native,version,leftovers):
         raise RuntimeError('B2_PURCHASE_RUNTIME_PROOF_INVALID')
     return {'result':'PASS','pgVersion':'16.14','nativeCases':len(results),'nativeResults':results,
             'deterministicRaceEvidence':races,'externalAttempts':0,'remainingOwnedDatabases':0,
-            'core':'PASS','existingReceivingWorkflow':'PASS','runtimeUserId':1000}
+            'core':'PASS','legacyRetirement':'PASS','runtimeUserId':1000}
 
 
 def b2_purchase_runtime_ci(image,sha):
@@ -1915,7 +1915,9 @@ def b2_purchase_runtime_ci(image,sha):
             time.sleep(0.25)
         else:raise RuntimeError('B2_PURCHASE_PG_NOT_READY')
         version=docker('exec',pg,'psql','-U','apple','-d','postgres','-p','55463','-X','-qAt','-c','SHOW server_version_num')
-        command="set -eu; test \"$(id -u)\" = 1000; node --test scripts/test-purchase-receipt-core.mjs; node scripts/test-purchase-receipt-native.mjs; node scripts/test-purchase-receiving-workflow.mjs"
+        # C06 in the full native suite requires retired legacy writes to return
+        # 410. The pre-retirement receiving script asserts the opposite contract.
+        command="set -eu; test \"$(id -u)\" = 1000; node --test scripts/test-purchase-receipt-core.mjs; node scripts/test-purchase-receipt-native.mjs"
         owned[candidate]=docker('create','--name',candidate,'--network','container:'+pg,
             '--label','budu.b2-purchase='+sha,'--read-only','--tmpfs','/tmp:mode=1777',
             '--tmpfs','/app/output:uid=1000,gid=1000,mode=0755','--tmpfs','/home/node:uid=1000,gid=1000,mode=0755',

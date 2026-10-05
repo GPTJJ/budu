@@ -1181,10 +1181,12 @@ class B2ArtifactReuseTests(unittest.TestCase):
         ids=re.findall(r"await test\('([^']+)'",(ROOT/'scripts/test-purchase-receipt-native.mjs').read_text())
         native={'results':[{'id':name,'status':'PASS'} for name in ids],
                 'raceEvidence':[{'label':'real-row-lock','waiting':2}],'externalAttempts':[]}
-        self.assertEqual(_CI.b2_validate_purchase_runtime(native,'160014','0')['nativeCases'],len(ids))
-        for fault in ('missing','duplicate','failed','external','no-race','unblocked','pg-version','database-remains'):
+        proof=_CI.b2_validate_purchase_runtime(native,'160014','0')
+        self.assertEqual(proof['nativeCases'],len(ids));self.assertEqual(proof['legacyRetirement'],'PASS')
+        for fault in ('missing','missing-retirement','duplicate','failed','external','no-race','unblocked','pg-version','database-remains'):
             value=copy.deepcopy(native);version='160014';leftovers='0'
             if fault=='missing':value['results'].pop()
+            elif fault=='missing-retirement':value['results']=[row for row in value['results'] if row['id']!='C06']
             elif fault=='duplicate':value['results'].append(value['results'][0])
             elif fault=='failed':value['results'][0]['status']='FAIL'
             elif fault=='external':value['externalAttempts']=[{'origin':'https://denied.invalid'}]
