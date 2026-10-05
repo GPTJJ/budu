@@ -1176,6 +1176,13 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_random_fixture_image_names_with_underscores_are_valid_docker_repositories(self):
+        for name in ('b1-dind-b1-import-_cxb2x8j','b1-dind-b1-import-a__b_', 'b2-model-_abc_123'):
+            tag=_CI.ci_fixture_image_tag(name)
+            self.assertRegex(tag,r'^[a-z0-9]+(?:-+[a-z0-9]+)*:fixture$')
+            self.assertNotIn('_',tag)
+        for name in ('/tmp/b1-import-abcd','unknown','b2-model-ABCD'):
+            with self.assertRaisesRegex(RuntimeError,'CI_FIXTURE_IMAGE_NAME_INVALID'): _CI.ci_fixture_image_tag(name)
     def test_fixed_r_oci_keeps_exact_compressed_blobs_and_rejects_identity_drift(self):
         import tarfile,gzip
         layer=gzip.compress(b'exact R layer',mtime=0);blob=r.digest(layer)

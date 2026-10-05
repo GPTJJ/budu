@@ -1524,6 +1524,12 @@ class ProcurementControllerCiRemote(ControllerCiRemote):
 
 
 
+def ci_fixture_image_tag(name):
+    if not re.fullmatch(r'(b1-dind-b1-import-|b2-model-)[a-z0-9_]+',name):
+        raise RuntimeError('CI_FIXTURE_IMAGE_NAME_INVALID')
+    return name.replace('_','-')+'-runner:fixture'
+
+
 def b2_allocation_ci(archive, compatible_archive):
     """Offline exact B1 E/R physical allocation, both empty-daemon orders.
 
@@ -1563,7 +1569,7 @@ def b2_allocation_ci(archive, compatible_archive):
             arts={'E':release.artifact(paths['E'],exact,source),'R':release.compatibility_artifact(source,paths['R'])}
         proof['artifacts']={role:{k:a[k] for k in ('release','archive','archiveHash','archiveConfigDigest','blobs','expanded','largest','layers','imageReference')} for role,a in arts.items()}
         with tempfile.TemporaryDirectory(prefix='b2-model-',dir=os.environ['RUNNER_TEMP']) as td:
-            root=Path(td);tag=root.name+':fixture'
+            root=Path(td);tag=ci_fixture_image_tag(root.name)
             subprocess.run(['docker','build','--tag',tag,'-'],input=b'FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils\n',check=True,timeout=240)
             for order in ('RE','ER'):
                 mount=root/order;mount.mkdir();disk=root/(order+'.ext4')
@@ -1670,7 +1676,7 @@ def b1_import_ci(archive, compatible_archive, sha, b2=False):
         with disk.open('wb') as f:f.truncate(24*1024**3)
         subprocess.run(['mkfs.ext4','-q','-F',str(disk)],check=True,stdout=subprocess.DEVNULL)
         subprocess.run(['mount','-o','loop',str(disk),str(mount)],check=True)
-        name='b1-dind-'+root.name;tag=name+':fixture';ident=None
+        name='b1-dind-'+root.name;tag=ci_fixture_image_tag(name);ident=None
         staging_before=release.STAGING_ROOT
         try:
             for part in ('docker','containerd','staging'):(mount/part).mkdir(mode=0o700)
@@ -1792,7 +1798,8 @@ def b2_compare_manifests(reference,candidate):
     different=sorted(k for k in set(reference)&set(candidate) if reference[k]!=candidate[k])
     proof={'verified':not(extra or missing or different),'extra':extra[:30],'missing':missing[:30],
            'different':different[:30],'counts':{'reference':len(reference),'candidate':len(candidate),
-           'extra':len(extra),'missing':len(missing),'different':len(different)}}
+           'extra':len(extra),'missing':len(missing),'different':len(different)},
+           'differences':[{'path':k,'reference':reference[k],'candidate':candidate[k]} for k in different[:30]]}
     return proof
 
 
@@ -1900,7 +1907,7 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
         args=['docker','buildx','build','--builder',builder,'--platform','linux/amd64',
               '--label',release.REVISION+'='+sha,'--tag',tag,'--provenance=false','--sbom=false',
               '--file',str(dockerfile),'--output','type=docker,compression=gzip,compression-level=9,force-compression=false,dest='+str(destination)]
-        if cache:args+=['--cache-from','type=local,src='+str(rlayout)]
+        if cache:args+=['--cache-from','type=local,src='+str(rlayout)+',digest='+rcontext.split('@',1)[1]]
         if derived:args+=['--build-context',rtag+'='+rcontext]
         subprocess.run([*args,str(source)],check=True,timeout=1200)
     def allocation(path):
@@ -1965,7 +1972,9 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
         if prior.exists():prior.rename(root/'cache-attempt-diagnostic.json')
         save();print('B2_ARTIFACT_REUSE_EQUIVALENCE_CAPACITY_PASS',flush=True)
     except BaseException as error:
-        report.update(result='FAILED',errorType=type(error).__name__)
+        code=str(error)
+        report.update(result='FAILED',errorType=type(error).__name__,
+                      errorCode=code if re.fullmatch(r'[A-Z][A-Z0-9_]{3,80}',code) else 'DETAILS_SUPPRESSED')
         save();raise
 
 
