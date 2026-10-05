@@ -1524,6 +1524,129 @@ class ProcurementControllerCiRemote(ControllerCiRemote):
 
 
 
+def b2_allocation_ci(archive, compatible_archive):
+    """Offline exact B1 E/R physical allocation, both empty-daemon orders.
+
+    No production transport, data or credentials. Observed import peaks are
+    explicitly lower bounds; conservative L/W/reserve budgets are not reduced.
+    """
+    branch='refs/heads/codex/purchase-receipt-b2-capacity-fasttrack'
+    if (os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('GITHUB_REF')!=branch
+            or os.environ.get('GITHUB_REPOSITORY')!='GPTJJ/budu' or os.environ.get('RUNNER_OS')!='Linux'
+            or sys.platform!='linux' or os.geteuid()!=0 or not os.environ.get('RUNNER_TEMP')):
+        raise RuntimeError('B2_ISOLATED_RUNNER_REQUIRED')
+    exact='7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524'
+    expected={'E':'8c2e92a0c9a4f74d598893f875a87c3579c99cdf5e1e3414220822cd70236f4b',
+              'R':'fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed'}
+    paths={'E':Path(archive).resolve(),'R':Path(compatible_archive).resolve()}
+    proof={'scope':'ISOLATED_EXACT_B1_E_FIXED_R_ALLOCATION_NOT_PRODUCTION',
+           'sourceSha':os.environ['GITHUB_SHA'],'exactESha':exact,'productionAccess':False,
+           'orders':{},'peakSamplesAreLowerBounds':True,'sampleDBBytes':164142103,
+           'sampleFreeBytes':15964217344,'productionUsedBytes':'UNAVAILABLE'}
+    output=Path(os.environ['RUNNER_TEMP'])/'b2-allocation-proof.json'
+    def save():output.write_text(json.dumps(proof,indent=2)+'\n')
+    save()
+    keys=('GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0')
+    before={k:os.environ.get(k) for k in keys}
+    os.environ.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='safe.directory',GIT_CONFIG_VALUE_0=str(ROOT))
+    try:
+        for role,path in paths.items():
+            with path.open('rb') as stream:
+                if hashlib.file_digest(stream,'sha256').hexdigest()!=expected[role]:raise RuntimeError('B2_EXACT_ARCHIVE_REQUIRED')
+        release.configure_profile('post-transfer',release.procurement_contract()['oldSha'],release.procurement_contract()['businessSha'],
+            hashlib.sha256(release.command(['git','-C',str(ROOT),'show',release.procurement_contract()['oldSha']+':server/v2.js'])).hexdigest())
+        arts={'E':release.artifact(paths['E'],exact,ROOT),'R':release.compatibility_artifact(ROOT,paths['R'])}
+        proof['artifacts']={role:{k:a[k] for k in ('release','archive','archiveHash','archiveConfigDigest','blobs','expanded','largest','layers','imageReference')} for role,a in arts.items()}
+        with tempfile.TemporaryDirectory(prefix='b2-model-',dir=os.environ['RUNNER_TEMP']) as td:
+            root=Path(td);tag=root.name+':fixture'
+            subprocess.run(['docker','build','--tag',tag,'-'],input=b'FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils\n',check=True,timeout=240)
+            for order in ('RE','ER'):
+                mount=root/order;mount.mkdir();disk=root/(order+'.ext4')
+                with disk.open('wb') as f:f.truncate(24*1024**3)
+                subprocess.run(['mkfs.ext4','-q','-F',str(disk)],check=True)
+                subprocess.run(['mount','-o','loop',str(disk),str(mount)],check=True)
+                name=root.name+'-'+order;ident=None
+                try:
+                    for sub in ('docker','containerd','staging'):(mount/sub).mkdir()
+                    boot="containerd --root /var/lib/containerd --state /run/containerd --address /run/containerd/containerd.sock >/tmp/containerd.log 2>&1 &\nfor i in $(seq 1 60); do test -S /run/containerd/containerd.sock && break; sleep 1; done\nexec dockerd --containerd /run/containerd/containerd.sock --containerd-namespace moby --feature containerd-snapshotter --iptables=false --ip6tables=false --bridge=none --host unix:///var/run/docker.sock"
+                    ident=docker('run','-d','--privileged','--network','none','--name',name,'--label','budu.b2-model='+os.environ['GITHUB_SHA'],
+                        '--mount','type=bind,source='+str(mount/'docker')+',target=/var/lib/docker',
+                        '--mount','type=bind,source='+str(mount/'containerd')+',target=/var/lib/containerd',
+                        '--mount','type=bind,source='+str(mount/'staging')+',target=/fixture/staging',
+                        '--tmpfs','/run','--entrypoint','sh',tag,'-c',boot)
+                    def run(args,timeout=60):return subprocess.check_output(['docker','exec',name,*args],timeout=timeout)
+                    for _ in range(60):
+                        ready=subprocess.run(['docker','exec',name,'docker','info','--format','{{.ServerVersion}}'],capture_output=True)
+                        if ready.returncode==0:break
+                        time.sleep(1)
+                    else:raise RuntimeError('B2_DAEMON_NOT_READY')
+                    def allocated():return sum(int(subprocess.check_output(['du','-sx','--block-size=1',str(mount/s)]).split()[0]) for s in ('docker','containerd'))
+                    def df():return tuple(map(int,subprocess.check_output(['df','-B1','--output=used,avail',str(mount)]).decode().splitlines()[1].split()))
+                    def inventory():
+                        code=release.B1_STORAGE_CODE.replace("os.stat('/')","os.stat('/var/lib/docker')")
+                        return json.loads(subprocess.check_output(['docker','exec','-i',name,'python3','-B','-c',code],input=b'null'))
+                    info=json.loads(run(['docker','info','--format','{{json .}}']));assert info['LiveRestoreEnabled'] is False
+                    base=allocated();bu,bf=df();entry={'beforeAllocated':base,'beforeUsed':bu,'beforeFree':bf,'imports':[],'liveRestore':False};proof['orders'][order]=entry
+                    for role in order:
+                        a=arts[role];pre=allocated();u,f=df();samples=[];done=threading.Event();errors=[]
+                        staged=mount/'staging'/'R.tar'
+                        if role=='R':shutil.copyfile(paths[role],staged)
+                        def sample():
+                            while not done.is_set():
+                                try:samples.append({'allocated':allocated(),'used':df()[0]})
+                                except BaseException as e:errors.append(type(e).__name__)
+                                done.wait(.2)
+                        observer=threading.Thread(target=sample);observer.start()
+                        receipt={'bytes':0,'sha256':None,'serverProcessWaited':False,'boundedChunkBytes':1024**2}
+                        proc=subprocess.Popen(['docker','exec','-i',name,'docker','load'],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+                        try:
+                            h=hashlib.sha256()
+                            with paths[role].open('rb') as stream:
+                                while chunk:=stream.read(1024**2):
+                                    h.update(chunk);receipt['bytes']+=len(chunk);proc.stdin.write(chunk)
+                            proc.stdin.close();proc.stdin=None
+                            _,stderr=proc.communicate(timeout=300)
+                            receipt.update(returncode=proc.returncode,sha256=h.hexdigest(),serverProcessWaited=True)
+                            if proc.returncode:raise RuntimeError('B2_IMPORT_FAILED:'+stderr.decode(errors='replace')[-400:])
+                        finally:
+                            done.set();observer.join(timeout=60)
+                            if proc.poll() is None:proc.kill();proc.wait()
+                        if errors or observer.is_alive():raise RuntimeError('B2_SAMPLE_FAILED')
+                        inv=inventory();image=json.loads(run(['docker','image','inspect',a['imageReference']]))[0]
+                        release.validate_loaded_image(image,a)
+                        post=allocated();after_import=df();samples.append({'allocated':post,'used':after_import[0]})
+                        row={'role':role,'beforeAllocated':pre,'afterAllocated':post,'actualIncrementalAllocation':post-pre,
+                             'beforeUsed':u,'beforeFree':f,'afterImportUsed':after_import[0],'afterImportFree':after_import[1],
+                             'observedAllocatedPeakIncrement':max(x['allocated'] for x in samples)-pre,
+                             'observedFilesystemPeakIncrement':max(x['used'] for x in samples)-u,'samples':samples,'receipt':receipt,
+                             'identity':'PASS','inventory':inv,'imageId':image['Id']}
+                        if role=='R':
+                            owned=staged.stat();staged.unlink();au,af=df()
+                            if af-after_import[1]<owned.st_blocks*512:raise RuntimeError('B2_R_ARCHIVE_RELEASE_NOT_OBSERVED')
+                            row['archiveRelease']={'allocated':owned.st_blocks*512,'released':af-after_import[1],'afterFree':af}
+                        entry['imports'].append(row);save()
+                    entry.update(afterAllocated=allocated(),afterUsed=df()[0],afterFree=df()[1]);save()
+                finally:
+                    if ident:
+                        owned=json.loads(docker('inspect',name))[0]
+                        if owned['Id']!=ident or owned['Config']['Labels'].get('budu.b2-model')!=os.environ['GITHUB_SHA']:raise RuntimeError('B2_OWNERSHIP_CHANGED')
+                        docker('rm','-f','-v',ident)
+                    subprocess.run(['umount',str(mount)],check=True)
+        re_order=proof['orders']['RE']['imports'];er_order=proof['orders']['ER']['imports']
+        r=re_order[0]['actualIncrementalAllocation'];e=er_order[0]['actualIncrementalAllocation'];union=proof['orders']['RE']['afterAllocated']-proof['orders']['RE']['beforeAllocated']
+        proof.update(result='PASS',rStandaloneAllocated=r,eStandaloneAllocated=e,eIncrementalAfterR=re_order[1]['actualIncrementalAllocation'],
+                     rIncrementalAfterE=er_order[1]['actualIncrementalAllocation'],unionAllocated=union,
+                     sharedAllocationBenefit=r+e-union,productionChanges=0)
+    except BaseException as error:
+        proof.update(result='FAIL',error=type(error).__name__+':'+str(error)[:600]);save();raise
+    finally:
+        for k,v in before.items():
+            if v is None:os.environ.pop(k,None)
+            else:os.environ[k]=v
+        save()
+    print('B2_EXACT_BIDIRECTIONAL_ALLOCATION_PASS',flush=True)
+
+
 def b1_import_ci(archive, compatible_archive, sha):
     """Real Docker 29.1.3/containerd import on an owned ext4 loop filesystem.
 
@@ -1981,6 +2104,9 @@ if __name__ == '__main__':
     try:
         if sys.argv[1] == '--native-pg16':
             native_pg16()
+        elif sys.argv[1] == '--b2-allocation-ci':
+            if len(sys.argv)!=4:raise RuntimeError('B2_MODEL_ARGUMENTS_INVALID')
+            b2_allocation_ci(*sys.argv[2:])
         elif sys.argv[1] == '--procurement-controller-ci':
             if len(sys.argv)!=7:raise RuntimeError('CI_CONTROLLER_ARGUMENTS_INVALID')
             procurement_controller_ci(*sys.argv[2:])

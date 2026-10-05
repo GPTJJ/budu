@@ -7,6 +7,11 @@ on:
         description: 'Shipping build-only: exact reviewed engineering release SHA'
         required: true
         type: string
+      b2_model_only:
+        description: 'B2 only: measure the retained exact B1 E and fixed R in isolated storage'
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - codex/release-path-post-transfer-generalization
@@ -26,6 +31,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  b2-model:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && inputs.b2_model_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact isolated B2 model source
+        env:
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" != 7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524
+          git merge-base --is-ancestor 7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524 "$GITHUB_SHA"
+          test -z "$(git rev-list --merges 7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524..HEAD)"
+          python3 - <<'PY'
+          import subprocess
+          allowed = {'scripts/deploy-prod-transfer-cas.py',
+                     'scripts/test-purchase-receipt-release-contract.py',
+                     'scripts/test-release-path-post-transfer.py',
+                     'scripts/test-candidate-db-probe-integration.py',
+                     '.github/workflows/release-build-only.yml'}
+          changed = set(filter(None, subprocess.check_output(['git','log','--format=',
+              '--name-only','7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524..HEAD'],text=True).splitlines()))
+          if not changed or not changed <= allowed: raise SystemExit('B2_CI_SCOPE_INVALID')
+          PY
+      - name: Restore reviewed exact E and R for offline measurement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/b2-model-artifacts"
+          mkdir -m 700 "$target"
+          gh run download 37315414130 --repo GPTJJ/budu \
+            --name release-staging-7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524 --dir "$target"
+          printf 'B2_MODEL_ARTIFACTS=%s\n' "$target" >> "$GITHUB_ENV"
+      - name: Measure both exact import orders without production access
+        run: |
+          set -euo pipefail
+          sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP \
+            python3 scripts/test-candidate-db-probe-integration.py --b2-allocation-ci \
+            "$B2_MODEL_ARTIFACTS/image.tar" "$B2_MODEL_ARTIFACTS/compatible.tar"
+      - name: Retain exact B2 allocation proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b2-allocation-proof-${{ github.sha }}
+          path: ${{ runner.temp }}/b2-allocation-proof.json
+          if-no-files-found: error
+          retention-days: 3
   artifact:
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack') || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
     name: Exact Docker artifact validation
