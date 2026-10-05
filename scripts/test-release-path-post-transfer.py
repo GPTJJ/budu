@@ -68,7 +68,74 @@ MATERIAL_PROJECTION = importlib.util.module_from_spec(MATERIAL_SPEC)
 MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 
 
+# Procurement/B1 source-preservation projection. Runtime tests below still use
+# the current module. Only reviewed additive/modified top-level nodes may be
+# projected to exact E, then its known procurement delta to C2, before the older
+# material -> Q legacy checks. Any other source node or byte change is rejected.
+PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc1f707a099335c8e3cef324dc9aa25cc41f4420513e37ce419ba214fca15',
+ 'scripts/deploy-prod-transfer-cas.py': {'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
+                                         'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
+                                         'B1_FILES': 'd7e937654876cabce73ad897944517769806465b7b0ee8513f8d749917068b31',
+                                         'B1_IDENTITY': 'bad84d232321fff2cce6614e4b2459defec854de0d9d168e188290382f8eb7cf',
+                                         'B1_IMPORT_CODE': '960f7fbd86479e9ba29483692c585ab3e6345eae5efabcd9c7d8a0eb05716d38',
+                                         'B1_STAGE_CODE': 'd7c61dcc9fbe10e94f38afa1ee395c34cc401c9308f481388a5e14499d8cea5f',
+                                         'B1_STORAGE_CODE': '4671b396e106816acd3b9f952ab98e217826fc0feabcb80c22a41b0adea409f1',
+                                         'SAFE_CONTROLLER_CODES': 'da2b842a57401a6cf098fb2b6631f61053027d87bfbdcc1608ea3d81ad634603',
+                                         'artifact': '03b0098e266a202b76fe81c1b42487731ebe41ea2c396d770bf0fdc4e38bacc2',
+                                         'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
+                                         'b1_capacity_gate': 'cc34c1bd8d110d965f032e4733e6e9547cbebc9070cbcb51daaeda7529f02756',
+                                         'b1_db_gate': '066cf4db5a0cd9e3793e8dc551703f872b5329bf0533e7c7aa0469f88139ded1',
+                                         'b1_deploy': '25ef55e0e5d3d64b2a3f8447fe3e407ffee4b2ad3ddf1a93d77c22fd0b81e7d8',
+                                         'b1_envelope': '7a781d2c0db5c4ec7ae8b99bf7cbff12fe4d01ba1f1d6020f8ffa8a54a5f54e1',
+                                         'b1_fixed_r': 'a22da289519d7ac18cd3632a0c85a16a5d314c6cbf2cf1b88416bbc19ccc9961',
+                                         'b1_preflight': '39ed4876d19c41732bafcd740863ec8e377c22bddbe7c455aba4bfff32e6b08d',
+                                         'b1_stage': 'e226cebaae1ab5948a7dbab9c9ea8b095ba68409e0335f34d4c3cae2668b4a0d',
+                                         'b1_storage': '8957503b18c4dcb187fc02d070861dd8c6274c09fd1d0056357080612513ae8d',
+                                         'deploy': 'b56001e2f0426ace2ba81e9541d59a3615acfe0433051dab02cafc06830fdab5',
+                                         'execute_loaded': '2aac604e35333b27c24e878d893ecbbecd5a275f5ab37a9cfe1ab12b5c7e5466',
+                                         'preflight': '5ee9b165289fa898acf6f5e0259069ced45f0d76619bdfe003d2c25709a5dfc1',
+                                         'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
+                                         'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
+                                         'validate_procurement_identity': 'e1df78fd075531594abdb28cab109d118bfbff02bf9d521199478059c06d602a'},
+ 'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
+                                                    '_procurement_controller_ci': 'ae8b5d71ec82be67f1ad257fd34313a380e5c74c87f41778ffc7b06d4618f770',
+                                                    'b1_import_ci': '952e0fada2a284e2db613b1dfbb3f47b9800be5b4113d4cae6452c4db2a95c1b',
+                                                    'procurement_controller_ci_guard': '51b08403c15b71935b578d1e8aa6146db238680e75cb1e650ca29b6df8b59e9b'}}
+
+
+def procurement_prior_source(source):
+    if 'def b1_capacity_gate(' in source:path='scripts/deploy-prod-transfer-cas.py'
+    elif 'def b1_import_ci(' in source:path='scripts/test-candidate-db-probe-integration.py'
+    elif "refs/heads/codex/purchase-receipt-b1-capacity-fasttrack" in source and source.startswith('name:'):path='.github/workflows/release-build-only.yml'
+    else:return source
+    base=subprocess.check_output(['git','-C',str(ROOT),'show',r.B1_BASE+':'+path],text=True)
+    if path.endswith('.yml'):
+        if hashlib.sha256(source.encode()).hexdigest()!=PROCUREMENT_EXTENSION_PINS[path]:
+            raise AssertionError('Unreviewed B1 workflow change')
+    else:
+        def nodes(value):
+            tree=ast.parse(value);result={}
+            for index,n in enumerate(tree.body):
+                key=(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else
+                     ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else
+                     '__entrypoint__' if isinstance(n,ast.If) else ast.dump(n))
+                original=key;number=1
+                while key in result:key=original+'#'+str(number);number+=1
+                result[key]=ast.get_source_segment(value,n)
+            return result
+        old=nodes(base);new=nodes(source);pins=PROCUREMENT_EXTENSION_PINS[path]
+        if set(old)-set(new):raise AssertionError('Removed legacy node')
+        for key,value in new.items():
+            if value==old.get(key):continue
+            if hashlib.sha256(value.encode()).hexdigest()!=pins.get(key):
+                raise AssertionError('Unreviewed procurement/B1 source change: '+key)
+        if set(pins)!={k for k,v in new.items() if v!=old.get(k)}:
+            raise AssertionError('Missing reviewed B1 node')
+    return subprocess.check_output(['git','-C',str(ROOT),'show',r.procurement_contract()['businessSha']+':'+path],text=True)
+
+
 def previous_release_source(source):
+    source=procurement_prior_source(source)
     return (MATERIAL_PROJECTION.previous_controller_source(source) if 'def material_contract():' in source
             else MATERIAL_PROJECTION.previous_ci_source(source) if 'def material_controller_ci_guard():' in source
             else MATERIAL_PROJECTION.previous_workflow_source(source))
@@ -126,7 +193,7 @@ def without_reviewed_transport(source):
 def build_only_workflow():
     return json.loads(subprocess.check_output(
         ['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],
-        input=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text()).encode()))
+        input=previous_release_source((ROOT/'.github/workflows/release-build-only.yml').read_text()).encode()))
 
 
 def without_quantity_binding(value, key):
@@ -343,7 +410,7 @@ class RealShellRoute(unittest.TestCase):
         self.assertIn(REVISION_BRANCH,steps[-1]['with']['name'])
         self.assertIn("format('release-staging-{0}', github.sha)",steps[-1]['with']['name'])
         self.assertIn("format('release-preflight-{0}', github.sha)",steps[-1]['with']['name'])
-        source=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
+        source=previous_release_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',
                                        REVISION_BUSINESS+':.github/workflows/release-build-only.yml'],text=True)
         # Exact pre-existing shell branch admission rules are retained byte for byte.
@@ -1193,7 +1260,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
             if key != ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):
                 self.assertEqual(value,constants(without_reviewed_disk_percent(without_reviewed_transport(previous_release_source((ROOT/path).read_text()))))[key],key)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
-        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
+        workflow=previous_release_source((ROOT/'.github/workflows/release-build-only.yml').read_text())
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_PARENT+':.github/workflows/release-build-only.yml'],text=True)
         for branch in (DIAGNOSTIC_BRANCH,):
             token='            '+branch+')'
@@ -1222,7 +1289,7 @@ class BackupDiagnosticIdentity(unittest.TestCase):
         for key,value in constants(old).items():
             if key!=ast.dump(ast.Name(id='SHIPPING_BACKUP_RESTORE_CODE',ctx=ast.Store())):self.assertEqual(value,constants(current)[key],key)
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',BACKUP_READINESS_BASE+':.github/workflows/release-build-only.yml'],text=True)
-        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text());tokens=['            '+BACKUP_BRANCH+')','            '+QUANTITY_BRANCH+')']
+        workflow=previous_release_source((ROOT/'.github/workflows/release-build-only.yml').read_text());tokens=['            '+BACKUP_BRANCH+')','            '+QUANTITY_BRANCH+')']
         def remove_admission(value):
             for token in tokens:
                 before,after=value.split(token,1);value=before+after.split(';;',1)[1]
@@ -1421,7 +1488,7 @@ class FormalShippingIdentity(unittest.TestCase):
         self.assertEqual(r.ABSOLUTE_MAX_PEAK,6*r.GIB);self.assertEqual(r.RESERVE,512*1024**2)
         self.assertEqual(hashlib.sha256(r.SHIPPING_BACKUP_RESTORE_CODE.encode()).hexdigest(),'08f5738100617198bcb6fd37aeb072a9d95bcbd18ba9251c69dd6184382393e4')
         previous=subprocess.check_output(['git','-C',str(ROOT),'show',POLICY_BASE+':.github/workflows/release-build-only.yml'],text=True)
-        workflow=MATERIAL_PROJECTION.previous_workflow_source((ROOT/'.github/workflows/release-build-only.yml').read_text());token='            '+QUANTITY_BRANCH+')'
+        workflow=previous_release_source((ROOT/'.github/workflows/release-build-only.yml').read_text());token='            '+QUANTITY_BRANCH+')'
         def remove_formal(value):
             before,after=value.split(token,1);return before+after.split(';;',1)[1]
         self.assertEqual(remove_formal(previous),remove_formal(workflow))
@@ -1532,7 +1599,9 @@ class ProcurementReleaseRoutingTests(unittest.TestCase):
 case "$1" in
 fetch) exit 0 ;;
 branch) printf '%s\n' "$GUARD_BRANCH" ;;
-rev-list) printf '%s %s\n' "$GITHUB_SHA" "$GUARD_PARENT" ;;
+rev-list) if [ "$2" = --merges ]; then printf '%s' "${GUARD_MERGES:-}"; else printf '%s %s\n' "$GITHUB_SHA" "$GUARD_PARENT"; fi ;;
+merge-base) exit "${GUARD_ANCESTOR_RC:-0}" ;;
+log) printf '%s' "${GUARD_FILES:-scripts/deploy-prod-transfer-cas.py}" ;;
 rev-parse) if [ "$2" = FETCH_HEAD ]; then printf '%s\n' "$GUARD_COMPATIBLE"; else printf '%s\n' "$GITHUB_SHA"; fi ;;
 status) exit 0 ;;
 *) exit 99 ;;
@@ -1589,6 +1658,33 @@ esac
             if 'run' in step:
                 result=subprocess.run(['/bin/bash','-n'],input=step['run'],capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,step['name']+result.stderr)
+
+class B1WorkflowTests(unittest.TestCase):
+    workflow=ProcurementReleaseRoutingTests.workflow
+    guard=ProcurementReleaseRoutingTests.guard
+    def test_b1_dispatch_ancestry_chain_and_exact_five_file_scope(self):
+        facts={'GITHUB_REF':'refs/heads/'+r.B1_BRANCH,'GUARD_BRANCH':r.B1_BRANCH}
+        self.assertEqual(self.guard(**facts).returncode,0)
+        for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'b'*40},
+                      {'GITHUB_SHA':r.B1_BASE,'REQUESTED_RELEASE_SHA':r.B1_BASE},
+                      {'GUARD_ANCESTOR_RC':'1'},{'GUARD_MERGES':'b'*40},
+                      {'GUARD_FILES':'scripts/deploy-prod-transfer-cas.py\nserver/v2.js'},
+                      {'GUARD_COMPATIBLE':'b'*40}):
+            with self.subTest(extra=extra):self.assertNotEqual(self.guard(**{**facts,**extra}).returncode,0)
+        self.assertEqual(self.guard(**{**facts,'GUARD_FILES':'\n'.join(sorted(r.B1_FILES))}).returncode,0)
+    @unittest.skipUnless(sys.platform=='linux','Bash regex boundary is verified on hosted Ubuntu; macOS Bash 3.2 differs')
+    def test_b1_rejects_short_sha_on_runner_shell(self):
+        result=self.guard(GITHUB_REF='refs/heads/'+r.B1_BRANCH,GUARD_BRANCH=r.B1_BRANCH,GITHUB_SHA='a'*39,REQUESTED_RELEASE_SHA='a'*39)
+        self.assertNotEqual(result.returncode,0)
+    def test_full_regression_and_no_trigger_permission_or_secret_expansion(self):
+        source=(ROOT/'.github/workflows/release-build-only.yml').read_text()
+        workflow=self.workflow()
+        base=json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],input=subprocess.check_output(['git','-C',str(ROOT),'show',r.B1_BASE+':.github/workflows/release-build-only.yml'])))
+        for key in ('true','permissions','concurrency'):self.assertEqual(workflow[key],base[key])
+        self.assertNotIn(r.B1_BRANCH,workflow['true']['push']['branches'])
+        self.assertNotIn('secrets.',source)
+        self.assertIn('python3 scripts/test-release-path-post-transfer.py\n',source)
+        self.assertEqual(len(r.B1_FILES),5)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

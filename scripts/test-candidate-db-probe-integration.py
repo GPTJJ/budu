@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import shutil
 import signal
 import threading
 import contextlib
@@ -1303,7 +1304,7 @@ def _material_controller_ci(image,old_image,archive,diagnostics):
 def procurement_controller_ci_guard():
     if (os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_OS')!='Linux'
             or sys.platform!='linux' or os.geteuid()!=0 or os.environ.get('GITHUB_REPOSITORY')!='GPTJJ/budu'
-            or os.environ.get('GITHUB_REF')!='refs/heads/'+release.procurement_contract()['branch']
+            or os.environ.get('GITHUB_REF') not in ('refs/heads/'+release.procurement_contract()['branch'],'refs/heads/'+release.B1_BRANCH)
             or os.environ.get('TEST_PROCUREMENT_CONTROLLER_CI')!='1'
             or os.environ.get('DOCKER_HOST') not in (None,'unix:///var/run/docker.sock')
             or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')
@@ -1522,6 +1523,93 @@ class ProcurementControllerCiRemote(ControllerCiRemote):
         raise release.GateError('HEALTH_FAILED')
 
 
+
+def b1_import_ci(archive, compatible_archive, sha):
+    """Real Docker 29.1.3/containerd import on an owned ext4 loop filesystem.
+
+    The only transport adaptations are local docker-exec, an owned staging
+    directory, and the filesystem root for a nested daemon. Never SSH. Capacity
+    formulas, archive helper, import process, image identity and daemon inventory
+    are the actual controller. DB growth is synthetic here; real PG16.14
+    dump/restore/migration runs separately in the b1_success controller case.
+    """
+    procurement_controller_ci_guard()
+    print('B1_ISOLATED_IMPORT_BEGIN',flush=True)
+    proof={'productionAccess':False,'filesystemRootAdapter':'OWNED_EXT4_MOUNT',
+           'dbSource':'SYNTHETIC_SIZE_ONLY_REAL_PG_IN_SEPARATE_CASE'}
+    with tempfile.TemporaryDirectory(prefix='b1-import-',dir=os.environ['RUNNER_TEMP']) as d:
+        root=Path(d);mount=root/'fs';mount.mkdir();disk=root/'disk.ext4'
+        with disk.open('wb') as f:f.truncate(24*1024**3)
+        subprocess.run(['mkfs.ext4','-q','-F',str(disk)],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(['mount','-o','loop',str(disk),str(mount)],check=True)
+        name='b1-dind-'+root.name;tag=name+':fixture';ident=None
+        staging_before=release.STAGING_ROOT
+        try:
+            for part in ('docker','containerd','staging'):(mount/part).mkdir(mode=0o700)
+            os.chown(mount/'staging',1000,1000)
+            dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 && adduser -D -u 1000 ubuntu\n'
+            subprocess.run(['docker','build','--tag',tag,'-'],input=dockerfile.encode(),check=True,timeout=240)
+            boot="containerd --root /var/lib/containerd --state /run/containerd --address /run/containerd/containerd.sock >/tmp/containerd.log 2>&1 &\nfor i in $(seq 1 60); do test -S /run/containerd/containerd.sock && break; sleep 1; done\nexec dockerd --containerd /run/containerd/containerd.sock --containerd-namespace moby --feature containerd-snapshotter --iptables=false --ip6tables=false --bridge=none --host unix:///var/run/docker.sock"
+            ident=docker('run','-d','--privileged','--network','none','--name',name,
+                '--label','budu.b1-fixture='+sha,'--mount','type=bind,source='+str(mount/'docker')+',target=/var/lib/docker',
+                '--mount','type=bind,source='+str(mount/'containerd')+',target=/var/lib/containerd',
+                '--mount','type=bind,source='+str(mount/'staging')+',target=/fixture/staging',
+                '--mount','type=bind,source='+str(Path(compatible_archive).resolve())+',target=/fixture-r.tar,readonly',
+                '--tmpfs','/run','--entrypoint','sh',tag,'-c',boot)
+            for _ in range(60):
+                ready=subprocess.run(['docker','exec',name,'docker','info','--format','{{.ServerVersion}}'],capture_output=True)
+                if ready.returncode==0:break
+                time.sleep(1)
+            else:raise RuntimeError('B1_CI_DAEMON_NOT_READY')
+            class Nested:
+                def run(self,args,data=None,timeout=60):
+                    assert args[0] in ('docker','python3')
+                    return subprocess.run(['docker','exec','-i',name,*args],input=data,capture_output=True,check=True,timeout=timeout).stdout
+                def py(self,code,value=None,timeout=60):
+                    if code==release.B1_STORAGE_CODE:
+                        assert code.count("os.stat('/')")==1
+                        code=code.replace("os.stat('/')","os.stat('/var/lib/docker')")
+                    return self.run(['python3','-B','-c',code],json.dumps(value).encode(),timeout).decode()
+                def inspect(self,ref,image=False):return json.loads(self.run(['docker',*(['image'] if image else []),'inspect',ref]))[0]
+                def disk(self):
+                    return tuple(map(int,subprocess.check_output(['df','-B1','--output=used,avail',str(mount)]).decode().splitlines()[1].split()))
+                def db(self):return {'dbBytes':164142103,'pgVersion':'16.14'}
+            remote=Nested();art=release.artifact(archive,sha,ROOT)
+            art['compatibility']=release.compatibility_artifact(ROOT,compatible_archive)
+            print('B1_FIXED_R_BASELINE_IMPORT',flush=True)
+            remote.run(['docker','load','-i','/fixture-r.tar'],timeout=240)
+            rid=release.b1_fixed_r(remote,art);storage=release.b1_storage(remote)
+            u,f=remote.disk();cap={'baselineUsed':u,'baselineAvailable':f,'fixedRImageId':rid,'phase':'PRE_IMPORT','peak':0,'token':os.urandom(16).hex()}
+            remote.b1_capacity=cap;art['capacityLedger']=cap
+            envelope=release.b1_envelope(art,remote.db())
+            release.b1_capacity_gate(cap,u,f,envelope['import'],max(envelope.values()))
+            release.STAGING_ROOT='/fixture/staging';release.b1_stage(remote,art,'claim')
+            tar=mount/'staging'/(sha+'.tar');meta=mount/'staging'/(sha+'.json')
+            shutil.copyfile(archive,tar);meta.write_text(json.dumps({'release':sha,'sha256':art['archiveHash'],'bytes':art['archive']}))
+            for p in (tar,meta):p.chmod(0o600);os.chown(p,1000,1000)
+            owned=release.b1_stage(remote,art,'inspect');cap.update(phase='UPLOADED',archiveAllocated=owned['allocated'])
+            u,f=remote.disk();release.b1_capacity_gate(cap,u,f,envelope['import']-art['archive'],max(envelope.values()))
+            print('B1_EXACT_E_IMPORT',flush=True)
+            cap['importReceipt']=json.loads(remote.run(['python3','-B','-c',release.B1_IMPORT_CODE,'/fixture/staging/'+sha+'.tar',art['archiveHash'],str(art['archive'])],timeout=300))
+            print('B1_SERVER_BARRIER_AND_ARCHIVE_RELEASE',flush=True)
+            release.b1_archive_release(remote,art)
+            assert not tar.exists() and remote.inspect(art['compatibility']['imageReference'],True)['Id']==rid
+            proof.update(result='PASS',baselineStorage=storage,finalStorage=release.b1_storage(remote),
+                capacityLedger=cap,artifactEnvelope=envelope,fixedRImageId=rid,
+                exactArchiveRemoved=True,fixedRPreserved=True,archiveHash=art['archiveHash'],
+                dockerVersion=remote.run(['docker','version','--format','{{.Server.Version}}']).decode().strip(),
+                serverImportReceipt=cap['importReceipt'])
+        finally:
+            release.STAGING_ROOT=staging_before
+            if ident:
+                owned=json.loads(docker('inspect',name))[0]
+                if owned['Id']!=ident or owned['Config']['Labels'].get('budu.b1-fixture')!=sha:raise RuntimeError('B1_CI_CLEANUP_OWNERSHIP_CHANGED')
+                docker('rm','-f','-v',ident)
+            subprocess.run(['umount',str(mount)],check=True)
+    print('B1_ISOLATED_IMPORT_PASS',flush=True)
+    return proof
+
+
 def procurement_controller_ci(image,old_image,compatible_image,archive,compatible_archive):
     procurement_controller_ci_guard()
     diagnostics=CiFailureDiagnostics(Path(os.environ['RUNNER_TEMP'])/'procurement-controller-diagnostic.json',os.environ.get('GITHUB_SHA'))
@@ -1564,6 +1652,7 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             raise RuntimeError('CI_REAL_PINNED_PRISMA_CLI_REQUIRED')
     art=release.artifact(archive,sha,ROOT)
     art['compatibility']=release.compatibility_artifact(ROOT,compatible_archive)
+    b1_proof=b1_import_ci(archive,compatible_archive,sha) if release.B1_IDENTITY else None
     ledger={p.parent.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'prisma/migrations').glob('*/migration.sql')}
     helper=(ROOT/'scripts/clone-production-container.py').read_text()
     cases=[]
@@ -1606,7 +1695,12 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             if docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'--entrypoint','node',image,'-e',primary_probe)!='PRIMARY_NETWORK_DB_UNREACHABLE':raise RuntimeError('CI_PRIMARY_NETWORK_UNEXPECTED_DB_ACCESS')
             docker('pull','nginx:1.28-alpine',timeout=180)
             case_specs=[(mode,None) for mode in (*CI_CASES,'post_restore_failure','post_migrator_create_failure')]+[('post_cutover_failure',fault) for fault in ('health','runtime','prisma','facts','routes','pointer','public','stop')]
+            if release.B1_IDENTITY:case_specs.append(('b1_success',None))
             for index,(mode,rollback_fault) in enumerate(case_specs):
+                b1_case=mode=='b1_success'
+                if b1_case:mode='success'
+                art['capacityProfile']='B1' if b1_case else 'LEGACY'
+                art.pop('capacityLedger',None)
                 release.configure_profile('post-transfer',release.procurement_contract()['oldSha'],release.procurement_contract()['businessSha'],release.digest(release.command(['git','-C',str(ROOT),'show',release.procurement_contract()['oldSha']+':server/v2.js'])))
                 diagnostics.case=mode
                 case_root=root/str(index);case_root.mkdir(mode=0o700);(case_root/'rollback').mkdir(mode=0o700)
@@ -1657,6 +1751,14 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
                           'post_restore_failure':('SHIPPING_BACKUP_RESTORE','SHIPPING_MIGRATION_DISK_GATE_FAILED'),
                           'post_migrator_create_failure':('SHIPPING_CHECK_MIGRATION','COMMAND_FAILED'),
                           'backup_limit':('SHIPPING_BACKUP_RESTORE','SHIPPING_BACKUP_RESTORE_UNVERIFIED')}.get(mode)
+                if b1_case:
+                    # DB-stage fixture: the E/R images are already loaded in this
+                    # owned runner baseline. Fresh import/barrier/release is
+                    # independently exercised by b1_import_ci below.
+                    used,available=remote.disk()
+                    art['capacityLedger']={'baselineUsed':used,'baselineAvailable':available,
+                        'phase':'DB','peak':0,'fixedRImageId':art['compatibility']['loadedDockerImageId'],
+                        'fixture':'PRELOADED_DB_STAGE_ONLY'}
                 result=io.StringIO()
                 try:
                     with contextlib.redirect_stdout(result):
@@ -1732,9 +1834,9 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
                 if migrator_networks is not None and ({k:v.get('NetworkID') for k,v in migrator_networks.items()}!={k:v.get('NetworkID') for k,v in old_networks.items()}):raise RuntimeError('CI_MIGRATOR_NETWORK_PARITY_FAILED')
                 starts=[event for event in remote.events if event['action']=='start' and remote.attempt_resources.get(event['container'])=='migrator']
                 if len(starts)!=(0 if mode=='backup_limit' and not recovery else 1) or (mode!='success' and not remote.injected):raise RuntimeError('CI_MIGRATOR_OR_INJECTION_NOT_OBSERVED')
-                cases.append({'case':('r_unverified_'+rollback_fault) if rollback_fault else 'post_l88_disk' if mode=='post_l86_disk' else mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
+                cases.append({'case':'b1_success' if b1_case else ('r_unverified_'+rollback_fault) if rollback_fault else 'post_l88_disk' if mode=='post_l86_disk' else mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
                               'procurementSchema':final['procurementSchema'],'protectedOldBusinessFactsUnchanged':True,'retainedProcurementFacts':retained,'legacyWriterNeverRestarted':True,'writer':writer,'writerSamples':remote.writer_samples,'events':remote.events,
-                              'diskSamples':remote.disk_samples,'backupRestoreProof':backup,'backupAndMigratorConnections':0,
+                              'capacityLedger':art.get('capacityLedger'),'diskSamples':remote.disk_samples,'backupRestoreProof':backup,'backupAndMigratorConnections':0,
                               'rollbackSha':release.procurement_contract()['rollbackSha'] if mode!='success' else None,'failureInjection':expected,
                               'hostStorageActual':remote.host_storage,'hostStorageGate':'CI_FIXTURE_ADAPTER_PRODUCTION_UNVERIFIED',
                               'automaticDnsAliasAdaptations':remote.alias_adaptations,'lockRemoved':not rollback_fault,'rollbackFailure':rollback_failure,'formalSameERecovery':recovery,
@@ -1773,6 +1875,9 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             for key,value in globals_before.items():setattr(release,key,value)
     diagnostics.raise_cleanup()
     report['ownedResourcesRemoved']=True
+    if release.B1_IDENTITY:
+        report['b1Import']=b1_proof
+        report['liveRestoreFalseFullDr']='DEFERRED_BY_USER_RELEASE_OVERRIDE'
     target=Path(os.environ['RUNNER_TEMP'])/'procurement-controller-proof.json'
     target.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
     print('ISOLATED_PROCUREMENT_REAL_CONTROLLER_CASES=14_PASS SAME_EXACT_E_FORMAL_RECOVERIES=4_PASS HOST_STORAGE=CI_ADAPTER_PRODUCTION_UNVERIFIED PRODUCTION_ADMISSION=NO')

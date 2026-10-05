@@ -11,6 +11,9 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import os
+import tempfile
+import types
 from unittest.mock import patch
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parent.parent
@@ -139,6 +142,12 @@ class SourceIsolationTests(unittest.TestCase):
         def sections(source):
             return {n.name:ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         left=sections(before);right=sections(after)
+        dispatch="    if vars(remote).get('b1_capacity') is not None:\n        return b1_db_gate(remote, resources)\n"
+        self.assertEqual(right['shipping_disk_gate'].count(dispatch),1)
+        right['shipping_disk_gate']=right['shipping_disk_gate'].replace(dispatch,'',1)
+        staging="    code=STAGING_CODE\n    if art.get('capacityProfile') == 'B1':\n        require(action in ('prepare','verify'), 'B1_ARCHIVE_UNVERIFIED')\n        # Invalid uploads are evidence, never cleanup candidates. Only the B1\n        # exact-ownership helper may end this release's archive lifecycle.\n        code=code.replace('current.unlink(); meta.unlink()', 'pass # B1 retain invalid upload')\n"
+        self.assertEqual(right['staging_action'].count(staging),1)
+        right['staging_action']=right['staging_action'].replace(staging,'',1).replace('remote.py(code,','remote.py(STAGING_CODE,',1)
         for name in ('stage_artifact','staging_action','shipping_disk_gate','shipping_resources',
                      'clone_parity','validate_clone_source','application_db_probe','writer_check','disk_budget',
                      'validate_loaded_image','resolve_loaded_image','replace_routes','write_authority','check_controller_result'):
@@ -618,5 +627,303 @@ class ProcurementRecoveryFactsTests(unittest.TestCase):
             with self.subTest(table=index),self.assertRaisesRegex(RuntimeError,'CI_FORMAL_RECOVERY_PROCUREMENT_FACTS_CHANGED'):
                 _CI.verify_procurement_recovery_facts(88,before,after,model.old_facts,model.old_facts,schema)
         with self.assertRaises(RuntimeError):_CI.verify_procurement_recovery_facts(88,before,before[:-1],model.old_facts,model.old_facts,schema)
+
+
+class B1CapacityTests(unittest.TestCase):
+    ART={'archive':566876672,'blobs':566856143,'expanded':2096529408,'largest':1155686400}
+    DB={'dbBytes':164142103,'pgVersion':'16.14'}
+    def ledger(self,used=60*r.GIB,free=15964217344):
+        return {'baselineUsed':used,'baselineAvailable':free,'phase':'PRE_IMPORT','peak':0}
+    def test_old_model_fail_and_b1_both_envelopes_without_budget_reduction(self):
+        limits=r.shipping_resources(self.DB)
+        old=sum(self.ART.values())+r.RESERVE+sum(limits.values())
+        self.assertEqual(old,6444543065);self.assertGreater(old,6*r.GIB)
+        envelope=r.b1_envelope(self.ART,self.DB)
+        self.assertEqual(envelope,{'import':5154070502,'database':4721979993})
+        ledger=self.ledger();result=r.b1_capacity_gate(ledger,ledger['baselineUsed'],ledger['baselineAvailable'],envelope['import'],max(envelope.values()))
+        self.assertEqual(result['projectedAvailable'],10810146842)
+        self.assertEqual(limits,{'backupLimit':395393070,'restoreLimit':760861765,'walLimit':231250967,'migratorLimit':134217728})
+    def test_six_gib_exact_plus_minus_one(self):
+        for offset in (-1,0,1):
+            ledger=self.ledger(0,100*r.GIB)
+            if offset==1:
+                with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):r.b1_capacity_gate(ledger,0,100*r.GIB,6*r.GIB+offset)
+            else:self.assertEqual(r.b1_capacity_gate(ledger,0,100*r.GIB,6*r.GIB+offset)['peak'],6*r.GIB+offset)
+    def test_ten_gib_exact_plus_minus_one(self):
+        for offset in (-1,0,1):
+            free=11*r.GIB+offset;ledger=self.ledger(0,free)
+            if offset==-1:
+                with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_10GIB'):r.b1_capacity_gate(ledger,0,free,r.GIB)
+            else:self.assertEqual(r.b1_capacity_gate(ledger,0,free,r.GIB)['projectedAvailable'],10*r.GIB+offset)
+    def test_ninety_percent_exact_plus_minus_one(self):
+        total=200*r.GIB;future=r.GIB
+        for offset in (-1,0,1):
+            used=179*r.GIB+offset;free=total-used;ledger=self.ledger(used,free)
+            if offset==1:
+                with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_90PCT'):r.b1_capacity_gate(ledger,used,free,future)
+            else:r.b1_capacity_gate(ledger,used,free,future)
+    def test_cumulative_not_per_phase_reset_or_repeated_charge(self):
+        ledger=self.ledger();u=ledger['baselineUsed'];f=ledger['baselineAvailable'];env=r.b1_envelope(self.ART,self.DB)
+        r.b1_capacity_gate(ledger,u,f,env['import'],max(env.values()))
+        archive=self.ART['archive'];h=self.ART['blobs']+self.ART['expanded']
+        for phase,actual,future in [('UPLOADED',archive,env['import']-archive),('IMPORT_TERMINATED_AND_ACCOUNTED',archive+h,r.RESERVE+r.shipping_resources(self.DB)['walLimit']),('DB',h,env['database']-h)]:
+            ledger['phase']=phase
+            for repeat in range(2):r.b1_capacity_gate(ledger,u+actual,f-actual,future)
+        self.assertEqual(ledger['peak'],env['import']);self.assertEqual(len(ledger['observations']),7)
+        # A new phase cannot reset either cumulative peak or remaining space.
+        with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):r.b1_capacity_gate(ledger,u+5*r.GIB,f-5*r.GIB,2*r.GIB)
+    def test_no_credit_for_unrelated_deletion_or_filesystem_change(self):
+        ledger=self.ledger(free=30*r.GIB);u=ledger['baselineUsed'];f=ledger['baselineAvailable']
+        r.b1_capacity_gate(ledger,u,f,5*r.GIB)
+        self.assertEqual(r.b1_capacity_gate(ledger,u-r.GIB,f+r.GIB,0)['peak'],5*r.GIB)
+        with self.assertRaisesRegex(r.GateError,'B1_FILESYSTEM_CHANGED'):r.b1_capacity_gate(ledger,u,f+1,0)
+    def test_fresh_db_and_df_each_gate_growth_is_not_stale(self):
+        cap=self.ledger();cap['phase']='DB';remote=types.SimpleNamespace(b1_capacity=cap)
+        reads=[];db=dict(self.DB);u=cap['baselineUsed'];f=cap['baselineAvailable'];h=self.ART['blobs']+self.ART['expanded']
+        remote.db=lambda:(reads.append('db') or dict(db));remote.disk=lambda:(reads.append('df') or (u+h,f-h))
+        first=r.b1_db_gate(remote);second=r.b1_db_gate(remote)
+        self.assertEqual(first['peak'],second['peak']);self.assertEqual(reads,['db','df','db','df'])
+        db['dbBytes']=r.GIB
+        with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):r.b1_db_gate(remote)
+        cap['phase']='UPLOADED'
+        with self.assertRaisesRegex(r.GateError,'B1_PHASE_INVALID'):r.b1_db_gate(remote)
+    def test_retained_backup_restore_counted_actual_not_future_twice(self):
+        cap=self.ledger();cap['phase']='DB';limits=r.shipping_resources(self.DB)
+        h=self.ART['blobs']+self.ART['expanded'];used=cap['baselineUsed']+h+limits['backupLimit']+limits['restoreLimit']
+        remote=types.SimpleNamespace(b1_capacity=cap,db=lambda:dict(self.DB),disk=lambda:(used,cap['baselineUsed']+cap['baselineAvailable']-used))
+        result=r.b1_db_gate(remote,{k:limits[k] for k in ('walLimit','migratorLimit')})
+        self.assertEqual(result['peak'],r.b1_envelope(self.ART,self.DB)['database'])
+        self.assertEqual(cap['phase'],'DB_RETAINED')
+    def test_exact_b1_controller_identity_and_entire_commit_chain(self):
+        legacy=AdmissionTests().identity_git
+        for fault in (None,'ancestor','merge','scope','business','same-e'):
+            def git(repo,*args):
+                if args==('branch','--show-current'):return r.B1_BRANCH
+                if args[:2]==('rev-list','--merges'):return 'b'*40 if fault=='merge' else ''
+                if args[:1]==('log',):return 'server/v2.js' if fault=='scope' else '\n'.join(sorted(r.B1_FILES))
+                if args[:3]==('diff','--name-only',r.B1_BASE):return 'server/v2.js' if fault=='business' else ''
+                return legacy(repo,*args)
+            with self.subTest(fault=fault),patch.object(r,'B1_IDENTITY',False),patch.object(r,'git',side_effect=git),patch.object(r,'is_ancestor',return_value=fault!='ancestor'):
+                if fault:
+                    with self.assertRaises(r.GateError):r.validate_procurement_identity(ROOT,r.B1_BASE if fault=='same-e' else 'a'*40)
+                else:r.validate_procurement_identity(ROOT,'a'*40)
+    def test_fixed_r_exact_id_required_without_import(self):
+        art={'compatibility':{'release':C['rollbackSha']}}
+        with patch.object(r,'resolve_loaded_image',return_value={'Id':'fixed-r'}):
+            self.assertEqual(r.b1_fixed_r(None,art),'fixed-r')
+            with self.assertRaisesRegex(r.GateError,'B1_R_BASELINE_UNVERIFIED'):r.b1_fixed_r(None,art,{'fixedRImageId':'changed'})
+        with patch.object(r,'resolve_loaded_image',side_effect=r.GateError('missing')):
+            with self.assertRaisesRegex(r.GateError,'B1_R_BASELINE_UNVERIFIED'):r.b1_fixed_r(None,art)
+    def test_unknown_import_receipt_and_storage_proof_fail_closed(self):
+        for proof in ({},{'terminated':True},{'terminated':True,'activeIngest':1,'unknownSnapshots':0,'allocatedRoots':{'x':1}},
+                      {'terminated':True,'activeIngest':0,'unknownSnapshots':1,'allocatedRoots':{'x':1}}):
+            with self.subTest(proof=proof),self.assertRaisesRegex(r.GateError,'B1_IMPORT_UNKNOWN'):
+                r.b1_storage(types.SimpleNamespace(py=lambda *args:json.dumps(proof)))
+    def test_real_storage_parser_rejects_active_ingest_unknown_snapshot_and_driver(self):
+        baseinfo={'ServerVersion':'29.1.3','Driver':'overlayfs','DockerRootDir':'/var/lib/docker','DriverStatus':[['driver-type','io.containerd.snapshotter.v1']]}
+        for mutation in ('valid','ingest','snapshot','driver','short-id','bad-header','command-failure'):
+            info=copy.deepcopy(baseinfo)
+            if mutation=='driver':info['Driver']='overlay2'
+            def run(args,**kw):
+                if mutation=='command-failure':raise subprocess.CalledProcessError(1,args)
+                if args[:2]==['docker','info']:return json.dumps(info).encode()
+                if args[:2]==['docker','ps']:return (('a'*12 if mutation=='short-id' else 'a'*64)+'\n').encode()
+                if args[-2:]==['content','active']:return ('REF SIZE AGE\n'+('held 4B 1s\n' if mutation=='ingest' else '')).encode()
+                if args[-1]=='list':return (('UNKNOWN\n' if mutation=='bad-header' else 'KEY PARENT KIND\n')+('unowned Active\n' if mutation=='snapshot' else 'a'*64+' Active\nlayer Committed\n')).encode()
+                if args[0]=='du':return b'4096 path\n'
+                raise AssertionError(args)
+            out=io.StringIO()
+            with patch('sys.stdin',io.StringIO('{}')),patch('sys.stdout',out),patch('subprocess.check_output',side_effect=run),patch('os.stat',return_value=types.SimpleNamespace(st_dev=1)),patch.object(Path,'is_symlink',return_value=False):
+                if mutation=='valid':exec(compile(r.B1_STORAGE_CODE,'b1-storage','exec'),{})
+                else:
+                    with self.assertRaises((AssertionError,subprocess.CalledProcessError)):exec(compile(r.B1_STORAGE_CODE,'b1-storage','exec'),{})
+            if mutation=='valid':self.assertEqual(json.loads(out.getvalue())['activeIngest'],0)
+
+
+class B1ImportBarrierTests(unittest.TestCase):
+    def attempt(self,fault=None):
+        art={**B1CapacityTests.ART,'archiveHash':'c'*64,'release':'a'*40}
+        cap={'baselineUsed':60*r.GIB,'baselineAvailable':15964217344,'phase':'UPLOADED','peak':5154070502,
+             'importReceipt':{'serverWaitComplete':True,'returncode':0,'archiveHash':art['archiveHash'],'archiveBytes':art['archive'],'archiveInode':17}}
+        art['capacityLedger']=cap;events=[];released=False
+        if fault=='receipt':cap['importReceipt']['serverWaitComplete']=False
+        proof={'inode':17,'device':1,'allocated':art['archive'],'path':'fixture'}
+        if fault=='inode':proof['inode']=18
+        h=art['blobs']+art['expanded']
+        def disk():
+            events.append('df');actual=h+(0 if released and fault!='no-free' else art['archive'])
+            return cap['baselineUsed']+actual,cap['baselineAvailable']-actual
+        def db():
+            events.append('db')
+            return {**B1CapacityTests.DB,'dbBytes':r.GIB if released and fault=='db-growth' else 164142103}
+        remote=types.SimpleNamespace(b1_capacity=cap,db=db,disk=disk)
+        def stage(remote,art,action,proof=None):
+            nonlocal released
+            events.append(action)
+            if fault=='ownership' and action=='inspect':raise r.GateError('B1_ARCHIVE_UNVERIFIED')
+            if action=='cleanup':released=True
+            return {'inode':18 if fault=='inode' else 17,'device':1,'allocated':art['archive'],'path':'fixture'}
+        def storage(remote):
+            events.append('storage')
+            if fault=='ingest':raise r.GateError('B1_IMPORT_UNKNOWN')
+            return {}
+        def image(remote,art):
+            events.append('image')
+            if fault=='image':raise r.GateError('LOADED_ARTIFACT_MISMATCH')
+            return {'Id':'synthetic-e'}
+        def fixed(*args):
+            events.append('fixed-r')
+            if fault=='fixed-r':raise r.GateError('B1_R_BASELINE_UNVERIFIED')
+        with patch.object(r,'b1_stage',side_effect=stage),patch.object(r,'b1_storage',side_effect=storage),patch.object(r,'resolve_loaded_image',side_effect=image),patch.object(r,'b1_fixed_r',side_effect=fixed):
+            try:result=r.b1_archive_release(remote,art)
+            except r.GateError as error:return events,cap,str(error)
+        return events,cap,result
+    def test_real_release_barrier_order_and_fresh_db_df(self):
+        events,cap,result=self.attempt()
+        self.assertEqual(events,['image','fixed-r','storage','inspect','image','storage','df','db','cleanup','released','storage','df','db','df'])
+        self.assertEqual(cap['phase'],'DB');self.assertTrue(cap['archiveRelease']['verified'])
+        self.assertEqual(result['peak'],5154070502)
+    def test_unknown_or_wrong_ownership_never_get_cleanup_credit(self):
+        for fault in ('receipt','inode','ownership','ingest','image','fixed-r'):
+            with self.subTest(fault=fault):
+                events,cap,error=self.attempt(fault)
+                self.assertIsInstance(error,str);self.assertNotIn('cleanup',events);self.assertNotIn('archiveRelease',cap)
+    def test_unlink_without_actual_release_holds(self):
+        events,cap,error=self.attempt('no-free')
+        self.assertEqual(error,'B1_ARCHIVE_RELEASE_NOT_OBSERVED');self.assertEqual(cap['phase'],'IMPORT_TERMINATED_AND_ACCOUNTED')
+        self.assertNotIn('archiveRelease',cap);self.assertEqual(events[-1],'df')
+    def test_post_cleanup_db_growth_holds_before_db_work(self):
+        events,cap,error=self.attempt('db-growth')
+        self.assertEqual(error,'B1_CAPACITY_6GIB');self.assertEqual(events[-2:],['db','df'])
+    def test_deploy_has_no_r_import_no_second_import_and_releases_before_handoff(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='b1_deploy')
+        body=ast.get_source_segment(source,node)
+        self.assertEqual(body.count("remote.run(['python3','-c',B1_IMPORT_CODE"),1)
+        self.assertNotIn('compatibilityPath',body)
+        self.assertLess(body.index('b1_archive_release(remote,art)'),body.index('run_loaded_controller(v)'))
+        self.assertNotIn('os.rmdir',body)
+
+
+class B1FormalPathTests(unittest.TestCase):
+    def attempt(self,fault=None):
+        r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+        class Model(ProcurementModel):
+            def __init__(self):
+                super().__init__();self.lock=False;self.imported=False;self.archive_present=False;self.cleaned=False
+                self.art.update(B1CapacityTests.ART);self.art['capacityProfile']='B1';self.order=[]
+            def disk(self):
+                growth=(self.art['archive'] if self.archive_present or (self.cleaned and fault=='no-free') else 0)+(self.art['blobs']+self.art['expanded'] if self.imported else 0)
+                return 60*r.GIB+growth,15964217344-growth
+            def db(self):
+                value=super().db();value['dbBytes']=r.GIB if self.cleaned and fault=='db-growth' else 164142103;return value
+            def run(self,args,data=None,timeout=60):
+                if args[:3]==['docker','images','-q'] and args[-1]==self.art['imageReference'] and not self.imported:return b''
+                if args[:3]==['python3','-c',r.B1_IMPORT_CODE]:
+                    self.order.append('import');self.imported=True
+                    if fault=='transport':raise r.GateError('COMMAND_UNAVAILABLE_OR_TIMEOUT')
+                    return json.dumps({'returncode':0,'serverWaitComplete':True,'archiveHash':self.art['archiveHash'],'archiveBytes':self.art['archive'],'archiveInode':17}).encode()
+                if args[:2]==['docker','stop'] and args[-1] in ('G','g-id'):
+                    self.order.append('stop-old');assert self.cleaned,'OLD_WRITER_STOPPED_BEFORE_ARCHIVE_RELEASE'
+                return super().run(args,data,timeout)
+            def py(self,code,value=None,timeout=60):
+                if code=='import os; os.mkdir(%r,0o700)' % r.LOCK:self.lock=True;return b''
+                if code==r.B1_STORAGE_CODE:
+                    if self.imported and fault=='ingest':return '{}'
+                    return json.dumps({'terminated':True,'activeIngest':0,'unknownSnapshots':0,'allocatedRoots':{'docker':1,'containerd':1}})
+                if code==r.B1_STAGE_CODE:
+                    action=value['action'];self.order.append(action)
+                    if action=='cleanup':
+                        assert self.old['State']['Running'];self.cleaned=True;self.archive_present=False
+                    return json.dumps({'claimed':True} if action=='claim' else {'released':True} if action=='released' else {'inode':17,'device':1,'allocated':self.art['archive'],'path':'fixture'})
+                return super().py(code,value,timeout)
+        model=Model()
+        def upload(*args):model.order.append('upload');model.archive_present=True;return 'fixture'
+        with patch.object(r,'stage_artifact',side_effect=upload),patch.object(r,'procurement_facts',side_effect=model.facts),patch.object(r,'signal') as signals,contextlib.redirect_stdout(io.StringIO()):
+            signals.SIGHUP=1;signals.SIGTERM=15;signals.SIGINT=2
+            try:r.deploy(model,ROOT,Path('fixture'),model.art,LEDGER,model.sha)
+            except r.GateError as error:return model,str(error)
+        return model,None
+    def test_real_b1_deploy_execute_loaded_order(self):
+        model,error=self.attempt();self.assertIsNone(error)
+        self.assertEqual(model.phase,88);self.assertEqual(model.pointer,model.sha);self.assertFalse(model.lock)
+        self.assertLess(model.order.index('cleanup'),model.order.index('stop-old'))
+        self.assertEqual(model.order.count('import'),1);self.assertEqual(r.writer_names(model.containers()),[model.ename])
+        self.assertEqual(model.art['capacityLedger']['peak'],5154070502)
+    def test_transport_unknown_ingest_no_free_and_db_growth_never_stop_old_writer(self):
+        for fault in ('transport','ingest','no-free','db-growth'):
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault);self.assertIsNotNone(error)
+                self.assertNotIn('stop-old',model.order);self.assertTrue(model.lock)
+                self.assertEqual(r.writer_names(model.containers()),['G'])
+                self.assertEqual(model.order.count('import'),1)
+                if fault in ('transport','ingest'):self.assertNotIn('cleanup',model.order)
+
+class B1ArchiveTests(unittest.TestCase):
+    def helper(self,value):
+        import pwd
+        # Only the Unix account mapping is adapted to the unprivileged local
+        # test user. CI Linux executes real /proc reader and mmap checks.
+        original_iterdir=Path.iterdir
+        def iterdir(p):
+            if str(p)=='/proc':return iter([Path('/proc')/str(os.getpid())]) if sys.platform=='linux' else iter(())
+            return original_iterdir(p)
+        out=io.StringIO()
+        with patch('sys.stdin',io.StringIO(json.dumps(value))),patch('sys.stdout',out),patch('pwd.getpwnam',return_value=types.SimpleNamespace(pw_uid=os.getuid())),patch.object(Path,'iterdir',iterdir):
+            exec(compile(r.B1_STAGE_CODE,'b1-owned-archive','exec'),{})
+        return json.loads(out.getvalue())
+    def fixture(self,root):
+        data=b'synthetic archive\n'*4096;sha='a'*40
+        v={'root':str(root.resolve()),'release':sha,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),'token':'test-release-owner','action':'claim'}
+        root.chmod(0o700);self.helper(v)
+        tar=root/(sha+'.tar');meta=root/(sha+'.json')
+        tar.write_bytes(data);meta.write_text(json.dumps({k:v[k] for k in ('release','sha256','bytes')}))
+        tar.chmod(0o600);meta.chmod(0o600)
+        return v,tar,meta
+    def test_exact_release_and_wrong_identity_never_cleaned(self):
+        for mutation in ('sha','size','symlink','hardlink','uid','mode','token','metadata'):
+            with self.subTest(mutation=mutation),tempfile.TemporaryDirectory() as d:
+                root=Path(d).resolve();v,tar,meta=self.fixture(root)
+                if mutation=='sha':tar.write_bytes(b'x'*v['bytes'])
+                elif mutation=='size':tar.write_bytes(b'x')
+                elif mutation=='symlink':other=root/'other';tar.rename(other);tar.symlink_to(other)
+                elif mutation=='hardlink':os.link(tar,root/'other')
+                elif mutation=='mode':tar.chmod(0o644)
+                elif mutation=='token':v['token']='wrong'
+                elif mutation=='metadata':meta.write_text('{}')
+                v['action']='cleanup';v.update(inode=tar.stat().st_ino,device=tar.stat().st_dev,allocated=tar.stat().st_blocks*512)
+                if mutation=='uid':
+                    original=Path.lstat
+                    def altered(p):
+                        value=original(p)
+                        if p==tar:return types.SimpleNamespace(st_mode=value.st_mode,st_nlink=value.st_nlink,st_uid=os.getuid()+1)
+                        return value
+                    with patch.object(Path,'lstat',altered),self.assertRaises(AssertionError):self.helper(v)
+                else:
+                    with self.assertRaises(AssertionError):self.helper(v)
+                self.assertTrue(tar.exists());self.assertTrue(meta.exists())
+    def test_exact_owned_release_and_unrelated_r_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d).resolve();v,tar,meta=self.fixture(root);fixed=root/'fixed-r.tar';fixed.write_bytes(b'KEEP R')
+            proof=self.helper({**v,'action':'inspect'})
+            self.helper({**v,**proof,'action':'cleanup'});self.helper({**v,**proof,'action':'released'})
+            self.assertFalse(tar.exists());self.assertEqual(fixed.read_bytes(),b'KEEP R')
+    def test_existing_archive_cannot_be_claimed_or_deleted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d).resolve();v,tar,meta=self.fixture(root)
+            with self.assertRaises(AssertionError):self.helper(v)
+            self.assertTrue(tar.exists())
+    @unittest.skipUnless(sys.platform=='linux','real /proc readers require hosted Linux')
+    def test_open_reader_and_mmap_block_cleanup(self):
+        import mmap
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d).resolve();v,tar,meta=self.fixture(root)
+            with tar.open('rb') as stream:
+                with self.assertRaises(AssertionError):self.helper({**v,'action':'inspect'})
+                mapping=mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ)
+            try:
+                with self.assertRaises(AssertionError):self.helper({**v,'action':'inspect'})
+            finally:mapping.close()
+            self.helper({**v,'action':'inspect'})
 
 if __name__=='__main__':unittest.main(verbosity=2)

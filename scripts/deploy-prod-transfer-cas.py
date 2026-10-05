@@ -205,6 +205,16 @@ def procurement_contract():
                 'scripts/test-candidate-db-probe-integration.py','scripts/test-release-path-post-transfer.py'}}
 
 
+B1_BASE = 'e762afce3053cd7ab0a7ebe9f36976ec80d3b64e'
+B1_BRANCH = 'codex/purchase-receipt-b1-capacity-fasttrack'
+B1_FILES = {'scripts/deploy-prod-transfer-cas.py',
+            'scripts/test-purchase-receipt-release-contract.py',
+            'scripts/test-release-path-post-transfer.py',
+            'scripts/test-candidate-db-probe-integration.py',
+            '.github/workflows/release-build-only.yml'}
+B1_IDENTITY = False
+
+
 def procurement_migration():
     c=procurement_contract()
     return RELEASE_PROFILE=='post-transfer' and RUNTIME_SHA==c['businessSha'] and EXPECTED_OLD_SHA in (c['oldSha'],c['rollbackSha'])
@@ -216,9 +226,20 @@ def migration_enabled():
 
 def validate_procurement_identity(repo, release):
     c=procurement_contract()
-    require(git(repo,'branch','--show-current')==c['branch']
-            and git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['businessSha'],
-            'PROCUREMENT_RELEASE_IDENTITY_INVALID')
+    global B1_IDENTITY
+    B1_IDENTITY = git(repo,'branch','--show-current') == B1_BRANCH
+    if B1_IDENTITY:
+        require(release != B1_BASE and is_ancestor(repo,B1_BASE,release)
+                and not git(repo,'rev-list','--merges',B1_BASE+'..'+release), 'B1_IDENTITY_INVALID')
+        changed=set(filter(None,git(repo,'log','--format=','--name-only',B1_BASE+'..'+release).splitlines()))
+        require(bool(changed) and changed <= B1_FILES, 'B1_SCOPE_INVALID')
+        require(not git(repo,'diff','--name-only',B1_BASE,release,'--',
+                'server','prisma','shared','src','brand','Dockerfile','package.json','package-lock.json'),
+                'B1_BUSINESS_CHANGED')
+    else:
+        require(git(repo,'branch','--show-current')==c['branch']
+                and git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['businessSha'],
+                'PROCUREMENT_RELEASE_IDENTITY_INVALID')
     require(set(git(repo,'diff','--name-only',c['businessSha'],release).splitlines())==c['engineeringFiles'],
             'PROCUREMENT_ENGINEERING_SCOPE_INVALID')
     path='prisma/migrations/'+c['migration']+'/migration.sql'
@@ -932,7 +953,303 @@ No archive member is extracted to the host filesystem.
         return dict(archive=size, blobs=blobs, expanded=expanded, largest=largest,
                     archiveHash=archive_hash, archiveConfigDigest='sha256:' + digest(config_bytes),
                     imageReference=tag, rootfsDiffIds=diffs,
-                    config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics)
+                    config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics,
+                    capacityProfile='B1' if B1_IDENTITY and release != procurement_contract()['rollbackSha'] else 'LEGACY')
+
+# B1 never discounts image contents or DB allowances. Only proven phase
+# transitions remove future allocations; actual retained bytes stay in df.
+def b1_capacity_gate(ledger, used, available, future, planned=0):
+    require(all(type(x) is int and x >= 0 for x in (used, available, future, planned)), 'B1_CAPACITY_INVALID')
+    require(used+available == ledger['baselineUsed']+ledger['baselineAvailable'], 'B1_FILESYSTEM_CHANGED')
+    retained=max(0, used-ledger['baselineUsed'])
+    peak=max(ledger.get('peak',0), retained+future, planned)
+    require(peak <= ABSOLUTE_MAX_PEAK, 'B1_CAPACITY_6GIB')
+    # Both the original cumulative envelope and current remaining allocations
+    # must pass. An unrelated deletion can never erase historical peak costs.
+    projected=min(available-future, ledger['baselineAvailable']-peak)
+    require(projected >= MIN_PROJECTED_AVAILABLE, 'B1_CAPACITY_10GIB')
+    total=used+available
+    require(total > 0 and 100*max(used+future,ledger['baselineUsed']+peak) <= MAX_PROJECTED_USAGE*total,
+            'B1_CAPACITY_90PCT')
+    ledger['peak']=peak
+    record={'phase':ledger['phase'],'used':used,'available':available,'retained':retained,
+            'future':future,'peak':peak,'projectedAvailable':projected}
+    ledger.setdefault('observations',[]).append(record)
+    return record
+
+
+def b1_envelope(art, db):
+    limits=shipping_resources(db)
+    # Original artifact limits/Model A are preserved, without reuse discounts.
+    disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])
+    retained=art['blobs']+art['expanded']
+    return {'import':art['archive']+retained+art['largest']+RESERVE+limits['walLimit'],
+            'database':retained+sum(limits.values())+RESERVE}
+
+
+B1_STORAGE_CODE = r'''import json,os,pathlib,subprocess,sys
+v=json.load(sys.stdin)
+def run(a):return subprocess.check_output(a,stderr=subprocess.DEVNULL,timeout=30).decode().strip()
+info=json.loads(run(['docker','info','--format','{{json .}}']))
+assert info['ServerVersion']=='29.1.3' and info['Driver']=='overlayfs'
+assert ['driver-type','io.containerd.snapshotter.v1'] in info['DriverStatus']
+assert info['DockerRootDir']=='/var/lib/docker'
+rootdev=os.stat('/').st_dev
+roots=['/var/lib/docker','/var/lib/containerd']
+assert all(os.stat(p).st_dev==rootdev and not pathlib.Path(p).is_symlink() for p in roots)
+base=['ctr','--address','/run/containerd/containerd.sock','--namespace','moby']
+ingest=run(base+['content','active']).splitlines()
+assert ingest and ingest[0].split()==['REF','SIZE','AGE']
+assert len(ingest)==1
+rows=run(base+['snapshots','--snapshotter','overlayfs','list']).splitlines()
+assert rows and rows[0].split()==['KEY','PARENT','KIND']
+ids=run(['docker','ps','-aq','--no-trunc']).split()
+assert all(len(i)==64 and all(c in '0123456789abcdef' for c in i) for i in ids)
+known=set(ids)|{i+'-init' for i in ids}
+active=[];committed=0
+for row in rows[1:]:
+    cols=row.split();assert len(cols) in (2,3)
+    key,kind=cols[0],cols[-1]
+    if kind=='Committed':committed+=1
+    else:
+        assert kind=='Active' and key in known
+        active.append(key)
+allocated={p:int(run(['du','-sx','--block-size=1',p]).split()[0]) for p in roots}
+print(json.dumps({'terminated':True,'activeIngest':0,'unknownSnapshots':0,
+ 'knownActiveSnapshots':active,'committedCount':committed,'allocatedRoots':allocated,'device':rootdev}))
+'''
+
+
+B1_STAGE_CODE = r'''import hashlib,json,os,pathlib,pwd,stat,sys
+v=json.load(sys.stdin);root=pathlib.Path(v['root']);uid=pwd.getpwnam('ubuntu').pw_uid
+assert root.resolve()==root and (not root.exists() or (root.is_dir() and not root.is_symlink()))
+if v['action']=='claim' and not root.exists():
+    root.mkdir(mode=0o700);os.chown(root,uid,-1)
+assert root.stat().st_uid==uid and stat.S_IMODE(root.stat().st_mode)==0o700
+release=v['release'];assert len(release)==40 and all(c in '0123456789abcdef' for c in release)
+tar=root/(release+'.tar');meta=root/(release+'.json');owner=root/(release+'.b1-owner')
+expected={k:v[k] for k in ('release','sha256','bytes')}
+def exact(p):
+    s=p.lstat()
+    assert stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==uid and stat.S_IMODE(s.st_mode)==0o600
+    return s
+def readers(inode,dev):
+    # Permission failures are UNKNOWN. Only vanished processes/fds may be skipped.
+    for proc in pathlib.Path('/proc').iterdir():
+        if not proc.name.isdigit():continue
+        try:
+            for fd in (proc/'fd').iterdir():
+                try:s=fd.stat()
+                except FileNotFoundError:continue
+                assert (s.st_ino,s.st_dev)!=(inode,dev)
+            for line in (proc/'maps').read_text().splitlines():
+                cols=line.split();major,minor=[int(x,16) for x in cols[3].split(':')]
+                assert (int(cols[4]),os.makedev(major,minor))!=(inode,dev)
+        except (FileNotFoundError,ProcessLookupError):continue
+if v['action']=='claim':
+    assert all(not p.exists() and not p.is_symlink() for p in (tar,meta,owner,root/(release+'.tar.part')))
+    fd=os.open(owner,os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_WRONLY,0o600)
+    with os.fdopen(fd,'w') as f:
+        os.fchown(f.fileno(),uid,-1);json.dump({**expected,'token':v['token']},f);f.flush();os.fsync(f.fileno())
+    print(json.dumps({'claimed':True}))
+elif v['action']=='released':
+    assert all(not p.exists() and not p.is_symlink() for p in (tar,meta,owner))
+    readers(v['inode'],v['device']);print(json.dumps({'released':True}))
+else:
+    assert v['action'] in ('inspect','cleanup')
+    exact(owner);exact(meta);s=exact(tar)
+    assert json.loads(owner.read_text())=={**expected,'token':v['token']}
+    assert json.loads(meta.read_text())==expected
+    assert s.st_size==v['bytes']
+    h=hashlib.sha256()
+    with tar.open('rb') as f:
+        for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
+    assert h.hexdigest()==v['sha256']
+    readers(s.st_ino,s.st_dev)
+    proof={'inode':s.st_ino,'device':s.st_dev,'allocated':s.st_blocks*512,'path':str(tar)}
+    if v['action']=='cleanup':
+        assert all(proof[k]==v[k] for k in ('inode','device','allocated'))
+        current=exact(tar)
+        assert (current.st_ino,current.st_dev,current.st_size,current.st_mtime_ns,current.st_ctime_ns)==(s.st_ino,s.st_dev,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+        tar.unlink();meta.unlink();owner.unlink()
+        fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+    print(json.dumps(proof))
+'''
+
+
+def b1_storage(remote):
+    try:
+        proof=json.loads(remote.py(B1_STORAGE_CODE,{}))
+        require(proof.get('terminated') is True and proof.get('activeIngest')==0
+                and proof.get('unknownSnapshots')==0 and bool(proof.get('allocatedRoots')), 'B1_IMPORT_UNKNOWN')
+        return proof
+    except Exception:
+        raise GateError('B1_IMPORT_UNKNOWN') from None
+
+
+def b1_stage(remote, art, action, proof=None):
+    value={'action':action,'root':STAGING_ROOT,'release':art['release'],
+           'sha256':art['archiveHash'],'bytes':art['archive'],'token':art['capacityLedger']['token']}
+    if proof:value.update(proof)
+    try:return json.loads(remote.py(B1_STAGE_CODE,value))
+    except Exception:raise GateError('B1_ARCHIVE_UNVERIFIED') from None
+
+
+def b1_fixed_r(remote, art, capacity=None):
+    compatible=art['compatibility']
+    require(compatible['release']==procurement_contract()['rollbackSha'], 'B1_R_BASELINE_UNVERIFIED')
+    try:
+        image=resolve_loaded_image(remote,compatible)
+        if capacity:require(image['Id']==capacity['fixedRImageId'], 'B1_R_BASELINE_UNVERIFIED')
+        return image['Id']
+    except Exception:raise GateError('B1_R_BASELINE_UNVERIFIED') from None
+
+
+def b1_db_gate(remote, resources=None):
+    cap=remote.b1_capacity
+    require(cap['phase'] in ('DB','DB_RETAINED'), 'B1_PHASE_INVALID')
+    db=remote.db();limits=shipping_resources(db)
+    if resources is not None:
+        require(set(resources) in ({'walLimit','migratorLimit'},set(limits)), 'B1_PHASE_INVALID')
+        if set(resources)=={'walLimit','migratorLimit'}:cap['phase']='DB_RETAINED'
+    # W is reserved once per envelope, never added to the ledger on each call.
+    # Already consumed growth stays in actual Used; no speculative WAL credit.
+    keys=('walLimit','migratorLimit') if cap['phase']=='DB_RETAINED' else tuple(limits)
+    used,available=remote.disk()
+    result=b1_capacity_gate(cap,used,available,sum(limits[k] for k in keys)+RESERVE)
+    cap['dbBytes']=db['dbBytes'];cap['resourceLimits']=limits
+    return {**result,'migrationResourceLimits':limits,'projectedUsage':
+            math.ceil(100*(used+result['future'])/(used+available))}
+
+
+B1_IMPORT_CODE = r'''import hashlib,json,os,pathlib,subprocess,sys,time
+path=pathlib.Path(sys.argv[1]);s=path.stat();expected=sys.argv[2]
+assert s.st_size==int(sys.argv[3]) and not path.is_symlink()
+h=hashlib.sha256()
+with path.open('rb') as f:
+    for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
+assert h.hexdigest()==expected
+started=time.monotonic()
+p=subprocess.Popen(['docker','load','-i',str(path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+rc=p.wait()
+assert not pathlib.Path('/proc/'+str(p.pid)).exists()
+after=path.stat()
+assert (s.st_ino,s.st_dev,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(after.st_ino,after.st_dev,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+print(json.dumps({'serverWaitComplete':True,'returncode':rc,'archiveHash':expected,
+ 'archiveBytes':s.st_size,'archiveInode':s.st_ino,'elapsedSeconds':time.monotonic()-started}))
+raise SystemExit(rc)
+'''
+
+
+def b1_archive_release(remote, art):
+    cap=art['capacityLedger'];receipt=cap.get('importReceipt',{})
+    require(cap['phase']=='UPLOADED' and receipt.get('serverWaitComplete') is True
+            and receipt.get('returncode')==0 and receipt.get('archiveHash')==art['archiveHash']
+            and receipt.get('archiveBytes')==art['archive'],'B1_IMPORT_UNKNOWN')
+    art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id']
+    b1_fixed_r(remote,art,cap)
+    b1_storage(remote);archive=b1_stage(remote,art,'inspect')
+    require(archive['inode']==receipt.get('archiveInode'),'B1_ARCHIVE_UNVERIFIED')
+    resolve_loaded_image(remote,art);b1_storage(remote)
+    cap['phase']='IMPORT_TERMINATED_AND_ACCOUNTED'
+    before_used,before_free=remote.disk()
+    b1_capacity_gate(cap,before_used,before_free,RESERVE+shipping_resources(remote.db())['walLimit'])
+    b1_stage(remote,art,'cleanup',archive)
+    b1_stage(remote,art,'released',archive);b1_storage(remote)
+    after_used,after_free=remote.disk()
+    require(after_free-before_free >= archive['allocated'] and before_used-after_used >= archive['allocated'],
+            'B1_ARCHIVE_RELEASE_NOT_OBSERVED')
+    cap['phase']='DB'
+    cap['archiveRelease']={'beforeAvailable':before_free,'afterAvailable':after_free,
+                           'allocated':archive['allocated'],'verified':True}
+    return b1_db_gate(remote)
+
+
+def b1_preflight(remote, art, ledger, imported=False):
+    # Same authority checks as legacy preflight; only capacity accounting differs.
+    template,active=remote.routes();name=route_target(template,active);old=remote.inspect(name)
+    require(old['Config']['Labels'].get(REVISION)==EXPECTED_OLD_SHA and env(old).get('GIT_SHA')==EXPECTED_OLD_SHA,
+            'PRODUCTION_SHA_MISMATCH')
+    require(old['State']['Running'] and old['State'].get('Health',{}).get('Status')=='healthy','PRODUCTION_NOT_HEALTHY')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==EXPECTED_OLD_SHA,'CURRENT_SHA_POINTER_MISMATCH')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0]==OLD_V2_HASH,'OLD_RUNTIME_SOURCE_MISMATCH')
+    remote.health(name,EXPECTED_OLD_SHA);remote.health(name,EXPECTED_OLD_SHA,public=True)
+    db=remote.db()
+    if EXPECTED_OLD_SHA==procurement_contract()['oldSha']:require(db['applied']==87,'PROCUREMENT_SCHEMA_INVALID')
+    validate_database(db,procurement_existing_ledger(db,ledger));writer_check(remote.containers(),db,[name])
+    validate_clone_source(old,art['config']);limits=shipping_resources(db)
+    cap=art.get('capacityLedger');rid=b1_fixed_r(remote,art,cap)
+    if cap is None:
+        storage=b1_storage(remote)
+        # R must be present before this df baseline; B1 never imports R.
+        used,available=remote.disk()
+        cap={'baselineUsed':used,'baselineAvailable':available,'fixedRImageId':rid,
+             'phase':'PRE_IMPORT','token':os.urandom(16).hex(),'storage':storage,'peak':0}
+        art['capacityLedger']=cap
+    remote.b1_capacity=cap
+    if imported:
+        require(cap['phase'] in ('DB','DB_RETAINED'),'B1_PHASE_INVALID')
+        budget=b1_db_gate(remote)
+        require(remote.run(['docker','run','--rm','--network','none','--entrypoint','node',
+                art['imageReference'],'-e',SHIPPING_CLI_PROBE])==b'PINNED_PRISMA_CLI_OK\n','SHIPPING_PRISMA_CLI_INVALID')
+    else:
+        require(cap['phase'] in ('PRE_IMPORT','UPLOADED'),'B1_PHASE_INVALID')
+        used,available=remote.disk();envelope=b1_envelope(art,db)
+        archive=art['archive'] if cap['phase']=='PRE_IMPORT' else 0
+        future=archive+art['blobs']+art['expanded']+art['largest']+RESERVE+limits['walLimit']
+        # DB phase may be reached only after actual archive release is proved.
+        outside=max(0,used-cap['baselineUsed']-cap.get('archiveAllocated',0))
+        planned=max(envelope.values())+outside
+        budget=b1_capacity_gate(cap,used,available,future,planned)
+    remote.inspect(old['Image'],image=True)
+    return dict(old=old,name=name,template=template,active=active,budget=budget,
+                diskUsed=budget['used'],diskAvailable=budget['available'],migrationResources=limits,
+                before_ledger=procurement_existing_ledger(db,ledger),migration_phase='L87' if db['applied']==87 else 'L88')
+
+
+def b1_deploy(remote, repo, path, art, ledger, authorize):
+    require(not MEASURE_ONLY and authorize==art['release'],'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
+    # A separate preflight command cannot carry stale observations into deploy.
+    art.pop('capacityLedger',None)
+    state=b1_preflight(remote,art,ledger);cap=art['capacityLedger']
+    remote.py('import os; os.mkdir(%r,0o700)' % LOCK)
+    # Every failure before handoff keeps this lock, including transport UNKNOWN.
+    # No retry/import/cleanup is inferred from a failed client process.
+    candidate='budu-prod-'+art['release'][:12]+CONTAINER_SUFFIX
+    recovering=EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']
+    exists=remote.run(['docker','images','-q',art['imageReference']]).strip()
+    require(not exists or recovering,'CANDIDATE_TAG_EXISTS')
+    if exists:
+        art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id']
+        procurement_stopped_candidate(remote,state,art)
+        b1_storage(remote);cap['phase']='DB'
+    else:
+        require(not remote.run(['docker','ps','-aq','--filter','name=^/'+candidate+'$']).strip(),'CANDIDATE_NAME_EXISTS')
+        b1_stage(remote,art,'claim')
+        staged=stage_artifact(remote,path,art)
+        archive=b1_stage(remote,art,'inspect');cap.update(phase='UPLOADED',archiveAllocated=archive['allocated'])
+        fresh=b1_preflight(remote,art,ledger)
+        require(fresh['old']['Id']==state['old']['Id'] and fresh['template']==state['template'],'AUTHORITY_CHANGED_DURING_UPLOAD')
+        try:
+            receipt=json.loads(remote.run(['python3','-c',B1_IMPORT_CODE,staged,art['archiveHash'],str(art['archive'])],timeout=1800))
+            require(receipt.get('returncode')==0,'B1_IMPORT_UNKNOWN')
+        except Exception:raise GateError('B1_IMPORT_UNKNOWN') from None
+        cap['importReceipt']=receipt
+        b1_archive_release(remote,art)
+    b1_fixed_r(remote,art,cap)
+    # Fresh DB and df, after real release and before the old writer is stopped.
+    b1_db_gate(remote)
+    fresh=b1_preflight(remote,art,ledger,imported=True)
+    require(fresh['old']['Id']==state['old']['Id'] and fresh['template']==state['template'],'AUTHORITY_CHANGED_DURING_IMPORT')
+    payload={'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,'expectedOldSha':EXPECTED_OLD_SHA,
+             'businessSha':RUNTIME_SHA,'oldV2Hash':OLD_V2_HASH,
+             'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
+             'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
+    code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
+    code+="\nv=json.load(sys.stdin)\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
+    result=remote.py(code,payload,timeout=480)
+    check_controller_result(result)
+
 
 class Remote:
     def __init__(self, key):
@@ -1085,6 +1402,8 @@ def shipping_resources(db):
 
 
 def shipping_disk_gate(remote, resources, art=None):
+    if vars(remote).get('b1_capacity') is not None:
+        return b1_db_gate(remote, resources)
     used, available = remote.disk()
     extra = sum(resources.values())
     if art is not None:
@@ -1399,6 +1718,9 @@ def validate_clone_source(old, image):
             and e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID') == 'dh', 'EXISTING_BINDING_MISMATCH')
 
 def preflight(remote, art, ledger, imported=False):
+    # B1 dispatch; the established legacy authority path below remains intact.
+    if art.get('capacityProfile') == 'B1':
+        return b1_preflight(remote, art, ledger, imported)
     template, active = remote.routes()
     name = route_target(template, active)
     old = remote.inspect(name)
@@ -1648,6 +1970,9 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
     for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, interrupted)
     try:
+        if art.get('capacityProfile') == 'B1':
+            require(art.get('capacityLedger',{}).get('phase') == 'DB', 'B1_PHASE_INVALID')
+            remote.b1_capacity = art['capacityLedger']
         state = preflight(remote, art, ledger, imported=True)
         require(state['old']['Id'] == expected_id and digest(state['template'].encode()) == expected_routes,
                 'AUTHORITY_CHANGED_DURING_IMPORT')
@@ -1746,7 +2071,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                           'mountReadabilityParity':'PASS','authorityMountReadability':authority_mounts,
                           'diskAfterUsed':used,'diskAfterAvailable':available,
                           'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True,
-                          'migrationPhase':state.get('migration_phase')}))
+                          'migrationPhase':state.get('migration_phase'),
+                          'capacityLedger':art.get('capacityLedger')}))
     except BaseException as error:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -1782,6 +2108,10 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
 
 
 SAFE_CONTROLLER_CODES = frozenset({
+    'B1_CAPACITY_INVALID','B1_FILESYSTEM_CHANGED','B1_CAPACITY_6GIB',
+    'B1_CAPACITY_10GIB','B1_CAPACITY_90PCT','B1_PHASE_INVALID',
+    'B1_IMPORT_UNKNOWN','B1_ARCHIVE_UNVERIFIED','B1_R_BASELINE_UNVERIFIED',
+    'B1_ARCHIVE_RELEASE_NOT_OBSERVED','B1_IDENTITY_INVALID','B1_SCOPE_INVALID','B1_BUSINESS_CHANGED',
     'RUNTIME_MOUNT_PROBE_FAILED','RUNTIME_MOUNT_IDENTITY_PARITY_FAILED',
     'RUNTIME_MOUNT_READABILITY_PARITY_FAILED','RUNTIME_CRASH_DETECTED',
     'LIVE_TRANSFER_CODE_MISMATCH','CRITICAL_STARTUP_LOG','HEALTH_FAILED',
@@ -1906,7 +2236,13 @@ else:
 
 
 def staging_action(remote, art, action):
-    result = json.loads(remote.py(STAGING_CODE, {'action':action,'release':art['release'],
+    code=STAGING_CODE
+    if art.get('capacityProfile') == 'B1':
+        require(action in ('prepare','verify'), 'B1_ARCHIVE_UNVERIFIED')
+        # Invalid uploads are evidence, never cleanup candidates. Only the B1
+        # exact-ownership helper may end this release's archive lifecycle.
+        code=code.replace('current.unlink(); meta.unlink()', 'pass # B1 retain invalid upload')
+    result = json.loads(remote.py(code, {'action':action,'release':art['release'],
                                                 'sha256':art['archiveHash'],'bytes':art['archive']}, timeout=180))
     require('error' not in result, result.get('error','STAGING_FAILED'))
     return result
@@ -1953,6 +2289,8 @@ raise SystemExit(result.returncode)
 
 
 def deploy(remote, repo, path, art, ledger, authorize):
+    if art.get('capacityProfile') == 'B1':
+        return b1_deploy(remote, repo, path, art, ledger, authorize)
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     require(authorize == art['release'], 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
     state = preflight(remote, art, ledger)
