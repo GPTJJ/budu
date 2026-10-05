@@ -26,6 +26,114 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  procurement-space-diagnostic:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-space-diagnostic-20261005' }}
+    name: NON_PRODUCTION exact procurement storage experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout exact diagnostic source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Guard exact diagnostic scope and zero additional fees
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/procurement-space-pycache
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = GPTJJ/budu
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/codex/purchase-receipt-space-diagnostic-20261005
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+          test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-list --parents -n 1 HEAD)" = "$GITHUB_SHA e762afce3053cd7ab0a7ebe9f36976ec80d3b64e"
+          test "$(git diff --name-only e762afce3053cd7ab0a7ebe9f36976ec80d3b64e HEAD)" = $'.github/workflows/release-build-only.yml\nscripts/test-purchase-receipt-space-isolated.py'
+          git diff --exit-code e762afce3053cd7ab0a7ebe9f36976ec80d3b64e HEAD -- server prisma cloudfunctions src shared Dockerfile package.json package-lock.json scripts/deploy-prod-transfer-cas.py
+          test "$(gh api repos/GPTJJ/budu --jq '.private')" = false
+          python3 -m py_compile scripts/test-purchase-receipt-space-isolated.py
+          python3 scripts/test-purchase-receipt-space-isolated.py --self-test
+          test -z "$(git status --porcelain --untracked-files=all)"
+          printf 'PUBLIC_STANDARD_UBUNTU_RUNNER_ONLY NO_NEW_CACHE_OR_ARTIFACT_UPLOAD NO_PRODUCTION_ACCESS\n'
+
+      - name: Reuse existing exact official E and R archives without rebuilding
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/GPTJJ/budu/actions/runs/37262379341 > "$RUNNER_TEMP/procurement-space-source-run.json"
+          gh api repos/GPTJJ/budu/actions/artifacts/11325782452 > "$RUNNER_TEMP/procurement-space-source-artifact.json"
+          python3 - <<'PY'
+          import datetime, json, os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          run=json.loads((root/'procurement-space-source-run.json').read_text())
+          artifact=json.loads((root/'procurement-space-source-artifact.json').read_text())
+          assert run['head_sha']=='e762afce3053cd7ab0a7ebe9f36976ec80d3b64e'
+          assert run['conclusion']=='success' and run['path']=='.github/workflows/release-build-only.yml'
+          assert artifact['id']==11325782452 and artifact['workflow_run']['id']==37262379341
+          assert artifact['size_in_bytes']==1133625596 and not artifact['expired']
+          assert artifact['digest']=='sha256:ddc6c1b9f95a701d23a9729b47d2e4baf2f30effb86fd9f9ceba0e5cfcf3be41'
+          assert datetime.datetime.fromisoformat(artifact['expires_at'].replace('Z','+00:00'))>datetime.datetime.now(datetime.timezone.utc)
+          PY
+          zip_path="$(mktemp "$RUNNER_TEMP/procurement-space-existing-zip.XXXXXX")"
+          (ulimit -f 1200000; gh api repos/GPTJJ/budu/actions/artifacts/11325782452/zip > "$zip_path")
+          input_dir="$RUNNER_TEMP/procurement-space-input-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 scripts/test-purchase-receipt-space-isolated.py --unpack-zip "$zip_path" --destination "$input_dir"
+          rm -- "$zip_path"
+          printf 'PROCUREMENT_SPACE_INPUT=%s\n' "$input_dir" >> "$GITHUB_ENV"
+
+      - name: Pin official static containerd to the read-only target version
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(mktemp "$RUNNER_TEMP/procurement-space-containerd.XXXXXX")"
+          curl --fail --silent --show-error --location --max-time 120 --max-filesize 33645699 \
+            https://github.com/containerd/containerd/releases/download/v2.2.1/containerd-static-2.2.1-linux-amd64.tar.gz \
+            --output "$archive"
+          bin_dir="$RUNNER_TEMP/procurement-space-containerd-bin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 scripts/test-purchase-receipt-space-isolated.py --unpack-containerd "$archive" --destination "$bin_dir"
+          rm -- "$archive"
+          printf 'PROCUREMENT_SPACE_CONTAINERD_BIN=%s\n' "$bin_dir" >> "$GITHUB_ENV"
+
+      - name: Prove physical reuse sampled peaks and held UNKNOWN recovery on owned storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_WORKSPACE,RUNNER_TEMP \
+            timeout --signal=TERM --kill-after=10s 40m \
+            python3 scripts/test-purchase-receipt-space-isolated.py \
+            --e-archive "$PROCUREMENT_SPACE_INPUT/image.tar" \
+            --r-archive "$PROCUREMENT_SPACE_INPUT/compatible.tar" \
+            --containerd-bin "$PROCUREMENT_SPACE_CONTAINERD_BIN" \
+            --proof "$RUNNER_TEMP/procurement-space-proof.json"
+
+      - name: Preserve bounded diagnostic evidence in job logs without storage uploads
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          proof=Path(os.environ['RUNNER_TEMP'])/'procurement-space-proof.json'
+          if proof.is_file():
+              assert proof.stat().st_size<=262144
+              print(proof.read_text())
+          else:
+              print('PHYSICAL_PROOF_NOT_COMPLETED: inspect the preceding step; no production action occurred')
+          PY
+
   artifact:
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision')) }}
     name: Exact Docker artifact validation
