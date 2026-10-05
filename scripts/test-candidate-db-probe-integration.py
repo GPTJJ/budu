@@ -1678,12 +1678,13 @@ def b1_import_ci(archive, compatible_archive, sha, b2=False):
             dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils sudo && adduser -D -u 1000 ubuntu\n'
             subprocess.run(['docker','build','--tag',tag,'-'],input=dockerfile.encode(),check=True,timeout=240)
             boot="containerd --root /var/lib/containerd --state /run/containerd --address /run/containerd/containerd.sock >/tmp/containerd.log 2>&1 &\nfor i in $(seq 1 60); do test -S /run/containerd/containerd.sock && break; sleep 1; done\nexec dockerd --containerd /run/containerd/containerd.sock --containerd-namespace moby --feature containerd-snapshotter --iptables=false --ip6tables=false --bridge=none --host unix:///var/run/docker.sock"
-            ident=docker('run','-d','--privileged','--network','none','--name',name,
+            ident=docker('run','-d','--privileged',*(['--cgroupns=private'] if b2 else []),'--network','none','--name',name,
                 '--label','budu.b1-fixture='+sha,'--mount','type=bind,source='+str(mount/'docker')+',target=/var/lib/docker',
                 '--mount','type=bind,source='+str(mount/'containerd')+',target=/var/lib/containerd',
                 '--mount','type=bind,source='+str(mount/'staging')+',target=/fixture/staging',
                 '--mount','type=bind,source='+str(Path(compatible_archive).resolve())+',target=/fixture-r.tar,readonly',
-                '--tmpfs','/run','--entrypoint','sh',tag,'-c',boot)
+                '--tmpfs','/run','--entrypoint',('/usr/local/bin/dind' if b2 else 'sh'),tag,*(['sh'] if b2 else []),'-c',boot)
+            if b2 and json.loads(docker('inspect',name))[0]['HostConfig']['CgroupnsMode']!='private':raise RuntimeError('B2_PRIVATE_CGROUP_REQUIRED')
             for _ in range(60):
                 ready=subprocess.run(['docker','exec',name,'docker','info','--format','{{.ServerVersion}}'],capture_output=True)
                 if ready.returncode==0:break
@@ -1792,12 +1793,25 @@ def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
     proof={'productionAccess':False,'productionAuthorityAdapter':'EXPLICIT_SYNTHETIC_IMPORT_ONLY',
            'handoffAdapter':'NO_DB_OR_APPLICATION_OR_CUTOVER_IN_THIS_FIXTURE',
            'realPgAndApplication':'INDEPENDENT_PG16_14_B2_SUCCESS_AND_ROLLBACK_CASES',
-           'filesystemRootAdapter':'OWNED_EXT4_MOUNT','dbSource':'SYNTHETIC_SIZE_ONLY'}
+           'filesystemRootAdapter':'OWNED_EXT4_MOUNT','dbSource':'SYNTHETIC_SIZE_ONLY',
+           'daemonInitializer':'OFFICIAL_IMAGE_DIND_WRAPPER_PRIVATE_CGROUP_ONLY'}
     try:
         with patch.object(release,'b2_preflight',side_effect=fixture_preflight),patch.object(release,'stage_artifact',side_effect=fixture_upload),patch.object(remote,'py',side_effect=fixture_py):
             release.b2_deploy(remote,ROOT,archive,art,{},sha)
         cap=art['capacityLedger'];r=art['compatibility'];release.b1_fixed_r(remote,art,cap)
         assert len(handoff)==1 and cap['phase']=='DB' and cap['rArchiveRelease']['verified']
+        # Test-only user sample, never a production constant or admission.
+        # The actual measured cumulative peak must fit the requested sample F;
+        # a larger hosted loop filesystem cannot manufacture B2 viability.
+        sample_free=15964217344;sample_peak=cap['peak']
+        proof['userSampleCapacity']={'inputSource':'USER_HISTORICAL_B_F_NOT_PRODUCTION_ADMISSION',
+            'dbBytes':remote.db()['dbBytes'],'freeBytes':sample_free,'peak':sample_peak,
+            'projectedFree':sample_free-sample_peak,'sixGiB':sample_peak<=release.ABSOLUTE_MAX_PEAK,
+            'tenGiB':sample_free-sample_peak>=release.MIN_PROJECTED_AVAILABLE,
+            'ninetyPercent':'CONDITIONAL_FROM_USER_OLD_90_PASS' if sample_peak<=6444543065 else 'UNVERIFIED',
+            'productionUsedBytes':'UNAVAILABLE'}
+        if not proof['userSampleCapacity']['sixGiB']:raise release.GateError('B1_CAPACITY_6GIB')
+        if not proof['userSampleCapacity']['tenGiB']:raise release.GateError('B1_CAPACITY_10GIB')
         assert not (mount/'staging'/(sha+'.tar')).exists() and not (mount/'staging'/(r['release']+'.tar')).exists()
         faults=[]
         for role,artifact,receipt in [('R',r,cap['rImportReceipt']),('E',art,cap['eImportReceipt'])]:

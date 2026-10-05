@@ -1484,7 +1484,9 @@ def b2_deploy(remote, repo, path, art, ledger, authorize):
     db=remote.db();limits=shipping_resources(db);u,f=remote.disk()
     future=art['blobs']+art['expanded']-credit+art['largest']+RESERVE+limits['walLimit']
     require(type(shared.get('ownedAllocatedBytes')) is int and shared['ownedAllocatedBytes']>=0,'B2_SHARED_UNKNOWN')
-    cap['phase']='E_STREAM';b1_capacity_gate(cap,u,f,future,max(max(0,u-cap['baselineUsed']),shared['ownedAllocatedBytes'])+future)
+    planned=max(max(0,u-cap['baselineUsed']),shared['ownedAllocatedBytes'])+future
+    cap.update(phase='E_STREAM',eAdmission={'used':u,'available':f,'future':future,'planned':planned,'dbBytes':db['dbBytes']})
+    b1_capacity_gate(cap,u,f,future,planned)
     receipt=b2_stream(remote,path,art);cap['eImportReceipt']=receipt
     b2_barrier(remote,art,receipt,cap);b1_fixed_r(remote,art,cap);u,f=remote.disk()
     cap['phase']='E_IMPORT_COMPLETE';b1_capacity_gate(cap,u,f,RESERVE+shipping_resources(remote.db())['walLimit'])

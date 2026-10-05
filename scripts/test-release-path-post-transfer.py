@@ -100,7 +100,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'dd608
                                          'b2_absent': '73b2ea25318dc887e1d16f49287ca55afef556b4fd0bb783c2e0764b715a99eb',
                                          'b2_barrier': 'a8ad62d04b2ffcbbb01e104cf721386bd9596db8f4b1f88668ceb732119cf38a',
                                          'b2_committed': '13e5b68255eed62c432995a67ae279d6c8320b1e087fe66a84d5865e6ce39e41',
-                                         'b2_deploy': 'c5152f6619973248764f1db7de8d8dd6f6f5c0cb2876dffb7de47c5bc56c4401',
+                                         'b2_deploy': '6d3b703e33dcf74505c3cebef91de643c6e53f83bf01929d7637d48b9672b97d',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
@@ -112,9 +112,9 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'dd608
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '__entrypoint__': 'cd14432873b5033379aebae6c14a0be3476db79de69215716933e8b114b8d7c6',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
-                                                    'b1_import_ci': '4b782bccc23927002c8255fa06a7b183af6c3913e87ce03611f23c342ddde5bc',
+                                                    'b1_import_ci': 'c8dc643562bd4b01ee9640f54687c8b6be6c9f28f179e4bdee31601423a4e6d6',
                                                     'b2_allocation_ci': 'c0fc35937406280ca0a57146faf4af66dae67a442a8baa8b4b69c4c5ea1847c2',
-                                                    'b2_owned_import_steps': '79950b1f2ece7545fb79bdc9c5342d7cb1121ee87d8554063fdc8b88949e35ff',
+                                                    'b2_owned_import_steps': 'a5040907648a2677c2eb2382bef4810eb68266b3c6a2725cc2392e7c21dd5c03',
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 

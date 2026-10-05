@@ -1028,6 +1028,8 @@ class B2FormalPathTests(unittest.TestCase):
         self.assertEqual([x for x in model.order if x in expected],expected)
         cap=model.art['capacityLedger'];self.assertEqual(cap['peak'],5152752630)
         self.assertTrue(cap['rArchiveRelease']['verified']);self.assertEqual(cap['eImportReceipt']['targetArchiveFiles'],0)
+        self.assertEqual(cap['eAdmission']['dbBytes'],164142103)
+        self.assertLessEqual(cap['eAdmission']['planned'],cap['peak'])
         self.assertEqual(r.writer_names(model.containers()),[model.ename])
     def test_r_present_wrong_r_stop_before_lock_or_upload(self):
         for fault in ('r-present','wrong-r'):
@@ -1087,6 +1089,13 @@ class B2GuardTests(unittest.TestCase):
                 if fault:
                     with self.assertRaises(r.GateError):r.validate_procurement_identity(ROOT,r.B2_BASE if fault=='same-e' else 'a'*40)
                 else:r.validate_procurement_identity(ROOT,'a'*40)
+    def test_real_import_fixture_initializes_private_dind_without_production_adapter(self):
+        source=(ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()
+        body=next(ast.get_source_segment(source,n) for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='b1_import_ci')
+        self.assertIn("'/usr/local/bin/dind' if b2 else 'sh'",body)
+        self.assertIn("['--cgroupns=private'] if b2 else []",body)
+        self.assertNotIn('--cgroupns=host',body)
+        self.assertNotIn('apparmor=unconfined',body)
     def test_b2_preserves_b1_budget_and_shipping_resource_code(self):
         source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
         base=subprocess.check_output(['git','-C',str(ROOT),'show',r.B2_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
