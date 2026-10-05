@@ -1176,6 +1176,20 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_exact_source_context_matches_official_umask_without_losing_executable_bits(self):
+        import tarfile
+        data=io.BytesIO()
+        with tarfile.open(fileobj=data,mode='w') as archive:
+            directory=tarfile.TarInfo('bin');directory.type=tarfile.DIRTYPE;directory.mode=0o775;archive.addfile(directory)
+            for name,mode in [('package.json',0o664),('bin/executable',0o775)]:
+                member=tarfile.TarInfo(name);member.mode=mode;member.size=5;archive.addfile(member,io.BytesIO(b'exact'))
+        data.seek(0)
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);_CI.b2_source_from_tar(data,root)
+            for name,mode in [('package.json',0o644),('bin',0o755),('bin/executable',0o755)]:
+                self.assertEqual((root/name).stat().st_mode&0o777,mode)
+            self.assertEqual((root/'package.json').read_bytes(),b'exact')
+            self.assertEqual((root/'bin/executable').read_bytes(),b'exact')
     def test_random_fixture_image_names_with_underscores_are_valid_docker_repositories(self):
         for name in ('b1-dind-b1-import-_cxb2x8j','b1-dind-b1-import-a__b_', 'b2-model-_abc_123'):
             tag=_CI.ci_fixture_image_tag(name)

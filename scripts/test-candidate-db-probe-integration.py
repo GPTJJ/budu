@@ -1868,6 +1868,16 @@ def b2_fixed_r_oci(archive,directory,fixed):
     return 'oci-layout://'+str(directory)+'@'+digest
 
 
+def b2_source_from_tar(stream,directory):
+    """Use the official runner's 0022 extraction modes for exact Git bytes."""
+    import tarfile
+    with tarfile.open(fileobj=stream,mode='r|') as archive:
+        for member in archive:
+            release.safe_name(member.name)
+            if member.isfile() or member.isdir():member.mode&=~0o022
+            archive.extract(member,directory)
+
+
 def b2_build_reusing_r_ci(directory,compatible_archive):
     """A real exact-R cache attempt, then B runtime derivation if A cannot fit."""
     procurement_controller_ci_guard()
@@ -1891,8 +1901,7 @@ def b2_build_reusing_r_ci(directory,compatible_archive):
             raise RuntimeError('B2_RUNTIME_BASE_SOURCE_DIFFERENT')
     source=root/'reuse-source';source.mkdir()
     with subprocess.Popen(['git','-C',str(ROOT),'archive',sha],stdout=subprocess.PIPE) as proc:
-        import tarfile
-        with tarfile.open(fileobj=proc.stdout,mode='r|') as archive:archive.extractall(source)
+        b2_source_from_tar(proc.stdout,source)
         if proc.wait()!=0:raise RuntimeError('B2_EXACT_BUILD_CONTEXT_FAILED')
     docker('load','-i',str(compatible_archive))
     rimage=json.loads(docker('image','inspect',rtag))[0];release.validate_loaded_image(rimage,fixed)
