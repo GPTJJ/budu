@@ -1547,7 +1547,7 @@ def b1_import_ci(archive, compatible_archive, sha):
         try:
             for part in ('docker','containerd','staging'):(mount/part).mkdir(mode=0o700)
             os.chown(mount/'staging',1000,1000)
-            dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 && adduser -D -u 1000 ubuntu\n'
+            dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils && adduser -D -u 1000 ubuntu\n'
             subprocess.run(['docker','build','--tag',tag,'-'],input=dockerfile.encode(),check=True,timeout=240)
             boot="containerd --root /var/lib/containerd --state /run/containerd --address /run/containerd/containerd.sock >/tmp/containerd.log 2>&1 &\nfor i in $(seq 1 60); do test -S /run/containerd/containerd.sock && break; sleep 1; done\nexec dockerd --containerd /run/containerd/containerd.sock --containerd-namespace moby --feature containerd-snapshotter --iptables=false --ip6tables=false --bridge=none --host unix:///var/run/docker.sock"
             ident=docker('run','-d','--privileged','--network','none','--name',name,
@@ -1569,12 +1569,23 @@ def b1_import_ci(archive, compatible_archive, sha):
                     if code==release.B1_STORAGE_CODE:
                         assert code.count("os.stat('/')")==1
                         code=code.replace("os.stat('/')","os.stat('/var/lib/docker')")
-                    return self.run(['python3','-B','-c',code],json.dumps(value).encode(),timeout).decode()
+                    try:return self.run(['python3','-B','-c',code],json.dumps(value).encode(),timeout).decode()
+                    except subprocess.CalledProcessError as error:
+                        # This daemon has only synthetic/public artifacts and
+                        # no secrets. Preserve a bounded helper traceback;
+                        # production transport remains redacted and unchanged.
+                        print(json.dumps({'b1OwnedFixtureHelperFailure':error.stderr.decode(errors='replace').splitlines()[-6:]}),file=sys.stderr)
+                        raise
                 def inspect(self,ref,image=False):return json.loads(self.run(['docker',*(['image'] if image else []),'inspect',ref]))[0]
                 def disk(self):
                     return tuple(map(int,subprocess.check_output(['df','-B1','--output=used,avail',str(mount)]).decode().splitlines()[1].split()))
                 def db(self):return {'dbBytes':164142103,'pgVersion':'16.14'}
-            remote=Nested();art=release.artifact(archive,sha,ROOT)
+            remote=Nested()
+            allocation_tool=remote.run(['python3','-c',"import subprocess;print(subprocess.check_output(['du','--version']).decode().splitlines()[0])"]).decode().strip()
+            if 'GNU coreutils' not in allocation_tool:raise RuntimeError('B1_CI_GNU_DU_REQUIRED')
+            proof['allocationTool']=allocation_tool
+            print(json.dumps({'b1AllocationTool':allocation_tool}),flush=True)
+            art=release.artifact(archive,sha,ROOT)
             art['compatibility']=release.compatibility_artifact(ROOT,compatible_archive)
             print('B1_FIXED_R_BASELINE_IMPORT',flush=True)
             remote.run(['docker','load','-i','/fixture-r.tar'],timeout=240)

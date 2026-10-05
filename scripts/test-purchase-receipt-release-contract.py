@@ -810,6 +810,23 @@ class B1ImportBarrierTests(unittest.TestCase):
         self.assertNotIn('os.rmdir',body)
 
 
+class B1PreflightTests(unittest.TestCase):
+    def test_same_legacy_output_fields_and_fresh_storage_guards(self):
+        r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+        model=ProcurementModel();model.art['capacityProfile']='B1'
+        storage={'terminated':True,'activeIngest':0,'unknownSnapshots':0,'allocatedRoots':{'docker':1,'containerd':1}}
+        with patch.object(r,'b1_storage',return_value=storage):
+            state=r.preflight(model,model.art,LEDGER)
+            self.assertTrue({'dfHuman','dockerSystemDf','diskUsed','diskAvailable','budget','old','name','template','active','migrationResources','before_ledger','migration_phase'}<=set(state))
+            original=model.run
+            def changed(args,*a,**kw):
+                if args[:2]==['docker','info']:return json.dumps({'ServerVersion':'unknown','Driver':'overlayfs'}).encode()
+                return original(args,*a,**kw)
+            with patch.object(model,'run',side_effect=changed),self.assertRaisesRegex(r.GateError,'DOCKER_STORAGE_MODEL_CHANGED'):
+                r.preflight(model,model.art,LEDGER)
+            with patch.object(model,'py',return_value='false'),self.assertRaisesRegex(r.GateError,'DOCKER_FILESYSTEM_MODEL_CHANGED'):
+                r.preflight(model,model.art,LEDGER)
+
 class B1FormalPathTests(unittest.TestCase):
     def attempt(self,fault=None):
         r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)

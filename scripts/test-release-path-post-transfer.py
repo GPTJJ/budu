@@ -88,7 +88,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'b1_deploy': '25ef55e0e5d3d64b2a3f8447fe3e407ffee4b2ad3ddf1a93d77c22fd0b81e7d8',
                                          'b1_envelope': '7a781d2c0db5c4ec7ae8b99bf7cbff12fe4d01ba1f1d6020f8ffa8a54a5f54e1',
                                          'b1_fixed_r': 'a22da289519d7ac18cd3632a0c85a16a5d314c6cbf2cf1b88416bbc19ccc9961',
-                                         'b1_preflight': '3639c3e294760faebf5bac193b8faa7ba910c548b497b9d82b05d59b92a6e4fc',
+                                         'b1_preflight': '99be97d5d73cf84037e5517620b1996dfbfa71ee2cf0001bfab9baca2ecb3f72',
                                          'b1_stage': 'e226cebaae1ab5948a7dbab9c9ea8b095ba68409e0335f34d4c3cae2668b4a0d',
                                          'b1_storage': '8957503b18c4dcb187fc02d070861dd8c6274c09fd1d0056357080612513ae8d',
                                          'deploy': 'b56001e2f0426ace2ba81e9541d59a3615acfe0433051dab02cafc06830fdab5',
@@ -99,7 +99,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'validate_procurement_identity': 'e1df78fd075531594abdb28cab109d118bfbff02bf9d521199478059c06d602a'},
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '_procurement_controller_ci': 'c8f56c79de64837489e61df3362df5c8d374ba71147cde77ddfa3f8a43f1ffcf',
-                                                    'b1_import_ci': '834455473f9bcefef87e5d777f7fba910a52805d7fac208abd699bb2711ec1bd',
+                                                    'b1_import_ci': '6942cea4a42bd3d1869701b1fa64884e38dd8bb5be140ca93a8c9021b06c299d',
                                                     'procurement_controller_ci_guard': '51b08403c15b71935b578d1e8aa6146db238680e75cb1e650ca29b6df8b59e9b'}}
 
 

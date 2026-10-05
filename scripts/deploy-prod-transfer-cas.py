@@ -1184,6 +1184,14 @@ def b1_preflight(remote, art, ledger, imported=False):
     if EXPECTED_OLD_SHA==procurement_contract()['oldSha']:require(db['applied']==87,'PROCUREMENT_SCHEMA_INVALID')
     validate_database(db,procurement_existing_ledger(db,ledger));writer_check(remote.containers(),db,[name])
     validate_clone_source(old,art['config']);limits=shipping_resources(db)
+    # Repeat the existing storage authority checks on every preflight, including
+    # the loaded-controller handoff; a prior import proof is not a substitute.
+    info=json.loads(remote.run(['docker','info','--format','{{json .}}']))
+    require(info['ServerVersion']=='29.1.3' and info['Driver']=='overlayfs'
+            and info['DockerRootDir']=='/var/lib/docker'
+            and ['driver-type','io.containerd.snapshotter.v1'] in info['DriverStatus'], 'DOCKER_STORAGE_MODEL_CHANGED')
+    same_fs=json.loads(remote.py("import os,json; print(json.dumps(all(os.stat(p).st_dev==os.stat('/').st_dev for p in ['/var/lib/docker','/var/lib/containerd'] if os.path.exists(p))))"))
+    require(same_fs is True, 'DOCKER_FILESYSTEM_MODEL_CHANGED')
     cap=art.get('capacityLedger');rid=b1_fixed_r(remote,art,cap)
     if cap is None:
         storage=b1_storage(remote)
@@ -1211,6 +1219,7 @@ def b1_preflight(remote, art, ledger, imported=False):
     remote.inspect(old['Image'],image=True)
     return dict(old=old,name=name,template=template,active=active,budget=budget,
                 diskUsed=budget['used'],diskAvailable=budget['available'],migrationResources=limits,
+                dfHuman=remote.run(['df','-h','/']).decode(),dockerSystemDf=remote.run(['docker','system','df']).decode(),
                 before_ledger=procurement_existing_ledger(db,ledger),migration_phase='L87' if db['applied']==87 else 'L88')
 
 
