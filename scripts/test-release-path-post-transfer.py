@@ -109,7 +109,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
- 'scripts/test-candidate-db-probe-integration.py': {'b2_purchase_runtime_ci': 'ba3f431fd6d7e56736f4f8a9670d4e12be156b8ab1856f67cdb076353a3afb36',
+ 'scripts/test-candidate-db-probe-integration.py': {'b2_purchase_runtime_ci': '6b27a4945a1114c1264df3aef36736320fbd1196f436c9cdf61a3850ec19d152',
 'b2_validate_purchase_runtime': 'aaad5848517c6f8b0278320a95e3487d009adb3a17709952960cc16781108a55',
 'b2_truncated_stream_ci': '1194a1707d9a7bda698bb0ebeeb07a0fe19ad54131182864ea24e17ed2a85b3c',
 'b2_source_from_tar': '8a743eae4571cdc9cf9e0d054b4919d5295f49bdc2ac6f88cd8e8f3c81e743f0',

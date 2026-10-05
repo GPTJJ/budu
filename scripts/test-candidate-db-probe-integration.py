@@ -1938,12 +1938,10 @@ def b2_purchase_runtime_ci(image,sha):
         if result.returncode!=0:
             print('B2_PURCHASE_RUNTIME_FAILURE='+json.dumps(log.splitlines()[-35:]),file=sys.stderr)
             raise RuntimeError('B2_PURCHASE_RUNTIME_REGRESSION_FAILED')
-        import tarfile
-        output=subprocess.check_output(['docker','cp',candidate+':/app/output/purchase-receipt/native-results.json','-'],timeout=30)
-        with tarfile.open(fileobj=io.BytesIO(output)) as archive:
-            member=archive.getmembers()[0]
-            if not member.isfile():raise RuntimeError('B2_PURCHASE_RESULT_INVALID')
-            native=json.load(archive.extractfile(member))
+        # Docker cp cannot read this tmpfs mount. Read within the running
+        # container namespace and parse without printing its raw DB URL.
+        output=subprocess.check_output(['docker','exec',candidate,'cat','/app/output/purchase-receipt/native-results.json'],timeout=30)
+        native=json.loads(output)
         leftovers=docker('exec',pg,'psql','-U','apple','-d','postgres','-p','55463','-X','-qAt','-c',
             "SELECT count(*) FROM pg_database WHERE datname LIKE 'budu_fullcritical_%'")
         proof=b2_validate_purchase_runtime(native,version,leftovers)

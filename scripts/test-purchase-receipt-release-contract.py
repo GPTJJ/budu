@@ -1176,6 +1176,43 @@ class B2GuardTests(unittest.TestCase):
 
 
 class B2ArtifactReuseTests(unittest.TestCase):
+    def test_native_tmpfs_result_is_read_in_running_namespace_and_validated_before_owned_cleanup(self):
+        import re
+        sha='a'*40;network='b2-purchase-'+sha[:12];pg=network+'-pg';candidate=network+'-runtime'
+        ids=re.findall(r"await test\('([^']+)'",(ROOT/'scripts/test-purchase-receipt-native.mjs').read_text())
+        native={'results':[{'id':name,'status':'PASS'} for name in ids],
+                'raceEvidence':[{'label':'real-row-lock','waiting':2}],'externalAttempts':[]}
+        calls=[]
+        def docker(*args,**kwargs):
+            calls.append(args)
+            if args[:2]==('image','inspect'):
+                return json.dumps([{'Id':'exact-image','Config':{'User':'node','Labels':{_CI.release.REVISION:sha}}}])
+            if args[:2]==('network','create'):return 'owned-network'
+            if args[:2]==('network','inspect'):
+                return json.dumps([{'Id':'owned-network','Internal':True,'Labels':{'budu.b2-purchase':sha}}])
+            if args[0]=='run':return 'owned-pg'
+            if args[0]=='create':return 'owned-runtime'
+            if args[:3]==('exec',pg,'psql'):
+                self.assertEqual(args[args.index('-d')+1],'postgres')
+                return '160014' if args[-1]=='SHOW server_version_num' else '0'
+            if args[0]=='inspect':
+                return json.dumps([{'Id':'owned-pg' if args[1]==pg else 'owned-runtime','Config':{'Labels':{'budu.b2-purchase':sha}}}])
+            return ''
+        def read_result(args,**kwargs):
+            self.assertEqual(args,['docker','exec',candidate,'cat','/app/output/purchase-receipt/native-results.json'])
+            self.assertIn(('start',candidate),calls)
+            self.assertFalse(any(row[0]=='rm' for row in calls))
+            return json.dumps(native).encode()
+        with tempfile.TemporaryDirectory() as td,patch.dict(os.environ,{'GITHUB_REF':'refs/heads/'+_CI.release.B2_BRANCH,'GITHUB_SHA':sha,'RUNNER_TEMP':td}),\
+                patch.object(_CI,'procurement_controller_ci_guard'),patch.object(_CI,'docker',side_effect=docker),\
+                patch.object(_CI.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout='',stderr='')),\
+                patch.object(_CI.subprocess,'check_output',side_effect=read_result) as reader,contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(_CI.b2_purchase_runtime_ci('exact-tag',sha)['nativeCases'],len(ids))
+            reader.assert_called_once()
+        self.assertIn(('rm','-f','-v','owned-runtime'),calls)
+        self.assertIn(('rm','-f','-v','owned-pg'),calls)
+        self.assertIn(('network','rm','owned-network'),calls)
+
     def test_native_runtime_proof_requires_full_suite_pg16_14_real_lock_barriers_and_cleanup(self):
         import re
         ids=re.findall(r"await test\('([^']+)'",(ROOT/'scripts/test-purchase-receipt-native.mjs').read_text())
