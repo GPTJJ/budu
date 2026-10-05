@@ -72,7 +72,7 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # the current module. Only reviewed additive/modified top-level nodes may be
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
-PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc1f707a099335c8e3cef324dc9aa25cc41f4420513e37ce419ba214fca15',
+PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'ddf47dec62d97a4b212d8ea0418e9918cc42c3b67c3ab302f1153f0bf6a55819',
  'scripts/deploy-prod-transfer-cas.py': {'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
                                          'B1_FILES': 'd7e937654876cabce73ad897944517769806465b7b0ee8513f8d749917068b31',
@@ -80,8 +80,14 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'B1_IMPORT_CODE': '960f7fbd86479e9ba29483692c585ab3e6345eae5efabcd9c7d8a0eb05716d38',
                                          'B1_STAGE_CODE': 'd7c61dcc9fbe10e94f38afa1ee395c34cc401c9308f481388a5e14499d8cea5f',
                                          'B1_STORAGE_CODE': '4671b396e106816acd3b9f952ab98e217826fc0feabcb80c22a41b0adea409f1',
-                                         'SAFE_CONTROLLER_CODES': 'da2b842a57401a6cf098fb2b6631f61053027d87bfbdcc1608ea3d81ad634603',
-                                         'artifact': '03b0098e266a202b76fe81c1b42487731ebe41ea2c396d770bf0fdc4e38bacc2',
+                                         'B2_ABSENT_CODE': '9762578dcea1b952ff824adcb6db7c29b9f7946106907ff6aeaef9b2cd71a302',
+                                         'B2_BASE': 'b77f9de46be5d1281ba7010aac504a041cc700d2377d235c2b777c3f8a6a5f56',
+                                         'B2_BRANCH': '140b5f3649f8ecc90758213b5302079ad58b79d75d8d7d322a66840b6168ee02',
+                                         'B2_IDENTITY': '0bad3fd58fd0c14eda744a2555e120237736508f500c8d721bc3f9a682af6444',
+                                         'B2_SHARED_CODE': '74e0293f6eaf9deac43f65dca4c04d5addf6662c9065f28f8c0533042717442d',
+                                         'B2_STREAM_CODE': 'a5737babd35d3ab2c811a6cefdb16421e81daab9dbec5345f945351f481c6038',
+                                         'SAFE_CONTROLLER_CODES': '80af6468baa2904d2d0f1f3551abc4d2dba46b22d81bbc1868f7b6d770fa8e29',
+                                         'artifact': 'dff2dc9e8f9952dccc49e3f43985c029353b6576c1892f29e3b76dd4470cc80b',
                                          'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
                                          'b1_capacity_gate': 'cc34c1bd8d110d965f032e4733e6e9547cbebc9070cbcb51daaeda7529f02756',
                                          'b1_db_gate': 'f257f0295008d9f5ddd68bd6c6600b11c7e967493a80727b99fd830d1f04630a',
@@ -91,16 +97,25 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'b4fdc
                                          'b1_preflight': '99be97d5d73cf84037e5517620b1996dfbfa71ee2cf0001bfab9baca2ecb3f72',
                                          'b1_stage': 'e226cebaae1ab5948a7dbab9c9ea8b095ba68409e0335f34d4c3cae2668b4a0d',
                                          'b1_storage': '8957503b18c4dcb187fc02d070861dd8c6274c09fd1d0056357080612513ae8d',
-                                         'deploy': 'b56001e2f0426ace2ba81e9541d59a3615acfe0433051dab02cafc06830fdab5',
-                                         'execute_loaded': '2aac604e35333b27c24e878d893ecbbecd5a275f5ab37a9cfe1ab12b5c7e5466',
-                                         'preflight': '5ee9b165289fa898acf6f5e0259069ced45f0d76619bdfe003d2c25709a5dfc1',
+                                         'b2_absent': '73b2ea25318dc887e1d16f49287ca55afef556b4fd0bb783c2e0764b715a99eb',
+                                         'b2_barrier': 'a8ad62d04b2ffcbbb01e104cf721386bd9596db8f4b1f88668ceb732119cf38a',
+                                         'b2_committed': '13e5b68255eed62c432995a67ae279d6c8320b1e087fe66a84d5865e6ce39e41',
+                                         'b2_deploy': '7a22eba3941185a67e92844a583c0b9845cddbc2f5d0007bbf7abdfbe2f2721b',
+                                         'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
+                                         'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
+                                         'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
+                                         'execute_loaded': '1783eeffc6b27dc86bdffd0673f897be7fafd5c4c34e5a46731250a6f3115ebf',
+                                         'preflight': 'dbd0d103b270ead6cb77665fd8bd672da8a25fd7b94ff44af334729d0053bc4b',
                                          'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
-                                         'validate_procurement_identity': 'e1df78fd075531594abdb28cab109d118bfbff02bf9d521199478059c06d602a'},
+                                         'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
-                                                    '_procurement_controller_ci': 'c8f56c79de64837489e61df3362df5c8d374ba71147cde77ddfa3f8a43f1ffcf',
-                                                    'b1_import_ci': '6942cea4a42bd3d1869701b1fa64884e38dd8bb5be140ca93a8c9021b06c299d',
-                                                    'procurement_controller_ci_guard': '51b08403c15b71935b578d1e8aa6146db238680e75cb1e650ca29b6df8b59e9b'}}
+                                                    '__entrypoint__': 'cd14432873b5033379aebae6c14a0be3476db79de69215716933e8b114b8d7c6',
+                                                    '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
+                                                    'b1_import_ci': '4b782bccc23927002c8255fa06a7b183af6c3913e87ce03611f23c342ddde5bc',
+                                                    'b2_allocation_ci': 'c0fc35937406280ca0a57146faf4af66dae67a442a8baa8b4b69c4c5ea1847c2',
+                                                    'b2_owned_import_steps': 'edc193cd7d59b343ccbb8f26542c892b0abfbd4a736b5987806c2aaef0a267ec',
+                                                    'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 
 def procurement_prior_source(source):
@@ -1622,8 +1637,9 @@ esac
     def test_no_automatic_procurement_push_deploy_or_new_permissions(self):
         workflow=self.workflow()
         original=json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],input=subprocess.check_output(['git','-C',str(ROOT),'show',r.procurement_contract()['businessSha']+':.github/workflows/release-build-only.yml'])))
-        for key in ('permissions','concurrency','name','true'):
-            self.assertEqual(workflow[key],original[key])
+        for key in ('permissions','concurrency','name'):self.assertEqual(workflow[key],original[key])
+        triggers=json.loads(json.dumps(workflow['true']));triggers['workflow_dispatch']['inputs'].pop('b2_model_only')
+        self.assertEqual(triggers,original['true'])
         self.assertEqual(workflow['jobs']['artifact']['runs-on'],'ubuntu-latest')
         self.assertNotIn('secrets.',json.dumps(workflow))
     def test_exact_two_artifacts_and_real_controller_proof(self):
@@ -1680,11 +1696,60 @@ class B1WorkflowTests(unittest.TestCase):
         source=(ROOT/'.github/workflows/release-build-only.yml').read_text()
         workflow=self.workflow()
         base=json.loads(subprocess.check_output(['ruby','-rjson','-ryaml','-e','puts JSON.generate(YAML.load(STDIN.read))'],input=subprocess.check_output(['git','-C',str(ROOT),'show',r.B1_BASE+':.github/workflows/release-build-only.yml'])))
-        for key in ('true','permissions','concurrency'):self.assertEqual(workflow[key],base[key])
+        for key in ('permissions','concurrency'):self.assertEqual(workflow[key],base[key])
+        triggers=json.loads(json.dumps(workflow['true']));triggers['workflow_dispatch']['inputs'].pop('b2_model_only')
+        self.assertEqual(triggers,base['true'])
         self.assertNotIn(r.B1_BRANCH,workflow['true']['push']['branches'])
         self.assertNotIn('secrets.',source)
         self.assertIn('python3 scripts/test-release-path-post-transfer.py\n',source)
         self.assertEqual(len(r.B1_FILES),5)
+
+
+class B2WorkflowTests(unittest.TestCase):
+    workflow=ProcurementReleaseRoutingTests.workflow
+    guard=ProcurementReleaseRoutingTests.guard
+    def test_b2_dispatch_preserves_exact_e_r_chain_and_five_files(self):
+        facts={'GITHUB_REF':'refs/heads/'+r.B2_BRANCH,'GUARD_BRANCH':r.B2_BRANCH}
+        self.assertEqual(self.guard(**facts).returncode,0)
+        for extra in ({'GITHUB_EVENT_NAME':'push'},{'REQUESTED_RELEASE_SHA':'b'*40},
+                      {'GUARD_ANCESTOR_RC':'1'},{'GUARD_MERGES':'b'*40},
+                      {'GUARD_FILES':'scripts/deploy-prod-transfer-cas.py\nserver/v2.js'},{'GUARD_COMPATIBLE':'b'*40}):
+            with self.subTest(extra=extra):self.assertNotEqual(self.guard(**{**facts,**extra}).returncode,0)
+    def test_artifact_job_requires_b2_model_success_and_full_dispatch(self):
+        workflow=self.workflow();source=workflow['jobs']['artifact']['if'].strip()
+        expression=source.removeprefix('${{').removesuffix('}}').strip()
+        for old,new in [('always()','True'),('github.event_name','event'),('github.ref','ref'),
+                        ('needs.b2-model.result','result'),('!inputs.b2_model_only','not model_only'),('&&',' and '),('||',' or ')]:expression=expression.replace(old,new)
+        def gate(branch,event='workflow_dispatch',result='success',model_only=False):
+            return eval(expression,{'__builtins__':{}},{'ref':'refs/heads/'+branch,'event':event,'result':result,'model_only':model_only})
+        self.assertTrue(gate(r.B2_BRANCH))
+        for facts in ({'event':'push'},{'result':'failure'},{'result':'skipped'},{'model_only':True}):
+            with self.subTest(facts=facts):self.assertFalse(gate(r.B2_BRANCH,**facts))
+        self.assertTrue(gate(r.B1_BRANCH,result='skipped'));self.assertTrue(gate(r.procurement_contract()['branch'],result='skipped'))
+        self.assertEqual(workflow['jobs']['artifact']['needs'],'b2-model')
+    def test_model_is_b2_dispatch_only_and_fixed_archives_are_immutable(self):
+        workflow=self.workflow();job=workflow['jobs']['b2-model']
+        self.assertEqual(job['if'].strip(),"github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/"+r.B2_BRANCH+"'")
+        self.assertEqual(job['permissions'],{'contents':'read','actions':'read'})
+        self.assertEqual(workflow['permissions'],{'contents':'read'})
+        self.assertNotIn('permissions',workflow['jobs']['artifact'])
+        self.assertNotIn('secrets.',json.dumps(workflow))
+        self.assertEqual(workflow['true']['workflow_dispatch']['inputs']['b2_model_only'],{'description':'B2 only: measure the retained exact B1 E and fixed R in isolated storage','required':False,'default':False,'type':'boolean'})
+        guard=next(s['run'] for s in job['steps'] if s.get('name')=='Verify exact isolated B2 model source')
+        for token in (r.B2_BASE,'--merges','--name-only','REQUESTED_RELEASE_SHA','[0-9a-f]{40}'):self.assertIn(token,guard)
+        for path in r.B1_FILES:self.assertIn(path,guard)
+        restore=next(s['run'] for s in job['steps'] if s.get('name')=='Restore reviewed exact E and R for offline measurement')
+        self.assertIn('37315414130',restore);self.assertIn('release-staging-'+r.B2_BASE,restore)
+        build=next(s['run'] for s in workflow['jobs']['artifact']['steps'] if s.get('name','').startswith('Build exact production-format'))
+        self.assertIn('fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed',build)
+        for step in job['steps']:
+            if 'run' in step:
+                check=subprocess.run(['/bin/bash','-n'],input=step['run'],text=True,capture_output=True)
+                self.assertEqual(check.returncode,0,step.get('name','')+check.stderr)
+    def test_projection_rejects_unreviewed_b2_controller_and_ci_changes(self):
+        for path,token in [('scripts/deploy-prod-transfer-cas.py','def b2_deploy('),('scripts/test-candidate-db-probe-integration.py','def b2_owned_import_steps(')]:
+            source=(ROOT/path).read_text();self.assertNotEqual(procurement_prior_source(source),source)
+            with self.assertRaises(AssertionError):procurement_prior_source(source.replace(token,'def unreviewed_sixth_behavior(',1))
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

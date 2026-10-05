@@ -948,4 +948,148 @@ class B1ArchiveTests(unittest.TestCase):
             finally:mapping.close()
             self.helper({**v,'action':'inspect'})
 
+
+class B2FormalPathTests(unittest.TestCase):
+    def attempt(self,fault=None):
+        r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+        class Model(ProcurementModel):
+            def __init__(self):
+                super().__init__();self.lock=False;self.r_imported=False;self.e_imported=False;self.archive_present=False;self.cleaned=False;self.order=[]
+                self.art.update(archive=566899200,blobs=566872461,expanded=2096597408,largest=1155686400,capacityProfile='B2')
+                self.art['layers']=[{'chainId':'common'},{'chainId':'e-only'}]
+                self.art['compatibility'].update(archive=566753792,blobs=566730271,expanded=2095460288,largest=1155686400,
+                    layers=[{'chainId':'common'},{'chainId':'r-only'}])
+            def disk(self):
+                self.order.append('fresh-df')
+                growth=(self.art['compatibility']['archive'] if self.archive_present or self.cleaned and fault=='no-free' else 0)
+                growth+=(2177372160 if self.r_imported else 0)+(192827392 if self.e_imported else 0)
+                return 60*r.GIB+growth,15964217344-growth
+            def db(self):
+                self.order.append('fresh-db');value=super().db()
+                value['dbBytes']=r.GIB if self.e_imported and fault=='db-growth' else 164142103;return value
+            def inspect(self,name,image=False):
+                if image and name==self.art['compatibility']['imageReference'] and (not self.r_imported or self.e_imported and fault=='r-lost'):
+                    raise r.GateError('LOADED_ARTIFACT_MISMATCH')
+                if image and name==self.art['imageReference'] and self.e_imported and fault=='wrong-e':
+                    image=super().inspect(name,True);image['RootFS']['Layers']=['wrong'];return image
+                return super().inspect(name,image)
+            def run(self,args,data=None,timeout=60):
+                if args[:3]==['docker','images','-q'] and args[-1]==self.art['imageReference'] and not self.e_imported:return b''
+                if args[:3]==['python3','-c',r.B1_IMPORT_CODE]:
+                    self.order.append('r-import');self.r_imported=True
+                    if fault=='r-interrupted':raise r.GateError('COMMAND_UNAVAILABLE_OR_TIMEOUT')
+                    a=self.art['compatibility'];return json.dumps({'returncode':0,'serverWaitComplete':fault!='r-wait','archiveHash':a['archiveHash'],'archiveBytes':a['archive'],'archiveInode':17}).encode()
+                if args[:2]==['docker','stop'] and args[-1] in ('G','g-id'):
+                    self.order.append('stop-old');assert self.cleaned and self.r_imported and self.e_imported
+                return super().run(args,data,timeout)
+            def py(self,code,value=None,timeout=60):
+                if code=='import os; os.mkdir(%r,0o700)' % r.LOCK:self.lock=True;return b''
+                if code==r.B2_ABSENT_CODE:
+                    self.order.append('r-absent');return json.dumps({'absent':fault not in ('r-present','wrong-r')})
+                if code==r.B2_SHARED_CODE:
+                    self.order.append('shared-proof')
+                    if fault=='shared-unknown':raise r.GateError('COMMAND_FAILED')
+                    role='r' if not self.e_imported else 'e'
+                    shared=1985757184;unique=2177372160-shared if role=='r' else 2178584576-shared
+                    return json.dumps({'verified':True,'creditedBytes':0 if fault=='no-shared' else shared,'source':'SYNTHETIC_FRESH_ALLOCATION_FIXTURE',
+                        'ownedAllocatedBytes':2177372160 if role=='r' else 2178584576,'metadataAllocated':0,'ownedExtraBlobs':{},
+                        'ownedLayers':[{'chainId':'common','contentDigest':'common','snapshotAllocated':shared,'blobAllocated':0},
+                            {'chainId':role+'-only','contentDigest':role+'-only','snapshotAllocated':unique,'blobAllocated':0}]})
+                if code==r.B1_STORAGE_CODE:
+                    self.order.append('storage')
+                    if self.r_imported and fault=='r-ingest' or self.e_imported and fault=='e-ingest':return '{}'
+                    return json.dumps({'terminated':True,'activeIngest':0,'unknownSnapshots':0,'allocatedRoots':{'docker':1,'containerd':1}})
+                if code==r.B1_STAGE_CODE:
+                    action=value['action'];self.order.append(action)
+                    if action=='cleanup':
+                        assert self.r_imported and not self.e_imported and self.old['State']['Running'];self.cleaned=True;self.archive_present=False
+                    return json.dumps({'claimed':True} if action=='claim' else {'released':True} if action=='released' else {'inode':18 if fault=='inode' else 17,'device':1,'allocated':self.art['compatibility']['archive'],'path':'fixture'})
+                return super().py(code,value,timeout)
+        model=Model()
+        def upload(*args):model.order.append('r-upload');model.archive_present=True;return 'fixture'
+        def stream(remote,path,art):
+            model.order.append('e-stream');assert model.cleaned and model.r_imported;model.e_imported=True
+            if fault=='e-interrupted':raise r.GateError('B2_IMPORT_UNKNOWN')
+            return {'serverWaitComplete':fault!='e-wait','returncode':0,'archiveBytes':art['archive'],'archiveHash':art['archiveHash'],'targetArchiveFiles':0}
+        def committed(remote):
+            keys=({'common','r-only'} if model.r_imported else set())|({'e-only'} if model.e_imported else set())
+            return keys|({'unknown'} if model.e_imported and fault=='residual' else set())
+        with patch.object(r,'stage_artifact',side_effect=upload),patch.object(r,'b2_stream',side_effect=stream),patch.object(r,'b2_committed',side_effect=committed),patch.object(r,'procurement_facts',side_effect=model.facts),patch.object(r,'signal') as signals,contextlib.redirect_stdout(io.StringIO()):
+            signals.SIGHUP=1;signals.SIGTERM=15;signals.SIGINT=2
+            try:r.deploy(model,ROOT,Path('fixture'),model.art,LEDGER,model.sha)
+            except r.GateError as error:return model,str(error)
+        return model,None
+    def test_b2_actual_deploy_and_execute_loaded_sequential_order(self):
+        model,error=self.attempt();self.assertIsNone(error)
+        self.assertEqual(model.phase,88);self.assertEqual(model.pointer,model.sha);self.assertFalse(model.lock)
+        expected=['r-upload','r-import','cleanup','shared-proof','e-stream','shared-proof','stop-old']
+        self.assertEqual([x for x in model.order if x in expected],expected)
+        cap=model.art['capacityLedger'];self.assertEqual(cap['peak'],5152752630)
+        self.assertTrue(cap['rArchiveRelease']['verified']);self.assertEqual(cap['eImportReceipt']['targetArchiveFiles'],0)
+        self.assertEqual(r.writer_names(model.containers()),[model.ename])
+    def test_r_present_wrong_r_stop_before_lock_or_upload(self):
+        for fault in ('r-present','wrong-r'):
+            model,error=self.attempt(fault);self.assertEqual(error,'B2_R_NOT_ABSENT')
+            self.assertFalse(model.lock);self.assertNotIn('r-upload',model.order)
+    def test_r_interrupted_unverified_or_unknown_never_cleanup_or_stream(self):
+        for fault in ('r-interrupted','r-wait','r-ingest','inode'):
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault);self.assertIsNotNone(error)
+                self.assertNotIn('cleanup',model.order);self.assertNotIn('e-stream',model.order);self.assertTrue(model.old['State']['Running']);self.assertTrue(model.lock)
+    def test_cleanup_credit_requires_real_release_and_shared_admission(self):
+        for fault in ('no-free','shared-unknown','no-shared'):
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault);self.assertIsNotNone(error);self.assertNotIn('e-stream',model.order)
+                self.assertTrue(model.old['State']['Running'])
+        self.assertEqual(self.attempt('no-shared')[1],'B1_CAPACITY_6GIB')
+    def test_e_interrupted_wrong_identity_residual_or_db_growth_never_stop_old(self):
+        for fault in ('e-interrupted','e-wait','e-ingest','wrong-e','residual','r-lost','db-growth'):
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault);self.assertIsNotNone(error)
+                self.assertNotIn('stop-old',model.order);self.assertTrue(model.old['State']['Running']);self.assertTrue(model.lock)
+    def test_archive_release_precedes_fresh_df_db_and_no_e_file(self):
+        model,error=self.attempt();self.assertIsNone(error)
+        between=model.order[model.order.index('cleanup')+1:model.order.index('e-stream')]
+        self.assertIn('fresh-df',between);self.assertIn('fresh-db',between);self.assertIn('shared-proof',between)
+        self.assertEqual(model.order.count('r-upload'),1)
+
+class B2GuardTests(unittest.TestCase):
+    def test_absence_unknown_is_not_absent(self):
+        for response in ('{}','{"absent":false}','{"absent":1}','not json'):
+            with self.subTest(response=response),self.assertRaises(r.GateError):
+                r.b2_absent(types.SimpleNamespace(py=lambda *a:response),{'compatibility':{'imageReference':'r','release':C['rollbackSha'],'archiveConfigDigest':'config'}})
+    def test_actual_absence_helper_tag_revision_and_exact_id(self):
+        value={'tag':'r','release':C['rollbackSha'],'config':'sha256:'+'b'*64}
+        for present in ('none','tag','revision','config','error'):
+            def run(args,**kw):
+                if present=='error':raise subprocess.CalledProcessError(1,args)
+                match=('reference=' in args[-1] and present=='tag') or ('label=' in args[-1] and present=='revision') or (args[-1]=='--no-trunc' and present=='config')
+                return (value['config'] if match else '').encode()
+            output=io.StringIO()
+            with patch('sys.stdin',io.StringIO(json.dumps(value))),patch('sys.stdout',output),patch('subprocess.check_output',side_effect=run):
+                if present=='error':
+                    with self.assertRaises(subprocess.CalledProcessError):exec(r.B2_ABSENT_CODE,{})
+                else:
+                    exec(r.B2_ABSENT_CODE,{});self.assertEqual(json.loads(output.getvalue())['absent'],present=='none')
+    def test_b2_identity_ancestry_scope_payload_and_merge_are_exact(self):
+        legacy=AdmissionTests().identity_git
+        for fault in (None,'same-e','ancestor','merge','sixth','business'):
+            def git(repo,*args):
+                if args==('branch','--show-current'):return r.B2_BRANCH
+                if args==('rev-list','--merges',r.B2_BASE+'..'+'a'*40):return 'b'*40 if fault=='merge' else ''
+                if args[:1]==('log',):return 'server/v2.js' if fault=='sixth' else '\n'.join(sorted(r.B1_FILES))
+                if args[:3]==('diff','--name-only',r.B2_BASE):return 'server/v2.js' if fault=='business' else ''
+                if args==('rev-list','--parents','-n','1','a'*40):return 'a'*40+' '+r.B2_BASE
+                return legacy(repo,*args)
+            with patch.object(r,'git',side_effect=git),patch.object(r,'is_ancestor',return_value=fault!='ancestor'):
+                if fault:
+                    with self.assertRaises(r.GateError):r.validate_procurement_identity(ROOT,r.B2_BASE if fault=='same-e' else 'a'*40)
+                else:r.validate_procurement_identity(ROOT,'a'*40)
+    def test_b2_preserves_b1_budget_and_shipping_resource_code(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        base=subprocess.check_output(['git','-C',str(ROOT),'show',r.B2_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(s):return {n.name:ast.get_source_segment(s,n) for n in ast.parse(s).body if isinstance(n,ast.FunctionDef)}
+        for name in ('b1_capacity_gate','b1_db_gate','b1_envelope','shipping_resources','disk_budget','shipping_disk_gate','b1_deploy','rollback'):
+            self.assertEqual(nodes(source)[name],nodes(base)[name],name)
+
 if __name__=='__main__':unittest.main(verbosity=2)

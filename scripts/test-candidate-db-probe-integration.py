@@ -1304,7 +1304,7 @@ def _material_controller_ci(image,old_image,archive,diagnostics):
 def procurement_controller_ci_guard():
     if (os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_OS')!='Linux'
             or sys.platform!='linux' or os.geteuid()!=0 or os.environ.get('GITHUB_REPOSITORY')!='GPTJJ/budu'
-            or os.environ.get('GITHUB_REF') not in ('refs/heads/'+release.procurement_contract()['branch'],'refs/heads/'+release.B1_BRANCH)
+            or os.environ.get('GITHUB_REF') not in ('refs/heads/'+release.procurement_contract()['branch'],'refs/heads/'+release.B1_BRANCH,'refs/heads/'+release.B2_BRANCH)
             or os.environ.get('TEST_PROCUREMENT_CONTROLLER_CI')!='1'
             or os.environ.get('DOCKER_HOST') not in (None,'unix:///var/run/docker.sock')
             or os.environ.get('DOCKER_CONTEXT') or not os.environ.get('RUNNER_TEMP')
@@ -1652,7 +1652,7 @@ def b2_allocation_ci(archive, compatible_archive):
     print('B2_EXACT_BIDIRECTIONAL_ALLOCATION_PASS',flush=True)
 
 
-def b1_import_ci(archive, compatible_archive, sha):
+def b1_import_ci(archive, compatible_archive, sha, b2=False):
     """Real Docker 29.1.3/containerd import on an owned ext4 loop filesystem.
 
     The only transport adaptations are local docker-exec, an owned staging
@@ -1675,7 +1675,7 @@ def b1_import_ci(archive, compatible_archive, sha):
         try:
             for part in ('docker','containerd','staging'):(mount/part).mkdir(mode=0o700)
             os.chown(mount/'staging',1000,1000)
-            dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils && adduser -D -u 1000 ubuntu\n'
+            dockerfile='FROM docker:29.1.3-dind\nRUN apk add --no-cache python3 coreutils sudo && adduser -D -u 1000 ubuntu\n'
             subprocess.run(['docker','build','--tag',tag,'-'],input=dockerfile.encode(),check=True,timeout=240)
             boot="containerd --root /var/lib/containerd --state /run/containerd --address /run/containerd/containerd.sock >/tmp/containerd.log 2>&1 &\nfor i in $(seq 1 60); do test -S /run/containerd/containerd.sock && break; sleep 1; done\nexec dockerd --containerd /run/containerd/containerd.sock --containerd-namespace moby --feature containerd-snapshotter --iptables=false --ip6tables=false --bridge=none --host unix:///var/run/docker.sock"
             ident=docker('run','-d','--privileged','--network','none','--name',name,
@@ -1691,7 +1691,7 @@ def b1_import_ci(archive, compatible_archive, sha):
             else:raise RuntimeError('B1_CI_DAEMON_NOT_READY')
             class Nested:
                 def run(self,args,data=None,timeout=60):
-                    assert args[0] in ('docker','python3')
+                    assert args[0] in ('docker','python3') or (b2 and args[0]=='ctr')
                     return subprocess.run(['docker','exec','-i',name,*args],input=data,capture_output=True,check=True,timeout=timeout).stdout
                 def py(self,code,value=None,timeout=60):
                     if code==release.B1_STORAGE_CODE:
@@ -1715,6 +1715,9 @@ def b1_import_ci(archive, compatible_archive, sha):
             print(json.dumps({'b1AllocationTool':allocation_tool}),flush=True)
             art=release.artifact(archive,sha,ROOT)
             art['compatibility']=release.compatibility_artifact(ROOT,compatible_archive)
+            if b2:
+                remote.ssh=['docker','exec','-i',name,'sh','-c']
+                return b2_owned_import_steps(remote,mount,archive,compatible_archive,sha)
             print('B1_FIXED_R_BASELINE_IMPORT',flush=True)
             remote.run(['docker','load','-i','/fixture-r.tar'],timeout=240)
             rid=release.b1_fixed_r(remote,art);storage=release.b1_storage(remote)
@@ -1746,6 +1749,98 @@ def b1_import_ci(archive, compatible_archive, sha):
                 docker('rm','-f','-v',ident)
             subprocess.run(['umount',str(mount)],check=True)
     print('B1_ISOLATED_IMPORT_PASS',flush=True)
+    return proof
+
+
+def b2_owned_import_steps(remote,mount,archive,compatible_archive,sha):
+    """Actual B2 import through DB barrier, on the owned nested filesystem.
+
+    Production app authority is deliberately absent in this import fixture;
+    that adapter is explicit. Full real PG/application/cutover/rollback uses
+    execute_loaded in the independent PG16.14 cases. No production transport.
+    """
+    from unittest.mock import patch
+    art=release.artifact(archive,sha,ROOT)
+    art.update(capacityProfile='B2',compatibility=release.compatibility_artifact(ROOT,compatible_archive),
+               compatibilityPath=str(compatible_archive))
+    before=(release.STAGING_ROOT,release.LOCK);release.STAGING_ROOT='/fixture/staging';release.LOCK='/fixture/staging/b2-lock'
+    phases=[];original_py=remote.py;original_db=remote.db;handoff=[]
+    state={'old':{'Id':'EXPLICIT_SYNTHETIC_AUTHORITY_ADAPTER'},'template':'ISOLATED_IMPORT_ONLY'}
+    def fixture_preflight(target,artifact,ledger,imported=False):
+        if imported:
+            release.b1_db_gate(target);release.b1_fixed_r(target,artifact,target.b1_capacity);release.b1_storage(target)
+            phases.append('DB_READY');return state
+        storage=release.b1_storage(target);release.b2_absent(target,artifact);u,f=target.disk()
+        cap=artifact.get('capacityLedger')
+        if cap is None:
+            cap={'baselineUsed':u,'baselineAvailable':f,'phase':'R_PRE_IMPORT','peak':0,
+                 'token':os.urandom(16).hex(),'baselineCommitted':sorted(release.b2_committed(target)),'baselineStorage':storage}
+            artifact['capacityLedger']=cap
+        target.b1_capacity=cap;envelope=release.b1_envelope(artifact['compatibility'],target.db())['import']
+        future=envelope-(artifact['compatibility']['archive'] if cap['phase']=='R_UPLOADED' else 0)
+        outside=max(0,u-cap['baselineUsed']-cap.get('archiveAllocated',0))
+        release.b1_capacity_gate(cap,u,f,future,envelope+outside);phases.append(cap['phase']);return state
+    def fixture_upload(target,path,artifact):
+        tar=mount/'staging'/(artifact['release']+'.tar');meta=tar.with_suffix('.json')
+        shutil.copyfile(path,tar);meta.write_text(json.dumps({'release':artifact['release'],'sha256':artifact['archiveHash'],'bytes':artifact['archive']}))
+        for p in (tar,meta):p.chmod(0o600);os.chown(p,1000,1000)
+        return '/fixture/staging/'+tar.name
+    def fixture_py(code,value=None,timeout=60):
+        if code.endswith('run_loaded_controller(v)\n'):
+            handoff.append(value);return json.dumps({'result':'DEPLOY_COMPLETE','fixture':'IMPORT_TO_DB_BARRIER_ONLY'})
+        return original_py(code,value,timeout)
+    proof={'productionAccess':False,'productionAuthorityAdapter':'EXPLICIT_SYNTHETIC_IMPORT_ONLY',
+           'handoffAdapter':'NO_DB_OR_APPLICATION_OR_CUTOVER_IN_THIS_FIXTURE',
+           'realPgAndApplication':'INDEPENDENT_PG16_14_B2_SUCCESS_AND_ROLLBACK_CASES',
+           'filesystemRootAdapter':'OWNED_EXT4_MOUNT','dbSource':'SYNTHETIC_SIZE_ONLY'}
+    try:
+        with patch.object(release,'b2_preflight',side_effect=fixture_preflight),patch.object(release,'stage_artifact',side_effect=fixture_upload),patch.object(remote,'py',side_effect=fixture_py):
+            release.b2_deploy(remote,ROOT,archive,art,{},sha)
+        cap=art['capacityLedger'];r=art['compatibility'];release.b1_fixed_r(remote,art,cap)
+        assert len(handoff)==1 and cap['phase']=='DB' and cap['rArchiveRelease']['verified']
+        assert not (mount/'staging'/(sha+'.tar')).exists() and not (mount/'staging'/(r['release']+'.tar')).exists()
+        faults=[]
+        for role,artifact,receipt in [('R',r,cap['rImportReceipt']),('E',art,cap['eImportReceipt'])]:
+            for field,value in [('serverWaitComplete',False),('archiveHash','0'*64),('archiveBytes',artifact['archive']-1),('returncode',1)]:
+                bad={**receipt,field:value}
+                try:release.b2_barrier(remote,artifact,bad,cap)
+                except release.GateError as error:
+                    assert str(error)=='B2_IMPORT_UNKNOWN';faults.append(role+':'+field)
+                else:raise RuntimeError('B2_INTERRUPTED_BARRIER_NOT_REJECTED')
+        # Real server wait/hash failure, using the exact E bytes but deliberately
+        # wrong transport identity. No additional image or production access.
+        bad={**art,'archiveHash':'0'*64}
+        try:release.b2_stream(remote,archive,bad)
+        except release.GateError as error:
+            assert str(error)=='B2_IMPORT_UNKNOWN';faults.append('E:REAL_SERVER_HASH_FAILURE')
+        else:raise RuntimeError('B2_BAD_STREAM_NOT_REJECTED')
+        with tempfile.NamedTemporaryFile(dir=os.environ['RUNNER_TEMP']) as partial:
+            with Path(archive).open('rb') as source:partial.write(source.read(65536));partial.flush()
+            try:release.b2_stream(remote,partial.name,art)
+            except release.GateError as error:
+                assert str(error)=='B2_IMPORT_UNKNOWN';faults.append('E:REAL_TRUNCATED_STREAM')
+            else:raise RuntimeError('B2_TRUNCATED_STREAM_NOT_REJECTED')
+        with patch.object(remote,'db',return_value={'dbBytes':release.GIB,'pgVersion':'16.14'}):
+            try:release.b1_db_gate(remote)
+            except release.GateError as error:
+                assert str(error)=='B1_CAPACITY_6GIB';faults.append('FRESH_DB_GROWTH')
+            else:raise RuntimeError('B2_STALE_DB_NOT_REJECTED')
+        final_storage=release.b1_storage(remote)
+        base=['ctr','--address','/run/containerd/containerd.sock','--namespace','moby','snapshots','--snapshotter','overlayfs']
+        remote.run(base+['prepare','b2-owned-residual-active'])
+        try:release.b1_storage(remote)
+        except release.GateError:faults.append('REAL_RESIDUAL_ACTIVE_SNAPSHOT')
+        else:raise RuntimeError('B2_ACTIVE_RESIDUAL_NOT_REJECTED')
+        remote.run(base+['commit','b2-owned-residual-committed','b2-owned-residual-active'])
+        try:release.b2_barrier(remote,art,cap['eImportReceipt'],cap)
+        except release.GateError as error:
+            assert str(error)=='B2_STORAGE_UNKNOWN';faults.append('REAL_RESIDUAL_COMMITTED_SNAPSHOT')
+        else:raise RuntimeError('B2_COMMITTED_RESIDUAL_NOT_REJECTED')
+        proof.update(result='PASS',phaseAuthorityChecks=phases,capacityLedger=cap,finalStorage=final_storage,
+                     fixedRPreserved=True,noTargetEArchive=True,realServerStream=True,
+                     sharedCreditSource=cap['sharedProof']['source'],failureTests=faults)
+    finally:release.STAGING_ROOT,release.LOCK=before
+    print('B2_ACTUAL_CONTROLLER_IMPORT_DB_BARRIER_PASS',flush=True)
     return proof
 
 
@@ -1791,7 +1886,8 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             raise RuntimeError('CI_REAL_PINNED_PRISMA_CLI_REQUIRED')
     art=release.artifact(archive,sha,ROOT)
     art['compatibility']=release.compatibility_artifact(ROOT,compatible_archive)
-    b1_proof=b1_import_ci(archive,compatible_archive,sha) if release.B1_IDENTITY else None
+    b1_proof=b1_import_ci(archive,compatible_archive,sha) if (release.B1_IDENTITY or release.B2_IDENTITY) else None
+    b2_proof=b1_import_ci(archive,compatible_archive,sha,b2=True) if release.B2_IDENTITY else None
     ledger={p.parent.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'prisma/migrations').glob('*/migration.sql')}
     helper=(ROOT/'scripts/clone-production-container.py').read_text()
     cases=[]
@@ -1834,11 +1930,12 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             if docker('run','--rm','--network',network,'-e','DATABASE_URL='+url,'--entrypoint','node',image,'-e',primary_probe)!='PRIMARY_NETWORK_DB_UNREACHABLE':raise RuntimeError('CI_PRIMARY_NETWORK_UNEXPECTED_DB_ACCESS')
             docker('pull','nginx:1.28-alpine',timeout=180)
             case_specs=[(mode,None) for mode in (*CI_CASES,'post_restore_failure','post_migrator_create_failure')]+[('post_cutover_failure',fault) for fault in ('health','runtime','prisma','facts','routes','pointer','public','stop')]
-            if release.B1_IDENTITY:case_specs.append(('b1_success',None))
+            if release.B1_IDENTITY or release.B2_IDENTITY:case_specs.append(('b1_success',None))
+            if release.B2_IDENTITY:case_specs.append(('b2_success',None))
             for index,(mode,rollback_fault) in enumerate(case_specs):
-                b1_case=mode=='b1_success'
-                if b1_case:mode='success'
-                art['capacityProfile']='B1' if b1_case else 'LEGACY'
+                b1_case=mode=='b1_success';b2_case=mode=='b2_success'
+                if b1_case or b2_case:mode='success'
+                art['capacityProfile']='B2' if b2_case else 'B1' if b1_case else 'LEGACY'
                 art.pop('capacityLedger',None)
                 release.configure_profile('post-transfer',release.procurement_contract()['oldSha'],release.procurement_contract()['businessSha'],release.digest(release.command(['git','-C',str(ROOT),'show',release.procurement_contract()['oldSha']+':server/v2.js'])))
                 diagnostics.case=mode
@@ -1890,7 +1987,7 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
                           'post_restore_failure':('SHIPPING_BACKUP_RESTORE','SHIPPING_MIGRATION_DISK_GATE_FAILED'),
                           'post_migrator_create_failure':('SHIPPING_CHECK_MIGRATION','COMMAND_FAILED'),
                           'backup_limit':('SHIPPING_BACKUP_RESTORE','SHIPPING_BACKUP_RESTORE_UNVERIFIED')}.get(mode)
-                if b1_case:
+                if b1_case or b2_case:
                     # DB-stage fixture: the E/R images are already loaded in this
                     # owned runner baseline. Fresh import/barrier/release is
                     # independently exercised by b1_import_ci below.
@@ -1974,7 +2071,7 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
                 if migrator_networks is not None and ({k:v.get('NetworkID') for k,v in migrator_networks.items()}!={k:v.get('NetworkID') for k,v in old_networks.items()}):raise RuntimeError('CI_MIGRATOR_NETWORK_PARITY_FAILED')
                 starts=[event for event in remote.events if event['action']=='start' and remote.attempt_resources.get(event['container'])=='migrator']
                 if len(starts)!=(0 if mode=='backup_limit' and not recovery else 1) or (mode!='success' and not remote.injected):raise RuntimeError('CI_MIGRATOR_OR_INJECTION_NOT_OBSERVED')
-                cases.append({'case':'b1_success' if b1_case else ('r_unverified_'+rollback_fault) if rollback_fault else 'post_l88_disk' if mode=='post_l86_disk' else mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
+                cases.append({'case':'b2_success' if b2_case else 'b1_success' if b1_case else ('r_unverified_'+rollback_fault) if rollback_fault else 'post_l88_disk' if mode=='post_l86_disk' else mode,'controller':'execute_loaded','result':'PASS','migrations':final['applied'],
                               'procurementSchema':final['procurementSchema'],'protectedOldBusinessFactsUnchanged':True,'retainedProcurementFacts':retained,'legacyWriterNeverRestarted':True,'writer':writer,'writerSamples':remote.writer_samples,'events':remote.events,
                               'capacityLedger':art.get('capacityLedger'),'diskSamples':remote.disk_samples,'backupRestoreProof':backup,'backupAndMigratorConnections':0,
                               'rollbackSha':release.procurement_contract()['rollbackSha'] if mode!='success' else None,'failureInjection':expected,
@@ -2015,8 +2112,9 @@ def _procurement_controller_ci(image,old_image,compatible_image,archive,compatib
             for key,value in globals_before.items():setattr(release,key,value)
     diagnostics.raise_cleanup()
     report['ownedResourcesRemoved']=True
-    if release.B1_IDENTITY:
+    if release.B1_IDENTITY or release.B2_IDENTITY:
         report['b1Import']=b1_proof
+        if b2_proof:report['b2Import']=b2_proof
         report['liveRestoreFalseFullDr']='DEFERRED_BY_USER_RELEASE_OVERRIDE'
     target=Path(os.environ['RUNNER_TEMP'])/'procurement-controller-proof.json'
     target.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');target.chmod(0o644)
