@@ -72,7 +72,7 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # the current module. Only reviewed additive/modified top-level nodes may be
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
-PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '5b687899e6ec289947ee5b24796fc5d1a026f217b34b09f61e1649c8fa384df8',
+PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '62cc9e0be1fefd394fb82839f24a247fbd5e7dba23c101f8989e55031df6a95b',
  'scripts/deploy-prod-transfer-cas.py': {'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
                                          'B1_FILES': 'd7e937654876cabce73ad897944517769806465b7b0ee8513f8d749917068b31',
@@ -87,7 +87,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '5b687
                                          'B2_SHARED_CODE': 'f56df1e4cd6ac449d07ec4f8653b9c8fc2b35adfa6c94e9dd09e5768d24c97cd',
                                          'B2_STREAM_CODE': 'a5737babd35d3ab2c811a6cefdb16421e81daab9dbec5345f945351f481c6038',
                                          'SAFE_CONTROLLER_CODES': '80af6468baa2904d2d0f1f3551abc4d2dba46b22d81bbc1868f7b6d770fa8e29',
-                                         'artifact': 'dff2dc9e8f9952dccc49e3f43985c029353b6576c1892f29e3b76dd4470cc80b',
+                                         'artifact': '5d2c746fe15b1c0d138dbaaa889cfd394ad4c75cb38073b1c281db8aadfc3be0',
                                          'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
                                          'b1_capacity_gate': 'cc34c1bd8d110d965f032e4733e6e9547cbebc9070cbcb51daaeda7529f02756',
                                          'b1_db_gate': 'f257f0295008d9f5ddd68bd6c6600b11c7e967493a80727b99fd830d1f04630a',
@@ -109,9 +109,13 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': '5b687
                                          'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
- 'scripts/test-candidate-db-probe-integration.py': {'b2_retained_ci': 'ffa22e7fa74d32dc0c7970defb0fbdf77962e0794229b81cc40861654be759c0',
+ 'scripts/test-candidate-db-probe-integration.py': {'b2_build_reusing_r_ci': '5c737ffc78aba5a91efb5069b72083a2a14868d65912a56a968eb2bae3c413af',
+'b2_compare_images': '73e450a0f0dc88d7f81d2a10894d69e9ee1ef004e05e239dc1f273c24a673a30',
+'b2_compare_manifests': 'de105cc1f7a9df153db8629795816fb463d37a6e330430bb3890ae07a85d7f5d',
+'b2_manifest_from_tar': '39c63746e9b0ecf87f2678c8e09c079a6b296e1a06627f6df8f7f08621ed0507',
+'b2_retained_ci': 'ffa22e7fa74d32dc0c7970defb0fbdf77962e0794229b81cc40861654be759c0',
 "Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
-                                                    '__entrypoint__': '2e3ddb8f510b85ba376c5f77855d905c5d05bee1e6241b461f6d8481608dfc35',
+                                                    '__entrypoint__': '375c9f54008f437f3937a6d5b3010f58a80f4f4650e4ca06bf28e65abfc6a60b',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
                                                     'b1_import_ci': '9d22768ea2dc8fdaae90fc74a19384961f2f02a3978e4ca963f70fa0a6f11a28',
                                                     'b2_allocation_ci': 'c0fc35937406280ca0a57146faf4af66dae67a442a8baa8b4b69c4c5ea1847c2',
@@ -1767,10 +1771,13 @@ class B2WorkflowTests(unittest.TestCase):
         self.assertIn('test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"',source)
         self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',source)
         self.assertIn('git switch -c '+r.B2_BRANCH,source)
+        self.assertIn('--procurement-controller-ci',source)
+        self.assertIn('python3 scripts/test-purchase-receipt-release-contract.py\n',source)
+        self.assertIn('python3 scripts/test-release-path-post-transfer.py\n',source)
         self.assertIn('test "$(git branch --show-current)" = '+r.B2_BRANCH,source)
-        self.assertIn('--b2-retained-ci',source)
+        self.assertIn('--b2-build-reuse-ci',source)
         self.assertIn('fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed',source)
-        for token in ('--procurement-controller-ci','ssh ','secrets.','deploy-prod.yml'):
+        for token in ('ssh ','secrets.','deploy-prod.yml'):
             self.assertNotIn(token,source)
         for step in job['steps']:
             if 'run' in step:

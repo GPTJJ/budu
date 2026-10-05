@@ -1174,4 +1174,69 @@ class B2GuardTests(unittest.TestCase):
         for name in ('b1_capacity_gate','b1_db_gate','b1_envelope','shipping_resources','disk_budget','shipping_disk_gate','b1_deploy','rollback'):
             self.assertEqual(nodes(source)[name],nodes(base)[name],name)
 
+
+class B2ArtifactReuseTests(unittest.TestCase):
+    def test_final_manifests_reject_stale_missing_content_type_mode_and_owner(self):
+        original={'app/server/v2.js':{'type':'file','size':3,'sha256':'abc','mode':0o644,'uid':1000,'gid':1000},
+                  'app/scripts/tool':{'type':'symlink','target':'real','mode':0o777,'uid':0,'gid':0}}
+        self.assertTrue(_CI.b2_compare_manifests(original,copy.deepcopy(original))['verified'])
+        for fault in ('extra','missing','size','sha256','mode','uid','gid','type','target'):
+            candidate=copy.deepcopy(original)
+            if fault=='extra':candidate['app/server/obsolete.js']=candidate['app/server/v2.js']
+            elif fault=='missing':candidate.pop('app/server/v2.js')
+            elif fault=='target':candidate['app/scripts/tool']['target']='wrong'
+            else:candidate['app/server/v2.js'][fault]='wrong'
+            with self.subTest(fault=fault):self.assertFalse(_CI.b2_compare_manifests(original,candidate)['verified'])
+    def archive(self,root,mode):
+        import tarfile
+        code=b'current v2';script=b'current script'
+        (root/'server').mkdir();(root/'server/v2.js').write_bytes(code)
+        expected={'app/server/v2.js':r.digest(code),'app/scripts/current.py':r.digest(script)}
+        layers=[]
+        rows=[{'app/server/v2.js':b'old v2','app/scripts/obsolete.py':b'old'},
+              {'app/.wh.server':b'','app/.wh.scripts':b'x' if mode=='invalid-whiteout' else b''},
+              {'app/server/v2.js':code,'app/scripts/current.py':script}]
+        if mode=='stale':rows[1].pop('app/.wh.scripts')
+        if mode=='missing':rows[2].pop('app/scripts/current.py')
+        for row in rows:
+            out=io.BytesIO()
+            with tarfile.open(fileobj=out,mode='w') as archive:
+                for name,value in row.items():
+                    member=tarfile.TarInfo(name);member.size=len(value);member.mode=0o644
+                    archive.addfile(member,io.BytesIO(value))
+            layers.append(out.getvalue())
+        sha='a'*40;config=json.dumps({'os':'linux','architecture':'amd64','config':{'Labels':{r.REVISION:sha}},
+            'rootfs':{'diff_ids':['sha256:'+r.digest(x) for x in layers]}}).encode()
+        files={'config.json':config,'manifest.json':json.dumps([{'Config':'config.json','RepoTags':[r.image_reference(sha)],
+            'Layers':['layer'+str(i)+'.tar' for i in range(len(layers))]}]).encode()}
+        files.update({'layer'+str(i)+'.tar':x for i,x in enumerate(layers)})
+        path=root/'image.tar'
+        with tarfile.open(path,mode='w') as archive:
+            for name,value in files.items():
+                member=tarfile.TarInfo(name);member.size=len(value);archive.addfile(member,io.BytesIO(value))
+        return path,sha,expected
+    def test_actual_archive_validation_merges_b2_deletions_and_remains_fail_closed(self):
+        for mode,error in [('correct',None),('stale','EXTRA_STALE_RUNTIME_FILE'),
+                           ('missing','ARTIFACT_RUNTIME_PAYLOAD_MISMATCH'),('invalid-whiteout','B2_WHITEOUT_INVALID')]:
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);path,sha,expected=self.archive(root,mode)
+                with patch.object(r,'B2_IDENTITY',True),patch.object(r,'runtime_payload',return_value=expected),patch.object(r,'migration_enabled',return_value=False):
+                    if error:
+                        with self.assertRaisesRegex(r.GateError,error):r.artifact(path,sha,root)
+                    else:self.assertEqual(r.artifact(path,sha,root)['runtimeHash'],expected['app/server/v2.js'])
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path,sha,expected=self.archive(root,'correct')
+            with patch.object(r,'B2_IDENTITY',False),patch.object(r,'runtime_payload',return_value=expected),patch.object(r,'migration_enabled',return_value=False):
+                with self.assertRaises(r.GateError):r.artifact(path,sha,root)
+    def test_reuse_builder_preserves_dependencies_and_replaces_all_payload_roots(self):
+        body=ast.get_source_segment((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text(),
+            next(n for n in ast.parse((ROOT/'scripts/test-candidate-db-probe-integration.py').read_text()).body
+                 if isinstance(n,ast.FunctionDef) and n.name=='b2_build_reusing_r_ci'))
+        for token in ('--cache-from','rsha+\':\'+path','B2_EXACT_R_BASE_LAYER_PREFIX_REQUIRED','npx prisma generate','b2_compare_images','b1_import_ci'):
+            self.assertIn(token,body)
+        for path in ('dist','server','brand/web','shared','src/utils','prisma','scripts'):self.assertIn('/app/'+path,body)
+        derived=body.split("derived.write_text(",1)[1].split("final=root/",1)[0]
+        self.assertNotIn('npm ci',derived)
+        self.assertIn('USER root',derived);self.assertIn('USER node',derived)
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -138,26 +138,33 @@ jobs:
             --dir "$RUNNER_TEMP/b2-retained-artifacts"
           printf '%s  %s\n' fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed \
             "$RUNNER_TEMP/b2-retained-artifacts/compatible.tar" | sha256sum -c -
-      - name: Build exact focused candidate artifact
-        run: |
-          set -euo pipefail
-          builder="b2-retained-$GITHUB_RUN_ID"
-          docker buildx create --name "$builder" --driver docker-container
-          docker buildx inspect "$builder" --bootstrap
-          mkdir "$RUNNER_TEMP/b2-retained-artifacts/source"
-          git archive "$GITHUB_SHA" | tar -x -C "$RUNNER_TEMP/b2-retained-artifacts/source"
-          timeout 15m docker buildx build --builder "$builder" --platform linux/amd64 \
-            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            --tag "budu-api:post-transfer-${GITHUB_SHA:0:12}" --provenance=false --sbom=false \
-            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUNNER_TEMP/b2-retained-artifacts/image.tar" \
-            "$RUNNER_TEMP/b2-retained-artifacts/source"
-      - name: Prove actual forward and reverse retained allocation
+      - name: Build and prove exact R-reusing candidate artifact
         env:
           TEST_PROCUREMENT_CONTROLLER_CI: '1'
         run: |
           set -euo pipefail
           sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,TEST_PROCUREMENT_CONTROLLER_CI \
-            python3 scripts/test-candidate-db-probe-integration.py --b2-retained-ci \
+            python3 scripts/test-candidate-db-probe-integration.py --b2-build-reuse-ci \
+            "$RUNNER_TEMP/b2-retained-artifacts" "$RUNNER_TEMP/b2-retained-artifacts/compatible.tar"
+      - name: Focused capacity boundaries and complete release regression
+        run: |
+          set -euo pipefail
+          python3 scripts/test-purchase-receipt-release-contract.py
+          python3 scripts/test-release-path-post-transfer.py
+      - name: Build exact G and run isolated PG16.14 controller and rollback
+        env:
+          TEST_PROCUREMENT_CONTROLLER_CI: '1'
+        run: |
+          set -euo pipefail
+          old_dir="$(mktemp -d "$RUNNER_TEMP/b2-focused-old.XXXXXX")"
+          git archive edb31cd398e3a330565b5453f42051f3e24005c3 | tar -x -C "$old_dir"
+          docker buildx build --builder default --platform linux/amd64 \
+            --label org.opencontainers.image.revision=edb31cd398e3a330565b5453f42051f3e24005c3 \
+            --tag budu-api:procurement-old-edb31cd398e3 --provenance=false --sbom=false --load "$old_dir"
+          sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP,TEST_PROCUREMENT_CONTROLLER_CI \
+            python3 scripts/test-candidate-db-probe-integration.py --procurement-controller-ci \
+            "budu-api:post-transfer-${GITHUB_SHA:0:12}" budu-api:procurement-old-edb31cd398e3 \
+            budu-api:post-transfer-e3ecebcb94c4 \
             "$RUNNER_TEMP/b2-retained-artifacts/image.tar" "$RUNNER_TEMP/b2-retained-artifacts/compatible.tar"
       - name: Retain focused proof or diagnostic
         if: always()
@@ -166,6 +173,9 @@ jobs:
           name: b2-retained-focused-${{ github.sha }}
           path: |
             ${{ runner.temp }}/b2-retained-proof.json
+            ${{ runner.temp }}/b2-artifact-reuse-proof.json
+            ${{ runner.temp }}/procurement-controller-proof.json
+            ${{ runner.temp }}/procurement-controller-diagnostic.json
             ${{ runner.temp }}/b2-controller-import-diagnostic.json
           if-no-files-found: error
           retention-days: 3
@@ -416,12 +426,18 @@ jobs:
           mkdir "$run_dir/source"
           git archive "$GITHUB_SHA" | tar -x -C "$run_dir/source"
           printf 'BUILD_CONTEXT_SHA=%s BUILD_CONTEXT_TREE=%s\n' "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")"
+          if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; then
+            sudo -n --preserve-env=GITHUB_ACTIONS,GITHUB_REF,GITHUB_SHA,GITHUB_REPOSITORY,RUNNER_OS,RUNNER_TEMP \
+              env TEST_PROCUREMENT_CONTROLLER_CI=1 python3 scripts/test-candidate-db-probe-integration.py --b2-build-reuse-ci \
+              "$run_dir" "$RUNNER_TEMP/b2-fixed-r/compatible.tar"
+          else
           timeout 35m docker buildx build --builder "$builder" --platform linux/amd64 \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag "budu-api:post-transfer-${GITHUB_SHA:0:12}" \
             --provenance=false --sbom=false \
             --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/image.tar" \
             "$run_dir/source"
+          fi
           compatibility_args=()
           if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
             if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; then
@@ -641,6 +657,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Retain B2 artifact equivalence and capacity proof
+        if: always() && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack'
+        uses: actions/upload-artifact@v4
+        with:
+          name: b2-artifact-reuse-${{ github.sha }}
+          path: ${{ runner.temp }}/b2-artifact-reuse-proof.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Retain isolated procurement controller proof
         if: success() && (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack'))
         uses: actions/upload-artifact@v4

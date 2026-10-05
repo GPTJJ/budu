@@ -1754,6 +1754,191 @@ def b1_import_ci(archive, compatible_archive, sha, b2=False):
 
 
 
+
+def b2_manifest_from_tar(stream):
+    """Content/type/permissions/ownership of the actual merged container export."""
+    import tarfile
+    roots=('app/package.json','app/package-lock.json','app/dist','app/server','app/brand/web',
+           'app/shared','app/src/utils','app/prisma','app/scripts','app/node_modules',
+           'usr/bin/chromium','usr/lib/chromium','usr/share/fonts','usr/local/bin/node')
+    manifest={};hardlinks={}
+    with tarfile.open(fileobj=stream,mode='r|') as archive:
+        for member in archive:
+            name=release.safe_name(member.name)
+            if not any(name==root or name.startswith(root+'/') for root in roots):continue
+            if name in manifest:raise RuntimeError('B2_DUPLICATE_EXPORT_PATH')
+            row={'mode':member.mode,'uid':member.uid,'gid':member.gid}
+            if member.isfile():
+                row.update(type='file',size=member.size,sha256=release.file_hash(archive.extractfile(member)))
+            elif member.isdir():row.update(type='directory')
+            elif member.issym():row.update(type='symlink',target=member.linkname)
+            elif member.islnk():hardlinks[name]=release.safe_name(member.linkname);row.update(type='hardlink')
+            else:raise RuntimeError('B2_RUNTIME_SPECIAL_FILE')
+            manifest[name]=row
+    for name,target in hardlinks.items():
+        visited={name}
+        while target in hardlinks:
+            if target in visited:raise RuntimeError('B2_RUNTIME_HARDLINK_CYCLE')
+            visited.add(target);target=hardlinks[target]
+        if target not in manifest or manifest[target]['type']!='file':raise RuntimeError('B2_RUNTIME_HARDLINK_UNKNOWN')
+        source=manifest[target];manifest[name].update({k:source[k] for k in ('type','size','sha256')})
+    if not all(any(name==root or name.startswith(root+'/') for name in manifest) for root in roots):
+        raise RuntimeError('CURRENT_RUNTIME_FILE_MISSING')
+    return manifest
+
+
+def b2_compare_manifests(reference,candidate):
+    extra=sorted(set(candidate)-set(reference));missing=sorted(set(reference)-set(candidate))
+    different=sorted(k for k in set(reference)&set(candidate) if reference[k]!=candidate[k])
+    proof={'verified':not(extra or missing or different),'extra':extra[:30],'missing':missing[:30],
+           'different':different[:30],'counts':{'reference':len(reference),'candidate':len(candidate),
+           'extra':len(extra),'missing':len(missing),'different':len(different)}}
+    return proof
+
+
+def b2_compare_images(reference,candidate,sha):
+    names=[]
+    def manifest(tag,role):
+        name='b2-equivalence-'+sha[:12]+'-'+role
+        ident=docker('create','--name',name,'--network','none','--label','budu.b2-equivalence='+sha,tag)
+        names.append((name,ident))
+        proc=subprocess.Popen(['docker','export',ident],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        try:
+            result=b2_manifest_from_tar(proc.stdout)
+            proc.stdout.close()
+            if proc.wait(timeout=60)!=0:raise RuntimeError('B2_EXPORT_FAILED')
+            return result
+        finally:
+            if proc.poll() is None:proc.kill();proc.wait()
+    try:
+        configs=[json.loads(docker('image','inspect',tag))[0]['Config'] for tag in (reference,candidate)]
+        keys=(*release.IDENTITY_KEYS,'Env')
+        config_diff=[key for key in keys if (sorted(configs[0].get(key) or []) if key=='Env' else configs[0].get(key))
+                      !=(sorted(configs[1].get(key) or []) if key=='Env' else configs[1].get(key))]
+        for config in configs:
+            if config.get('Labels',{}).get(release.REVISION)!=sha:raise RuntimeError('B2_EQUIVALENCE_REVISION_INVALID')
+        a=manifest(reference,'reference');b=manifest(candidate,'candidate')
+        proof=b2_compare_manifests(a,b)
+        proof.update(runtimeConfigVerified=not config_diff,configDifferences=config_diff,
+            manifestSHA256=hashlib.sha256(json.dumps(b,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
+            generatedPrismaCompared=True,productionDependenciesCompared=True,chromiumAndFontsCompared=True)
+        if config_diff:proof['verified']=False
+        if not proof['verified']:
+            print('B2_EQUIVALENCE_FAILURE='+json.dumps(proof,sort_keys=True),flush=True)
+            raise RuntimeError('B2_RUNTIME_EQUIVALENCE_FAILED')
+        return proof
+    finally:
+        for name,ident in names:
+            owned=json.loads(docker('inspect',name))[0]
+            if owned['Id']!=ident or owned['Config']['Labels'].get('budu.b2-equivalence')!=sha:
+                raise RuntimeError('B2_EQUIVALENCE_CLEANUP_OWNERSHIP_CHANGED')
+            docker('rm',ident)
+
+
+def b2_build_reusing_r_ci(directory,compatible_archive):
+    """A real exact-R cache attempt, then B runtime derivation if A cannot fit."""
+    procurement_controller_ci_guard()
+    if os.environ['GITHUB_REF']!='refs/heads/'+release.B2_BRANCH:raise RuntimeError('B2_ISOLATED_RUNNER_REQUIRED')
+    # This entry point runs as root only on the owned hosted runner. Trust this
+    # exact checkout for this process, just as the isolated controller does.
+    os.environ.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='safe.directory',GIT_CONFIG_VALUE_0=str(ROOT))
+    root=Path(directory).resolve();temp=Path(os.environ['RUNNER_TEMP']).resolve()
+    if temp not in root.parents or not root.is_dir():raise RuntimeError('B2_OWNED_BUILD_DIRECTORY_REQUIRED')
+    old_sha=release.procurement_contract()['oldSha'];sha=os.environ['GITHUB_SHA']
+    release.configure_profile('post-transfer',old_sha,release.procurement_contract()['businessSha'],
+        hashlib.sha256(release.command(['git','-C',str(ROOT),'show',old_sha+':server/v2.js'])).hexdigest())
+    actual,_=release.identity(ROOT)
+    if actual!=sha:raise RuntimeError('CI_EXACT_SOURCE_REQUIRED')
+    fixed=release.compatibility_artifact(ROOT,compatible_archive)
+    if fixed['archiveHash']!='fd7d56c195c4b0fff477d5e9ebf263919d385a4b4f152fad8753c5855ec4afed':
+        raise RuntimeError('B2_EXACT_FIXED_R_ARCHIVE_REQUIRED')
+    rsha=release.procurement_contract()['rollbackSha'];rtag=fixed['imageReference'];tag=release.image_reference(sha)
+    for path in ('Dockerfile','package.json','package-lock.json'):
+        if release.git(ROOT,'rev-parse',rsha+':'+path)!=release.git(ROOT,'rev-parse',sha+':'+path):
+            raise RuntimeError('B2_RUNTIME_BASE_SOURCE_DIFFERENT')
+    source=root/'reuse-source';source.mkdir()
+    with subprocess.Popen(['git','-C',str(ROOT),'archive',sha],stdout=subprocess.PIPE) as proc:
+        import tarfile
+        with tarfile.open(fileobj=proc.stdout,mode='r|') as archive:archive.extractall(source)
+        if proc.wait()!=0:raise RuntimeError('B2_EXACT_BUILD_CONTEXT_FAILED')
+    docker('load','-i',str(compatible_archive))
+    rimage=json.loads(docker('image','inspect',rtag))[0];release.validate_loaded_image(rimage,fixed)
+    report={'sourceSha':sha,'fixedRSha':rsha,'fixedRArchiveHash':fixed['archiveHash'],
+            'productionAccess':False,'attempts':[],'result':'RUNNING'}
+    output=Path(os.environ['RUNNER_TEMP'])/'b2-artifact-reuse-proof.json'
+    def save():output.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n');output.chmod(0o644)
+    def build(dockerfile,destination,cache=False):
+        args=['docker','buildx','build','--builder','default','--platform','linux/amd64',
+              '--label',release.REVISION+'='+sha,'--tag',tag,'--provenance=false','--sbom=false',
+              '--file',str(dockerfile),'--output','type=docker,compression=gzip,compression-level=9,force-compression=false,dest='+str(destination)]
+        if cache:args+=['--cache-from',rtag]
+        subprocess.run([*args,str(source)],check=True,timeout=1200)
+    def allocation(path):
+        try:return b1_import_ci(path,compatible_archive,sha,b2=True)
+        except release.GateError as error:
+            if str(error) not in ('B1_CAPACITY_6GIB','B1_CAPACITY_10GIB','B1_CAPACITY_90PCT'):raise
+            diagnostic=Path(os.environ['RUNNER_TEMP'])/'b2-controller-import-diagnostic.json'
+            if not diagnostic.is_file():raise
+            return json.loads(diagnostic.read_text())
+    save()
+    try:
+        standard=root/'standard-reference.tar';cache_build_ok=True
+        try:build(source/'Dockerfile',standard,cache=True)
+        except subprocess.CalledProcessError as error:
+            cache_build_ok=False
+            report['attempts'].append({'strategy':'A_EXACT_R_CACHE','result':'BUILD_ADAPTER_FAILED','returncode':error.returncode})
+            save()
+            build(source/'Dockerfile',standard)
+        a=release.artifact(standard,sha,ROOT);first=allocation(standard)
+        report['attempts'].append({'strategy':'A_EXACT_R_CACHE','result':first['result'],
+            'allocation':first.get('userSampleCapacity'),'code':first.get('code'),
+            'sharedProof':first.get('capacityLedger',{}).get('sharedProof')})
+        save()
+        if first['result']=='PASS' and cache_build_ok:
+            final=standard;proof=first;report['strategy']='A_EXACT_R_CACHE'
+            docker('load','-i',str(standard))
+            equivalence=b2_compare_images(tag,tag,sha)
+        else:
+            docker('load','-i',str(standard));reference='budu-b2-reference:'+sha[:12]
+            docker('tag',tag,reference)
+            original=(source/'Dockerfile').read_text();marker='FROM node:22-bookworm-slim'
+            if original.count(marker)!=1:raise RuntimeError('B2_RUNTIME_DOCKERFILE_BOUNDARY_INVALID')
+            derived=root/'reuse-runtime.Dockerfile'
+            derived.write_text(original.split(marker)[0]+'FROM '+rtag+'\nUSER root\n'
+                'RUN rm -rf /app/dist /app/server /app/brand/web /app/shared /app/src/utils /app/prisma /app/scripts\n'
+                'COPY --from=builder /app/dist ./dist\nCOPY server ./server\nCOPY brand/web ./brand/web\n'
+                'COPY shared ./shared\nCOPY src/utils ./src/utils\nCOPY prisma ./prisma\nCOPY scripts ./scripts\n'
+                'RUN npx prisma generate\nRUN mkdir -p /app/server/data && chown -R node:node /app/server\nUSER node\n')
+            final=root/'derived-candidate.tar';build(derived,final)
+            b=release.artifact(final,sha,ROOT)
+            if b['rootfsDiffIds'][:len(fixed['rootfsDiffIds'])]!=fixed['rootfsDiffIds']:
+                raise RuntimeError('B2_EXACT_R_BASE_LAYER_PREFIX_REQUIRED')
+            docker('load','-i',str(final));equivalence=b2_compare_images(reference,tag,sha)
+            proof=allocation(final)
+            report['attempts'].append({'strategy':'B_R_DERIVED_RUNTIME','result':proof['result'],
+                'allocation':proof.get('userSampleCapacity'),'code':proof.get('code')})
+            if proof['result']!='PASS':raise RuntimeError('B2_MAXIMUM_R_REUSE_CAPACITY_FAILED')
+            report['strategy']='B_R_DERIVED_RUNTIME'
+        shutil.copyfile(final,root/'image.tar')
+        cap=proof['capacityLedger'];sample=proof['userSampleCapacity']
+        ready=next(o for o in cap['observations'] if o['phase']=='R_READY')
+        complete=next(o for o in cap['observations'] if o['phase']=='E_IMPORT_COMPLETE')
+        report.update(result='PASS',equivalence=equivalence,capacity=sample,
+            historicalSample90='HISTORICAL_SAMPLE_90_UNVERIFIED',
+            rRetainedAllocation=ready['retained'],eIncrementalAllocation=complete['retained']-ready['retained'],
+            sharedCreditedBytes=cap['sharedProof']['creditedBytes'],maximumPeak=cap['peak'],
+            projectedFree=sample['projectedFree'],tenGiBHeadroom=sample['projectedFree']-release.MIN_PROJECTED_AVAILABLE,
+            artifact=release.artifact(root/'image.tar',sha,ROOT))
+        proof_path=Path(os.environ['RUNNER_TEMP'])/'b2-retained-proof.json'
+        proof_path.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n');proof_path.chmod(0o644)
+        prior=Path(os.environ['RUNNER_TEMP'])/'b2-controller-import-diagnostic.json'
+        if prior.exists():prior.rename(root/'cache-attempt-diagnostic.json')
+        save();print('B2_ARTIFACT_REUSE_EQUIVALENCE_CAPACITY_PASS',flush=True)
+    except BaseException as error:
+        report.update(result='FAILED',errorType=type(error).__name__)
+        save();raise
+
+
 def b2_retained_ci(archive, compatible_archive):
     """Focused real fresh-candidate proof; no production transport or full CI."""
     procurement_controller_ci_guard()
@@ -2260,6 +2445,9 @@ if __name__ == '__main__':
     try:
         if sys.argv[1] == '--native-pg16':
             native_pg16()
+        elif sys.argv[1] == '--b2-build-reuse-ci':
+            if len(sys.argv)!=4:raise RuntimeError('B2_BUILD_ARGUMENTS_INVALID')
+            b2_build_reusing_r_ci(*sys.argv[2:])
         elif sys.argv[1] == '--b2-retained-ci':
             if len(sys.argv)!=4:raise RuntimeError('B2_FOCUSED_ARGUMENTS_INVALID')
             b2_retained_ci(*sys.argv[2:])

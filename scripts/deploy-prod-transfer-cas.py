@@ -878,6 +878,11 @@ No archive member is extracted to the host filesystem.
         file_sizes = {}
         expected_payload = runtime_payload(repo)
         observed_payload = {}
+        # B2 may inherit exact R then replace its runtime directories. Validate
+        # the resulting filesystem, including deletions, rather than requiring
+        # obsolete files in lower layers to match the current source.
+        merged_b2 = B2_IDENTITY and release != procurement_contract()['rollbackSha']
+        runtime_files = set()
         v2_bytes = None
         prisma_files = {}
         layer_metrics = []
@@ -919,24 +924,34 @@ No archive member is extracted to the host filesystem.
                     if basename.startswith('.wh.'):
                         parent = name.rsplit('/',1)[0]+'/' if '/' in name else ''
                         affected = parent if basename == '.wh..wh..opq' else parent+basename[4:]
-                        require(not any(k == affected or k.startswith(affected if affected.endswith('/') else affected+'/') for k in expected_payload), 'RUNTIME_WHITEOUT_UNSUPPORTED')
+                        replaces_runtime = any(k == affected or k.startswith(affected if affected.endswith('/') else affected+'/') for k in expected_payload)
+                        if merged_b2:
+                            require(member.isfile() and member.size == 0, 'B2_WHITEOUT_INVALID')
+                            def removed(k):return k == affected or k.startswith(affected if affected.endswith('/') else affected+'/')
+                            observed_payload = {k:v for k,v in observed_payload.items() if not removed(k)}
+                            runtime_files = {k for k in runtime_files if not removed(k)}
+                            if removed('app/server/v2.js'):v2_bytes = None
+                        else:require(not replaces_runtime, 'RUNTIME_WHITEOUT_UNSUPPORTED')
                         if migration_enabled():
                             require(not any(k == affected or k.startswith(affected.rstrip('/')+'/') for k in
                                             ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js')),
                                     'SHIPPING_PRISMA_CLI_INVALID')
+                        if merged_b2:continue
                     if (migration_enabled()) and name in ('app/node_modules/prisma/package.json', 'app/node_modules/prisma/build/index.js'):
                         require(member.isfile() and 0 < member.size < 4 * 1024 ** 2, 'SHIPPING_PRISMA_CLI_INVALID')
                         content = layer.extractfile(member).read()
                         prisma_files[name] = json.loads(content)['version'] if name.endswith('package.json') else digest(content)
-                    if member.isfile() and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/')):
-                        require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
+                    if (member.isfile() or merged_b2 and (member.issym() or member.islnk())) and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/')):
+                        if merged_b2:runtime_files.add(name)
+                        else:require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
                     if name in expected_payload:
                         require(member.isfile(), 'RUNTIME_SOURCE_MUST_BE_REGULAR_FILE')
                         observed_payload[name] = file_hash(layer.extractfile(member))
                     if name in ('app/server/v2.js', 'app/server/.wh.v2.js', 'app/server/.wh..wh..opq', 'app/.wh.server'):
-                        require(name == 'app/server/v2.js' and member.isfile() and member.size < 4 * 1024 ** 2,
-                                'RUNTIME_LAYER_INVALID')
-                        v2_bytes = observed_payload.get(name)
+                        if not (merged_b2 and basename.startswith('.wh.')):
+                            require(name == 'app/server/v2.js' and member.isfile() and member.size < 4 * 1024 ** 2,
+                                    'RUNTIME_LAYER_INVALID')
+                            v2_bytes = observed_payload.get(name)
             # Include trailing tar padding in the canonical diff_id hash.
             while stream.read(1024 * 1024):
                 pass
@@ -958,6 +973,8 @@ No archive member is extracted to the host filesystem.
         require(v2_bytes is not None and v2_bytes == digest((Path(repo) / 'server/v2.js').read_bytes()),
                 'ARTIFACT_BUSINESS_CODE_MISMATCH')
         require(observed_payload == expected_payload, 'ARTIFACT_RUNTIME_PAYLOAD_MISMATCH')
+        if merged_b2:
+            require(runtime_files <= set(expected_payload), 'EXTRA_STALE_RUNTIME_FILE')
         if migration_enabled():
             pinned = json.loads((Path(repo)/'package-lock.json').read_text())['packages']['node_modules/prisma']['version']
             require(pinned == '6.19.3' and prisma_files.get('app/node_modules/prisma/package.json') == pinned
