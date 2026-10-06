@@ -119,6 +119,7 @@ export default function PurchaseReceiptPage({
     if (id) await openDetail(id);
   };
   const saveDraft = () => run(async () => {
+    if (staleDraftItems.some(x => String(x.quantity ?? '').trim() !== '')) throw new Error('请先移除已不再可采购的商品');
     const content = {
       ...draft.content,
       items: draft.content.items.filter(x => String(x.quantity ?? '').trim() !== '')
@@ -137,7 +138,14 @@ export default function PurchaseReceiptPage({
     await refresh(d.order.id);
     setNotice('采购清单已保存；实际微信下单后再标记');
   });
-  const supplierProducts = draft ? products.filter(p => p.purchaseEnabled && p.procurementSupplierId === draft.content.supplierId) : [];
+  const activeSupplierProducts = draft ? products.filter(p => p.purchaseEnabled && p.procurementSupplierId === draft.content.supplierId) : [];
+  const activeSupplierProductIds = new Set(activeSupplierProducts.map(p => p.id));
+  const staleDraftItems = draft ? draft.content.items.filter(x => !activeSupplierProductIds.has(x.itemId)) : [];
+  const draftProducts = [...new Map([...activeSupplierProducts, ...staleDraftItems.map(x => ({
+    id: x.itemId,
+    name: products.find(p => p.id === x.itemId)?.name || x.productNameSnapshot || '历史商品',
+    stale: true
+  }))].map(p => [p.id, p])).values()];
   const changeDraftProduct = (itemId, field, value) => setDraft(d => {
     const existing = d.content.items.find(x => x.itemId === itemId);
     return {
@@ -331,9 +339,15 @@ export default function PurchaseReceiptPage({
               ...d.content,
               storeKey: e.target.value
             }
-          }))}><option value="">请选择</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>{!draft.content.supplierId ? <p className="text-sm text-slate-500">请选择采购供应商</p> : !supplierProducts.length ? <p className="text-sm text-slate-500">该供应商暂无可采购商品</p> : supplierProducts.map((p, i) => {
+          }))}><option value="">请选择</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>{!draft.content.supplierId && <p className="text-sm text-slate-500">请选择采购供应商</p>}{draft.content.supplierId && !draftProducts.length && <p className="text-sm text-slate-500">该供应商暂无可采购商品</p>}{draftProducts.map((p, i) => {
           const l = draft.content.items.find(x => x.itemId === p.id);
-          return <div key={p.id} className="min-w-0 rounded-xl bg-slate-50 p-3"><p className="break-words font-semibold">{p.name}</p><div className="mt-2 grid grid-cols-2 gap-2"><input aria-label={'要货数量' + (i + 1)} className={input} inputMode="decimal" value={l?.quantity ?? ''} onChange={e => changeDraftProduct(p.id, 'quantity', e.target.value)} placeholder="数量" /><input aria-label={'要货单位' + (i + 1)} className={input} value={l?.unit ?? ''} onChange={e => changeDraftProduct(p.id, 'unit', e.target.value)} placeholder="单位" /></div></div>;
+          return <div key={p.id} className={'min-w-0 rounded-xl p-3 ' + (p.stale ? 'border border-rose-200 bg-rose-50' : 'bg-slate-50')}><p className="break-words font-semibold">{p.name}</p>{p.stale && <p className="mt-1 text-sm font-semibold text-rose-700">已不再可采购</p>}<div className="mt-2 grid grid-cols-2 gap-2"><input aria-label={'要货数量' + (i + 1)} className={input} inputMode="decimal" value={l?.quantity ?? ''} onChange={e => changeDraftProduct(p.id, 'quantity', e.target.value)} placeholder="数量" /><input aria-label={'要货单位' + (i + 1)} className={input} value={l?.unit ?? ''} onChange={e => changeDraftProduct(p.id, 'unit', e.target.value)} placeholder="单位" /></div>{p.stale && <button className={btn + ' mt-2 !text-rose-700'} onClick={() => setDraft(d => ({
+            ...d,
+            content: {
+              ...d.content,
+              items: d.content.items.filter(x => x.itemId !== p.id)
+            }
+          }))}>从本次采购移除</button>}</div>;
         })}<button className={primary + ' w-full'} disabled={busy} onClick={saveDraft}>保存备单</button></div></Sheet>}
  {supplier && <Sheet error={error} title="采购供应商维护" onClose={() => setSupplier(null)}><input aria-label="供应商名称" className={input} value={supplier.name} onChange={e => setSupplier(s => ({
         ...s,

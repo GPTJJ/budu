@@ -339,6 +339,121 @@ test('DRAFT responsive 320px 至 iPad 长商品名、输入和保存可用', asy
   expect(await page.evaluate(() => document.body.style.overflow)).not.toBe('hidden');
 });
 
+
+const draftProduct = (page, name) => page.getByRole('dialog').getByText(name, {exact: true}).locator('..');
+async function expectStaleProduct(page, name) {
+  const card = draftProduct(page, name);
+  await expect(card).toHaveCount(1);
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('textbox').nth(0)).toHaveValue('10000');
+  await expect(card.getByRole('textbox').nth(1)).toHaveValue('克');
+  await expect(card.getByText('已不再可采购', {exact: true})).toBeVisible();
+  await expect(card.getByRole('button', {name: '从本次采购移除', exact: true})).toBeVisible();
+  const active = draftProduct(page, '合成糖商品B');
+  await expect(active.getByRole('textbox').nth(0)).toHaveValue('');
+  await expect(active.getByRole('textbox').nth(1)).toHaveValue('');
+  await expect(active.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '移除此行', exact: true})).toHaveCount(0);
+  return card;
+}
+async function expectStaleSaveBlocked(page) {
+  const puts = [];
+  const listener = r => {if (r.method() === 'PUT' && /\/procurement\/orders\//.test(r.url())) puts.push(r);};
+  page.on('request', listener);
+  try {
+    await page.getByRole('button', {name: '保存备单', exact: true}).click();
+    await expect(page.getByRole('dialog').getByRole('alert')).toHaveText('请先移除已不再可采购的商品');
+    expect(puts).toHaveLength(0);
+  } finally {
+    page.off('request', listener);
+  }
+}
+
+test('DRAFT stale 解绑后的历史商品可见，主动移除后 PUT 只包含 B', async ({page}) => {
+  const o = await draft(page);
+  const supplier = (await api(page, '/procurement/suppliers')).rows.find(s => s.id === o.draftContent.supplierId);
+  const changed = (await api(page, '/procurement/suppliers/' + supplier.id, {
+    requestKey: randomUUID(), version: supplier.version, name: supplier.name, productIds: ['synth-item-b']
+  }, 'PUT')).supplier;
+  try {
+    await visit(page);
+    await open(page, o.id);
+    await page.getByRole('button', {name: '修改要货清单'}).click();
+    const stale = await expectStaleProduct(page, '合成糖商品A');
+    await expectStaleSaveBlocked(page);
+    expect((await api(page, '/procurement/orders/' + o.id)).order.draftContent.items[0].quantity).toBe('10000');
+    await stale.getByRole('button', {name: '从本次采购移除', exact: true}).click();
+    await expect(stale).toHaveCount(0);
+    const active = draftProduct(page, '合成糖商品B');
+    await active.getByRole('textbox').nth(0).fill('20');
+    await active.getByRole('textbox').nth(1).fill('盒');
+    const {payload} = await saveAndCapture(page, 'PUT', o.id);
+    expect(payload.version).toBe(o.version);
+    expect(payload.content.items).toEqual([{itemId: 'synth-item-b', quantity: '20', unit: '盒'}]);
+  } finally {
+    await api(page, '/procurement/suppliers/' + supplier.id, {
+      requestKey: randomUUID(), version: changed.version, name: supplier.name, productIds: supplier.products.map(p => p.id)
+    }, 'PUT');
+  }
+});
+
+for (const state of ['disabled', 'missing-snapshot', 'missing-name']) {
+  test('DRAFT stale ' + state + ' 名称回退、按 itemId 去重、主动清空数量', async ({page}) => {
+    const o = await draft(page);
+    let changed;
+    if (state === 'disabled') {
+      const a = (await api(page, '/procurement/items')).rows.find(p => p.id === 'synth-item-a');
+      changed = (await api(page, '/procurement/items/' + a.id + '/purchase-purpose', {
+        requestKey: randomUUID(), version: a.version, purchaseEnabled: false
+      }, 'PATCH')).item;
+    } else {
+      // Read-response fixtures cover an unavailable product and old snapshots;
+      // no canonical product or historical order is deleted/rewritten.
+      await page.route('**/api/v2/procurement/items', async route => {
+        const r = await route.fetch();
+        const data = await r.json();
+        data.rows = data.rows.filter(p => p.id !== 'synth-item-a');
+        await route.fulfill({response: r, json: data});
+      });
+      await page.route('**/api/v2/procurement/orders/' + o.id, async route => {
+        if (route.request().method() !== 'GET') return route.continue();
+        const r = await route.fetch();
+        const data = await r.json();
+        const item = {...data.order.draftContent.items[0]};
+        if (state === 'missing-name') delete item.productNameSnapshot;
+        data.order.draftContent.items = [item, {...item}];
+        await route.fulfill({response: r, json: data});
+      });
+    }
+    try {
+      await visit(page);
+      await open(page, o.id);
+      await page.getByRole('button', {name: '修改要货清单'}).click();
+      const name = state === 'missing-name' ? '历史商品' : '合成糖商品A';
+      const stale = await expectStaleProduct(page, name);
+      await expectStaleSaveBlocked(page);
+      const width = test.info().project.name === 'desktop-chromium' ? 1440 : 320;
+      await page.setViewportSize({width, height: 900});
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.screenshot({path: root + '/' + test.info().project.name + '-stale-' + state + '.png'});
+      await stale.getByRole('textbox').nth(0).fill('');
+      await expect(stale).toBeVisible();
+      await expect(stale.getByRole('textbox').nth(1)).toHaveValue('克');
+      await page.getByRole('button', {name: '保存备单', exact: true}).click();
+      await expect(page.getByRole('dialog').getByRole('alert')).toHaveText('请至少填写一个采购商品数量');
+      const active = draftProduct(page, '合成糖商品B');
+      await active.getByRole('textbox').nth(0).fill('20');
+      await active.getByRole('textbox').nth(1).fill('盒');
+      const {payload} = await saveAndCapture(page, 'PUT', o.id);
+      expect(payload.content.items).toEqual([{itemId: 'synth-item-b', quantity: '20', unit: '盒'}]);
+    } finally {
+      if (changed) await api(page, '/procurement/items/' + changed.id + '/purchase-purpose', {
+        requestKey: randomUUID(), version: changed.version, purchaseEnabled: true
+      }, 'PATCH');
+    }
+  });
+}
+
 test('E2E1 默认一次收完：9980偏差、独立核准、开发者手动结束', async ({
   page
 }, testInfo) => {
