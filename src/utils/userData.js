@@ -247,10 +247,15 @@ export async function loadUserData(options = {}) {
   const transfers = result(4)
   const purchases = result(5)
   const stock = result(6)
-  if (transfers && purchases) {
-    const reqs = []
-    for (const r of (transfers && transfers.rows) || []) {
-      reqs.push({
+  // Each PG domain refreshes independently; failures retain its last successful
+  // in-memory snapshot, never legacy /userdata inventoryRequests.
+  const previousRequests = cached.inventoryRequests
+  let transferRequests = previousRequests.filter((r) => r.type === 'transfer')
+  let purchaseRequests = previousRequests.filter((r) => r.type === 'purchase')
+  if (transfers && Array.isArray(transfers.rows)) {
+    transferRequests = []
+    for (const r of transfers.rows) {
+      transferRequests.push({
         id: r.id,
         type: 'transfer',
         storeKey: r.storeKey,
@@ -293,8 +298,11 @@ export async function loadUserData(options = {}) {
         })),
       })
     }
-    for (const r of (purchases && purchases.rows) || []) {
-      reqs.push({
+  }
+  if (purchases && Array.isArray(purchases.rows)) {
+    purchaseRequests = []
+    for (const r of purchases.rows) {
+      purchaseRequests.push({
         id: r.id,
         type: 'purchase',
         storeKey: r.storeKey,
@@ -318,8 +326,11 @@ export async function loadUserData(options = {}) {
         })),
       })
     }
-    nextCache.inventoryRequests = reqs
   }
+  nextCache.inventoryRequests = [
+    ...transferRequests, ...purchaseRequests,
+    ...previousRequests.filter((r) => r.type !== 'transfer' && r.type !== 'purchase'),
+  ]
   if (stock) {
     nextCache.inventory = ((stock && stock.rows) || []).map((r) => ({
       storeKey: r.storeKey,

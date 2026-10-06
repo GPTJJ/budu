@@ -1,8 +1,13 @@
+import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 // Gate 1：真实执行 loadUserData，证明 legacy /userdata 不再阻塞 PostgreSQL authority bootstrap。
 import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   getUserData,
+  getInventoryRequests,
   loadUserData,
   resetUserData,
 } from '../src/utils/userData.js'
@@ -213,4 +218,122 @@ test('Gate 1 Scenario E: 调拨箱/颗字段从 PG API 完整进入前端缓存'
   assert.equal(item.estimatedWeightGrams, 996)
   assert.equal(item.productCategory, '糖果')
   assert.equal(transferQuantityLabel(item), '166颗')
+})
+
+
+const transferRow = (id, overrides = {}) => ({
+  id, storeKey: 'synth-to', fromStoreKey: 'synth-from', status: 'pending',
+  createdAt: '2026-10-06T08:00:00.000Z', updatedAt: '2026-10-06T08:00:00.000Z',
+  createdBy: 'synthetic-actor', note: 'synthetic-note', items: [], ...overrides,
+})
+const purchaseRow = (id, overrides = {}) => ({ id, storeKey: 'synth-to', status: 'pending', items: [], ...overrides })
+const retiredPurchase = () => json({ error: 'retired purchase endpoint' }, 410)
+const transferCache = () => getInventoryRequests().filter(row => row.type === 'transfer')
+async function seedPgRequestSnapshot() {
+  installFetch({ legacy: {}, pg: pgResponses({
+    '/api/v2/transfer-requests': { rows: [transferRow('tr-previous', { createdAt: '2026-10-04T08:00:00.000Z' })] },
+    '/api/v2/purchase-requests': { rows: [purchaseRow('purchase-previous')] },
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  return structuredClone(getInventoryRequests())
+}
+
+test('Transfer cache CASE1: fresh pending PG transfer replaces old subset despite purchase410', async () => {
+  const before = await seedPgRequestSnapshot()
+  installFetch({ legacy: { inventoryRequests: [{ id: 'tr-kv', type: 'transfer' }] }, pg: pgResponses({
+    '/api/v2/transfer-requests': { rows: [transferRow('tr-new')] },
+    '/api/v2/purchase-requests': retiredPurchase(),
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(transferCache().map(row => row.id), ['tr-new'])
+  assert.deepEqual(getInventoryRequests().filter(row => row.type === 'purchase'), before.filter(row => row.type === 'purchase'))
+})
+
+test('Transfer cache CASE2: authoritative empty PG transfer clears old subset despite purchase failure', async () => {
+  const before = await seedPgRequestSnapshot()
+  installFetch({ legacy: { inventoryRequests: before }, pg: pgResponses({
+    '/api/v2/transfer-requests': { rows: [] }, '/api/v2/purchase-requests': retiredPurchase(),
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(transferCache(), [])
+  assert.deepEqual(getInventoryRequests().filter(row => row.type === 'purchase'), before.filter(row => row.type === 'purchase'))
+})
+
+test('Transfer cache CASE3: both PG domains failing retain the last successful PG request snapshot', async () => {
+  const before = await seedPgRequestSnapshot()
+  installFetch({ legacy: {}, pg: pgResponses({
+    '/api/v2/transfer-requests': json({ error: 'unavailable' }, 503), '/api/v2/purchase-requests': retiredPurchase(),
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(getInventoryRequests(), before)
+})
+
+test('Transfer cache CASE4: both PG domains succeeding preserve transfer/purchase merge and received mapping', async () => {
+  await seedPgRequestSnapshot()
+  installFetch({ legacy: {}, pg: pgResponses({
+    '/api/v2/transfer-requests': { rows: [transferRow('tr-new')] },
+    '/api/v2/purchase-requests': { rows: [purchaseRow('purchase-new', { status: 'received', supplier: 'synthetic-supplier' })] },
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(getInventoryRequests().map(row => [row.type, row.id, row.status]), [['transfer', 'tr-new', 'pending'], ['purchase', 'purchase-new', 'done']])
+  assert.equal(getInventoryRequests()[1].supplier, 'synthetic-supplier')
+})
+
+test('Transfer cache CASE5: failed transfer cannot restore legacy userdata transfers or overwrite successful PG history', async () => {
+  const before = await seedPgRequestSnapshot()
+  installFetch({ legacy: { inventoryRequests: [{ id: 'tr-kv-old', type: 'transfer', status: 'shipped' }] }, pg: pgResponses({
+    '/api/v2/transfer-requests': json({ error: 'unavailable' }, 503), '/api/v2/purchase-requests': retiredPurchase(),
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(getInventoryRequests(), before)
+  assert(!getInventoryRequests().some(row => row.id === 'tr-kv-old'))
+})
+
+test('Transfer cache CASE6: newest pending stable identity, timestamps, stores, items and delivery facts survive selector', async () => {
+  const item = { itemId: 'item-stable', itemCode: 'code-stable', productName: 'synthetic-product', category: 'product', productCategory: 'synthetic-category', quantity: null, boxQuantity: 2, pieceQuantity: 3, shippedQuantity: null, shippedBoxQuantity: 0, shippedPieceQuantity: 0, shipmentRecorded: false, boxWeightGrams: 1000, pieceWeightGrams: 6, estimatedWeightGrams: 2018, note: 'synthetic-item-note' }
+  const deliveryRecipients = { source: 'notification_delivery', successful: [{ key: 'synthetic-recipient', label: 'synthetic-recipient', status: 'sent' }], undelivered: [] }
+  const row = transferRow('tr-new', { items: [item], deliveryRecipients, storeName: 'synthetic-to', fromStoreName: 'synthetic-from' })
+  installFetch({ legacy: {}, pg: pgResponses({ '/api/v2/transfer-requests': { rows: [row] }, '/api/v2/purchase-requests': retiredPurchase() }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  const selected = transferCache().find(value => value.id === 'tr-new')
+  assert(selected)
+  for (const key of ['status', 'createdAt', 'updatedAt', 'storeKey', 'fromStoreKey', 'storeName', 'fromStoreName', 'createdBy', 'note']) assert.equal(selected[key], row[key])
+  assert.deepEqual(selected.items[0], item)
+  assert.deepEqual(selected.deliveryRecipients, deliveryRecipients)
+})
+
+test('Transfer cache CASE7: historical shipped/canceled transitions and shipment/withdrawal snapshots stay unchanged', async () => {
+  const shipped = transferRow('tr-shipped', { status: 'shipped', shippedBy: 'synthetic-shipper', shippedAt: '2026-10-04T09:00:00.000Z', shipmentRecorded: true })
+  const canceled = transferRow('tr-canceled', { status: 'canceled', withdrawnBy: 'synthetic-withdrawer', withdrawnAt: '2026-10-04T10:00:00.000Z' })
+  installFetch({ legacy: {}, pg: pgResponses({ '/api/v2/transfer-requests': { rows: [shipped, canceled] }, '/api/v2/purchase-requests': retiredPurchase() }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(transferCache().map(row => row.status), ['shipped', 'canceled'])
+  for (const source of [shipped, canceled]) {
+    const value = transferCache().find(row => row.id === source.id)
+    for (const key of ['shippedBy', 'shippedAt', 'withdrawnBy', 'withdrawnAt']) assert.equal(value[key], source[key] || (key.endsWith('At') ? null : ''))
+    assert.deepEqual(value.history, [])
+  }
+  assert.equal(transferCache()[0].shipmentRecorded, true)
+})
+
+test('Transfer cache CASE8: load is GET-only and existing create/ship/withdraw/notification/page sources are immutable', async () => {
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => { calls.push(options.method || 'GET'); return json(String(url) === '/api/userdata' ? {} : { rows: [] }) }
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert(calls.length > 0 && calls.every(method => method === 'GET'))
+  const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+  for (const file of ['server/v2.js', 'server/transfer-notification.js', 'src/components/StoreTransferPage.jsx', 'server/purchase-receipt.js', 'prisma/schema.prisma']) {
+    const baseline = execFileSync('git', ['-C', root, 'show', '1952969a64ee9d651cf70482e51ccd3928015a49:' + file])
+    assert.deepEqual(fs.readFileSync(path.join(root, file)), baseline, file)
+  }
+})
+
+test('Transfer cache malformed PG rows retain the successful domain while the other domain refreshes independently', async () => {
+  const before = await seedPgRequestSnapshot()
+  installFetch({ legacy: { inventoryRequests: [{ id: 'tr-kv', type: 'transfer' }] }, pg: pgResponses({
+    '/api/v2/transfer-requests': { rows: null }, '/api/v2/purchase-requests': { rows: [] },
+  }) })
+  await loadUserData({ userId: 'transfer-cache-authority' })
+  assert.deepEqual(transferCache(), before.filter(row => row.type === 'transfer'))
+  assert.deepEqual(getInventoryRequests().filter(row => row.type === 'purchase'), [])
 })

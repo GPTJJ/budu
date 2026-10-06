@@ -73,13 +73,17 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
 PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b265f60a5b5154a9ef34dc136bdf0786d104982e43f5cc2ab0fd14795423',
- 'scripts/deploy-prod-transfer-cas.py': {                                         'BG_HOTFIX_BASE': '511fe36247c081ea1c78a8ce50c02507a9c0a2709aabc4532266621318e53441',
+ 'scripts/deploy-prod-transfer-cas.py': {                                         'BG_TRANSFER_BASE': '16c85fdbefcb114d6f6c649937418574f73253c677fc813efbad9e9b01898b36',
+                                         'BG_TRANSFER_FILES': 'c05ee1b27ec1ee372939fbecdc89d7cdf442e775d437182f018682652e642c84',
+                                         'bg_hotfix_base': '2f09118456c66b846e481e755f52a1dba6fcdacfe1d6acb18fb9af8106793fb3',
+                                         'bg_hotfix_files': '901e124b58df30530cc6a0f37cde4db86a30f3e554aa49d653d898aa864f02a7',
+                                         'BG_HOTFIX_BASE': '511fe36247c081ea1c78a8ce50c02507a9c0a2709aabc4532266621318e53441',
                                          'BG_HOTFIX_FILES': '92024567001acbe95298dddf3fc05af392c7d1733d556779221ac1cb4496db38',
-                                         'bg_recover_g': 'ece29284d692fcff637e92843c8ec5eeb80a1ee9f803b1353808c38ebf80acd7',
-                                         'bg_release_base': '22f7df30239070c2ac876356be8528c64bd20d0ce55c698e3a50356977f98d4c',
+                                         'bg_recover_g': '3906ac920cf35ad9db942d1215fdcc93ff9f9d744a37e95dff3ee960e8b72e24',
+                                         'bg_release_base': '1587575683bee0311da604ee079a9df69c0d7aa0ea477d93b05edb720250edd7',
                                          'identity': '1c5853f489c44c1575c19ae1d354c58d44bbb82bb47abb960b4e0f2ed348f1a5',
                                          'procurement_database_details': 'b34ef982abe96712401aa7dde973e01744184c80056b56478781e7bfdcda4e82',
-                                         'procurement_hotfix': '154a5a97fa763b77a33eb8f911cb22114bb7cd1384f4354acc7098bbece7c5a0',
+                                         'procurement_hotfix': 'b2f347d7468ff191fc9c0056cebf91ff557aceadb6af48a639fc13137087312f',
                                          'validate_database': '61f35f6a7a0294f7e9d1f4cb637d010abbc3bc921c1e112b41e6f0224c8a53a1',
 'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
@@ -128,7 +132,7 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'b2_deploy': '6c355cb2db57a02b8768285765b3626bf27882c6dc7dbc26f4bd1a0441d31507',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
-                                         'bg_bind': 'fa43733edb15aa62223893b69bc94fbda8f6a2221d6d569bba4bf0879dac52cb',
+                                         'bg_bind': '6e88b34aa80804617ade02dac1ed52506e62f73ae3ef8ead54df070a561f6afb',
                                          'bg_candidate_identity': '082ae570edc43defe29ff5abf6c48ef1c839a57c261090b65aeae6f8b1dcaeea',
                                          'bg_capacity': 'ccc5c887b19a770b4753ed0af5c75721e4c47f2a421f1eef6ce94da924167cb5',
                                          'bg_clone': '1daceedfdb8dd4f09dd4a2fba6da8f204eb44e8530d253de346be40c6814e5a2',
@@ -145,18 +149,18 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'bg_writer': '7b793f0aa46457533ab327597e05524b5585ae7ac116cfd73b21adad4240d3e3',
                                          'capacity_require': '78bb64e2da113d41556836ebf55625482d80d1622f14177fd7ac134be62d992c',
                                          'check_controller_result': '24519b63c06628542937058ec15fa78d2138b8fb03bb3c408bcc9b2936c258ce',
-                                         'configure_capacity_waiver': '3ce471748d47df62f8d7973bb4da8bad5a1e34ee94504d50ce663dd5ef27d680',
+                                         'configure_capacity_waiver': 'c9bd1c1fc8afd7486b50548a8cc0d25c8f6efbed3f1b64d576e7223663c15b9e',
                                          'configure_profile': 'b25b72dd4c380214ec3be1eaf32ed95d24331561e81804a7a68d107a4c952c5c',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
                                          'disk_budget': 'e80c280227277f08fbca9808854c92aa273a894ea5d18625d9483d8a57be7465',
                                          'execute_loaded': '1101414ee7c5782450115e890cb336a4bf747d52e4e28f5b77fdac913d321be1',
-                                         'main': '24b08e0ca21f5ad1b34048b60afb41562cea1fec3fe2fefd8fe40e25a72cdb31',
+                                         'main': 'c61516bbe26cba87f7cfb319365ff224276ea9f44d453e84243ddf3f692025eb',
                                          'preflight': '843b32bc2fe2bde0e90ae5b258f8e7c6c1f5ecd078c11ad5694313e9931bb495',
                                          'run_loaded_controller': '1457203633cc4fde1a0a791db94ec0db909c16a36842a87e96675e05ac11214c',
                                          'shipping_disk_gate': 'cd6a54feb7fb306c82e7103d82afc680274f34cc0b1194618ab9a1c4c6a72351',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
-                                         'validate_post_transfer_identity': '513bd41bf5a845fbaeedeacb6e923b23e9a299f03a031e642a3bb09c20500a9e',
-                                         'validate_procurement_identity': '78c36ed7cab47bba7def3d0b13fd43e47107fa558a0a3bc2ea0d488d4bd444e5'},
+                                         'validate_post_transfer_identity': 'd13b665c9027730a918d88dd7a074f13826e393ba18a71372e789b8839f9c4f4',
+                                         'validate_procurement_identity': '77cb9fd20265ee1639a72a0e64087c649049743895de3e8f1d1dd132eacfabe1'},
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '__entrypoint__': '375c9f54008f437f3937a6d5b3010f58a80f4f4650e4ca06bf28e65abfc6a60b',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
@@ -1905,7 +1909,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
             lines=value.splitlines(keepends=True)
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
         before=nodes(prior);after=nodes(source)
-        allowed={'BG_HOTFIX_BASE', 'BG_HOTFIX_FILES', 'BG_LOCK_CODE', 'bg_bind', 'bg_deploy', 'bg_execute', 'bg_g_guard', 'bg_lifecycle', 'bg_lock', 'bg_promote', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'identity', 'main', 'procurement_database_details', 'procurement_hotfix', 'validate_database', 'validate_post_transfer_identity', 'validate_procurement_identity'}
+        allowed={'BG_HOTFIX_BASE', 'BG_HOTFIX_FILES', 'BG_LOCK_CODE', 'BG_TRANSFER_BASE', 'BG_TRANSFER_FILES', 'bg_bind', 'bg_deploy', 'bg_execute', 'bg_g_guard', 'bg_hotfix_base', 'bg_hotfix_files', 'bg_lifecycle', 'bg_lock', 'bg_promote', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'identity', 'main', 'procurement_database_details', 'procurement_hotfix', 'validate_database', 'validate_post_transfer_identity', 'validate_procurement_identity'}
         self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},allowed)
         self.assertNotEqual(procurement_prior_source(source),source)
         for token in ("peak=max(ledger.get('peak',0), retained+future, planned)","ledger['baselineAvailable']-peak",'ABSOLUTE_MAX_PEAK = 6 * GIB','MIN_PROJECTED_AVAILABLE = 10 * GIB','MAX_PROJECTED_USAGE = 90'):
@@ -1927,6 +1931,40 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
         for old,new in [("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),("'BG_LIFECYCLE_FAILED'","'IGNORED'"),("require(rc==0,'B2_IMPORT_UNKNOWN')",'pass')]:
             self.assertIn(old,source)
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(old,new,1))
+
+
+class TransferCacheHotfixSourceTests(unittest.TestCase):
+    def test_controller_changes_only_finite_identity_binding_nodes(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):
+            lines=value.splitlines(keepends=True)
+            return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
+        before=nodes(prior);after=nodes(source)
+        self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},{'BG_TRANSFER_BASE', 'BG_TRANSFER_FILES', 'bg_bind', 'bg_hotfix_base', 'bg_hotfix_files', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'main', 'procurement_hotfix', 'validate_post_transfer_identity', 'validate_procurement_identity'})
+        self.assertNotEqual(procurement_prior_source(source),source)
+        self.assertEqual(r.BG_TRANSFER_FILES,{'src/utils/userData.js','scripts/test-pg-bootstrap-independence.mjs','scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py','scripts/test-release-path-post-transfer.py'})
+    def test_business_change_only_domain_merge_and_mapping_bodies_unchanged(self):
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':src/utils/userData.js'],text=True)
+        after=(ROOT/'src/utils/userData.js').read_text()
+        left=before.index('  if (transfers && purchases) {');right=before.index('  if (stock) {',left)
+        newleft=after.index('  // Each PG domain refreshes independently;');newright=after.index('  if (stock) {',newleft)
+        self.assertEqual(before[:left],after[:newleft]);self.assertEqual(before[right:],after[newright:])
+        def objects(value,token):
+            result=[];start=0
+            while token in value[start:]:
+                at=value.index(token,start)+len(token)-1;depth=0
+                for end in range(at,len(value)):
+                    if value[end]=='{':depth+=1
+                    if value[end]=='}':depth-=1
+                    if depth==0:break
+                result.append(value[at:end+1]);start=end+1
+            return result
+        original=objects(before[left:right],'reqs.push({')
+        self.assertEqual(original,objects(after[newleft:newright],'transferRequests.push({')+objects(after[newleft:newright],'purchaseRequests.push({'))
+        for token in ('cached.inventoryRequests','Array.isArray(transfers.rows)','Array.isArray(purchases.rows)'):self.assertIn(token,after[newleft:newright])
+        for path in ('server/v2.js','server/transfer-notification.js','server/purchase-receipt.js','server/app.js','server/index.js','src/components/StoreTransferPage.jsx','prisma/schema.prisma','package.json','package-lock.json','Dockerfile'):
+            self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':'+path]),path)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

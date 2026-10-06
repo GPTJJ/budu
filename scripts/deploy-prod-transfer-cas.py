@@ -226,6 +226,10 @@ BG_BASE = '0f5eebf667457c30acbb8075bbfe87e457f0f214'
 BG_ACTIVE = False
 BG_LIVE = None
 BG_HOTFIX_BASE = '221cc055ec7d959ef202bfc71c0e00e0d37f087e'
+BG_TRANSFER_BASE = '1952969a64ee9d651cf70482e51ccd3928015a49'
+BG_TRANSFER_FILES = {'src/utils/userData.js','scripts/test-pg-bootstrap-independence.mjs',
+                     'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py',
+                     'scripts/test-release-path-post-transfer.py'}
 BG_HOTFIX_FILES = {'server/purchase-receipt.js','scripts/test-purchase-receipt-native.mjs',
                    'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py',
                    'scripts/test-release-path-post-transfer.py'}
@@ -256,7 +260,7 @@ def configure_capacity_waiver(receipt, art, emit=True):
             and receipt['releaseSha']==art['release'] and art.get('capacityProfile')=='B2'
             and ((not BG_ACTIVE and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT and EXPECTED_OLD_SHA==c['oldSha'])
                  or (BG_ACTIVE and receipt['parentSha']==BG_BASE and EXPECTED_OLD_SHA==c['rollbackSha'])
-                 or (procurement_hotfix() and receipt['parentSha']==BG_HOTFIX_BASE))
+                 or (procurement_hotfix() and receipt['parentSha']==bg_hotfix_base()))
             and RELEASE_PROFILE=='post-transfer'
             and (RUNTIME_SHA==c['businessSha'] or procurement_hotfix()), 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     CAPACITY_WAIVER=dict(receipt)
@@ -280,13 +284,21 @@ def procurement_migration():
 
 
 def procurement_hotfix():
-    # One exact production base, E-only, schema already L88. Never migration.
+    # Finite reviewed production bases, E-only, schema already L88. Never migration.
     return (BG_ACTIVE and RELEASE_PROFILE=='post-transfer'
-            and EXPECTED_OLD_SHA==RUNTIME_SHA==BG_HOTFIX_BASE)
+            and EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE))
+
+
+def bg_hotfix_base():
+    return BG_TRANSFER_BASE if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_BASE
+
+
+def bg_hotfix_files():
+    return BG_TRANSFER_FILES if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_FILES
 
 
 def bg_release_base():
-    return BG_HOTFIX_BASE if procurement_hotfix() else BG_BASE
+    return bg_hotfix_base() if procurement_hotfix() else BG_BASE
 
 
 def migration_enabled():
@@ -299,15 +311,17 @@ def validate_procurement_identity(repo, release):
     B1_IDENTITY = git(repo,'branch','--show-current') == B1_BRANCH
     B2_IDENTITY = git(repo,'branch','--show-current') == B2_BRANCH
     if procurement_hotfix():
-        require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_HOTFIX_BASE,
+        base=bg_hotfix_base();files=bg_hotfix_files()
+        business={'src/utils/userData.js'} if base==BG_TRANSFER_BASE else {'server/purchase-receipt.js'}
+        focused='scripts/test-pg-bootstrap-independence.mjs' if base==BG_TRANSFER_BASE else 'scripts/test-purchase-receipt-native.mjs'
+        require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+base,
                 'BG_HOTFIX_SCOPE_INVALID')
-        changed=set(git(repo,'diff','--name-only',BG_HOTFIX_BASE,release).splitlines())
-        require(changed <= BG_HOTFIX_FILES and {'server/purchase-receipt.js','scripts/test-purchase-receipt-native.mjs',
-                'scripts/deploy-prod-transfer-cas.py'} <= changed,'BG_HOTFIX_SCOPE_INVALID')
-        require(set(git(repo,'diff','--name-only',BG_HOTFIX_BASE,release,'--','server','prisma','shared','src','brand',
-                'Dockerfile','package.json','package-lock.json').splitlines())=={'server/purchase-receipt.js'},'BG_BUSINESS_CHANGED')
+        changed=set(git(repo,'diff','--name-only',base,release).splitlines())
+        require(changed <= files and business | {focused,'scripts/deploy-prod-transfer-cas.py'} <= changed,'BG_HOTFIX_SCOPE_INVALID')
+        require(set(git(repo,'diff','--name-only',base,release,'--','server','prisma','shared','src','brand',
+                'Dockerfile','package.json','package-lock.json').splitlines())==business,'BG_BUSINESS_CHANGED')
         require(all(digest((Path(repo)/p).read_bytes())==h for p,h in BG_BOOTSTRAP_HASHES.items()),'BG_LIFECYCLE_IDENTITY_INVALID')
-        require(not git(repo,'diff','--name-only',BG_HOTFIX_BASE,release,'--','prisma'),'PROCUREMENT_MIGRATION_IDENTITY_INVALID')
+        require(not git(repo,'diff','--name-only',base,release,'--','prisma'),'PROCUREMENT_MIGRATION_IDENTITY_INVALID')
         return
     if BG_ACTIVE:
         require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BASE, 'BG_SCOPE_INVALID')
@@ -726,7 +740,7 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= (BG_HOTFIX_FILES if procurement_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= (bg_hotfix_files() if procurement_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
@@ -3053,7 +3067,7 @@ def bg_bind(repo, release, art, live):
     require(BG_ACTIVE and B2_IDENTITY and art['release']==release and art['capacityProfile']=='B2'
             and git(repo,'rev-list','--parents','-n','1',release)==release+' '+bg_release_base()
             and live.get('result')=='LIVE_G_PROVEN' and live['LIVE_G_SHA']==EXPECTED_OLD_SHA
-            and ((procurement_hotfix() and live['DB_APPLIED']==88 and live['POINTER_SHA']==BG_HOTFIX_BASE)
+            and ((procurement_hotfix() and live['DB_APPLIED']==88 and live['POINTER_SHA']==bg_hotfix_base())
                  or (not procurement_hotfix() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'] and live['DB_APPLIED']==87))
             and live['DB_FAILED']==0
             and re.fullmatch(r'[0-9a-f]{64}',live['LIVE_G_CONTAINER_ID'])
@@ -3244,7 +3258,7 @@ def bg_recover_g(remote, value, current):
     # returns it to standby; restore its existing writer lifecycle before route.
     live=value['live']
     require(procurement_hotfix() and current['Id']==live['LIVE_G_CONTAINER_ID']
-            and current['Image']==live['LIVE_G_IMAGE_ID'] and live['LIVE_G_SHA']==BG_HOTFIX_BASE,'BG_G_IDENTITY_CHANGED')
+            and current['Image']==live['LIVE_G_IMAGE_ID'] and live['LIVE_G_SHA']==bg_hotfix_base(),'BG_G_IDENTITY_CHANGED')
     c=remote.inspect(current['Id'])
     require(c['State']['Running'] and c['Config']['Labels'].get(REVISION)==env(c).get('GIT_SHA')==live['LIVE_G_SHA'],
             'BG_G_IDENTITY_CHANGED')
@@ -3629,7 +3643,7 @@ def main():
     global BG_ACTIVE, BG_LIVE
     if args.blue_green_live_proof is not None:
         require(args.mode=='deploy' and ((procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'])
-                or (EXPECTED_OLD_SHA==RUNTIME_SHA==BG_HOTFIX_BASE))
+                or (EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE)))
                 and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
         BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())
     backup_diagnostic = args.mode in ('identity-backup-diagnostic','inspect-artifact-backup-diagnostic')

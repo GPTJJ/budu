@@ -1592,8 +1592,8 @@ assert.deepEqual(calls,['app','online','wechat_pay','alipay','refund']);assert.e
         self.assertEqual(output,b'BG_BACKGROUND_LIFECYCLE_PASS\n')
 
 class BlueGreenControllerTests(unittest.TestCase):
-    def attempt(self,fault=None,hotfix=False):
-        base=r.BG_HOTFIX_BASE if hotfix else C['rollbackSha']
+    def attempt(self,fault=None,hotfix=False,hotfix_base=None):
+        base=(hotfix_base or r.BG_HOTFIX_BASE) if hotfix else C['rollbackSha']
         r.configure_profile('post-transfer',base,base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
         r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
         events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[88 if hotfix else 87]
@@ -1763,5 +1763,71 @@ class ProcurementPurposeHotfixTests(unittest.TestCase):
         with patch.object(r,'bg_script',return_value={}) as call:r.bg_lock(None,value,'claim')
         self.assertTrue(call.call_args[0][2]['fresh']);self.assertIn('p.mkdir(mode=0o700)',r.BG_LOCK_CODE)
         self.assertIn("q['present'] is False",r.BG_LOCK_CODE);self.assertIn('os.O_EXCL|os.O_NOFOLLOW',r.BG_LOCK_CODE)
+
+
+class TransferCacheReleaseTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.BG_TRANSFER_BASE,r.BG_TRANSFER_BASE,'0'*64);r.BG_ACTIVE=True
+    def tearDown(self):r.BG_ACTIVE=False
+    def attempt(self,fault=None):return BlueGreenControllerTests.attempt(self,fault,True,r.BG_TRANSFER_BASE)
+    def test_transfer_success_is_E_only_DB88_no_backup_no_migration(self):
+        result,e,run,route=self.attempt()
+        self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertEqual(result['dbApplied'],88)
+        self.assertEqual(result['backupProof']['result'],'NOT_REQUIRED_NO_SCHEMA_CHANGE');self.assertEqual(result['migrationProof']['result'],'NOT_REQUIRED_DB_ALREADY_88')
+        self.assertNotIn('backup',e);self.assertNotIn('migration',e)
+        self.assertLess(e.index('schemaProbe'),e.index('stopG'));self.assertLess(e.index('stopG'),e.index('zero'));self.assertLess(e.index('zero'),e.index('promote'))
+        self.assertLess(e.index('publicE'),e.index('pointerE'));self.assertEqual(run,{'G':False,'E':True});self.assertTrue(result['releaseLockReleased'])
+    def test_transfer_failure_preserves_or_recovers_exact_G(self):
+        for fault in ('probe','standby','schemaProbe','promote','routeE','publicE','evidence'):
+            result,e,run,route=self.attempt(fault)
+            self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertNotIn('secondaryRecoveryCode',result)
+            self.assertEqual(run,{'G':True,'E':False});self.assertEqual(route,['G'])
+            if 'stopG' in e:
+                self.assertLess(e.index('stopE'),e.index('restartG'));self.assertLess(e.index('recoverGActive'),e.index('routeG'))
+            self.assertNotIn('migration',e);self.assertNotIn('backup',e)
+    def test_transfer_binding_allows_only_single_exact_business_file(self):
+        release='a'*40
+        def git(repo,*args):
+            if args==('branch','--show-current'):return r.B2_BRANCH
+            if args[0]=='rev-list':return release+' '+r.BG_TRANSFER_BASE
+            if args[0]=='diff' and args[-1]=='prisma':return ''
+            if args[0]=='diff' and '--' in args:return 'src/utils/userData.js'
+            return '\n'.join(sorted(r.BG_TRANSFER_FILES))
+        with patch.object(r,'git',side_effect=git):r.validate_procurement_identity(ROOT,release)
+        businessArgs=('diff','--name-only',r.BG_TRANSFER_BASE,release,'--','server','prisma','shared','src','brand','Dockerfile','package.json','package-lock.json')
+        failures=[(('rev-list','--parents','-n','1',release),release+' '+r.BG_HOTFIX_BASE),
+                  (('diff','--name-only',r.BG_TRANSFER_BASE,release),'src/utils/other.js'),
+                  (businessArgs,'src/utils/userData.js\nserver/purchase-receipt.js'),
+                  (businessArgs,'src/components/StoreTransferPage.jsx')]
+        for key,bad in failures:
+            with self.subTest(key=key),self.assertRaises(r.GateError),patch.object(r,'git',side_effect=lambda repo,*args:bad if args==key else git(repo,*args)):
+                r.validate_procurement_identity(ROOT,release)
+    def test_transfer_waiver_is_exact_and_other_profiles_and_physical_guards_fail_closed(self):
+        self.assertTrue(r.procurement_hotfix());self.assertFalse(r.migration_enabled());self.assertEqual(r.bg_release_base(),r.BG_TRANSFER_BASE)
+        art={'release':'a'*40,'capacityProfile':'B2'};receipt={'releaseSha':'a'*40,'parentSha':r.BG_TRANSFER_BASE}
+        r.configure_capacity_waiver(receipt,art,emit=False)
+        r.b1_capacity_gate({'baselineUsed':100*r.GIB,'baselineAvailable':r.GIB,'phase':'TRANSFER'},100*r.GIB,r.GIB,20*r.GIB)
+        self.assertTrue(any(x['waived'] for x in r.CAPACITY_TELEMETRY))
+        for code in ('BG_ENOSPC','BG_EIO','B2_IMPORT_UNKNOWN','B1_FILESYSTEM_CHANGED','MIGRATION_LEDGER_INVALID','WRITER_COUNT_INVALID','HEALTH_FAILED'):
+            with self.assertRaises(r.GateError):r.capacity_require(False,code,{})
+        for key,bad in [('releaseSha','b'*40),('parentSha',r.BG_HOTFIX_BASE)]:
+            with self.assertRaises(r.GateError):r.configure_capacity_waiver(dict(receipt,**{key:bad}),art)
+        r.configure_profile('post-transfer','b'*40,r.BG_TRANSFER_BASE,'0'*64)
+        self.assertFalse(r.procurement_hotfix())
+        with self.assertRaises(r.GateError):r.configure_capacity_waiver(receipt,art)
+    def test_transfer_bind_requires_matching_live_G_pointer_and_DB88(self):
+        release='a'*40;r.B2_IDENTITY=True
+        art={'release':release,'capacityProfile':'B2'}
+        live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':r.BG_TRANSFER_BASE,'POINTER_SHA':r.BG_TRANSFER_BASE,'DB_APPLIED':88,'DB_FAILED':0,'LIVE_G_CONTAINER_ID':'b'*64,'LIVE_G_IMAGE_ID':'sha256:'+'c'*64}
+        with patch.object(r,'git',return_value=release+' '+r.BG_TRANSFER_BASE):
+            r.bg_bind(ROOT,release,art,live)
+            for key,bad in [('DB_APPLIED',87),('DB_FAILED',1),('LIVE_G_SHA',r.BG_HOTFIX_BASE),('POINTER_SHA',r.BG_HOTFIX_BASE)]:
+                with self.assertRaises(r.GateError):r.bg_bind(ROOT,release,art,dict(live,**{key:bad}))
+    def test_transfer_exact_db88_guard_remains_strict(self):
+        self.assertEqual(r.before_ledger(LEDGER),LEDGER)
+        db={'database':r.EXPECTED_DB,'applied':88,'failed':0,'rolledBack':0,'ledger':LEDGER,'procurementSchema':{'schemaMd5':C['schemaMd5']}}
+        r.validate_database(db,LEDGER)
+        for key,bad in [('applied',87),('failed',1),('rolledBack',1),('ledger',{})]:
+            with self.assertRaises(r.GateError):r.validate_database(dict(db,**{key:bad}),LEDGER)
 
 if __name__=='__main__':unittest.main(verbosity=2)
