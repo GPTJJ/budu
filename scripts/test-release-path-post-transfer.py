@@ -86,10 +86,10 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'B2_IDENTITY': '0bad3fd58fd0c14eda744a2555e120237736508f500c8d721bc3f9a682af6444',
                                          'B2_SHARED_CODE': 'f56df1e4cd6ac449d07ec4f8653b9c8fc2b35adfa6c94e9dd09e5768d24c97cd',
                                          'B2_STREAM_CODE': 'a5737babd35d3ab2c811a6cefdb16421e81daab9dbec5345f945351f481c6038',
-                                         'SAFE_CONTROLLER_CODES': '80af6468baa2904d2d0f1f3551abc4d2dba46b22d81bbc1868f7b6d770fa8e29',
+                                         'SAFE_CONTROLLER_CODES': '787d1125ced435ae1166c6f933ec3148001c630c43e4715870bfb853141cdec9',
                                          'artifact': '5d2c746fe15b1c0d138dbaaa889cfd394ad4c75cb38073b1c281db8aadfc3be0',
                                          'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
-                                         'b1_capacity_gate': 'cc34c1bd8d110d965f032e4733e6e9547cbebc9070cbcb51daaeda7529f02756',
+                                         'b1_capacity_gate': '14ec67aa420a7daebfdab9b8d4caa3227a313a632d92ab41da312be17cf3a349',
                                          'b1_db_gate': 'f257f0295008d9f5ddd68bd6c6600b11c7e967493a80727b99fd830d1f04630a',
                                          'b1_deploy': '25ef55e0e5d3d64b2a3f8447fe3e407ffee4b2ad3ddf1a93d77c22fd0b81e7d8',
                                          'b1_envelope': '7a781d2c0db5c4ec7ae8b99bf7cbff12fe4d01ba1f1d6020f8ffa8a54a5f54e1',
@@ -100,15 +100,27 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'b2_absent': '73b2ea25318dc887e1d16f49287ca55afef556b4fd0bb783c2e0764b715a99eb',
                                          'b2_barrier': 'a8ad62d04b2ffcbbb01e104cf721386bd9596db8f4b1f88668ceb732119cf38a',
                                          'b2_committed': '13e5b68255eed62c432995a67ae279d6c8320b1e087fe66a84d5865e6ce39e41',
-                                         'b2_deploy': 'a1285f4f47d8973d87daf4bb9c0c0fb635f6b16677a134cddcdba0302c6a1a3a',
+                                         'b2_deploy': '6c355cb2db57a02b8768285765b3626bf27882c6dc7dbc26f4bd1a0441d31507',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
-                                         'execute_loaded': '1783eeffc6b27dc86bdffd0673f897be7fafd5c4c34e5a46731250a6f3115ebf',
-                                         'preflight': 'dbd0d103b270ead6cb77665fd8bd672da8a25fd7b94ff44af334729d0053bc4b',
-                                         'shipping_disk_gate': '6e585599c39860c02529fa14d0f2431e0ef44055297b622134292a454bacf266',
+                                         'execute_loaded': '1101414ee7c5782450115e890cb336a4bf747d52e4e28f5b77fdac913d321be1',
+                                         'preflight': '843b32bc2fe2bde0e90ae5b258f8e7c6c1f5ecd078c11ad5694313e9931bb495',
+                                         'shipping_disk_gate': 'cd6a54feb7fb306c82e7103d82afc680274f34cc0b1194618ab9a1c4c6a72351',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
-                                         'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c'},
+                                         'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c',
+                                         'B2_CAPACITY_WAIVER_PARENT': '016f184e2228186151afecf09319716bb657602904557f497284891b1936dba3',
+                                         'CAPACITY_TELEMETRY': '907d13f3f367b294715ad4012bf20160eefda8bd9fef537eebe3ac50de60cad0',
+                                         'CAPACITY_TELEMETRY_EMIT': '3ec9d83eae1074f528abaad3a63eb3118c4d78e115931cd4b6689fd52b99af0c',
+                                         'CAPACITY_WAIVER': 'e8f5e50b3e78104e3cfe50f148dcf01e10676b42a212d53c98f70777e0682f2f',
+                                         'CAPACITY_WAIVER_CODES': '5a5099cfcdd6e2833bfca6d4ba775f0cfe41824b4df23bff3325ab95adbf8a36',
+                                         'capacity_require': '78bb64e2da113d41556836ebf55625482d80d1622f14177fd7ac134be62d992c',
+                                         'check_controller_result': '24519b63c06628542937058ec15fa78d2138b8fb03bb3c408bcc9b2936c258ce',
+                                         'configure_capacity_waiver': '978f45df8da00228b02aebfa14179dcbbc27ed12cdbb8bd2cd15e6a0167f5336',
+                                         'configure_profile': 'b25b72dd4c380214ec3be1eaf32ed95d24331561e81804a7a68d107a4c952c5c',
+                                         'disk_budget': 'e80c280227277f08fbca9808854c92aa273a894ea5d18625d9483d8a57be7465',
+                                         'main': '8bf85a815bcad97039ba75e9a53585f1d22ef9e42a5713032a31883f5700da0d',
+                                         'run_loaded_controller': '1457203633cc4fde1a0a791db94ec0db909c16a36842a87e96675e05ac11214c'},
  'scripts/test-candidate-db-probe-integration.py': {'b2_purchase_runtime_ci': '6b27a4945a1114c1264df3aef36736320fbd1196f436c9cdf61a3850ec19d152',
 'b2_validate_purchase_runtime': 'aaad5848517c6f8b0278320a95e3487d009adb3a17709952960cc16781108a55',
 'b2_truncated_stream_ci': '1194a1707d9a7bda698bb0ebeeb07a0fe19ad54131182864ea24e17ed2a85b3c',
@@ -1761,6 +1773,24 @@ class B2WorkflowTests(unittest.TestCase):
         for path,token in [('scripts/deploy-prod-transfer-cas.py','def b2_deploy('),('scripts/test-candidate-db-probe-integration.py','def b2_owned_import_steps(')]:
             source=(ROOT/path).read_text();self.assertNotEqual(procurement_prior_source(source),source)
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(token,'def unreviewed_sixth_behavior(',1))
+    def test_temporary_capacity_waiver_preserves_every_other_source_node(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.B2_CAPACITY_WAIVER_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):
+            lines=value.splitlines(keepends=True)
+            return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
+        before=nodes(prior);after=nodes(source)
+        allowed={'configure_profile','disk_budget','b1_capacity_gate','b2_deploy','shipping_disk_gate',
+                 'preflight','execute_loaded','run_loaded_controller','check_controller_result','main',
+                 'SAFE_CONTROLLER_CODES'}
+        self.assertFalse(set(before)-set(after))
+        self.assertEqual({k for k in before if before[k]!=after[k]},allowed)
+        self.assertIn("args.mode=='deploy' and B2_IDENTITY",source)
+        self.assertIn("args.temporary_b2_capacity_waiver_sha==release",source)
+        self.assertIn("release+' '+B2_CAPACITY_WAIVER_PARENT",source)
+        self.assertIn("configure_capacity_waiver(v['capacityWaiver'],v['art'],emit=False)",source)
+        self.assertIn("CAPACITY_TELEMETRY.extend(v['capacityTelemetry'])",source)
+        self.assertNotEqual(procurement_prior_source(source),source)
     def test_archive_repair_projection_preserves_capacity_history_and_exact_proofs(self):
         source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
         self.assertNotEqual(procurement_prior_source(source),source)

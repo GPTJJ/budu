@@ -163,6 +163,10 @@ def git(repo, *args):
     return command(['git', '-C', str(repo), *args]).decode().strip()
 
 def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None):
+    global CAPACITY_WAIVER, CAPACITY_TELEMETRY, CAPACITY_TELEMETRY_EMIT
+    CAPACITY_WAIVER = None
+    CAPACITY_TELEMETRY = []
+    CAPACITY_TELEMETRY_EMIT = True
     global RELEASE_PROFILE, EXPECTED_OLD_SHA, RUNTIME_SHA, OLD_V2_HASH
     global IMAGE_PREFIX, CONTAINER_SUFFIX, ROLLBACK_PREFIX
     require(profile in ('transfer-first', 'post-transfer'), 'RELEASE_PROFILE_INVALID')
@@ -216,6 +220,45 @@ B1_IDENTITY = False
 B2_BASE = '7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524'
 B2_BRANCH = 'codex/purchase-receipt-b2-capacity-fasttrack'
 B2_IDENTITY = False
+
+# Explicit one-release authorization. Descendants and other profiles remain
+# subject to the original capacity policy; this is never an environment default.
+B2_CAPACITY_WAIVER_PARENT = 'b01173d93fd4b655c267a822b4eb437a2155e846'
+CAPACITY_WAIVER = None
+CAPACITY_TELEMETRY = []
+CAPACITY_TELEMETRY_EMIT = True
+CAPACITY_WAIVER_CODES = frozenset({
+    'B1_CAPACITY_6GIB', 'B1_CAPACITY_10GIB', 'B1_CAPACITY_90PCT',
+    'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK',
+    'ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM',
+    'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM',
+    'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM',
+    'SHIPPING_MIGRATION_DISK_GATE_FAILED',
+})
+
+
+def configure_capacity_waiver(receipt, art, emit=True):
+    global CAPACITY_WAIVER, CAPACITY_TELEMETRY_EMIT
+    c=procurement_contract()
+    require(isinstance(receipt,dict) and set(receipt)=={'releaseSha','parentSha'}
+            and isinstance(receipt['releaseSha'],str) and re.fullmatch(r'[0-9a-f]{40}',receipt['releaseSha'])
+            and receipt['releaseSha']==art['release'] and art.get('capacityProfile')=='B2'
+            and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT
+            and RELEASE_PROFILE=='post-transfer' and EXPECTED_OLD_SHA==c['oldSha']
+            and RUNTIME_SHA==c['businessSha'], 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
+    CAPACITY_WAIVER=dict(receipt)
+    CAPACITY_TELEMETRY_EMIT=emit
+
+
+def capacity_require(passed, code, record):
+    if CAPACITY_WAIVER is None or code not in CAPACITY_WAIVER_CODES:
+        require(passed,code)
+        return
+    observation=dict(record,guard=code,passed=bool(passed),waived=not passed,
+                     releaseSha=CAPACITY_WAIVER['releaseSha'])
+    CAPACITY_TELEMETRY.append(observation)
+    if CAPACITY_TELEMETRY_EMIT:
+        print(json.dumps({'stage':'TEMPORARY_B2_CAPACITY_WAIVER','observation':observation}),flush=True)
 
 
 def procurement_migration():
@@ -789,11 +832,13 @@ def disk_budget(used, available, archive, blobs, expanded, largest_layer):
     peak = archive + blobs + expanded + largest_layer + RESERVE
     require(0 < archive <= MAX_ARCHIVE and min(blobs, expanded, largest_layer) > 0,
             'ARTIFACT_SIZE_INVALID')
-    require(peak <= ABSOLUTE_MAX_PEAK, 'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK')
     projected = math.ceil(100 * (used + peak) / (used + available))
     minimum = available - peak
-    require(projected <= MAX_PROJECTED_USAGE and minimum >= MIN_PROJECTED_AVAILABLE,
-            'ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM')
+    record=dict(phase='ARTIFACT_BUDGET',used=used,available=available,retained=0,
+                future=peak,planned=peak,peak=peak,projectedUsage=projected,projectedAvailable=minimum)
+    capacity_require(peak <= ABSOLUTE_MAX_PEAK, 'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK',record)
+    capacity_require(projected <= MAX_PROJECTED_USAGE and minimum >= MIN_PROJECTED_AVAILABLE,
+                     'ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM',record)
     return dict(peakIncrement=peak, finalIncrement=blobs + expanded,
                 tempIncrement=archive + largest_layer + RESERVE,
                 projectedUsage=projected, projectedAvailable=minimum)
@@ -992,18 +1037,20 @@ def b1_capacity_gate(ledger, used, available, future, planned=0):
     require(used+available == ledger['baselineUsed']+ledger['baselineAvailable'], 'B1_FILESYSTEM_CHANGED')
     retained=max(0, used-ledger['baselineUsed'])
     peak=max(ledger.get('peak',0), retained+future, planned)
-    require(peak <= ABSOLUTE_MAX_PEAK, 'B1_CAPACITY_6GIB')
     # Both the original cumulative envelope and current remaining allocations
     # must pass. An unrelated deletion can never erase historical peak costs.
     projected=min(available-future, ledger['baselineAvailable']-peak)
-    require(projected >= MIN_PROJECTED_AVAILABLE, 'B1_CAPACITY_10GIB')
     total=used+available
-    require(total > 0 and 100*max(used+future,ledger['baselineUsed']+peak) <= MAX_PROJECTED_USAGE*total,
-            'B1_CAPACITY_90PCT')
+    require(total > 0, 'B1_CAPACITY_INVALID')
     ledger['peak']=peak
     record={'phase':ledger['phase'],'used':used,'available':available,'retained':retained,
-            'future':future,'peak':peak,'projectedAvailable':projected}
+            'future':future,'planned':planned,'peak':peak,'projectedAvailable':projected,
+            'projectedUsage':math.ceil(100*max(used+future,ledger['baselineUsed']+peak)/total)}
     ledger.setdefault('observations',[]).append(record)
+    capacity_require(peak <= ABSOLUTE_MAX_PEAK, 'B1_CAPACITY_6GIB',record)
+    capacity_require(projected >= MIN_PROJECTED_AVAILABLE, 'B1_CAPACITY_10GIB',record)
+    capacity_require(100*max(used+future,ledger['baselineUsed']+peak) <= MAX_PROJECTED_USAGE*total,
+                     'B1_CAPACITY_90PCT',record)
     return record
 
 
@@ -1533,8 +1580,10 @@ def b2_deploy(remote, repo, path, art, ledger, authorize):
     payload={'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,'expectedOldSha':EXPECTED_OLD_SHA,
              'businessSha':RUNTIME_SHA,'oldV2Hash':OLD_V2_HASH,'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
              'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
+    if CAPACITY_WAIVER is not None:
+        payload.update(capacityWaiver=CAPACITY_WAIVER,capacityTelemetry=CAPACITY_TELEMETRY)
     code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
-    code+="\nv=json.load(sys.stdin)\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
+    code+="\nv=json.load(sys.stdin)\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nif v.get('capacityWaiver') is not None:\n configure_capacity_waiver(v['capacityWaiver'],v['art'],emit=False)\n CAPACITY_TELEMETRY.extend(v['capacityTelemetry'])\nrun_loaded_controller(v)\n"
     result=remote.py(code,payload,timeout=480);check_controller_result(result)
 
 
@@ -1697,11 +1746,15 @@ def shipping_disk_gate(remote, resources, art=None):
     if art is not None:
         budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest'])
         extra += budget['peakIncrement']
-        require(extra <= ABSOLUTE_MAX_PEAK, 'SHIPPING_MIGRATION_DISK_GATE_FAILED')
     else:
         extra += RESERVE
-    require(math.ceil(100*(used+extra)/(used+available)) <= MAX_PROJECTED_USAGE
-            and available-extra >= MIN_PROJECTED_AVAILABLE, 'SHIPPING_MIGRATION_DISK_GATE_FAILED')
+    record=dict(phase='MIGRATION_BUDGET',used=used,available=available,retained=0,
+                future=extra,planned=extra,peak=extra,projectedAvailable=available-extra,
+                projectedUsage=math.ceil(100*(used+extra)/(used+available)))
+    if art is not None:
+        capacity_require(extra <= ABSOLUTE_MAX_PEAK, 'SHIPPING_MIGRATION_DISK_GATE_FAILED',record)
+    capacity_require(record['projectedUsage'] <= MAX_PROJECTED_USAGE
+                     and available-extra >= MIN_PROJECTED_AVAILABLE, 'SHIPPING_MIGRATION_DISK_GATE_FAILED',record)
     return {'migrationResourceLimits': resources, 'projectedAvailableWithMigration': available-extra,
             'projectedUsageWithMigration': math.ceil(100*(used+extra)/(used+available))}
 
@@ -2037,8 +2090,11 @@ def preflight(remote, art, ledger, imported=False):
     df_h = remote.run(['df','-h','/']).decode()
     docker_df = remote.run(['docker','system','df']).decode()
     budget = disk_budget(used, available, art['archive'], art['blobs'], art['expanded'], art['largest']) if not imported else {'projectedUsage':math.ceil(100*(used+RESERVE)/(used+available)), 'projectedAvailable':available-RESERVE}
-    require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
-            'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM')
+    capacity_require(budget['projectedUsage'] <= MAX_PROJECTED_USAGE and budget['projectedAvailable'] >= MIN_PROJECTED_AVAILABLE,
+                     'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM',
+                     dict(phase='POST_IMPORT',used=used,available=available,retained=0,future=RESERVE,
+                          planned=budget.get('peakIncrement',RESERVE),peak=budget.get('peakIncrement',RESERVE),
+                          projectedUsage=budget['projectedUsage'],projectedAvailable=budget['projectedAvailable']))
     resources = None
     if migration_enabled():
         resources = shipping_resources(db)
@@ -2349,8 +2405,12 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         runtime_checks(remote, name, art['runtimeHash'], authority_mounts)
         stage = 'FINAL_DISK'
         used, available = remote.disk()
-        require(math.ceil(100*used/(used+available)) <= MAX_PROJECTED_USAGE
-                and available >= MIN_PROJECTED_AVAILABLE, 'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM')
+        capacity_require(math.ceil(100*used/(used+available)) <= MAX_PROJECTED_USAGE
+                         and available >= MIN_PROJECTED_AVAILABLE, 'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM',
+                         dict(phase='POST_DEPLOY',used=used,available=available,
+                              retained=max(0,used-art.get('capacityLedger',{}).get('baselineUsed',used)),future=0,
+                              planned=0,peak=art.get('capacityLedger',{}).get('peak',0),
+                              projectedAvailable=available,projectedUsage=math.ceil(100*used/(used+available))))
         state['pointer_touched'] = True
         stage = 'SHA_POINTER'
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
@@ -2362,7 +2422,8 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
                           'diskAfterUsed':used,'diskAfterAvailable':available,
                           'dfPk':remote.run(['df','-Pk','/']).decode(),'transferCodePresent':True,
                           'migrationPhase':state.get('migration_phase'),
-                          'capacityLedger':art.get('capacityLedger')}))
+                          'capacityLedger':art.get('capacityLedger'),
+                          'capacityWaiver':CAPACITY_WAIVER,'capacityTelemetry':CAPACITY_TELEMETRY}))
     except BaseException as error:
         # Finish rollback despite a second transport/terminal signal.
         for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
@@ -2398,6 +2459,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
 
 
 SAFE_CONTROLLER_CODES = frozenset({
+    'B2_CAPACITY_WAIVER_SCOPE_INVALID',
     'B2_IDENTITY_INVALID','B2_SCOPE_INVALID','B2_BUSINESS_CHANGED','B2_R_ABSENCE_UNKNOWN',
     'B2_R_NOT_ABSENT','B2_STORAGE_UNKNOWN','B2_IMPORT_UNKNOWN','B2_PHASE_INVALID','B2_SHARED_UNKNOWN',
     'B1_CAPACITY_INVALID','B1_FILESYSTEM_CHANGED','B1_CAPACITY_6GIB',
@@ -2444,9 +2506,13 @@ def run_loaded_controller(value):
         stage = getattr(error, 'failure_stage', 'UNKNOWN')
         result = getattr(error, 'deployment_result', 'DEPLOY_BLOCKED')
         # No stderr or exception text crosses SSH unless it is an exact fixed code.
-        print(json.dumps({'result':result if result in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK') else 'DEPLOY_BLOCKED',
+        outcome={'result':result if result in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK') else 'DEPLOY_BLOCKED',
                           'failureGate':stage if stage in SAFE_CONTROLLER_STAGES else 'UNKNOWN',
-                          'code':code if code in SAFE_CONTROLLER_CODES else 'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}))
+                          'code':code if code in SAFE_CONTROLLER_CODES else 'REMOTE_CONTROLLER_FAILURE_DETAILS_SUPPRESSED'}
+        if CAPACITY_WAIVER is not None:
+            outcome.update(capacityWaiver=CAPACITY_WAIVER,capacityTelemetry=CAPACITY_TELEMETRY,
+                           capacityLedger=value['art'].get('capacityLedger'))
+        print(json.dumps(outcome))
 
 
 def check_controller_result(raw):
@@ -2458,7 +2524,10 @@ def check_controller_result(raw):
     if result.get('result') in ('DEPLOY_BLOCKED','DEPLOY_ROLLED_BACK'):
         require(result.get('code') in SAFE_CONTROLLER_CODES
                 and result.get('failureGate') in SAFE_CONTROLLER_STAGES
-                and set(result) == {'result','failureGate','code'}, 'REMOTE_CONTROLLER_RESULT_INVALID')
+                and (set(result) == {'result','failureGate','code'} or
+                     CAPACITY_WAIVER is not None and set(result)=={'result','failureGate','code','capacityWaiver','capacityTelemetry','capacityLedger'}
+                     and result['capacityWaiver']==CAPACITY_WAIVER and isinstance(result['capacityTelemetry'],list)),
+                'REMOTE_CONTROLLER_RESULT_INVALID')
         print(json.dumps(result), flush=True)
         raise GateError(result['code'])
     require(result.get('result') == 'DEPLOY_COMPLETE', 'REMOTE_CONTROLLER_RESULT_INVALID')
@@ -2949,6 +3018,7 @@ def main():
     p.add_argument('--compatibility-archive', type=Path)
     p.add_argument('--ssh-key', type=Path)
     p.add_argument('--authorize-release-sha')
+    p.add_argument('--temporary-b2-capacity-waiver-sha')
     p.add_argument('--release-profile', choices=['transfer-first','post-transfer'], default='transfer-first')
     p.add_argument('--expected-production-sha')
     p.add_argument('--business-base-sha')
@@ -2969,6 +3039,11 @@ def main():
     diagnostic = backup_diagnostic or args.mode in ('identity-diagnostic','inspect-artifact-diagnostic')
     release, ledger = (backup_diagnostic_identity(args.repo) if backup_diagnostic else
                        diagnostic_identity(args.repo) if diagnostic else identity(args.repo))
+    if args.temporary_b2_capacity_waiver_sha is not None:
+        require(args.mode=='deploy' and B2_IDENTITY and args.temporary_b2_capacity_waiver_sha==release
+                and args.authorize_release_sha==release
+                and git(args.repo,'rev-list','--parents','-n','1',release)==release+' '+B2_CAPACITY_WAIVER_PARENT,
+                'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     if args.mode in ('identity','identity-diagnostic','identity-backup-diagnostic'):
         result = {'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}
         if diagnostic:result.update(diagnosticOnly=True, productionEligible=False)
@@ -3004,6 +3079,8 @@ def main():
                 compatible.chmod(0o400)
                 art['compatibility']=compatibility_artifact(args.repo,compatible)
                 art['compatibilityPath']=str(compatible)
+            if args.temporary_b2_capacity_waiver_sha is not None:
+                configure_capacity_waiver({'releaseSha':release,'parentSha':B2_CAPACITY_WAIVER_PARENT},art)
             deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
         return
     art = artifact(args.archive, release, args.repo)

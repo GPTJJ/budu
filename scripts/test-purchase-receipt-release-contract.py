@@ -956,7 +956,7 @@ class ReleaseModelClock:
 
 
 class B2FormalPathTests(unittest.TestCase):
-    def attempt(self,fault=None,fresh_artifact=False):
+    def attempt(self,fault=None,fresh_artifact=False,capacity_waiver=False):
         r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
         class Model(ProcurementModel):
             def __init__(self):
@@ -1033,6 +1033,8 @@ class B2FormalPathTests(unittest.TestCase):
                     return json.dumps({'claimed':True} if action=='claim' else {'released':True} if action=='released' else {'inode':18 if fault=='inode' else 17,'device':1,'allocated':self.art['compatibility']['archive'],'path':'fixture'})
                 return super().py(code,value,timeout)
         model=Model()
+        if capacity_waiver:
+            r.configure_capacity_waiver({'releaseSha':model.sha,'parentSha':r.B2_CAPACITY_WAIVER_PARENT},model.art,emit=False)
         def upload(*args):model.order.append('r-upload');model.archive_present=True;return 'fixture'
         def stream(remote,path,art):
             model.order.append('e-stream');assert model.cleaned and model.r_imported;model.e_imported=True
@@ -1122,6 +1124,75 @@ class B2FormalPathTests(unittest.TestCase):
                 self.assertEqual(error,code);self.assertEqual(model.release_observations,0)
                 self.assertNotIn('rArchiveRelease',model.art['capacityLedger'])
                 self.assertNotIn('e-stream',model.order);self.assertTrue(model.old['State']['Running']);self.assertTrue(model.lock)
+
+class B2CapacityWaiverTests(unittest.TestCase):
+    def setUp(self):r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+    def tearDown(self):r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+    def enable(self):
+        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.B2_CAPACITY_WAIVER_PARENT},
+                                   {'release':'a'*40,'capacityProfile':'B2'},emit=False)
+    def test_all_and_only_authorized_capacity_codes_are_telemetry(self):
+        self.enable()
+        expected={'B1_CAPACITY_6GIB','B1_CAPACITY_10GIB','B1_CAPACITY_90PCT',
+            'ARTIFACT_DISK_GATE_FAIL:ABSOLUTE_PEAK','ARTIFACT_DISK_GATE_FAIL:DYNAMIC_HEADROOM',
+            'ARTIFACT_DISK_GATE_FAIL:POST_IMPORT_HEADROOM','ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM',
+            'SHIPPING_MIGRATION_DISK_GATE_FAILED'}
+        self.assertEqual(r.CAPACITY_WAIVER_CODES,expected)
+        for code in expected:r.capacity_require(False,code,{'phase':'FOCUSED'})
+        self.assertEqual({x['guard'] for x in r.CAPACITY_TELEMETRY},expected)
+        self.assertTrue(all(x['waived'] for x in r.CAPACITY_TELEMETRY))
+        for code in ('COMMAND_FAILED','ENOSPC','B1_FILESYSTEM_CHANGED','B2_SHARED_UNKNOWN',
+                     'B1_ARCHIVE_UNVERIFIED','B1_IMPORT_UNKNOWN','DATABASE_AUTHORITY_MISMATCH',
+                     'WRITER_TRANSITION_FAILED','HEALTH_FAILED'):
+            with self.subTest(code=code),self.assertRaisesRegex(r.GateError,code):
+                r.capacity_require(False,code,{})
+    def test_exact_scope_and_profile_reset(self):
+        receipt={'releaseSha':'a'*40,'parentSha':r.B2_CAPACITY_WAIVER_PARENT}
+        art={'release':'a'*40,'capacityProfile':'B2'}
+        for bad,artifact in [({**receipt,'parentSha':'b'*40},art),
+                             ({**receipt,'releaseSha':'c'*40},art),
+                             (receipt,{**art,'capacityProfile':'B1'}),
+                             (receipt,{**art,'capacityProfile':'LEGACY'})]:
+            with self.assertRaisesRegex(r.GateError,'B2_CAPACITY_WAIVER_SCOPE_INVALID'):
+                r.configure_capacity_waiver(bad,artifact,emit=False)
+        r.configure_profile('post-transfer',r.SHIPPING_OLD_SHA,r.SHIPPING_BUSINESS_SHA,'0'*64)
+        with self.assertRaisesRegex(r.GateError,'B2_CAPACITY_WAIVER_SCOPE_INVALID'):
+            r.configure_capacity_waiver(receipt,art,emit=False)
+        r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64);self.enable()
+        r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
+        self.assertIsNone(r.CAPACITY_WAIVER)
+        with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_6GIB'):
+            r.capacity_require(False,'B1_CAPACITY_6GIB',{})
+    def test_original_formula_history_and_complete_numeric_telemetry(self):
+        self.enable();used=95*r.GIB;available=5*r.GIB;cap=B1CapacityTests().ledger(used,available)
+        first=r.b1_capacity_gate(cap,used,available,7*r.GIB,8*r.GIB)
+        self.assertEqual(first['peak'],8*r.GIB);self.assertEqual(first['projectedAvailable'],-3*r.GIB)
+        later=r.b1_capacity_gate(cap,used-4*r.GIB,available+4*r.GIB,0)
+        self.assertEqual(later['peak'],8*r.GIB);self.assertEqual(later['projectedAvailable'],-3*r.GIB)
+        self.assertEqual(set(first),{'phase','used','available','retained','future','planned','peak','projectedAvailable','projectedUsage'})
+        self.assertTrue(all(type(first[k]) is int for k in first if k!='phase'))
+        with self.assertRaisesRegex(r.GateError,'B1_FILESYSTEM_CHANGED'):r.b1_capacity_gate(cap,used,available+1,0)
+        with self.assertRaisesRegex(r.GateError,'B1_CAPACITY_INVALID'):r.b1_capacity_gate(cap,used,available,-1)
+        r.disk_budget(used,available,500*1024**2,r.GIB,5*r.GIB,r.GIB)
+        remote=types.SimpleNamespace(disk=lambda:(used,available))
+        r.shipping_disk_gate(remote,r.shipping_resources(B1CapacityTests.DB),B1CapacityTests.ART)
+        with self.assertRaisesRegex(r.GateError,'ARTIFACT_SIZE_INVALID'):r.disk_budget(used,available,0,1,1,1)
+        with self.assertRaisesRegex(r.GateError,'SHIPPING_PG16_REQUIRED'):r.shipping_resources({'pgVersion':'15','dbBytes':1})
+    def test_real_b2_path_capacity_shortfalls_continue_with_original_writer_order(self):
+        for fault in ('capacity-6','capacity-10','capacity-90','no-shared'):
+            with self.subTest(fault=fault):
+                model,error=B2FormalPathTests().attempt(fault,capacity_waiver=True)
+                self.assertIsNone(error);self.assertEqual(model.pointer,model.sha);self.assertEqual(model.phase,88)
+                self.assertEqual(model.order.count('shared-proof'),2);self.assertFalse(model.lock)
+                self.assertEqual(r.writer_names(model.containers()),[model.ename])
+                self.assertTrue(any(x['waived'] for x in r.CAPACITY_TELEMETRY))
+    def test_real_b2_noncapacity_failures_still_keep_old_writer_and_lock(self):
+        for fault in ('cleanup-reader','released-proof','post-cleanup-ingest','post-cleanup-snapshot',
+                      'shared-unknown','retained-unknown','wrong-e','r-interrupted','e-interrupted','df-unknown'):
+            with self.subTest(fault=fault):
+                model,error=B2FormalPathTests().attempt(fault,capacity_waiver=True)
+                self.assertIsNotNone(error);self.assertNotIn('stop-old',model.order)
+                self.assertTrue(model.old['State']['Running']);self.assertTrue(model.lock)
 
 class B2ArchiveReleaseTests(unittest.TestCase):
     def test_unrelated_writes_after_exact_release_use_real_capacity(self):
