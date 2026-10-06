@@ -1592,12 +1592,13 @@ assert.deepEqual(calls,['app','online','wechat_pay','alipay','refund']);assert.e
         self.assertEqual(output,b'BG_BACKGROUND_LIFECYCLE_PASS\n')
 
 class BlueGreenControllerTests(unittest.TestCase):
-    def attempt(self,fault=None):
-        r.configure_profile('post-transfer',C['rollbackSha'],C['businessSha'],'0'*64);r.BG_ACTIVE=True
-        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.BG_BASE},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
-        events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[87]
+    def attempt(self,fault=None,hotfix=False):
+        base=r.BG_HOTFIX_BASE if hotfix else C['rollbackSha']
+        r.configure_profile('post-transfer',base,base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
+        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
+        events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[88 if hotfix else 87]
         g={'Id':'g'*64,'Image':'sha256:'+'b'*64,'State':{'Running':True},'HostConfig':{'NetworkMode':'n'}}
-        live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':g['Id'],'LIVE_G_IMAGE_ID':g['Image'],'LIVE_G_SHA':C['rollbackSha'],'POINTER_SHA':C['oldSha']}
+        live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':g['Id'],'LIVE_G_IMAGE_ID':g['Image'],'LIVE_G_SHA':base,'POINTER_SHA':base if hotfix else C['oldSha']}
         template=' '.join(['proxy_pass http://G:3000;']*3)
         art={'release':'a'*40,'capacityProfile':'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
         proof={'result':'PASS','oldRuntimeExactSource':C['rollbackSha'],'additiveMigrationSqlHash':C['sqlHash'],'oldPrismaDb88':'PASS','oldInternalHealthDb88':'PASS','pgVersion':'16.14'}
@@ -1637,11 +1638,11 @@ class BlueGreenControllerTests(unittest.TestCase):
             if code==r.BG_EVIDENCE_CODE:event('evidence');return {'result':'PASS'}
             if code==r.BG_PROBE_CODE:event('probe');return {'result':'PASS','terminated':True}
             if code==r.BG_SNAPSHOT_CODE:
-                event('backup');return dict(result='PASS',**{k:True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified')},sourceSnapshotFingerprint='x',restoredFingerprint='x',pgVersion='16.14')
-            if code==r.BG_ATOMIC_MIGRATION_CODE:event('migration');dbcount[0]=88;return {'result':'PASS','terminated':True}
+                self.assertFalse(hotfix,'hotfix must not backup/restore');event('backup');return dict(result='PASS',**{k:True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified')},sourceSnapshotFingerprint='x',restoredFingerprint='x',pgVersion='16.14')
+            if code==r.BG_ATOMIC_MIGRATION_CODE:self.assertFalse(hotfix,'hotfix must not migrate');event('migration');dbcount[0]=88;return {'result':'PASS','terminated':True}
             raise AssertionError('unknown helper')
         def lock(*args):event('lock-'+args[2]);return {}
-        patches={'bg_g_guard':gguard,'validate_clone_source':lambda *a:None,'b1_storage':lambda *a:True,'bg_lock':lock,'shipping_resources':lambda *a:{'walLimit':1,'migratorLimit':1},'bg_capacity':lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]}),'resolve_loaded_image':lambda *a:{'Id':'sha256:'+'c'*64},'b2_barrier':lambda *a:True,'bg_script':script,'bg_clone':clone,'bg_lifecycle':lifecycle,'mount_readability':lambda *a:[],'runtime_checks':lambda *a:event('runtime'),'application_db_probe':lambda *a:event('dbProbe'),'bg_writer':writer,'bg_promote':promote,'replace_routes':routes,'write_authority':pointer,'bg_owned_stop':ownedstop}
+        patches={'bg_g_guard':gguard,'validate_clone_source':lambda *a:None,'b1_storage':lambda *a:True,'bg_lock':lock,'shipping_resources':lambda *a:{'walLimit':1,'migratorLimit':1},'bg_capacity':lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]}),'resolve_loaded_image':lambda *a:{'Id':'sha256:'+'c'*64},'b2_barrier':lambda *a:True,'bg_script':script,'bg_clone':clone,'bg_lifecycle':lifecycle,'mount_readability':lambda *a:[],'runtime_checks':lambda *a:event('runtime'),'application_db_probe':lambda *a:event('dbProbe'),'bg_writer':writer,'bg_promote':promote,'replace_routes':routes,'write_authority':pointer,'bg_owned_stop':ownedstop,'bg_recover_g':lambda *a:event('recoverGActive')}
         with contextlib.ExitStack() as stack:
             for name,fn in patches.items():stack.enter_context(patch.object(r,name,side_effect=fn))
             result=r.bg_execute(remote,v,lambda root:{'serverSha256BeforeImport':True})
@@ -1686,5 +1687,81 @@ class BlueGreenControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(r.GateError,'UNKNOWN_DB_CLIENT_OR_OLD_WRITER'):r.bg_writer(Remote(),v,state,['G'],True)
         self.assertEqual(r.writer_names(rows),['G','E'])
 
+
+
+class ProcurementPurposeHotfixTests(unittest.TestCase):
+    attempt=BlueGreenControllerTests.attempt
+    def setUp(self):
+        r.configure_profile('post-transfer',r.BG_HOTFIX_BASE,r.BG_HOTFIX_BASE,'0'*64);r.BG_ACTIVE=True
+    def tearDown(self):r.BG_ACTIVE=False
+    def test_hotfix_success_skips_backup_restore_migration_and_keeps_handover(self):
+        result,e,run,route=self.attempt(hotfix=True)
+        self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertEqual(result['dbApplied'],88)
+        self.assertEqual(result['backupProof']['result'],'NOT_REQUIRED_NO_SCHEMA_CHANGE')
+        self.assertEqual(result['migrationProof']['result'],'NOT_REQUIRED_DB_ALREADY_88')
+        for forbidden in ('backup','migration'):self.assertNotIn(forbidden,e)
+        self.assertLess(e.index('schemaProbe'),e.index('stopG'));self.assertLess(e.index('stopG'),e.index('zero'))
+        self.assertLess(e.index('zero'),e.index('promote'));self.assertLess(e.index('publicE'),e.index('pointerE'))
+        self.assertEqual(run,{'G':False,'E':True});self.assertEqual(route,['E']);self.assertTrue(result['releaseLockReleased'])
+    def test_hotfix_failure_recovers_same_G_lifecycle_before_route(self):
+        for fault in ('probe','standby','schemaProbe','promote','routeE','publicE','evidence'):
+            result,e,run,route=self.attempt(fault,hotfix=True)
+            self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertNotIn('secondaryRecoveryCode',result)
+            self.assertEqual(run,{'G':True,'E':False});self.assertEqual(route,['G'])
+            if 'stopG' in e:
+                self.assertLess(e.index('stopE'),e.index('restartG'));self.assertLess(e.index('restartG'),e.index('recoverGActive'))
+                self.assertLess(e.index('recoverGActive'),e.index('routeG'))
+            else:self.assertNotIn('recoverGActive',e)
+            self.assertNotIn('migration',e);self.assertNotIn('backup',e)
+    def test_exact_db88_schema_checksums_and_no_migration(self):
+        self.assertTrue(r.procurement_hotfix());self.assertFalse(r.migration_enabled());self.assertEqual(r.before_ledger(LEDGER),LEDGER)
+        db={'database':r.EXPECTED_DB,'applied':88,'failed':0,'rolledBack':0,'ledger':LEDGER,'procurementSchema':{'schemaMd5':C['schemaMd5']}}
+        r.validate_database(db,LEDGER)
+        for key,bad in [('applied',87),('failed',1),('rolledBack',1),('database','other'),('ledger',{})]:
+            with self.subTest(key=key),self.assertRaises(r.GateError):r.validate_database(dict(db,**{key:bad}),LEDGER)
+        with self.assertRaises(r.GateError):r.validate_database(dict(db,procurementSchema={'schemaMd5':'wrong'}),LEDGER)
+    def test_hotfix_waiver_exact_binding_and_other_guards_fail_closed(self):
+        art={'release':'a'*40,'capacityProfile':'B2'};receipt={'releaseSha':'a'*40,'parentSha':r.BG_HOTFIX_BASE}
+        r.configure_capacity_waiver(receipt,art,emit=False)
+        r.b1_capacity_gate({'baselineUsed':100*r.GIB,'baselineAvailable':r.GIB,'phase':'HOTFIX'},100*r.GIB,r.GIB,20*r.GIB)
+        self.assertTrue(any(x['waived'] for x in r.CAPACITY_TELEMETRY))
+        for code in ('BG_ENOSPC','BG_EIO','B2_IMPORT_UNKNOWN','B1_FILESYSTEM_CHANGED','MIGRATION_LEDGER_INVALID','WRITER_COUNT_INVALID','HEALTH_FAILED','BG_LIFECYCLE_FAILED'):
+            with self.subTest(code=code),self.assertRaises(r.GateError):r.capacity_require(False,code,{})
+        for key,bad in [('releaseSha','b'*40),('parentSha',r.BG_BASE)]:
+            with self.assertRaises(r.GateError):r.configure_capacity_waiver(dict(receipt,**{key:bad}),art)
+        r.BG_ACTIVE=False
+        with self.assertRaises(r.GateError):r.configure_capacity_waiver(receipt,art)
+    def test_exact_hotfix_parent_and_business_file_scope(self):
+        release='a'*40
+        def git(repo,*args):
+            if args==('branch','--show-current'):return r.B2_BRANCH
+            if args[0]=='rev-list':return release+' '+r.BG_HOTFIX_BASE
+            if args[0]=='diff' and args[-1]=='prisma':return ''
+            if args[0]=='diff' and '--' in args:return 'server/purchase-receipt.js'
+            return '\n'.join(sorted(r.BG_HOTFIX_FILES))
+        with patch.object(r,'git',side_effect=git):r.validate_procurement_identity(ROOT,release)
+        failures=[(('rev-list','--parents','-n','1',release),release+' '+r.BG_BASE),
+                  (('diff','--name-only',r.BG_HOTFIX_BASE,release),'server/other.js'),
+                  (('branch','--show-current'),'wrong')]
+        for key,bad in failures:
+            with self.assertRaises(r.GateError),patch.object(r,'git',side_effect=lambda repo,*args:bad if args==key else git(repo,*args)):
+                r.validate_procurement_identity(ROOT,release)
+    def test_recovery_promotes_qualified_exact_G_with_new_start_markers(self):
+        c={'Id':'g'*64,'Image':'sha256:'+'b'*64,'Config':{'Image':'exact-G','Env':['GIT_SHA='+r.BG_HOTFIX_BASE,'BUDU_RUNTIME_MODE=standby'],'Labels':{r.REVISION:r.BG_HOTFIX_BASE}},'State':{'Running':True,'StartedAt':'2026-10-06T00:00:00Z'}}
+        live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':c['Id'],'LIVE_G_IMAGE_ID':c['Image'],'LIVE_G_SHA':r.BG_HOTFIX_BASE}
+        events=[]
+        class Remote:
+            def inspect(self,*a):return c
+        def lifecycle(remote,value,state,mode):
+            events.append(mode);self.assertEqual(value['art']['release'],r.BG_HOTFIX_BASE);self.assertEqual(state['lifecycleSince'],c['State']['StartedAt'])
+        with patch.object(r,'bg_lifecycle',side_effect=lifecycle),patch.object(r,'bg_promote',side_effect=lambda *a:events.append('promote')):
+            r.bg_recover_g(Remote(),{'live':live},c)
+        self.assertEqual(events,['standby','promote','active'])
+        with self.assertRaises(r.GateError):r.bg_recover_g(Remote(),{'live':dict(live,LIVE_G_CONTAINER_ID='x'*64)},c)
+    def test_new_hotfix_lock_never_adopts_existing_lock(self):
+        value={'art':{'release':'a'*40},'live':{'releaseLock':{'present':False,'openReferences':[]}}}
+        with patch.object(r,'bg_script',return_value={}) as call:r.bg_lock(None,value,'claim')
+        self.assertTrue(call.call_args[0][2]['fresh']);self.assertIn('p.mkdir(mode=0o700)',r.BG_LOCK_CODE)
+        self.assertIn("q['present'] is False",r.BG_LOCK_CODE);self.assertIn('os.O_EXCL|os.O_NOFOLLOW',r.BG_LOCK_CODE)
 
 if __name__=='__main__':unittest.main(verbosity=2)

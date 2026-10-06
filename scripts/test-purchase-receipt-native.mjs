@@ -175,6 +175,9 @@ export async function startFixture() {
       isActive: false
     }, {
       id: 'synth-item-off',
+      salePriceCents: 500n,
+      costPriceCents: 300n,
+      partnerKgBasePriceCents: 700n,
       name: '合成未开采购商品',
       purchaseEnabled: false,
       isActive: false
@@ -328,6 +331,7 @@ export async function runNative() {
   const results = [],
     raceEvidence = [];
   const test = async (id, fn) => {
+    if (process.argv.includes('--purchase-purpose-only') && id !== 'A07') return;
     try {
       await fn();
       results.push({
@@ -412,7 +416,10 @@ export async function runNative() {
       Prisma
     } = await import('@prisma/client');
     const protectedModels = ['StockBalance', 'StockLedger', 'InventoryItemCostHistory', 'Payment', 'Refund'];
+    // A priced fixture legitimately initializes cost history through the existing trigger.
+    const protectedFixtureFacts = {};
     for (const model of protectedModels) {
+      protectedFixtureFacts[model] = await prisma[model[0].toLowerCase() + model.slice(1)].findMany();
       const table = Prisma.dmmf.datamodel.models.find(x => x.name === model).dbName || model;
       await prisma.$executeRawUnsafe('CREATE TRIGGER synthetic_protected_write BEFORE INSERT OR UPDATE OR DELETE ON "' + table + '" FOR EACH STATEMENT EXECUTE FUNCTION synthetic_deny_protected_write()');
     }
@@ -501,22 +508,71 @@ export async function runNative() {
       assert.equal((await ok('multi', '/procurement/stores')).rows.length, 2);
     });
     await test('A07', async () => {
-      const before = await prisma.inventoryItem.findUnique({
-        where: {
-          id: 'synth-item-off'
-        }
-      });
-      await ok('productOnly', '/procurement/items/synth-item-off/purchase-purpose', {
-        requestKey: rk(),
-        version: before.version,
-        purchaseEnabled: true
+      const before = await prisma.inventoryItem.findUnique({ where: { id: 'synth-item-off' } });
+      assert.equal(before.salePriceCents, 500n);
+      assert.equal(before.costPriceCents, 300n);
+      assert.equal(before.partnerKgBasePriceCents, 700n);
+      const requestKey = rk();
+      const response = await ok('productOnly', '/procurement/items/' + before.id + '/purchase-purpose', {
+        requestKey, version: before.version, purchaseEnabled: true
       }, 'PATCH');
-      const after = await prisma.inventoryItem.findUnique({
-        where: {
-          id: before.id
-        }
-      });
-      for (const k of ['isActive', 'salePriceCents', 'costPriceCents', 'transferEnabled', 'partnerReplenishmentEnabled']) assert.deepEqual(after[k], before[k]);
+      const after = await prisma.inventoryItem.findUnique({ where: { id: before.id } });
+      assert.equal(after.purchaseEnabled, true);
+      assert.equal(after.version, before.version + 1);
+      for (const k of ['isActive', 'salePriceCents', 'costPriceCents', 'partnerKgBasePriceCents', 'transferEnabled', 'partnerReplenishmentEnabled']) assert.deepEqual(after[k], before[k]);
+      const snapshot = item => Object.fromEntries(['id', 'name', 'category', 'purchaseEnabled', 'procurementSupplierId', 'version'].map(k => [k, item[k]]));
+      assert.deepEqual(response.item, snapshot(after));
+      const audit = await prisma.procurementAudit.findUnique({ where: { operationKey: requestKey } });
+      assert.equal(audit.action, 'PURCHASE_PURPOSE');
+      assert.equal(audit.actorId, f.users.productOnly.id);
+      assert.deepEqual(audit.before, snapshot(before));
+      assert.deepEqual(audit.after, snapshot(after));
+      assert.equal(audit.before.purchaseEnabled, false);
+      assert.equal(audit.after.purchaseEnabled, true);
+      assert.doesNotThrow(() => JSON.stringify({ before: audit.before, after: audit.after }));
+      assert.equal((await ok('dev', '/procurement/items')).rows.find(x => x.id === before.id).purchaseEnabled, true);
+      const auditCount = await prisma.procurementAudit.count();
+      assert.equal((await request('productOnly', '/procurement/items/' + before.id + '/purchase-purpose', {
+        requestKey: rk(), version: before.version, purchaseEnabled: false
+      }, 'PATCH')).status, 409);
+      assert.deepEqual(await prisma.inventoryItem.findUnique({ where: { id: before.id } }), after);
+      assert.equal(await prisma.procurementAudit.count(), auditCount);
+      // Reusing an operation key with a fresh version still cannot commit twice.
+      assert.equal((await request('productOnly', '/procurement/items/' + before.id + '/purchase-purpose', {
+        requestKey, version: after.version, purchaseEnabled: true
+      }, 'PATCH')).status, 409);
+      assert.deepEqual(await prisma.inventoryItem.findUnique({ where: { id: before.id } }), after);
+      assert.equal(await prisma.procurementAudit.count(), auditCount);
+      const bound = await supplier('合成采购用途BigInt供应商', [before.id]);
+      assert.equal((await prisma.inventoryItem.findUnique({ where: { id: before.id } })).procurementSupplierId, bound.id);
+      const refreshed = (await ok('dev', '/procurement/items')).rows.find(x => x.id === before.id);
+      assert.equal(refreshed.purchaseEnabled, true);
+      assert.equal(refreshed.procurementSupplierId, bound.id);
+      assert.deepEqual((await ok('dev', '/procurement/suppliers/' + bound.id + '/products')).rows.map(x => x.id), [before.id]);
+      const boundItem = await prisma.inventoryItem.findUnique({ where: { id: before.id } });
+      const disableKey = rk();
+      const disabled = await ok('productOnly', '/procurement/items/' + before.id + '/purchase-purpose', {
+        requestKey: disableKey, version: boundItem.version, purchaseEnabled: false
+      }, 'PATCH');
+      const disabledItem = await prisma.inventoryItem.findUnique({ where: { id: before.id } });
+      assert.equal(disabledItem.purchaseEnabled, false);
+      assert.equal(disabledItem.version, boundItem.version + 1);
+      assert.equal(disabledItem.procurementSupplierId, bound.id);
+      assert.deepEqual(disabled.item, snapshot(disabledItem));
+      const disableAudit = await prisma.procurementAudit.findUnique({ where: { operationKey: disableKey } });
+      assert.equal(disableAudit.action, 'PURCHASE_PURPOSE');
+      assert.deepEqual(disableAudit.before, snapshot(boundItem));
+      assert.deepEqual(disableAudit.after, snapshot(disabledItem));
+      for (const k of ['isActive', 'salePriceCents', 'costPriceCents', 'partnerKgBasePriceCents', 'transferEnabled', 'partnerReplenishmentEnabled']) assert.deepEqual(disabledItem[k], before[k]);
+      assert.equal((await ok('dev', '/procurement/items')).rows.find(x => x.id === before.id).purchaseEnabled, false);
+      // Leave the shared synthetic fixture enabled, matching the original A07.
+      await ok('productOnly', '/procurement/items/' + before.id + '/purchase-purpose', {
+        requestKey: rk(), version: disabledItem.version, purchaseEnabled: true
+      }, 'PATCH');
+      for (const model of protectedModels) assert.deepEqual(await prisma[model[0].toLowerCase() + model.slice(1)].findMany(), protectedFixtureFacts[model], model);
+      assert.equal((await prisma.$queryRawUnsafe('SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL'))[0].n, 88);
+      assert.equal((await prisma.$queryRawUnsafe('SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NULL AND rolled_back_at IS NULL'))[0].n, 0);
+      assert.equal(f.externalAttempts.length, 0);
     });
     await test('A08', async () => {
       const count = await prisma.notification.count();
@@ -1291,7 +1347,7 @@ export async function runNative() {
       assert.equal(await prisma.purchaseRequest.count(), 1);
     });
     await test('C07', async () => {
-      for (const table of ['stockBalance', 'stockLedger', 'payment', 'refund', 'inventoryItemCostHistory']) assert.equal(await prisma[table].count(), 0);
+      for (const model of protectedModels) assert.deepEqual(await prisma[model[0].toLowerCase() + model.slice(1)].findMany(), protectedFixtureFacts[model], model);
     });
     await test('C11', async () => {
       assert.equal((await prisma.$queryRawUnsafe('SELECT count(*)::int n FROM "_prisma_migrations"'))[0].n, 88);

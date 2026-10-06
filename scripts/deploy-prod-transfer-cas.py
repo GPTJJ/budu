@@ -225,6 +225,10 @@ B2_IDENTITY = False
 BG_BASE = '0f5eebf667457c30acbb8075bbfe87e457f0f214'
 BG_ACTIVE = False
 BG_LIVE = None
+BG_HOTFIX_BASE = '221cc055ec7d959ef202bfc71c0e00e0d37f087e'
+BG_HOTFIX_FILES = {'server/purchase-receipt.js','scripts/test-purchase-receipt-native.mjs',
+                   'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py',
+                   'scripts/test-release-path-post-transfer.py'}
 BG_FILES = B1_FILES | {'server/app.js','server/index.js'}
 BG_BOOTSTRAP_HASHES = {'server/app.js': 'b3547fe419c41aa1a16aba9c2e8ac11659b9243927e66b5dd835112ac235dac6', 'server/index.js': 'c3641f84a98bf4bbdd32d1c02352dd47d31f472d15a7bbf761d139f03aacef18'}
 
@@ -251,9 +255,10 @@ def configure_capacity_waiver(receipt, art, emit=True):
             and isinstance(receipt['releaseSha'],str) and re.fullmatch(r'[0-9a-f]{40}',receipt['releaseSha'])
             and receipt['releaseSha']==art['release'] and art.get('capacityProfile')=='B2'
             and ((not BG_ACTIVE and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT and EXPECTED_OLD_SHA==c['oldSha'])
-                 or (BG_ACTIVE and receipt['parentSha']==BG_BASE and EXPECTED_OLD_SHA==c['rollbackSha']))
+                 or (BG_ACTIVE and receipt['parentSha']==BG_BASE and EXPECTED_OLD_SHA==c['rollbackSha'])
+                 or (procurement_hotfix() and receipt['parentSha']==BG_HOTFIX_BASE))
             and RELEASE_PROFILE=='post-transfer'
-            and RUNTIME_SHA==c['businessSha'], 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
+            and (RUNTIME_SHA==c['businessSha'] or procurement_hotfix()), 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     CAPACITY_WAIVER=dict(receipt)
     CAPACITY_TELEMETRY_EMIT=emit
 
@@ -274,6 +279,16 @@ def procurement_migration():
     return RELEASE_PROFILE=='post-transfer' and RUNTIME_SHA==c['businessSha'] and EXPECTED_OLD_SHA in (c['oldSha'],c['rollbackSha'])
 
 
+def procurement_hotfix():
+    # One exact production base, E-only, schema already L88. Never migration.
+    return (BG_ACTIVE and RELEASE_PROFILE=='post-transfer'
+            and EXPECTED_OLD_SHA==RUNTIME_SHA==BG_HOTFIX_BASE)
+
+
+def bg_release_base():
+    return BG_HOTFIX_BASE if procurement_hotfix() else BG_BASE
+
+
 def migration_enabled():
     return shipping_migration() or material_migration() or procurement_migration()
 
@@ -283,6 +298,17 @@ def validate_procurement_identity(repo, release):
     global B1_IDENTITY, B2_IDENTITY
     B1_IDENTITY = git(repo,'branch','--show-current') == B1_BRANCH
     B2_IDENTITY = git(repo,'branch','--show-current') == B2_BRANCH
+    if procurement_hotfix():
+        require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_HOTFIX_BASE,
+                'BG_HOTFIX_SCOPE_INVALID')
+        changed=set(git(repo,'diff','--name-only',BG_HOTFIX_BASE,release).splitlines())
+        require(changed <= BG_HOTFIX_FILES and {'server/purchase-receipt.js','scripts/test-purchase-receipt-native.mjs',
+                'scripts/deploy-prod-transfer-cas.py'} <= changed,'BG_HOTFIX_SCOPE_INVALID')
+        require(set(git(repo,'diff','--name-only',BG_HOTFIX_BASE,release,'--','server','prisma','shared','src','brand',
+                'Dockerfile','package.json','package-lock.json').splitlines())=={'server/purchase-receipt.js'},'BG_BUSINESS_CHANGED')
+        require(all(digest((Path(repo)/p).read_bytes())==h for p,h in BG_BOOTSTRAP_HASHES.items()),'BG_LIFECYCLE_IDENTITY_INVALID')
+        require(not git(repo,'diff','--name-only',BG_HOTFIX_BASE,release,'--','prisma'),'PROCUREMENT_MIGRATION_IDENTITY_INVALID')
+        return
     if BG_ACTIVE:
         require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BASE, 'BG_SCOPE_INVALID')
         changed=set(git(repo,'diff','--name-only',BG_BASE,release).splitlines())
@@ -345,7 +371,7 @@ print(r.stdout.decode().strip())
 
 
 def procurement_database_details(remote, db):
-    if procurement_migration():
+    if procurement_migration() or procurement_hotfix():
         db['procurementSchema']=procurement_query(remote,PROCUREMENT_SCHEMA_SQL)
     return db
 
@@ -687,7 +713,7 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and (is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA) or (procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']))
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    if procurement_migration():
+    if procurement_migration() or procurement_hotfix():
         validate_procurement_identity(repo, release)
     elif material_migration():
         validate_material_identity(repo, release)
@@ -700,7 +726,7 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= ((procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= (BG_HOTFIX_FILES if procurement_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
@@ -717,7 +743,7 @@ def identity(repo):
     if RELEASE_PROFILE == 'post-transfer':
         validate_post_transfer_identity(repo, release)
         migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
-        require(len(migrations) == (88 if procurement_migration() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
+        require(len(migrations) == (88 if procurement_migration() or procurement_hotfix() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
         before_ledger(migrations)
         return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
@@ -1680,7 +1706,8 @@ def writer_check(containers, database, expected_names):
     require(set(database['clients']) <= ips, 'UNKNOWN_DB_CLIENT_OR_OLD_WRITER')
 
 def validate_database(db, ledger):
-    if procurement_migration():
+    if procurement_migration() or procurement_hotfix():
+        if procurement_hotfix():require(len(ledger)==88 and db['applied']==88,'MIGRATION_LEDGER_INVALID')
         require(db['database']==EXPECTED_DB and len(ledger) in (87,88) and db['applied']==len(ledger)
                 and db['failed']==0 and db.get('rolledBack')==0 and db['ledger']==ledger, 'MIGRATION_LEDGER_INVALID')
         schema=db.get('procurementSchema',{})
@@ -3024,9 +3051,11 @@ def measure_release(repo,path,art,ledger,key):
 
 def bg_bind(repo, release, art, live):
     require(BG_ACTIVE and B2_IDENTITY and art['release']==release and art['capacityProfile']=='B2'
-            and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BASE
+            and git(repo,'rev-list','--parents','-n','1',release)==release+' '+bg_release_base()
             and live.get('result')=='LIVE_G_PROVEN' and live['LIVE_G_SHA']==EXPECTED_OLD_SHA
-            and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'] and live['DB_APPLIED']==87 and live['DB_FAILED']==0
+            and ((procurement_hotfix() and live['DB_APPLIED']==88 and live['POINTER_SHA']==BG_HOTFIX_BASE)
+                 or (not procurement_hotfix() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'] and live['DB_APPLIED']==87))
+            and live['DB_FAILED']==0
             and re.fullmatch(r'[0-9a-f]{64}',live['LIVE_G_CONTAINER_ID'])
             and re.fullmatch(r'sha256:[0-9a-f]{64}',live['LIVE_G_IMAGE_ID']),'BG_SCOPE_INVALID')
 
@@ -3042,12 +3071,17 @@ def bg_script(remote, code, value, timeout=600):
 
 
 BG_LOCK_CODE = r'''import json,sys,os,pathlib,stat,re,uuid
-v=json.load(sys.stdin);p=pathlib.Path(v['path']);s=p.lstat()
+v=json.load(sys.stdin);p=pathlib.Path(v['path'])
+if v['action']=='claim' and v.get('fresh'):
+    q=v['stale'];assert q['present'] is False and not q['openReferences'];p.mkdir(mode=0o700)
+s=p.lstat()
 assert stat.S_ISDIR(s.st_mode) and not p.is_symlink() and s.st_uid==0 and stat.S_IMODE(s.st_mode)==0o700
 owner=p/'blue-green-owner.json'
 if v['action']=='claim':
-    q=v['stale'];assert q['present'] and q['empty'] and not q['openReferences']
-    assert (s.st_ino,s.st_dev,s.st_ctime_ns,s.st_mtime_ns)==(q['inode'],q['device'],q['ctimeNs'],q['mtimeNs']) and not list(p.iterdir())
+    q=v['stale'];assert not list(p.iterdir())
+    if not v.get('fresh'):
+        assert q['present'] and q['empty'] and not q['openReferences']
+        assert (s.st_ino,s.st_dev,s.st_ctime_ns,s.st_mtime_ns)==(q['inode'],q['device'],q['ctimeNs'],q['mtimeNs'])
     own=set();pid=os.getpid()
     while pid>1:
         own.add(pid);a=pathlib.Path('/proc')/str(pid)/'stat';text=a.read_text();pid=int(text[text.rfind(')')+2:].split()[1])
@@ -3074,7 +3108,7 @@ print(json.dumps(receipt))
 
 def bg_lock(remote, value, action, receipt=None):
     try:return bg_script(remote,BG_LOCK_CODE,{'path':LOCK,'action':action,'stale':value['live']['releaseLock'],
-                                           'release':value['art']['release'],'receipt':receipt})
+                                           'release':value['art']['release'],'receipt':receipt,'fresh':procurement_hotfix()})
     except Exception:raise GateError('BG_LOCK_AUTHORITY_UNVERIFIED') from None
 
 
@@ -3121,7 +3155,7 @@ def bg_lifecycle(remote, value, state, mode):
     count=0 if mode=='standby' else 1
     require(h.get('ok') is True and h.get('dbOk') is True and h.get('gitSha') in (value['art']['release'],value['art']['release'][:12])
             and h.get('runtimeMode')==mode and h.get('appStartupTasksStarted')==count and h.get('processBackgroundTasksStarted')==count,'BG_LIFECYCLE_FAILED')
-    logs=remote.run(['sh','-c','docker logs --tail 200 '+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
+    logs=remote.run(['sh','-c','docker logs --tail 200 '+('--since '+shlex.quote(state['lifecycleSince'])+' ' if state.get('lifecycleSince') else '')+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
     marker=('BUDU_RUNTIME_STANDBY_READY' if mode=='standby' else 'BUDU_RUNTIME_PROMOTION_COMPLETE')+' sha='+value['art']['release']
     require(logs.count(marker)==1 and 'BUDU_RUNTIME_PROMOTION_FAILED' not in logs,'BG_PROMOTION_MARKER_INVALID')
     if mode=='standby':
@@ -3152,6 +3186,10 @@ def bg_g_guard(remote, value, state=None):
     require(remote.routes()==(value['template'],value['active']),'BG_G_ROUTE_CHANGED')
     require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==live['POINTER_SHA'],'BG_POINTER_CHANGED')
     remote.health(g['Id'],live['LIVE_G_SHA']);remote.health(g['Id'],live['LIVE_G_SHA'],public=True)
+    if procurement_hotfix():
+        h=json.loads(remote.run(['docker','exec',g['Id'],'wget','-qO-','http://127.0.0.1:3000/api/health']))
+        require(h.get('runtimeMode')=='active' and h.get('appStartupTasksStarted')==1
+                and h.get('processBackgroundTasksStarted')==1,'BG_G_WRITER_INACTIVE')
     application_db_probe(remote,g['Id'],'CURRENT_APPLICATION_DB_PROBE_FAILED')
     require(remote.run(['docker','exec',g['Id'],'sha256sum','/app/server/v2.js']).decode().split()[0]==OLD_V2_HASH,'OLD_RUNTIME_SOURCE_MISMATCH')
     db=bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],bool(state.get('candidateId')))
@@ -3194,12 +3232,26 @@ r=subprocess.run(['docker','exec',v['id'],'node','--input-type=module','-e',scri
     for _ in range(30):
         c=bg_candidate_identity(remote,value,state)
         require(c['State']['Running'],'BG_PROMOTION_FAILED')
-        logs=remote.run(['sh','-c','docker logs --tail 200 '+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
+        logs=remote.run(['sh','-c','docker logs --tail 200 '+('--since '+shlex.quote(state['lifecycleSince'])+' ' if state.get('lifecycleSince') else '')+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
         require('BUDU_RUNTIME_PROMOTION_FAILED' not in logs,'BG_PROMOTION_FAILED')
         if 'BUDU_RUNTIME_PROMOTION_COMPLETE sha='+value['art']['release'] in logs:
             bg_lifecycle(remote,value,state,'active');return
         time.sleep(.5)
     raise GateError('BG_PROMOTION_TIMEOUT')
+
+def bg_recover_g(remote, value, current):
+    # Exact previous G was itself promoted from standby. A Docker restart alone
+    # returns it to standby; restore its existing writer lifecycle before route.
+    live=value['live']
+    require(procurement_hotfix() and current['Id']==live['LIVE_G_CONTAINER_ID']
+            and current['Image']==live['LIVE_G_IMAGE_ID'] and live['LIVE_G_SHA']==BG_HOTFIX_BASE,'BG_G_IDENTITY_CHANGED')
+    c=remote.inspect(current['Id'])
+    require(c['State']['Running'] and c['Config']['Labels'].get(REVISION)==env(c).get('GIT_SHA')==live['LIVE_G_SHA'],
+            'BG_G_IDENTITY_CHANGED')
+    gv=dict(value,art={'release':live['LIVE_G_SHA'],'loadedDockerImageId':c['Image'],'imageReference':c['Config']['Image']})
+    gs={'candidate':live['LIVE_G_CONTAINER'],'candidateId':c['Id'],'lifecycleSince':c['State']['StartedAt']}
+    bg_lifecycle(remote,gv,gs,'standby');bg_promote(remote,gv,gs);bg_lifecycle(remote,gv,gs,'active')
+
 
 BG_EVIDENCE_CODE = r'''import json,sys,pathlib,os
 v=json.load(sys.stdin)
@@ -3425,35 +3477,41 @@ def bg_migration_contract(sql):
 
 
 def bg_execute(remote, value, import_e):
-    art=value['art'];live=value['live'];stage='PREFLIGHT';state={'candidate':'budu-prod-'+art['release'][:12]+CONTAINER_SUFFIX};retained_lock=True
+    art=value['art'];live=value['live'];hotfix=procurement_hotfix();stage='PREFLIGHT'
+    state={'candidate':'budu-prod-'+art['release'][:12]+CONTAINER_SUFFIX,'phase':88 if hotfix else 87};retained_lock=True
+    backup={'result':'NOT_REQUIRED_NO_SCHEMA_CHANGE'};migration={'result':'NOT_REQUIRED_DB_ALREADY_88'}
     result=None
     try:
         g,db=bg_g_guard(remote,value);state['g']=g
-        validate_clone_source(g,art['config']);b1_storage(remote);bg_migration_contract(value['migrationSql'])
+        validate_clone_source(g,art['config']);b1_storage(remote)
+        if not hotfix:bg_migration_contract(value['migrationSql'])
         require(BG_ACTIVE and art['capacityProfile']=='B2' and art['release']==CAPACITY_WAIVER['releaseSha'],'BG_SCOPE_INVALID')
-        require(value['compatibilityProof']['result']=='PASS' and value['compatibilityProof']['oldRuntimeExactSource']==live['LIVE_G_SHA']
-                and value['compatibilityProof']['additiveMigrationSqlHash']==procurement_contract()['sqlHash']
-                and value['compatibilityProof']['oldPrismaDb88']=='PASS' and value['compatibilityProof']['oldInternalHealthDb88']=='PASS'
-                and value['compatibilityProof']['pgVersion']=='16.14','BG_COMPATIBILITY_PROOF_INVALID')
+        if not hotfix:
+            require(value['compatibilityProof']['result']=='PASS' and value['compatibilityProof']['oldRuntimeExactSource']==live['LIVE_G_SHA']
+                    and value['compatibilityProof']['additiveMigrationSqlHash']==procurement_contract()['sqlHash']
+                    and value['compatibilityProof']['oldPrismaDb88']=='PASS' and value['compatibilityProof']['oldInternalHealthDb88']=='PASS'
+                    and value['compatibilityProof']['pgVersion']=='16.14','BG_COMPATIBILITY_PROOF_INVALID')
         state['lockReceipt']=bg_lock(remote,value,'claim');state['lockOwned']=True
         root='/opt/budu/.rollback-assets/blue-green-'+art['release'];state['root']=root
         remote.py("import pathlib,json,sys,os;v=json.load(sys.stdin);os.umask(0o077);p=pathlib.Path(v['root']);p.mkdir(mode=0o700);(p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",{'root':root,'manifest':{'releaseSha':art['release'],'live':live,'migrationSqlHash':procurement_contract()['sqlHash']}})
-        limits=shipping_resources(db);stage='E_IMPORT';bg_capacity(remote,art,'BG_E_ADMIT',sum(art[k] for k in ('archive','blobs','expanded','largest'))+RESERVE+sum(limits.values()))
+        limits={} if hotfix else shipping_resources(db)
+        require(db.get('pgVersion')=='16.14','SHIPPING_PG16_REQUIRED');stage='E_IMPORT';bg_capacity(remote,art,'BG_E_ADMIT',sum(art[k] for k in ('archive','blobs','expanded','largest'))+RESERVE+sum(limits.values()))
         receipt=import_e(root);state['importReceipt']=receipt;art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id'];b2_barrier(remote,art,receipt,art['capacityLedger'])
         g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_E_IMPORTED',RESERVE+sum(limits.values()))
         stage='E_PRE_MIGRATION_PROBE'
         script="import {validateConfig} from './server/config.js';import {prisma} from './server/pg.js';import './server/app.js';import fs from 'node:fs';validateConfig();try{if(JSON.parse(fs.readFileSync('./node_modules/prisma/package.json')).version!=='6.19.3'||!fs.existsSync('./node_modules/prisma/build/index.js'))throw Error();if((await prisma.$queryRawUnsafe('SELECT 1 AS ok'))[0].ok!==1)throw Error();await prisma.inventoryItem.findFirst({select:{id:true}});process.stdout.write('BG_PRE_MIGRATION_PROBE_OK\\n')}finally{await prisma.$disconnect()}"
         probe=bg_script(remote,BG_PROBE_CODE,{'old':g['Id'],'name':'budu-bg-probe-'+art['release'][:12],'release':art['release'],'image':art['imageReference'],'imageId':art['loadedDockerImageId'],'script':script},60);state['probe']=probe
         require(probe.get('result')=='PASS' and probe.get('terminated') is True,probe.get('code','BG_PRE_MIGRATION_PROBE_UNKNOWN'))
-        bg_g_guard(remote,value);stage='ONLINE_SNAPSHOT_BACKUP';state['backupAttempted']=True
-        backup=bg_script(remote,BG_SNAPSHOT_CODE,{'root':root,'pg':PG,'database':EXPECTED_DB,'limits':limits,'release':art['release'],'restore':'budu-bg-restore-'+art['release'][:12]});state['backup']=backup
-        require(backup.get('result')=='PASS',backup.get('code','BG_BACKUP_UNKNOWN'))
-        require(all(backup.get(k) is True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified'))
-                and backup['sourceSnapshotFingerprint']==backup['restoredFingerprint'] and backup['pgVersion']=='16.14','BG_BACKUP_PROOF_UNVERIFIED')
-        g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_DB_RETAINED',RESERVE+limits['walLimit']+limits['migratorLimit'])
-        stage='ATOMIC_MIGRATION';state['migrationAttempted']=True
-        migration=bg_script(remote,BG_ATOMIC_MIGRATION_CODE,{'pg':PG,'database':EXPECTED_DB,'sql':value['migrationSql'],'checksum':procurement_contract()['sqlHash'],'id':art['release'][:32],'release':art['release']},60);state['migration']=migration
-        require(migration.get('result')=='PASS',migration.get('code','BG_MIGRATION_UNKNOWN'));require(migration.get('terminated') is True,'BG_MIGRATION_TERMINATION_UNVERIFIED')
+        if not hotfix:
+            bg_g_guard(remote,value);stage='ONLINE_SNAPSHOT_BACKUP';state['backupAttempted']=True
+            backup=bg_script(remote,BG_SNAPSHOT_CODE,{'root':root,'pg':PG,'database':EXPECTED_DB,'limits':limits,'release':art['release'],'restore':'budu-bg-restore-'+art['release'][:12]});state['backup']=backup
+            require(backup.get('result')=='PASS',backup.get('code','BG_BACKUP_UNKNOWN'))
+            require(all(backup.get(k) is True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified'))
+                    and backup['sourceSnapshotFingerprint']==backup['restoredFingerprint'] and backup['pgVersion']=='16.14','BG_BACKUP_PROOF_UNVERIFIED')
+            g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_DB_RETAINED',RESERVE+limits['walLimit']+limits['migratorLimit'])
+            stage='ATOMIC_MIGRATION';state['migrationAttempted']=True
+            migration=bg_script(remote,BG_ATOMIC_MIGRATION_CODE,{'pg':PG,'database':EXPECTED_DB,'sql':value['migrationSql'],'checksum':procurement_contract()['sqlHash'],'id':art['release'][:32],'release':art['release']},60);state['migration']=migration
+            require(migration.get('result')=='PASS',migration.get('code','BG_MIGRATION_UNKNOWN'));require(migration.get('terminated') is True,'BG_MIGRATION_TERMINATION_UNVERIFIED')
         state['phase']=88;g,db=bg_g_guard(remote,value,state);bg_capacity(remote,art,'BG_DB88',RESERVE)
         stage='CANDIDATE_CREATE';bg_clone(remote,value,state);name=state['candidate']
         stage='CANDIDATE_STANDBY';remote.health(name,art['release']);bg_lifecycle(remote,value,state,'standby')
@@ -3492,8 +3550,9 @@ def bg_execute(remote, value, import_e):
                 recovery_db=remote.db();state['phase']=recovery_db['applied'];bg_writer(remote,value,state,[])
                 current=remote.inspect(live['LIVE_G_CONTAINER']);require(current['Id']==live['LIVE_G_CONTAINER_ID'] and current['Image']==live['LIVE_G_IMAGE_ID'],'BG_G_IDENTITY_CHANGED')
                 remote.run(['docker','start',current['Id']]);remote.health(current['Id'],live['LIVE_G_SHA'])
+                if hotfix:bg_recover_g(remote,value,current)
                 replace_routes(remote,state['fallback'],state['fallback']);write_authority(remote,CURRENT_SHA_FILE,live['LIVE_G_SHA']+'\n')
-            db=remote.db();state['phase']=db['applied'];require(state['phase'] in (87,88),'BG_DB_PHASE_UNKNOWN');bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']])
+            db=remote.db();state['phase']=db['applied'];require(state['phase'] in ((88,) if hotfix else (87,88)),'BG_DB_PHASE_UNKNOWN');bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']])
             remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA']);remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA'],public=True)
             backup_safe=not state.get('backupAttempted') or (state.get('backup') or {}).get('backupTerminationVerified') is True
             migration_safe=not state.get('migrationAttempted') or (state.get('migration') or {}).get('terminated') is True
@@ -3515,11 +3574,13 @@ def bg_execute(remote, value, import_e):
 def bg_deploy(remote, repo, path, art, ledger, authorize):
     require(authorize==art['release'] and BG_ACTIVE and CAPACITY_WAIVER['releaseSha']==authorize,'BG_SCOPE_INVALID')
     template,active=remote.routes()
-    proof=BG_LIVE.get('compatibilityProof');require(isinstance(proof,dict),'BG_COMPATIBILITY_PROOF_INVALID')
+    proof=BG_LIVE.get('compatibilityProof')
+    if not procurement_hotfix():require(isinstance(proof,dict),'BG_COMPATIBILITY_PROOF_INVALID')
     value={'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,'expectedOldSha':EXPECTED_OLD_SHA,'businessSha':RUNTIME_SHA,'oldV2Hash':OLD_V2_HASH,
            'live':BG_LIVE,'template':template,'active':active,'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
-           'migrationSql':(Path(repo)/'prisma/migrations'/procurement_contract()['migration']/'migration.sql').read_text(),'waiver':CAPACITY_WAIVER,'compatibilityProof':proof}
-    bg_g_guard(remote,value);bg_migration_contract(value['migrationSql'])
+           'migrationSql':None if procurement_hotfix() else (Path(repo)/'prisma/migrations'/procurement_contract()['migration']/'migration.sql').read_text(),'waiver':CAPACITY_WAIVER,'compatibilityProof':proof}
+    bg_g_guard(remote,value)
+    if not procurement_hotfix():bg_migration_contract(value['migrationSql'])
     code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
     code+="\nv=json.loads(sys.stdin.buffer.readline())\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nBG_ACTIVE=True\nBG_LIVE=v['live']\nconfigure_capacity_waiver(v['waiver'],v['art'],emit=False)\ndef interrupted(*_):raise GateError('BG_CONTROLLER_INTERRUPTED')\nfor sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\nprint(json.dumps(bg_execute(LocalRemote(),v,lambda root:bg_import(sys.stdin.buffer,v['art'],root))),flush=True)\n"
     loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-blue-green>','exec'))"
@@ -3567,7 +3628,8 @@ def main():
     require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     global BG_ACTIVE, BG_LIVE
     if args.blue_green_live_proof is not None:
-        require(args.mode=='deploy' and procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']
+        require(args.mode=='deploy' and ((procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'])
+                or (EXPECTED_OLD_SHA==RUNTIME_SHA==BG_HOTFIX_BASE))
                 and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
         BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())
     backup_diagnostic = args.mode in ('identity-backup-diagnostic','inspect-artifact-backup-diagnostic')
@@ -3577,7 +3639,7 @@ def main():
     if args.temporary_b2_capacity_waiver_sha is not None:
         require(args.mode=='deploy' and B2_IDENTITY and args.temporary_b2_capacity_waiver_sha==release
                 and args.authorize_release_sha==release
-                and git(args.repo,'rev-list','--parents','-n','1',release)==release+' '+(BG_BASE if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT),
+                and git(args.repo,'rev-list','--parents','-n','1',release)==release+' '+(bg_release_base() if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT),
                 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     if args.mode in ('identity','identity-diagnostic','identity-backup-diagnostic'):
         result = {'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}
@@ -3615,7 +3677,7 @@ def main():
                 art['compatibility']=compatibility_artifact(args.repo,compatible)
                 art['compatibilityPath']=str(compatible)
             if args.temporary_b2_capacity_waiver_sha is not None:
-                configure_capacity_waiver({'releaseSha':release,'parentSha':BG_BASE if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT},art)
+                configure_capacity_waiver({'releaseSha':release,'parentSha':bg_release_base() if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT},art)
             if BG_ACTIVE:
                 bg_bind(args.repo,release,art,BG_LIVE)
                 bg_deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)

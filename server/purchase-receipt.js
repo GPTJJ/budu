@@ -91,6 +91,16 @@ async function audit(tx, u, entityId, orderId, action, before, after, op, payloa
     }
   });
 }
+function purchasePurposeSnapshot(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    purchaseEnabled: item.purchaseEnabled,
+    procurementSupplierId: item.procurementSupplierId,
+    version: item.version
+  };
+}
 async function replay(tx, op, payload) {
   const a = await tx.procurementAudit.findUnique({
     where: {
@@ -743,6 +753,7 @@ purchaseReceiptRouter.patch('/procurement/items/:id/purchase-purpose', wrap(asyn
   if (!['developer', 'admin', 'finance', 'manager'].includes(u.role)) throw fail('无商品管理权限', 403);
   version(item.version, req.body.version);
   if (typeof req.body.purchaseEnabled !== 'boolean') throw fail('采购用途值不正确');
+  const beforeSnapshot = purchasePurposeSnapshot(item);
   const after = await tx.inventoryItem.update({
     where: {
       id: item.id
@@ -754,9 +765,10 @@ purchaseReceiptRouter.patch('/procurement/items/:id/purchase-purpose', wrap(asyn
       }
     }
   });
-  await audit(tx, u, item.id, null, 'PURCHASE_PURPOSE', item, after, key(req.body.requestKey), req.body);
+  const afterSnapshot = purchasePurposeSnapshot(after);
+  await audit(tx, u, item.id, null, 'PURCHASE_PURPOSE', beforeSnapshot, afterSnapshot, key(req.body.requestKey), req.body);
   return {
-    item: json(after)
+    item: afterSnapshot
   };
 })));
 purchaseReceiptRouter.get('/procurement/suppliers', wrap(async req => {
