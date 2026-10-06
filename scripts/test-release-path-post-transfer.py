@@ -99,9 +99,8 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'b1_storage': '8957503b18c4dcb187fc02d070861dd8c6274c09fd1d0056357080612513ae8d',
                                          'b2_absent': '73b2ea25318dc887e1d16f49287ca55afef556b4fd0bb783c2e0764b715a99eb',
                                          'b2_barrier': 'a8ad62d04b2ffcbbb01e104cf721386bd9596db8f4b1f88668ceb732119cf38a',
-                                         'b2_observe_archive_release': '54cd5b48f88595c07c1243778e7e7707a7f36347572fd0715b749fa83824b452',
                                          'b2_committed': '13e5b68255eed62c432995a67ae279d6c8320b1e087fe66a84d5865e6ce39e41',
-                                         'b2_deploy': '0fbd161a73ad013cb15f27a09729a4a535496e93780d84e6fe1b9f6bd9be121d',
+                                         'b2_deploy': 'a1285f4f47d8973d87daf4bb9c0c0fb635f6b16677a134cddcdba0302c6a1a3a',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
@@ -1762,6 +1761,20 @@ class B2WorkflowTests(unittest.TestCase):
         for path,token in [('scripts/deploy-prod-transfer-cas.py','def b2_deploy('),('scripts/test-candidate-db-probe-integration.py','def b2_owned_import_steps(')]:
             source=(ROOT/path).read_text();self.assertNotEqual(procurement_prior_source(source),source)
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(token,'def unreviewed_sixth_behavior(',1))
+    def test_archive_repair_projection_preserves_capacity_history_and_exact_proofs(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        self.assertNotEqual(procurement_prior_source(source),source)
+        for before,after in [
+                ("peak=max(ledger.get('peak',0), retained+future, planned)","peak=max(retained+future, planned)"),
+                ("ledger['baselineAvailable']-peak","available-peak"),
+                ('ABSOLUTE_MAX_PEAK = 6 * GIB','ABSOLUTE_MAX_PEAK = 7 * GIB'),
+                ('MIN_PROJECTED_AVAILABLE = 10 * GIB','MIN_PROJECTED_AVAILABLE = 9 * GIB'),
+                ('MAX_PROJECTED_USAGE = 90','MAX_PROJECTED_USAGE = 91'),
+                ("b1_stage(remote,r,'released',owned);b1_storage(remote)","b1_storage(remote)"),
+                ("b1_stage(remote,r,'cleanup',owned);b1_stage(remote,r,'released',owned);b1_storage(remote)","b1_stage(remote,r,'cleanup',owned);b1_stage(remote,r,'released',owned)")]:
+            with self.subTest(before=before):
+                self.assertIn(before,source)
+                with self.assertRaises(AssertionError):procurement_prior_source(source.replace(before,after,1))
     def test_focused_retained_dispatch_runs_real_proof_without_full_ci_or_production(self):
         workflow=self.workflow();job=workflow['jobs']['b2-retained']
         expression=job['if']
