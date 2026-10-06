@@ -37,8 +37,19 @@ try {
   process.exit(1)
 }
 
+const runtimeMode = process.env.BUDU_RUNTIME_MODE ?? 'active'
+if (!['active', 'standby'].includes(runtimeMode)) {
+  console.error('BUDU_RUNTIME_MODE_INVALID')
+  process.exit(1)
+}
 const PORT = Number(process.env.PORT || 3000)
-createApp({onlineCheckoutRuntime}).listen(PORT, '0.0.0.0', () => {
+const app = createApp({onlineCheckoutRuntime})
+const runtime = app.locals.buduRuntime
+let backgroundStarted = false
+function startProcessBackgroundTasks() {
+  if (backgroundStarted) return
+  backgroundStarted = true
+  runtime.processTasksStarted += 1
   onlineCheckoutRuntime?.start()
   console.log(`BUDU server: http://localhost:${PORT}`)
   console.log(`env=${APP_ENV} version=${APP_VERSION} sha=${GIT_SHA || 'local'}`)
@@ -69,4 +80,33 @@ createApp({onlineCheckoutRuntime}).listen(PORT, '0.0.0.0', () => {
     startProviderRefundReconciler({ service: paymentService, providerNames: enabledProviders, ...refundOptions })
     console.log(`支付退款后台核对已启动（providers=${enabledProviders.join(',')} interval=${refundOptions.intervalMs}ms）`)
   }
+}
+
+const runtimeSha = process.env.GIT_SHA || GIT_SHA || 'local'
+let promotionPromise = null
+if (runtimeMode === 'standby') {
+  process.on('SIGUSR2', () => {
+    if (runtime.state === 'active') {
+      console.log(`BUDU_RUNTIME_ALREADY_ACTIVE sha=${runtimeSha}`)
+      return
+    }
+    if (promotionPromise) return
+    runtime.state = 'promoting'
+    promotionPromise = (async () => {
+      try {
+        await runtime.startAppStartupTasks({promotion:true})
+        startProcessBackgroundTasks()
+        runtime.state = 'active'
+        console.log(`BUDU_RUNTIME_PROMOTION_COMPLETE sha=${runtimeSha}`)
+      } catch {
+        runtime.state = 'failed'
+        console.error(`BUDU_RUNTIME_PROMOTION_FAILED sha=${runtimeSha}`)
+        process.exit(1)
+      }
+    })()
+  })
+}
+app.listen(PORT, '0.0.0.0', () => {
+  if (runtimeMode === 'active') startProcessBackgroundTasks()
+  else console.log(`BUDU_RUNTIME_STANDBY_READY sha=${runtimeSha}`)
 })

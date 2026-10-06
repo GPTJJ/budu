@@ -1570,4 +1570,121 @@ class B2ArtifactReuseTests(unittest.TestCase):
         self.assertNotIn('npm ci',derived)
         self.assertIn('USER root',derived);self.assertIn('USER node',derived)
 
+
+class BlueGreenLifecycleTests(unittest.TestCase):
+    def test_background_groups_standby_default_promotion_and_failure(self):
+        # Execute the real index lifecycle with enabled provider adapters; none
+        # of these adapters contacts a provider or production.
+        script=r'''const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict');
+const source=fs.readFileSync(process.argv[1],'utf8').split('\n').filter(x=>!x.startsWith('import ')).join('\n');
+async function attempt(mode,fault=false){const calls=[],logs=[],handlers={},runtime={state:mode??'active',appTasksStarted:0,processTasksStarted:0};let exit;
+const context={process:{env:{...(mode===undefined?{}:{BUDU_RUNTIME_MODE:mode}),GIT_SHA:'a'.repeat(40)},on:(s,f)=>handlers[s]=f,exit:c=>{exit=c}},console:{log:x=>logs.push(x),error:x=>logs.push(x)},APP_ENV:'prod',APP_VERSION:'test',GIT_SHA:'a'.repeat(40),prisma:{},Sentry:{},paymentService:{},
+validateConfig:()=>{},loadOnlineCheckoutConfig:()=>({}),createOnlineCheckoutRuntime:()=>({start:()=>{calls.push('online');if(fault)throw Error('FAULT')}}),
+wechatPayStatus:()=>({enabled:true}),alipayStatus:()=>({enabled:true}),providerReconcilerEnvConfig:()=>({}),refundReconcilerEnvConfig:()=>({}),startProviderReconciler:p=>calls.push(p),startProviderRefundReconciler:()=>calls.push('refund'),
+createApp:()=>{runtime.startAppStartupTasks=async()=>{runtime.appTasksStarted++;calls.push('app')};return {locals:{buduRuntime:runtime},listen:(_p,_h,f)=>f()}}};vm.runInNewContext(source,context);
+if(mode===undefined){assert.deepEqual(calls,['online','wechat_pay','alipay','refund']);assert.equal(handlers.SIGUSR2,undefined);return}
+assert.deepEqual(calls,[]);assert(logs.some(x=>x.includes('BUDU_RUNTIME_STANDBY_READY')));
+handlers.SIGUSR2();await new Promise(r=>setImmediate(r));
+if(fault){assert.equal(exit,1);assert.equal(runtime.state,'failed');assert(logs.some(x=>x.includes('BUDU_RUNTIME_PROMOTION_FAILED')));assert(!logs.some(x=>x.includes('BUDU_RUNTIME_PROMOTION_COMPLETE')));return}
+assert.deepEqual(calls,['app','online','wechat_pay','alipay','refund']);assert.equal(runtime.state,'active');assert.equal(runtime.processTasksStarted,1);handlers.SIGUSR2();await new Promise(r=>setImmediate(r));assert.equal(calls.length,5);assert.equal(runtime.appTasksStarted,1);assert(logs.some(x=>x.includes('BUDU_RUNTIME_ALREADY_ACTIVE')))}
+(async()=>{await attempt();await attempt('standby');await attempt('standby',true);console.log('BG_BACKGROUND_LIFECYCLE_PASS')})().catch(()=>process.exit(1));'''
+        output=subprocess.check_output(['node','-e',script,str(ROOT/'server/index.js')],stderr=subprocess.DEVNULL,timeout=30)
+        self.assertEqual(output,b'BG_BACKGROUND_LIFECYCLE_PASS\n')
+
+class BlueGreenControllerTests(unittest.TestCase):
+    def attempt(self,fault=None):
+        r.configure_profile('post-transfer',C['rollbackSha'],C['businessSha'],'0'*64);r.BG_ACTIVE=True
+        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.BG_BASE},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
+        events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[87]
+        g={'Id':'g'*64,'Image':'sha256:'+'b'*64,'State':{'Running':True},'HostConfig':{'NetworkMode':'n'}}
+        live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':g['Id'],'LIVE_G_IMAGE_ID':g['Image'],'LIVE_G_SHA':C['rollbackSha'],'POINTER_SHA':C['oldSha']}
+        template=' '.join(['proxy_pass http://G:3000;']*3)
+        art={'release':'a'*40,'capacityProfile':'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
+        proof={'result':'PASS','oldRuntimeExactSource':C['rollbackSha'],'additiveMigrationSqlHash':C['sqlHash'],'oldPrismaDb88':'PASS','oldInternalHealthDb88':'PASS','pgVersion':'16.14'}
+        v={'art':art,'live':live,'ledger':LEDGER,'template':template,'active':template,'compatibilityProof':proof,'migrationSql':(ROOT/'prisma/migrations'/C['migration']/'migration.sql').read_text()}
+        def event(e):
+            events.append(e)
+            if e==fault:raise r.GateError('BG_INJECTED_FAILURE')
+        class Remote:
+            def inspect(self,name,image=False):
+                if image:return {'Id':g['Image']}
+                if name in ('G',g['Id']):return dict(g,State={'Running':running['G']})
+                return {'Id':'e'*64,'State':{'Running':running['E']}}
+            def run(self,args,**kw):
+                if args[:2]==['docker','stop']:event('stopG');running['G']=False
+                if args[:2]==['docker','start']:event('restartG');running['G']=True
+                if 'BG_PROCUREMENT_SCHEMA_OK' in str(args):event('schemaProbe');return b'BG_PROCUREMENT_SCHEMA_OK\n'
+                if args[:1]==['cat']:return (art['release']+'\n').encode()
+                return b''
+            def py(self,*args,**kw):return b''
+            def health(self,name,sha,public=False):event('publicE' if public and name=='E' else 'health')
+            def routes(self):return (' '.join(['proxy_pass http://'+route[0]+':3000;']*3),)*2
+            def db(self):return {'applied':dbcount[0]}
+        remote=Remote()
+        def gguard(*args):event('Gguard');self.assertTrue(running['G']);return g,{'dbBytes':1,'pgVersion':'16.14'}
+        def clone(*args):event('createE');state=args[2];state.update(candidate='E',candidateId='e'*64,candidateAttempted=True);running['E']=True
+        def lifecycle(*args):
+            mode=args[-1];event('standby' if mode=='standby' else 'active');self.assertTrue(running['E']);self.assertEqual(promoted[0],mode=='active');return {}
+        def writer(*args):
+            names=args[3];event('zero' if names==[] else 'writer');actual=['G'] if running['G'] else []
+            if running['E'] and promoted[0]:actual.append('E')
+            self.assertEqual(sorted(actual),sorted(names));return {}
+        def promote(*args):event('promote');self.assertFalse(running['G']);self.assertTrue(args[2]['standbyVerified']);promoted[0]=True
+        def ownedstop(*args):event('stopE');running['E']=False
+        def routes(*args):event('routeE' if 'http://E:' in args[1] else 'routeG');route[0]='E' if 'http://E:' in args[1] else 'G'
+        def pointer(*args):event('pointerE' if args[2].strip()==art['release'] else 'pointerG')
+        def script(remote,code,value,*args,**kw):
+            if code==r.BG_EVIDENCE_CODE:event('evidence');return {'result':'PASS'}
+            if code==r.BG_PROBE_CODE:event('probe');return {'result':'PASS','terminated':True}
+            if code==r.BG_SNAPSHOT_CODE:
+                event('backup');return dict(result='PASS',**{k:True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified')},sourceSnapshotFingerprint='x',restoredFingerprint='x',pgVersion='16.14')
+            if code==r.BG_ATOMIC_MIGRATION_CODE:event('migration');dbcount[0]=88;return {'result':'PASS','terminated':True}
+            raise AssertionError('unknown helper')
+        def lock(*args):event('lock-'+args[2]);return {}
+        patches={'bg_g_guard':gguard,'validate_clone_source':lambda *a:None,'b1_storage':lambda *a:True,'bg_lock':lock,'shipping_resources':lambda *a:{'walLimit':1,'migratorLimit':1},'bg_capacity':lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]}),'resolve_loaded_image':lambda *a:{'Id':'sha256:'+'c'*64},'b2_barrier':lambda *a:True,'bg_script':script,'bg_clone':clone,'bg_lifecycle':lifecycle,'mount_readability':lambda *a:[],'runtime_checks':lambda *a:event('runtime'),'application_db_probe':lambda *a:event('dbProbe'),'bg_writer':writer,'bg_promote':promote,'replace_routes':routes,'write_authority':pointer,'bg_owned_stop':ownedstop}
+        with contextlib.ExitStack() as stack:
+            for name,fn in patches.items():stack.enter_context(patch.object(r,name,side_effect=fn))
+            result=r.bg_execute(remote,v,lambda root:{'serverSha256BeforeImport':True})
+        r.BG_ACTIVE=False
+        return result,events,running,route
+    def test_success_exact_handover_order(self):
+        result,e,run,route=self.attempt();self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertTrue(result['releaseLockReleased'])
+        self.assertLess(e.index('standby'),e.index('stopG'));self.assertLess(e.index('stopG'),e.index('zero'));self.assertLess(e.index('zero'),e.index('promote'));self.assertLess(e.index('promote'),e.index('routeE'));self.assertLess(e.index('publicE'),e.index('pointerE'));self.assertEqual(run,{'G':False,'E':True})
+    def test_pre_handover_failures_preserve_live_G(self):
+        for fault in ('probe','backup','migration','standby','runtime','dbProbe','schemaProbe'):
+            with self.subTest(fault=fault):
+                result,e,run,route=self.attempt(fault);self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertNotIn('stopG',e);self.assertNotIn('promote',e);self.assertTrue(run['G']);self.assertFalse(run['E']);self.assertEqual(route,['G'])
+    def test_promotion_and_cutover_failure_stop_E_before_G_restart(self):
+        for fault in ('promote','routeE','publicE','evidence'):
+            with self.subTest(fault=fault):
+                result,e,run,route=self.attempt(fault);self.assertEqual(result['rootFailure']['code'],'BG_INJECTED_FAILURE');self.assertNotIn('secondaryRecoveryCode',result);self.assertLess(e.index('stopE'),e.index('restartG'));self.assertTrue(run['G']);self.assertFalse(run['E']);self.assertEqual(route,['G'])
+    def test_E_only_source_contains_no_R_lifecycle(self):
+        for fn in (r.bg_deploy,r.bg_execute,r.bg_import,r.bg_clone,r.bg_owned_stop):
+            node=next(n for n in ast.parse((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()).body if isinstance(n,ast.FunctionDef) and n.name==fn.__name__)
+            source=ast.get_source_segment((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text(),node)
+            for forbidden in ('compatibility_artifact(','b1_fixed_r(','b2_absent(','procurement_rollback(','docker image rm','docker volume','prune'):
+                self.assertNotIn(forbidden,source)
+    def test_exact_waiver_and_physical_guards(self):
+        r.configure_profile('post-transfer',C['rollbackSha'],C['businessSha'],'0'*64);r.BG_ACTIVE=True
+        art={'release':'a'*40,'capacityProfile':'B2'};receipt={'releaseSha':'a'*40,'parentSha':r.BG_BASE}
+        r.configure_capacity_waiver(receipt,art,emit=False)
+        ledger={'baselineUsed':100*r.GIB,'baselineAvailable':r.GIB,'phase':'BG'}
+        r.b1_capacity_gate(ledger,100*r.GIB,r.GIB,20*r.GIB)
+        for code in ('BG_ENOSPC','BG_EIO','MIGRATION_LEDGER_INVALID','WRITER_COUNT_INVALID','HEALTH_FAILED','B2_IMPORT_UNKNOWN','B1_FILESYSTEM_CHANGED'):
+            with self.subTest(code=code),self.assertRaises(r.GateError):r.capacity_require(False,code,{})
+        for key,bad in [('releaseSha','b'*40),('parentSha',r.B2_CAPACITY_WAIVER_PARENT)]:
+            with self.subTest(key=key),self.assertRaises(r.GateError):r.configure_capacity_waiver(dict(receipt,**{key:bad}),art)
+        r.BG_ACTIVE=False
+    def test_standby_does_not_hide_its_DB_sessions_or_other_containers(self):
+        r.configure_profile('post-transfer',C['rollbackSha'],C['businessSha'],'0'*64)
+        rows=[{'Name':'/G','Id':'g','Config':{'Env':['DATABASE_URL=postgresql://x/budu_bj006']},'NetworkSettings':{'Networks':{'n':{'IPAddress':'1.1.1.1'}}}},{'Name':'/E','Id':'e','Config':{'Env':['DATABASE_URL=postgresql://x/budu_bj006']},'NetworkSettings':{'Networks':{'n':{'IPAddress':'1.1.1.2'}}}}]
+        class Remote:
+            def containers(self):return rows
+            def db(self):return {'clients':['1.1.1.2']}
+        state={'candidateId':'e','phase':88};v={'live':{},'ledger':LEDGER}
+        with patch.object(r,'bg_lifecycle',return_value={'Id':'e'}),patch.object(r,'validate_database'):
+            with self.assertRaisesRegex(r.GateError,'UNKNOWN_DB_CLIENT_OR_OLD_WRITER'):r.bg_writer(Remote(),v,state,['G'],True)
+        self.assertEqual(r.writer_names(rows),['G','E'])
+
+
 if __name__=='__main__':unittest.main(verbosity=2)

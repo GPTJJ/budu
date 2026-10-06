@@ -83,9 +83,26 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'B2_ABSENT_CODE': '9762578dcea1b952ff824adcb6db7c29b9f7946106907ff6aeaef9b2cd71a302',
                                          'B2_BASE': 'b77f9de46be5d1281ba7010aac504a041cc700d2377d235c2b777c3f8a6a5f56',
                                          'B2_BRANCH': '140b5f3649f8ecc90758213b5302079ad58b79d75d8d7d322a66840b6168ee02',
+                                         'B2_CAPACITY_WAIVER_PARENT': '016f184e2228186151afecf09319716bb657602904557f497284891b1936dba3',
                                          'B2_IDENTITY': '0bad3fd58fd0c14eda744a2555e120237736508f500c8d721bc3f9a682af6444',
                                          'B2_SHARED_CODE': 'f56df1e4cd6ac449d07ec4f8653b9c8fc2b35adfa6c94e9dd09e5768d24c97cd',
                                          'B2_STREAM_CODE': 'a5737babd35d3ab2c811a6cefdb16421e81daab9dbec5345f945351f481c6038',
+                                         'BG_ACTIVE': 'd3fb8ba41f7f84971d382b855725aa0255a479b53529f035d3a339c1e9af168c',
+                                         'BG_ATOMIC_MIGRATION_CODE': '5076192a2b92464955893cb5bce29e7b0cfc19f723e8727428b4b2289a5afc9f',
+                                         'BG_BASE': 'c28050e5471d167797a03b1175893d78f62925c1851dda5a1996baa3f7ed7103',
+                                         'BG_BOOTSTRAP_HASHES': '7844c98547b41b456d787f1ccb6ca073f0f8765606012cd327d0a8149fc9b168',
+                                         'BG_EVIDENCE_CODE': '847839199af32bb94d06df5b53044a86799b93869a007a99309f3fc53e5fad43',
+                                         'BG_FILES': '92044012bd6499702777b79f6440e07908ab47b13afa12ae38b36dfd9a389061',
+                                         'BG_LIVE': '476bf50c72a1d2a90ad1c290bb450c99cd0ac9c885e2a44b09a097d8f62fee09',
+                                         'BG_LOCK_CODE': '28e14118fdeddce38278e2bc9ad335c84b957f7f88fb4dec7b57167a28b442c3',
+                                         'BG_PROBE_CODE': '0567fd07e289fb5591b85ed9ea4d7e9ef43ed77656cee046f53e0aa4458598a3',
+                                         'BG_SNAPSHOT_CODE': 'c06e303a9583a3c9814ba29697b5445ccde82237aeadc89380e6e93555a596ff',
+                                         'CAPACITY_TELEMETRY': '907d13f3f367b294715ad4012bf20160eefda8bd9fef537eebe3ac50de60cad0',
+                                         'CAPACITY_TELEMETRY_EMIT': '3ec9d83eae1074f528abaad3a63eb3118c4d78e115931cd4b6689fd52b99af0c',
+                                         'CAPACITY_WAIVER': 'e8f5e50b3e78104e3cfe50f148dcf01e10676b42a212d53c98f70777e0682f2f',
+                                         'CAPACITY_WAIVER_CODES': '5a5099cfcdd6e2833bfca6d4ba775f0cfe41824b4df23bff3325ab95adbf8a36',
+                                         "Import(names=[alias(name='copy')])": '37effa9caacd97bad7e2ded872a87a97b8975fca47afea9c20251191e2a288dd',
+                                         "Import(names=[alias(name='stat')])": 'f9e42ccd54cc9de18179025fa0bf90642c41392da38ee9faa647e9e85573f63e',
                                          'SAFE_CONTROLLER_CODES': '787d1125ced435ae1166c6f933ec3148001c630c43e4715870bfb853141cdec9',
                                          'artifact': '5d2c746fe15b1c0d138dbaaa889cfd394ad4c75cb38073b1c281db8aadfc3be0',
                                          'b1_archive_release': '9fe361532b6da6900505dd4c760adf5db0324f8259438ae7a897fae4e2635365',
@@ -103,41 +120,52 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'b2_deploy': '6c355cb2db57a02b8768285765b3626bf27882c6dc7dbc26f4bd1a0441d31507',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
-                                         'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
-                                         'execute_loaded': '1101414ee7c5782450115e890cb336a4bf747d52e4e28f5b77fdac913d321be1',
-                                         'preflight': '843b32bc2fe2bde0e90ae5b258f8e7c6c1f5ecd078c11ad5694313e9931bb495',
-                                         'shipping_disk_gate': 'cd6a54feb7fb306c82e7103d82afc680274f34cc0b1194618ab9a1c4c6a72351',
-                                         'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
-                                         'validate_procurement_identity': '6c49abc68f46934b53359813145fdbdd6e39c72d9ce8501f95de57aa6aec2b2c',
-                                         'B2_CAPACITY_WAIVER_PARENT': '016f184e2228186151afecf09319716bb657602904557f497284891b1936dba3',
-                                         'CAPACITY_TELEMETRY': '907d13f3f367b294715ad4012bf20160eefda8bd9fef537eebe3ac50de60cad0',
-                                         'CAPACITY_TELEMETRY_EMIT': '3ec9d83eae1074f528abaad3a63eb3118c4d78e115931cd4b6689fd52b99af0c',
-                                         'CAPACITY_WAIVER': 'e8f5e50b3e78104e3cfe50f148dcf01e10676b42a212d53c98f70777e0682f2f',
-                                         'CAPACITY_WAIVER_CODES': '5a5099cfcdd6e2833bfca6d4ba775f0cfe41824b4df23bff3325ab95adbf8a36',
+                                         'bg_bind': '3757befdd1fdd653a4a6d13c34bcd73de1cafcd7f937f88a5c210069c296f10f',
+                                         'bg_candidate_identity': '082ae570edc43defe29ff5abf6c48ef1c839a57c261090b65aeae6f8b1dcaeea',
+                                         'bg_capacity': 'ccc5c887b19a770b4753ed0af5c75721e4c47f2a421f1eef6ce94da924167cb5',
+                                         'bg_clone': '1daceedfdb8dd4f09dd4a2fba6da8f204eb44e8530d253de346be40c6814e5a2',
+                                         'bg_deploy': '2aba62ffa0072a57dfe06639c71b5837281f620973b29489ac9fddfa6ed6e458',
+                                         'bg_execute': '775afc5163864e05c78a6a058f673c85d6d607c0ca4c6fafc37d1e5ee50ac05f',
+                                         'bg_g_guard': 'f6258af1caea782b110efc4439df6757fdcc1a85863359bfa1b84692e39da7ea',
+                                         'bg_import': 'cfe5f08794cd180c9e08d9b6dba35946b71eb8a36869cac3ca31f3e16dfe7b0c',
+                                         'bg_lifecycle': 'd1205b47f9333d72a53dbf8b9c75f185ae0d2ad4af8f66adc62862b8585dfdd7',
+                                         'bg_lock': '8157cde29065c4d45e9becae46e10536aabdc6b764d3c7eeae116a049570c23e',
+                                         'bg_migration_contract': 'bde739d413db6fa13289eb4d0ab76e0b81cb596dfd7f104939e02bdf53ef44ce',
+                                         'bg_owned_stop': '428117e8b72e1ae4b9d8b96ba8deeabbf62b06801b57186372d863ea731cba07',
+                                         'bg_promote': '0c8d787d87d65fd9ebdab359d6962a891a3d534d6d45753dea2f58056245a880',
+                                         'bg_script': 'c6b27582d0234aa5e1a2463f5db41964b4cae566574241b67f6bd63d35e132c9',
+                                         'bg_writer': '7b793f0aa46457533ab327597e05524b5585ae7ac116cfd73b21adad4240d3e3',
                                          'capacity_require': '78bb64e2da113d41556836ebf55625482d80d1622f14177fd7ac134be62d992c',
                                          'check_controller_result': '24519b63c06628542937058ec15fa78d2138b8fb03bb3c408bcc9b2936c258ce',
-                                         'configure_capacity_waiver': '978f45df8da00228b02aebfa14179dcbbc27ed12cdbb8bd2cd15e6a0167f5336',
+                                         'configure_capacity_waiver': '5235b7e8717350a30089d6941ba9f17d94bb57a19cacdc5d60980f670b4ddf31',
                                          'configure_profile': 'b25b72dd4c380214ec3be1eaf32ed95d24331561e81804a7a68d107a4c952c5c',
+                                         'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
                                          'disk_budget': 'e80c280227277f08fbca9808854c92aa273a894ea5d18625d9483d8a57be7465',
-                                         'main': '8bf85a815bcad97039ba75e9a53585f1d22ef9e42a5713032a31883f5700da0d',
-                                         'run_loaded_controller': '1457203633cc4fde1a0a791db94ec0db909c16a36842a87e96675e05ac11214c'},
- 'scripts/test-candidate-db-probe-integration.py': {'b2_purchase_runtime_ci': '6b27a4945a1114c1264df3aef36736320fbd1196f436c9cdf61a3850ec19d152',
-'b2_validate_purchase_runtime': 'aaad5848517c6f8b0278320a95e3487d009adb3a17709952960cc16781108a55',
-'b2_truncated_stream_ci': '1194a1707d9a7bda698bb0ebeeb07a0fe19ad54131182864ea24e17ed2a85b3c',
-'b2_source_from_tar': '8a743eae4571cdc9cf9e0d054b4919d5295f49bdc2ac6f88cd8e8f3c81e743f0',
-'ci_fixture_image_tag': 'f2599630b7befa4f0f8f3e861e41126de9a106711b272295a53a1db9b909a6bb',
-'b2_fixed_r_oci': '58e5530fdff1740b9032eb4574a16a34ab1bc85c1df32ef6bd5143a34d6615d5',
-'b2_build_reusing_r_ci': 'c06fe70ac922863db938c740dfdbdc4c4faeb9eb497739a2b6d6dd444aeb2349',
-'b2_compare_images': '73e450a0f0dc88d7f81d2a10894d69e9ee1ef004e05e239dc1f273c24a673a30',
-'b2_compare_manifests': '846baad82121c64168796c8cbdf669ea792fe57d3255206975868f83433bcb9e',
-'b2_manifest_from_tar': '39c63746e9b0ecf87f2678c8e09c079a6b296e1a06627f6df8f7f08621ed0507',
-'b2_retained_ci': 'ffa22e7fa74d32dc0c7970defb0fbdf77962e0794229b81cc40861654be759c0',
-"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
+                                         'execute_loaded': '1101414ee7c5782450115e890cb336a4bf747d52e4e28f5b77fdac913d321be1',
+                                         'main': '580ea26f3770ee948ee4a4b0a6872fac7f983c0e31848b3be7fd171cd6f40ba4',
+                                         'preflight': '843b32bc2fe2bde0e90ae5b258f8e7c6c1f5ecd078c11ad5694313e9931bb495',
+                                         'run_loaded_controller': '1457203633cc4fde1a0a791db94ec0db909c16a36842a87e96675e05ac11214c',
+                                         'shipping_disk_gate': 'cd6a54feb7fb306c82e7103d82afc680274f34cc0b1194618ab9a1c4c6a72351',
+                                         'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
+                                         'validate_post_transfer_identity': '2e6f57e2d0c97487212bacc4355c5b44558f68267d041a13513bb6df7cf91422',
+                                         'validate_procurement_identity': 'e7d61da90b1c7959d55269e14ad6a61ec9b921f415332e1dcbe27ccda549ea17'},
+ 'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '__entrypoint__': '375c9f54008f437f3937a6d5b3010f58a80f4f4650e4ca06bf28e65abfc6a60b',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
                                                     'b1_import_ci': '759e3016e396ca041a20ea18be34be9b2bab17db6342745661d2e6b888bf901e',
                                                     'b2_allocation_ci': '55d47cbc30413819e6fa31ad2640b7702739b560fae4ec6a15b98e1ca214a0f6',
+                                                    'b2_build_reusing_r_ci': 'c06fe70ac922863db938c740dfdbdc4c4faeb9eb497739a2b6d6dd444aeb2349',
+                                                    'b2_compare_images': '73e450a0f0dc88d7f81d2a10894d69e9ee1ef004e05e239dc1f273c24a673a30',
+                                                    'b2_compare_manifests': '846baad82121c64168796c8cbdf669ea792fe57d3255206975868f83433bcb9e',
+                                                    'b2_fixed_r_oci': '58e5530fdff1740b9032eb4574a16a34ab1bc85c1df32ef6bd5143a34d6615d5',
+                                                    'b2_manifest_from_tar': '39c63746e9b0ecf87f2678c8e09c079a6b296e1a06627f6df8f7f08621ed0507',
                                                     'b2_owned_import_steps': '12354a587312bb03131799319a99c417cb66e8b0d3f4301346e3e186fccbc14e',
+                                                    'b2_purchase_runtime_ci': '6b27a4945a1114c1264df3aef36736320fbd1196f436c9cdf61a3850ec19d152',
+                                                    'b2_retained_ci': 'ffa22e7fa74d32dc0c7970defb0fbdf77962e0794229b81cc40861654be759c0',
+                                                    'b2_source_from_tar': '8a743eae4571cdc9cf9e0d054b4919d5295f49bdc2ac6f88cd8e8f3c81e743f0',
+                                                    'b2_truncated_stream_ci': '1194a1707d9a7bda698bb0ebeeb07a0fe19ad54131182864ea24e17ed2a85b3c',
+                                                    'b2_validate_purchase_runtime': 'aaad5848517c6f8b0278320a95e3487d009adb3a17709952960cc16781108a55',
+                                                    'ci_fixture_image_tag': 'f2599630b7befa4f0f8f3e861e41126de9a106711b272295a53a1db9b909a6bb',
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 
@@ -1775,19 +1803,17 @@ class B2WorkflowTests(unittest.TestCase):
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(token,'def unreviewed_sixth_behavior(',1))
     def test_temporary_capacity_waiver_preserves_every_other_source_node(self):
         source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
-        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.B2_CAPACITY_WAIVER_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             lines=value.splitlines(keepends=True)
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
         before=nodes(prior);after=nodes(source)
-        allowed={'configure_profile','disk_budget','b1_capacity_gate','b2_deploy','shipping_disk_gate',
-                 'preflight','execute_loaded','run_loaded_controller','check_controller_result','main',
-                 'SAFE_CONTROLLER_CODES'}
+        allowed={'configure_capacity_waiver','validate_procurement_identity','validate_post_transfer_identity','main'}
         self.assertFalse(set(before)-set(after))
         self.assertEqual({k for k in before if before[k]!=after[k]},allowed)
         self.assertIn("args.mode=='deploy' and B2_IDENTITY",source)
         self.assertIn("args.temporary_b2_capacity_waiver_sha==release",source)
-        self.assertIn("release+' '+B2_CAPACITY_WAIVER_PARENT",source)
+        self.assertIn("release+' '+(BG_BASE if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT)",source)
         self.assertIn("configure_capacity_waiver(v['capacityWaiver'],v['art'],emit=False)",source)
         self.assertIn("CAPACITY_TELEMETRY.extend(v['capacityTelemetry'])",source)
         self.assertNotEqual(procurement_prior_source(source),source)
@@ -1833,6 +1859,34 @@ class B2WorkflowTests(unittest.TestCase):
             if 'run' in step:
                 check=subprocess.run(['/bin/bash','-n'],input=step['run'],text=True,capture_output=True)
                 self.assertEqual(check.returncode,0,step.get('name','')+check.stderr)
+
+
+class BlueGreenSourceTests(unittest.TestCase):
+    def test_bootstrap_business_tasks_preserved_verbatim(self):
+        old_app=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BASE+':server/app.js'],text=True)
+        app=(ROOT/'server/app.js').read_text()
+        start='  async function syncStoreNames() {'
+        end='  if (!disableStartupTasks) {'
+        old_body=old_app[old_app.index(start):old_app.index(end)]
+        self.assertIn(old_body.strip(),app)
+        old_index=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BASE+':server/index.js'],text=True)
+        body=old_index[old_index.index('  onlineCheckoutRuntime?.start()'):old_index.rindex('\n})')]
+        self.assertIn(body,(ROOT/'server/index.js').read_text())
+        self.assertEqual({p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in r.BG_BOOTSTRAP_HASHES},r.BG_BOOTSTRAP_HASHES)
+    def test_snapshot_is_shared_and_cleanup_is_own_session_only(self):
+        code=r.BG_SNAPSHOT_CODE
+        for text in ('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY','pg_export_snapshot()','SET TRANSACTION SNAPSHOT','--snapshot=','PGAPPNAME=','sourceSnapshotFingerprint','restoredFingerprint','backupTerminationVerified','BG_SNAPSHOT_SEQUENCE_SCOPE_UNKNOWN'):
+            self.assertIn(text,code)
+        self.assertIn("application_name IN (",code)
+        self.assertIn("pid<>pg_backend_pid()",code)
+        self.assertIn("--network','none",code)
+        self.assertIn("pg['Image']",code)
+        self.assertIn("'16.14'",code)
+        self.assertNotIn('pg_terminate_backend(pid) FROM pg_stat_activity;',code)
+        self.assertIn("lock_timeout='2s'",r.BG_ATOMIC_MIGRATION_CODE)
+        self.assertIn("statement_timeout='30s'",r.BG_ATOMIC_MIGRATION_CODE)
+        self.assertIn('BEGIN;',r.BG_ATOMIC_MIGRATION_CODE)
+        self.assertIn('COMMIT;',r.BG_ATOMIC_MIGRATION_CODE)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

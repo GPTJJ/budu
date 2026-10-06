@@ -285,8 +285,20 @@ export function createCompatibilityProcurementGate(requireBusiness, requireModul
 
 export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers, disableStartupTasks = false } = {}) {
   if (disableStartupTasks && APP_ENV !== 'test') throw new Error('C11 startup-task suppression requires APP_ENV=test')
+  const runtimeMode = process.env.BUDU_RUNTIME_MODE ?? 'active'
+  if (!['active', 'standby'].includes(runtimeMode)) throw new Error('BUDU_RUNTIME_MODE_INVALID')
   const app = express()
-  app.locals.c11StartupTasks = disableStartupTasks ? 'DISABLED' : 'ENABLED'
+  const runtime = { configuredMode: runtimeMode, state: runtimeMode, appTasksStarted: 0, processTasksStarted: 0 }
+  app.locals.buduRuntime = runtime
+  app.locals.c11StartupTasks = disableStartupTasks ? 'DISABLED' : runtimeMode === 'standby' ? 'STANDBY' : 'ENABLED'
+  // Standby has no public mutation capability. This precedes every business
+  // router and body parser, including provider callbacks.
+  app.use('/api', (req, res, next) => {
+    if (runtime.state !== 'active' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      return res.status(503).json({ ok: false, code: 'BUDU_RUNTIME_STANDBY' })
+    }
+    next()
+  })
   onlineCheckoutRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
@@ -650,6 +662,11 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     appVersion: APP_VERSION,
     gitSha: GIT_SHA || '',
     dbOk: dbReady(),
+    ...(process.env.BUDU_RUNTIME_MODE === undefined ? {} : {
+      runtimeMode: runtime.state,
+      appStartupTasksStarted: runtime.appTasksStarted,
+      processBackgroundTasksStarted: runtime.processTasksStarted,
+    }),
   }))
   // A0.6 test-environment authority probe. It is deliberately unavailable in
   // every non-test runtime and only reachable through the isolated test gateway.
@@ -1438,12 +1455,30 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
       console.error('[store-names-sync]', error.message)
     }
   }
-  if (!disableStartupTasks) {
-    syncStoreNames()
-    startAssetReminderJob()
-    // 审批模板种子（数据库未配置时跳过，下次启动自动补）
-    ensureApprovalTemplates().catch((error) => console.error('[approval-templates]', error.message))
-    ensureNotificationTemplates().catch((error) => console.error('[notification-templates]', error.message))
+  let startupPromise = null
+  function startAppStartupTasks({ promotion = false } = {}) {
+    if (startupPromise) return startupPromise
+    runtime.appTasksStarted += 1
+    try {
+      const storeSync = syncStoreNames()
+      startAssetReminderJob()
+      // Preserve default-active error handling. Promotion awaits both seeds
+      // and propagates their failures to the process lifecycle.
+      const approval = ensureApprovalTemplates()
+      const notification = ensureNotificationTemplates()
+      startupPromise = Promise.all(promotion ? [storeSync, approval, notification] : [
+        storeSync,
+        approval.catch((error) => console.error('[approval-templates]', error.message)),
+        notification.catch((error) => console.error('[notification-templates]', error.message)),
+      ])
+    } catch (error) {
+      startupPromise = Promise.reject(error)
+    }
+    return startupPromise
+  }
+  runtime.startAppStartupTasks = startAppStartupTasks
+  if (!disableStartupTasks && runtimeMode === 'active') {
+    startAppStartupTasks().catch((error) => console.error('[app-startup-tasks]', error.message))
   }
 
   if (process.env.SENTRY_DSN) {

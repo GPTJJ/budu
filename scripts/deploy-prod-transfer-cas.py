@@ -6,6 +6,8 @@ Only fixed error codes and an allowlisted summary are printed. No shell tracing.
 The existing cloner is used only AFTER the previous writer has stopped.
 """
 import argparse
+import copy
+import stat
 import gzip
 import hashlib
 import io
@@ -220,6 +222,11 @@ B1_IDENTITY = False
 B2_BASE = '7364b050ea58a7dc0e4227eaa8cbdd8c8d1c5524'
 B2_BRANCH = 'codex/purchase-receipt-b2-capacity-fasttrack'
 B2_IDENTITY = False
+BG_BASE = '0f5eebf667457c30acbb8075bbfe87e457f0f214'
+BG_ACTIVE = False
+BG_LIVE = None
+BG_FILES = B1_FILES | {'server/app.js','server/index.js'}
+BG_BOOTSTRAP_HASHES = {'server/app.js': 'b3547fe419c41aa1a16aba9c2e8ac11659b9243927e66b5dd835112ac235dac6', 'server/index.js': 'c3641f84a98bf4bbdd32d1c02352dd47d31f472d15a7bbf761d139f03aacef18'}
 
 # Explicit one-release authorization. Descendants and other profiles remain
 # subject to the original capacity policy; this is never an environment default.
@@ -243,8 +250,9 @@ def configure_capacity_waiver(receipt, art, emit=True):
     require(isinstance(receipt,dict) and set(receipt)=={'releaseSha','parentSha'}
             and isinstance(receipt['releaseSha'],str) and re.fullmatch(r'[0-9a-f]{40}',receipt['releaseSha'])
             and receipt['releaseSha']==art['release'] and art.get('capacityProfile')=='B2'
-            and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT
-            and RELEASE_PROFILE=='post-transfer' and EXPECTED_OLD_SHA==c['oldSha']
+            and ((not BG_ACTIVE and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT and EXPECTED_OLD_SHA==c['oldSha'])
+                 or (BG_ACTIVE and receipt['parentSha']==BG_BASE and EXPECTED_OLD_SHA==c['rollbackSha']))
+            and RELEASE_PROFILE=='post-transfer'
             and RUNTIME_SHA==c['businessSha'], 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     CAPACITY_WAIVER=dict(receipt)
     CAPACITY_TELEMETRY_EMIT=emit
@@ -275,7 +283,13 @@ def validate_procurement_identity(repo, release):
     global B1_IDENTITY, B2_IDENTITY
     B1_IDENTITY = git(repo,'branch','--show-current') == B1_BRANCH
     B2_IDENTITY = git(repo,'branch','--show-current') == B2_BRANCH
-    if B2_IDENTITY:
+    if BG_ACTIVE:
+        require(B2_IDENTITY and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BASE, 'BG_SCOPE_INVALID')
+        changed=set(git(repo,'diff','--name-only',BG_BASE,release).splitlines())
+        require(changed <= BG_FILES and {'server/app.js','server/index.js','scripts/deploy-prod-transfer-cas.py'} <= changed,'BG_SCOPE_INVALID')
+        require(set(git(repo,'diff','--name-only',BG_BASE,release,'--','server','prisma','shared','src','brand','Dockerfile','package.json','package-lock.json').splitlines())==set(BG_BOOTSTRAP_HASHES), 'BG_BUSINESS_CHANGED')
+        require(all(digest((Path(repo)/p).read_bytes())==h for p,h in BG_BOOTSTRAP_HASHES.items()),'BG_LIFECYCLE_IDENTITY_INVALID')
+    elif B2_IDENTITY:
         require(release != B2_BASE and is_ancestor(repo,B2_BASE,release)
                 and not git(repo,'rev-list','--merges',B2_BASE+'..'+release), 'B2_IDENTITY_INVALID')
         changed=set(filter(None,git(repo,'log','--format=','--name-only',B2_BASE+'..'+release).splitlines()))
@@ -295,7 +309,7 @@ def validate_procurement_identity(repo, release):
         require(git(repo,'branch','--show-current')==c['branch']
                 and git(repo,'rev-list','--parents','-n','1',release)==release+' '+c['businessSha'],
                 'PROCUREMENT_RELEASE_IDENTITY_INVALID')
-    require(set(git(repo,'diff','--name-only',c['businessSha'],release).splitlines())==c['engineeringFiles'],
+    require(set(git(repo,'diff','--name-only',c['businessSha'],release).splitlines())==c['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set()),
             'PROCUREMENT_ENGINEERING_SCOPE_INVALID')
     path='prisma/migrations/'+c['migration']+'/migration.sql'
     require(set(git(repo,'diff','--name-only',c['oldSha'],release,'--','prisma').splitlines())=={'prisma/schema.prisma',path}
@@ -686,7 +700,7 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= (procurement_contract()['engineeringFiles'] if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= ((procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
@@ -3008,6 +3022,521 @@ def measure_release(repo,path,art,ledger,key):
             'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
 
 
+def bg_bind(repo, release, art, live):
+    require(BG_ACTIVE and B2_IDENTITY and art['release']==release and art['capacityProfile']=='B2'
+            and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BASE
+            and live.get('result')=='LIVE_G_PROVEN' and live['LIVE_G_SHA']==EXPECTED_OLD_SHA
+            and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'] and live['DB_APPLIED']==87 and live['DB_FAILED']==0
+            and re.fullmatch(r'[0-9a-f]{64}',live['LIVE_G_CONTAINER_ID'])
+            and re.fullmatch(r'sha256:[0-9a-f]{64}',live['LIVE_G_IMAGE_ID']),'BG_SCOPE_INVALID')
+
+
+def bg_script(remote, code, value, timeout=600):
+    if not isinstance(remote,LocalRemote):return json.loads(remote.py(code,value,timeout=timeout))
+    previous_in,previous_out=sys.stdin,sys.stdout;output=io.StringIO()
+    try:
+        sys.stdin,sys.stdout=io.StringIO(json.dumps(value)),output
+        exec(compile(code,'budu-blue-green-helper','exec'),{'__name__':'blue_green_helper'})
+        return json.loads(output.getvalue())
+    finally:sys.stdin,sys.stdout=previous_in,previous_out
+
+
+BG_LOCK_CODE = r'''import json,sys,os,pathlib,stat,re,uuid
+v=json.load(sys.stdin);p=pathlib.Path(v['path']);s=p.lstat()
+assert stat.S_ISDIR(s.st_mode) and not p.is_symlink() and s.st_uid==0 and stat.S_IMODE(s.st_mode)==0o700
+owner=p/'blue-green-owner.json'
+if v['action']=='claim':
+    q=v['stale'];assert q['present'] and q['empty'] and not q['openReferences']
+    assert (s.st_ino,s.st_dev,s.st_ctime_ns,s.st_mtime_ns)==(q['inode'],q['device'],q['ctimeNs'],q['mtimeNs']) and not list(p.iterdir())
+    own=set();pid=os.getpid()
+    while pid>1:
+        own.add(pid);a=pathlib.Path('/proc')/str(pid)/'stat';text=a.read_text();pid=int(text[text.rfind(')')+2:].split()[1])
+    for d in pathlib.Path('/proc').iterdir():
+        if not d.name.isdigit() or int(d.name) in own:continue
+        try:
+            text=(d/'cmdline').read_bytes().replace(b'\0',b' ').decode(errors='replace')
+            assert not re.search(r'(^|/|\s)rsync(\s|$)|docker (load|import)|deploy-prod-transfer-cas|<budu-b2-stream>|<budu-blue-green>|pg_dump|pg_restore|prisma migrate',text)
+            for f in [d/'cwd',*(d/'fd').iterdir()]:
+                try:fs=f.stat()
+                except FileNotFoundError:continue
+                assert (fs.st_dev,fs.st_ino)!=(s.st_dev,s.st_ino)
+        except (FileNotFoundError,ProcessLookupError):continue
+    receipt={'releaseSha':v['release'],'pid':os.getpid(),'token':uuid.uuid4().hex,'inode':s.st_ino,'device':s.st_dev}
+    fd=os.open(owner,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'w') as f:json.dump(receipt,f);f.flush();os.fsync(f.fileno())
+else:
+    receipt=v['receipt'];assert receipt['releaseSha']==v['release'] and receipt['pid']==os.getpid()
+    assert (s.st_ino,s.st_dev)==(receipt['inode'],receipt['device']) and json.loads(owner.read_text())==receipt
+    assert list(p.iterdir())==[owner];owner.unlink();p.rmdir()
+print(json.dumps(receipt))
+'''
+
+
+def bg_lock(remote, value, action, receipt=None):
+    try:return bg_script(remote,BG_LOCK_CODE,{'path':LOCK,'action':action,'stale':value['live']['releaseLock'],
+                                           'release':value['art']['release'],'receipt':receipt})
+    except Exception:raise GateError('BG_LOCK_AUTHORITY_UNVERIFIED') from None
+
+
+def bg_capacity(remote, art, phase, future):
+    used,available=remote.disk();cap=art.get('capacityLedger')
+    if cap is None:
+        cap={'baselineUsed':used,'baselineAvailable':available,'peak':0,'phase':phase,
+             'baselineCommitted':sorted(b2_committed(remote))};art['capacityLedger']=cap
+    cap['phase']=phase
+    return b1_capacity_gate(cap,used,available,future)
+
+
+def bg_import(stream, art, root):
+    # Exact E only. The server checks the completed archive before Docker sees it.
+    p=Path(root)/'exact-e.tar';h=hashlib.sha256();total=0
+    with p.open('xb') as out:
+        while True:
+            block=stream.read(1024**2)
+            if not block:break
+            total+=len(block);require(total<=art['archive'],'B2_IMPORT_UNKNOWN');h.update(block);out.write(block)
+        out.flush();os.fsync(out.fileno())
+    p.chmod(0o400);s=p.lstat()
+    require(stat.S_ISREG(s.st_mode) and s.st_uid==0 and total==art['archive'] and h.hexdigest()==art['archiveHash'],'B2_IMPORT_UNKNOWN')
+    with p.open('rb') as src:
+        require(file_hash(src)==art['archiveHash'],'B2_IMPORT_UNKNOWN');src.seek(0)
+        child=subprocess.Popen(['docker','load'],stdin=src,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:rc=child.wait(timeout=300)
+        finally:
+            if child.poll() is None:child.terminate();child.wait(timeout=30)
+    require(rc==0,'B2_IMPORT_UNKNOWN')
+    return {'archiveBytes':total,'archiveHash':h.hexdigest(),'returncode':rc,'serverWaitComplete':True,'serverSha256BeforeImport':True}
+
+
+def bg_candidate_identity(remote, value, state):
+    c=remote.inspect(state['candidate']);validate_candidate_image(c,value['art'])
+    require(c['Id']==state['candidateId'] and env(c).get('BUDU_RUNTIME_MODE')=='standby'
+            and c['Config']['Labels'].get(REVISION)==env(c).get('GIT_SHA')==value['art']['release'],'BG_CANDIDATE_CHANGED')
+    return c
+
+
+def bg_lifecycle(remote, value, state, mode):
+    c=bg_candidate_identity(remote,value,state);require(c['State']['Running'],'BG_LIFECYCLE_FAILED')
+    h=json.loads(remote.run(['docker','exec',c['Id'],'wget','-qO-','http://127.0.0.1:3000/api/health']))
+    count=0 if mode=='standby' else 1
+    require(h.get('ok') is True and h.get('dbOk') is True and h.get('gitSha') in (value['art']['release'],value['art']['release'][:12])
+            and h.get('runtimeMode')==mode and h.get('appStartupTasksStarted')==count and h.get('processBackgroundTasksStarted')==count,'BG_LIFECYCLE_FAILED')
+    logs=remote.run(['sh','-c','docker logs --tail 200 '+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
+    marker=('BUDU_RUNTIME_STANDBY_READY' if mode=='standby' else 'BUDU_RUNTIME_PROMOTION_COMPLETE')+' sha='+value['art']['release']
+    require(logs.count(marker)==1 and 'BUDU_RUNTIME_PROMOTION_FAILED' not in logs,'BG_PROMOTION_MARKER_INVALID')
+    if mode=='standby':
+        require('BUDU_RUNTIME_PROMOTION_COMPLETE' not in logs,'BG_E_ALREADY_PROMOTED')
+        script="for(const method of ['POST','PUT','PATCH','DELETE']){const r=await fetch('http://127.0.0.1:3000/api/procurement/orders',{method});const b=await r.json();if(r.status!==503||b.code!=='BUDU_RUNTIME_STANDBY')process.exit(1)}process.stdout.write('BG_MUTATION_BLOCKED\\n')"
+        require(remote.run(['docker','exec',c['Id'],'node','--input-type=module','-e',script])==b'BG_MUTATION_BLOCKED\n','BG_STANDBY_MUTATION_GUARD_FAILED')
+    return c
+
+
+def bg_writer(remote, value, state, names, standby=False):
+    rows=remote.containers()
+    if standby:
+        c=bg_lifecycle(remote,value,state,'standby')
+        require(sum(x['Id']==c['Id'] for x in rows)==1,'BG_CANDIDATE_CHANGED')
+        rows=[x for x in rows if x['Id']!=c['Id']]
+    db=remote.db();validate_database(db,value['ledger'] if state.get('phase')==88 else before_ledger(value['ledger']))
+    # A qualified standby is excluded only from container classification. Any
+    # persistent E/unknown DB session still fails the original client-IP guard.
+    writer_check(rows,db,names)
+    return db
+
+
+def bg_g_guard(remote, value, state=None):
+    state=state or {};live=value['live'];g=remote.inspect(live['LIVE_G_CONTAINER'])
+    require(g['Id']==live['LIVE_G_CONTAINER_ID'] and g['Image']==live['LIVE_G_IMAGE_ID']
+            and g['Config']['Labels'].get(REVISION)==env(g).get('GIT_SHA')==live['LIVE_G_SHA'],'BG_G_IDENTITY_CHANGED')
+    require(g['State']['Running'] and g['State'].get('Health',{}).get('Status')=='healthy','BG_G_HEALTH_FAILED')
+    require(remote.routes()==(value['template'],value['active']),'BG_G_ROUTE_CHANGED')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==live['POINTER_SHA'],'BG_POINTER_CHANGED')
+    remote.health(g['Id'],live['LIVE_G_SHA']);remote.health(g['Id'],live['LIVE_G_SHA'],public=True)
+    application_db_probe(remote,g['Id'],'CURRENT_APPLICATION_DB_PROBE_FAILED')
+    require(remote.run(['docker','exec',g['Id'],'sha256sum','/app/server/v2.js']).decode().split()[0]==OLD_V2_HASH,'OLD_RUNTIME_SOURCE_MISMATCH')
+    db=bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],bool(state.get('candidateId')))
+    return g,db
+
+
+def bg_clone(remote, value, state):
+    art=value['art'];g=state['g'];name=state['candidate']
+    require(not remote.run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip(),'CANDIDATE_NAME_EXISTS')
+    helper=value['helper'];needle='env["GIT_SHA"] = release_sha'
+    require(helper.count(needle)==1,'BG_CLONE_HELPER_CHANGED')
+    helper=helper.replace(needle,needle+'\nenv["BUDU_RUNTIME_MODE"] = "standby"',1)
+    state['candidateAttempted']=True
+    remote.py("import json,sys,subprocess,tempfile,pathlib,os;v=json.load(sys.stdin);c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0];e=dict(x.split('=',1) for x in c['Config']['Env']);f,p=tempfile.mkstemp(dir='/dev/shm');os.fchmod(f,0o600);os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode());os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['name'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL);rc=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(rc)",
+        {'old':g['Id'],'name':name,'image':art['imageReference'],'sha':art['release'],'network':g['HostConfig']['NetworkMode'],'helper':helper},timeout=120)
+    remote.run(['docker','update','--restart','unless-stopped',name])
+    c=remote.inspect(name);validate_candidate_image(c,art);state['candidateId']=c['Id']
+    expected=copy.deepcopy(g);desired=env(expected);desired['BUDU_RUNTIME_MODE']='standby';expected['Config']['Env']=[k+'='+v for k,v in desired.items()]
+    clone_parity(expected,c,art['release'])
+
+
+def bg_owned_stop(remote, value, state):
+    if state.get('candidateAttempted'):
+        ids=remote.run(['docker','ps','-aq','--filter','name=^/'+state['candidate']+'$']).strip()
+        if ids:
+            c=remote.inspect(state['candidate']);validate_candidate_image(c,value['art'])
+            require(not state.get('candidateId') or state['candidateId']==c['Id'],'BG_CANDIDATE_CHANGED')
+            if c['State']['Running']:remote.run(['docker','stop','--time','30',c['Id']])
+            require(not remote.inspect(c['Id'])['State']['Running'],'BG_CANDIDATE_STOP_UNVERIFIED')
+
+
+def bg_promote(remote, value, state):
+    # Signal the exact node process, not Docker PID1's shell/npm supervisor.
+    remote.py(r'''import json,sys,subprocess
+v=json.load(sys.stdin);c=json.loads(subprocess.check_output(['docker','inspect',v['name']]))[0]
+assert c['Id']==v['id'] and c['Image']==v['image'] and c['State']['Running']
+script="import fs from 'node:fs';const rows=[];for(const p of fs.readdirSync('/proc')){if(!/^\\d+$/.test(p)||+p===process.pid)continue;try{const a=fs.readFileSync('/proc/'+p+'/cmdline','utf8').split('\\0');if(a[0].split('/').pop()==='node'&&a.includes('server/index.js'))rows.push(+p)}catch{}}if(rows.length!==1)process.exit(1);process.kill(rows[0],'SIGUSR2')"
+r=subprocess.run(['docker','exec',v['id'],'node','--input-type=module','-e',script],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);assert r.returncode==0
+''',{'name':state['candidate'],'id':state['candidateId'],'image':value['art']['loadedDockerImageId']})
+    for _ in range(30):
+        c=bg_candidate_identity(remote,value,state)
+        require(c['State']['Running'],'BG_PROMOTION_FAILED')
+        logs=remote.run(['sh','-c','docker logs --tail 200 '+shlex.quote(c['Id'])+' 2>&1']).decode(errors='replace')
+        require('BUDU_RUNTIME_PROMOTION_FAILED' not in logs,'BG_PROMOTION_FAILED')
+        if 'BUDU_RUNTIME_PROMOTION_COMPLETE sha='+value['art']['release'] in logs:
+            bg_lifecycle(remote,value,state,'active');return
+        time.sleep(.5)
+    raise GateError('BG_PROMOTION_TIMEOUT')
+
+BG_EVIDENCE_CODE = r'''import json,sys,pathlib,os
+v=json.load(sys.stdin)
+try:
+    p=pathlib.Path(v['root'])/'controller-proof.json'
+    with p.open('x') as f:json.dump(v['result'],f,sort_keys=True);f.flush();os.fsync(f.fileno())
+    print(json.dumps({'result':'PASS'}))
+except OSError as e:print(json.dumps({'result':'FAIL','code':'BG_ENOSPC' if e.errno==28 else 'BG_EIO' if e.errno==5 else 'BG_EVIDENCE_UNKNOWN'}))
+'''
+
+BG_ATOMIC_MIGRATION_CODE = SHIPPING_BOUNDED_DUMP_CODE + r'''
+import json,sys
+v=json.load(sys.stdin);assert hashlib.sha256(v['sql'].encode()).hexdigest()==v['checksum']
+pg=json.loads(subprocess.check_output(['docker','inspect',v['pg']]))[0];e=dict(x.split('=',1) for x in pg['Config']['Env'] if '=' in x)
+marker='budu_bg_migrator_'+v['release'][:12];user=e.get('POSTGRES_USER','postgres');process=None
+result={'result':'FAIL','transactionAtomic':True,'terminated':False}
+script="BEGIN;SET LOCAL lock_timeout='2s';SET LOCAL statement_timeout='30s';LOCK TABLE \"_prisma_migrations\" IN SHARE ROW EXCLUSIVE MODE;\n"
+script+="DO $check$ BEGIN IF (SELECT count(*) FROM \"_prisma_migrations\" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL)<>87 OR EXISTS(SELECT 1 FROM \"_prisma_migrations\" WHERE finished_at IS NULL AND rolled_back_at IS NULL) THEN RAISE EXCEPTION 'MIGRATION_IDENTITY_CHANGED'; END IF; END $check$;\n"
+script+=v['sql']+"\nINSERT INTO \"_prisma_migrations\"(id,checksum,migration_name,finished_at,applied_steps_count) VALUES ('"+v['id']+"','"+v['checksum']+"','20261003140000_purchase_receipt_v1',clock_timestamp(),1);COMMIT;\n"
+base=['docker','exec','-i','-e','PGOPTIONS=-c application_name='+marker+' -c TimeZone=UTC','-e','PGAPPNAME='+marker,v['pg'],'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',user,'-d',v['database']]
+try:
+    process=subprocess.Popen(base,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    out,err=process.communicate(script.encode(),timeout=45);result['returncode']=process.returncode
+    if process.returncode:
+        code='BG_ENOSPC' if b'No space left on device' in err else 'BG_EIO' if b'Input/output error' in err else 'BG_MIGRATION_LOCK_TIMEOUT' if b'lock timeout' in err else 'BG_MIGRATION_STATEMENT_TIMEOUT' if b'statement timeout' in err else 'BG_MIGRATION_FAILED'
+        result['code']=code
+    else:result['result']='PASS'
+except BaseException as error:
+    result['code']='BG_MIGRATION_DEADLINE' if isinstance(error,subprocess.TimeoutExpired) else 'BG_MIGRATION_INTERRUPTED' if isinstance(error,KeyboardInterrupt) else 'BG_MIGRATION_UNKNOWN'
+finally:
+    previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+    try:
+        if process is not None:stop_backup_process(process)
+        predicate="datname='"+v['database'].replace("'","''")+"' AND application_name='"+marker+"' AND pid<>pg_backend_pid()"
+        def cleanup(sql):
+            args=base.copy();args[6]='PGAPPNAME='+marker+'_cleanup';args[4]='PGOPTIONS=-c application_name='+marker+'_cleanup -c statement_timeout=8000'
+            p=subprocess.run(args,input=sql.encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=15)
+            assert p.returncode==0;return p.stdout.strip()
+        cleanup('SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity WHERE '+predicate+';')
+        assert cleanup('SELECT count(*) FROM pg_stat_activity WHERE '+predicate+';')==b'0'
+        result['terminated']=True
+    except BaseException:
+        result['result']='FAIL';result.setdefault('code','BG_MIGRATION_TERMINATION_UNVERIFIED');result['cleanupCode']='BG_MIGRATION_TERMINATION_UNVERIFIED'
+    finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+print(json.dumps(result))
+'''
+
+BG_PROBE_CODE = r'''import json,pathlib,subprocess,sys,tempfile,os
+v=json.load(sys.stdin);source=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0]
+e=dict(x.split('=',1) for x in source['Config']['Env'] if '=' in x);e['GIT_SHA']=v['release'];e['PGOPTIONS']='-c default_transaction_read_only=on -c statement_timeout=8000 -c temp_file_limit=0'
+fd,p=tempfile.mkstemp(dir='/dev/shm');os.fchmod(fd,0o600)
+try:
+    os.write(fd,(''.join(k+'='+value+'\n' for k,value in sorted(e.items()))).encode());os.close(fd)
+    args=['docker','create','--name',v['name'],'--network',source['HostConfig']['NetworkMode'],'--restart','no',
+          '--read-only','--tmpfs','/tmp:rw,nosuid,size=128m','--label','budu.bg-probe='+v['release'],'--env-file',p,'--entrypoint','node']
+    if source['Config'].get('User'):args+=['--user',source['Config']['User']]
+    for group in source['HostConfig'].get('GroupAdd') or []:args+=['--group-add',group]
+    for m in source['Mounts']:
+        args+=['--mount','type='+m['Type']+',source='+(m.get('Name') if m['Type']=='volume' else m['Source'])+',target='+m['Destination']+',readonly']
+    args+=[v['image'],'--input-type=module','-e',v['script']]
+    p1=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30);assert p1.returncode==0
+    for network in source['NetworkSettings']['Networks']:
+        if network!=source['HostConfig']['NetworkMode']:subprocess.run(['docker','network','connect',network,v['name']],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+    p1=subprocess.run(['docker','start','-a',v['name']],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=40)
+    c=json.loads(subprocess.check_output(['docker','inspect',v['name']]))[0]
+    assert c['Image']==v['imageId'] and c['Config']['Labels'].get('budu.bg-probe')==v['release'] and not c['State']['Running'] and c['State']['ExitCode']==0 and p1.returncode==0
+    assert p1.stdout==b'BG_PRE_MIGRATION_PROBE_OK\n'
+    print(json.dumps({'result':'PASS','imageIdentity':True,'moduleSmoke':True,'config':True,'prismaCli':True,'applicationDbRead':True,'terminated':True}))
+finally:
+    pathlib.Path(p).unlink()
+    ids=subprocess.check_output(['docker','ps','-aq','--filter','name=^/'+v['name']+'$']).strip()
+    if ids:
+        c=json.loads(subprocess.check_output(['docker','inspect',v['name']]))[0]
+        assert c['Image']==v['imageId'] and c['Config']['Labels'].get('budu.bg-probe')==v['release']
+        if c['State']['Running']:subprocess.run(['docker','stop','--time','10',c['Id']],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+        assert not json.loads(subprocess.check_output(['docker','inspect',c['Id']]))[0]['State']['Running']
+'''
+
+BG_SNAPSHOT_CODE = SHIPPING_BOUNDED_DUMP_CODE + r'''
+import json,pathlib,sys,re
+v=json.load(sys.stdin);root=pathlib.Path(v['root']);os.umask(0o077)
+deadline=time.monotonic()+600;stage='SNAPSHOT_EXPORT';exporter=None;restore_process=None
+created=False;cleanup_complete=False;exported=None;pg=None;user=None;dump_process=None
+marker='budu_bg_'+v['release'][:12];name=v['restore'];data=root/'restore-pg'
+result={'result':'FAIL','backupAttempted':True,'backupTerminationVerified':False,
+        'exporterTerminated':False,'restoreStopped':False,'dumpTerminated':False}
+def call(args,input=None,timeout=30,cleanup=False):
+    remaining=timeout if cleanup else min(timeout,deadline-time.monotonic())
+    if remaining<=0:raise RuntimeError('BG_BACKUP_DEADLINE')
+    p=subprocess.run(args,input=input,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=remaining)
+    if p.returncode:
+        if b'No space left on device' in p.stderr:raise RuntimeError('BG_ENOSPC')
+        if b'Input/output error' in p.stderr:raise RuntimeError('BG_EIO')
+        raise RuntimeError('BG_'+stage+'_COMMAND_FAILED')
+    return p.stdout
+
+def sql(container,database,text,role=None,snapshot=None,cleanup=False):
+    transaction='BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n'
+    if snapshot:
+        if not re.fullmatch(r'[0-9A-Fa-f-]+',snapshot):raise RuntimeError('BG_SNAPSHOT_EXPORT_UNKNOWN')
+        transaction+="SET TRANSACTION SNAPSHOT '"+snapshot+"';\n"
+    options='PGOPTIONS=-c application_name='+marker+'_reader -c statement_timeout=30000 -c lock_timeout=2000 -c TimeZone=UTC'
+    return call(['docker','exec','-i','-e',options,'-e','PGAPPNAME='+marker+'_reader',container,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',role or user,'-d',database],
+                (transaction+text+'\nCOMMIT;').encode(),cleanup=cleanup)
+
+def fingerprint(container,database,role=None,snapshot=None):
+    tables=sorted(json.loads(sql(container,database,"SELECT coalesce(json_agg(tablename),'[]') FROM pg_tables WHERE schemaname='public';",role,snapshot)))
+    rows=[]
+    for table in tables:
+        quoted='"'+table.replace('"','""')+'"'
+        query="SELECT count(*)::text||':'||md5(coalesce(string_agg(h,'' ORDER BY h COLLATE \"C\"),'')) FROM (SELECT md5(row_to_json(t)::text) h FROM "+quoted+" t) s;"
+        rows.append([table,sql(container,database,query,role,snapshot).decode().strip()])
+    seq=sql(container,database,"SELECT coalesce(json_agg(row_to_json(s) ORDER BY sequencename COLLATE \"C\"),'[]') FROM (SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public') s;",role,snapshot).decode().strip()
+    # Sequence counters are not MVCC snapshots. The exact reviewed 87/88 schema
+    # has none; an unknown sequence cannot silently lose the previous proof.
+    if json.loads(seq)!=[]:raise RuntimeError('BG_SNAPSHOT_SEQUENCE_SCOPE_UNKNOWN')
+    return hashlib.sha256(json.dumps([rows,seq],sort_keys=True).encode()).hexdigest(),len(tables)
+
+def bounded_dump(args,path,limit):
+    global dump_process
+    total=0;h=hashlib.sha256()
+    with path.open('xb') as out:
+        try:
+            dump_process=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+            while True:
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise RuntimeError('BG_BACKUP_DEADLINE')
+                ready,_,_=select.select([dump_process.stdout],[],[],min(1,remaining))
+                if not ready:continue
+                block=os.read(dump_process.stdout.fileno(),65536)
+                if not block:break
+                total+=len(block)
+                if total>limit:raise RuntimeError('BG_BACKUP_LIMIT')
+                h.update(block);out.write(block)
+            if dump_process.wait(timeout=min(5,max(.01,deadline-time.monotonic())))!=0:raise RuntimeError('BG_SNAPSHOT_DUMP_FAILED')
+            out.flush();os.fsync(out.fileno())
+        finally:
+            if dump_process is not None:stop_backup_process(dump_process);dump_process.stdout.close()
+    return total,h.hexdigest()
+
+def extent():return sum(p.stat().st_blocks*512 for p in data.rglob('*') if p.is_file())
+try:
+    pg=json.loads(call(['docker','inspect',v['pg']]))[0]
+    e=dict(x.split('=',1) for x in pg['Config']['Env'] if '=' in x);user=e.get('POSTGRES_USER','postgres')
+    if sql(v['pg'],v['database'],"SELECT current_setting('server_version');").decode().split()[0]!='16.14':raise RuntimeError('BG_PG_VERSION_MISMATCH')
+    options='PGOPTIONS=-c application_name='+marker+'_exporter -c default_transaction_read_only=on -c idle_in_transaction_session_timeout=650000 -c statement_timeout=30000 -c TimeZone=UTC'
+    exporter=subprocess.Popen(['docker','exec','-i','-e',options,'-e','PGAPPNAME='+marker+'_exporter',v['pg'],'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',user,'-d',v['database']],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    exporter.stdin.write(b'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\nSELECT pg_export_snapshot();\n');exporter.stdin.flush()
+    ready,_,_=select.select([exporter.stdout],[],[],10)
+    if not ready:raise RuntimeError('BG_SNAPSHOT_EXPORT_UNKNOWN')
+    exported=exporter.stdout.readline().decode().strip()
+    if not re.fullmatch(r'[0-9A-Fa-f-]+',exported) or exporter.poll() is not None:raise RuntimeError('BG_SNAPSHOT_EXPORT_UNKNOWN')
+    stage='SOURCE_FINGERPRINT';before,tables=fingerprint(v['pg'],v['database'],snapshot=exported)
+    stage='SNAPSHOT_DUMP';dump=root/'database-snapshot.dump'
+    options='PGOPTIONS=-c application_name='+marker+'_dump -c statement_timeout=30000 -c lock_timeout=2000 -c TimeZone=UTC'
+    total,backup_hash=bounded_dump(['docker','exec','-e',options,'-e','PGAPPNAME='+marker+'_dump',v['pg'],'pg_dump','-U',user,'-d',v['database'],'-Fc','--no-owner','--no-acl','--lock-wait-timeout=2s','--snapshot='+exported],dump,v['limits']['backupLimit'])
+    result['dumpTerminated']=True
+    if exporter.poll() is not None:raise RuntimeError('BG_SNAPSHOT_EXPORTER_LOST')
+    exporter.stdin.write(b'ROLLBACK;\n');exporter.stdin.close();exporter.stdin=None
+    if exporter.wait(timeout=10)!=0:raise RuntimeError('BG_SNAPSHOT_EXPORTER_TERMINATION_UNVERIFIED')
+    result['exporterTerminated']=True
+    stage='RESTORE_CREATE';data.mkdir(mode=0o700)
+    if call(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip():raise RuntimeError('BG_RESTORE_NAME_EXISTS')
+    created=True
+    call(['docker','create','--name',name,'--network','none','--restart','no','--label','budu.bg-restore='+v['release'],
+          '-e','POSTGRES_HOST_AUTH_METHOD=trust','-e','POSTGRES_DB=restore_fixture','-v',str(data)+':/var/lib/postgresql/data',pg['Image']])
+    call(['docker','start',name]);stage='RESTORE_READY'
+    for _ in range(60):
+        try:version=call(['docker','exec',name,'psql','-h','127.0.0.1','-X','-qAt','-U','postgres','-d','restore_fixture','-c',"SELECT current_setting('server_version');"],timeout=5).decode().split()
+        except (RuntimeError,subprocess.TimeoutExpired):time.sleep(.2);continue
+        if not version or version[0]!='16.14':raise RuntimeError('BG_PG_VERSION_MISMATCH')
+        break
+    else:raise RuntimeError('BG_RESTORE_NOT_READY')
+    stage='RESTORE'
+    with dump.open('rb') as source:
+        restore_process=subprocess.Popen(['docker','exec','-i',name,'pg_restore','-U','postgres','-d','restore_fixture','--exit-on-error','--no-owner','--no-acl'],stdin=source,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        while restore_process.poll() is None:
+            if extent()>v['limits']['restoreLimit']:raise RuntimeError('BG_RESTORE_LIMIT')
+            if time.monotonic()>deadline:raise RuntimeError('BG_BACKUP_DEADLINE')
+            time.sleep(.2)
+        if restore_process.returncode!=0:raise RuntimeError('BG_RESTORE_FAILED')
+    stage='RESTORED_FINGERPRINT';after,after_tables=fingerprint(name,'restore_fixture','postgres')
+    if before!=after or tables!=after_tables:raise RuntimeError('BG_RESTORE_FACTS_MISMATCH')
+    if extent()>v['limits']['restoreLimit']:raise RuntimeError('BG_RESTORE_LIMIT')
+    result.update(result='PASS',backupBytes=total,backupSha256=backup_hash,restoreAllocatedBytes=extent(),tableCount=tables,
+                  sourceSnapshotFingerprint=before,restoredFingerprint=after,exportedSnapshot=exported,pgVersion='16.14',restoreVerified=True)
+except BaseException as error:
+    fixed=str(error) if isinstance(error,RuntimeError) and str(error).startswith('BG_') else 'BG_ENOSPC' if isinstance(error,OSError) and error.errno==28 else 'BG_EIO' if isinstance(error,OSError) and error.errno==5 else 'BG_BACKUP_INTERRUPTED' if isinstance(error,KeyboardInterrupt) else 'BG_'+stage+'_UNKNOWN'
+    result.update(result='FAIL',code=fixed,substage=stage,errorType=type(error).__name__)
+finally:
+    previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+    try:
+        for process,key in ((exporter,'exporterTerminated'),(dump_process,'dumpTerminated'),(restore_process,'restoreProcessTerminated')):
+            if process is not None:stop_backup_process(process)
+            result[key]=True
+        if pg is not None and user is not None:
+            # Only this release's dedicated sessions, never G's connections.
+            quoted=marker.replace("'","''")
+            predicate="datname='"+v['database'].replace("'","''")+"' AND application_name IN ('"+quoted+"_exporter','"+quoted+"_reader','"+quoted+"_dump') AND pid<>pg_backend_pid()"
+            options='PGOPTIONS=-c application_name='+marker+'_cleanup -c statement_timeout=8000 -c TimeZone=UTC'
+            def clean(text):return call(['docker','exec','-i','-e',options,'-e','PGAPPNAME='+marker+'_cleanup',v['pg'],'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',user,'-d',v['database']],text.encode(),cleanup=True)
+            clean('SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity WHERE '+predicate+';')
+            if clean('SELECT count(*) FROM pg_stat_activity WHERE '+predicate+';').strip()!=b'0':raise RuntimeError('BG_BACKUP_TERMINATION_UNVERIFIED')
+        if created:
+            c=json.loads(call(['docker','inspect',name],cleanup=True))[0]
+            if c['Image']!=pg['Image'] or c['Config'].get('Labels',{}).get('budu.bg-restore')!=v['release'] or c['HostConfig']['NetworkMode']!='none' or set(c['NetworkSettings']['Networks'])-{'none'} or any(n.get('IPAddress') for n in c['NetworkSettings']['Networks'].values()) or not any(m['Source']==str(data) and m['Destination']=='/var/lib/postgresql/data' for m in c['Mounts']):raise RuntimeError('BG_RESTORE_IDENTITY_UNVERIFIED')
+            call(['docker','stop','--time','10',name],timeout=20,cleanup=True)
+            if json.loads(call(['docker','inspect',name],cleanup=True))[0]['State']['Running']:raise RuntimeError('BG_RESTORE_STOP_UNVERIFIED')
+        result['restoreStopped']=True;result['backupTerminationVerified']=True;cleanup_complete=True
+    except BaseException as cleanup_error:
+        result['cleanupCode']=str(cleanup_error) if isinstance(cleanup_error,RuntimeError) and str(cleanup_error).startswith('BG_') else 'BG_BACKUP_CLEANUP_UNKNOWN'
+        result['result']='FAIL'
+        result.setdefault('code','BG_BACKUP_TERMINATION_UNVERIFIED');result.setdefault('substage','TERMINATE')
+    finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+result['releaseSha']=v['release'];result['restoreContainer']=name
+(root/'snapshot-backup-result.json').write_text(json.dumps(result,sort_keys=True))
+print(json.dumps(result))
+'''
+
+def bg_migration_contract(sql):
+    require(digest(sql.encode())==procurement_contract()['sqlHash'],'PROCUREMENT_MIGRATION_IDENTITY_INVALID')
+    require(not re.search(r'\b(?:DROP|RENAME|TRUNCATE)\b|ALTER\s+COLUMN',sql,re.I),'BG_MIGRATION_NOT_ADDITIVE')
+
+
+def bg_execute(remote, value, import_e):
+    art=value['art'];live=value['live'];stage='PREFLIGHT';state={'candidate':'budu-prod-'+art['release'][:12]+CONTAINER_SUFFIX};retained_lock=True
+    result=None
+    try:
+        g,db=bg_g_guard(remote,value);state['g']=g
+        validate_clone_source(g,art['config']);b1_storage(remote);bg_migration_contract(value['migrationSql'])
+        require(BG_ACTIVE and art['capacityProfile']=='B2' and art['release']==CAPACITY_WAIVER['releaseSha'],'BG_SCOPE_INVALID')
+        require(value['compatibilityProof']['result']=='PASS' and value['compatibilityProof']['oldRuntimeExactSource']==live['LIVE_G_SHA']
+                and value['compatibilityProof']['additiveMigrationSqlHash']==procurement_contract()['sqlHash']
+                and value['compatibilityProof']['oldPrismaDb88']=='PASS' and value['compatibilityProof']['oldInternalHealthDb88']=='PASS'
+                and value['compatibilityProof']['pgVersion']=='16.14','BG_COMPATIBILITY_PROOF_INVALID')
+        state['lockReceipt']=bg_lock(remote,value,'claim');state['lockOwned']=True
+        root='/opt/budu/.rollback-assets/blue-green-'+art['release'];state['root']=root
+        remote.py("import pathlib,json,sys,os;v=json.load(sys.stdin);os.umask(0o077);p=pathlib.Path(v['root']);p.mkdir(mode=0o700);(p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",{'root':root,'manifest':{'releaseSha':art['release'],'live':live,'migrationSqlHash':procurement_contract()['sqlHash']}})
+        limits=shipping_resources(db);stage='E_IMPORT';bg_capacity(remote,art,'BG_E_ADMIT',sum(art[k] for k in ('archive','blobs','expanded','largest'))+RESERVE+sum(limits.values()))
+        receipt=import_e(root);state['importReceipt']=receipt;art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id'];b2_barrier(remote,art,receipt,art['capacityLedger'])
+        g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_E_IMPORTED',RESERVE+sum(limits.values()))
+        stage='E_PRE_MIGRATION_PROBE'
+        script="import {validateConfig} from './server/config.js';import {prisma} from './server/pg.js';import './server/app.js';import fs from 'node:fs';validateConfig();try{if(JSON.parse(fs.readFileSync('./node_modules/prisma/package.json')).version!=='6.19.3'||!fs.existsSync('./node_modules/prisma/build/index.js'))throw Error();if((await prisma.$queryRawUnsafe('SELECT 1 AS ok'))[0].ok!==1)throw Error();await prisma.inventoryItem.findFirst({select:{id:true}});process.stdout.write('BG_PRE_MIGRATION_PROBE_OK\\n')}finally{await prisma.$disconnect()}"
+        probe=bg_script(remote,BG_PROBE_CODE,{'old':g['Id'],'name':'budu-bg-probe-'+art['release'][:12],'release':art['release'],'image':art['imageReference'],'imageId':art['loadedDockerImageId'],'script':script},60);state['probe']=probe
+        require(probe.get('result')=='PASS' and probe.get('terminated') is True,probe.get('code','BG_PRE_MIGRATION_PROBE_UNKNOWN'))
+        bg_g_guard(remote,value);stage='ONLINE_SNAPSHOT_BACKUP';state['backupAttempted']=True
+        backup=bg_script(remote,BG_SNAPSHOT_CODE,{'root':root,'pg':PG,'database':EXPECTED_DB,'limits':limits,'release':art['release'],'restore':'budu-bg-restore-'+art['release'][:12]});state['backup']=backup
+        require(backup.get('result')=='PASS',backup.get('code','BG_BACKUP_UNKNOWN'))
+        require(all(backup.get(k) is True for k in ('backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified'))
+                and backup['sourceSnapshotFingerprint']==backup['restoredFingerprint'] and backup['pgVersion']=='16.14','BG_BACKUP_PROOF_UNVERIFIED')
+        g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_DB_RETAINED',RESERVE+limits['walLimit']+limits['migratorLimit'])
+        stage='ATOMIC_MIGRATION';state['migrationAttempted']=True
+        migration=bg_script(remote,BG_ATOMIC_MIGRATION_CODE,{'pg':PG,'database':EXPECTED_DB,'sql':value['migrationSql'],'checksum':procurement_contract()['sqlHash'],'id':art['release'][:32],'release':art['release']},60);state['migration']=migration
+        require(migration.get('result')=='PASS',migration.get('code','BG_MIGRATION_UNKNOWN'));require(migration.get('terminated') is True,'BG_MIGRATION_TERMINATION_UNVERIFIED')
+        state['phase']=88;g,db=bg_g_guard(remote,value,state);bg_capacity(remote,art,'BG_DB88',RESERVE)
+        stage='CANDIDATE_CREATE';bg_clone(remote,value,state);name=state['candidate']
+        stage='CANDIDATE_STANDBY';remote.health(name,art['release']);bg_lifecycle(remote,value,state,'standby')
+        authority=mount_readability(remote,g['Id']);runtime_checks(remote,name,art['runtimeHash'],authority)
+        application_db_probe(remote,name,'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+        procurement_probe="import {prisma} from './server/pg.js';try{await prisma.procurementSupplier.findFirst({select:{id:true}});await prisma.procurementOrder.findFirst({select:{id:true}});await prisma.procurementReceipt.findFirst({select:{id:true}});await prisma.inventoryItem.findFirst({select:{id:true,purchaseEnabled:true,procurementSupplierId:true}});process.stdout.write('BG_PROCUREMENT_SCHEMA_OK\\n')}finally{await prisma.$disconnect()}"
+        require(remote.run(['docker','exec','-w','/app','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000',name,'node','--input-type=module','-e',procurement_probe],timeout=20)==b'BG_PROCUREMENT_SCHEMA_OK\n','BG_PROCUREMENT_APPLICATION_SCHEMA_FAILED')
+        db=bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],True)
+        bg_g_guard(remote,value,state);state['standbyVerified']=True
+        old_name=route_target(value['template'],value['active']);next_routes=value['template'].replace('http://'+old_name+':3000','http://'+name+':3000')
+        fallback=value['template'].replace('http://'+old_name+':3000','http://'+live['LIVE_G_CONTAINER']+':3000')
+        require(next_routes.count('http://'+name+':3000')==3 and fallback.count('http://'+live['LIVE_G_CONTAINER']+':3000')==3,'CUTOVER_ROUTE_COUNT_INVALID');state['fallback']=fallback
+        # No interposed off-host action: stop G -> prove zero -> promote -> route E.
+        stage='STOP_G';state['gStopAttempted']=True;remote.run(['docker','stop','--time','30',g['Id']]);require(not remote.inspect(g['Id'])['State']['Running'],'BG_G_STOP_UNVERIFIED')
+        stage='ZERO_WRITER';bg_writer(remote,value,state,[],True)
+        stage='PROMOTION';bg_promote(remote,value,state);bg_lifecycle(remote,value,state,'active');bg_writer(remote,value,state,[name])
+        remote.health(name,art['release']);runtime_checks(remote,name,art['runtimeHash'],authority)
+        stage='CUTOVER';state['routeAttempted']=True;replace_routes(remote,next_routes,next_routes)
+        remote.health(name,art['release'],public=True);application_db_probe(remote,name,'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+        bg_writer(remote,value,state,[name]);require(route_target(*remote.routes())==name,'BG_FINAL_ROUTE_INVALID');bg_capacity(remote,art,'BG_FINAL',0)
+        stage='FINAL_POINTER';write_authority(remote,CURRENT_SHA_FILE,art['release']+'\n');require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==art['release'],'SHA_POINTER_WRITE_FAILED')
+        require(not remote.inspect(g['Id'])['State']['Running'] and remote.inspect(g['Image'],image=True)['Id']==g['Image'],'BG_G_RETENTION_UNVERIFIED')
+        result={'result':'DEPLOY_COMPLETE','releaseSha':art['release'],'runtimeSha':RUNTIME_SHA,'writer':1,'migrationPhase':'L88','dbApplied':88,'dbFailed':0,'internalHealth':'PASS','publicHealth':'PASS','applicationDbProbe':'PASS','runtimeMode':'active','route':name,'oldGStopped':True,'fixedRUntouched':True,'importReceipt':receipt,'backupProof':backup,'migrationProof':migration}
+        stage='FINAL_EVIDENCE'
+        evidence=dict(result,capacityWaiver=CAPACITY_WAIVER,capacityLedger=art.get('capacityLedger'),capacityTelemetry=CAPACITY_TELEMETRY)
+        saved=bg_script(remote, BG_EVIDENCE_CODE,{'root':root,'result':evidence})
+        require(saved.get('result')=='PASS',saved.get('code','BG_EVIDENCE_UNKNOWN'))
+        retained_lock=False
+    except BaseException as error:
+        code=str(error) if isinstance(error,GateError) else 'BG_ENOSPC' if isinstance(error,OSError) and error.errno==28 else 'BG_EIO' if isinstance(error,OSError) and error.errno==5 else 'BG_'+stage+'_UNKNOWN'
+        result={'result':'DEPLOY_BLOCKED','failureGate':stage,'code':code,'rootFailure':{'stage':stage,'code':code},'backup':state.get('backup'),'migration':state.get('migration')}
+        try:
+            bg_owned_stop(remote,value,state)
+            if state.get('gStopAttempted'):
+                # Never start G until E is stopped and its DB sessions are gone.
+                recovery_db=remote.db();state['phase']=recovery_db['applied'];bg_writer(remote,value,state,[])
+                current=remote.inspect(live['LIVE_G_CONTAINER']);require(current['Id']==live['LIVE_G_CONTAINER_ID'] and current['Image']==live['LIVE_G_IMAGE_ID'],'BG_G_IDENTITY_CHANGED')
+                remote.run(['docker','start',current['Id']]);remote.health(current['Id'],live['LIVE_G_SHA'])
+                replace_routes(remote,state['fallback'],state['fallback']);write_authority(remote,CURRENT_SHA_FILE,live['LIVE_G_SHA']+'\n')
+            db=remote.db();state['phase']=db['applied'];require(state['phase'] in (87,88),'BG_DB_PHASE_UNKNOWN');bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']])
+            remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA']);remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA'],public=True)
+            backup_safe=not state.get('backupAttempted') or (state.get('backup') or {}).get('backupTerminationVerified') is True
+            migration_safe=not state.get('migrationAttempted') or (state.get('migration') or {}).get('terminated') is True
+            probe_safe=not state.get('probe') or state['probe'].get('terminated') is True
+            retained_lock=not (backup_safe and migration_safe and probe_safe) or 'UNKNOWN' in code or 'UNVERIFIED' in code
+            result['liveGRecovered']=True;result['dbApplied']=db['applied']
+        except BaseException as secondary:
+            result['secondaryRecoveryCode']=str(secondary) if isinstance(secondary,GateError) else 'BG_RECOVERY_UNKNOWN';retained_lock=True
+    finally:
+        if result is None:result={'result':'DEPLOY_BLOCKED','code':'BG_CONTROLLER_UNKNOWN'}
+        if state.get('lockOwned') and not retained_lock:
+            try:bg_lock(remote,value,'release',state['lockReceipt']);result['releaseLockReleased']=True
+            except BaseException:result['releaseLockReleased']=False;result['result']='DEPLOY_BLOCKED';result.setdefault('code','BG_LOCK_RELEASE_UNVERIFIED')
+        else:result['releaseLockReleased']=False
+        result.update(capacityWaiver=CAPACITY_WAIVER,capacityLedger=art.get('capacityLedger'),capacityTelemetry=CAPACITY_TELEMETRY)
+    return result
+
+
+def bg_deploy(remote, repo, path, art, ledger, authorize):
+    require(authorize==art['release'] and BG_ACTIVE and CAPACITY_WAIVER['releaseSha']==authorize,'BG_SCOPE_INVALID')
+    template,active=remote.routes()
+    proof=BG_LIVE.get('compatibilityProof');require(isinstance(proof,dict),'BG_COMPATIBILITY_PROOF_INVALID')
+    value={'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,'expectedOldSha':EXPECTED_OLD_SHA,'businessSha':RUNTIME_SHA,'oldV2Hash':OLD_V2_HASH,
+           'live':BG_LIVE,'template':template,'active':active,'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
+           'migrationSql':(Path(repo)/'prisma/migrations'/procurement_contract()['migration']/'migration.sql').read_text(),'waiver':CAPACITY_WAIVER,'compatibilityProof':proof}
+    bg_g_guard(remote,value);bg_migration_contract(value['migrationSql'])
+    code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
+    code+="\nv=json.loads(sys.stdin.buffer.readline())\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nBG_ACTIVE=True\nBG_LIVE=v['live']\nconfigure_capacity_waiver(v['waiver'],v['art'],emit=False)\ndef interrupted(*_):raise GateError('BG_CONTROLLER_INTERRUPTED')\nfor sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\nprint(json.dumps(bg_execute(LocalRemote(),v,lambda root:bg_import(sys.stdin.buffer,v['art'],root))),flush=True)\n"
+    loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-blue-green>','exec'))"
+    child=subprocess.Popen(remote.ssh+[shlex.join(['sudo','-n','python3','-B','-c',loader])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    try:
+        child.stdin.write(json.dumps(code).encode()+b'\n');child.stdin.write(json.dumps(value).encode()+b'\n')
+        h=hashlib.sha256();total=0
+        with Path(path).open('rb') as src:
+            for block in iter(lambda:src.read(1024**2),b''):h.update(block);total+=len(block);child.stdin.write(block)
+        child.stdin.close();child.stdin=None;out,_=child.communicate(timeout=1200)
+        require(child.returncode==0 and total==art['archive'] and h.hexdigest()==art['archiveHash'],'BG_CONTROLLER_TRANSPORT_UNKNOWN')
+        result=json.loads(out);require(result.get('releaseSha',art['release'])==art['release'],'BG_CONTROLLER_RESULT_UNKNOWN')
+        print(json.dumps(result),flush=True);require(result.get('result')=='DEPLOY_COMPLETE','BG_DEPLOYMENT_BLOCKED')
+    finally:
+        if child.poll() is None:child.terminate();child.wait(timeout=30)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure',
@@ -3019,6 +3548,7 @@ def main():
     p.add_argument('--ssh-key', type=Path)
     p.add_argument('--authorize-release-sha')
     p.add_argument('--temporary-b2-capacity-waiver-sha')
+    p.add_argument('--blue-green-live-proof',type=Path)
     p.add_argument('--release-profile', choices=['transfer-first','post-transfer'], default='transfer-first')
     p.add_argument('--expected-production-sha')
     p.add_argument('--business-base-sha')
@@ -3035,6 +3565,11 @@ def main():
         require(args.expected_production_sha is None and args.business_base_sha is None,
                 'FIRST_ROLLOUT_IDENTITY_OVERRIDE_FORBIDDEN')
     require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
+    global BG_ACTIVE, BG_LIVE
+    if args.blue_green_live_proof is not None:
+        require(args.mode=='deploy' and procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']
+                and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
+        BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())
     backup_diagnostic = args.mode in ('identity-backup-diagnostic','inspect-artifact-backup-diagnostic')
     diagnostic = backup_diagnostic or args.mode in ('identity-diagnostic','inspect-artifact-diagnostic')
     release, ledger = (backup_diagnostic_identity(args.repo) if backup_diagnostic else
@@ -3042,7 +3577,7 @@ def main():
     if args.temporary_b2_capacity_waiver_sha is not None:
         require(args.mode=='deploy' and B2_IDENTITY and args.temporary_b2_capacity_waiver_sha==release
                 and args.authorize_release_sha==release
-                and git(args.repo,'rev-list','--parents','-n','1',release)==release+' '+B2_CAPACITY_WAIVER_PARENT,
+                and git(args.repo,'rev-list','--parents','-n','1',release)==release+' '+(BG_BASE if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT),
                 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     if args.mode in ('identity','identity-diagnostic','identity-backup-diagnostic'):
         result = {'result':'IDENTITY_PASS','releaseSha':release,'runtimeSha':RUNTIME_SHA}
@@ -3051,7 +3586,7 @@ def main():
         return
     require(args.archive is not None, 'ARCHIVE_REQUIRED')
     require(procurement_migration() or args.compatibility_archive is None, 'PROCUREMENT_COMPATIBILITY_IDENTITY_INVALID')
-    if procurement_migration():
+    if procurement_migration() and not BG_ACTIVE:
         require(args.compatibility_archive is not None, 'PROCUREMENT_COMPATIBILITY_ARCHIVE_REQUIRED')
     if args.mode == 'deploy':
         require(args.authorize_release_sha == release, 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
@@ -3070,7 +3605,7 @@ def main():
                     dst.write(block)
             frozen.chmod(0o400)
             art = artifact(frozen,release,args.repo)
-            if procurement_migration():
+            if procurement_migration() and not BG_ACTIVE:
                 compatible=Path(directory)/'compatible.tar'
                 with args.compatibility_archive.open('rb') as src, compatible.open('xb') as dst:
                     total=0
@@ -3080,8 +3615,12 @@ def main():
                 art['compatibility']=compatibility_artifact(args.repo,compatible)
                 art['compatibilityPath']=str(compatible)
             if args.temporary_b2_capacity_waiver_sha is not None:
-                configure_capacity_waiver({'releaseSha':release,'parentSha':B2_CAPACITY_WAIVER_PARENT},art)
-            deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
+                configure_capacity_waiver({'releaseSha':release,'parentSha':BG_BASE if BG_ACTIVE else B2_CAPACITY_WAIVER_PARENT},art)
+            if BG_ACTIVE:
+                bg_bind(args.repo,release,art,BG_LIVE)
+                bg_deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
+            else:
+                deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
         return
     art = artifact(args.archive, release, args.repo)
     if procurement_migration(): art['compatibility']=compatibility_artifact(args.repo,args.compatibility_archive)
