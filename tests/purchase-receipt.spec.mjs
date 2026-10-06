@@ -48,7 +48,7 @@ async function snap(page, name, testInfo) {
   });
   return d;
 }
-async function draft(page) {
+async function beginDraft(page) {
   await visit(page);
   let suppliers = (await api(page, '/procurement/suppliers')).rows;
   if (!suppliers.find(x => x.name === '合成页面供应商')) {
@@ -88,7 +88,10 @@ async function draft(page) {
   await page.getByLabel('收货门店', {
     exact: true
   }).selectOption('synth-1');
-  await page.getByLabel('添加采购商品').selectOption('synth-item-a');
+  return s;
+}
+async function draft(page) {
+  await beginDraft(page);
   await page.getByLabel('要货数量1').fill('10000');
   await page.getByLabel('要货单位1').fill('克');
   const response = page.waitForResponse(r => r.url().endsWith('/api/v2/procurement/orders') && r.request().method() === 'POST');
@@ -145,6 +148,197 @@ test.afterEach(async ({
 }) => {
   expect(page.externalAttempts).toEqual([]);
 });
+
+const quantity = (page, n) => page.getByLabel('要货数量' + n, {exact: true});
+const unit = (page, n) => page.getByLabel('要货单位' + n, {exact: true});
+async function saveAndCapture(page, method = 'POST', id = '') {
+  const response = page.waitForResponse(r => r.url().endsWith('/api/v2/procurement/orders' + (id ? '/' + id : '')) && r.request().method() === method);
+  await page.getByRole('button', {name: '保存备单', exact: true}).click();
+  const r = await response;
+  expect(r.status()).toBe(200);
+  const payload = r.request().postDataJSON();
+  expect(payload.requestKey).toBeTruthy();
+  expect(payload.content.storeKey).toBe('synth-1');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  return {payload, order: (await r.json()).order};
+}
+
+test('DRAFT CASE1 供应商全部商品自动展开，无添加或移除操作', async ({page}) => {
+  await visit(page);
+  await page.getByRole('button', {name: '新建备单'}).click();
+  await expect(page.getByRole('dialog').getByText('请选择采购供应商', {exact: true})).toBeVisible();
+  await expect(quantity(page, 1)).toHaveCount(0);
+  await page.getByRole('dialog').getByRole('button', {name: '关闭', exact: true}).click();
+  await beginDraft(page);
+  for (const name of ['合成糖商品A', '合成糖商品B']) await expect(page.getByRole('dialog').getByText(name, {exact: true})).toBeVisible();
+  await expect(page.getByLabel('添加采购商品')).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '移除此行'})).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('checkbox')).toHaveCount(0);
+  for (const n of [1, 2]) {
+    await expect(quantity(page, n)).toHaveValue('');
+    await expect(unit(page, n)).toHaveValue('');
+  }
+});
+
+test('DRAFT CASE2 单个数量只提交一项，空商品不进入 POST', async ({page}) => {
+  const supplier = await beginDraft(page);
+  await quantity(page, 1).fill('10000');
+  await unit(page, 1).fill('克');
+  const {payload} = await saveAndCapture(page);
+  expect(payload.content.supplierId).toBe(supplier.id);
+  expect(payload.content.items).toEqual([{itemId: 'synth-item-a', quantity: '10000', unit: '克'}]);
+});
+
+test('DRAFT CASE3 只有单位或空白数量不算采购', async ({page}) => {
+  await beginDraft(page);
+  await unit(page, 1).fill('克');
+  await quantity(page, 1).fill('   ');
+  await quantity(page, 2).fill('20');
+  await unit(page, 2).fill('盒');
+  const {payload} = await saveAndCapture(page);
+  expect(payload.content.items).toEqual([{itemId: 'synth-item-b', quantity: '20', unit: '盒'}]);
+});
+
+test('DRAFT CASE4 两项按稳定 ID 提交且不重复', async ({page}) => {
+  await beginDraft(page);
+  await unit(page, 2).fill('盒');
+  await quantity(page, 2).fill('20');
+  await quantity(page, 1).fill('100');
+  await unit(page, 1).fill('克');
+  await quantity(page, 1).fill('101');
+  await quantity(page, 1).fill('100');
+  const {payload} = await saveAndCapture(page);
+  expect(payload.content.items).toHaveLength(2);
+  expect(new Set(payload.content.items.map(x => x.itemId)).size).toBe(2);
+  expect(payload.content.items).toEqual(expect.arrayContaining([
+    {itemId: 'synth-item-a', quantity: '100', unit: '克'},
+    {itemId: 'synth-item-b', quantity: '20', unit: '盒'}
+  ]));
+});
+
+test('DRAFT CASE5 清空数量不残留 stale item', async ({page}) => {
+  await beginDraft(page);
+  await quantity(page, 1).fill('100');
+  await unit(page, 1).fill('克');
+  await quantity(page, 1).fill('');
+  await quantity(page, 2).fill('20');
+  await unit(page, 2).fill('盒');
+  const {payload} = await saveAndCapture(page);
+  expect(payload.content.items).toEqual([{itemId: 'synth-item-b', quantity: '20', unit: '盒'}]);
+});
+
+test('DRAFT CASE6 切换供应商清空旧数量和单位', async ({page}) => {
+  await visit(page);
+  const suppliers = (await api(page, '/procurement/suppliers')).rows;
+  const other = suppliers.find(s => s.name === '合成切换供应商') || (await api(page, '/procurement/suppliers', {
+    requestKey: randomUUID(), name: '合成切换供应商', productIds: ['synth-item-c']
+  })).supplier;
+  const original = await beginDraft(page);
+  await quantity(page, 1).fill('100');
+  await unit(page, 1).fill('克');
+  await page.getByLabel('采购供应商', {exact: true}).selectOption(other.id);
+  await expect(page.getByRole('dialog').getByText('合成糖商品A', {exact: true})).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByText('合成物料C', {exact: true})).toBeVisible();
+  await expect(quantity(page, 1)).toHaveValue('');
+  await expect(unit(page, 1)).toHaveValue('');
+  await page.getByLabel('采购供应商', {exact: true}).selectOption(original.id);
+  await expect(quantity(page, 1)).toHaveValue('');
+  await expect(unit(page, 1)).toHaveValue('');
+  await page.getByLabel('采购供应商', {exact: true}).selectOption(other.id);
+  await quantity(page, 1).fill('8');
+  await unit(page, 1).fill('袋');
+  const {payload} = await saveAndCapture(page);
+  expect(payload.content.supplierId).toBe(other.id);
+  expect(payload.content.items).toEqual([{itemId: 'synth-item-c', quantity: '8', unit: '袋'}]);
+});
+
+test('DRAFT CASE7 修改已保存单保留 A 并展示空 B，PUT version 不变', async ({page}) => {
+  const o = await draft(page);
+  expect(o.draftContent.items).toHaveLength(1);
+  await page.getByRole('button', {name: '修改要货清单'}).click();
+  await expect(quantity(page, 1)).toHaveValue('10000');
+  await expect(unit(page, 1)).toHaveValue('克');
+  await expect(page.getByRole('dialog').getByText('合成糖商品B', {exact: true})).toBeVisible();
+  await expect(quantity(page, 2)).toHaveValue('');
+  await expect(unit(page, 2)).toHaveValue('');
+  await quantity(page, 1).fill('2500');
+  const {payload} = await saveAndCapture(page, 'PUT', o.id);
+  expect(payload.version).toBe(o.version);
+  expect(payload.content.items).toHaveLength(1);
+  expect(payload.content.items[0]).toMatchObject({itemId: 'synth-item-a', quantity: '2500', unit: '克'});
+});
+
+test('DRAFT CASE8 无绑定采购商品时显示空状态', async ({page}) => {
+  await visit(page);
+  const suppliers = (await api(page, '/procurement/suppliers')).rows;
+  const empty = suppliers.find(s => s.name === '合成空供应商') || (await api(page, '/procurement/suppliers', {
+    requestKey: randomUUID(), name: '合成空供应商', productIds: []
+  })).supplier;
+  await visit(page);
+  await page.getByRole('button', {name: '新建备单'}).click();
+  await page.getByLabel('采购供应商', {exact: true}).selectOption(empty.id);
+  await expect(page.getByText('该供应商暂无可采购商品', {exact: true})).toBeVisible();
+  await expect(quantity(page, 1)).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '保存备单'})).toBeEnabled();
+});
+
+test('DRAFT validation 数量全空不提交，已填数量不得补默认单位', async ({page}) => {
+  await beginDraft(page);
+  let posts = 0;
+  page.on('request', r => {if (r.method() === 'POST' && r.url().endsWith('/api/v2/procurement/orders')) posts++;});
+  await unit(page, 1).fill('克');
+  await page.getByRole('button', {name: '保存备单'}).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toHaveText('请至少填写一个采购商品数量');
+  expect(posts).toBe(0);
+  await quantity(page, 2).fill('20');
+  const response = page.waitForResponse(r => r.url().endsWith('/api/v2/procurement/orders') && r.request().method() === 'POST');
+  await page.getByRole('button', {name: '保存备单'}).click();
+  const r = await response;
+  expect(r.status()).toBe(200);
+  expect(r.request().postDataJSON().content.items).toEqual([{itemId: 'synth-item-b', quantity: '20', unit: ''}]);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('order-state')).toHaveText('准备中');
+  const ordered = page.waitForResponse(r => r.url().endsWith('/mark-ordered'));
+  await page.getByRole('button', {name: '标记已下单'}).click();
+  expect((await ordered).status()).toBe(400);
+  await expect(page.getByTestId('order-state')).toHaveText('准备中');
+  await expect(page.getByRole('alert')).toBeVisible();
+});
+
+test('DRAFT responsive 320px 至 iPad 长商品名、输入和保存可用', async ({page}, testInfo) => {
+  const longName = '合成采购商品长名称'.repeat(18);
+  await page.route('**/api/v2/procurement/items', async route => {
+    const r = await route.fetch();
+    const data = await r.json();
+    data.rows = data.rows.map(p => p.id === 'synth-item-a' ? {...p, name: longName} : p);
+    await route.fulfill({response: r, json: data});
+  });
+  await beginDraft(page);
+  for (const width of [320, 340, 375, 390, 430, 768, 1024, 1440]) {
+    await page.setViewportSize({width, height: 900});
+    await expect(page.getByRole('dialog').getByText(longName, {exact: true})).toBeVisible();
+    const metrics = await page.getByRole('dialog').evaluate(dialog => ({
+      pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
+      sheetFits: dialog.firstElementChild.scrollWidth <= dialog.firstElementChild.clientWidth + 1,
+      locked: document.body.style.overflow === 'hidden'
+    }));
+    expect(metrics).toEqual({pageFits: true, sheetFits: true, locked: true});
+    for (const field of [quantity(page, 1), unit(page, 1)]) {
+      const box = await field.boundingBox();
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    await quantity(page, 1).fill('100');
+    await unit(page, 1).fill('克');
+    await page.getByRole('button', {name: '保存备单'}).scrollIntoViewIfNeeded();
+    await expect(page.getByRole('button', {name: '保存备单'})).toBeInViewport();
+    if (width === 320 || width === 1024) await page.screenshot({path: root + '/' + testInfo.project.name + '-draft-' + width + '.png'});
+  }
+  await page.getByRole('dialog').getByRole('button', {name: '关闭', exact: true}).click();
+  expect(await page.evaluate(() => document.body.style.overflow)).not.toBe('hidden');
+});
+
 test('E2E1 默认一次收完：9980偏差、独立核准、开发者手动结束', async ({
   page
 }, testInfo) => {
@@ -258,7 +452,7 @@ test('B03/C10 部分商品实收、窄屏及弹层布局', async ({
   await page.getByRole('button', {
     name: '修改要货清单'
   }).click();
-  await page.getByLabel('添加采购商品').selectOption('synth-item-b');
+  await expect(page.getByLabel('要货数量2')).toHaveValue('');
   await page.getByLabel('要货数量2').fill('20');
   await page.getByLabel('要货单位2').fill('盒');
   await page.getByRole('button', {

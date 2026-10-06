@@ -119,43 +119,43 @@ export default function PurchaseReceiptPage({
     if (id) await openDetail(id);
   };
   const saveDraft = () => run(async () => {
+    const content = {
+      ...draft.content,
+      items: draft.content.items.filter(x => String(x.quantity ?? '').trim() !== '')
+    };
+    if (!content.items.length) throw new Error('请至少填写一个采购商品数量');
     const path = '/v2/procurement/orders' + (draft.id ? '/' + draft.id : '');
     const d = await api(path, {
       method: draft.id ? 'PUT' : 'POST',
       body: JSON.stringify({
         requestKey: saveKey.current,
         version: draft.version,
-        content: draft.content
+        content
       })
     });
     setDraft(null);
     await refresh(d.order.id);
     setNotice('采购清单已保存；实际微信下单后再标记');
   });
-  const addItem = itemId => {
-    if (!itemId || draft.content.items.some(x => x.itemId === itemId)) return;
-    setDraft(d => ({
+  const supplierProducts = draft ? products.filter(p => p.purchaseEnabled && p.procurementSupplierId === draft.content.supplierId) : [];
+  const changeDraftProduct = (itemId, field, value) => setDraft(d => {
+    const existing = d.content.items.find(x => x.itemId === itemId);
+    return {
       ...d,
       content: {
         ...d.content,
-        items: [...d.content.items, {
+        items: existing ? d.content.items.map(x => x.itemId === itemId ? {
+          ...x,
+          [field]: value
+        } : x) : [...d.content.items, {
           itemId,
           quantity: '',
-          unit: ''
+          unit: '',
+          [field]: value
         }]
       }
-    }));
-  };
-  const changeItem = (index, field, value) => setDraft(d => ({
-    ...d,
-    content: {
-      ...d.content,
-      items: d.content.items.map((x, i) => i === index ? {
-        ...x,
-        [field]: value
-      } : x)
-    }
-  }));
+    };
+  });
   const orderAction = (name, why = '') => run(async () => {
     const d = await api('/v2/procurement/orders/' + detail.id + '/' + name, {
       method: 'POST',
@@ -331,13 +331,10 @@ export default function PurchaseReceiptPage({
               ...d.content,
               storeKey: e.target.value
             }
-          }))}><option value="">请选择</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label><select className={input} aria-label="添加采购商品" value="" onChange={e => addItem(e.target.value)}><option value="">添加该供应商商品</option>{products.filter(p => p.purchaseEnabled && p.procurementSupplierId === draft.content.supplierId && !draft.content.items.some(x => x.itemId === p.id)).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>{draft.content.items.map((l, i) => <div key={l.itemId} className="rounded-xl bg-slate-50 p-3"><p className="break-words">{products.find(p => p.id === l.itemId)?.name || l.productNameSnapshot}</p><div className="mt-2 grid grid-cols-2 gap-2"><input aria-label={'要货数量' + (i + 1)} className={input} inputMode="decimal" value={l.quantity} onChange={e => changeItem(i, 'quantity', e.target.value)} placeholder="数量" /><input aria-label={'要货单位' + (i + 1)} className={input} value={l.unit} onChange={e => changeItem(i, 'unit', e.target.value)} placeholder="单位" /></div><button className={btn + ' mt-2'} onClick={() => setDraft(d => ({
-            ...d,
-            content: {
-              ...d.content,
-              items: d.content.items.filter((_, j) => j !== i)
-            }
-          }))}>移除此行</button></div>)}<button className={primary + ' w-full'} disabled={busy} onClick={saveDraft}>保存备单</button></div></Sheet>}
+          }))}><option value="">请选择</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>{!draft.content.supplierId ? <p className="text-sm text-slate-500">请选择采购供应商</p> : !supplierProducts.length ? <p className="text-sm text-slate-500">该供应商暂无可采购商品</p> : supplierProducts.map((p, i) => {
+          const l = draft.content.items.find(x => x.itemId === p.id);
+          return <div key={p.id} className="min-w-0 rounded-xl bg-slate-50 p-3"><p className="break-words font-semibold">{p.name}</p><div className="mt-2 grid grid-cols-2 gap-2"><input aria-label={'要货数量' + (i + 1)} className={input} inputMode="decimal" value={l?.quantity ?? ''} onChange={e => changeDraftProduct(p.id, 'quantity', e.target.value)} placeholder="数量" /><input aria-label={'要货单位' + (i + 1)} className={input} value={l?.unit ?? ''} onChange={e => changeDraftProduct(p.id, 'unit', e.target.value)} placeholder="单位" /></div></div>;
+        })}<button className={primary + ' w-full'} disabled={busy} onClick={saveDraft}>保存备单</button></div></Sheet>}
  {supplier && <Sheet error={error} title="采购供应商维护" onClose={() => setSupplier(null)}><input aria-label="供应商名称" className={input} value={supplier.name} onChange={e => setSupplier(s => ({
         ...s,
         name: e.target.value
