@@ -949,6 +949,52 @@ class B1ArchiveTests(unittest.TestCase):
             self.helper({**v,'action':'inspect'})
 
 
+class ArchiveObservationClock:
+    def __init__(self):self.now=0;self.sleeps=[]
+    def monotonic(self):return self.now
+    def sleep(self,seconds):self.sleeps.append(seconds);self.now+=seconds
+
+
+class B2ArchiveObservationTests(unittest.TestCase):
+    def observe(self,samples,allocated=4096,latency=0,failure=None):
+        clock=ArchiveObservationClock();calls=[];before=(1000000,2000000)
+        def disk():
+            calls.append(clock.now);clock.now+=latency
+            if failure:raise r.GateError(failure)
+            return samples[min(len(calls)-1,len(samples)-1)]
+        with patch.object(r.time,'monotonic',side_effect=clock.monotonic),patch.object(r.time,'sleep',side_effect=clock.sleep):
+            try:result=r.b2_observe_archive_release(types.SimpleNamespace(disk=disk),*before,allocated)
+            except r.GateError as error:result=str(error)
+        return result,clock,calls
+    def test_immediate_exact_reclaim_needs_no_sleep(self):
+        sample=(1000000-4096,2000000+4096)
+        result,clock,calls=self.observe([sample])
+        self.assertEqual(result,sample);self.assertEqual(calls,[0]);self.assertEqual(clock.sleeps,[])
+    def test_delayed_observation_waits_for_both_exact_deltas(self):
+        sample=(1000000-4096,2000000+4096)
+        result,clock,calls=self.observe([(1000000,2000000),(1000000-4095,2000000+4095),sample])
+        self.assertEqual(result,sample);self.assertEqual(calls,[0,1,2]);self.assertEqual(clock.sleeps,[1,1])
+    def test_either_delta_short_by_one_byte_keeps_original_guard(self):
+        for sample in [(1000000-4095,2000000+4096),(1000000-4096,2000000+4095)]:
+            with self.subTest(sample=sample):
+                result,clock,calls=self.observe([sample])
+                self.assertEqual(result,'B1_ARCHIVE_RELEASE_NOT_OBSERVED')
+                self.assertEqual(clock.now,30);self.assertEqual(len(calls),30)
+    def test_required_allocation_is_not_discounted_or_hardcoded(self):
+        sample=(1000000-8192,2000000+8192)
+        result,clock,calls=self.observe([(1000000-4096,2000000+4096),sample],allocated=8192)
+        self.assertEqual(result,sample);self.assertEqual(calls,[0,1])
+    def test_late_success_sample_cannot_escape_observation_deadline(self):
+        result,clock,calls=self.observe([(1000000-4096,2000000+4096)],latency=31)
+        self.assertEqual(result,'B1_ARCHIVE_RELEASE_NOT_OBSERVED');self.assertEqual(len(calls),1)
+    def test_df_transport_timeout_keeps_original_guard(self):
+        result,clock,calls=self.observe([(0,0)],failure='COMMAND_UNAVAILABLE_OR_TIMEOUT')
+        self.assertEqual(result,'B1_ARCHIVE_RELEASE_NOT_OBSERVED');self.assertEqual(clock.sleeps,[])
+    def test_other_df_command_failure_remains_fail_closed(self):
+        result,clock,calls=self.observe([(0,0)],failure='COMMAND_FAILED')
+        self.assertEqual(result,'COMMAND_FAILED');self.assertEqual(len(calls),1)
+
+
 class B2FormalPathTests(unittest.TestCase):
     def attempt(self,fault=None,fresh_artifact=False):
         r.configure_profile('post-transfer',C['oldSha'],C['businessSha'],'0'*64)
@@ -962,10 +1008,12 @@ class B2FormalPathTests(unittest.TestCase):
                 self.e_image=super().inspect(self.art['imageReference'],True)
                 if fresh_artifact:self.art.pop('loadedDockerImageId')
                 if fault=='stale-e-id':self.art['loadedDockerImageId']='sha256:'+'0'*64
-                self.shared_inputs=[]
+                self.shared_inputs=[];self.release_observations=0
             def disk(self):
                 self.order.append('fresh-df')
-                growth=(self.art['compatibility']['archive'] if self.archive_present or self.cleaned and fault=='no-free' else 0)
+                if self.cleaned and not self.e_imported:self.release_observations+=1
+                delayed=self.cleaned and fault=='delayed-free' and self.release_observations<3
+                growth=(self.art['compatibility']['archive'] if self.archive_present or self.cleaned and fault=='no-free' or delayed else 0)
                 growth+=(2177372160 if self.r_imported else 0)+(192827392 if self.e_imported else 0)
                 return 60*r.GIB+growth,15964217344-growth
             def db(self):
@@ -1003,10 +1051,11 @@ class B2FormalPathTests(unittest.TestCase):
                             {'chainId':role+'-only','contentDigest':role+'-only','snapshotAllocated':unique,'blobAllocated':0}]})
                 if code==r.B1_STORAGE_CODE:
                     self.order.append('storage')
-                    if self.r_imported and fault=='r-ingest' or self.e_imported and fault=='e-ingest':return '{}'
+                    if self.r_imported and fault=='r-ingest' or self.e_imported and fault=='e-ingest' or self.cleaned and fault=='post-cleanup-ingest':return '{}'
                     return json.dumps({'terminated':True,'activeIngest':0,'unknownSnapshots':0,'allocatedRoots':{'docker':1,'containerd':1}})
                 if code==r.B1_STAGE_CODE:
                     action=value['action'];self.order.append(action)
+                    if action=='released' and fault=='released-proof':raise r.GateError('COMMAND_FAILED')
                     if action=='cleanup':
                         assert self.r_imported and not self.e_imported and self.old['State']['Running']
                         assert value['inode']==17 and value['device']==1 and value['allocated']==self.art['compatibility']['archive']
@@ -1022,7 +1071,8 @@ class B2FormalPathTests(unittest.TestCase):
         def committed(remote):
             keys=({'common','r-only'} if model.r_imported else set())|({'e-only'} if model.e_imported else set())
             return keys|({'unknown'} if model.e_imported and fault=='residual' else set())
-        with patch.object(r,'stage_artifact',side_effect=upload),patch.object(r,'b2_stream',side_effect=stream),patch.object(r,'b2_committed',side_effect=committed),patch.object(r,'procurement_facts',side_effect=model.facts),patch.object(r,'signal') as signals,contextlib.redirect_stdout(io.StringIO()):
+        clock=ArchiveObservationClock()
+        with patch.object(r.time,'monotonic',side_effect=clock.monotonic),patch.object(r.time,'sleep',side_effect=clock.sleep),patch.object(r,'stage_artifact',side_effect=upload),patch.object(r,'b2_stream',side_effect=stream),patch.object(r,'b2_committed',side_effect=committed),patch.object(r,'procurement_facts',side_effect=model.facts),patch.object(r,'signal') as signals,contextlib.redirect_stdout(io.StringIO()):
             signals.SIGHUP=1;signals.SIGTERM=15;signals.SIGINT=2
             try:r.deploy(model,ROOT,Path('fixture'),model.art,LEDGER,model.sha)
             except r.GateError as error:return model,str(error)
@@ -1083,6 +1133,24 @@ class B2FormalPathTests(unittest.TestCase):
         between=model.order[model.order.index('cleanup')+1:model.order.index('e-stream')]
         self.assertIn('fresh-df',between);self.assertIn('fresh-db',between);self.assertIn('shared-proof',between)
         self.assertEqual(model.order.count('r-upload'),1)
+    def test_delayed_archive_df_settles_before_r_ready_and_e_admission(self):
+        model,error=self.attempt('delayed-free')
+        self.assertIsNone(error)
+        self.assertGreaterEqual(model.release_observations,3)
+        self.assertTrue(model.art['capacityLedger']['rArchiveRelease']['verified'])
+        self.assertEqual(model.art['capacityLedger']['rArchiveRelease']['allocated'],model.art['compatibility']['archive'])
+        self.assertLess(model.order.index('released'),model.order.index('e-stream'))
+        after_cleanup=model.order[model.order.index('cleanup')+1:model.order.index('e-stream')]
+        self.assertEqual(after_cleanup[:2],['released','storage'])
+        self.assertGreaterEqual(after_cleanup.count('fresh-df'),3)
+        self.assertEqual(model.phase,88);self.assertEqual(r.writer_names(model.containers()),[model.ename])
+    def test_absence_or_post_cleanup_ingest_failure_precedes_any_polling(self):
+        for fault,code in [('released-proof','B1_ARCHIVE_UNVERIFIED'),('post-cleanup-ingest','B1_IMPORT_UNKNOWN')]:
+            with self.subTest(fault=fault):
+                model,error=self.attempt(fault)
+                self.assertEqual(error,code);self.assertEqual(model.release_observations,0)
+                self.assertNotIn('rArchiveRelease',model.art['capacityLedger'])
+                self.assertNotIn('e-stream',model.order);self.assertTrue(model.old['State']['Running']);self.assertTrue(model.lock)
 
 class B2GuardTests(unittest.TestCase):
     def test_absence_unknown_is_not_absent(self):

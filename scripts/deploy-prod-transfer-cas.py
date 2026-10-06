@@ -1468,6 +1468,27 @@ def b2_stream(remote, path, art):
         if p.poll() is None:p.kill();p.wait()
 
 
+def b2_observe_archive_release(remote, before_used, before_free, allocated):
+    # Observe only after exact ownership/absence and no-ingest proofs. Keep the
+    # original required bytes and both df deltas; delayed accounting gets time,
+    # never speculative credit. Existing df RPCs remain bounded at 60 seconds,
+    # so the 30-second observation deadline has at most one RPC's overrun.
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline:
+        try:used,free=remote.disk()
+        except GateError as error:
+            if str(error)=='COMMAND_UNAVAILABLE_OR_TIMEOUT':
+                raise GateError('B1_ARCHIVE_RELEASE_NOT_OBSERVED') from None
+            raise
+        now=time.monotonic()
+        require(now<=deadline,'B1_ARCHIVE_RELEASE_NOT_OBSERVED')
+        if free-before_free>=allocated and before_used-used>=allocated:
+            return used,free
+        remaining=deadline-now
+        if remaining>0:time.sleep(min(1,remaining))
+    raise GateError('B1_ARCHIVE_RELEASE_NOT_OBSERVED')
+
+
 def b2_deploy(remote, repo, path, art, ledger, authorize):
     require(not MEASURE_ONLY and authorize==art['release'],'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
     art.pop('capacityLedger',None);state=b2_preflight(remote,art,ledger);cap=art['capacityLedger']
@@ -1487,8 +1508,8 @@ def b2_deploy(remote, repo, path, art, ledger, authorize):
     owned=b1_stage(remote,r,'inspect');require(owned['inode']==receipt.get('archiveInode'),'B1_ARCHIVE_UNVERIFIED')
     cap['phase']='R_IMPORT_COMPLETE';u0,f0=remote.disk();limits=shipping_resources(remote.db())
     b1_capacity_gate(cap,u0,f0,RESERVE+limits['walLimit'])
-    b1_stage(remote,r,'cleanup',owned);b1_stage(remote,r,'released',owned);b1_storage(remote);u,f=remote.disk()
-    require(f-f0>=owned['allocated'] and u0-u>=owned['allocated'],'B1_ARCHIVE_RELEASE_NOT_OBSERVED')
+    b1_stage(remote,r,'cleanup',owned);b1_stage(remote,r,'released',owned);b1_storage(remote)
+    u,f=b2_observe_archive_release(remote,u0,f0,owned['allocated'])
     cap['rArchiveRelease']={'allocated':owned['allocated'],'beforeAvailable':f0,'afterAvailable':f,'verified':True}
     cap['phase']='R_READY';b1_capacity_gate(cap,u,f,RESERVE+shipping_resources(remote.db())['walLimit'])
     try:
