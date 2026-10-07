@@ -158,13 +158,18 @@ def file_hash(stream):
 
 def runtime_payload(repo):
     paths = git(repo, 'ls-files', '--', 'server', 'shared', 'src/utils', 'prisma', 'scripts', 'brand/web', 'package.json', 'package-lock.json').splitlines()
-    return {'app/' + p:digest((Path(repo)/p).read_bytes()) for p in paths if not p.startswith('server/data/')}
+    result = {'app/' + p:digest((Path(repo)/p).read_bytes()) for p in paths if not p.startswith('server/data/')}
+    if MOBILE_HOTFIX_IDENTITY:
+        result.update(mobile_frontend_manifest(repo))
+    return result
 
 
 def git(repo, *args):
     return command(['git', '-C', str(repo), *args]).decode().strip()
 
 def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None):
+    global MOBILE_HOTFIX_IDENTITY
+    MOBILE_HOTFIX_IDENTITY = False
     global CAPACITY_WAIVER, CAPACITY_TELEMETRY, CAPACITY_TELEMETRY_EMIT
     CAPACITY_WAIVER = None
     CAPACITY_TELEMETRY = []
@@ -248,6 +253,71 @@ BG_BUNDLE_FILES = BG_BUNDLE_RELEASE_FILES | {'src/components/PurchaseReceiptPage
 BG_FILES = B1_FILES | {'server/app.js','server/index.js'}
 BG_BOOTSTRAP_HASHES = {'server/app.js': 'b3547fe419c41aa1a16aba9c2e8ac11659b9243927e66b5dd835112ac235dac6', 'server/index.js': 'c3641f84a98bf4bbdd32d1c02352dd47d31f472d15a7bbf761d139f03aacef18'}
 
+# MOBILE_SIDEBAR_REFRESH_HOTFIX: one frozen business parent, no capacity waiver.
+MOBILE_HOTFIX_LIVE_BASE = 'd9d992a91a072a683b5309117f5313678649aba5'
+MOBILE_HOTFIX_BUSINESS_PARENT = 'd037b1f9c3b1e7b3fd4ea367ee61922a2ca2ba58'
+MOBILE_HOTFIX_BRANCH = 'codex/mobile-sidebar-pull-refresh-guard'
+MOBILE_HOTFIX_BUSINESS_FILES = {'src/components/PullToRefresh.jsx', 'src/components/Sidebar.jsx'}
+MOBILE_HOTFIX_TEST_FILES = {'tests/pull-to-refresh-harness.html', 'tests/pull-to-refresh.spec.mjs',
+                           'playwright.pull-to-refresh.config.mjs'}
+MOBILE_HOTFIX_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py',
+                              'scripts/test-purchase-receipt-release-contract.py',
+                              'scripts/test-release-path-post-transfer.py'}
+MOBILE_HOTFIX_PROFILE = 'MOBILE_SIDEBAR_REFRESH_HOTFIX'
+MOBILE_HOTFIX_IDENTITY = False
+
+
+def mobile_hotfix():
+    return (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == MOBILE_HOTFIX_LIVE_BASE
+            and RUNTIME_SHA == MOBILE_HOTFIX_BUSINESS_PARENT)
+
+
+def validate_mobile_hotfix_identity(repo, release):
+    global MOBILE_HOTFIX_IDENTITY
+    MOBILE_HOTFIX_IDENTITY = False
+    require(mobile_hotfix() and git(repo, 'branch', '--show-current') == MOBILE_HOTFIX_BRANCH
+            and re.fullmatch(r'[0-9a-f]{40}', release)
+            and git(repo, 'rev-list', '--parents', '-n', '1', release)
+                == release + ' ' + MOBILE_HOTFIX_BUSINESS_PARENT
+            and git(repo, 'rev-list', '--parents', '-n', '1', MOBILE_HOTFIX_BUSINESS_PARENT)
+                == MOBILE_HOTFIX_BUSINESS_PARENT + ' ' + MOBILE_HOTFIX_LIVE_BASE,
+            'MOBILE_HOTFIX_IDENTITY_INVALID')
+    require(set(git(repo, 'diff', '--name-only', MOBILE_HOTFIX_BUSINESS_PARENT, release).splitlines())
+            == MOBILE_HOTFIX_RELEASE_FILES, 'MOBILE_HOTFIX_RELEASE_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', MOBILE_HOTFIX_LIVE_BASE,
+                    MOBILE_HOTFIX_BUSINESS_PARENT).splitlines())
+            == MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES,
+            'MOBILE_HOTFIX_BUSINESS_SCOPE_INVALID')
+    require(set(git(repo, 'diff', '--name-only', MOBILE_HOTFIX_LIVE_BASE, release).splitlines())
+            == MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | MOBILE_HOTFIX_RELEASE_FILES,
+            'MOBILE_HOTFIX_CUMULATIVE_SCOPE_INVALID')
+    require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    require(all(digest((Path(repo)/p).read_bytes()) == h for p, h in BG_BOOTSTRAP_HASHES.items()),
+            'BG_LIFECYCLE_IDENTITY_INVALID')
+    MOBILE_HOTFIX_IDENTITY = True
+
+
+def mobile_frontend_manifest(repo):
+    root = Path(repo)/'dist'
+    require((root/'index.html').is_file(), 'MOBILE_FRONTEND_BUILD_REQUIRED')
+    files = sorted(p for p in root.rglob('*') if p.is_file())
+    require(files and all(not p.is_symlink() for p in files), 'MOBILE_FRONTEND_ASSET_INVALID')
+    javascript = ''.join(p.read_text() for p in files if p.suffix == '.js')
+    require(javascript.count('data-pull-to-refresh-ignore') >= 2
+            and 'closest(' in javascript and 'touchcancel' in javascript,
+            'MOBILE_FRONTEND_EXCLUSION_MISSING')
+    return {'app/dist/' + p.relative_to(root).as_posix(): digest(p.read_bytes()) for p in files}
+
+
+def mobile_frontend_probe(remote, name, art):
+    expected = art.get('mobileFrontend')
+    require(mobile_hotfix() and isinstance(expected, dict) and expected
+            and 'app/dist/index.html' in expected, 'MOBILE_FRONTEND_PROOF_REQUIRED')
+    script = "const fs=require('fs'),crypto=require('crypto'),path=require('path');const expected=JSON.parse(fs.readFileSync(0,'utf8'));const actual={};let js='';function visit(dir){for(const name of fs.readdirSync(dir)){const p=path.join(dir,name),s=fs.lstatSync(p);if(s.isSymbolicLink())process.exit(1);if(s.isDirectory())visit(p);else if(s.isFile()){const data=fs.readFileSync(p);actual[p.slice(1)]=crypto.createHash('sha256').update(data).digest('hex');if(p.endsWith('.js'))js+=data.toString()}}}visit('/app/dist');const keys=Object.keys(actual).sort();if(JSON.stringify(keys)!==JSON.stringify(Object.keys(expected).sort())||keys.some(k=>actual[k]!==expected[k])||(js.match(/data-pull-to-refresh-ignore/g)||[]).length<2||!js.includes('closest(')||!js.includes('touchcancel'))process.exit(1);process.stdout.write('MOBILE_FRONTEND_EXACT_ASSETS_PASS\\n')"
+    require(remote.run(['docker', 'exec', '-i', name, 'node', '-e', script],
+                       json.dumps(expected).encode(), timeout=30)
+            == b'MOBILE_FRONTEND_EXACT_ASSETS_PASS\n', 'MOBILE_FRONTEND_ASSET_MISMATCH')
+
 # Explicit one-release authorization. Descendants and other profiles remain
 # subject to the original capacity policy; this is never an environment default.
 B2_CAPACITY_WAIVER_PARENT = 'b01173d93fd4b655c267a822b4eb437a2155e846'
@@ -266,6 +336,7 @@ CAPACITY_WAIVER_CODES = frozenset({
 
 def configure_capacity_waiver(receipt, art, emit=True):
     global CAPACITY_WAIVER, CAPACITY_TELEMETRY_EMIT
+    require(not mobile_hotfix(), 'MOBILE_CAPACITY_WAIVER_FORBIDDEN')
     c=procurement_contract()
     require(isinstance(receipt,dict) and set(receipt)=={'releaseSha','parentSha'}
             and isinstance(receipt['releaseSha'],str) and re.fullmatch(r'[0-9a-f]{40}',receipt['releaseSha'])
@@ -297,21 +368,25 @@ def procurement_migration():
 
 def procurement_hotfix():
     # Finite reviewed production bases, E-only, schema already L88. Never migration.
+    if mobile_hotfix(): return BG_ACTIVE
     return (BG_ACTIVE and RELEASE_PROFILE=='post-transfer'
             and EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE,BG_BUNDLE_BASE))
 
 
 def bg_hotfix_base():
+    if mobile_hotfix(): return MOBILE_HOTFIX_LIVE_BASE
     if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_BASE
     return BG_TRANSFER_BASE if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_BASE
 
 
 def bg_hotfix_files():
+    if mobile_hotfix(): return MOBILE_HOTFIX_RELEASE_FILES
     if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_FILES
     return BG_TRANSFER_FILES if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_FILES
 
 
 def bg_release_base():
+    if mobile_hotfix(): return MOBILE_HOTFIX_BUSINESS_PARENT
     if procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_PARENT
     return bg_hotfix_base() if procurement_hotfix() else BG_BASE
 
@@ -763,7 +838,9 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and (is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA) or (procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']))
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    if procurement_migration() or procurement_hotfix():
+    if mobile_hotfix() or git(repo, 'branch', '--show-current') == MOBILE_HOTFIX_BRANCH:
+        validate_mobile_hotfix_identity(repo, release)
+    elif procurement_migration() or procurement_hotfix():
         validate_procurement_identity(repo, release)
     elif material_migration():
         validate_material_identity(repo, release)
@@ -776,7 +853,7 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= (bg_hotfix_files() if procurement_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= (bg_hotfix_files() if procurement_hotfix() or mobile_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
@@ -793,7 +870,7 @@ def identity(repo):
     if RELEASE_PROFILE == 'post-transfer':
         validate_post_transfer_identity(repo, release)
         migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
-        require(len(migrations) == (88 if procurement_migration() or procurement_hotfix() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
+        require(len(migrations) == (88 if mobile_hotfix() or procurement_migration() or procurement_hotfix() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
         before_ledger(migrations)
         return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
@@ -1016,7 +1093,7 @@ No archive member is extracted to the host filesystem.
         # B2 may inherit exact R then replace its runtime directories. Validate
         # the resulting filesystem, including deletions, rather than requiring
         # obsolete files in lower layers to match the current source.
-        merged_b2 = B2_IDENTITY and release != procurement_contract()['rollbackSha']
+        merged_b2 = (B2_IDENTITY or MOBILE_HOTFIX_IDENTITY) and release != procurement_contract()['rollbackSha']
         runtime_files = set()
         v2_bytes = None
         prisma_files = {}
@@ -1076,7 +1153,7 @@ No archive member is extracted to the host filesystem.
                         require(member.isfile() and 0 < member.size < 4 * 1024 ** 2, 'SHIPPING_PRISMA_CLI_INVALID')
                         content = layer.extractfile(member).read()
                         prisma_files[name] = json.loads(content)['version'] if name.endswith('package.json') else digest(content)
-                    if (member.isfile() or merged_b2 and (member.issym() or member.islnk())) and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/')):
+                    if (member.isfile() or merged_b2 and (member.issym() or member.islnk())) and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/') + (('app/dist/',) if MOBILE_HOTFIX_IDENTITY else ())):
                         if merged_b2:runtime_files.add(name)
                         else:require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
                     if name in expected_payload:
@@ -1118,7 +1195,8 @@ No archive member is extracted to the host filesystem.
                     archiveHash=archive_hash, archiveConfigDigest='sha256:' + digest(config_bytes),
                     imageReference=tag, rootfsDiffIds=diffs,
                     config=config['config'], release=release, runtimeHash=v2_bytes, layers=layer_metrics,
-                    capacityProfile=('B2' if B2_IDENTITY else 'B1') if (B1_IDENTITY or B2_IDENTITY) and release != procurement_contract()['rollbackSha'] else 'LEGACY')
+                    mobileFrontend=mobile_frontend_manifest(repo) if MOBILE_HOTFIX_IDENTITY else None,
+                    capacityProfile=MOBILE_HOTFIX_PROFILE if MOBILE_HOTFIX_IDENTITY else ('B2' if B2_IDENTITY else 'B1') if (B1_IDENTITY or B2_IDENTITY) and release != procurement_contract()['rollbackSha'] else 'LEGACY')
 
 # B1 never discounts image contents or DB allowances. Only proven phase
 # transitions remove future allocations; actual retained bytes stay in df.
@@ -1684,6 +1762,16 @@ class Remote:
                     '-o', 'ConnectTimeout=12']
         if os.environ.get('TRANSFER_CAS_KNOWN_HOSTS'):
             self.ssh += ['-o', 'UserKnownHostsFile='+os.environ['TRANSFER_CAS_KNOWN_HOSTS'], '-o', 'HostKeyAlgorithms=ssh-ed25519']
+        if mobile_hotfix():
+            socket = os.environ.get('BUDU_MOBILE_ISOLATED_AGENT_SOCKET', '')
+            require(str(key) == '/Users/apple/.ssh/budu_bj_migration' and socket.startswith('/private/tmp/budu-mobile-isolated-entry-')
+                    and stat.S_ISSOCK(Path(socket).stat().st_mode) and Path(socket).stat().st_uid == os.getuid(),
+                    'MOBILE_ISOLATED_AGENT_REQUIRED')
+            require(os.environ.get('SSH_AUTH_SOCK') == socket, 'MOBILE_ISOLATED_AGENT_REQUIRED')
+            listing = command(['ssh-add', '-l'], timeout=10).decode().splitlines()
+            require(len(listing) == 1 and listing[0].split()[1] == 'SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ'
+                    and listing[0].endswith('(ED25519)'), 'ISOLATED_AGENT_IDENTITY_CONTAMINATED')
+            self.ssh += ['-p', '22', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent='+socket]
         self.ssh += [HOST]
     def run(self, args, data=None, timeout=60):
         return command(self.ssh + [shlex.join(args)], data, timeout)
@@ -3153,7 +3241,8 @@ def bg_bundle_reset_standby(remote, value, state):
 
 
 def bg_bind(repo, release, art, live):
-    require(BG_ACTIVE and B2_IDENTITY and art['release']==release and art['capacityProfile']=='B2'
+    require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+                          or (not mobile_hotfix() and B2_IDENTITY and art['capacityProfile']=='B2')) and art['release']==release
             and git(repo,'rev-list','--parents','-n','1',release)==release+' '+bg_release_base()
             and live.get('result')=='LIVE_G_PROVEN' and live['LIVE_G_SHA']==EXPECTED_OLD_SHA
             and ((procurement_hotfix() and live['DB_APPLIED']==88 and live['POINTER_SHA']==bg_hotfix_base())
@@ -3598,7 +3687,8 @@ def bg_execute(remote, value, import_e):
         g,db=bg_g_guard(remote,value);state['g']=g
         validate_clone_source(g,art['config']);b1_storage(remote)
         if not hotfix:bg_migration_contract(value['migrationSql'])
-        require(BG_ACTIVE and art['capacityProfile']=='B2' and art['release']==CAPACITY_WAIVER['releaseSha'],'BG_SCOPE_INVALID')
+        require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+                or (not mobile_hotfix() and art['capacityProfile']=='B2' and CAPACITY_WAIVER is not None and art['release']==CAPACITY_WAIVER['releaseSha'])),'BG_SCOPE_INVALID')
         if not hotfix:
             require(value['compatibilityProof']['result']=='PASS' and value['compatibilityProof']['oldRuntimeExactSource']==live['LIVE_G_SHA']
                     and value['compatibilityProof']['additiveMigrationSqlHash']==procurement_contract()['sqlHash']
@@ -3634,6 +3724,7 @@ def bg_execute(remote, value, import_e):
         require(remote.run(['docker','exec','-w','/app','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000',name,'node','--input-type=module','-e',procurement_probe],timeout=20)==b'BG_PROCUREMENT_SCHEMA_OK\n','BG_PROCUREMENT_APPLICATION_SCHEMA_FAILED')
         db=bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],True)
         bg_g_guard(remote,value,state);state['standbyVerified']=True
+        if mobile_hotfix(): mobile_frontend_probe(remote, name, art)
         old_name=route_target(value['template'],value['active']);next_routes=value['template'].replace('http://'+old_name+':3000','http://'+name+':3000')
         fallback=value['template'].replace('http://'+old_name+':3000','http://'+live['LIVE_G_CONTAINER']+':3000')
         require(next_routes.count('http://'+name+':3000')==3 and fallback.count('http://'+live['LIVE_G_CONTAINER']+':3000')==3,'CUTOVER_ROUTE_COUNT_INVALID');state['fallback']=fallback
@@ -3685,7 +3776,9 @@ def bg_execute(remote, value, import_e):
 
 
 def bg_deploy(remote, repo, path, art, ledger, authorize):
-    require(authorize==art['release'] and BG_ACTIVE and CAPACITY_WAIVER['releaseSha']==authorize,'BG_SCOPE_INVALID')
+    require(authorize==art['release'] and BG_ACTIVE
+            and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+                 or (not mobile_hotfix() and CAPACITY_WAIVER is not None and CAPACITY_WAIVER['releaseSha']==authorize)),'BG_SCOPE_INVALID')
     template,active=remote.routes()
     proof=BG_LIVE.get('compatibilityProof')
     if not procurement_hotfix():require(isinstance(proof,dict),'BG_COMPATIBILITY_PROOF_INVALID')
@@ -3693,9 +3786,11 @@ def bg_deploy(remote, repo, path, art, ledger, authorize):
            'live':BG_LIVE,'template':template,'active':active,'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
            'migrationSql':None if procurement_hotfix() else (Path(repo)/'prisma/migrations'/procurement_contract()['migration']/'migration.sql').read_text(),'waiver':CAPACITY_WAIVER,'compatibilityProof':proof}
     bg_g_guard(remote,value)
+    if mobile_hotfix():
+        bg_capacity(remote, art, 'MOBILE_E_ADMIT', sum(art[k] for k in ('archive','blobs','expanded','largest')) + RESERVE)
     if not procurement_hotfix():bg_migration_contract(value['migrationSql'])
     code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
-    code+="\nv=json.loads(sys.stdin.buffer.readline())\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nBG_ACTIVE=True\nBG_LIVE=v['live']\nconfigure_capacity_waiver(v['waiver'],v['art'],emit=False)\ndef interrupted(*_):raise GateError('BG_CONTROLLER_INTERRUPTED')\nfor sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\nprint(json.dumps(bg_execute(LocalRemote(),v,lambda root:bg_import(sys.stdin.buffer,v['art'],root))),flush=True)\n"
+    code+="\nv=json.loads(sys.stdin.buffer.readline())\nconfigure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nBG_ACTIVE=True\nBG_LIVE=v['live']\nif mobile_hotfix():\n require(v['waiver'] is None and v['art']['capacityProfile']==MOBILE_HOTFIX_PROFILE,'MOBILE_CAPACITY_WAIVER_FORBIDDEN')\n MOBILE_HOTFIX_IDENTITY=True\nelse:configure_capacity_waiver(v['waiver'],v['art'],emit=False)\ndef interrupted(*_):raise GateError('BG_CONTROLLER_INTERRUPTED')\nfor sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\nprint(json.dumps(bg_execute(LocalRemote(),v,lambda root:bg_import(sys.stdin.buffer,v['art'],root))),flush=True)\n"
     loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-blue-green>','exec'))"
     child=subprocess.Popen(remote.ssh+[shlex.join(['sudo','-n','python3','-B','-c',loader])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
     try:
@@ -3741,7 +3836,7 @@ def main():
     require(not (MEASURE_ONLY and args.mode == 'deploy'), 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     global BG_ACTIVE, BG_LIVE
     if args.blue_green_live_proof is not None:
-        require(args.mode=='deploy' and ((procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'])
+        require(args.mode=='deploy' and (mobile_hotfix() or (procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'])
                 or (EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE,BG_BUNDLE_BASE)))
                 and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
         BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())

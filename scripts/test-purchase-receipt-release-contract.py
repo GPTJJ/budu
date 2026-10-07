@@ -1592,15 +1592,16 @@ assert.deepEqual(calls,['app','online','wechat_pay','alipay','refund']);assert.e
         self.assertEqual(output,b'BG_BACKGROUND_LIFECYCLE_PASS\n')
 
 class BlueGreenControllerTests(unittest.TestCase):
-    def attempt(self,fault=None,hotfix=False,hotfix_base=None):
-        base=(hotfix_base or r.BG_HOTFIX_BASE) if hotfix else C['rollbackSha']
-        r.configure_profile('post-transfer',base,base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
-        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
+    def attempt(self,fault=None,hotfix=False,hotfix_base=None,mobile=False):
+        base=r.MOBILE_HOTFIX_LIVE_BASE if mobile else (hotfix_base or r.BG_HOTFIX_BASE) if hotfix else C['rollbackSha']
+        r.configure_profile('post-transfer',base,r.MOBILE_HOTFIX_BUSINESS_PARENT if mobile else base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
+        r.MOBILE_HOTFIX_IDENTITY=mobile
+        if not mobile:r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
         events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[88 if hotfix else 87]
         g={'Id':'g'*64,'Image':'sha256:'+'b'*64,'State':{'Running':True},'HostConfig':{'NetworkMode':'n'}}
         live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':g['Id'],'LIVE_G_IMAGE_ID':g['Image'],'LIVE_G_SHA':base,'POINTER_SHA':base if hotfix else C['oldSha']}
         template=' '.join(['proxy_pass http://G:3000;']*3)
-        art={'release':'a'*40,'capacityProfile':'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
+        art={'release':'a'*40,'capacityProfile':r.MOBILE_HOTFIX_PROFILE if mobile else 'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
         proof={'result':'PASS','oldRuntimeExactSource':C['rollbackSha'],'additiveMigrationSqlHash':C['sqlHash'],'oldPrismaDb88':'PASS','oldInternalHealthDb88':'PASS','pgVersion':'16.14'}
         v={'art':art,'live':live,'ledger':LEDGER,'template':template,'active':template,'compatibilityProof':proof,'migrationSql':(ROOT/'prisma/migrations'/C['migration']/'migration.sql').read_text()}
         def event(e):
@@ -1643,10 +1644,11 @@ class BlueGreenControllerTests(unittest.TestCase):
             raise AssertionError('unknown helper')
         def lock(*args):event('lock-'+args[2]);return {}
         patches={'bg_g_guard':gguard,'validate_clone_source':lambda *a:None,'b1_storage':lambda *a:True,'bg_lock':lock,'shipping_resources':lambda *a:{'walLimit':1,'migratorLimit':1},'bg_capacity':lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]}),'resolve_loaded_image':lambda *a:{'Id':'sha256:'+'c'*64},'b2_barrier':lambda *a:True,'bg_script':script,'bg_clone':clone,'bg_lifecycle':lifecycle,'mount_readability':lambda *a:[],'runtime_checks':lambda *a:event('runtime'),'application_db_probe':lambda *a:event('dbProbe'),'bg_writer':writer,'bg_promote':promote,'replace_routes':routes,'write_authority':pointer,'bg_owned_stop':ownedstop,'bg_recover_g':lambda *a:event('recoverGActive')}
+        if mobile:patches['mobile_frontend_probe']=lambda *a:event('mobileAssets')
         with contextlib.ExitStack() as stack:
             for name,fn in patches.items():stack.enter_context(patch.object(r,name,side_effect=fn))
             result=r.bg_execute(remote,v,lambda root:{'serverSha256BeforeImport':True})
-        r.BG_ACTIVE=False
+        r.BG_ACTIVE=False;r.MOBILE_HOTFIX_IDENTITY=False
         return result,events,running,route
     def test_success_exact_handover_order(self):
         result,e,run,route=self.attempt();self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertTrue(result['releaseLockReleased'])
@@ -1964,5 +1966,127 @@ if(failed!==value.fail)process.exit(1);if(!calls.length||calls.some(c=>c[0]!=='G
         with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
         proof['referenceId']='tr-approved';proof['transferApiAuthority']='FAIL'
         with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
+
+
+
+class MobileSidebarReleaseTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT,'0'*64)
+        r.BG_ACTIVE=True
+    def tearDown(self):
+        r.BG_ACTIVE=False;r.MOBILE_HOTFIX_IDENTITY=False;r.CAPACITY_WAIVER=None
+    def git_fixture(self,changes=None):
+        release='a'*40
+        answers={('branch','--show-current'):r.MOBILE_HOTFIX_BRANCH,
+            ('rev-list','--parents','-n','1',release):release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT,
+            ('rev-list','--parents','-n','1',r.MOBILE_HOTFIX_BUSINESS_PARENT):r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+r.MOBILE_HOTFIX_LIVE_BASE,
+            ('diff','--name-only',r.MOBILE_HOTFIX_BUSINESS_PARENT,release):'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES)),
+            ('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,release):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('status','--porcelain','--untracked-files=all'):''}
+        answers.update(changes or {})
+        return lambda repo,*args:answers[args]
+    def test_exact_base_parent_branch_and_five_plus_three_files_pass(self):
+        with patch.object(r,'git',side_effect=self.git_fixture()):r.validate_mobile_hotfix_identity(ROOT,'a'*40)
+        self.assertTrue(r.MOBILE_HOTFIX_IDENTITY)
+        self.assertFalse(r.migration_enabled());self.assertEqual(r.before_ledger(LEDGER),LEDGER)
+        self.assertEqual(r.bg_hotfix_base(),r.MOBILE_HOTFIX_LIVE_BASE)
+        self.assertEqual(r.bg_release_base(),r.MOBILE_HOTFIX_BUSINESS_PARENT)
+        self.assertIsNone(r.CAPACITY_WAIVER)
+    def test_wrong_live_base_and_business_parent_fail_closed(self):
+        for old,business in [('b'*40,r.MOBILE_HOTFIX_BUSINESS_PARENT),(r.MOBILE_HOTFIX_LIVE_BASE,'c'*40)]:
+            with self.subTest(old=old,business=business):
+                r.configure_profile('post-transfer',old,business,'0'*64)
+                with patch.object(r,'git',side_effect=self.git_fixture()),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,'a'*40)
+                self.assertFalse(r.MOBILE_HOTFIX_IDENTITY)
+    def test_wrong_branch_merge_and_non_direct_child_fail_closed(self):
+        release='a'*40
+        for key,bad in [(('branch','--show-current'),'wrong'),
+            (('rev-list','--parents','-n','1',release),release+' '+'b'*40),
+            (('rev-list','--parents','-n','1',release),release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+'b'*40),
+            (('rev-list','--parents','-n','1',r.MOBILE_HOTFIX_BUSINESS_PARENT),r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+'b'*40)]:
+            with self.subTest(key=key,bad=bad),patch.object(r,'git',side_effect=self.git_fixture({key:bad})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_extra_business_server_shared_prisma_migration_or_test_fails(self):
+        release='a'*40;key=('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,release)
+        expected=r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES
+        for path in ('src/components/Other.jsx','server/app.js','server/index.js','shared/other.js','prisma/schema.prisma','prisma/migrations/extra/migration.sql','tests/other.mjs'):
+            with self.subTest(path=path),patch.object(r,'git',side_effect=self.git_fixture({key:'\n'.join(sorted(expected|{path}))})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_release_only_and_business_parent_scopes_are_exact(self):
+        release='a'*40
+        for key,bad in [(('diff','--name-only',r.MOBILE_HOTFIX_BUSINESS_PARENT,release),'scripts/deploy-prod-transfer-cas.py'),
+                       (('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT),'src/components/Sidebar.jsx'),
+                       (('status','--porcelain','--untracked-files=all'),' M server/app.js')]:
+            with self.subTest(key=key),patch.object(r,'git',side_effect=self.git_fixture({key:bad})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_procurement_capacity_waiver_is_always_forbidden(self):
+        with self.assertRaisesRegex(r.GateError,'MOBILE_CAPACITY_WAIVER_FORBIDDEN'):
+            r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.MOBILE_HOTFIX_BUSINESS_PARENT},{'release':'a'*40,'capacityProfile':'B2'})
+        self.assertIsNone(r.CAPACITY_WAIVER)
+        for used,free,future,code in [(10*r.GIB,30*r.GIB,7*r.GIB,'B1_CAPACITY_6GIB'),(70*r.GIB,10*r.GIB,r.GIB,'B1_CAPACITY_10GIB'),(100*r.GIB,20*r.GIB,6*r.GIB,None)]:
+            ledger={'baselineUsed':used,'baselineAvailable':free,'phase':'MOBILE'}
+            if code:
+                with self.assertRaisesRegex(r.GateError,code):r.b1_capacity_gate(ledger,used,free,future)
+            else:r.b1_capacity_gate(ledger,used,free,future)
+    def test_live_bind_rejects_changed_G_pointer_db_and_legacy_profile(self):
+        r.MOBILE_HOTFIX_IDENTITY=True;release='a'*40;art={'release':release,'capacityProfile':r.MOBILE_HOTFIX_PROFILE}
+        live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':r.MOBILE_HOTFIX_LIVE_BASE,'POINTER_SHA':r.MOBILE_HOTFIX_LIVE_BASE,'DB_APPLIED':88,'DB_FAILED':0,'LIVE_G_CONTAINER_ID':'b'*64,'LIVE_G_IMAGE_ID':'sha256:'+'c'*64}
+        with patch.object(r,'git',return_value=release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT):
+            r.bg_bind(ROOT,release,art,live)
+            for key,bad in [('LIVE_G_SHA','b'*40),('POINTER_SHA','b'*40),('DB_APPLIED',87),('DB_FAILED',1)]:
+                with self.subTest(key=key),self.assertRaises(r.GateError):r.bg_bind(ROOT,release,art,dict(live,**{key:bad}))
+            with self.assertRaises(r.GateError):r.bg_bind(ROOT,release,dict(art,capacityProfile='B2'),live)
+    def test_db_88_and_canonical_ledger_remain_strict(self):
+        db={'database':r.EXPECTED_DB,'applied':88,'failed':0,'rolledBack':0,'ledger':LEDGER,'procurementSchema':{'schemaMd5':C['schemaMd5']}}
+        r.validate_database(db,LEDGER)
+        for key,bad in [('database','another'),('applied',87),('failed',1),('rolledBack',1),('ledger',{})]:
+            with self.subTest(key=key),self.assertRaises(r.GateError):r.validate_database(dict(db,**{key:bad}),LEDGER)
+    def test_E_only_no_migration_and_existing_handover_order(self):
+        result,events,running,route=BlueGreenControllerTests.attempt(self,hotfix=True,mobile=True)
+        self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertIsNone(result['capacityWaiver'])
+        self.assertNotIn('backup',events);self.assertNotIn('migration',events)
+        for before,after in [('standby','mobileAssets'),('mobileAssets','stopG'),('stopG','zero'),('zero','promote'),('promote','routeE'),('publicE','pointerE')]:self.assertLess(events.index(before),events.index(after))
+        self.assertEqual(running,{'G':False,'E':True});self.assertEqual(route,['E']);self.assertTrue(result['releaseLockReleased'])
+    def test_failures_preserve_or_recover_exact_G(self):
+        for fault in ('standby','dbProbe','mobileAssets','promote','routeE','publicE','evidence'):
+            with self.subTest(fault=fault):
+                result,events,running,route=BlueGreenControllerTests.attempt(self,fault,hotfix=True,mobile=True)
+                self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertNotIn('secondaryRecoveryCode',result)
+                self.assertEqual(running,{'G':True,'E':False});self.assertEqual(route,['G'])
+                self.assertNotIn('backup',events);self.assertNotIn('migration',events)
+                if 'stopG' in events:self.assertLess(events.index('stopE'),events.index('restartG'));self.assertLess(events.index('recoverGActive'),events.index('routeG'))
+                else:self.assertNotIn('promote',events)
+    def test_isolated_signer_rejects_default_agent_extra_key_and_wrong_key(self):
+        import os,stat
+        from types import SimpleNamespace
+        path='/private/tmp/budu-mobile-isolated-entry-fixture/agent.sock'
+        metadata=SimpleNamespace(st_mode=stat.S_IFSOCK|0o600,st_uid=os.getuid())
+        environment={'SSH_AUTH_SOCK':path,'BUDU_MOBILE_ISOLATED_AGENT_SOCKET':path}
+        line=b'256 SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ exact (ED25519)\n'
+        with patch.object(r.Path,'stat',return_value=metadata):
+            with patch.dict(os.environ,environment),patch.object(r,'command',return_value=line) as command:
+                remote=r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+                self.assertIn('IdentitiesOnly=yes',remote.ssh);self.assertIn('IdentityAgent='+path,remote.ssh)
+                command.assert_called_once()
+            with patch.dict(os.environ,dict(environment,SSH_AUTH_SOCK='/system/default')),patch.object(r,'command') as command,self.assertRaises(r.GateError):
+                r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+            command.assert_not_called()
+            for listing in (line+line,b'256 SHA256:wrong exact (ED25519)\n'):
+                with patch.dict(os.environ,environment),patch.object(r,'command',return_value=listing),self.assertRaisesRegex(r.GateError,'ISOLATED_AGENT_IDENTITY_CONTAMINATED'):
+                    r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+            with patch.dict(os.environ,environment),patch.object(r,'command') as command,self.assertRaises(r.GateError):r.Remote(Path('/another/key'))
+            command.assert_not_called()
+    def test_frontend_runtime_probe_rejects_any_asset_hash_change(self):
+        import tempfile,hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'dist').mkdir();(root/'dist/index.html').write_text('<script src="/assets.js"></script>')
+            (root/'dist/assets.js').write_text('closest("data-pull-to-refresh-ignore");data-pull-to-refresh-ignore;touchcancel')
+            expected=r.mobile_frontend_manifest(root)
+            class Remote:
+                def run(self,args,data=None,timeout=30):
+                    script=args[-1].replace("visit('/app/dist')",'visit('+json.dumps(str(root/'dist'))+')').replace("p.slice(1)","'app/dist/'+path.relative("+json.dumps(str(root/'dist'))+",p)")
+                    result=subprocess.run(['node','-e',script],input=data,capture_output=True)
+                    return result.stdout
+            remote=Remote();r.mobile_frontend_probe(remote,'E',{'mobileFrontend':expected})
+            (root/'dist/assets.js').write_text('changed')
+            with self.assertRaises(r.GateError):r.mobile_frontend_probe(remote,'E',{'mobileFrontend':expected})
 
 if __name__=='__main__':unittest.main(verbosity=2)

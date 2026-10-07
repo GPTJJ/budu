@@ -192,7 +192,30 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 
+
+# Preserve historical source pins by projecting only the exact reviewed mobile
+# binding back to its frozen parent. Any altered guard or unpinned node fails.
+MOBILE_CONTROLLER_NODE_HASHES = {'runtime_payload': '182030d7b6e3f7b9b2baa65b65ea4f0f99c4492109e25d48a93c23e65a47bd87', 'configure_profile': '7e61c1eb5227fca906ccd347831c280e38abde0466ae77da4f5a06a39fd755c0', 'MOBILE_HOTFIX_LIVE_BASE': '25a4c927e659e323ddb3b5de8c07c263590f305e135b2d1daaad7f792e033b2f', 'MOBILE_HOTFIX_BUSINESS_PARENT': '44e39800f996da79c96392f77243b7a4f86e8ef15ab7e5f4658018b4bd164885', 'MOBILE_HOTFIX_BRANCH': 'b4d3169896c381ffd5176eebe3be5a9b01c4a5ff5270d68fb5e6ec9118044df0', 'MOBILE_HOTFIX_BUSINESS_FILES': 'd4dea44c54b8026fe0f90f2df8be1f149fb78b0ec87dd0b0cffb7d8936305e67', 'MOBILE_HOTFIX_TEST_FILES': '11714dafa2db20ebee722dbd25bff4fe10d0cb293520bddcc42afc63049eb647', 'MOBILE_HOTFIX_RELEASE_FILES': '212a7d2a0841f3a010c369e06c4ccd0afb2645d69f3a528644fdfa705070ebe0', 'MOBILE_HOTFIX_PROFILE': '21527ca0e6f3af00c56b8bb461be991718ab514cd0dfb66bf275f1b33a7c6266', 'MOBILE_HOTFIX_IDENTITY': '061544dbbb4b62d705390c665368a3a8d0ffead92c7fe5242301888764f4d336', 'mobile_hotfix': 'e1d061d7f2bf75b024a7679b1483b9a09f813cfab06e17aa52c8d042869e8f1b', 'validate_mobile_hotfix_identity': '5da29b293c7fa62dd8bebb826f31f3591e3c066831a9570af0a2c2da1f4a1d9d', 'mobile_frontend_manifest': 'e10ef04f92a238aacd81c532925a28c205f7e8f8e8c451dc3384adcc9bdaf62d', 'mobile_frontend_probe': '0d233a2eb2bb3cc57d3509533745f4788797163761c6e09ed75fbb3221ec1bcf', 'configure_capacity_waiver': '11e00cc232ff91f11f3e16d3c3ad952bb1ea5f7bf4fcfe2c750a054ed834f275', 'procurement_hotfix': 'ae37fb2d97afa5cb2412011f91bad8cb31878b5527c4bf2b1f5cc10c31bbf54c', 'bg_hotfix_base': '84bf8b266b4c1b7a085eaf85c378986c46ec91d76abc0457b78cbdc3fb9d25af', 'bg_hotfix_files': 'ae2881b60d356c383bcb0acec7a49e220d1e5691002927b50cd78160b25be47b', 'bg_release_base': 'd6fb1d729a0f1d568c9f522ab85d095b2eef0610c23de8b45ca09726938c95e6', 'validate_post_transfer_identity': 'd7806c48101c8c8f9b66ed69d25cc27c7da66c197a03abf20296e6233f9a5d44', 'identity': '6b9202429eee7ae8563bfee2eb936c86ff642e00df1f33d945d65645992e7b0e', 'artifact': '4f36a7e59c268a6f8a59179adc64bed6d50564748ce0594ef45c671ac1ff79df', 'Remote': '17e636aacaa781b6dfef79c453bbee120d771b3146b7494664c40f9a4887857e', 'bg_bind': 'c4ce09ce20b54c45b20f66707d3958b820004442448a0ba453e2ec0af606aa0a', 'bg_execute': 'bdd56aa5a6466781ea563551272c35ab64b91f4c3991b34aa0196ca26ee7498b', 'bg_deploy': '01e389f06c95a5f228777007e16345f0c7fa8c1df76578227481c5b5a9fef3f1', 'main': '48f2f2ca442941596b04a4c597756959c62766231ab1eb9ba0c8f67e47e6b02f'}
+
+def mobile_baseline_source(source):
+    if 'MOBILE_SIDEBAR_REFRESH_HOTFIX' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):(n,ast.get_source_segment(value,n)) for n in ast.parse(value).body}
+    before=nodes(prior);after=nodes(source);edits=[];lines=prior.splitlines(keepends=True)
+    assert not (set(before)-set(after))
+    assert set(after)-set(before)<=set(MOBILE_CONTROLLER_NODE_HASHES)
+    for name,expected in MOBILE_CONTROLLER_NODE_HASHES.items():
+        _,body=after[name]
+        assert hashlib.sha256(body.encode()).hexdigest()==expected,name
+    for name,(node,body) in before.items():
+        if name not in MOBILE_CONTROLLER_NODE_HASHES and after[name][1]!=body:
+            edits.append((node.lineno-1,node.end_lineno,after[name][1]+'\n'))
+    for start,end,replacement in sorted(edits,reverse=True):lines[start:end]=[replacement]
+    return ''.join(lines)
+
 def procurement_prior_source(source):
+    source=mobile_baseline_source(source)
     if 'def b1_capacity_gate(' in source:path='scripts/deploy-prod-transfer-cas.py'
     elif 'def b1_import_ci(' in source:path='scripts/test-candidate-db-probe-integration.py'
     elif "refs/heads/codex/purchase-receipt-b1-capacity-fasttrack" in source and source.startswith('name:'):path='.github/workflows/release-build-only.yml'
@@ -1914,7 +1937,7 @@ class BlueGreenSourceTests(unittest.TestCase):
 
 class ProcurementHotfixSourceTests(unittest.TestCase):
     def test_only_finite_binding_and_existing_BG_path_changed(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_HOTFIX_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             lines=value.splitlines(keepends=True)
@@ -1938,7 +1961,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
             original=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_HOTFIX_BASE+':'+path])
             self.assertEqual((ROOT/path).read_bytes(),original,path)
     def test_source_pins_reject_noncapacity_guard_changes(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         for old,new in [("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),("'BG_LIFECYCLE_FAILED'","'IGNORED'"),("require(rc==0,'B2_IMPORT_UNKNOWN')",'pass')]:
             self.assertIn(old,source)
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(old,new,1))
@@ -1946,7 +1969,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
 
 class TransferCacheHotfixSourceTests(unittest.TestCase):
     def test_controller_changes_only_finite_identity_binding_nodes(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             lines=value.splitlines(keepends=True)
@@ -1981,7 +2004,7 @@ class TransferCacheHotfixSourceTests(unittest.TestCase):
 
 class FinalHotfixBundleSourceTests(unittest.TestCase):
     def test_only_exact_binding_nodes_change_and_business_is_frozen(self):
-        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        current=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
@@ -1997,11 +2020,54 @@ class FinalHotfixBundleSourceTests(unittest.TestCase):
     def test_core_guards_transport_and_handover_unchanged(self):
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         before={n.name:ast.get_source_segment(prior,n) for n in ast.parse(prior).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        current=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         after={n.name:ast.get_source_segment(current,n) for n in ast.parse(current).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         self.assertEqual(after['bg_g_guard'],before['bg_g_guard'].replace('    return g,db',"    if RUNTIME_SHA==BG_BUNDLE_BASE and state.get('candidateId'):\n        proof=bg_bundle_read_probe(remote,state['candidate'],live['TRANSFER_RECORD_ID'],value['art']['release'],'standby')\n        state['bundleReadonlyProof']=proof\n        bg_bundle_reset_standby(remote,value,state)\n        print(json.dumps({'stage':'FINAL_HOTFIX_BUNDLE_STANDBY_READ_PASS',\n                          'proof':{k:proof[k] for k in ('referenceId','transferPgAuthority','transferApiAuthority','procurementReadonly','counts')}}),flush=True)\n    return g,db"))
         for name in ('b1_capacity_gate','b1_stage','b1_storage','b2_barrier','validate_database','writer_check','application_db_probe','bg_lock','bg_execute','bg_deploy','bg_clone','bg_lifecycle','bg_promote','bg_recover_g','bg_import','replace_routes'):
             self.assertEqual(before[name],after[name],name)
+
+
+
+class MobileSidebarSourceTests(unittest.TestCase):
+    def sources(self):
+        after=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
+        return before,after,nodes(before),nodes(after)
+    def test_independent_finite_binding_is_the_only_source_change(self):
+        before,after,b,a=self.sources()
+        self.assertFalse(set(b)-set(a))
+        self.assertEqual({k for k,v in a.items() if b.get(k)!=v},set(MOBILE_CONTROLLER_NODE_HASHES))
+        self.assertEqual(mobile_baseline_source(after).strip(),before.strip())
+        self.assertEqual(r.MOBILE_HOTFIX_LIVE_BASE,'d9d992a91a072a683b5309117f5313678649aba5')
+        self.assertEqual(r.MOBILE_HOTFIX_BUSINESS_PARENT,'d037b1f9c3b1e7b3fd4ea367ee61922a2ca2ba58')
+        self.assertEqual(r.MOBILE_HOTFIX_BUSINESS_FILES,{'src/components/PullToRefresh.jsx','src/components/Sidebar.jsx'})
+        self.assertEqual(r.MOBILE_HOTFIX_TEST_FILES,{'tests/pull-to-refresh-harness.html','tests/pull-to-refresh.spec.mjs','playwright.pull-to-refresh.config.mjs'})
+        self.assertEqual(r.MOBILE_HOTFIX_RELEASE_FILES,{'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py','scripts/test-release-path-post-transfer.py'})
+    def test_capacity_writer_db_import_and_lifecycle_guards_unchanged(self):
+        _,_,before,after=self.sources()
+        for name in ('b1_capacity_gate','b1_storage','b2_barrier','writer_check','validate_database','application_db_probe','bg_clone','bg_lifecycle','bg_promote','bg_recover_g','bg_import','bg_g_guard','bg_lock','replace_routes'):
+            self.assertEqual(before[name],after[name],name)
+        for name in ('ABSOLUTE_MAX_PEAK','MIN_PROJECTED_AVAILABLE','MAX_PROJECTED_USAGE','RESERVE'):
+            self.assertEqual(before[name],after[name],name)
+        token='        # No interposed off-host action: stop G -> prove zero -> promote -> route E.'
+        self.assertEqual(before['bg_execute'].split(token)[1],after['bg_execute'].split(token)[1])
+        self.assertIn("if mobile_hotfix(): mobile_frontend_probe(remote, name, art)",after['bg_execute'].split(token)[0])
+    def test_frozen_business_and_migration_have_no_release_edits(self):
+        expected=r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES
+        actual=set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,'--','src','server','shared','prisma','tests','playwright.pull-to-refresh.config.mjs'],text=True).splitlines())
+        self.assertEqual(actual,expected)
+        for path in ('server/app.js','server/index.js','prisma/schema.prisma','Dockerfile','package.json','package-lock.json'):
+            self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_LIVE_BASE+':'+path]),path)
+    def test_source_pins_fail_when_a_real_guard_is_weakened(self):
+        _,source,_,_=self.sources()
+        for old,new in [("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),('ABSOLUTE_MAX_PEAK = 6 * GIB','ABSOLUTE_MAX_PEAK = 60 * GIB')]:
+            self.assertIn(old,source)
+            with self.assertRaises(AssertionError):procurement_prior_source(source.replace(old,new,1))
+    def test_mobile_remote_checks_agent_before_listing_and_signing(self):
+        _,_,_,after=self.sources();body=after['Remote']
+        self.assertLess(body.index("os.environ.get('SSH_AUTH_SOCK') == socket"),body.index("command(['ssh-add', '-l']"))
+        for token in ('/Users/apple/.ssh/budu_bj_migration','IdentitiesOnly=yes','IdentityAgent=','StrictHostKeyChecking=yes','SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ','(ED25519)'):self.assertIn(token,body)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
