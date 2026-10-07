@@ -73,17 +73,28 @@ MATERIAL_SPEC.loader.exec_module(MATERIAL_PROJECTION)
 # projected to exact E, then its known procurement delta to C2, before the older
 # material -> Q legacy checks. Any other source node or byte change is rejected.
 PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b265f60a5b5154a9ef34dc136bdf0786d104982e43f5cc2ab0fd14795423',
- 'scripts/deploy-prod-transfer-cas.py': {                                         'BG_TRANSFER_BASE': '16c85fdbefcb114d6f6c649937418574f73253c677fc813efbad9e9b01898b36',
+ 'scripts/deploy-prod-transfer-cas.py': {
+                                         'bg_bundle_reset_standby': '8736398709543bbdc51d9a990452c2a85905a8c9d46253e8c504260a1ffd08d8',
+                                         'BG_BUNDLE_READ_CODE': 'b074766ab05128e2531b03ff3f9924f423a656293e1f6e084fd5cb019f71c8ab',
+                                         'bg_bundle_read_probe': '8829e8813d1f8c126d611b0322ed620ed3c91bc0c511f7f4edbe4afd6ea02a70',
+                                         'BG_BUNDLE_BASE': 'b07e672cb2da83fc88af8444aaf0a0a14cf5f5fb4e5a74f3020a105c873d3434',
+                                         'BG_BUNDLE_BUSINESS_FILES': 'd391c1bf1a326ebd586edf8a02607fbbb006e8e1705325dfeaa63d1c182400e0',
+                                         'BG_BUNDLE_FILES': '25e8cff1b1956729a4b498de2c8fa776e2bf2e895cb7584117087ade88b2421b',
+                                         'BG_BUNDLE_FOCUSED_FILES': 'c3243dca03ed00bc0940e858509f4daf6a4c2f2d1aa836ee226ddbe8417bd11b',
+                                         'BG_BUNDLE_ORIGIN': '0124c3f880b1bb76cad388cd68ed76e690a5d168312f09b91ba8e96d1ea3b79b',
+                                         'BG_BUNDLE_PARENT': 'edd9c4b5a7a28be00e33b176b3eb9f0640db3d56ea1c56cd70905e03ffc612eb',
+                                         'BG_BUNDLE_RELEASE_FILES': '00553e189d7b21ea11fe2334d84a4d18656514ab67fcb2cc4c894d6ebea51cd2',
+                                         'validate_final_hotfix_bundle': 'e4853c20f3bf081370d9209a502da081ef4a50149869d913692875e3c99c0b87',                                         'BG_TRANSFER_BASE': '16c85fdbefcb114d6f6c649937418574f73253c677fc813efbad9e9b01898b36',
                                          'BG_TRANSFER_FILES': 'c05ee1b27ec1ee372939fbecdc89d7cdf442e775d437182f018682652e642c84',
-                                         'bg_hotfix_base': '2f09118456c66b846e481e755f52a1dba6fcdacfe1d6acb18fb9af8106793fb3',
-                                         'bg_hotfix_files': '901e124b58df30530cc6a0f37cde4db86a30f3e554aa49d653d898aa864f02a7',
+                                         'bg_hotfix_base': 'aa2f3871f2860df840530adff2156dc271efabc5fccd88d1538a9d640b8c442e',
+                                         'bg_hotfix_files': 'f2290aeb6dea3e909748d52a72936aaafd6f5f7674476f32fd79e5291c8dd185',
                                          'BG_HOTFIX_BASE': '511fe36247c081ea1c78a8ce50c02507a9c0a2709aabc4532266621318e53441',
                                          'BG_HOTFIX_FILES': '92024567001acbe95298dddf3fc05af392c7d1733d556779221ac1cb4496db38',
                                          'bg_recover_g': '3906ac920cf35ad9db942d1215fdcc93ff9f9d744a37e95dff3ee960e8b72e24',
-                                         'bg_release_base': '1587575683bee0311da604ee079a9df69c0d7aa0ea477d93b05edb720250edd7',
+                                         'bg_release_base': '4b4605d3168cb3940925f2e9861a048fe4280fc678a97cb6ddabf8d156c82de0',
                                          'identity': '1c5853f489c44c1575c19ae1d354c58d44bbb82bb47abb960b4e0f2ed348f1a5',
                                          'procurement_database_details': 'b34ef982abe96712401aa7dde973e01744184c80056b56478781e7bfdcda4e82',
-                                         'procurement_hotfix': 'b2f347d7468ff191fc9c0056cebf91ff557aceadb6af48a639fc13137087312f',
+                                         'procurement_hotfix': 'bc53eebdb3d5a87b621dc7add94d3e05f857bce011aac4cc52a76d042352f8b9',
                                          'validate_database': '61f35f6a7a0294f7e9d1f4cb637d010abbc3bc921c1e112b41e6f0224c8a53a1',
 'B1_BASE': 'c6a88515064770b6a770557d94a7cae3501c542921e947a02cef2aea5d800fcf',
                                          'B1_BRANCH': '5aa4cb9984c2e9f0168abfd2eb1485580e18cd532be752e09be4089ab34b3a75',
@@ -132,13 +143,13 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'b2_deploy': '6c355cb2db57a02b8768285765b3626bf27882c6dc7dbc26f4bd1a0441d31507',
                                          'b2_preflight': 'ea7542d441ea2864547f73b2bd49286648085a06e23741975f40d47afef55de8',
                                          'b2_stream': '736061b7cb86371c9aff12f4726deac74f56539ed049f77b4cbd8d5e497aae61',
-                                         'bg_bind': '6e88b34aa80804617ade02dac1ed52506e62f73ae3ef8ead54df070a561f6afb',
+                                         'bg_bind': 'b134464cb38cb7255d1c9e159ec9ea1d98e16eaa0d70065032ce7cbeaad888b3',
                                          'bg_candidate_identity': '082ae570edc43defe29ff5abf6c48ef1c839a57c261090b65aeae6f8b1dcaeea',
                                          'bg_capacity': 'ccc5c887b19a770b4753ed0af5c75721e4c47f2a421f1eef6ce94da924167cb5',
                                          'bg_clone': '1daceedfdb8dd4f09dd4a2fba6da8f204eb44e8530d253de346be40c6814e5a2',
                                          'bg_deploy': 'c500d0ecbdb53e795261bcea53855484ac0e62119e3dc34d08a723b94fc8e923',
                                          'bg_execute': 'd6e4e85f2e53320da570c97682690a165ef2ae420239562f28ff3f60fca6062b',
-                                         'bg_g_guard': '19c09fa299770efb94943be8e58e3f447055fa0c3904ab2f3b2a35ea47e255aa',
+                                         'bg_g_guard': '7305f434d95a2660e9f56a9a2949aefdd5cf33840c1834dbf369af275f4cd166',
                                          'bg_import': 'cfe5f08794cd180c9e08d9b6dba35946b71eb8a36869cac3ca31f3e16dfe7b0c',
                                          'bg_lifecycle': '3a2fbfd54f6951f1508b154cdb3e5afd3ff600eb6490b44ab11ec0983a36a24d',
                                          'bg_lock': '7f4c739df38df18a8b3e707c9684e0d01b8eaa8d37b7131c420a987410c24c5d',
@@ -149,18 +160,18 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                          'bg_writer': '7b793f0aa46457533ab327597e05524b5585ae7ac116cfd73b21adad4240d3e3',
                                          'capacity_require': '78bb64e2da113d41556836ebf55625482d80d1622f14177fd7ac134be62d992c',
                                          'check_controller_result': '24519b63c06628542937058ec15fa78d2138b8fb03bb3c408bcc9b2936c258ce',
-                                         'configure_capacity_waiver': 'c9bd1c1fc8afd7486b50548a8cc0d25c8f6efbed3f1b64d576e7223663c15b9e',
+                                         'configure_capacity_waiver': '9305770c35c6d0666d269f9d757a2db0389bbf33392409068151615c034d97d3',
                                          'configure_profile': 'b25b72dd4c380214ec3be1eaf32ed95d24331561e81804a7a68d107a4c952c5c',
                                          'deploy': '2dad39f97a46dda1be01c5d35bc89aa833c787f7d995a4b7bc87b6f9954b73ab',
                                          'disk_budget': 'e80c280227277f08fbca9808854c92aa273a894ea5d18625d9483d8a57be7465',
                                          'execute_loaded': '1101414ee7c5782450115e890cb336a4bf747d52e4e28f5b77fdac913d321be1',
-                                         'main': 'c61516bbe26cba87f7cfb319365ff224276ea9f44d453e84243ddf3f692025eb',
+                                         'main': 'fd2f39e928efaac1601fea2adc7bc8ae1ae6fe76c9b45dc8f0c392d9b5d2d55d',
                                          'preflight': '843b32bc2fe2bde0e90ae5b258f8e7c6c1f5ecd078c11ad5694313e9931bb495',
                                          'run_loaded_controller': '1457203633cc4fde1a0a791db94ec0db909c16a36842a87e96675e05ac11214c',
                                          'shipping_disk_gate': 'cd6a54feb7fb306c82e7103d82afc680274f34cc0b1194618ab9a1c4c6a72351',
                                          'staging_action': 'b65cfe40f29079917cd748cb79a52ae441c0b14eda35437271713bd04b84cee2',
                                          'validate_post_transfer_identity': 'd13b665c9027730a918d88dd7a074f13826e393ba18a71372e789b8839f9c4f4',
-                                         'validate_procurement_identity': '77cb9fd20265ee1639a72a0e64087c649049743895de3e8f1d1dd132eacfabe1'},
+                                         'validate_procurement_identity': 'ddeefde7ba41cfa4dca621016c9612396c18aa815619fcddbaed59e01f64f2fc'},
  'scripts/test-candidate-db-probe-integration.py': {"Import(names=[alias(name='shutil')])": '582f9ff727d7496ab22b435e59b0f09b8ec415b0c8e8482ad2547f28cb6beb37',
                                                     '__entrypoint__': '375c9f54008f437f3937a6d5b3010f58a80f4f4650e4ca06bf28e65abfc6a60b',
                                                     '_procurement_controller_ci': 'da3ab8317c141de84159e3e06e2ceaeabceae58718f8c07c7a83822a345ef868',
@@ -1910,7 +1921,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
         before=nodes(prior);after=nodes(source)
         allowed={'BG_HOTFIX_BASE', 'BG_HOTFIX_FILES', 'BG_LOCK_CODE', 'BG_TRANSFER_BASE', 'BG_TRANSFER_FILES', 'bg_bind', 'bg_deploy', 'bg_execute', 'bg_g_guard', 'bg_hotfix_base', 'bg_hotfix_files', 'bg_lifecycle', 'bg_lock', 'bg_promote', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'identity', 'main', 'procurement_database_details', 'procurement_hotfix', 'validate_database', 'validate_post_transfer_identity', 'validate_procurement_identity'}
-        self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},allowed)
+        self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},(((allowed | {'BG_BUNDLE_RELEASE_FILES', 'BG_BUNDLE_READ_CODE', 'bg_bundle_read_probe', 'BG_BUNDLE_ORIGIN', 'BG_BUNDLE_FOCUSED_FILES', 'BG_BUNDLE_BUSINESS_FILES', 'bg_bind', 'bg_g_guard', 'validate_final_hotfix_bundle', 'BG_BUNDLE_BASE', 'BG_BUNDLE_FILES', 'BG_BUNDLE_PARENT'}) | {'bg_bundle_read_probe', 'bg_g_guard', 'BG_BUNDLE_READ_CODE', 'bg_bind'}) | {'bg_bundle_reset_standby'}))
         self.assertNotEqual(procurement_prior_source(source),source)
         for token in ("peak=max(ledger.get('peak',0), retained+future, planned)","ledger['baselineAvailable']-peak",'ABSOLUTE_MAX_PEAK = 6 * GIB','MIN_PROJECTED_AVAILABLE = 10 * GIB','MAX_PROJECTED_USAGE = 90'):
             self.assertIn(token,source)
@@ -1941,7 +1952,7 @@ class TransferCacheHotfixSourceTests(unittest.TestCase):
             lines=value.splitlines(keepends=True)
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):''.join(lines[n.lineno-1:n.end_lineno]) for n in ast.parse(value).body}
         before=nodes(prior);after=nodes(source)
-        self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},{'BG_TRANSFER_BASE', 'BG_TRANSFER_FILES', 'bg_bind', 'bg_hotfix_base', 'bg_hotfix_files', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'main', 'procurement_hotfix', 'validate_post_transfer_identity', 'validate_procurement_identity'})
+        self.assertFalse(set(before)-set(after));self.assertEqual({k for k,v in after.items() if before.get(k)!=v},((({'BG_TRANSFER_BASE', 'BG_TRANSFER_FILES', 'bg_bind', 'bg_hotfix_base', 'bg_hotfix_files', 'bg_recover_g', 'bg_release_base', 'configure_capacity_waiver', 'main', 'procurement_hotfix', 'validate_post_transfer_identity', 'validate_procurement_identity'} | {'BG_BUNDLE_RELEASE_FILES', 'BG_BUNDLE_READ_CODE', 'bg_bundle_read_probe', 'BG_BUNDLE_ORIGIN', 'BG_BUNDLE_FOCUSED_FILES', 'BG_BUNDLE_BUSINESS_FILES', 'bg_bind', 'bg_g_guard', 'validate_final_hotfix_bundle', 'BG_BUNDLE_BASE', 'BG_BUNDLE_FILES', 'BG_BUNDLE_PARENT'}) | {'bg_bundle_read_probe', 'bg_g_guard', 'BG_BUNDLE_READ_CODE', 'bg_bind'}) | {'bg_bundle_reset_standby'}))
         self.assertNotEqual(procurement_prior_source(source),source)
         self.assertEqual(r.BG_TRANSFER_FILES,{'src/utils/userData.js','scripts/test-pg-bootstrap-independence.mjs','scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py','scripts/test-release-path-post-transfer.py'})
     def test_business_change_only_domain_merge_and_mapping_bodies_unchanged(self):
@@ -1965,6 +1976,32 @@ class TransferCacheHotfixSourceTests(unittest.TestCase):
         for token in ('cached.inventoryRequests','Array.isArray(transfers.rows)','Array.isArray(purchases.rows)'):self.assertIn(token,after[newleft:newright])
         for path in ('server/v2.js','server/transfer-notification.js','server/purchase-receipt.js','server/app.js','server/index.js','src/components/StoreTransferPage.jsx','prisma/schema.prisma','package.json','package-lock.json','Dockerfile'):
             self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':'+path]),path)
+
+
+
+class FinalHotfixBundleSourceTests(unittest.TestCase):
+    def test_only_exact_binding_nodes_change_and_business_is_frozen(self):
+        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):
+            return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
+        before=nodes(prior);after=nodes(current)
+        self.assertFalse(set(before)-set(after))
+        self.assertEqual({k for k,v in after.items() if before.get(k)!=v},((({'BG_BUNDLE_RELEASE_FILES', 'BG_BUNDLE_READ_CODE', 'bg_bundle_read_probe', 'BG_BUNDLE_ORIGIN', 'BG_BUNDLE_FOCUSED_FILES', 'BG_BUNDLE_BUSINESS_FILES', 'bg_bind', 'bg_g_guard', 'validate_final_hotfix_bundle', 'bg_hotfix_base', 'BG_BUNDLE_BASE', 'validate_procurement_identity', 'BG_BUNDLE_FILES', 'BG_BUNDLE_PARENT', 'configure_capacity_waiver', 'procurement_hotfix', 'bg_hotfix_files', 'main', 'bg_release_base'}) | {'bg_bundle_read_probe', 'bg_g_guard', 'BG_BUNDLE_READ_CODE', 'bg_bind'}) | {'bg_bundle_reset_standby'}))
+        for path in r.BG_BUNDLE_BUSINESS_FILES | {'server/app.js','server/index.js','prisma/schema.prisma','package.json','package-lock.json','Dockerfile'}:
+            self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':'+path]),path)
+        self.assertEqual(r.BG_BUNDLE_RELEASE_FILES,{'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py','scripts/test-release-path-post-transfer.py'})
+        self.assertEqual(r.BG_BUNDLE_BUSINESS_FILES,{'server/purchase-receipt.js','src/utils/userData.js','src/components/PurchaseReceiptPage.jsx'})
+        self.assertEqual(r.BG_BUNDLE_FOCUSED_FILES,{'scripts/test-pg-bootstrap-independence.mjs','scripts/test-purchase-receipt-native.mjs','tests/purchase-receipt.spec.mjs'})
+        self.assertNotEqual(procurement_prior_source(current),current)
+    def test_core_guards_transport_and_handover_unchanged(self):
+        prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        before={n.name:ast.get_source_segment(prior,n) for n in ast.parse(prior).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        after={n.name:ast.get_source_segment(current,n) for n in ast.parse(current).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        self.assertEqual(after['bg_g_guard'],before['bg_g_guard'].replace('    return g,db',"    if RUNTIME_SHA==BG_BUNDLE_BASE and state.get('candidateId'):\n        proof=bg_bundle_read_probe(remote,state['candidate'],live['TRANSFER_RECORD_ID'],value['art']['release'],'standby')\n        state['bundleReadonlyProof']=proof\n        bg_bundle_reset_standby(remote,value,state)\n        print(json.dumps({'stage':'FINAL_HOTFIX_BUNDLE_STANDBY_READ_PASS',\n                          'proof':{k:proof[k] for k in ('referenceId','transferPgAuthority','transferApiAuthority','procurementReadonly','counts')}}),flush=True)\n    return g,db"))
+        for name in ('b1_capacity_gate','b1_stage','b1_storage','b2_barrier','validate_database','writer_check','application_db_probe','bg_lock','bg_execute','bg_deploy','bg_clone','bg_lifecycle','bg_promote','bg_recover_g','bg_import','replace_routes'):
+            self.assertEqual(before[name],after[name],name)
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

@@ -233,6 +233,18 @@ BG_TRANSFER_FILES = {'src/utils/userData.js','scripts/test-pg-bootstrap-independ
 BG_HOTFIX_FILES = {'server/purchase-receipt.js','scripts/test-purchase-receipt-native.mjs',
                    'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py',
                    'scripts/test-release-path-post-transfer.py'}
+# FINAL_HOTFIX_BUNDLE: user-confirmed live G and frozen reviewed business tree.
+BG_BUNDLE_BASE = '87efac6649f860217168118a08248a6626472d0a'
+BG_BUNDLE_PARENT = '822558b428f7fbba65ee5a0b4a37c1129641d50d'
+BG_BUNDLE_ORIGIN = '221cc055ec7d959ef202bfc71c0e00e0d37f087e'
+BG_BUNDLE_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py',
+                         'scripts/test-purchase-receipt-release-contract.py',
+                         'scripts/test-release-path-post-transfer.py'}
+BG_BUNDLE_BUSINESS_FILES = {'server/purchase-receipt.js','src/utils/userData.js',
+                          'src/components/PurchaseReceiptPage.jsx'}
+BG_BUNDLE_FOCUSED_FILES = {'scripts/test-pg-bootstrap-independence.mjs',
+                         'scripts/test-purchase-receipt-native.mjs','tests/purchase-receipt.spec.mjs'}
+BG_BUNDLE_FILES = BG_BUNDLE_RELEASE_FILES | {'src/components/PurchaseReceiptPage.jsx','tests/purchase-receipt.spec.mjs'}
 BG_FILES = B1_FILES | {'server/app.js','server/index.js'}
 BG_BOOTSTRAP_HASHES = {'server/app.js': 'b3547fe419c41aa1a16aba9c2e8ac11659b9243927e66b5dd835112ac235dac6', 'server/index.js': 'c3641f84a98bf4bbdd32d1c02352dd47d31f472d15a7bbf761d139f03aacef18'}
 
@@ -260,7 +272,7 @@ def configure_capacity_waiver(receipt, art, emit=True):
             and receipt['releaseSha']==art['release'] and art.get('capacityProfile')=='B2'
             and ((not BG_ACTIVE and receipt['parentSha']==B2_CAPACITY_WAIVER_PARENT and EXPECTED_OLD_SHA==c['oldSha'])
                  or (BG_ACTIVE and receipt['parentSha']==BG_BASE and EXPECTED_OLD_SHA==c['rollbackSha'])
-                 or (procurement_hotfix() and receipt['parentSha']==bg_hotfix_base()))
+                 or (procurement_hotfix() and receipt['parentSha']==bg_release_base()))
             and RELEASE_PROFILE=='post-transfer'
             and (RUNTIME_SHA==c['businessSha'] or procurement_hotfix()), 'B2_CAPACITY_WAIVER_SCOPE_INVALID')
     CAPACITY_WAIVER=dict(receipt)
@@ -286,23 +298,44 @@ def procurement_migration():
 def procurement_hotfix():
     # Finite reviewed production bases, E-only, schema already L88. Never migration.
     return (BG_ACTIVE and RELEASE_PROFILE=='post-transfer'
-            and EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE))
+            and EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE,BG_BUNDLE_BASE))
 
 
 def bg_hotfix_base():
+    if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_BASE
     return BG_TRANSFER_BASE if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_BASE
 
 
 def bg_hotfix_files():
+    if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_FILES
     return BG_TRANSFER_FILES if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_FILES
 
 
 def bg_release_base():
+    if procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_PARENT
     return bg_hotfix_base() if procurement_hotfix() else BG_BASE
 
 
 def migration_enabled():
     return shipping_migration() or material_migration() or procurement_migration()
+
+
+def validate_final_hotfix_bundle(repo, release):
+    require(B2_IDENTITY and EXPECTED_OLD_SHA==RUNTIME_SHA==BG_BUNDLE_BASE
+            and git(repo,'rev-list','--parents','-n','1',release)==release+' '+BG_BUNDLE_PARENT,
+            'FINAL_HOTFIX_BUNDLE_IDENTITY_INVALID')
+    require(set(git(repo,'diff','--name-only',BG_BUNDLE_PARENT,release).splitlines())==BG_BUNDLE_RELEASE_FILES,
+            'FINAL_HOTFIX_BUNDLE_RELEASE_SCOPE_INVALID')
+    require(set(git(repo,'diff','--name-only',BG_BUNDLE_ORIGIN,release).splitlines())
+            ==BG_BUNDLE_BUSINESS_FILES | BG_BUNDLE_FOCUSED_FILES | BG_BUNDLE_RELEASE_FILES,
+            'FINAL_HOTFIX_BUNDLE_SCOPE_INVALID')
+    require(set(git(repo,'diff','--name-only',BG_BUNDLE_ORIGIN,release,'--','server','prisma','shared','src',
+                'brand','Dockerfile','package.json','package-lock.json').splitlines())==BG_BUNDLE_BUSINESS_FILES,
+            'FINAL_HOTFIX_BUNDLE_BUSINESS_INVALID')
+    require(not git(repo,'diff','--name-only',BG_BUNDLE_ORIGIN,release,'--','prisma'),
+            'PROCUREMENT_MIGRATION_IDENTITY_INVALID')
+    require(all(digest((Path(repo)/p).read_bytes())==h for p,h in BG_BOOTSTRAP_HASHES.items()),
+            'BG_LIFECYCLE_IDENTITY_INVALID')
 
 
 def validate_procurement_identity(repo, release):
@@ -311,6 +344,9 @@ def validate_procurement_identity(repo, release):
     B1_IDENTITY = git(repo,'branch','--show-current') == B1_BRANCH
     B2_IDENTITY = git(repo,'branch','--show-current') == B2_BRANCH
     if procurement_hotfix():
+        if RUNTIME_SHA==BG_BUNDLE_BASE:
+            validate_final_hotfix_bundle(repo,release)
+            return
         base=bg_hotfix_base();files=bg_hotfix_files()
         business={'src/utils/userData.js'} if base==BG_TRANSFER_BASE else {'server/purchase-receipt.js'}
         focused='scripts/test-pg-bootstrap-independence.mjs' if base==BG_TRANSFER_BASE else 'scripts/test-purchase-receipt-native.mjs'
@@ -3063,6 +3099,59 @@ def measure_release(repo,path,art,ledger,key):
             'SOURCE_MODEL_MATCHES_PRODUCTION':streaming_evidence}
 
 
+
+BG_BUNDLE_READ_CODE = "import {prisma} from './server/pg.js';import {signToken} from './server/auth.js';import crypto from 'node:crypto';\nconst [reference,expectedSha,mode]=process.argv.slice(1);\ntry{\n const proof=await prisma.$transaction(async tx=>{\n  await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');\n  const ro=await tx.$queryRawUnsafe('SHOW transaction_read_only');if(ro[0].transaction_read_only!=='on')throw Error();\n  const db=(await tx.$queryRawUnsafe('SELECT current_database() AS name'))[0].name;if(db!=='budu_bj006')throw Error();\n  const rows=await tx.transferRequest.findMany({orderBy:{createdAt:'desc'},take:30,select:{id:true,status:true,fromStoreKey:true,toStoreKey:true,createdBy:true,createdAt:true,deletedAt:true}});\n  const chosen=reference?rows.find(r=>r.id===reference):rows.find(r=>r.createdAt.toISOString().startsWith('2026-10-06')&&!r.deletedAt);\n  if(!chosen||chosen.deletedAt)throw Error();\n  const user=await tx.user.findFirst({where:{role:'developer',status:'active'},select:{id:true,username:true,role:true}});if(!user)throw Error();\n  const token=signToken(user,process.env.JWT_SECRET);\n  const get=async path=>{const r=await fetch('http://127.0.0.1:3000/api'+path,{headers:{Cookie:'budu_token='+token},signal:AbortSignal.timeout(8000)});if(r.status!==200)throw Error('HTTP_'+r.status);return r.json()};\n  const h=await get('/health');if(h.ok!==true||h.dbOk!==true||h.gitSha!==expectedSha&&h.gitSha!==expectedSha.slice(0,12)||h.runtimeMode!==mode)throw Error();\n  const transfer=await get('/v2/transfer-requests');if(!transfer.rows?.some(r=>r.id===chosen.id))throw Error();\n  const counts={};for(const name of ['suppliers','items','orders']){const d=await get('/v2/procurement/'+name);if(!Array.isArray(d.rows))throw Error();counts[name]=d.rows.length}\n  await tx.procurementSupplier.findFirst({select:{id:true}});await tx.procurementOrder.findFirst({select:{id:true}});await tx.inventoryItem.findFirst({select:{id:true,purchaseEnabled:true,procurementSupplierId:true}});\n  return {result:'PASS',database:db,referenceId:chosen.id,referenceCreatedAt:chosen.createdAt.toISOString(),transferPgAuthority:'PASS',transferApiAuthority:'PASS',procurementReadonly:'PASS',counts,apiTransferCount:transfer.rows.length,recent:rows.map(r=>({...r,createdBy:'sha256:'+crypto.createHash('sha256').update(r.createdBy||'').digest('hex')}))};\n },{timeout:45000});process.stdout.write(JSON.stringify(proof));\n}finally{await prisma.$disconnect()}\n"
+
+def bg_bundle_read_probe(remote, name, reference, sha, mode):
+    require(procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE and mode in ('active','standby'),
+            'FINAL_HOTFIX_BUNDLE_READ_SCOPE_INVALID')
+    try:
+        proof=json.loads(remote.run(['docker','exec','-w','/app',name,'node','--input-type=module','-e',
+                                    BG_BUNDLE_READ_CODE,reference,sha,mode],timeout=55))
+    except Exception:raise GateError('FINAL_HOTFIX_BUNDLE_READ_PROBE_FAILED') from None
+    require(proof.get('result')=='PASS' and proof.get('database')==EXPECTED_DB
+            and proof.get('transferPgAuthority')==proof.get('transferApiAuthority')==proof.get('procurementReadonly')=='PASS'
+            and (not reference or proof.get('referenceId')==reference), 'FINAL_HOTFIX_BUNDLE_READ_PROBE_FAILED')
+    return proof
+
+
+
+
+def bg_bundle_reset_standby(remote, value, state):
+    # User-approved finite-bundle reset after actual readonly API verification.
+    live=value['live'];art=value['art']
+    require(procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE
+            and state['candidateId']!=live['LIVE_G_CONTAINER_ID']
+            and state.get('bundleReadonlyProof',{}).get('result')=='PASS',
+            'FINAL_HOTFIX_BUNDLE_RESET_SCOPE_INVALID')
+    require(remote.routes()==(value['template'],value['active'])
+            and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==live['POINTER_SHA'],'BG_G_ROUTE_CHANGED')
+    before=bg_lifecycle(remote,value,state,'standby')
+    remote.run(['docker','stop','--time','30',before['Id']])
+    stopped=remote.inspect(before['Id'])
+    require(not stopped['State']['Running'] and stopped['Id']==before['Id']
+            and stopped['Image']==before['Image'],'BG_CANDIDATE_STOP_UNVERIFIED')
+    # Full original writer/DB/client guard while E is stopped, no PG termination.
+    bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],False)
+    remote.run(['docker','start',before['Id']])
+    after=bg_candidate_identity(remote,value,state)
+    require(after['Id']==before['Id'] and after['Image']==before['Image']
+            and after['Config']==before['Config'] and after['HostConfig']==before['HostConfig']
+            and sorted((m.get('Type'),m.get('Source'),m.get('Destination'),m.get('RW')) for m in after['Mounts'])
+                ==sorted((m.get('Type'),m.get('Source'),m.get('Destination'),m.get('RW')) for m in before['Mounts']),
+            'BG_CANDIDATE_CHANGED')
+    state['lifecycleSince']=after['State']['StartedAt']
+    remote.health(state['candidate'],art['release'])
+    bg_lifecycle(remote,value,state,'standby')
+    application_db_probe(remote,state['candidate'],'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+    bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],True)
+    remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA'])
+    remote.health(live['LIVE_G_CONTAINER'],live['LIVE_G_SHA'],public=True)
+    require(remote.routes()==(value['template'],value['active'])
+            and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==live['POINTER_SHA'],'BG_G_ROUTE_CHANGED')
+    state['bundleStandbyResetVerified']=True
+
+
 def bg_bind(repo, release, art, live):
     require(BG_ACTIVE and B2_IDENTITY and art['release']==release and art['capacityProfile']=='B2'
             and git(repo,'rev-list','--parents','-n','1',release)==release+' '+bg_release_base()
@@ -3072,6 +3161,10 @@ def bg_bind(repo, release, art, live):
             and live['DB_FAILED']==0
             and re.fullmatch(r'[0-9a-f]{64}',live['LIVE_G_CONTAINER_ID'])
             and re.fullmatch(r'sha256:[0-9a-f]{64}',live['LIVE_G_IMAGE_ID']),'BG_SCOPE_INVALID')
+    if RUNTIME_SHA==BG_BUNDLE_BASE:
+        require(live.get('TRANSFER_PG_AUTHORITY')==live.get('TRANSFER_API_AUTHORITY')=='PASS'
+                and isinstance(live.get('TRANSFER_RECORD_ID'),str) and bool(live['TRANSFER_RECORD_ID']),
+                'FINAL_HOTFIX_BUNDLE_TRANSFER_AUTHORITY_INVALID')
 
 
 def bg_script(remote, code, value, timeout=600):
@@ -3207,6 +3300,12 @@ def bg_g_guard(remote, value, state=None):
     application_db_probe(remote,g['Id'],'CURRENT_APPLICATION_DB_PROBE_FAILED')
     require(remote.run(['docker','exec',g['Id'],'sha256sum','/app/server/v2.js']).decode().split()[0]==OLD_V2_HASH,'OLD_RUNTIME_SOURCE_MISMATCH')
     db=bg_writer(remote,value,state,[live['LIVE_G_CONTAINER']],bool(state.get('candidateId')))
+    if RUNTIME_SHA==BG_BUNDLE_BASE and state.get('candidateId'):
+        proof=bg_bundle_read_probe(remote,state['candidate'],live['TRANSFER_RECORD_ID'],value['art']['release'],'standby')
+        state['bundleReadonlyProof']=proof
+        bg_bundle_reset_standby(remote,value,state)
+        print(json.dumps({'stage':'FINAL_HOTFIX_BUNDLE_STANDBY_READ_PASS',
+                          'proof':{k:proof[k] for k in ('referenceId','transferPgAuthority','transferApiAuthority','procurementReadonly','counts')}}),flush=True)
     return g,db
 
 
@@ -3643,7 +3742,7 @@ def main():
     global BG_ACTIVE, BG_LIVE
     if args.blue_green_live_proof is not None:
         require(args.mode=='deploy' and ((procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha'])
-                or (EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE)))
+                or (EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE,BG_BUNDLE_BASE)))
                 and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
         BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())
     backup_diagnostic = args.mode in ('identity-backup-diagnostic','inspect-artifact-backup-diagnostic')

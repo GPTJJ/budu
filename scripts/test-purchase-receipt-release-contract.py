@@ -1830,4 +1830,139 @@ class TransferCacheReleaseTests(unittest.TestCase):
         for key,bad in [('applied',87),('failed',1),('rolledBack',1),('ledger',{})]:
             with self.assertRaises(r.GateError):r.validate_database(dict(db,**{key:bad}),LEDGER)
 
+
+
+class FinalHotfixBundleReleaseTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.BG_BUNDLE_BASE,r.BG_BUNDLE_BASE,'0'*64);r.BG_ACTIVE=True;r.B2_IDENTITY=True
+    def tearDown(self):r.BG_ACTIVE=False;r.CAPACITY_WAIVER=None
+    def fake_git(self,repo,*args):
+        release='a'*40
+        if args==('branch','--show-current'):return r.B2_BRANCH
+        if args==('rev-list','--parents','-n','1',release):return release+' '+r.BG_BUNDLE_PARENT
+        if args==('diff','--name-only',r.BG_BUNDLE_PARENT,release):return '\n'.join(sorted(r.BG_BUNDLE_RELEASE_FILES))
+        if args==('diff','--name-only',r.BG_BUNDLE_ORIGIN,release):return '\n'.join(sorted(r.BG_BUNDLE_BUSINESS_FILES|r.BG_BUNDLE_FOCUSED_FILES|r.BG_BUNDLE_RELEASE_FILES))
+        if args==('diff','--name-only',r.BG_BUNDLE_ORIGIN,release,'--','prisma'):return ''
+        if args==('diff','--name-only',r.BG_BUNDLE_ORIGIN,release,'--','server','prisma','shared','src','brand','Dockerfile','package.json','package-lock.json'):return '\n'.join(sorted(r.BG_BUNDLE_BUSINESS_FILES))
+        raise AssertionError(args)
+    def test_exact_reviewed_parent_live_base_and_cumulative_bundle_allowed(self):
+        with patch.object(r,'git',side_effect=self.fake_git):r.validate_procurement_identity(ROOT,'a'*40)
+        self.assertEqual(r.bg_hotfix_base(),r.BG_BUNDLE_BASE);self.assertEqual(r.bg_release_base(),r.BG_BUNDLE_PARENT)
+        self.assertTrue(r.procurement_hotfix());self.assertFalse(r.migration_enabled())
+        planned=set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.BG_BUNDLE_BASE,r.BG_BUNDLE_PARENT],text=True).splitlines()) | r.BG_BUNDLE_RELEASE_FILES
+        self.assertEqual(planned,r.BG_BUNDLE_FILES)
+    def test_wrong_ancestry_and_any_extra_business_or_schema_file_fail_closed(self):
+        release='a'*40;business=('diff','--name-only',r.BG_BUNDLE_ORIGIN,release,'--','server','prisma','shared','src','brand','Dockerfile','package.json','package-lock.json')
+        failures=[(('rev-list','--parents','-n','1',release),release+' '+r.BG_BUNDLE_BASE),
+                  (('diff','--name-only',r.BG_BUNDLE_PARENT,release),'scripts/deploy-prod-transfer-cas.py\nserver/other.js'),
+                  (('diff','--name-only',r.BG_BUNDLE_ORIGIN,release),self.fake_git(ROOT,'diff','--name-only',r.BG_BUNDLE_ORIGIN,release)+'\ntests/other.spec.mjs'),
+                  (('diff','--name-only',r.BG_BUNDLE_ORIGIN,release,'--','prisma'),'prisma/migrations/new/migration.sql')]
+        for path in ('server/other.js','server/app.js','server/index.js','prisma/schema.prisma','src/other.jsx','shared/other.js','package.json'):
+            failures.append((business,'\n'.join(sorted(r.BG_BUNDLE_BUSINESS_FILES|{path}))))
+        for key,bad in failures:
+            with self.subTest(key=key,bad=bad),self.assertRaises(r.GateError),patch.object(r,'git',side_effect=lambda repo,*args:bad if args==key else self.fake_git(repo,*args)):
+                r.validate_procurement_identity(ROOT,release)
+        with patch.object(r,'digest',return_value='wrong'),patch.object(r,'git',side_effect=self.fake_git),self.assertRaisesRegex(r.GateError,'BG_LIFECYCLE_IDENTITY_INVALID'):
+            r.validate_procurement_identity(ROOT,release)
+    def test_wrong_live_base_and_non_BG_profiles_cannot_adopt_bundle(self):
+        for old,business,profile in [(r.BG_BUNDLE_ORIGIN,r.BG_BUNDLE_BASE,'post-transfer'),(r.BG_BUNDLE_BASE,r.BG_BUNDLE_PARENT,'post-transfer')]:
+            r.configure_profile(profile,old,business,'0'*64)
+            self.assertFalse(r.procurement_hotfix())
+            with patch.object(r,'git',side_effect=self.fake_git),self.assertRaises(r.GateError):r.validate_procurement_identity(ROOT,'a'*40)
+        with self.assertRaisesRegex(r.GateError,'FIRST_ROLLOUT_IDENTITY_OVERRIDE_FORBIDDEN'):
+            r.configure_profile('transfer-first',r.BG_BUNDLE_BASE,r.BG_BUNDLE_BASE,'0'*64)
+    def test_bundle_exact_waiver_and_unchanged_noncapacity_failures(self):
+        art={'release':'a'*40,'capacityProfile':'B2'};receipt={'releaseSha':'a'*40,'parentSha':r.BG_BUNDLE_PARENT}
+        r.configure_capacity_waiver(receipt,art,emit=False)
+        r.b1_capacity_gate({'baselineUsed':100*r.GIB,'baselineAvailable':r.GIB,'phase':'BUNDLE'},100*r.GIB,r.GIB,20*r.GIB)
+        self.assertTrue(any(x['waived'] for x in r.CAPACITY_TELEMETRY))
+        for code in ('BG_ENOSPC','BG_EIO','B2_IMPORT_UNKNOWN','B1_FILESYSTEM_CHANGED','MIGRATION_LEDGER_INVALID','WRITER_COUNT_INVALID','HEALTH_FAILED','BG_LIFECYCLE_FAILED','FINAL_HOTFIX_BUNDLE_READ_PROBE_FAILED'):
+            with self.assertRaises(r.GateError):r.capacity_require(False,code,{})
+        for key,bad in [('releaseSha','b'*40),('parentSha',r.BG_BUNDLE_BASE)]:
+            with self.assertRaises(r.GateError):r.configure_capacity_waiver(dict(receipt,**{key:bad}),art)
+        r.BG_ACTIVE=False
+        with self.assertRaises(r.GateError):r.configure_capacity_waiver(receipt,art)
+    def test_bind_requires_real_G_DB88_and_transfer_authority(self):
+        live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':r.BG_BUNDLE_BASE,'POINTER_SHA':r.BG_BUNDLE_BASE,'DB_APPLIED':88,'DB_FAILED':0,'LIVE_G_CONTAINER_ID':'b'*64,'LIVE_G_IMAGE_ID':'sha256:'+'c'*64,'TRANSFER_PG_AUTHORITY':'PASS','TRANSFER_API_AUTHORITY':'PASS','TRANSFER_RECORD_ID':'tr-approved'}
+        with patch.object(r,'git',return_value='a'*40+' '+r.BG_BUNDLE_PARENT):
+            r.bg_bind(ROOT,'a'*40,{'release':'a'*40,'capacityProfile':'B2'},live)
+            for key,bad in [('LIVE_G_SHA',r.BG_BUNDLE_ORIGIN),('POINTER_SHA',r.BG_BUNDLE_ORIGIN),('DB_APPLIED',87),('DB_FAILED',1),('TRANSFER_PG_AUTHORITY','FAIL'),('TRANSFER_API_AUTHORITY','FAIL'),('TRANSFER_RECORD_ID','')]:
+                with self.assertRaises(r.GateError):r.bg_bind(ROOT,'a'*40,{'release':'a'*40,'capacityProfile':'B2'},dict(live,**{key:bad}))
+    def test_existing_controller_E_only_no_migration_and_same_G_recovery(self):
+        result,e,running,route=BlueGreenControllerTests.attempt(self,hotfix=True,hotfix_base=r.BG_BUNDLE_BASE)
+        self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertTrue(result['releaseLockReleased']);self.assertEqual(route,['E'])
+        for forbidden in ('backup','migration'):self.assertNotIn(forbidden,e)
+        self.assertLess(e.index('standby'),e.index('stopG'));self.assertLess(e.index('stopG'),e.index('zero'));self.assertLess(e.index('zero'),e.index('promote'));self.assertLess(e.index('promote'),e.index('routeE'))
+        for fault in ('probe','standby','promote','routeE','publicE'):
+            result,e,running,route=BlueGreenControllerTests.attempt(self,fault,True,r.BG_BUNDLE_BASE)
+            self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertEqual(route,['G']);self.assertEqual(running,{'G':True,'E':False})
+            if 'stopG' in e:self.assertLess(e.index('stopE'),e.index('restartG'));self.assertLess(e.index('restartG'),e.index('recoverGActive'))
+            self.assertNotIn('backup',e);self.assertNotIn('migration',e)
+    def test_read_adapter_uses_actual_cookie_contract_and_only_gets(self):
+        script=r"""import http from 'node:http';import fs from 'node:fs';
+const value=JSON.parse(fs.readFileSync(0,'utf8'));const calls=[];
+const server=http.createServer((req,res)=>{calls.push([req.method,req.url,req.headers.cookie]);res.setHeader('Content-Type','application/json');
+if(req.method!=='GET'||req.headers.cookie!=='budu_token=opaque'){res.writeHead(401);return res.end('{}')}
+const path=req.url;if(path==='/api/health')return res.end(JSON.stringify({ok:true,dbOk:true,gitSha:'a'.repeat(40),runtimeMode:'standby'}));
+res.end(JSON.stringify({rows:path==='/api/v2/transfer-requests'?[{id:'tr-approved'}]:[]}))});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const fetchOriginal=globalThis.fetch;
+globalThis.fetch=(url,args)=>fetchOriginal(String(url).replace(':3000',':'+server.address().port),args);
+process.argv=[process.argv[0],'tr-approved','a'.repeat(40),'standby'];process.env.JWT_SECRET='synthetic-only';
+const item={id:'tr-approved',createdAt:new Date('2026-10-06T10:49:00Z'),createdBy:'synthetic',deletedAt:null};
+const prefix=`const tx={$executeRawUnsafe:async()=>{},$queryRawUnsafe:async sql=>sql.startsWith('SHOW')?[{transaction_read_only:'on'}]:[{name:'budu_bj006'}],transferRequest:{findMany:async()=>[item]},user:{findFirst:async()=>({id:'synthetic'})},procurementSupplier:{findFirst:async()=>null},procurementOrder:{findFirst:async()=>null},inventoryItem:{findFirst:async()=>null}};const prisma={$transaction:async fn=>fn(tx),$disconnect:async()=>{}};const signToken=()=> 'opaque';`;
+let failed=false;try{await eval('(async()=>{'+value.code.replace("import {prisma} from './server/pg.js';import {signToken} from './server/auth.js';",prefix).replace("import crypto from 'node:crypto';","const crypto=(await import('node:crypto')).default;")+'})()')}catch{failed=true}
+finally{await new Promise(resolve=>server.close(resolve))}
+if(failed!==value.fail)process.exit(1);if(!calls.length||calls.some(c=>c[0]!=='GET'))process.exit(1);
+"""
+        for code,fail in [(r.BG_BUNDLE_READ_CODE,False),(r.BG_BUNDLE_READ_CODE.replace("Cookie:'budu_token='+token","Authorization:'Bearer '+token"),True)]:
+            result=subprocess.run(['node','--input-type=module','-e',script],input=json.dumps({'code':code,'fail':fail}).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=20)
+            self.assertEqual(result.returncode,0,'cookie-contract read adapter regression')
+
+
+    def test_owned_standby_reset_rechecks_identity_sessions_and_G_before_handover(self):
+        release='a'*40;events=[];changed=None
+        before={'Id':'e','Image':'sha256:'+'e'*64,'State':{'Running':True,'StartedAt':'old'},'Config':{'Env':['GIT_SHA='+release],'Labels':{}},'HostConfig':{'Memory':1},'Mounts':[{'Type':'bind','Source':'same','Destination':'/data','RW':True}]}
+        value={'art':{'release':release},'live':{'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':'g','LIVE_G_SHA':r.BG_BUNDLE_BASE,'POINTER_SHA':r.BG_BUNDLE_BASE},'template':'G','active':'G'}
+        class Remote:
+            def routes(self):return ('G','G')
+            def run(self,args,**kw):
+                if args[0]=='cat':return (r.BG_BUNDLE_BASE+'\n').encode()
+                events.append(args[1]);return b''
+            def inspect(self,name):return dict(before,State={'Running':False})
+            def health(self,name,*args,**kw):events.append('health'+name)
+        def writer(*args):events.append('writerStoppedE' if not args[-1] else 'writerStandbyE');return {}
+        state={'candidate':'E','candidateId':'e','bundleReadonlyProof':{'result':'PASS'}}
+        after=dict(before,State={'Running':True,'StartedAt':'new'})
+        with patch.object(r,'bg_lifecycle',side_effect=lambda *a:events.append('lifecycle') or before),patch.object(r,'bg_candidate_identity',return_value=after),patch.object(r,'bg_writer',side_effect=writer),patch.object(r,'application_db_probe',side_effect=lambda *a:events.append('prisma')):
+            r.bg_bundle_reset_standby(Remote(),value,state)
+        self.assertTrue(state['bundleStandbyResetVerified']);self.assertEqual(state['lifecycleSince'],'new')
+        self.assertLess(events.index('stop'),events.index('writerStoppedE'));self.assertLess(events.index('writerStoppedE'),events.index('start'));self.assertLess(events.index('start'),events.index('prisma'));self.assertLess(events.index('prisma'),events.index('writerStandbyE'))
+        for field,bad in [('Id','g'),('Image','other'),('Config',{}),('HostConfig',{}),('Mounts',[])]:
+            events.clear();state={'candidate':'E','candidateId':'e','bundleReadonlyProof':{'result':'PASS'}}
+            with patch.object(r,'bg_lifecycle',return_value=before),patch.object(r,'bg_candidate_identity',return_value=dict(after,**{field:bad})),patch.object(r,'bg_writer',side_effect=writer),self.assertRaises(r.GateError):
+                r.bg_bundle_reset_standby(Remote(),value,state)
+        state={'candidate':'E','candidateId':'g','bundleReadonlyProof':{'result':'PASS'}}
+        with self.assertRaisesRegex(r.GateError,'FINAL_HOTFIX_BUNDLE_RESET_SCOPE_INVALID'):r.bg_bundle_reset_standby(Remote(),value,state)
+        state={'candidate':'E','candidateId':'e','bundleReadonlyProof':{'result':'PASS'}}
+        with patch.object(r,'bg_lifecycle',return_value=before),patch.object(r,'bg_writer',side_effect=r.GateError('UNKNOWN_DB_CLIENT_OR_OLD_WRITER')),self.assertRaises(r.GateError):
+            r.bg_bundle_reset_standby(Remote(),value,state)
+        self.assertNotIn('start',events[-1:])
+
+    def test_read_probe_is_readonly_and_reference_failures_block(self):
+        proof={'result':'PASS','database':r.EXPECTED_DB,'referenceId':'tr-approved','transferPgAuthority':'PASS','transferApiAuthority':'PASS','procurementReadonly':'PASS'}
+        class Remote:
+            def run(self,args,**kw):
+                self.args=args;return json.dumps(proof).encode()
+        remote=Remote();self.assertEqual(r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby'),proof)
+        self.assertIn('SET TRANSACTION READ ONLY',r.BG_BUNDLE_READ_CODE)
+        self.assertIn('transaction_read_only',r.BG_BUNDLE_READ_CODE)
+        self.assertIn("headers:{Cookie:'budu_token='+token}",r.BG_BUNDLE_READ_CODE)
+        self.assertNotIn('Authorization:',r.BG_BUNDLE_READ_CODE)
+        for token in ('/v2/transfer-requests','suppliers','items','orders'):self.assertIn(token,r.BG_BUNDLE_READ_CODE)
+        for token in ('POST','PATCH','PUT','DELETE','migrate deploy'):self.assertNotIn(token,r.BG_BUNDLE_READ_CODE)
+        proof['referenceId']='wrong'
+        with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
+        proof['referenceId']='tr-approved';proof['transferApiAuthority']='FAIL'
+        with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
+
 if __name__=='__main__':unittest.main(verbosity=2)
