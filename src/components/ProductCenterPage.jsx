@@ -1,6 +1,6 @@
 import { isPartnerCandy } from '../../shared/partnerProductUnits'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, FolderTree, History, ImagePlus, Package, Pencil, Plus, Search, Upload, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Download, FolderTree, History, ImagePlus, Loader2, Package, Pencil, Plus, Search, Upload, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import { centsToYuan, compressProductImage, formatCents, yuanToCents } from '../utils/pos'
@@ -40,6 +40,8 @@ const emptyForm = {
 }
 
 const inputClass = 'mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
+// Keep only active requests across page remounts; completed values remain server-owned.
+const pendingPurchasePurposes = new Map()
 
 function toForm(product) {
   const partnerOrderUnit = isPartnerCandy(product) ? 'PCS' : product.partnerOrderUnit || ''
@@ -172,6 +174,12 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const purchaseActor = user?.id || null
+  const purchaseScopeRef = useRef(null)
+  const purchaseSnapshotsRef = useRef(new Map())
+  const loadedRef = useRef(false)
+  const [purchaseSaving, setPurchaseSaving] = useState(new Set())
+  const [purchaseErrors, setPurchaseErrors] = useState({})
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('all')
   const [purpose, setPurpose] = useState('pos')
@@ -205,31 +213,108 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
   const materialCategory = materialCategories.length === 1 ? materialCategories[0] : null
   const materialRows = (materialCategoryAmbiguous ? [] : materials).map((item) => ({ ...item, productId: item.id, _material: true, transferCode: item.code || '', transferEnabled: item.enabled, isActive: false, productCategoryId: item.productCategoryId || materialCategory?.id || '', productCategory: item.productCategory || materialCategory || null }))
 
+  const mergePurchaseRow = (current, incoming, material = false) => {
+    const row = current?.version > incoming.version ? current : incoming
+    const snapshot = purchaseSnapshotsRef.current.get(`${material}:${material ? row.id : row.productId}`)
+    if (snapshot?.partial && snapshot.purchaseVersion > row.version) return { ...row, purchaseEnabled: snapshot.purchaseEnabled, procurementSupplierId: snapshot.procurementSupplierId }
+    return snapshot?.version > row.version ? { ...row, ...snapshot } : row
+  }
+  const mergePurchaseRows = (current, incoming, material = false) => {
+    const byId = new Map(current.map((row) => [material ? row.id : row.productId, row]))
+    return incoming.map((row) => mergePurchaseRow(byId.get(material ? row.id : row.productId), row, material))
+  }
+
   const loadProducts = async () => {
+    const scope = purchaseScopeRef.current
     if (!canViewProducts && !canViewMaterials) { setLoading(false); return }
-    setLoading(true)
+    if (!loadedRef.current) setLoading(true)
     setError('')
     try {
       const [data, categoryData, groupData, materialData] = await Promise.all([canViewProducts ? api('/v2/products') : { rows: [] }, api('/v2/product-categories'), canViewProducts ? api('/v2/product-groups') : { rows: [] }, canViewMaterials ? api('/v2/transfer-master-items?category=material') : { rows: [] }])
-      setProducts(data.rows || [])
+      if (purchaseScopeRef.current !== scope) return
+      setProducts((current) => mergePurchaseRows(current, data.rows || []))
       setProductCategories(categoryData.rows || [])
       setProductGroups(groupData.rows || [])
       const matchingMaterialCategories = (categoryData.rows || []).filter((item) => item.name === '物料')
-      setMaterials(matchingMaterialCategories.length > 1 ? [] : materialData.rows || [])
+      setMaterials((current) => matchingMaterialCategories.length > 1 ? [] : mergePurchaseRows(current, materialData.rows || [], true))
       if (matchingMaterialCategories.length > 1 && canViewMaterials) setError('物料分类存在同名歧义，已暂停物料展示和编辑，请核对分类 ID')
-      if (initialMaterials || !canViewProducts) {
+      if (!loadedRef.current && (initialMaterials || !canViewProducts)) {
         const existingCategory = matchingMaterialCategories.length === 1 ? matchingMaterialCategories[0] : null
         if (existingCategory) setCategory(existingCategory.id)
         setPurpose('all')
       }
+      loadedRef.current = true
     } catch (e) {
-      setError(e.message)
+      if (purchaseScopeRef.current === scope) setError(e.message)
     } finally {
-      setLoading(false)
+      if (purchaseScopeRef.current === scope) setLoading(false)
     }
   }
 
-  useEffect(() => { loadProducts() }, [])
+  const purchasePendingIds = () => new Set([...pendingPurchasePurposes.values()].filter((entry) => entry.actor === purchaseActor).map((entry) => entry.id))
+  const watchPurchasePurpose = async (entry, reportError, scope = purchaseScopeRef.current) => {
+    setPurchaseSaving(purchasePendingIds())
+    const { snapshot, message } = await entry.result
+    if (purchaseScopeRef.current !== scope) return
+    if (snapshot) {
+      const key = `${entry.material}:${entry.id}`
+      const previous = purchaseSnapshotsRef.current.get(key)
+      if (!((previous?.purchaseVersion ?? previous?.version) > (snapshot.purchaseVersion ?? snapshot.version))) purchaseSnapshotsRef.current.set(key, snapshot)
+      const setRows = entry.material ? setMaterials : setProducts
+      setRows((current) => current.map((row) => (entry.material ? row.id : row.productId) === entry.id ? mergePurchaseRow(row, snapshot.partial ? row : { ...row, ...snapshot }, entry.material) : row))
+    }
+    if (message && (reportError || !snapshot || snapshot.partial)) setPurchaseErrors((current) => ({ ...current, [entry.id]: reportError ? message : snapshot?.partial ? '商品资料未确认，请稍后重试' : '采购状态未确认，请稍后重试' }))
+    setPurchaseSaving(purchasePendingIds())
+  }
+
+  useEffect(() => {
+    const scope = {}
+    purchaseScopeRef.current = scope
+    loadedRef.current = false
+    purchaseSnapshotsRef.current.clear()
+    loadProducts()
+    for (const entry of pendingPurchasePurposes.values()) {
+      if (entry.actor === purchaseActor && (entry.material ? canViewMaterials : canViewProducts)) watchPurchasePurpose(entry, false, scope)
+    }
+    return () => { if (purchaseScopeRef.current === scope) purchaseScopeRef.current = null }
+  }, [purchaseActor])
+
+  const savePurchasePurpose = async (item, enabled) => {
+    const id = item.productId
+    const key = JSON.stringify([purchaseActor, id])
+    if (!purchaseActor || !(item._material ? canManageMaterials : canManage) || pendingPurchasePurposes.has(key)) return
+    setPurchaseErrors((current) => ({ ...current, [id]: '' }))
+    const entry = { actor: purchaseActor, id, material: Boolean(item._material) }
+    entry.result = (async () => {
+      try {
+        const data = await api(`/v2/procurement/items/${id}/purchase-purpose`, {
+          method: 'PATCH',
+          body: JSON.stringify({ purchaseEnabled: enabled, version: item.version, requestKey: crypto.randomUUID() }),
+        })
+        // The PATCH receipt is partial: its version must not mark cached metadata
+        // as current. Read the existing authoritative projection for this row.
+        try {
+          const latest = await api(item._material ? '/v2/transfer-master-items?category=material' : '/v2/products')
+          const snapshot = (latest.rows || []).find((row) => (item._material ? row.id : row.productId) === id)
+          if (!snapshot || snapshot.version < data.item.version) throw new Error('商品资料尚未确认')
+          return { snapshot }
+        } catch {
+          // Keep the old metadata version so a later full response can repair it.
+          return { snapshot: { partial: true, purchaseVersion: data.item.version, purchaseEnabled: data.item.purchaseEnabled, procurementSupplierId: data.item.procurementSupplierId }, message: '采购用途已保存；商品资料核对失败，请稍后重试' }
+        }
+      } catch (err) {
+        let message = err.message
+        try {
+          const data = await api(item._material ? '/v2/transfer-master-items?category=material' : '/v2/products')
+          return { snapshot: (data.rows || []).find((row) => (item._material ? row.id : row.productId) === id), message }
+        } catch {
+          return { message: message + '；状态核对失败，请稍后重试' }
+        }
+      }
+    })().finally(() => pendingPurchasePurposes.delete(key))
+    pendingPurchasePurposes.set(key, entry)
+    await watchPurchasePurpose(entry, true)
+  }
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -253,7 +338,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
     try {
       const body = { category: 'material', name: materialEditor.name, enabled: materialEditor.enabled, sortOrder: Number(materialEditor.sortOrder), productCategoryId: materialEditor.productCategoryId, salePriceCents: yuanToCents(materialEditor.salePrice), ...(!materialEditor.id || materialEditor.costVisible ? { costPriceCents: yuanToCents(materialEditor.costPrice) } : {}), partnerReplenishmentEnabled: materialEditor.partnerReplenishmentEnabled, partnerOrderUnit: materialEditor.partnerOrderUnit, partnerMaterialPriceCents: materialEditor.partnerMaterialPrice ? yuanToCents(materialEditor.partnerMaterialPrice) : '', unit: materialEditor.unit, ...(materialEditor.id ? { version: materialEditor.version } : {}) }
       const data = await api(materialEditor.id ? `/v2/transfer-master-items/${materialEditor.id}` : '/v2/transfer-master-items', { method: materialEditor.id ? 'PUT' : 'POST', body: JSON.stringify(body) })
-      setMaterials((current) => materialEditor.id ? current.map((item) => item.id === data.item.id ? data.item : item) : [...current, data.item])
+      setMaterials((current) => materialEditor.id ? current.map((item) => item.id === data.item.id ? mergePurchaseRow(item, data.item, true) : item) : [...current, data.item])
       setMaterialEditor(null); setNotice('物料资料已保存')
     } catch (error) { setError(error.message) } finally { setSaving(false) }
   }
@@ -372,7 +457,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
       })
       const savedById = new Map((data.rows || []).map((item) => [item.productId, item]))
       setProducts((current) => {
-        const next = current.map((item) => savedById.get(item.productId) || item)
+        const next = current.map((item) => savedById.has(item.productId) ? mergePurchaseRow(item, savedById.get(item.productId)) : item)
         const known = new Set(next.map((item) => item.productId))
         for (const item of data.rows || []) if (!known.has(item.productId)) next.push(item)
         return next.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN'))
@@ -427,7 +512,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
       const saved = data.product
       setProducts((current) => {
         const next = current.some((item) => item.productId === saved.productId)
-          ? current.map((item) => item.productId === saved.productId ? saved : item)
+          ? current.map((item) => item.productId === saved.productId ? mergePurchaseRow(item, saved) : item)
           : [...current, saved]
         return next.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN'))
       })
@@ -436,7 +521,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
       setTimeout(() => setNotice(''), 2500)
     } catch (e) {
       if (e.status === 409 && e.data?.latest) {
-        setProducts((current) => current.map((item) => item.productId === e.data.latest.productId ? e.data.latest : item))
+        setProducts((current) => current.map((item) => item.productId === e.data.latest.productId ? mergePurchaseRow(item, e.data.latest) : item))
         setForm(toForm(e.data.latest))
       }
       setError(e.message)
@@ -453,7 +538,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
   const saveProductGroup = async (saved) => {
     setProductGroups((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh-CN')))
     const data = await api('/v2/products')
-    setProducts(data.rows || [])
+    setProducts((current) => mergePurchaseRows(current, data.rows || []))
   }
 
   const applyBulk = async ({ operation, purpose: targetPurpose, enabled }) => {
@@ -462,7 +547,7 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
     try {
       const data = await api('/v2/products/bulk', { method: 'PUT', body: JSON.stringify({ ids: selectedIds, operation, productCategoryId: operation === 'category' ? bulkCategoryId : undefined, purpose: targetPurpose, enabled }) })
       const byId = new Map((data.rows || []).map((item) => [item.productId, item]))
-      setProducts((current) => current.map((item) => byId.get(item.productId) || item))
+      setProducts((current) => current.map((item) => byId.has(item.productId) ? mergePurchaseRow(item, byId.get(item.productId)) : item))
       setSelectedIds([]); setNotice(`已批量更新 ${data.updated || 0} 个商品`)
     } catch (err) { setError(err.message) } finally { setBulkBusy(false) }
   }
@@ -533,7 +618,14 @@ export default function ProductCenterPage({ onBack, user, initialMaterials = fal
                     <span data-testid="product-price" className="mt-1 block shrink-0 text-sm font-black text-budu-700">{item.salePriceCents == null ? '未设零售价' : formatCents(item.salePriceCents)}</span>
                   </div>
                   <div data-testid="product-badges" className="mt-2 flex flex-wrap gap-1.5">{[['POS', item.isActive], ['调拨', item.transferEnabled], ['补货', item.partnerReplenishmentEnabled], ['采购', item.purchaseEnabled]].map(([label, enabled]) => <span key={label} className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{label} {enabled ? '✓' : '—'}</span>)}</div>
-                  {(item._material ? canManageMaterials : canManage) && <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" aria-label={item.name+'可用于采购'} checked={item.purchaseEnabled===true} onChange={e=>{const enabled=e.target.checked;setError('');api('/v2/procurement/items/'+item.productId+'/purchase-purpose',{method:'PATCH',body:JSON.stringify({purchaseEnabled:enabled,version:item.version,requestKey:crypto.randomUUID()})}).then(()=>loadProducts()).catch(e=>setError(e.message));}}/>可用于采购</label>}
+                  {(item._material ? canManageMaterials : canManage) && <>
+                    <label className="mt-2 flex min-h-11 items-center gap-2 text-sm">
+                      <input type="checkbox" aria-label={`${item.name}可用于采购`} aria-busy={purchaseSaving.has(item.productId)} disabled={!purchaseActor || purchaseSaving.has(item.productId)} title={!purchaseActor ? '登录信息未确认，请重新登录' : undefined} checked={item.purchaseEnabled === true} onChange={(event) => savePurchasePurpose(item, event.target.checked)} className="h-4 w-4 shrink-0 accent-budu-500 disabled:opacity-50" />
+                      可用于采购
+                      {purchaseSaving.has(item.productId) && <span role="status" aria-label="采购用途保存中"><Loader2 className="h-4 w-4 animate-spin text-budu-500" aria-hidden="true" /></span>}
+                    </label>
+                    {purchaseErrors[item.productId] && <p role="alert" className="mt-1 text-xs text-rose-600">{purchaseErrors[item.productId]}</p>}
+                  </>}
                   <p data-testid="product-sku" className="mt-2 break-all text-[11px] font-medium leading-4 text-slate-400">SKU&nbsp;&nbsp;{item.sku || '—'}</p>
                   <p data-testid="product-meta" className="mt-0.5 truncate text-[11px] leading-4 text-slate-400">{item.productCategory?.name || '未分类'} · {item.productGroup ? `${item.productGroup.name} / ${item.variantName || '未命名款式'}` : '未分组'} · 排序 {item.sortOrder}</p>
                 </div>
