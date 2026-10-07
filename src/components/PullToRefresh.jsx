@@ -3,6 +3,10 @@ import { ArrowDown } from 'lucide-react'
 
 const THRESHOLD = 64
 const overlayStackOpen = () => document.documentElement.classList.contains('budu-overlay-open')
+const shouldIgnorePullTarget = (target) => {
+  const element = target instanceof Element ? target : target?.parentElement
+  return Boolean(element?.closest('[data-pull-to-refresh-ignore="true"]'))
+}
 
 /** 移动端下拉刷新：页面顶部下拉超过阈值后触发 onRefresh（仅触屏设备） */
 export default function PullToRefresh({ onRefresh, children }) {
@@ -29,7 +33,7 @@ export default function PullToRefresh({ onRefresh, children }) {
     }
 
     const onTouchStart = (e) => {
-      if (refreshing || overlayStackOpen() || window.scrollY > 0) return
+      if (refreshing || overlayStackOpen() || window.scrollY > 0 || shouldIgnorePullTarget(e.target)) return
       const t = e.touches && e.touches[0]
       if (!t) return
       startY.current = t.clientY
@@ -89,6 +93,7 @@ export default function PullToRefresh({ onRefresh, children }) {
     window.addEventListener('touchstart', onTouchStart, { passive: true })
     window.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('touchend', onTouchEnd, { passive: true })
+    window.addEventListener('touchcancel', cancelPull, { passive: true })
     const overlayObserver = new MutationObserver(() => {
       if (overlayStackOpen()) cancelPull()
     })
@@ -98,6 +103,7 @@ export default function PullToRefresh({ onRefresh, children }) {
       window.removeEventListener('touchstart', onTouchStart)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('touchcancel', cancelPull)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshing, onRefresh])

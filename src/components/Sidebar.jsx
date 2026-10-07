@@ -85,6 +85,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
 
   return (
     <aside
+      data-pull-to-refresh-ignore="true"
       className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white/95 backdrop-blur transition-transform duration-300 lg:sticky lg:top-0 lg:z-30 lg:h-screen lg:translate-x-0 lg:bg-white ${
         open ? 'translate-x-0' : '-translate-x-full'
       }`}
@@ -96,7 +97,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
       </div>
 
       {/* 菜单（移动端内容超出时可滚动，底部渐变提示可继续滑动） */}
-      <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-4">
+      <nav className="relative flex-1 space-y-1.5 overflow-y-auto overscroll-y-contain px-4">
         <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
           {t('运营管理')}
         </p>
