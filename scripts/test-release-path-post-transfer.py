@@ -192,7 +192,87 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
                                                     'procurement_controller_ci_guard': 'e3eb96dfa3fdaaa19b19f90b729d70ce300806fec92f25438eba0c93525322a8'}}
 
 
+
+# Preserve historical source pins by projecting only the exact reviewed mobile
+# binding back to its frozen parent. Any altered guard or unpinned node fails.
+THIN_CLONE_FIX_NODE_HASHES = {'bg_release_base': '7a237db359bae4a0f4b5060d4a0c3c6e468f759128feed8795bb047db9d6a81b', 'bg_clone': '9427e5c4b0fa1cf23b717cda7d2adf5ebd8cb737f99ff23d932447eb8b2cf913', 'THIN_CLONE_FIX_PARENT': '43b5a97145d24de2c4d39f55d9b1dddd150a42c0c41eca27e17b4e0667207241', 'thin_identity': 'c744f9855d810fe930840ccfd2ba2e4581003c6bd16ba565220d2dd02b16f22a', 'thin_clone_source': '047d4f9b04f710f519dab64c583f860cba9a7d6ecc4a38fcb9f9f5be3f7b446a'}
+
+PURCHASE_UI_NODE_HASHES = {'PURCHASE_UI_BRANCH': '923f3c0e86b65663f098be48c01f4da0f27c8e9bf31db928baf271f4808e9adf', 'PURCHASE_UI_BUSINESS_SHA': '724b32db4e263b8642551362439b7ca9ab658b6949130696480abf8f7be0848f', 'PURCHASE_UI_ENGINEERING_SOURCE': '5939dbafa29bf14a60cc09ed08024f2e2d5ebb7f9383d61abc5d5316ee363967', 'PURCHASE_UI_LIVE_BINDING': '6102b6787213c4e6052d6e438021d472d58ee116368fbd6d710af8abf3cac585', 'PURCHASE_UI_SOURCE_HASH': 'ecbbaa0ab7aeabbc4ff758a8e5e22e8347159663de5cb29590ad1c555baac6ae', 'PURCHASE_UI_SOURCE_PARENT': '5c4766f3ea55ac1cc5a14c7a63a1816ab45575a533e3d82977fa505c3ade5a6c', 'Remote': '2a693e064f53efeb185e84cbbb82f324d23623ee16f39eadc368cda859d17c5a', 'bg_hotfix_base': '9245d17c6f794ff27e1f415b7233513416e2bea32f3d9800a33286797253f9d0', 'bg_release_base': '5675eed60ee7936f5c2a9ad425d7fc942963639a941944e04ace52a763f74dbe', 'mobile_frontend_manifest': '2191f20e923aeb1a5969df2b68e60999dd0d4d7ab62e2aaf63a5354cb0097b11', 'mobile_frontend_probe': '169b0febeff8a7613d2eccc2704d59f44e96f5e1185c2fda086bdcd2a6ca26b9', 'mobile_hotfix': 'd139f50d2e2994250749f2fc1042c8626b31ceb40c1b5d76b4b0d7467c41b33e', 'purchase_ui_binding': '17fd3ed1bb4355be04b3ed329510925ef46debe2523a0cd6b14fdc7a2353ee3a', 'purchase_ui_hotfix': 'bc3718a60ba3ca87e6fa51959f0a0f600cf26b0aac71f32a8ef9ed149654ddd1', 'purchase_ui_identity': '14dd372f5dca40dc769c8cb30ce90375279af9a08032be57d760c1e63083570c', 'thin_build': '9fbef54103d35ccb2833bea6e1d30c9ba4984c7a82150a78148ac1449a3fcf67', 'thin_business_sha': '250405698981de60658b5fed5acc59aa10f5c6b7149191711f744dadf27cf4d8', 'thin_clone_source': '77cb21f116ac4bda214c76705ea4abc9c7ffbd21256b56f9ee7dd94ba553a6a4', 'thin_deploy': 'b036c17c5cc81610618e6f805f44ef9737913306495493e71e2bafc10de9dee2', 'thin_dockerfile': 'e062a44989a21696e174474243af5436c6ed5e76a32e02abd77684d41c99a15e', 'thin_identity': 'f05bddf4a12c14ac24f93245fb42aba971f69e795a90b615bf53e5d1ab81a9bf', 'thin_image_verify': 'ddfe8b7153ea8a79f517fd08540584f350975b2121957d4de09188bfde728fef', 'thin_live_sha': '222435c5733907432b2802aa0d0ba584610a87100b837dec353138cc99650ae7', 'thin_manifest': '8210005f001597c39887fed4a13ceba830b6dc2f14c10aa7dcea6495c798b1fc', 'thin_preflight': 'f8461b237c4acbf5cddc8f443fb5dc2daad9dc851cd0a9521b7a60c7aa8153d9'}
+
+def purchase_ui_baseline_source(source):
+    if 'PURCHASE_UI_LIVE_BINDING =' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show','29ed604124c9fc6981f08cbc20c21ff4f7c0b851:scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        lines=value.splitlines(keepends=True);result={}
+        for n in ast.parse(value).body:
+            key=n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)
+            parts=lines[n.lineno-1:n.end_lineno];parts[-1]=parts[-1][:n.end_col_offset];parts[0]=parts[0][n.col_offset:]
+            result[key]=''.join(parts)
+        return result
+    before=nodes(prior);after=nodes(source)
+    assert not set(before)-set(after)
+    assert {k for k,v in after.items() if before.get(k)!=v}==set(PURCHASE_UI_NODE_HASHES)
+    for k,h in PURCHASE_UI_NODE_HASHES.items():assert hashlib.sha256(after[k].encode()).hexdigest()==h,k
+    return prior
+
+def thin_clone_fix_baseline_source(source):
+    source=purchase_ui_baseline_source(source)
+    if 'THIN_CLONE_FIX_PARENT =' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show','8a600f3bda413786b266a9776d86ac0f64b47817:scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        lines=value.splitlines(keepends=True);result={}
+        for n in ast.parse(value).body:
+            key=n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)
+            parts=lines[n.lineno-1:n.end_lineno];parts[-1]=parts[-1][:n.end_col_offset];parts[0]=parts[0][n.col_offset:]
+            result[key]=''.join(parts)
+        return result
+    before=nodes(prior);after=nodes(source)
+    assert not set(before)-set(after)
+    assert {k for k,v in after.items() if before.get(k)!=v}==set(THIN_CLONE_FIX_NODE_HASHES)
+    for k,h in THIN_CLONE_FIX_NODE_HASHES.items():assert hashlib.sha256(after[k].encode()).hexdigest()==h,k
+    return prior
+
+THIN_CONTROLLER_NODE_HASHES = {'configure_profile': '7ad8f1487eaf3d512248d53eb4c83866b0b044d69f2e9abb074eeca9ddb4fedd', 'bg_release_base': 'b5924e364606de917f7afbcb0745119a57cdd5fbc70fb50bb669c0e07527e987', 'validate_post_transfer_identity': 'bb8fe65edd4d4e658adc49d25444a91d0c53a3353da4da6afe7680dab53ae40a', 'bg_bind': 'a0bc68fdc0b070a0817c8aba43e3af5c01c2a3a833d292990174d7c2dba7a893', 'bg_execute': '3d480a22b61519bc15c6c7536a21fb36b6b2091f006b99eba8d13e6a29708e01', 'bg_deploy': 'f2716f0a09d620c347e78df71b5e731be595ed579886a6adb428660f9e906cbb', 'THIN_LIVE_BASE': 'df0f5ee353e595d7eb1af62225cd08153a15c74f5ecb73b2bf2e6018801812ce', 'THIN_RELEASE_PARENT': 'b3e845c60ca52a83ec464e4b66a6a8a6a0f0e070dc243ed1544a3d40b00a3672', 'THIN_BUSINESS_SHA': 'ae68b1738a323f32c5842bf7514e5705cd2a4d30ee5db789c56d3516b26c5a8b', 'THIN_PROFILE': '02e285f1744a369f816d9d6cfcab016722172c28518bf14501a259ab46305a47', 'THIN_MODE': '9ba49e8e01d71a439a7392d8bf330df2cbc61c8a69b2a1cc9e36aa7f1dfd2d9f', 'THIN_IDENTITY': '52f36e04813924ccc0a2ea53eb81b7698c99f980fbcb6baba6e4c263b8f1d5c7', 'THIN_MAX_PACKAGE': 'abf1e655d8c3c580cc21b83bbd9b0107907707fe3f2fdacbb331fbbb81136742', 'thin_identity': '7959cbe5abc20491359077253d7a009ae7cebffa63b0051fb0057ccffb1ad3e7', 'thin_manifest': 'c9c8b6e02c738b2f2ce32a80e496bc0c6e5168d83adae070cb1a14fa0cce42bb', 'thin_dockerfile': '8b9e9c5ea0683ab86927bba9ac56dc2fff4f16875961206c12f665142ab888f9', 'thin_package': '2aea76c648e99745a2d6d395fba88d4a3822a4d316d0932118a7ab72db3ce4ff', 'thin_read_package': '9804d5de44376a22de52cbef168c56604e082e5937e63deb76edc4b99b9cdef8', 'thin_allowed': 'fed20e83335dd0b48a5a28504a6ab9f9318a30d11d587a7b4377e580ef3dce80', 'thin_budget': 'c871b4abcc1fa10528ecf52fd804c4590b6fe5cbec1ff7caf1ceb3e5ee867b79', 'mobile_art_profile': 'e5e046c6a690550f28f203edee08f0a401945afe16edc95b6ae5056161827386', 'bg_e_budget': '4530a066ba9661a152ab6a249940f905cb69137b1a5f76f0a6cd9a5952354011', 'bg_e_barrier': '71520b65551df8758ae3f168c4a9fa27d4f62c1aa27785eaeee39bd2f8201f06', 'thin_image_verify': '5c1505234c1cb9e3856511608d33fd0a8ca5efc33dc15447f3287067de577f5a', 'THIN_TREE_PROBE': '298778316807e02deaf9c49301df2c9771a09be13e696c1e505f7931aa8c3e17', 'thin_tree_verify': '56adfe9aafeac64791949c818427043197bd1d2af5dd448961f820d40a58ead1', 'thin_preflight': '8dc48c39199df17e7feb282d6127d7755efa5c59f57d892ebf19c624393abb5b', 'thin_build': 'ca0b7120f8092addc4bc3b081b25bcb78955664d3205c3235bf388584fbc6494', 'thin_deploy': 'ce74617cd9dac5439e84ad356f68efddebbd9fb70229a160e41614b427e843bb', 'main': '03f2cd7ce329525b42affdd00c41b98a3978c0473d99638ee8317b421c803735'}
+
+def thin_baseline_source(source):
+    source=thin_clone_fix_baseline_source(source)
+    if 'MOBILE_THIN_DERIVATIVE_E' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        lines=value.splitlines(keepends=True);result={}
+        for n in ast.parse(value).body:
+            key=n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)
+            parts=lines[n.lineno-1:n.end_lineno];parts[-1]=parts[-1][:n.end_col_offset];parts[0]=parts[0][n.col_offset:]
+            result[key]=(n,''.join(parts))
+        return result
+    before=nodes(prior);after=nodes(source)
+    assert not set(before)-set(after)
+    assert {k for k,v in after.items() if k not in before or before[k][1]!=v[1]} == set(THIN_CONTROLLER_NODE_HASHES)
+    for k,h in THIN_CONTROLLER_NODE_HASHES.items():assert hashlib.sha256(after[k][1].encode()).hexdigest()==h,k
+    return prior
+
+MOBILE_CONTROLLER_NODE_HASHES = {'runtime_payload': '182030d7b6e3f7b9b2baa65b65ea4f0f99c4492109e25d48a93c23e65a47bd87', 'configure_profile': '7e61c1eb5227fca906ccd347831c280e38abde0466ae77da4f5a06a39fd755c0', 'MOBILE_HOTFIX_LIVE_BASE': '25a4c927e659e323ddb3b5de8c07c263590f305e135b2d1daaad7f792e033b2f', 'MOBILE_HOTFIX_BUSINESS_PARENT': '44e39800f996da79c96392f77243b7a4f86e8ef15ab7e5f4658018b4bd164885', 'MOBILE_HOTFIX_BRANCH': 'b4d3169896c381ffd5176eebe3be5a9b01c4a5ff5270d68fb5e6ec9118044df0', 'MOBILE_HOTFIX_BUSINESS_FILES': 'd4dea44c54b8026fe0f90f2df8be1f149fb78b0ec87dd0b0cffb7d8936305e67', 'MOBILE_HOTFIX_TEST_FILES': '11714dafa2db20ebee722dbd25bff4fe10d0cb293520bddcc42afc63049eb647', 'MOBILE_HOTFIX_RELEASE_FILES': '212a7d2a0841f3a010c369e06c4ccd0afb2645d69f3a528644fdfa705070ebe0', 'MOBILE_HOTFIX_PROFILE': '21527ca0e6f3af00c56b8bb461be991718ab514cd0dfb66bf275f1b33a7c6266', 'MOBILE_HOTFIX_IDENTITY': '061544dbbb4b62d705390c665368a3a8d0ffead92c7fe5242301888764f4d336', 'mobile_hotfix': 'e1d061d7f2bf75b024a7679b1483b9a09f813cfab06e17aa52c8d042869e8f1b', 'validate_mobile_hotfix_identity': '5da29b293c7fa62dd8bebb826f31f3591e3c066831a9570af0a2c2da1f4a1d9d', 'mobile_frontend_manifest': 'e10ef04f92a238aacd81c532925a28c205f7e8f8e8c451dc3384adcc9bdaf62d', 'mobile_frontend_probe': '0d233a2eb2bb3cc57d3509533745f4788797163761c6e09ed75fbb3221ec1bcf', 'configure_capacity_waiver': '11e00cc232ff91f11f3e16d3c3ad952bb1ea5f7bf4fcfe2c750a054ed834f275', 'procurement_hotfix': 'ae37fb2d97afa5cb2412011f91bad8cb31878b5527c4bf2b1f5cc10c31bbf54c', 'bg_hotfix_base': '84bf8b266b4c1b7a085eaf85c378986c46ec91d76abc0457b78cbdc3fb9d25af', 'bg_hotfix_files': 'ae2881b60d356c383bcb0acec7a49e220d1e5691002927b50cd78160b25be47b', 'bg_release_base': 'd6fb1d729a0f1d568c9f522ab85d095b2eef0610c23de8b45ca09726938c95e6', 'validate_post_transfer_identity': 'd7806c48101c8c8f9b66ed69d25cc27c7da66c197a03abf20296e6233f9a5d44', 'identity': '6b9202429eee7ae8563bfee2eb936c86ff642e00df1f33d945d65645992e7b0e', 'artifact': '4f36a7e59c268a6f8a59179adc64bed6d50564748ce0594ef45c671ac1ff79df', 'Remote': '17e636aacaa781b6dfef79c453bbee120d771b3146b7494664c40f9a4887857e', 'bg_bind': 'c4ce09ce20b54c45b20f66707d3958b820004442448a0ba453e2ec0af606aa0a', 'bg_execute': 'bdd56aa5a6466781ea563551272c35ab64b91f4c3991b34aa0196ca26ee7498b', 'bg_deploy': '01e389f06c95a5f228777007e16345f0c7fa8c1df76578227481c5b5a9fef3f1', 'main': '48f2f2ca442941596b04a4c597756959c62766231ab1eb9ba0c8f67e47e6b02f'}
+
+def mobile_baseline_source(source):
+    source=thin_baseline_source(source)
+    if 'MOBILE_SIDEBAR_REFRESH_HOTFIX' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):(n,ast.get_source_segment(value,n)) for n in ast.parse(value).body}
+    before=nodes(prior);after=nodes(source);edits=[];lines=prior.splitlines(keepends=True)
+    assert not (set(before)-set(after))
+    assert set(after)-set(before)<=set(MOBILE_CONTROLLER_NODE_HASHES)
+    for name,expected in MOBILE_CONTROLLER_NODE_HASHES.items():
+        _,body=after[name]
+        assert hashlib.sha256(body.encode()).hexdigest()==expected,name
+    for name,(node,body) in before.items():
+        if name not in MOBILE_CONTROLLER_NODE_HASHES and after[name][1]!=body:
+            edits.append((node.lineno-1,node.end_lineno,after[name][1]+'\n'))
+    for start,end,replacement in sorted(edits,reverse=True):lines[start:end]=[replacement]
+    return ''.join(lines)
+
 def procurement_prior_source(source):
+    source=mobile_baseline_source(source)
     if 'def b1_capacity_gate(' in source:path='scripts/deploy-prod-transfer-cas.py'
     elif 'def b1_import_ci(' in source:path='scripts/test-candidate-db-probe-integration.py'
     elif "refs/heads/codex/purchase-receipt-b1-capacity-fasttrack" in source and source.startswith('name:'):path='.github/workflows/release-build-only.yml'
@@ -1914,7 +1994,7 @@ class BlueGreenSourceTests(unittest.TestCase):
 
 class ProcurementHotfixSourceTests(unittest.TestCase):
     def test_only_finite_binding_and_existing_BG_path_changed(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_HOTFIX_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             lines=value.splitlines(keepends=True)
@@ -1938,7 +2018,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
             original=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_HOTFIX_BASE+':'+path])
             self.assertEqual((ROOT/path).read_bytes(),original,path)
     def test_source_pins_reject_noncapacity_guard_changes(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         for old,new in [("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),("'BG_LIFECYCLE_FAILED'","'IGNORED'"),("require(rc==0,'B2_IMPORT_UNKNOWN')",'pass')]:
             self.assertIn(old,source)
             with self.assertRaises(AssertionError):procurement_prior_source(source.replace(old,new,1))
@@ -1946,7 +2026,7 @@ class ProcurementHotfixSourceTests(unittest.TestCase):
 
 class TransferCacheHotfixSourceTests(unittest.TestCase):
     def test_controller_changes_only_finite_identity_binding_nodes(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_TRANSFER_BASE+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             lines=value.splitlines(keepends=True)
@@ -1981,7 +2061,7 @@ class TransferCacheHotfixSourceTests(unittest.TestCase):
 
 class FinalHotfixBundleSourceTests(unittest.TestCase):
     def test_only_exact_binding_nodes_change_and_business_is_frozen(self):
-        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        current=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):
             return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
@@ -1997,11 +2077,154 @@ class FinalHotfixBundleSourceTests(unittest.TestCase):
     def test_core_guards_transport_and_handover_unchanged(self):
         prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.BG_BUNDLE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         before={n.name:ast.get_source_segment(prior,n) for n in ast.parse(prior).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        current=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        current=mobile_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         after={n.name:ast.get_source_segment(current,n) for n in ast.parse(current).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         self.assertEqual(after['bg_g_guard'],before['bg_g_guard'].replace('    return g,db',"    if RUNTIME_SHA==BG_BUNDLE_BASE and state.get('candidateId'):\n        proof=bg_bundle_read_probe(remote,state['candidate'],live['TRANSFER_RECORD_ID'],value['art']['release'],'standby')\n        state['bundleReadonlyProof']=proof\n        bg_bundle_reset_standby(remote,value,state)\n        print(json.dumps({'stage':'FINAL_HOTFIX_BUNDLE_STANDBY_READ_PASS',\n                          'proof':{k:proof[k] for k in ('referenceId','transferPgAuthority','transferApiAuthority','procurementReadonly','counts')}}),flush=True)\n    return g,db"))
         for name in ('b1_capacity_gate','b1_stage','b1_storage','b2_barrier','validate_database','writer_check','application_db_probe','bg_lock','bg_execute','bg_deploy','bg_clone','bg_lifecycle','bg_promote','bg_recover_g','bg_import','replace_routes'):
             self.assertEqual(before[name],after[name],name)
+
+
+
+class MobileSidebarSourceTests(unittest.TestCase):
+    def sources(self):
+        after=thin_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
+        return before,after,nodes(before),nodes(after)
+    def test_independent_finite_binding_is_the_only_source_change(self):
+        before,after,b,a=self.sources()
+        self.assertFalse(set(b)-set(a))
+        self.assertEqual({k for k,v in a.items() if b.get(k)!=v},set(MOBILE_CONTROLLER_NODE_HASHES))
+        self.assertEqual(mobile_baseline_source(after).strip(),before.strip())
+        self.assertEqual(r.MOBILE_HOTFIX_LIVE_BASE,'d9d992a91a072a683b5309117f5313678649aba5')
+        self.assertEqual(r.MOBILE_HOTFIX_BUSINESS_PARENT,'d037b1f9c3b1e7b3fd4ea367ee61922a2ca2ba58')
+        self.assertEqual(r.MOBILE_HOTFIX_BUSINESS_FILES,{'src/components/PullToRefresh.jsx','src/components/Sidebar.jsx'})
+        self.assertEqual(r.MOBILE_HOTFIX_TEST_FILES,{'tests/pull-to-refresh-harness.html','tests/pull-to-refresh.spec.mjs','playwright.pull-to-refresh.config.mjs'})
+        self.assertEqual(r.MOBILE_HOTFIX_RELEASE_FILES,{'scripts/deploy-prod-transfer-cas.py','scripts/test-purchase-receipt-release-contract.py','scripts/test-release-path-post-transfer.py'})
+    def test_capacity_writer_db_import_and_lifecycle_guards_unchanged(self):
+        _,_,before,after=self.sources()
+        for name in ('b1_capacity_gate','b1_storage','b2_barrier','writer_check','validate_database','application_db_probe','bg_clone','bg_lifecycle','bg_promote','bg_recover_g','bg_import','bg_g_guard','bg_lock','replace_routes'):
+            self.assertEqual(before[name],after[name],name)
+        for name in ('ABSOLUTE_MAX_PEAK','MIN_PROJECTED_AVAILABLE','MAX_PROJECTED_USAGE','RESERVE'):
+            self.assertEqual(before[name],after[name],name)
+        token='        # No interposed off-host action: stop G -> prove zero -> promote -> route E.'
+        self.assertEqual(before['bg_execute'].split(token)[1],after['bg_execute'].split(token)[1])
+        self.assertIn("if mobile_hotfix(): mobile_frontend_probe(remote, name, art)",after['bg_execute'].split(token)[0])
+    def test_frozen_business_and_migration_have_no_release_edits(self):
+        expected=r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES
+        # Keep this historical business assertion on its frozen source; the new
+        # purchase UI layer is checked independently below against that source.
+        frozen=[r.PURCHASE_UI_SOURCE_PARENT] if hasattr(r,'PURCHASE_UI_SOURCE_PARENT') else []
+        actual=set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,*frozen,'--','src','server','shared','prisma','tests','playwright.pull-to-refresh.config.mjs'],text=True).splitlines())
+        self.assertEqual(actual,expected)
+        for path in ('server/app.js','server/index.js','prisma/schema.prisma','Dockerfile','package.json','package-lock.json'):
+            self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_LIVE_BASE+':'+path]),path)
+    def test_source_pins_fail_when_a_real_guard_is_weakened(self):
+        _,source,_,_=self.sources()
+        for old,new in [("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),('ABSOLUTE_MAX_PEAK = 6 * GIB','ABSOLUTE_MAX_PEAK = 60 * GIB')]:
+            self.assertIn(old,source)
+            with self.assertRaises(AssertionError):procurement_prior_source(source.replace(old,new,1))
+    def test_mobile_remote_checks_agent_before_listing_and_signing(self):
+        _,_,_,after=self.sources();body=after['Remote']
+        self.assertLess(body.index("os.environ.get('SSH_AUTH_SOCK') == socket"),body.index("command(['ssh-add', '-l']"))
+        for token in ('/Users/apple/.ssh/budu_bj_migration','IdentitiesOnly=yes','IdentityAgent=','StrictHostKeyChecking=yes','SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ','(ED25519)'):self.assertIn(token,body)
+
+class MobileThinSourceTests(unittest.TestCase):
+    def test_only_exact_extension_nodes_are_changed(self):
+        source=thin_clone_fix_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        self.assertEqual(thin_baseline_source(source).strip(),before.strip())
+    def test_existing_writer_db_lifecycle_capacity_and_cutover_are_preserved(self):
+        source=thin_clone_fix_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):return {n.name:ast.get_source_segment(value,n) for n in ast.parse(value).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        a=nodes(source);b=nodes(before)
+        for name in ('b1_capacity_gate','b1_storage','b2_barrier','writer_check','validate_database','application_db_probe','bg_clone',
+                     'bg_lifecycle','bg_promote','bg_recover_g','bg_g_guard','bg_lock','replace_routes','Remote','bg_owned_stop'):
+            self.assertEqual(a[name],b[name],name)
+        token='        # No interposed off-host action: stop G -> prove zero -> promote -> route E.'
+        self.assertEqual(a['bg_execute'].split(token)[1],b['bg_execute'].split(token)[1])
+    def test_runtime_business_and_tests_are_frozen(self):
+        self.assertEqual(r.THIN_RELEASE_PARENT,'43880068415f3124a93d6c3311a11706f1225043')
+        self.assertEqual(r.THIN_LIVE_BASE,r.MOBILE_HOTFIX_LIVE_BASE);self.assertEqual(r.THIN_BUSINESS_SHA,r.MOBILE_HOTFIX_BUSINESS_PARENT)
+        for p in r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|{'Dockerfile','package.json','package-lock.json'}:
+            self.assertEqual((ROOT/p).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':'+p]))
+        frozen=[r.PURCHASE_UI_SOURCE_PARENT] if hasattr(r,'PURCHASE_UI_SOURCE_PARENT') else []
+        changed=set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.THIN_RELEASE_PARENT,*frozen],text=True).splitlines())
+        self.assertEqual(changed,r.MOBILE_HOTFIX_RELEASE_FILES)
+    def test_mutations_to_new_or_existing_guards_fail_closed(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for old,new in [('1<=len(after)-len(before)<=3','True'),('projected >= MIN_PROJECTED_AVAILABLE','True'),
+                        ('reply==probe','True'),("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),
+                        ('THIN_RELEASE_PARENT = \'43880068415f3124a93d6c3311a11706f1225043\'','THIN_RELEASE_PARENT = \'wrong\'')]:
+            self.assertIn(old,source)
+            with self.subTest(old=old),self.assertRaises(AssertionError):thin_baseline_source(source.replace(old,new,1))
+    def test_network_disabled_package_whitelist_and_before_stop_proofs(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for fn in ('thin_dockerfile','thin_package','thin_build','thin_deploy'):
+            node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name==fn)
+            body=ast.get_source_segment(source,node)
+            for forbidden in ('docker system prune','docker volume','apt-get','npm install','prisma generate','b1_fixed_r('):self.assertNotIn(forbidden,body)
+        body=ast.get_source_segment(source,next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='thin_build'))
+        self.assertLess(body.index("'THIN_CONTEXT_EXTRACTED'"),body.index("['docker','build'"))
+        self.assertLess(body.index('thin_image_verify('),body.index('thin_tree_verify('))
+        self.assertIn("'--pull=false','--network=none'",body)
+
+
+class ThinCloneFixSourceTests(unittest.TestCase):
+    def test_exact_adapter_nodes_and_generic_clone_guard_remain_strict(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=thin_clone_fix_baseline_source(source)
+        self.assertEqual(set(THIN_CLONE_FIX_NODE_HASHES),{'bg_clone','bg_release_base','THIN_CLONE_FIX_PARENT','thin_identity','thin_clone_source'})
+        def node(value,name):return ast.get_source_segment(value,next(n for n in ast.parse(value).body if isinstance(n,ast.FunctionDef) and n.name==name))
+        self.assertEqual(node(source,'clone_parity'),node(prior,'clone_parity'))
+        self.assertEqual(node(source,'bg_clone'),node(prior,'bg_clone').replace('expected=copy.deepcopy(g);','expected=thin_clone_source(g,art);'))
+        self.assertEqual(r.THIN_CLONE_FIX_PARENT,'8a600f3bda413786b266a9776d86ac0f64b47817')
+    def test_provenance_and_original_label_guard_mutations_are_rejected(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for old,new in [("g['Image']==art['baseImageId']",'True'),("new['Config']['Labels'] == labels",'True')]:
+            self.assertIn(old,source)
+            with self.assertRaises(AssertionError):thin_clone_fix_baseline_source(source.replace(old,new,1))
+
+
+class PurchaseUIThinSourceTests(unittest.TestCase):
+    def test_business_commit_and_working_tree_have_only_frozen_ui_and_three_engineering_files(self):
+        parents=subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.PURCHASE_UI_BUSINESS_SHA],text=True).split()
+        self.assertEqual(parents,[r.PURCHASE_UI_BUSINESS_SHA,r.PURCHASE_UI_SOURCE_PARENT])
+        def changed(*refs):
+            return set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',*refs],text=True).splitlines())
+        self.assertEqual(changed(r.PURCHASE_UI_SOURCE_PARENT,r.PURCHASE_UI_BUSINESS_SHA),{'src/components/ProductCenterPage.jsx'})
+        self.assertEqual(changed(r.PURCHASE_UI_BUSINESS_SHA),r.MOBILE_HOTFIX_RELEASE_FILES)
+        self.assertEqual(hashlib.sha256((ROOT/'src/components/ProductCenterPage.jsx').read_bytes()).hexdigest(),r.PURCHASE_UI_SOURCE_HASH)
+        for path in r.MOBILE_HOTFIX_BUSINESS_FILES|{'Dockerfile','package.json','package-lock.json','server/app.js','server/index.js','prisma/schema.prisma'}:
+            self.assertEqual((ROOT/path).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.PURCHASE_UI_SOURCE_PARENT+':'+path]),path)
+    def test_exact_adapter_nodes_preserve_existing_execution_auth_and_capacity_guards(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=purchase_ui_baseline_source(source)
+        def nodes(value):
+            return {n.name:ast.get_source_segment(value,n) for n in ast.parse(value).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        a=nodes(source);b=nodes(prior)
+        for name in ('configure_profile','configure_capacity_waiver','clone_parity','bg_g_guard',
+                     'bg_lock','bg_lifecycle','bg_capacity','bg_execute','thin_allowed','thin_budget',
+                     'thin_tree_verify','identity','validate_post_transfer_identity','main'):
+            self.assertEqual(a[name],b[name],name)
+        self.assertEqual(a['thin_image_verify'],b['thin_image_verify'].replace('THIN_LIVE_BASE','thin_live_sha()'))
+        self.assertEqual(r.PURCHASE_UI_BUSINESS_SHA,'c8667d324abb132c3c7badb0ce2b6454608ec4c4')
+        self.assertEqual(r.PURCHASE_UI_SOURCE_PARENT,'d9d992a91a072a683b5309117f5313678649aba5')
+        self.assertEqual(r.PURCHASE_UI_ENGINEERING_SOURCE,'29ed604124c9fc6981f08cbc20c21ff4f7c0b851')
+    def test_provenance_auth_capacity_lock_writer_and_runtime_guard_mutations_are_rejected(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for old,new in [("labels == binding['containerLabels']",'True'),
+                        ('MIN_PROJECTED_AVAILABLE = 10 * GIB','MIN_PROJECTED_AVAILABLE = 9 * GIB'),
+                        ("socket.startswith('/private/tmp/budu-mobile-isolated-entry-')",'True'),
+                        ("require(not lock['present'],'PRODUCTION_STATE_CHANGED')",'pass'),
+                        ('writer_check(rows,db,names)','pass'),
+                        ("'DOCKER_BUILDKIT=0'","'DOCKER_BUILDKIT=1'"),
+                        ("socket = purchase_ui_binding()['agentSocket']","socket = os.environ.get('SSH_AUTH_SOCK')"),
+                        ("'server', 'brand/web', 'shared', 'src/utils', 'prisma'","'brand/web', 'shared', 'src/utils'")]:
+            self.assertIn(old,source)
+            with self.subTest(old=old),self.assertRaises(AssertionError):purchase_ui_baseline_source(source.replace(old,new,1))
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

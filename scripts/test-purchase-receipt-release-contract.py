@@ -1592,15 +1592,19 @@ assert.deepEqual(calls,['app','online','wechat_pay','alipay','refund']);assert.e
         self.assertEqual(output,b'BG_BACKGROUND_LIFECYCLE_PASS\n')
 
 class BlueGreenControllerTests(unittest.TestCase):
-    def attempt(self,fault=None,hotfix=False,hotfix_base=None):
-        base=(hotfix_base or r.BG_HOTFIX_BASE) if hotfix else C['rollbackSha']
-        r.configure_profile('post-transfer',base,base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
-        r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
+    def attempt(self,fault=None,hotfix=False,hotfix_base=None,mobile=False,thin=False):
+        base=r.MOBILE_HOTFIX_LIVE_BASE if mobile else (hotfix_base or r.BG_HOTFIX_BASE) if hotfix else C['rollbackSha']
+        r.configure_profile('post-transfer',base,r.MOBILE_HOTFIX_BUSINESS_PARENT if mobile else base if hotfix else C['businessSha'],'0'*64);r.BG_ACTIVE=True
+        r.MOBILE_HOTFIX_IDENTITY=mobile
+        if not mobile:r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.bg_release_base()},{'release':'a'*40,'capacityProfile':'B2'},emit=False)
         events=[];route=['G'];running={'G':True,'E':False};promoted=[False];dbcount=[88 if hotfix else 87]
         g={'Id':'g'*64,'Image':'sha256:'+'b'*64,'State':{'Running':True},'HostConfig':{'NetworkMode':'n'}}
         live={'LIVE_G_CONTAINER':'G','LIVE_G_CONTAINER_ID':g['Id'],'LIVE_G_IMAGE_ID':g['Image'],'LIVE_G_SHA':base,'POINTER_SHA':base if hotfix else C['oldSha']}
         template=' '.join(['proxy_pass http://G:3000;']*3)
-        art={'release':'a'*40,'capacityProfile':'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
+        art={'release':'a'*40,'capacityProfile':r.MOBILE_HOTFIX_PROFILE if mobile else 'B2','config':{},'runtimeHash':'h','imageReference':'image','archive':100,'blobs':200,'expanded':300,'largest':100}
+        if thin:
+            r.THIN_MODE=r.THIN_IDENTITY=True
+            art.update(thin=True,capacityProfile=r.THIN_PROFILE,thinPeak=r.GIB)
         proof={'result':'PASS','oldRuntimeExactSource':C['rollbackSha'],'additiveMigrationSqlHash':C['sqlHash'],'oldPrismaDb88':'PASS','oldInternalHealthDb88':'PASS','pgVersion':'16.14'}
         v={'art':art,'live':live,'ledger':LEDGER,'template':template,'active':template,'compatibilityProof':proof,'migrationSql':(ROOT/'prisma/migrations'/C['migration']/'migration.sql').read_text()}
         def event(e):
@@ -1643,10 +1647,14 @@ class BlueGreenControllerTests(unittest.TestCase):
             raise AssertionError('unknown helper')
         def lock(*args):event('lock-'+args[2]);return {}
         patches={'bg_g_guard':gguard,'validate_clone_source':lambda *a:None,'b1_storage':lambda *a:True,'bg_lock':lock,'shipping_resources':lambda *a:{'walLimit':1,'migratorLimit':1},'bg_capacity':lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]}),'resolve_loaded_image':lambda *a:{'Id':'sha256:'+'c'*64},'b2_barrier':lambda *a:True,'bg_script':script,'bg_clone':clone,'bg_lifecycle':lifecycle,'mount_readability':lambda *a:[],'runtime_checks':lambda *a:event('runtime'),'application_db_probe':lambda *a:event('dbProbe'),'bg_writer':writer,'bg_promote':promote,'replace_routes':routes,'write_authority':pointer,'bg_owned_stop':ownedstop,'bg_recover_g':lambda *a:event('recoverGActive')}
+        if mobile:patches['mobile_frontend_probe']=lambda *a:event('mobileAssets')
+        if thin:
+            patches['thin_budget']=lambda remote,art,*a:art.setdefault('capacityLedger',{'baselineCommitted':[]})
+            patches['bg_e_barrier']=lambda *a:event('thinBarrier')
         with contextlib.ExitStack() as stack:
             for name,fn in patches.items():stack.enter_context(patch.object(r,name,side_effect=fn))
             result=r.bg_execute(remote,v,lambda root:{'serverSha256BeforeImport':True})
-        r.BG_ACTIVE=False
+        r.BG_ACTIVE=False;r.MOBILE_HOTFIX_IDENTITY=False;r.THIN_MODE=r.THIN_IDENTITY=False
         return result,events,running,route
     def test_success_exact_handover_order(self):
         result,e,run,route=self.attempt();self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertTrue(result['releaseLockReleased'])
@@ -1964,5 +1972,519 @@ if(failed!==value.fail)process.exit(1);if(!calls.length||calls.some(c=>c[0]!=='G
         with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
         proof['referenceId']='tr-approved';proof['transferApiAuthority']='FAIL'
         with self.assertRaises(r.GateError):r.bg_bundle_read_probe(remote,'E','tr-approved','a'*40,'standby')
+
+
+
+class MobileSidebarReleaseTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT,'0'*64)
+        r.BG_ACTIVE=True
+    def tearDown(self):
+        r.BG_ACTIVE=False;r.MOBILE_HOTFIX_IDENTITY=False;r.CAPACITY_WAIVER=None
+    def git_fixture(self,changes=None):
+        release='a'*40
+        answers={('branch','--show-current'):r.MOBILE_HOTFIX_BRANCH,
+            ('rev-list','--parents','-n','1',release):release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT,
+            ('rev-list','--parents','-n','1',r.MOBILE_HOTFIX_BUSINESS_PARENT):r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+r.MOBILE_HOTFIX_LIVE_BASE,
+            ('diff','--name-only',r.MOBILE_HOTFIX_BUSINESS_PARENT,release):'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES)),
+            ('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,release):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('status','--porcelain','--untracked-files=all'):''}
+        answers.update(changes or {})
+        return lambda repo,*args:answers[args]
+    def test_exact_base_parent_branch_and_five_plus_three_files_pass(self):
+        with patch.object(r,'git',side_effect=self.git_fixture()):r.validate_mobile_hotfix_identity(ROOT,'a'*40)
+        self.assertTrue(r.MOBILE_HOTFIX_IDENTITY)
+        self.assertFalse(r.migration_enabled());self.assertEqual(r.before_ledger(LEDGER),LEDGER)
+        self.assertEqual(r.bg_hotfix_base(),r.MOBILE_HOTFIX_LIVE_BASE)
+        self.assertEqual(r.bg_release_base(),r.MOBILE_HOTFIX_BUSINESS_PARENT)
+        self.assertIsNone(r.CAPACITY_WAIVER)
+    def test_wrong_live_base_and_business_parent_fail_closed(self):
+        for old,business in [('b'*40,r.MOBILE_HOTFIX_BUSINESS_PARENT),(r.MOBILE_HOTFIX_LIVE_BASE,'c'*40)]:
+            with self.subTest(old=old,business=business):
+                r.configure_profile('post-transfer',old,business,'0'*64)
+                with patch.object(r,'git',side_effect=self.git_fixture()),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,'a'*40)
+                self.assertFalse(r.MOBILE_HOTFIX_IDENTITY)
+    def test_wrong_branch_merge_and_non_direct_child_fail_closed(self):
+        release='a'*40
+        for key,bad in [(('branch','--show-current'),'wrong'),
+            (('rev-list','--parents','-n','1',release),release+' '+'b'*40),
+            (('rev-list','--parents','-n','1',release),release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+'b'*40),
+            (('rev-list','--parents','-n','1',r.MOBILE_HOTFIX_BUSINESS_PARENT),r.MOBILE_HOTFIX_BUSINESS_PARENT+' '+'b'*40)]:
+            with self.subTest(key=key,bad=bad),patch.object(r,'git',side_effect=self.git_fixture({key:bad})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_extra_business_server_shared_prisma_migration_or_test_fails(self):
+        release='a'*40;key=('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,release)
+        expected=r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES
+        for path in ('src/components/Other.jsx','server/app.js','server/index.js','shared/other.js','prisma/schema.prisma','prisma/migrations/extra/migration.sql','tests/other.mjs'):
+            with self.subTest(path=path),patch.object(r,'git',side_effect=self.git_fixture({key:'\n'.join(sorted(expected|{path}))})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_release_only_and_business_parent_scopes_are_exact(self):
+        release='a'*40
+        for key,bad in [(('diff','--name-only',r.MOBILE_HOTFIX_BUSINESS_PARENT,release),'scripts/deploy-prod-transfer-cas.py'),
+                       (('diff','--name-only',r.MOBILE_HOTFIX_LIVE_BASE,r.MOBILE_HOTFIX_BUSINESS_PARENT),'src/components/Sidebar.jsx'),
+                       (('status','--porcelain','--untracked-files=all'),' M server/app.js')]:
+            with self.subTest(key=key),patch.object(r,'git',side_effect=self.git_fixture({key:bad})),self.assertRaises(r.GateError):r.validate_mobile_hotfix_identity(ROOT,release)
+    def test_procurement_capacity_waiver_is_always_forbidden(self):
+        with self.assertRaisesRegex(r.GateError,'MOBILE_CAPACITY_WAIVER_FORBIDDEN'):
+            r.configure_capacity_waiver({'releaseSha':'a'*40,'parentSha':r.MOBILE_HOTFIX_BUSINESS_PARENT},{'release':'a'*40,'capacityProfile':'B2'})
+        self.assertIsNone(r.CAPACITY_WAIVER)
+        for used,free,future,code in [(10*r.GIB,30*r.GIB,7*r.GIB,'B1_CAPACITY_6GIB'),(70*r.GIB,10*r.GIB,r.GIB,'B1_CAPACITY_10GIB'),(100*r.GIB,20*r.GIB,6*r.GIB,None)]:
+            ledger={'baselineUsed':used,'baselineAvailable':free,'phase':'MOBILE'}
+            if code:
+                with self.assertRaisesRegex(r.GateError,code):r.b1_capacity_gate(ledger,used,free,future)
+            else:r.b1_capacity_gate(ledger,used,free,future)
+    def test_live_bind_rejects_changed_G_pointer_db_and_legacy_profile(self):
+        r.MOBILE_HOTFIX_IDENTITY=True;release='a'*40;art={'release':release,'capacityProfile':r.MOBILE_HOTFIX_PROFILE}
+        live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':r.MOBILE_HOTFIX_LIVE_BASE,'POINTER_SHA':r.MOBILE_HOTFIX_LIVE_BASE,'DB_APPLIED':88,'DB_FAILED':0,'LIVE_G_CONTAINER_ID':'b'*64,'LIVE_G_IMAGE_ID':'sha256:'+'c'*64}
+        with patch.object(r,'git',return_value=release+' '+r.MOBILE_HOTFIX_BUSINESS_PARENT):
+            r.bg_bind(ROOT,release,art,live)
+            for key,bad in [('LIVE_G_SHA','b'*40),('POINTER_SHA','b'*40),('DB_APPLIED',87),('DB_FAILED',1)]:
+                with self.subTest(key=key),self.assertRaises(r.GateError):r.bg_bind(ROOT,release,art,dict(live,**{key:bad}))
+            with self.assertRaises(r.GateError):r.bg_bind(ROOT,release,dict(art,capacityProfile='B2'),live)
+    def test_db_88_and_canonical_ledger_remain_strict(self):
+        db={'database':r.EXPECTED_DB,'applied':88,'failed':0,'rolledBack':0,'ledger':LEDGER,'procurementSchema':{'schemaMd5':C['schemaMd5']}}
+        r.validate_database(db,LEDGER)
+        for key,bad in [('database','another'),('applied',87),('failed',1),('rolledBack',1),('ledger',{})]:
+            with self.subTest(key=key),self.assertRaises(r.GateError):r.validate_database(dict(db,**{key:bad}),LEDGER)
+    def test_E_only_no_migration_and_existing_handover_order(self):
+        result,events,running,route=BlueGreenControllerTests.attempt(self,hotfix=True,mobile=True)
+        self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertIsNone(result['capacityWaiver'])
+        self.assertNotIn('backup',events);self.assertNotIn('migration',events)
+        for before,after in [('standby','mobileAssets'),('mobileAssets','stopG'),('stopG','zero'),('zero','promote'),('promote','routeE'),('publicE','pointerE')]:self.assertLess(events.index(before),events.index(after))
+        self.assertEqual(running,{'G':False,'E':True});self.assertEqual(route,['E']);self.assertTrue(result['releaseLockReleased'])
+    def test_failures_preserve_or_recover_exact_G(self):
+        for fault in ('standby','dbProbe','mobileAssets','promote','routeE','publicE','evidence'):
+            with self.subTest(fault=fault):
+                result,events,running,route=BlueGreenControllerTests.attempt(self,fault,hotfix=True,mobile=True)
+                self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertNotIn('secondaryRecoveryCode',result)
+                self.assertEqual(running,{'G':True,'E':False});self.assertEqual(route,['G'])
+                self.assertNotIn('backup',events);self.assertNotIn('migration',events)
+                if 'stopG' in events:self.assertLess(events.index('stopE'),events.index('restartG'));self.assertLess(events.index('recoverGActive'),events.index('routeG'))
+                else:self.assertNotIn('promote',events)
+    def test_isolated_signer_rejects_default_agent_extra_key_and_wrong_key(self):
+        import os,stat
+        from types import SimpleNamespace
+        path='/private/tmp/budu-mobile-isolated-entry-fixture/agent.sock'
+        metadata=SimpleNamespace(st_mode=stat.S_IFSOCK|0o600,st_uid=os.getuid())
+        environment={'SSH_AUTH_SOCK':path,'BUDU_MOBILE_ISOLATED_AGENT_SOCKET':path}
+        line=b'256 SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ exact (ED25519)\n'
+        with patch.object(r.Path,'stat',return_value=metadata):
+            with patch.dict(os.environ,environment),patch.object(r,'command',return_value=line) as command:
+                remote=r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+                self.assertIn('IdentitiesOnly=yes',remote.ssh);self.assertIn('IdentityAgent='+path,remote.ssh)
+                command.assert_called_once()
+            with patch.dict(os.environ,dict(environment,SSH_AUTH_SOCK='/system/default')),patch.object(r,'command') as command,self.assertRaises(r.GateError):
+                r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+            command.assert_not_called()
+            for listing in (line+line,b'256 SHA256:wrong exact (ED25519)\n'):
+                with patch.dict(os.environ,environment),patch.object(r,'command',return_value=listing),self.assertRaisesRegex(r.GateError,'ISOLATED_AGENT_IDENTITY_CONTAMINATED'):
+                    r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+            with patch.dict(os.environ,environment),patch.object(r,'command') as command,self.assertRaises(r.GateError):r.Remote(Path('/another/key'))
+            command.assert_not_called()
+    def test_frontend_runtime_probe_rejects_any_asset_hash_change(self):
+        import tempfile,hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'dist').mkdir();(root/'dist/index.html').write_text('<script src="/assets.js"></script>')
+            (root/'dist/assets.js').write_text('closest("data-pull-to-refresh-ignore");data-pull-to-refresh-ignore;touchcancel')
+            expected=r.mobile_frontend_manifest(root)
+            class Remote:
+                def run(self,args,data=None,timeout=30):
+                    script=args[-1].replace("visit('/app/dist')",'visit('+json.dumps(str(root/'dist'))+')').replace("p.slice(1)","'app/dist/'+path.relative("+json.dumps(str(root/'dist'))+",p)")
+                    result=subprocess.run(['node','-e',script],input=data,capture_output=True)
+                    return result.stdout
+            remote=Remote();r.mobile_frontend_probe(remote,'E',{'mobileFrontend':expected})
+            (root/'dist/assets.js').write_text('changed')
+            with self.assertRaises(r.GateError):r.mobile_frontend_probe(remote,'E',{'mobileFrontend':expected})
+
+class MobileThinReleaseTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.THIN_LIVE_BASE,r.THIN_BUSINESS_SHA,'0'*64)
+        r.THIN_MODE=True;r.BG_ACTIVE=True
+    def tearDown(self):
+        r.THIN_MODE=r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=r.BG_ACTIVE=False;r.CAPACITY_WAIVER=None
+    def fixture(self,changes=None):
+        release='a'*40
+        answers={('branch','--show-current'):r.MOBILE_HOTFIX_BRANCH,
+            ('rev-list','--parents','-n','1',release):release+' '+r.THIN_CLONE_FIX_PARENT,
+            ('rev-list','--parents','-n','1',r.THIN_CLONE_FIX_PARENT):r.THIN_CLONE_FIX_PARENT+' '+r.THIN_RELEASE_PARENT,
+            ('rev-list','--parents','-n','1',r.THIN_RELEASE_PARENT):r.THIN_RELEASE_PARENT+' '+r.THIN_BUSINESS_SHA,
+            ('rev-list','--parents','-n','1',r.THIN_BUSINESS_SHA):r.THIN_BUSINESS_SHA+' '+r.THIN_LIVE_BASE,
+            ('diff','--name-only',r.THIN_CLONE_FIX_PARENT,release):'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff','--name-only',r.THIN_LIVE_BASE,release):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff','--name-only',r.THIN_LIVE_BASE,release,'--','Dockerfile','package.json','package-lock.json','server','brand/web','shared','src/utils','prisma'):'',
+            ('diff','--name-only',r.THIN_BUSINESS_SHA,release,'--',*sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES)):'',
+            ('status','--porcelain','--untracked-files=all'):''}
+        answers.update(changes or {})
+        return lambda repo,*args:answers[args]
+    def test_exact_three_release_files_and_frozen_runtime(self):
+        with patch.object(r,'git',side_effect=self.fixture()):r.thin_identity(ROOT,'a'*40)
+        self.assertTrue(r.THIN_IDENTITY);self.assertEqual(r.bg_release_base(),r.THIN_CLONE_FIX_PARENT)
+        self.assertFalse(r.migration_enabled());self.assertEqual(r.before_ledger(LEDGER),LEDGER)
+    def test_wrong_base_business_parent_branch_merge_dirty_and_extra_inputs_fail(self):
+        release='a'*40
+        bads=[(('branch','--show-current'),'other'),
+              (('rev-list','--parents','-n','1',release),release+' '+'b'*40),
+              (('rev-list','--parents','-n','1',release),release+' '+r.THIN_RELEASE_PARENT+' '+'b'*40),
+              (('status','--porcelain','--untracked-files=all'),' M server/app.js')]
+        scope=('diff','--name-only',r.THIN_CLONE_FIX_PARENT,release)
+        for path in ('src/extra.jsx','server/v2.js','shared/extra.js','prisma/schema.prisma','Dockerfile','package-lock.json'):
+            bads.append((scope,'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES|{path}))))
+        for key,bad in bads:
+            with self.subTest(key=key,bad=bad),patch.object(r,'git',side_effect=self.fixture({key:bad})),self.assertRaises(r.GateError):r.thin_identity(ROOT,release)
+            self.assertFalse(r.THIN_IDENTITY)
+        for old,business in [('b'*40,r.THIN_BUSINESS_SHA),(r.THIN_LIVE_BASE,'c'*40)]:
+            r.configure_profile('post-transfer',old,business,'0'*64);r.THIN_MODE=True
+            with patch.object(r,'git',side_effect=self.fixture()),self.assertRaises(r.GateError):r.thin_identity(ROOT,release)
+    def test_manifest_content_path_hash_and_complete_source_identity(self):
+        files={'dist/index.html':b'index','dist/assets/a.js':b'js','scripts/entry.mjs':b'entry'}
+        first=r.thin_manifest(files,'a'*40)
+        self.assertEqual(first,r.thin_manifest(dict(reversed(list(files.items()))),'a'*40))
+        for changed in [dict(files,**{'dist/index.html':b'changed'}),dict(files,**{'dist/new.js':b'js'})]:
+            self.assertNotEqual(first['distTreeSha256'],r.thin_manifest(changed,'a'*40)['distTreeSha256'])
+        self.assertEqual(first['fileCount'],3);self.assertEqual(first['distBytes'],7)
+    def package(self,path,extra=None,manifest_change=False,nested=False):
+        import tarfile,io
+        files={'dist/index.html':b'index','scripts/entry.mjs':b'entry'}
+        if nested:files['dist/assets/permission-check.js']=b'check'
+        m=r.thin_manifest(files,'a'*40)
+        if manifest_change:m['distTreeSha256']='0'*64
+        payload=dict(files,**{'manifest.json':json.dumps(m).encode(),'Dockerfile.thin':r.thin_dockerfile('a'*40,m).encode()})
+        with tarfile.open(path,'w:gz') as tar:
+            for name,data in payload.items():
+                item=tarfile.TarInfo(name);item.size=len(data);tar.addfile(item,io.BytesIO(data))
+            if extra:
+                name,kind=extra;item=tarfile.TarInfo(name);item.type=kind;item.linkname='/etc/passwd';tar.addfile(item)
+    def test_archive_rejects_traversal_links_extra_runtime_and_tampered_manifest(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'overlay.tar.gz';self.package(path)
+            descriptor=r.thin_read_package(path,'a'*40);self.assertGreaterEqual(descriptor['thinPeak'],r.GIB)
+            for name,kind in [('/etc/passwd',tarfile.REGTYPE),('../escape',tarfile.REGTYPE),('server/v2.js',tarfile.REGTYPE),('dist/link',tarfile.SYMTYPE),('scripts/hard',tarfile.LNKTYPE)]:
+                self.package(path,(name,kind))
+                with self.subTest(name=name),self.assertRaises(r.GateError):r.thin_read_package(path,'a'*40)
+            self.package(path,manifest_change=True)
+            with self.assertRaises(r.GateError):r.thin_read_package(path,'a'*40)
+    def test_standard_capacity_is_not_waived_and_includes_builder_and_reserve(self):
+        r.THIN_IDENTITY=True
+        art={'capacityProfile':r.THIN_PROFILE,'thin':True,'thinPeak':r.GIB}
+        class Remote:
+            def disk(self):return 68*r.GIB,12*r.GIB
+        with patch.object(r,'b2_committed',return_value=set()):
+            record=r.thin_budget(Remote(),art,'ADMIT',r.GIB)
+        self.assertEqual(record['projectedAvailable'],11*r.GIB)
+        with patch.object(Remote,'disk',return_value=(68*r.GIB,10*r.GIB)),self.assertRaises(r.GateError):r.thin_budget(Remote(),art,'LOW',r.GIB)
+        r.CAPACITY_WAIVER={'releaseSha':'a'*40}
+        with self.assertRaises(r.GateError):r.thin_budget(Remote(),art,'WAIVER',r.GIB)
+        r.CAPACITY_WAIVER=None
+        self.assertEqual(r.thin_allowed(90*r.GIB,10*r.GIB),0)
+    def image_fixture(self):
+        config={'User':'node','WorkingDir':'/app','Env':['NODE_ENV=production'],'Cmd':['node','server/index.js'],
+                'Entrypoint':None,'Healthcheck':{'Test':['CMD','wget']},'ExposedPorts':{'3000/tcp':{}},'Labels':{r.REVISION:r.THIN_LIVE_BASE}}
+        base={'Id':'sha256:'+'b'*64,'RootFS':{'Layers':['sha256:'+'1'*64]},'Config':config,'Os':'linux','Architecture':'amd64','Size':100}
+        art={'baseImageId':base['Id'],'release':'a'*40,'imageReference':r.image_reference('a'*40),'manifest':{'overlayIdentity':'f'*64}}
+        image=copy.deepcopy(base);image['Id']='sha256:'+'c'*64;image['RootFS']['Layers'].append('sha256:'+'2'*64)
+        image['RepoTags']=[art['imageReference']];image['Config']['Labels'].update({r.REVISION:art['release'],'budu.thin-base':r.THIN_LIVE_BASE,'budu.thin-overlay-sha256':'f'*64})
+        return base,art,image
+    def test_exact_rootfs_prefix_and_all_config_semantics(self):
+        base,art,image=self.image_fixture();self.assertEqual(r.thin_image_verify(image,base,art)['rootfsPrefix'],'PASS')
+        for key,value in [('RootFS',{'Layers':['wrong','new']}),('Config',dict(image['Config'],User='root')),('Config',dict(image['Config'],Env=['changed'])),('Config',dict(image['Config'],Cmd=['npm','install']))]:
+            changed=copy.deepcopy(image);changed[key]=value
+            with self.subTest(key=key,value=value),self.assertRaises(r.GateError):r.thin_image_verify(changed,base,art)
+        changed=copy.deepcopy(image);changed['Config']['Labels']['unknown']='extra'
+        with self.assertRaises(r.GateError):r.thin_image_verify(changed,base,art)
+    def test_dockerfile_is_only_exact_base_dist_scripts_without_network_installs(self):
+        m=r.thin_manifest({'dist/index.html':b'x','scripts/test.py':b'y'},'a'*40);body=r.thin_dockerfile('a'*40,m)
+        self.assertIn('FROM budu-thin-base:'+'a'*40,body)
+        self.assertEqual([line for line in body.splitlines() if line.startswith('COPY ')],['COPY dist /app/dist','COPY scripts /app/scripts'])
+        for bad in ('apt','npm','prisma','ADD ','http','node_modules'):self.assertNotIn(bad,body)
+    def test_thin_handover_uses_same_controller_and_recovers_G_for_failures(self):
+        for fault in (None,'thinBarrier','probe','standby','promote','routeE','publicE'):
+            result,events,running,route=BlueGreenControllerTests.attempt(self,fault,True,mobile=True,thin=True)
+            if fault is None:
+                self.assertEqual(result['result'],'DEPLOY_COMPLETE');self.assertEqual(route,['E'])
+                self.assertLess(events.index('thinBarrier'),events.index('standby'));self.assertLess(events.index('standby'),events.index('stopG'))
+            else:
+                self.assertEqual(result['code'],'BG_INJECTED_FAILURE');self.assertEqual(route,['G']);self.assertEqual(running,{'G':True,'E':False})
+                if 'stopG' in events:self.assertLess(events.index('stopE'),events.index('restartG'))
+            self.assertNotIn('migration',events);self.assertNotIn('backup',events)
+
+
+    def test_server_build_is_exact_base_and_cleans_only_its_context_and_tag(self):
+        self.server_build_case()
+    def test_runtime_mismatch_removes_exact_new_image_without_touching_G(self):
+        self.server_build_case(bad_tree=True)
+    def server_build_case(self,bad_tree=False,purchase=False):
+        import io
+        r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=True
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);archive=root/'input.tar.gz';self.package(archive,nested=True)
+            descriptor=r.thin_read_package(archive,'a'*40);base,art,image=self.image_fixture()
+            art.update(descriptor,thin=True,capacityProfile=r.THIN_PROFILE,baseImage=base,baseRuntime={})
+            image['Config']['Labels']['budu.thin-overlay-sha256']=art['manifest']['overlayIdentity']
+            image['Size']=120
+            events=[]
+            class Remote(r.LocalRemote):
+                def inspect(self,name,image=False):
+                    return copy.deepcopy(base if name in (base['Id'],'budu-thin-base:'+'a'*40) else candidate)
+                def run(self,args,data=None,timeout=60):
+                    events.append(args)
+                    if args[:3]==['docker','image','ls']:return b''
+                    if args[:2]==['docker','build'] or args[:4]==['env','DOCKER_BUILDKIT=0','docker','build']:
+                        stage=Path(args[args.index('-f')+1]).parent
+                        mode=lambda p:r.stat.S_IMODE(p.stat().st_mode)
+                        self_case.assertEqual(mode(stage),0o700)
+                        self_case.assertEqual(mode(stage.parent),0o700)
+                        for directory in (stage/'dist/assets',stage/'scripts'):
+                            self_case.assertEqual(mode(directory),0o755 if purchase else 0o700)
+                        if purchase:
+                            self_case.assertTrue(all(mode(p)==0o755 for p in stage.rglob('*') if p.is_dir()))
+                        for path in descriptor['manifest']['files']:
+                            self_case.assertEqual(mode(stage/path),0o644)
+                    if args[:2]==['docker','run']:
+                        trees={k:art['manifest'][k] for k in ('distTreeSha256','scriptsTreeSha256')}
+                        if bad_tree:trees['distTreeSha256']='0'*64
+                        return json.dumps(trees).encode()
+                    return b''
+                def disk(self):return 68*r.GIB,12*r.GIB
+            self_case=self;candidate=image;remote=Remote()
+            with patch.object(r,'b2_committed',return_value=set()),archive.open('rb') as stream:
+                if bad_tree:
+                    with self.assertRaisesRegex(r.GateError,'THIN_RUNTIME_IDENTITY_FAILED'):r.thin_build(remote,art,stream,str(root))
+                else:
+                    receipt=r.thin_build(remote,art,stream,str(root));self.assertEqual(receipt['result'],'THIN_BUILD_PASS')
+            self.assertFalse((root/'thin-context').exists())
+            build=next(args for args in events if args[:2]==['docker','build'] or args[:4]==['env','DOCKER_BUILDKIT=0','docker','build'])
+            if purchase:self.assertEqual(build[:4],['env','DOCKER_BUILDKIT=0','docker','build'])
+            else:self.assertEqual(build[:2],['docker','build'])
+            self.assertIn('--network=none',build);self.assertIn('--pull=false',build)
+            removals=[args[-1] for args in events if args[:3]==['docker','image','rm']]
+            self.assertEqual(removals,([art['imageReference']] if bad_tree else [])+['budu-thin-base:'+'a'*40])
+            self.assertNotIn(base['Id'],removals)
+
+
+class ThinCloneProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.THIN_LIVE_BASE,r.THIN_BUSINESS_SHA,'0'*64)
+        r.THIN_MODE=r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=True
+    def tearDown(self):r.THIN_MODE=r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=False
+    def objects(self):
+        config={k:None for k in r.IDENTITY_KEYS};config.update(User='node',WorkingDir='/app',Cmd=['node','server/index.js'],Env=['GIT_SHA='+r.THIN_LIVE_BASE],Labels={r.REVISION:r.THIN_LIVE_BASE,'budu.production-role':'candidate'})
+        h=copy.deepcopy(r.HOST_DEFAULTS);h.update(RestartPolicy={'Name':'unless-stopped','MaximumRetryCount':0},PortBindings=None,PublishAllPorts=False,ReadonlyRootfs=False,CapAdd=None,CapDrop=None,Privileged=False,SecurityOpt=None,LogConfig={'Type':'json-file','Config':{}},GroupAdd=None,Init=None,NetworkMode='n')
+        g={'Image':'sha256:'+'b'*64,'Config':config,'HostConfig':h,'Mounts':[],'NetworkSettings':{'Networks':{'n':{}}}}
+        art={'release':'a'*40,'thin':True,'capacityProfile':r.THIN_PROFILE,'baseImageId':g['Image'],'manifest':{'overlayIdentity':'f'*64}}
+        candidate=copy.deepcopy(g);candidate['Config']['Env']=['GIT_SHA='+art['release']]
+        candidate['Config']['Labels'].update({r.REVISION:art['release'],'budu.thin-base':r.THIN_LIVE_BASE,'budu.thin-overlay-sha256':'f'*64})
+        return g,art,candidate
+    def test_real_clone_parity_accepts_only_exact_two_verified_provenance_labels(self):
+        g,art,candidate=self.objects()
+        with self.assertRaisesRegex(r.GateError,'CLONE_LABELS_MISMATCH'):r.clone_parity(g,candidate,art['release'])
+        expected=r.thin_clone_source(g,art);r.clone_parity(expected,candidate,art['release'])
+        for key,value in [('extra','unexpected'),('budu.thin-base','wrong'),('budu.thin-overlay-sha256','0'*64)]:
+            bad=copy.deepcopy(candidate);bad['Config']['Labels'][key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(r.GateError,'CLONE_LABELS_MISMATCH'):r.clone_parity(expected,bad,art['release'])
+        self.assertEqual(set(g['Config']['Labels']),{r.REVISION,'budu.production-role'})
+    def test_foreign_base_or_disabled_thin_identity_stays_blocked(self):
+        g,art,_=self.objects()
+        with self.assertRaises(r.GateError):r.thin_clone_source(g,dict(art,baseImageId='sha256:'+'c'*64))
+        r.THIN_IDENTITY=False
+        with self.assertRaises(r.GateError):r.thin_clone_source(g,art)
+        legacy=r.thin_clone_source(g,dict(art,thin=False));self.assertEqual(legacy,g);self.assertIsNot(legacy,g)
+
+
+class PurchaseUIThinDraftTests(unittest.TestCase):
+    def setUp(self):
+        self.live = r.PURCHASE_UI_SOURCE_PARENT
+        self.binding = {'liveSha': self.live, 'imageId': 'sha256:'+'b'*64,
+                        'imageLabels': {r.REVISION: self.live},
+                        'containerLabels': {r.REVISION: self.live, 'budu.production-role': 'candidate'},
+                        'agentSocket': '/private/tmp/com.apple.launchd.synthetic/Listeners'}
+        self.binding_patch = patch.object(r, 'PURCHASE_UI_LIVE_BINDING', self.binding)
+        self.binding_patch.start()
+        r.configure_profile('post-transfer', self.live, r.PURCHASE_UI_BUSINESS_SHA, '0'*64)
+        r.THIN_MODE = r.BG_ACTIVE = True
+    def tearDown(self):
+        self.binding_patch.stop()
+        r.configure_profile('post-transfer', r.THIN_LIVE_BASE, r.THIN_BUSINESS_SHA, '0'*64)
+        r.THIN_MODE = r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = r.BG_ACTIVE = False
+        r.CAPACITY_WAIVER = None
+    def fixture(self, changes=None):
+        release = 'a'*40
+        answers = {
+            ('branch', '--show-current'): r.PURCHASE_UI_BRANCH,
+            ('rev-list', '--parents', '-n', '1', release): release+' '+r.PURCHASE_UI_BUSINESS_SHA,
+            ('rev-list', '--parents', '-n', '1', r.PURCHASE_UI_BUSINESS_SHA): r.PURCHASE_UI_BUSINESS_SHA+' '+r.PURCHASE_UI_SOURCE_PARENT,
+            ('diff', '--name-only', self.live, r.PURCHASE_UI_SOURCE_PARENT): '',
+            ('diff', '--name-only', r.PURCHASE_UI_SOURCE_PARENT, r.PURCHASE_UI_BUSINESS_SHA): 'src/components/ProductCenterPage.jsx',
+            ('diff', '--name-only', r.PURCHASE_UI_BUSINESS_SHA, release): '\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff', '--name-only', self.live, release): '\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES | {'src/components/ProductCenterPage.jsx'})),
+            ('diff', '--name-only', self.live, release, '--', 'Dockerfile', 'package.json', 'package-lock.json', 'server', 'brand/web', 'shared', 'src/utils', 'prisma'): '',
+            ('diff', '--name-only', r.PURCHASE_UI_SOURCE_PARENT, release, '--', *sorted(r.MOBILE_HOTFIX_BUSINESS_FILES | r.MOBILE_HOTFIX_TEST_FILES)): '',
+            ('status', '--porcelain', '--untracked-files=all'): '',
+        }
+        answers.update(changes or {})
+        return lambda repo, *args: answers[args]
+    def test_unverified_binding_rejects_before_any_command_or_remote(self):
+        with patch.object(r, 'PURCHASE_UI_LIVE_BINDING', None), patch.object(r, 'command') as command, patch.object(r, 'Remote') as remote:
+            with self.assertRaisesRegex(r.GateError, 'PURCHASE_UI_LIVE_BINDING_REQUIRED'):
+                r.thin_identity(ROOT, 'a'*40)
+            command.assert_not_called(); remote.assert_not_called()
+        self.assertFalse(r.THIN_IDENTITY)
+    def test_binding_rejects_missing_extra_or_malformed_identity_and_labels(self):
+        bads = [None, {}, dict(self.binding, extra=True), dict(self.binding, liveSha='short'),
+                dict(self.binding, imageId='foreign'), dict(self.binding, imageLabels={}),
+                dict(self.binding, imageLabels=dict(self.binding['imageLabels'], extra='unreviewed')),
+                dict(self.binding, imageLabels={r.REVISION: 'c'*40, 'budu.production-role': 'candidate'}),
+                dict(self.binding, imageLabels=dict(self.binding['imageLabels'], **{'budu.thin-base': 'c'*40})),
+                dict(self.binding, imageLabels=dict(self.binding['imageLabels'], **{'budu.thin-base': 'c'*40, 'budu.thin-overlay-sha256': 'bad'}))]
+        for value in bads:
+            with self.subTest(value=value), patch.object(r, 'PURCHASE_UI_LIVE_BINDING', value), self.assertRaises(r.GateError):
+                r.purchase_ui_binding()
+    def test_exact_business_and_three_release_files_keep_migration_and_waiver_closed(self):
+        with patch.object(r, 'git', side_effect=self.fixture()), patch.object(r, 'is_ancestor', return_value=True):
+            r.thin_identity(ROOT, 'a'*40)
+        self.assertTrue(r.THIN_IDENTITY); self.assertEqual(r.bg_release_base(), r.PURCHASE_UI_BUSINESS_SHA)
+        self.assertEqual(r.bg_hotfix_base(), self.live); self.assertFalse(r.migration_enabled())
+        self.assertEqual(r.before_ledger(LEDGER), LEDGER)
+        with self.assertRaises(r.GateError):
+            r.configure_capacity_waiver({'releaseSha': 'a'*40, 'parentSha': r.PURCHASE_UI_BUSINESS_SHA}, {'release': 'a'*40, 'capacityProfile': 'B2'})
+    def test_wrong_branch_parent_merge_dirty_source_scope_and_runtime_are_rejected(self):
+        release = 'a'*40
+        cases = [
+            (('branch', '--show-current'), 'wrong'),
+            (('rev-list', '--parents', '-n', '1', release), release+' '+'c'*40),
+            (('rev-list', '--parents', '-n', '1', release), release+' '+r.PURCHASE_UI_BUSINESS_SHA+' '+'c'*40),
+            (('rev-list', '--parents', '-n', '1', r.PURCHASE_UI_BUSINESS_SHA), r.PURCHASE_UI_BUSINESS_SHA+' '+'c'*40),
+            (('status', '--porcelain', '--untracked-files=all'), '?? unknown'),
+            (('diff', '--name-only', r.PURCHASE_UI_SOURCE_PARENT, release, '--', *sorted(r.MOBILE_HOTFIX_BUSINESS_FILES | r.MOBILE_HOTFIX_TEST_FILES)), 'src/components/Sidebar.jsx'),
+            (('diff', '--name-only', self.live, release, '--', 'Dockerfile', 'package.json', 'package-lock.json', 'server', 'brand/web', 'shared', 'src/utils', 'prisma'), 'prisma/schema.prisma'),
+        ]
+        for path in ['server/app.js', 'src/extra.jsx', 'package-lock.json', '.github/workflows/deploy-prod.yml']:
+            cases.append((('diff', '--name-only', r.PURCHASE_UI_BUSINESS_SHA, release), '\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES | {path}))))
+        for key, value in cases:
+            with self.subTest(key=key, value=value), patch.object(r, 'git', side_effect=self.fixture({key: value})), patch.object(r, 'is_ancestor', return_value=True), self.assertRaises(r.GateError):
+                r.thin_identity(ROOT, release)
+            self.assertFalse(r.THIN_IDENTITY)
+        with patch.object(r, 'git', side_effect=self.fixture()), patch.object(r, 'is_ancestor', return_value=False), self.assertRaises(r.GateError):
+            r.thin_identity(ROOT, release)
+    def test_wrong_frozen_product_payload_is_rejected(self):
+        with patch.object(r, 'PURCHASE_UI_SOURCE_HASH', '0'*64), patch.object(r, 'git', side_effect=self.fixture()), patch.object(r, 'is_ancestor', return_value=True), self.assertRaisesRegex(r.GateError, 'BUSINESS_FIX_REQUIRED'):
+            r.thin_identity(ROOT, 'a'*40)
+    def test_manifest_binds_verified_base_business_and_release(self):
+        m = r.thin_manifest({'dist/index.html': b'index', 'scripts/entry.mjs': b'entry'}, 'a'*40)
+        self.assertEqual((m['productionBaseSha'], m['businessSha'], m['releaseSha']), (self.live, r.PURCHASE_UI_BUSINESS_SHA, 'a'*40))
+        self.assertIn('LABEL budu.thin-base='+self.live, r.thin_dockerfile('a'*40, m))
+    def objects(self, inherited=False):
+        config = {k: None for k in r.IDENTITY_KEYS}
+        config.update(User='node', WorkingDir='/app', Cmd=['node', 'server/index.js'], Env=['GIT_SHA='+self.live], Labels=copy.deepcopy(self.binding['containerLabels']))
+        if inherited:config['Labels'].update({'budu.thin-base': 'c'*40, 'budu.thin-overlay-sha256': 'd'*64})
+        host = copy.deepcopy(r.HOST_DEFAULTS)
+        host.update(RestartPolicy={'Name': 'unless-stopped', 'MaximumRetryCount': 0}, PortBindings=None, PublishAllPorts=False, ReadonlyRootfs=False, CapAdd=None, CapDrop=None, Privileged=False, SecurityOpt=None, LogConfig={'Type': 'json-file', 'Config': {}}, GroupAdd=None, Init=None, NetworkMode='n')
+        g = {'Id': 'e'*64, 'Image': self.binding['imageId'], 'State': {'Running': True}, 'Config': config, 'HostConfig': host, 'Mounts': [], 'NetworkSettings': {'Networks': {'n': {}}}}
+        art = {'release': 'a'*40, 'thin': True, 'capacityProfile': r.THIN_PROFILE, 'baseImageId': g['Image'], 'manifest': {'overlayIdentity': 'f'*64}}
+        return g, art
+    def test_distinct_image_and_container_labels_are_exact_and_unknown_provenance_rejected(self):
+        r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = True
+        g, art = self.objects(); before = copy.deepcopy(g)
+        expected = r.thin_clone_source(g, art)
+        self.assertEqual(g, before)
+        self.assertEqual(expected['Config']['Labels']['budu.thin-base'], self.live)
+        self.assertEqual(expected['Config']['Labels']['budu.thin-overlay-sha256'], 'f'*64)
+        candidate = copy.deepcopy(expected); candidate['Config']['Env'] = ['GIT_SHA='+art['release']]
+        candidate['Config']['Labels'][r.REVISION] = art['release']
+        r.clone_parity(expected, candidate, art['release'])
+        for field, value in [('budu.thin-overlay-sha256', '0'*64), ('budu.thin-base', '0'*40), ('extra', 'unreviewed')]:
+            bad = copy.deepcopy(g); bad['Config']['Labels'][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(r.GateError, 'THIN_CLONE_PROVENANCE_REQUIRED'):
+                r.thin_clone_source(bad, art)
+        bad = copy.deepcopy(g); bad['Image'] = 'sha256:'+'0'*64
+        with self.assertRaises(r.GateError): r.thin_clone_source(bad, dict(art, baseImageId=bad['Image']))
+    def test_preflight_rejects_changed_image_labels_or_lock_before_build(self):
+        g, art = self.objects()
+        base_labels = copy.deepcopy(self.binding['imageLabels'])
+        class Remote:
+            def __init__(self): self.g = copy.deepcopy(g); self.base = {'Id': g['Image'], 'Config': {'Labels': copy.deepcopy(base_labels)}}; self.lock = False
+            def routes(self):
+                template = '\n'.join(['proxy_pass http://G:3000;']*3); return template, template
+            def inspect(self, name, image=False):
+                if image: return self.base
+                return {'State': {'Running': False}} if name.startswith('budu-prod-e3') else self.g
+            def py(self, *args, **kwargs): return json.dumps({'present': self.lock}).encode()
+            def disk(self): return 30*r.GIB, 20*r.GIB
+            def run(self, args, **kwargs):
+                if args == ['df', '-Pk', '/']: return b'header\nroot 104857600 31457280 20971520 30% /\n'
+                raise AssertionError(args)
+        remote = Remote()
+        with patch.object(r, 'bg_g_guard', return_value=(g, {'applied': 88, 'failed': 0})) as guard:
+            result, _, _ = r.thin_preflight(remote, ROOT, 'a'*40, LEDGER)
+            self.assertEqual(result['LIVE_G_SHA'], self.live); guard.assert_called_once()
+        for change in ['image', 'baseLabels', 'containerLabels', 'lock']:
+            remote = Remote()
+            if change == 'image': remote.base['Id'] = 'sha256:'+'0'*64
+            if change == 'baseLabels': remote.base['Config']['Labels']['budu.thin-overlay-sha256'] = '0'*64
+            if change == 'containerLabels': remote.g['Config']['Labels']['budu.thin-overlay-sha256'] = '0'*64
+            if change == 'lock': remote.lock = True
+            with self.subTest(change=change), patch.object(r, 'bg_g_guard') as guard, self.assertRaisesRegex(r.GateError, 'PRODUCTION_STATE_CHANGED'):
+                r.thin_preflight(remote, ROOT, 'a'*40, LEDGER)
+            guard.assert_not_called()
+    def test_old_mobile_registration_and_its_strict_label_guard_remain_unchanged(self):
+        r.configure_profile('post-transfer', r.THIN_LIVE_BASE, r.THIN_BUSINESS_SHA, '0'*64)
+        r.THIN_MODE = r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = True
+        self.assertEqual(r.thin_live_sha(), r.THIN_LIVE_BASE); self.assertEqual(r.thin_business_sha(), r.THIN_BUSINESS_SHA)
+        g, art = self.objects(True); g['Config']['Labels'][r.REVISION] = r.THIN_LIVE_BASE
+        with self.assertRaisesRegex(r.GateError, 'THIN_CLONE_PROVENANCE_REQUIRED'): r.thin_clone_source(g, art)
+
+    def test_binding_rejects_container_label_or_agent_shape_drift(self):
+        for value in [dict(self.binding,containerLabels=self.binding['imageLabels']),
+                      dict(self.binding,containerLabels=dict(self.binding['containerLabels'],unknown='value')),
+                      dict(self.binding,agentSocket='/tmp/arbitrary-agent'),
+                      dict(self.binding,agentSocket=None)]:
+            with self.subTest(value=value),patch.object(r,'PURCHASE_UI_LIVE_BINDING',value),self.assertRaises(r.GateError):
+                r.purchase_ui_binding()
+
+    def test_system_agent_requires_exact_socket_owner_single_key_and_strict_options(self):
+        r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = True
+        good=types.SimpleNamespace(st_mode=r.stat.S_IFSOCK|0o600,st_uid=os.getuid())
+        listing=b'256 SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ synthetic (ED25519)\n'
+        with patch.dict(os.environ,{'SSH_AUTH_SOCK':self.binding['agentSocket']}),patch.object(Path,'stat',return_value=good),patch.object(r,'command',return_value=listing):
+            remote=r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+            for flag in ('BatchMode=yes','StrictHostKeyChecking=yes','IdentitiesOnly=yes','IdentityAgent='+self.binding['agentSocket']):self.assertIn(flag,remote.ssh)
+            self.assertEqual(remote.ssh[-1],'ubuntu@154.8.195.42')
+        for owner,mode,socket,keys,key in [
+                (os.getuid()+1,good.st_mode,self.binding['agentSocket'],listing,'/Users/apple/.ssh/budu_bj_migration'),
+                (os.getuid(),r.stat.S_IFREG,self.binding['agentSocket'],listing,'/Users/apple/.ssh/budu_bj_migration'),
+                (os.getuid(),good.st_mode,'/tmp/other',listing,'/Users/apple/.ssh/budu_bj_migration'),
+                (os.getuid(),good.st_mode,self.binding['agentSocket'],listing+listing,'/Users/apple/.ssh/budu_bj_migration'),
+                (os.getuid(),good.st_mode,self.binding['agentSocket'],listing.replace(b'ObUo5aPh',b'wrongAAA'),'/Users/apple/.ssh/budu_bj_migration'),
+                (os.getuid(),good.st_mode,self.binding['agentSocket'],listing,'/tmp/other-key')]:
+            with self.subTest(owner=owner,mode=mode,socket=socket,key=key),patch.dict(os.environ,{'SSH_AUTH_SOCK':socket}),patch.object(Path,'stat',return_value=types.SimpleNamespace(st_mode=mode,st_uid=owner)),patch.object(r,'command',return_value=keys),self.assertRaises(r.GateError):
+                r.Remote(Path(key))
+
+    def test_unverified_scope_or_old_profile_cannot_use_system_agent(self):
+        r.THIN_IDENTITY = False
+        with patch.object(r,'command') as command,self.assertRaisesRegex(r.GateError,'PURCHASE_UI_AGENT_SCOPE_INVALID'):
+            r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+        command.assert_not_called()
+        r.configure_profile('post-transfer',r.THIN_LIVE_BASE,r.THIN_BUSINESS_SHA,'0'*64)
+        with patch.dict(os.environ,{'SSH_AUTH_SOCK':self.binding['agentSocket'],'BUDU_MOBILE_ISOLATED_AGENT_SOCKET':''}),patch.object(r,'command') as command,self.assertRaises(r.GateError):
+            r.Remote(Path('/Users/apple/.ssh/budu_bj_migration'))
+        command.assert_not_called()
+
+    def test_product_asset_manifest_does_not_require_unpublished_sidebar(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo=Path(d);(repo/'dist/assets').mkdir(parents=True);(repo/'src/components').mkdir(parents=True)
+            (repo/'src/components/ProductCenterPage.jsx').write_bytes((ROOT/'src/components/ProductCenterPage.jsx').read_bytes())
+            (repo/'dist/index.html').write_text('index')
+            asset=repo/'dist/assets/ProductCenterPage-test.js';asset.write_text('export const asset=1;')
+            m=r.mobile_frontend_manifest(repo);self.assertIn('app/dist/assets/ProductCenterPage-test.js',m)
+            r.configure_profile('post-transfer',r.THIN_LIVE_BASE,r.THIN_BUSINESS_SHA,'0'*64)
+            with self.assertRaisesRegex(r.GateError,'MOBILE_FRONTEND_EXCLUSION_MISSING'):r.mobile_frontend_manifest(repo)
+            r.configure_profile('post-transfer',self.live,r.PURCHASE_UI_BUSINESS_SHA,'0'*64)
+            asset.unlink()
+            with self.assertRaisesRegex(r.GateError,'PURCHASE_UI_FRONTEND_ASSET_REQUIRED'):r.mobile_frontend_manifest(repo)
+
+    def test_scoped_legacy_build_and_exact_cleanup(self):
+        helper=MobileThinReleaseTests()
+        helper.server_build_case(purchase=True)
+        helper.server_build_case(bad_tree=True,purchase=True)
+
 
 if __name__=='__main__':unittest.main(verbosity=2)
