@@ -168,8 +168,8 @@ def git(repo, *args):
     return command(['git', '-C', str(repo), *args]).decode().strip()
 
 def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None):
-    global MOBILE_HOTFIX_IDENTITY
-    MOBILE_HOTFIX_IDENTITY = False
+    global MOBILE_HOTFIX_IDENTITY, THIN_MODE, THIN_IDENTITY
+    MOBILE_HOTFIX_IDENTITY = THIN_MODE = THIN_IDENTITY = False
     global CAPACITY_WAIVER, CAPACITY_TELEMETRY, CAPACITY_TELEMETRY_EMIT
     CAPACITY_WAIVER = None
     CAPACITY_TELEMETRY = []
@@ -386,6 +386,7 @@ def bg_hotfix_files():
 
 
 def bg_release_base():
+    if THIN_MODE: return THIN_RELEASE_PARENT
     if mobile_hotfix(): return MOBILE_HOTFIX_BUSINESS_PARENT
     if procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_PARENT
     return bg_hotfix_base() if procurement_hotfix() else BG_BASE
@@ -838,7 +839,9 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and (is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA) or (procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']))
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    if mobile_hotfix() or git(repo, 'branch', '--show-current') == MOBILE_HOTFIX_BRANCH:
+    if THIN_MODE:
+        thin_identity(repo, release)
+    elif mobile_hotfix() or git(repo, 'branch', '--show-current') == MOBILE_HOTFIX_BRANCH:
         validate_mobile_hotfix_identity(repo, release)
     elif procurement_migration() or procurement_hotfix():
         validate_procurement_identity(repo, release)
@@ -3241,7 +3244,7 @@ def bg_bundle_reset_standby(remote, value, state):
 
 
 def bg_bind(repo, release, art, live):
-    require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+    require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and mobile_art_profile(art) and CAPACITY_WAIVER is None)
                           or (not mobile_hotfix() and B2_IDENTITY and art['capacityProfile']=='B2')) and art['release']==release
             and git(repo,'rev-list','--parents','-n','1',release)==release+' '+bg_release_base()
             and live.get('result')=='LIVE_G_PROVEN' and live['LIVE_G_SHA']==EXPECTED_OLD_SHA
@@ -3687,7 +3690,7 @@ def bg_execute(remote, value, import_e):
         g,db=bg_g_guard(remote,value);state['g']=g
         validate_clone_source(g,art['config']);b1_storage(remote)
         if not hotfix:bg_migration_contract(value['migrationSql'])
-        require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+        require(BG_ACTIVE and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and mobile_art_profile(art) and CAPACITY_WAIVER is None)
                 or (not mobile_hotfix() and art['capacityProfile']=='B2' and CAPACITY_WAIVER is not None and art['release']==CAPACITY_WAIVER['releaseSha'])),'BG_SCOPE_INVALID')
         if not hotfix:
             require(value['compatibilityProof']['result']=='PASS' and value['compatibilityProof']['oldRuntimeExactSource']==live['LIVE_G_SHA']
@@ -3698,8 +3701,8 @@ def bg_execute(remote, value, import_e):
         root='/opt/budu/.rollback-assets/blue-green-'+art['release'];state['root']=root
         remote.py("import pathlib,json,sys,os;v=json.load(sys.stdin);os.umask(0o077);p=pathlib.Path(v['root']);p.mkdir(mode=0o700);(p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",{'root':root,'manifest':{'releaseSha':art['release'],'live':live,'migrationSqlHash':procurement_contract()['sqlHash']}})
         limits={} if hotfix else shipping_resources(db)
-        require(db.get('pgVersion')=='16.14','SHIPPING_PG16_REQUIRED');stage='E_IMPORT';bg_capacity(remote,art,'BG_E_ADMIT',sum(art[k] for k in ('archive','blobs','expanded','largest'))+RESERVE+sum(limits.values()))
-        receipt=import_e(root);state['importReceipt']=receipt;art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id'];b2_barrier(remote,art,receipt,art['capacityLedger'])
+        require(db.get('pgVersion')=='16.14','SHIPPING_PG16_REQUIRED');stage='E_IMPORT';bg_e_budget(remote,art,limits)
+        receipt=import_e(root);state['importReceipt']=receipt;art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id'];bg_e_barrier(remote,art,receipt)
         g,db=bg_g_guard(remote,value);bg_capacity(remote,art,'BG_E_IMPORTED',RESERVE+sum(limits.values()))
         stage='E_PRE_MIGRATION_PROBE'
         script="import {validateConfig} from './server/config.js';import {prisma} from './server/pg.js';import './server/app.js';import fs from 'node:fs';validateConfig();try{if(JSON.parse(fs.readFileSync('./node_modules/prisma/package.json')).version!=='6.19.3'||!fs.existsSync('./node_modules/prisma/build/index.js'))throw Error();if((await prisma.$queryRawUnsafe('SELECT 1 AS ok'))[0].ok!==1)throw Error();await prisma.inventoryItem.findFirst({select:{id:true}});process.stdout.write('BG_PRE_MIGRATION_PROBE_OK\\n')}finally{await prisma.$disconnect()}"
@@ -3777,7 +3780,7 @@ def bg_execute(remote, value, import_e):
 
 def bg_deploy(remote, repo, path, art, ledger, authorize):
     require(authorize==art['release'] and BG_ACTIVE
-            and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and art['capacityProfile']==MOBILE_HOTFIX_PROFILE and CAPACITY_WAIVER is None)
+            and ((mobile_hotfix() and MOBILE_HOTFIX_IDENTITY and mobile_art_profile(art) and CAPACITY_WAIVER is None)
                  or (not mobile_hotfix() and CAPACITY_WAIVER is not None and CAPACITY_WAIVER['releaseSha']==authorize)),'BG_SCOPE_INVALID')
     template,active=remote.routes()
     proof=BG_LIVE.get('compatibilityProof')
@@ -3806,9 +3809,306 @@ def bg_deploy(remote, repo, path, art, ledger, authorize):
         if child.poll() is None:child.terminate();child.wait(timeout=30)
 
 
+# Exact-bound mobile thin derivative. No migration, dependency install or R path.
+THIN_LIVE_BASE = 'd9d992a91a072a683b5309117f5313678649aba5'
+THIN_RELEASE_PARENT = '43880068415f3124a93d6c3311a11706f1225043'
+THIN_BUSINESS_SHA = 'd037b1f9c3b1e7b3fd4ea367ee61922a2ca2ba58'
+THIN_PROFILE = 'MOBILE_THIN_DERIVATIVE_E'
+THIN_MODE = False
+THIN_IDENTITY = False
+THIN_MAX_PACKAGE = 64 * 1024**2
+
+
+def thin_identity(repo, release):
+    global THIN_IDENTITY, MOBILE_HOTFIX_IDENTITY
+    THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = False
+    require(THIN_MODE and mobile_hotfix() and EXPECTED_OLD_SHA == THIN_LIVE_BASE
+            and RUNTIME_SHA == THIN_BUSINESS_SHA and git(repo,'branch','--show-current') == MOBILE_HOTFIX_BRANCH
+            and re.fullmatch(r'[0-9a-f]{40}',release)
+            and git(repo,'rev-list','--parents','-n','1',release) == release+' '+THIN_RELEASE_PARENT
+            and git(repo,'rev-list','--parents','-n','1',THIN_RELEASE_PARENT) == THIN_RELEASE_PARENT+' '+THIN_BUSINESS_SHA
+            and git(repo,'rev-list','--parents','-n','1',THIN_BUSINESS_SHA) == THIN_BUSINESS_SHA+' '+THIN_LIVE_BASE,
+            'THIN_RELEASE_IDENTITY_FAILED')
+    require(set(git(repo,'diff','--name-only',THIN_RELEASE_PARENT,release).splitlines()) == MOBILE_HOTFIX_RELEASE_FILES,
+            'THIN_RELEASE_SCOPE_FAILED')
+    require(set(git(repo,'diff','--name-only',THIN_LIVE_BASE,release).splitlines()) ==
+            MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | MOBILE_HOTFIX_RELEASE_FILES,
+            'THIN_RELEASE_SCOPE_FAILED')
+    require(not git(repo,'diff','--name-only',THIN_LIVE_BASE,release,'--','Dockerfile','package.json','package-lock.json',
+                    'server','brand/web','shared','src/utils','prisma'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
+    require(not git(repo,'diff','--name-only',THIN_BUSINESS_SHA,release,'--',
+                    *sorted(MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES)), 'BUSINESS_FIX_REQUIRED')
+    require(not git(repo,'status','--porcelain','--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    require(all(digest((Path(repo)/p).read_bytes()) == h for p,h in BG_BOOTSTRAP_HASHES.items()),'BG_LIFECYCLE_IDENTITY_INVALID')
+    THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = True
+
+
+def thin_manifest(files, release):
+    require(set(files) and all(p.startswith(('dist/','scripts/')) and safe_name(p)==p for p in files), 'THIN_ENTRY_INVALID')
+    groups={}
+    for prefix in ('dist','scripts'):
+        rows=sorted([p[len(prefix)+1:],digest(b)] for p,b in files.items() if p.startswith(prefix+'/'))
+        require(rows,'THIN_EMPTY_TREE')
+        groups[prefix+'TreeSha256']=digest(json.dumps(rows,ensure_ascii=False,separators=(',',':')).encode())
+        groups[prefix+'Bytes']=sum(len(b) for p,b in files.items() if p.startswith(prefix+'/'))
+    core=dict(releaseSha=release,productionBaseSha=THIN_LIVE_BASE,businessSha=THIN_BUSINESS_SHA,
+              createdFromCleanWorktree=True,fileCount=len(files),files={p:digest(b) for p,b in sorted(files.items())},**groups)
+    core['overlayIdentity']=digest(json.dumps(core,sort_keys=True,separators=(',',':')).encode())
+    return core
+
+
+def thin_dockerfile(release, manifest):
+    require(re.fullmatch(r'[0-9a-f]{40}',release),'THIN_RELEASE_IDENTITY_FAILED')
+    return ('FROM budu-thin-base:'+release+'\nUSER root\nRUN rm -rf /app/dist /app/scripts\n'
+            'COPY dist /app/dist\nCOPY scripts /app/scripts\nLABEL '+REVISION+'='+release+'\n'
+            'LABEL budu.thin-base='+THIN_LIVE_BASE+'\nLABEL budu.thin-overlay-sha256='+manifest['overlayIdentity']+'\nUSER node\n')
+
+
+def thin_package(repo, archive, release):
+    require(THIN_IDENTITY and not Path(archive).exists(),'THIN_PACKAGE_SCOPE_INVALID')
+    mobile_frontend_manifest(repo)
+    files={}
+    for path in sorted((Path(repo)/'dist').rglob('*')):
+        if path.is_file():
+            require(not path.is_symlink(),'THIN_ENTRY_INVALID');files[path.relative_to(repo).as_posix()]=path.read_bytes()
+    scripts=git(repo,'ls-files','--','scripts').splitlines()
+    for path in scripts:
+        require(not (Path(repo)/path).is_symlink(),'THIN_ENTRY_INVALID')
+        data=command(['git','-C',str(repo),'show',release+':'+path])
+        require(data==(Path(repo)/path).read_bytes(),'THIN_SOURCE_CHANGED');files[path]=data
+    m=thin_manifest(files,release)
+    with tarfile.open(archive,'x:gz') as tar:
+        payload=dict(files,**{'manifest.json':json.dumps(m,sort_keys=True,separators=(',',':')).encode(),
+                             'Dockerfile.thin':thin_dockerfile(release,m).encode()})
+        for path,data in sorted(payload.items()):
+            info=tarfile.TarInfo(path);info.size=len(data);info.mode=0o644;info.mtime=0
+            if path in scripts and git(repo,'ls-tree',release,path).startswith('100755'):info.mode=0o755
+            tar.addfile(info,io.BytesIO(data))
+    Path(archive).chmod(0o400)
+    return thin_read_package(archive,release,repo)
+
+
+def thin_read_package(archive, release, repo=None):
+    require(0 < Path(archive).stat().st_size <= THIN_MAX_PACKAGE,'THIN_ARCHIVE_TOO_LARGE')
+    files={};unpacked=0
+    with tarfile.open(archive,'r:gz') as tar:
+        for member in tar:
+            name=safe_name(member.name)
+            require(member.isfile() and name not in files and (name in ('manifest.json','Dockerfile.thin')
+                    or name.startswith(('dist/','scripts/'))) and member.size <= THIN_MAX_PACKAGE,'THIN_ENTRY_INVALID')
+            unpacked+=member.size;require(unpacked<=THIN_MAX_PACKAGE,'THIN_ARCHIVE_TOO_LARGE')
+            files[name]=tar.extractfile(member).read()
+    require({'manifest.json','Dockerfile.thin'} <= set(files),'THIN_ENTRY_INVALID')
+    m=json.loads(files.pop('manifest.json'));dockerfile=files.pop('Dockerfile.thin')
+    require(m==thin_manifest(files,release) and dockerfile==thin_dockerfile(release,m).encode(),'THIN_MANIFEST_MISMATCH')
+    if repo is not None:
+        expected={k[4:]:v for k,v in runtime_payload(repo).items() if k.startswith(('app/dist/','app/scripts/'))}
+        require(m['files']==expected,'THIN_SOURCE_CHANGED')
+    with Path(archive).open('rb') as src:h=file_hash(src)
+    size=Path(archive).stat().st_size
+    overlay=m['distBytes']+m['scriptsBytes']
+    peak=max(GIB,4*overlay+2*size+RESERVE)
+    return dict(manifest=m,archive=size,archiveHash=h,uncompressed=unpacked,overlayBytes=overlay,thinPeak=peak)
+
+
+def thin_allowed(used, available):
+    require(type(used) is int and type(available) is int and min(used,available)>=0,'THIN_DISK_UNKNOWN')
+    total=used+available
+    return min(available-MIN_PROJECTED_AVAILABLE,total*MAX_PROJECTED_USAGE//100-used)
+
+
+def thin_budget(remote, art, phase, future):
+    require(THIN_MODE and THIN_IDENTITY and CAPACITY_WAIVER is None and art['capacityProfile']==THIN_PROFILE
+            and future<=art['thinPeak']<=ABSOLUTE_MAX_PEAK,'THIN_CAPACITY_SCOPE_INVALID')
+    used,available=remote.disk()
+    require(thin_allowed(used,available)>=future,'THIN_CAPACITY_POLICY_BLOCKED')
+    cap=art.get('capacityLedger')
+    if cap is None:
+        cap={'baselineUsed':used,'baselineAvailable':available,'peak':0,'phase':phase,
+             'baselineCommitted':sorted(b2_committed(remote))};art['capacityLedger']=cap
+    cap['phase']=phase
+    return b1_capacity_gate(cap,used,available,future)
+
+
+def mobile_art_profile(art):
+    return ((not THIN_MODE and art['capacityProfile']==MOBILE_HOTFIX_PROFILE)
+            or (THIN_MODE and THIN_IDENTITY and art['capacityProfile']==THIN_PROFILE and art.get('thin') is True))
+
+
+def bg_e_budget(remote, art, limits):
+    if art.get('thin'):
+        return thin_budget(remote,art,'THIN_E_ADMIT',art['thinPeak'])
+    return bg_capacity(remote,art,'BG_E_ADMIT',sum(art[k] for k in ('archive','blobs','expanded','largest'))+RESERVE+sum(limits.values()))
+
+
+def bg_e_barrier(remote, art, receipt):
+    if art.get('thin'):
+        require(THIN_MODE and THIN_IDENTITY and receipt.get('result')=='THIN_BUILD_PASS'
+                and receipt['archiveHash']==art['archiveHash'] and receipt['archiveBytes']==art['archive'], 'THIN_BUILD_UNVERIFIED')
+        b1_storage(remote)
+        thin_image_verify(remote.inspect(art['loadedDockerImageId'],image=True), art['baseImage'], art)
+        thin_budget(remote,art,'THIN_BUILT',RESERVE)
+    else:b2_barrier(remote,art,receipt,art['capacityLedger'])
+
+
+def thin_image_verify(image, base, art):
+    require(base['Id']==art['baseImageId'] and image['Id']!=base['Id'] and image['Os']==base['Os']=='linux'
+            and image['Architecture']==base['Architecture']=='amd64','THIN_IMAGE_IDENTITY_FAILED')
+    before=base['RootFS']['Layers'];after=image['RootFS']['Layers']
+    require(after[:len(before)]==before and 1<=len(after)-len(before)<=3,'THIN_ROOTFS_PREFIX_FAILED')
+    labels=dict(base['Config'].get('Labels') or {})
+    labels.update({REVISION:art['release'],'budu.thin-base':THIN_LIVE_BASE,
+                   'budu.thin-overlay-sha256':art['manifest']['overlayIdentity']})
+    desired=copy.deepcopy(base['Config']);desired['Labels']=labels
+    require(image['Config']==desired,'THIN_CONFIG_PARITY_FAILED')
+    require(image.get('RepoTags')==[art['imageReference']],'THIN_IMAGE_TAG_FAILED')
+    return {'rootfsPrefix':'PASS','sharedLayerCount':len(before),'uniqueLayerCount':len(after)-len(before)}
+
+
+THIN_TREE_PROBE = r"""import fs from 'node:fs';import crypto from 'node:crypto';
+const hash=b=>crypto.createHash('sha256').update(b).digest('hex');const trees={};
+for(const prefix of ['dist','scripts']){const rows=[];function walk(dir,rel=''){for(const name of fs.readdirSync(dir).sort()){const p=dir+'/'+name;const r=rel+name;const s=fs.lstatSync(p);if(s.isSymbolicLink())throw Error();if(s.isDirectory())walk(p,r+'/');else if(s.isFile())rows.push([r,hash(fs.readFileSync(p))]);else throw Error()}}walk('/app/'+prefix);rows.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);trees[prefix+'TreeSha256']=hash(JSON.stringify(rows))}
+const expected=JSON.parse(process.argv[1]);for(const [p,h] of Object.entries(expected))if(hash(fs.readFileSync('/app/'+p))!==h)throw Error();process.stdout.write(JSON.stringify(trees));"""
+
+
+def thin_tree_verify(remote, art):
+    # No production environment/mounts/credentials and no network. --rm deletes
+    # only this verifier's container, never a production or rollback container.
+    expected=art['baseRuntime']
+    out=json.loads(remote.run(['docker','run','--rm','--network','none','--read-only',
+                    '--entrypoint','node',art['loadedDockerImageId'],'--input-type=module','-e',THIN_TREE_PROBE,
+                    json.dumps(expected,separators=(',',':'))],timeout=60))
+    require(all(out.get(k)==art['manifest'][k] for k in ('distTreeSha256','scriptsTreeSha256')),'THIN_RUNTIME_IDENTITY_FAILED')
+    return dict(out,baseRuntime='PASS',network='none',productionCredentials=False)
+
+
+def thin_preflight(remote, repo, release, ledger):
+    template,active=remote.routes();name=route_target(template,active);g=remote.inspect(name)
+    require(g['State']['Running'] and env(g).get('GIT_SHA')==g['Config']['Labels'].get(REVISION)==THIN_LIVE_BASE,
+            'PRODUCTION_STATE_CHANGED')
+    base=remote.inspect(g['Image'],image=True)
+    require(base['Id']==g['Image'] and base['Config']['Labels'].get(REVISION)==THIN_LIVE_BASE,'PRODUCTION_STATE_CHANGED')
+    live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':THIN_LIVE_BASE,'LIVE_G_CONTAINER':name,'LIVE_G_CONTAINER_ID':g['Id'],
+          'LIVE_G_IMAGE_ID':base['Id'],'DB_APPLIED':88,'DB_FAILED':0,'POINTER_SHA':THIN_LIVE_BASE}
+    lock=json.loads(remote.py("import pathlib,json; p=pathlib.Path('/run/lock/budu-transfer-cas-release'); print(json.dumps({'present':p.exists(),'openReferences':[]}))"))
+    require(not lock['present'],'PRODUCTION_STATE_CHANGED');live['releaseLock']=lock
+    value={'live':live,'template':template,'active':active,'ledger':ledger}
+    _,db=bg_g_guard(remote,value)
+    require(db['applied']==88 and db['failed']==0,'PRODUCTION_STATE_CHANGED')
+    r=remote.inspect('budu-prod-e3ecebcb94c4-purchase-compat-0f5eebf66745')
+    require(not r['State']['Running'],'PRODUCTION_STATE_CHANGED')
+    used,available=remote.disk()
+    require(thin_allowed(used,available)>0,'CAPACITY_POLICY_BLOCKED')
+    fs=remote.run(['df','-Pk','/']).decode().splitlines()[1].split()
+    total=int(fs[1])*1024
+    require(total>=used+available,'THIN_FILESYSTEM_UNKNOWN')
+    return live,base,{'used':used,'available':available,'filesystemTotal':total,
+                      'standardUsableTotal':used+available,'allowedIncrement':thin_allowed(used,available),
+                      'physical90PercentLimit':total*MAX_PROJECTED_USAGE//100-used}
+
+
+def thin_build(remote, art, stream, root):
+    require(THIN_MODE and THIN_IDENTITY and isinstance(remote,LocalRemote),'THIN_BUILD_SCOPE_INVALID')
+    stage=Path(root)/'thin-context';stage.mkdir(mode=0o700)
+    archive=stage/'overlay.tar.gz';base=art['baseImage'];tag='budu-thin-base:'+art['release'];candidate=art['imageReference']
+    tagged=False;built=False;receipt=None
+    try:
+        with archive.open('xb') as dst:
+            h=hashlib.sha256();n=0
+            for chunk in iter(lambda:stream.read(1024**2),b''):
+                n+=len(chunk);require(n<=art['archive'],'THIN_ARCHIVE_MISMATCH');h.update(chunk);dst.write(chunk)
+            dst.flush();os.fsync(dst.fileno())
+        require(n==art['archive'] and h.hexdigest()==art['archiveHash'],'THIN_ARCHIVE_MISMATCH')
+        descriptor=thin_read_package(archive,art['release'])
+        require(descriptor['manifest']==art['manifest'] and descriptor['thinPeak']==art['thinPeak'],'THIN_MANIFEST_MISMATCH')
+        with tarfile.open(archive,'r:gz') as tar:
+            for m in tar:
+                p=stage/m.name;p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+                with p.open('xb') as dst:shutil.copyfileobj(tar.extractfile(m),dst)
+                p.chmod(m.mode & 0o755)
+        thin_budget(remote,art,'THIN_CONTEXT_EXTRACTED',art['thinPeak'])
+        require(remote.inspect(base['Id'],image=True)['RootFS']==base['RootFS'],'THIN_BASE_CHANGED')
+        require(not remote.run(['docker','image','ls','-q',tag]).strip()
+                and not remote.run(['docker','image','ls','-q',candidate]).strip(),'THIN_TAG_EXISTS')
+        remote.run(['docker','tag',base['Id'],tag]);tagged=True
+        require(remote.inspect(tag,image=True)['Id']==base['Id'],'THIN_BASE_CHANGED')
+        remote.run(['docker','build','--pull=false','--network=none','--no-cache','-f',str(stage/'Dockerfile.thin'),
+                    '-t',candidate,str(stage)],timeout=300)
+        image=remote.inspect(candidate,image=True);built=True;art['loadedDockerImageId']=image['Id']
+        prefix=thin_image_verify(image,base,art)
+        art['config']=image['Config'];art['rootfsDiffIds']=image['RootFS']['Layers']
+        tree=thin_tree_verify(remote,art);after=thin_budget(remote,art,'THIN_BUILD_FINISHED',RESERVE)
+        receipt={'result':'THIN_BUILD_PASS','candidateImageId':image['Id'],
+                'baseRootfsLayers':base['RootFS']['Layers'],'candidateRootfsLayers':image['RootFS']['Layers'],
+                'archiveHash':art['archiveHash'],'archiveBytes':art['archive'],
+                'serverWaitComplete':True,'returncode':0,'prefix':prefix,'trees':tree,
+                'virtualImageBytes':image['Size'],'sharedVirtualBytes':base['Size'],
+                'uniqueThinLayerBytes':image['Size']-base['Size'],'layerBytesBasis':'virtual layer bytes; physical allocation reported via df delta',
+                'actualBuildDeltaWithContext':after['used']-art['capacityLedger']['baselineUsed']}
+        return receipt
+    except BaseException:
+        if built:
+            current=remote.inspect(candidate,image=True)
+            require(current['Id']==art['loadedDockerImageId'] and current['Config']['Labels'].get(REVISION)==art['release'],
+                    'THIN_CLEANUP_IDENTITY_UNKNOWN')
+            remote.run(['docker','image','rm',candidate])
+        raise
+    finally:
+        if tagged:
+            require(remote.inspect(tag,image=True)['Id']==base['Id'],'THIN_CLEANUP_IDENTITY_UNKNOWN')
+            remote.run(['docker','image','rm',tag])
+        require(stage.parent==Path(root) and stage.name=='thin-context' and not stage.is_symlink(),'THIN_CLEANUP_IDENTITY_UNKNOWN')
+        shutil.rmtree(stage)
+        require(remote.inspect(base['Id'],image=True)['RootFS']==base['RootFS'],'THIN_G_RETENTION_UNVERIFIED')
+        used,available=remote.disk()
+        if receipt is not None:
+            receipt['diskAfterTempCleanup']={'used':used,'available':available}
+            receipt['actualBuildDelta']=used-art['capacityLedger']['baselineUsed']
+        else:art['thinCleanupDisk']={'used':used,'available':available}
+
+
+def thin_deploy(remote, repo, archive, release, ledger, authorize):
+    require(authorize==release and THIN_MODE and THIN_IDENTITY and CAPACITY_WAIVER is None,'THIN_AUTHORIZATION_REQUIRED')
+    descriptor=thin_read_package(archive,release,repo)
+    live,base,before=thin_preflight(remote,repo,release,ledger)
+    art=dict(descriptor,release=release,capacityProfile=THIN_PROFILE,thin=True,imageReference=image_reference(release),
+             baseImage=base,baseImageId=base['Id'],config=base['Config'],runtimeHash=OLD_V2_HASH,
+             mobileFrontend=mobile_frontend_manifest(repo),
+             baseRuntime={k[4:]:v for k,v in runtime_payload(repo).items() if not k.startswith(('app/dist/','app/scripts/'))})
+    thin_budget(remote,art,'THIN_PRE_UPLOAD',art['thinPeak'])
+    bg_bind(repo,release,art,live)
+    # Fixed-size in-memory transport probe: no remote file or production data.
+    probe=os.urandom(256*1024);start=time.monotonic()
+    try:reply=remote.run(['cat'],data=probe,timeout=20)
+    except GateError:raise GateError('TRANSPORT_TOO_SLOW') from None
+    elapsed=time.monotonic()-start
+    require(reply==probe and len(probe)/max(elapsed,.001)>=32*1024,'TRANSPORT_TOO_SLOW')
+    template,active=remote.routes()
+    value={'art':art,'ledger':ledger,'live':live,'template':template,'active':active,
+           'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),'migrationSql':None,'compatibilityProof':None}
+    code=Path(__file__).read_text().rsplit("\nif __name__ == '__main__':",1)[0]
+    code+="\nv=json.loads(sys.stdin.buffer.readline())\nconfigure_profile('post-transfer',THIN_LIVE_BASE,THIN_BUSINESS_SHA,v['art']['runtimeHash'])\nTHIN_MODE=THIN_IDENTITY=MOBILE_HOTFIX_IDENTITY=BG_ACTIVE=True\nBG_LIVE=v['live']\ndef interrupted(*_):raise GateError('BG_CONTROLLER_INTERRUPTED')\nfor sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\nresult=bg_execute(LocalRemote(),v,lambda root:thin_build(LocalRemote(),v['art'],sys.stdin.buffer,root))\nprint(json.dumps(result),flush=True)\n"
+    loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-thin-blue-green>','exec'))"
+    child=subprocess.Popen(remote.ssh+[shlex.join(['sudo','-n','python3','-B','-c',loader])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    try:
+        child.stdin.write(json.dumps(code).encode()+b'\n');child.stdin.write(json.dumps(value).encode()+b'\n')
+        with Path(archive).open('rb') as src:shutil.copyfileobj(src,child.stdin)
+        child.stdin.close();child.stdin=None
+        out,err=child.communicate(timeout=1200)
+        require(child.returncode==0,'THIN_CONTROLLER_TRANSPORT_UNKNOWN')
+        records=[json.loads(line) for line in out.decode().splitlines()];result=records[-1]
+        result.update(thinCapacityBefore=before,thinArchiveBytes=art['archive'],overlayBytes=art['overlayBytes'],
+                      conservativePeak=art['thinPeak'],baseImageId=base['Id'],transportProbeBytes=len(probe),transportProbeSeconds=elapsed)
+        print(json.dumps(result),flush=True)
+        require(result.get('result')=='DEPLOY_COMPLETE','THIN_DEPLOYMENT_BLOCKED')
+    finally:
+        if child.poll() is None:child.terminate();child.wait(timeout=30)
+
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode', choices=['identity','inspect-artifact','preflight','deploy','measure-artifact','measure',
+    p.add_argument('mode', choices=['thin-package','thin-preflight','thin-deploy','identity','inspect-artifact','preflight','deploy','measure-artifact','measure',
                                    'identity-diagnostic','inspect-artifact-diagnostic',
                                    'identity-backup-diagnostic','inspect-artifact-backup-diagnostic'])
     p.add_argument('--repo', type=Path, required=True)
@@ -3840,6 +4140,21 @@ def main():
                 or (EXPECTED_OLD_SHA==RUNTIME_SHA and RUNTIME_SHA in (BG_HOTFIX_BASE,BG_TRANSFER_BASE,BG_BUNDLE_BASE)))
                 and args.compatibility_archive is None, 'BG_SCOPE_INVALID')
         BG_ACTIVE=True;BG_LIVE=json.loads(args.blue_green_live_proof.read_text())
+    if args.mode.startswith('thin-'):
+        global THIN_MODE
+        THIN_MODE=True;BG_ACTIVE=True
+        release,ledger=identity(args.repo)
+        require(args.temporary_b2_capacity_waiver_sha is None and args.compatibility_archive is None,'MOBILE_CAPACITY_WAIVER_FORBIDDEN')
+        if args.mode=='thin-package':
+            require(args.archive is not None,'ARCHIVE_REQUIRED')
+            print(json.dumps(thin_package(args.repo,args.archive,release)));return
+        require(args.ssh_key is not None,'SSH_KEY_REQUIRED')
+        remote=Remote(args.ssh_key)
+        if args.mode=='thin-preflight':
+            live,base,disk=thin_preflight(remote,args.repo,release,ledger)
+            print(json.dumps({'result':'THIN_PREFLIGHT_PASS','live':live,'baseImageId':base['Id'],'disk':disk}));return
+        require(args.archive is not None,'ARCHIVE_REQUIRED')
+        thin_deploy(remote,args.repo,args.archive,release,ledger,args.authorize_release_sha);return
     backup_diagnostic = args.mode in ('identity-backup-diagnostic','inspect-artifact-backup-diagnostic')
     diagnostic = backup_diagnostic or args.mode in ('identity-diagnostic','inspect-artifact-diagnostic')
     release, ledger = (backup_diagnostic_identity(args.repo) if backup_diagnostic else

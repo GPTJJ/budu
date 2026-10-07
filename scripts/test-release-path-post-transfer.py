@@ -195,9 +195,28 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
 
 # Preserve historical source pins by projecting only the exact reviewed mobile
 # binding back to its frozen parent. Any altered guard or unpinned node fails.
+THIN_CONTROLLER_NODE_HASHES = {'configure_profile': '7ad8f1487eaf3d512248d53eb4c83866b0b044d69f2e9abb074eeca9ddb4fedd', 'bg_release_base': 'b5924e364606de917f7afbcb0745119a57cdd5fbc70fb50bb669c0e07527e987', 'validate_post_transfer_identity': 'bb8fe65edd4d4e658adc49d25444a91d0c53a3353da4da6afe7680dab53ae40a', 'bg_bind': 'a0bc68fdc0b070a0817c8aba43e3af5c01c2a3a833d292990174d7c2dba7a893', 'bg_execute': '3d480a22b61519bc15c6c7536a21fb36b6b2091f006b99eba8d13e6a29708e01', 'bg_deploy': 'f2716f0a09d620c347e78df71b5e731be595ed579886a6adb428660f9e906cbb', 'THIN_LIVE_BASE': 'df0f5ee353e595d7eb1af62225cd08153a15c74f5ecb73b2bf2e6018801812ce', 'THIN_RELEASE_PARENT': 'b3e845c60ca52a83ec464e4b66a6a8a6a0f0e070dc243ed1544a3d40b00a3672', 'THIN_BUSINESS_SHA': 'ae68b1738a323f32c5842bf7514e5705cd2a4d30ee5db789c56d3516b26c5a8b', 'THIN_PROFILE': '02e285f1744a369f816d9d6cfcab016722172c28518bf14501a259ab46305a47', 'THIN_MODE': '9ba49e8e01d71a439a7392d8bf330df2cbc61c8a69b2a1cc9e36aa7f1dfd2d9f', 'THIN_IDENTITY': '52f36e04813924ccc0a2ea53eb81b7698c99f980fbcb6baba6e4c263b8f1d5c7', 'THIN_MAX_PACKAGE': 'abf1e655d8c3c580cc21b83bbd9b0107907707fe3f2fdacbb331fbbb81136742', 'thin_identity': '7959cbe5abc20491359077253d7a009ae7cebffa63b0051fb0057ccffb1ad3e7', 'thin_manifest': 'c9c8b6e02c738b2f2ce32a80e496bc0c6e5168d83adae070cb1a14fa0cce42bb', 'thin_dockerfile': '8b9e9c5ea0683ab86927bba9ac56dc2fff4f16875961206c12f665142ab888f9', 'thin_package': '2aea76c648e99745a2d6d395fba88d4a3822a4d316d0932118a7ab72db3ce4ff', 'thin_read_package': '9804d5de44376a22de52cbef168c56604e082e5937e63deb76edc4b99b9cdef8', 'thin_allowed': 'fed20e83335dd0b48a5a28504a6ab9f9318a30d11d587a7b4377e580ef3dce80', 'thin_budget': 'c871b4abcc1fa10528ecf52fd804c4590b6fe5cbec1ff7caf1ceb3e5ee867b79', 'mobile_art_profile': 'e5e046c6a690550f28f203edee08f0a401945afe16edc95b6ae5056161827386', 'bg_e_budget': '4530a066ba9661a152ab6a249940f905cb69137b1a5f76f0a6cd9a5952354011', 'bg_e_barrier': '71520b65551df8758ae3f168c4a9fa27d4f62c1aa27785eaeee39bd2f8201f06', 'thin_image_verify': '5c1505234c1cb9e3856511608d33fd0a8ca5efc33dc15447f3287067de577f5a', 'THIN_TREE_PROBE': '298778316807e02deaf9c49301df2c9771a09be13e696c1e505f7931aa8c3e17', 'thin_tree_verify': '56adfe9aafeac64791949c818427043197bd1d2af5dd448961f820d40a58ead1', 'thin_preflight': '8dc48c39199df17e7feb282d6127d7755efa5c59f57d892ebf19c624393abb5b', 'thin_build': 'ca0b7120f8092addc4bc3b081b25bcb78955664d3205c3235bf388584fbc6494', 'thin_deploy': 'ce74617cd9dac5439e84ad356f68efddebbd9fb70229a160e41614b427e843bb', 'main': '03f2cd7ce329525b42affdd00c41b98a3978c0473d99638ee8317b421c803735'}
+
+def thin_baseline_source(source):
+    if 'MOBILE_THIN_DERIVATIVE_E' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        lines=value.splitlines(keepends=True);result={}
+        for n in ast.parse(value).body:
+            key=n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)
+            parts=lines[n.lineno-1:n.end_lineno];parts[-1]=parts[-1][:n.end_col_offset];parts[0]=parts[0][n.col_offset:]
+            result[key]=(n,''.join(parts))
+        return result
+    before=nodes(prior);after=nodes(source)
+    assert not set(before)-set(after)
+    assert {k for k,v in after.items() if k not in before or before[k][1]!=v[1]} == set(THIN_CONTROLLER_NODE_HASHES)
+    for k,h in THIN_CONTROLLER_NODE_HASHES.items():assert hashlib.sha256(after[k][1].encode()).hexdigest()==h,k
+    return prior
+
 MOBILE_CONTROLLER_NODE_HASHES = {'runtime_payload': '182030d7b6e3f7b9b2baa65b65ea4f0f99c4492109e25d48a93c23e65a47bd87', 'configure_profile': '7e61c1eb5227fca906ccd347831c280e38abde0466ae77da4f5a06a39fd755c0', 'MOBILE_HOTFIX_LIVE_BASE': '25a4c927e659e323ddb3b5de8c07c263590f305e135b2d1daaad7f792e033b2f', 'MOBILE_HOTFIX_BUSINESS_PARENT': '44e39800f996da79c96392f77243b7a4f86e8ef15ab7e5f4658018b4bd164885', 'MOBILE_HOTFIX_BRANCH': 'b4d3169896c381ffd5176eebe3be5a9b01c4a5ff5270d68fb5e6ec9118044df0', 'MOBILE_HOTFIX_BUSINESS_FILES': 'd4dea44c54b8026fe0f90f2df8be1f149fb78b0ec87dd0b0cffb7d8936305e67', 'MOBILE_HOTFIX_TEST_FILES': '11714dafa2db20ebee722dbd25bff4fe10d0cb293520bddcc42afc63049eb647', 'MOBILE_HOTFIX_RELEASE_FILES': '212a7d2a0841f3a010c369e06c4ccd0afb2645d69f3a528644fdfa705070ebe0', 'MOBILE_HOTFIX_PROFILE': '21527ca0e6f3af00c56b8bb461be991718ab514cd0dfb66bf275f1b33a7c6266', 'MOBILE_HOTFIX_IDENTITY': '061544dbbb4b62d705390c665368a3a8d0ffead92c7fe5242301888764f4d336', 'mobile_hotfix': 'e1d061d7f2bf75b024a7679b1483b9a09f813cfab06e17aa52c8d042869e8f1b', 'validate_mobile_hotfix_identity': '5da29b293c7fa62dd8bebb826f31f3591e3c066831a9570af0a2c2da1f4a1d9d', 'mobile_frontend_manifest': 'e10ef04f92a238aacd81c532925a28c205f7e8f8e8c451dc3384adcc9bdaf62d', 'mobile_frontend_probe': '0d233a2eb2bb3cc57d3509533745f4788797163761c6e09ed75fbb3221ec1bcf', 'configure_capacity_waiver': '11e00cc232ff91f11f3e16d3c3ad952bb1ea5f7bf4fcfe2c750a054ed834f275', 'procurement_hotfix': 'ae37fb2d97afa5cb2412011f91bad8cb31878b5527c4bf2b1f5cc10c31bbf54c', 'bg_hotfix_base': '84bf8b266b4c1b7a085eaf85c378986c46ec91d76abc0457b78cbdc3fb9d25af', 'bg_hotfix_files': 'ae2881b60d356c383bcb0acec7a49e220d1e5691002927b50cd78160b25be47b', 'bg_release_base': 'd6fb1d729a0f1d568c9f522ab85d095b2eef0610c23de8b45ca09726938c95e6', 'validate_post_transfer_identity': 'd7806c48101c8c8f9b66ed69d25cc27c7da66c197a03abf20296e6233f9a5d44', 'identity': '6b9202429eee7ae8563bfee2eb936c86ff642e00df1f33d945d65645992e7b0e', 'artifact': '4f36a7e59c268a6f8a59179adc64bed6d50564748ce0594ef45c671ac1ff79df', 'Remote': '17e636aacaa781b6dfef79c453bbee120d771b3146b7494664c40f9a4887857e', 'bg_bind': 'c4ce09ce20b54c45b20f66707d3958b820004442448a0ba453e2ec0af606aa0a', 'bg_execute': 'bdd56aa5a6466781ea563551272c35ab64b91f4c3991b34aa0196ca26ee7498b', 'bg_deploy': '01e389f06c95a5f228777007e16345f0c7fa8c1df76578227481c5b5a9fef3f1', 'main': '48f2f2ca442941596b04a4c597756959c62766231ab1eb9ba0c8f67e47e6b02f'}
 
 def mobile_baseline_source(source):
+    source=thin_baseline_source(source)
     if 'MOBILE_SIDEBAR_REFRESH_HOTFIX' not in source:return source
     prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
     def nodes(value):
@@ -2030,7 +2049,7 @@ class FinalHotfixBundleSourceTests(unittest.TestCase):
 
 class MobileSidebarSourceTests(unittest.TestCase):
     def sources(self):
-        after=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        after=thin_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         before=subprocess.check_output(['git','-C',str(ROOT),'show',r.MOBILE_HOTFIX_BUSINESS_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):return {(n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)):ast.get_source_segment(value,n) for n in ast.parse(value).body}
         return before,after,nodes(before),nodes(after)
@@ -2068,6 +2087,47 @@ class MobileSidebarSourceTests(unittest.TestCase):
         _,_,_,after=self.sources();body=after['Remote']
         self.assertLess(body.index("os.environ.get('SSH_AUTH_SOCK') == socket"),body.index("command(['ssh-add', '-l']"))
         for token in ('/Users/apple/.ssh/budu_bj_migration','IdentitiesOnly=yes','IdentityAgent=','StrictHostKeyChecking=yes','SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ','(ED25519)'):self.assertIn(token,body)
+
+class MobileThinSourceTests(unittest.TestCase):
+    def test_only_exact_extension_nodes_are_changed(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        self.assertEqual(thin_baseline_source(source).strip(),before.strip())
+    def test_existing_writer_db_lifecycle_capacity_and_cutover_are_preserved(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
+        def nodes(value):return {n.name:ast.get_source_segment(value,n) for n in ast.parse(value).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+        a=nodes(source);b=nodes(before)
+        for name in ('b1_capacity_gate','b1_storage','b2_barrier','writer_check','validate_database','application_db_probe','bg_clone',
+                     'bg_lifecycle','bg_promote','bg_recover_g','bg_g_guard','bg_lock','replace_routes','Remote','bg_owned_stop'):
+            self.assertEqual(a[name],b[name],name)
+        token='        # No interposed off-host action: stop G -> prove zero -> promote -> route E.'
+        self.assertEqual(a['bg_execute'].split(token)[1],b['bg_execute'].split(token)[1])
+    def test_runtime_business_and_tests_are_frozen(self):
+        self.assertEqual(r.THIN_RELEASE_PARENT,'43880068415f3124a93d6c3311a11706f1225043')
+        self.assertEqual(r.THIN_LIVE_BASE,r.MOBILE_HOTFIX_LIVE_BASE);self.assertEqual(r.THIN_BUSINESS_SHA,r.MOBILE_HOTFIX_BUSINESS_PARENT)
+        for p in r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|{'Dockerfile','package.json','package-lock.json'}:
+            self.assertEqual((ROOT/p).read_bytes(),subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':'+p]))
+        changed=set(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.THIN_RELEASE_PARENT],text=True).splitlines())
+        self.assertEqual(changed,r.MOBILE_HOTFIX_RELEASE_FILES)
+    def test_mutations_to_new_or_existing_guards_fail_closed(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for old,new in [('1<=len(after)-len(before)<=3','True'),('projected >= MIN_PROJECTED_AVAILABLE','True'),
+                        ('reply==probe','True'),("db['failed']==0","db['failed']>=0"),('writer_check(rows,db,names)','pass'),
+                        ('THIN_RELEASE_PARENT = \'43880068415f3124a93d6c3311a11706f1225043\'','THIN_RELEASE_PARENT = \'wrong\'')]:
+            self.assertIn(old,source)
+            with self.subTest(old=old),self.assertRaises(AssertionError):thin_baseline_source(source.replace(old,new,1))
+    def test_network_disabled_package_whitelist_and_before_stop_proofs(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for fn in ('thin_dockerfile','thin_package','thin_build','thin_deploy'):
+            node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name==fn)
+            body=ast.get_source_segment(source,node)
+            for forbidden in ('docker system prune','docker volume','apt-get','npm install','prisma generate','b1_fixed_r('):self.assertNotIn(forbidden,body)
+        body=ast.get_source_segment(source,next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=='thin_build'))
+        self.assertLess(body.index("'THIN_CONTEXT_EXTRACTED'"),body.index("['docker','build'"))
+        self.assertLess(body.index('thin_image_verify('),body.index('thin_tree_verify('))
+        self.assertIn("'--pull=false','--network=none'",body)
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)
