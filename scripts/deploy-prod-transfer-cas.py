@@ -286,6 +286,7 @@ PURCHASE_UI_LIVE_BINDING = {
 # Exact production-reconciled scroll-only release; reuse the existing controller.
 SCROLL_UI_LIVE_SHA = '20946065322330f7a98142726d3513469b66dd07'
 SCROLL_UI_BUSINESS_SHA = 'ff83f0718ea20e73c4dc90f5dacec7b965712e08'
+SCROLL_UI_RELEASE_PARENT = 'd9f2f2b8471eaf227eaadfb7f178e8b62f40785b'
 SCROLL_UI_BRANCH = 'codex/mobile-scroll-production-20261008'
 SCROLL_UI_FILES = MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | {'tests/pull-to-refresh-native.spec.mjs'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
@@ -310,7 +311,9 @@ def scroll_ui_identity(repo, release):
     require(THIN_MODE and BG_ACTIVE and EXPECTED_OLD_SHA == SCROLL_UI_LIVE_SHA and CAPACITY_WAIVER is None
             and git(repo, 'branch', '--show-current') == SCROLL_UI_BRANCH
             and re.fullmatch(r'[0-9a-f]{40}', release)
-            and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_BUSINESS_SHA
+            and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_RELEASE_PARENT
+            and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_RELEASE_PARENT)
+                == SCROLL_UI_RELEASE_PARENT + ' ' + SCROLL_UI_BUSINESS_SHA
             and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_SHA)
                 == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
     require(set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, SCROLL_UI_BUSINESS_SHA).splitlines()) == SCROLL_UI_FILES
@@ -487,7 +490,7 @@ def bg_hotfix_files():
 
 
 def bg_release_base():
-    if THIN_MODE and scroll_ui_hotfix(): return SCROLL_UI_BUSINESS_SHA
+    if THIN_MODE and scroll_ui_hotfix(): return SCROLL_UI_RELEASE_PARENT
     if THIN_MODE and purchase_ui_hotfix(): return PURCHASE_UI_BUSINESS_SHA
     if THIN_MODE: return THIN_CLONE_FIX_PARENT
     if mobile_hotfix(): return MOBILE_HOTFIX_BUSINESS_PARENT
@@ -2333,8 +2336,11 @@ def validate_clone_source(old, image):
     c, h = old['Config'], old['HostConfig']
     for k in IDENTITY_KEYS:
         require(c.get(k) == image.get(k), 'IMAGE_RUNTIME_CONFIG_MISMATCH')
-    require(set(c.get('Labels') or {}) == {REVISION, 'budu.production-role'}
-            and c['Labels']['budu.production-role'] == 'candidate', 'SOURCE_LABELS_UNSUPPORTED')
+    require((scroll_ui_hotfix() and THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY
+             and CAPACITY_WAIVER is None and old['Image'] == SCROLL_UI_LIVE_BINDING['imageId']
+             and c.get('Labels') == SCROLL_UI_LIVE_BINDING['containerLabels'])
+            or (not scroll_ui_hotfix() and set(c.get('Labels') or {}) == {REVISION, 'budu.production-role'}
+                and c['Labels']['budu.production-role'] == 'candidate'), 'SOURCE_LABELS_UNSUPPORTED')
     require(h.get('RestartPolicy') == {'Name': 'unless-stopped', 'MaximumRetryCount': 0}, 'RESTART_POLICY_UNSUPPORTED')
     require(not h.get('PortBindings') and not h.get('PublishAllPorts'), 'PORT_BINDINGS_UNSUPPORTED')
     require(not any(h.get(k) for k in ['Privileged','ReadonlyRootfs','CapAdd','CapDrop','SecurityOpt','Init']), 'SECURITY_CONFIG_UNSUPPORTED')

@@ -26,7 +26,7 @@ class ScrollReleaseTests(unittest.TestCase):
         if args == ('branch', '--show-current'): return r.SCROLL_UI_BRANCH
         if args[:3] == ('rev-list', '--parents', '-n'):
             sha = args[-1]
-            return sha+' '+(r.SCROLL_UI_BUSINESS_SHA if sha == self.release else r.SCROLL_UI_LIVE_SHA)
+            return sha+' '+({self.release:r.SCROLL_UI_RELEASE_PARENT,r.SCROLL_UI_RELEASE_PARENT:r.SCROLL_UI_BUSINESS_SHA,r.SCROLL_UI_BUSINESS_SHA:r.SCROLL_UI_LIVE_SHA}[sha])
         if args[:2] == ('status', '--porcelain'): return ''
         if args[:2] == ('diff', '--name-only'):
             if '--' in args: return ''
@@ -40,7 +40,7 @@ class ScrollReleaseTests(unittest.TestCase):
         self.assertTrue(r.THIN_IDENTITY and r.MOBILE_HOTFIX_IDENTITY)
         self.assertEqual(r.thin_live_sha(), r.SCROLL_UI_LIVE_SHA)
         self.assertEqual(r.thin_business_sha(), r.SCROLL_UI_BUSINESS_SHA)
-        self.assertEqual(r.bg_release_base(), r.SCROLL_UI_BUSINESS_SHA)
+        self.assertEqual(r.bg_release_base(), r.SCROLL_UI_RELEASE_PARENT)
         self.assertEqual(r.bg_hotfix_base(), r.SCROLL_UI_LIVE_SHA)
         self.assertFalse(r.migration_enabled())
 
@@ -79,15 +79,34 @@ class ScrollReleaseTests(unittest.TestCase):
             bad=copy.deepcopy(g);bad['Config']['Labels'][key]=value
             with self.assertRaises(r.GateError):r.thin_clone_source(bad,art)
 
+    def test_clone_source_accepts_only_verified_thin_provenance(self):
+        spec=importlib.util.spec_from_file_location('fixtures',ROOT/'scripts/test-deploy-prod-transfer-cas.py')
+        fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
+        old=fixture.original()
+        old['Image']=r.SCROLL_UI_LIVE_BINDING['imageId']
+        old['Config']['Labels']=copy.deepcopy(r.SCROLL_UI_LIVE_BINDING['containerLabels'])
+        image=copy.deepcopy(old['Config'])
+        r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=True
+        r.validate_clone_source(old,image)
+        for key,value in [('unknown','x'),('budu.thin-overlay-sha256','0'*64),('org.opencontainers.image.revision','0'*40)]:
+            bad=copy.deepcopy(old);bad['Config']['Labels'][key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(r.GateError,'SOURCE_LABELS_UNSUPPORTED'):r.validate_clone_source(bad,image)
+        for key,value in [('THIN_IDENTITY',False),('MOBILE_HOTFIX_IDENTITY',False),('CAPACITY_WAIVER',{})]:
+            with patch.object(r,key,value),self.assertRaisesRegex(r.GateError,'SOURCE_LABELS_UNSUPPORTED'):r.validate_clone_source(old,image)
+
     def test_core_switch_rollback_db_capacity_and_writer_code_unchanged(self):
         before=subprocess.check_output(['git','-C',str(ROOT),'show',r.SCROLL_UI_LIVE_SHA+':scripts/deploy-prod-transfer-cas.py'],text=True)
         after=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
         def nodes(source):
             return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         old,new=nodes(before),nodes(after)
-        permitted={'thin_live_sha','thin_business_sha','mobile_hotfix','bg_hotfix_base','bg_hotfix_files','bg_release_base','thin_identity','thin_clone_source','thin_preflight','thin_build'}
+        permitted={'thin_live_sha','thin_business_sha','mobile_hotfix','bg_hotfix_base','bg_hotfix_files','bg_release_base','thin_identity','thin_clone_source','thin_preflight','thin_build','validate_clone_source'}
         self.assertEqual({k for k in old if old[k]!=new[k]},permitted)
         self.assertEqual(set(new)-set(old),{'scroll_ui_hotfix','scroll_ui_identity'})
+        before_clone=next(n for n in ast.parse(before).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
+        after_clone=next(n for n in ast.parse(after).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
+        self.assertEqual([ast.dump(n) for n in before_clone.body[:2]+before_clone.body[3:]],
+                         [ast.dump(n) for n in after_clone.body[:2]+after_clone.body[3:]])
         self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*1024**3)
         self.assertIsNone(r.CAPACITY_WAIVER)
 
