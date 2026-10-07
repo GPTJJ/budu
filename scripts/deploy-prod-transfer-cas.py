@@ -283,6 +283,51 @@ PURCHASE_UI_LIVE_BINDING = {
 }
 
 
+# Exact production-reconciled scroll-only release; reuse the existing controller.
+SCROLL_UI_LIVE_SHA = '20946065322330f7a98142726d3513469b66dd07'
+SCROLL_UI_BUSINESS_SHA = 'ff83f0718ea20e73c4dc90f5dacec7b965712e08'
+SCROLL_UI_BRANCH = 'codex/mobile-scroll-production-20261008'
+SCROLL_UI_FILES = MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | {'tests/pull-to-refresh-native.spec.mjs'}
+SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c'}
+SCROLL_UI_LIVE_BINDING = {
+    'liveSha': SCROLL_UI_LIVE_SHA,
+    'imageId': 'sha256:9f6d721f5254ff29ebced9d404a7828127935d7e77e0a3848b891f1b34e652c6',
+    'imageLabels': {
+        'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
+        'budu.thin-base': 'd9d992a91a072a683b5309117f5313678649aba5',
+        'budu.thin-overlay-sha256': '5ddf3085d271adc1e00f44867763de9afb6e15bac439631c2deefc62fca4b703',
+    },
+}
+SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
+
+
+def scroll_ui_hotfix():
+    return RELEASE_PROFILE == 'post-transfer' and RUNTIME_SHA == SCROLL_UI_BUSINESS_SHA
+
+
+def scroll_ui_identity(repo, release):
+    require(THIN_MODE and BG_ACTIVE and EXPECTED_OLD_SHA == SCROLL_UI_LIVE_SHA and CAPACITY_WAIVER is None
+            and git(repo, 'branch', '--show-current') == SCROLL_UI_BRANCH
+            and re.fullmatch(r'[0-9a-f]{40}', release)
+            and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_BUSINESS_SHA
+            and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_SHA)
+                == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
+    require(set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, SCROLL_UI_BUSINESS_SHA).splitlines()) == SCROLL_UI_FILES
+            and set(git(repo, 'diff', '--name-only', SCROLL_UI_BUSINESS_SHA, release).splitlines()) == SCROLL_UI_RELEASE_FILES
+            and set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release).splitlines())
+                == SCROLL_UI_FILES | SCROLL_UI_RELEASE_FILES, 'SCROLL_UI_RELEASE_SCOPE_INVALID')
+    require(all(digest((Path(repo)/path).read_bytes()) == expected for path, expected in SCROLL_UI_SOURCE_HASHES.items())
+            and not git(repo, 'diff', '--name-only', SCROLL_UI_BUSINESS_SHA, release, '--', *sorted(SCROLL_UI_FILES)),
+            'BUSINESS_FIX_REQUIRED')
+    require(not git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release, '--', 'Dockerfile', 'package.json',
+                    'package-lock.json', 'server', 'prisma', 'shared', 'brand/web', 'src/utils',
+                    'src/components/ProductCenterPage.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
+    require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    require(all(digest((Path(repo)/path).read_bytes()) == expected for path, expected in BG_BOOTSTRAP_HASHES.items()),
+            'BG_LIFECYCLE_IDENTITY_INVALID')
+
+
 def purchase_ui_hotfix():
     return RELEASE_PROFILE == 'post-transfer' and RUNTIME_SHA == PURCHASE_UI_BUSINESS_SHA
 
@@ -302,15 +347,17 @@ def purchase_ui_binding():
 
 
 def thin_live_sha():
+    if scroll_ui_hotfix(): return SCROLL_UI_LIVE_SHA
     return purchase_ui_binding()['liveSha'] if purchase_ui_hotfix() else THIN_LIVE_BASE
 
 
 def thin_business_sha():
+    if scroll_ui_hotfix(): return SCROLL_UI_BUSINESS_SHA
     return PURCHASE_UI_BUSINESS_SHA if purchase_ui_hotfix() else THIN_BUSINESS_SHA
 
 
 def mobile_hotfix():
-    return purchase_ui_hotfix() or (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == MOBILE_HOTFIX_LIVE_BASE
+    return scroll_ui_hotfix() or purchase_ui_hotfix() or (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == MOBILE_HOTFIX_LIVE_BASE
             and RUNTIME_SHA == MOBILE_HOTFIX_BUSINESS_PARENT)
 
 
@@ -425,6 +472,7 @@ def procurement_hotfix():
 
 
 def bg_hotfix_base():
+    if scroll_ui_hotfix(): return SCROLL_UI_LIVE_SHA
     if purchase_ui_hotfix(): return thin_live_sha()
     if mobile_hotfix(): return MOBILE_HOTFIX_LIVE_BASE
     if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_BASE
@@ -432,12 +480,14 @@ def bg_hotfix_base():
 
 
 def bg_hotfix_files():
+    if scroll_ui_hotfix(): return SCROLL_UI_RELEASE_FILES
     if mobile_hotfix(): return MOBILE_HOTFIX_RELEASE_FILES
     if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_FILES
     return BG_TRANSFER_FILES if RUNTIME_SHA==BG_TRANSFER_BASE else BG_HOTFIX_FILES
 
 
 def bg_release_base():
+    if THIN_MODE and scroll_ui_hotfix(): return SCROLL_UI_BUSINESS_SHA
     if THIN_MODE and purchase_ui_hotfix(): return PURCHASE_UI_BUSINESS_SHA
     if THIN_MODE: return THIN_CLONE_FIX_PARENT
     if mobile_hotfix(): return MOBILE_HOTFIX_BUSINESS_PARENT
@@ -3882,6 +3932,10 @@ THIN_MAX_PACKAGE = 64 * 1024**2
 def thin_identity(repo, release):
     global THIN_IDENTITY, MOBILE_HOTFIX_IDENTITY
     THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = False
+    if scroll_ui_hotfix():
+        scroll_ui_identity(repo, release)
+        THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = True
+        return
     if purchase_ui_hotfix():
         purchase_ui_identity(repo, release)
         THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = True
@@ -4048,8 +4102,8 @@ def thin_clone_source(g, art):
             and g['Config']['Labels'].get(REVISION)==thin_live_sha()
             and re.fullmatch(r'[0-9a-f]{64}',art['manifest']['overlayIdentity']), 'THIN_CLONE_PROVENANCE_REQUIRED')
     labels=dict(expected['Config']['Labels'])
-    if purchase_ui_hotfix():
-        binding = purchase_ui_binding()
+    if purchase_ui_hotfix() or scroll_ui_hotfix():
+        binding = SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
         require(g['Image'] == binding['imageId'] and labels == binding['containerLabels'],
                 'THIN_CLONE_PROVENANCE_REQUIRED')
     else:
@@ -4098,8 +4152,8 @@ def thin_preflight(remote, repo, release, ledger):
             'PRODUCTION_STATE_CHANGED')
     base=remote.inspect(g['Image'],image=True)
     require(base['Id']==g['Image'] and base['Config']['Labels'].get(REVISION)==live_sha,'PRODUCTION_STATE_CHANGED')
-    if purchase_ui_hotfix():
-        binding = purchase_ui_binding()
+    if purchase_ui_hotfix() or scroll_ui_hotfix():
+        binding = SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
         require(base['Id'] == binding['imageId'] and base['Config']['Labels'] == binding['imageLabels']
                 and g['Config']['Labels'] == binding['containerLabels'], 'PRODUCTION_STATE_CHANGED')
     live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':live_sha,'LIVE_G_CONTAINER':name,'LIVE_G_CONTAINER_ID':g['Id'],
@@ -4137,7 +4191,7 @@ def thin_build(remote, art, stream, root):
         require(descriptor['manifest']==art['manifest'] and descriptor['thinPeak']==art['thinPeak'],'THIN_MANIFEST_MISMATCH')
         with tarfile.open(archive,'r:gz') as tar:
             for m in tar:
-                p=stage/m.name;p.parent.mkdir(parents=True,exist_ok=True,mode=0o755 if purchase_ui_hotfix() else 0o700)
+                p=stage/m.name;p.parent.mkdir(parents=True,exist_ok=True,mode=0o755 if purchase_ui_hotfix() or scroll_ui_hotfix() else 0o700)
                 with p.open('xb') as dst:shutil.copyfileobj(tar.extractfile(m),dst)
                 p.chmod(m.mode & 0o755)
         thin_budget(remote,art,'THIN_CONTEXT_EXTRACTED',art['thinPeak'])
@@ -4146,7 +4200,7 @@ def thin_build(remote, art, stream, root):
                 and not remote.run(['docker','image','ls','-q',candidate]).strip(),'THIN_TAG_EXISTS')
         remote.run(['docker','tag',base['Id'],tag]);tagged=True
         require(remote.inspect(tag,image=True)['Id']==base['Id'],'THIN_BASE_CHANGED')
-        prefix = ['env', 'DOCKER_BUILDKIT=0'] if purchase_ui_hotfix() else []
+        prefix = ['env', 'DOCKER_BUILDKIT=0'] if purchase_ui_hotfix() or scroll_ui_hotfix() else []
         remote.run(prefix + ['docker','build','--pull=false','--network=none','--no-cache','-f',str(stage/'Dockerfile.thin'),
                     '-t',candidate,str(stage)],timeout=300)
         image=remote.inspect(candidate,image=True);built=True;art['loadedDockerImageId']=image['Id']
