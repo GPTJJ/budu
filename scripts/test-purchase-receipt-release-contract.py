@@ -2104,10 +2104,11 @@ class MobileThinReleaseTests(unittest.TestCase):
     def fixture(self,changes=None):
         release='a'*40
         answers={('branch','--show-current'):r.MOBILE_HOTFIX_BRANCH,
-            ('rev-list','--parents','-n','1',release):release+' '+r.THIN_RELEASE_PARENT,
+            ('rev-list','--parents','-n','1',release):release+' '+r.THIN_CLONE_FIX_PARENT,
+            ('rev-list','--parents','-n','1',r.THIN_CLONE_FIX_PARENT):r.THIN_CLONE_FIX_PARENT+' '+r.THIN_RELEASE_PARENT,
             ('rev-list','--parents','-n','1',r.THIN_RELEASE_PARENT):r.THIN_RELEASE_PARENT+' '+r.THIN_BUSINESS_SHA,
             ('rev-list','--parents','-n','1',r.THIN_BUSINESS_SHA):r.THIN_BUSINESS_SHA+' '+r.THIN_LIVE_BASE,
-            ('diff','--name-only',r.THIN_RELEASE_PARENT,release):'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
+            ('diff','--name-only',r.THIN_CLONE_FIX_PARENT,release):'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES)),
             ('diff','--name-only',r.THIN_LIVE_BASE,release):'\n'.join(sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES|r.MOBILE_HOTFIX_RELEASE_FILES)),
             ('diff','--name-only',r.THIN_LIVE_BASE,release,'--','Dockerfile','package.json','package-lock.json','server','brand/web','shared','src/utils','prisma'):'',
             ('diff','--name-only',r.THIN_BUSINESS_SHA,release,'--',*sorted(r.MOBILE_HOTFIX_BUSINESS_FILES|r.MOBILE_HOTFIX_TEST_FILES)):'',
@@ -2116,7 +2117,7 @@ class MobileThinReleaseTests(unittest.TestCase):
         return lambda repo,*args:answers[args]
     def test_exact_three_release_files_and_frozen_runtime(self):
         with patch.object(r,'git',side_effect=self.fixture()):r.thin_identity(ROOT,'a'*40)
-        self.assertTrue(r.THIN_IDENTITY);self.assertEqual(r.bg_release_base(),r.THIN_RELEASE_PARENT)
+        self.assertTrue(r.THIN_IDENTITY);self.assertEqual(r.bg_release_base(),r.THIN_CLONE_FIX_PARENT)
         self.assertFalse(r.migration_enabled());self.assertEqual(r.before_ledger(LEDGER),LEDGER)
     def test_wrong_base_business_parent_branch_merge_dirty_and_extra_inputs_fail(self):
         release='a'*40
@@ -2124,7 +2125,7 @@ class MobileThinReleaseTests(unittest.TestCase):
               (('rev-list','--parents','-n','1',release),release+' '+'b'*40),
               (('rev-list','--parents','-n','1',release),release+' '+r.THIN_RELEASE_PARENT+' '+'b'*40),
               (('status','--porcelain','--untracked-files=all'),' M server/app.js')]
-        scope=('diff','--name-only',r.THIN_RELEASE_PARENT,release)
+        scope=('diff','--name-only',r.THIN_CLONE_FIX_PARENT,release)
         for path in ('src/extra.jsx','server/v2.js','shared/extra.js','prisma/schema.prisma','Dockerfile','package-lock.json'):
             bads.append((scope,'\n'.join(sorted(r.MOBILE_HOTFIX_RELEASE_FILES|{path}))))
         for key,bad in bads:
@@ -2243,6 +2244,35 @@ class MobileThinReleaseTests(unittest.TestCase):
             removals=[args[-1] for args in events if args[:3]==['docker','image','rm']]
             self.assertEqual(removals,([art['imageReference']] if bad_tree else [])+['budu-thin-base:'+'a'*40])
             self.assertNotIn(base['Id'],removals)
+
+
+class ThinCloneProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        r.configure_profile('post-transfer',r.THIN_LIVE_BASE,r.THIN_BUSINESS_SHA,'0'*64)
+        r.THIN_MODE=r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=True
+    def tearDown(self):r.THIN_MODE=r.THIN_IDENTITY=r.MOBILE_HOTFIX_IDENTITY=False
+    def objects(self):
+        config={k:None for k in r.IDENTITY_KEYS};config.update(User='node',WorkingDir='/app',Cmd=['node','server/index.js'],Env=['GIT_SHA='+r.THIN_LIVE_BASE],Labels={r.REVISION:r.THIN_LIVE_BASE,'budu.production-role':'candidate'})
+        h=copy.deepcopy(r.HOST_DEFAULTS);h.update(RestartPolicy={'Name':'unless-stopped','MaximumRetryCount':0},PortBindings=None,PublishAllPorts=False,ReadonlyRootfs=False,CapAdd=None,CapDrop=None,Privileged=False,SecurityOpt=None,LogConfig={'Type':'json-file','Config':{}},GroupAdd=None,Init=None,NetworkMode='n')
+        g={'Image':'sha256:'+'b'*64,'Config':config,'HostConfig':h,'Mounts':[],'NetworkSettings':{'Networks':{'n':{}}}}
+        art={'release':'a'*40,'thin':True,'capacityProfile':r.THIN_PROFILE,'baseImageId':g['Image'],'manifest':{'overlayIdentity':'f'*64}}
+        candidate=copy.deepcopy(g);candidate['Config']['Env']=['GIT_SHA='+art['release']]
+        candidate['Config']['Labels'].update({r.REVISION:art['release'],'budu.thin-base':r.THIN_LIVE_BASE,'budu.thin-overlay-sha256':'f'*64})
+        return g,art,candidate
+    def test_real_clone_parity_accepts_only_exact_two_verified_provenance_labels(self):
+        g,art,candidate=self.objects()
+        with self.assertRaisesRegex(r.GateError,'CLONE_LABELS_MISMATCH'):r.clone_parity(g,candidate,art['release'])
+        expected=r.thin_clone_source(g,art);r.clone_parity(expected,candidate,art['release'])
+        for key,value in [('extra','unexpected'),('budu.thin-base','wrong'),('budu.thin-overlay-sha256','0'*64)]:
+            bad=copy.deepcopy(candidate);bad['Config']['Labels'][key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(r.GateError,'CLONE_LABELS_MISMATCH'):r.clone_parity(expected,bad,art['release'])
+        self.assertEqual(set(g['Config']['Labels']),{r.REVISION,'budu.production-role'})
+    def test_foreign_base_or_disabled_thin_identity_stays_blocked(self):
+        g,art,_=self.objects()
+        with self.assertRaises(r.GateError):r.thin_clone_source(g,dict(art,baseImageId='sha256:'+'c'*64))
+        r.THIN_IDENTITY=False
+        with self.assertRaises(r.GateError):r.thin_clone_source(g,art)
+        legacy=r.thin_clone_source(g,dict(art,thin=False));self.assertEqual(legacy,g);self.assertIsNot(legacy,g)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

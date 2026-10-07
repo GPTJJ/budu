@@ -195,9 +195,28 @@ PROCUREMENT_EXTENSION_PINS = {'.github/workflows/release-build-only.yml': 'acf9b
 
 # Preserve historical source pins by projecting only the exact reviewed mobile
 # binding back to its frozen parent. Any altered guard or unpinned node fails.
+THIN_CLONE_FIX_NODE_HASHES = {'bg_release_base': '7a237db359bae4a0f4b5060d4a0c3c6e468f759128feed8795bb047db9d6a81b', 'bg_clone': '9427e5c4b0fa1cf23b717cda7d2adf5ebd8cb737f99ff23d932447eb8b2cf913', 'THIN_CLONE_FIX_PARENT': '43b5a97145d24de2c4d39f55d9b1dddd150a42c0c41eca27e17b4e0667207241', 'thin_identity': 'c744f9855d810fe930840ccfd2ba2e4581003c6bd16ba565220d2dd02b16f22a', 'thin_clone_source': '047d4f9b04f710f519dab64c583f860cba9a7d6ecc4a38fcb9f9f5be3f7b446a'}
+
+def thin_clone_fix_baseline_source(source):
+    if 'THIN_CLONE_FIX_PARENT =' not in source:return source
+    prior=subprocess.check_output(['git','-C',str(ROOT),'show','8a600f3bda413786b266a9776d86ac0f64b47817:scripts/deploy-prod-transfer-cas.py'],text=True)
+    def nodes(value):
+        lines=value.splitlines(keepends=True);result={}
+        for n in ast.parse(value).body:
+            key=n.name if isinstance(n,(ast.FunctionDef,ast.ClassDef)) else ','.join(t.id for t in n.targets if isinstance(t,ast.Name)) if isinstance(n,ast.Assign) else ast.dump(n)
+            parts=lines[n.lineno-1:n.end_lineno];parts[-1]=parts[-1][:n.end_col_offset];parts[0]=parts[0][n.col_offset:]
+            result[key]=''.join(parts)
+        return result
+    before=nodes(prior);after=nodes(source)
+    assert not set(before)-set(after)
+    assert {k for k,v in after.items() if before.get(k)!=v}==set(THIN_CLONE_FIX_NODE_HASHES)
+    for k,h in THIN_CLONE_FIX_NODE_HASHES.items():assert hashlib.sha256(after[k].encode()).hexdigest()==h,k
+    return prior
+
 THIN_CONTROLLER_NODE_HASHES = {'configure_profile': '7ad8f1487eaf3d512248d53eb4c83866b0b044d69f2e9abb074eeca9ddb4fedd', 'bg_release_base': 'b5924e364606de917f7afbcb0745119a57cdd5fbc70fb50bb669c0e07527e987', 'validate_post_transfer_identity': 'bb8fe65edd4d4e658adc49d25444a91d0c53a3353da4da6afe7680dab53ae40a', 'bg_bind': 'a0bc68fdc0b070a0817c8aba43e3af5c01c2a3a833d292990174d7c2dba7a893', 'bg_execute': '3d480a22b61519bc15c6c7536a21fb36b6b2091f006b99eba8d13e6a29708e01', 'bg_deploy': 'f2716f0a09d620c347e78df71b5e731be595ed579886a6adb428660f9e906cbb', 'THIN_LIVE_BASE': 'df0f5ee353e595d7eb1af62225cd08153a15c74f5ecb73b2bf2e6018801812ce', 'THIN_RELEASE_PARENT': 'b3e845c60ca52a83ec464e4b66a6a8a6a0f0e070dc243ed1544a3d40b00a3672', 'THIN_BUSINESS_SHA': 'ae68b1738a323f32c5842bf7514e5705cd2a4d30ee5db789c56d3516b26c5a8b', 'THIN_PROFILE': '02e285f1744a369f816d9d6cfcab016722172c28518bf14501a259ab46305a47', 'THIN_MODE': '9ba49e8e01d71a439a7392d8bf330df2cbc61c8a69b2a1cc9e36aa7f1dfd2d9f', 'THIN_IDENTITY': '52f36e04813924ccc0a2ea53eb81b7698c99f980fbcb6baba6e4c263b8f1d5c7', 'THIN_MAX_PACKAGE': 'abf1e655d8c3c580cc21b83bbd9b0107907707fe3f2fdacbb331fbbb81136742', 'thin_identity': '7959cbe5abc20491359077253d7a009ae7cebffa63b0051fb0057ccffb1ad3e7', 'thin_manifest': 'c9c8b6e02c738b2f2ce32a80e496bc0c6e5168d83adae070cb1a14fa0cce42bb', 'thin_dockerfile': '8b9e9c5ea0683ab86927bba9ac56dc2fff4f16875961206c12f665142ab888f9', 'thin_package': '2aea76c648e99745a2d6d395fba88d4a3822a4d316d0932118a7ab72db3ce4ff', 'thin_read_package': '9804d5de44376a22de52cbef168c56604e082e5937e63deb76edc4b99b9cdef8', 'thin_allowed': 'fed20e83335dd0b48a5a28504a6ab9f9318a30d11d587a7b4377e580ef3dce80', 'thin_budget': 'c871b4abcc1fa10528ecf52fd804c4590b6fe5cbec1ff7caf1ceb3e5ee867b79', 'mobile_art_profile': 'e5e046c6a690550f28f203edee08f0a401945afe16edc95b6ae5056161827386', 'bg_e_budget': '4530a066ba9661a152ab6a249940f905cb69137b1a5f76f0a6cd9a5952354011', 'bg_e_barrier': '71520b65551df8758ae3f168c4a9fa27d4f62c1aa27785eaeee39bd2f8201f06', 'thin_image_verify': '5c1505234c1cb9e3856511608d33fd0a8ca5efc33dc15447f3287067de577f5a', 'THIN_TREE_PROBE': '298778316807e02deaf9c49301df2c9771a09be13e696c1e505f7931aa8c3e17', 'thin_tree_verify': '56adfe9aafeac64791949c818427043197bd1d2af5dd448961f820d40a58ead1', 'thin_preflight': '8dc48c39199df17e7feb282d6127d7755efa5c59f57d892ebf19c624393abb5b', 'thin_build': 'ca0b7120f8092addc4bc3b081b25bcb78955664d3205c3235bf388584fbc6494', 'thin_deploy': 'ce74617cd9dac5439e84ad356f68efddebbd9fb70229a160e41614b427e843bb', 'main': '03f2cd7ce329525b42affdd00c41b98a3978c0473d99638ee8317b421c803735'}
 
 def thin_baseline_source(source):
+    source=thin_clone_fix_baseline_source(source)
     if 'MOBILE_THIN_DERIVATIVE_E' not in source:return source
     prior=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
     def nodes(value):
@@ -2090,11 +2109,11 @@ class MobileSidebarSourceTests(unittest.TestCase):
 
 class MobileThinSourceTests(unittest.TestCase):
     def test_only_exact_extension_nodes_are_changed(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=thin_clone_fix_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         self.assertEqual(thin_baseline_source(source).strip(),before.strip())
     def test_existing_writer_db_lifecycle_capacity_and_cutover_are_preserved(self):
-        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        source=thin_clone_fix_baseline_source((ROOT/'scripts/deploy-prod-transfer-cas.py').read_text())
         before=subprocess.check_output(['git','-C',str(ROOT),'show',r.THIN_RELEASE_PARENT+':scripts/deploy-prod-transfer-cas.py'],text=True)
         def nodes(value):return {n.name:ast.get_source_segment(value,n) for n in ast.parse(value).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         a=nodes(source);b=nodes(before)
@@ -2127,6 +2146,22 @@ class MobileThinSourceTests(unittest.TestCase):
         self.assertLess(body.index("'THIN_CONTEXT_EXTRACTED'"),body.index("['docker','build'"))
         self.assertLess(body.index('thin_image_verify('),body.index('thin_tree_verify('))
         self.assertIn("'--pull=false','--network=none'",body)
+
+
+class ThinCloneFixSourceTests(unittest.TestCase):
+    def test_exact_adapter_nodes_and_generic_clone_guard_remain_strict(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        prior=thin_clone_fix_baseline_source(source)
+        self.assertEqual(set(THIN_CLONE_FIX_NODE_HASHES),{'bg_clone','bg_release_base','THIN_CLONE_FIX_PARENT','thin_identity','thin_clone_source'})
+        def node(value,name):return ast.get_source_segment(value,next(n for n in ast.parse(value).body if isinstance(n,ast.FunctionDef) and n.name==name))
+        self.assertEqual(node(source,'clone_parity'),node(prior,'clone_parity'))
+        self.assertEqual(node(source,'bg_clone'),node(prior,'bg_clone').replace('expected=copy.deepcopy(g);','expected=thin_clone_source(g,art);'))
+        self.assertEqual(r.THIN_CLONE_FIX_PARENT,'8a600f3bda413786b266a9776d86ac0f64b47817')
+    def test_provenance_and_original_label_guard_mutations_are_rejected(self):
+        source=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
+        for old,new in [("g['Image']==art['baseImageId']",'True'),("new['Config']['Labels'] == labels",'True')]:
+            self.assertIn(old,source)
+            with self.assertRaises(AssertionError):thin_clone_fix_baseline_source(source.replace(old,new,1))
 
 
 if __name__=='__main__':

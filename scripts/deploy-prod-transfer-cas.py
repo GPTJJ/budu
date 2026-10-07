@@ -386,7 +386,7 @@ def bg_hotfix_files():
 
 
 def bg_release_base():
-    if THIN_MODE: return THIN_RELEASE_PARENT
+    if THIN_MODE: return THIN_CLONE_FIX_PARENT
     if mobile_hotfix(): return MOBILE_HOTFIX_BUSINESS_PARENT
     if procurement_hotfix() and RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_PARENT
     return bg_hotfix_base() if procurement_hotfix() else BG_BASE
@@ -3412,7 +3412,7 @@ def bg_clone(remote, value, state):
         {'old':g['Id'],'name':name,'image':art['imageReference'],'sha':art['release'],'network':g['HostConfig']['NetworkMode'],'helper':helper},timeout=120)
     remote.run(['docker','update','--restart','unless-stopped',name])
     c=remote.inspect(name);validate_candidate_image(c,art);state['candidateId']=c['Id']
-    expected=copy.deepcopy(g);desired=env(expected);desired['BUDU_RUNTIME_MODE']='standby';expected['Config']['Env']=[k+'='+v for k,v in desired.items()]
+    expected=thin_clone_source(g,art);desired=env(expected);desired['BUDU_RUNTIME_MODE']='standby';expected['Config']['Env']=[k+'='+v for k,v in desired.items()]
     clone_parity(expected,c,art['release'])
 
 
@@ -3813,6 +3813,7 @@ def bg_deploy(remote, repo, path, art, ledger, authorize):
 THIN_LIVE_BASE = 'd9d992a91a072a683b5309117f5313678649aba5'
 THIN_RELEASE_PARENT = '43880068415f3124a93d6c3311a11706f1225043'
 THIN_BUSINESS_SHA = 'd037b1f9c3b1e7b3fd4ea367ee61922a2ca2ba58'
+THIN_CLONE_FIX_PARENT = '8a600f3bda413786b266a9776d86ac0f64b47817'
 THIN_PROFILE = 'MOBILE_THIN_DERIVATIVE_E'
 THIN_MODE = False
 THIN_IDENTITY = False
@@ -3825,11 +3826,12 @@ def thin_identity(repo, release):
     require(THIN_MODE and mobile_hotfix() and EXPECTED_OLD_SHA == THIN_LIVE_BASE
             and RUNTIME_SHA == THIN_BUSINESS_SHA and git(repo,'branch','--show-current') == MOBILE_HOTFIX_BRANCH
             and re.fullmatch(r'[0-9a-f]{40}',release)
-            and git(repo,'rev-list','--parents','-n','1',release) == release+' '+THIN_RELEASE_PARENT
+            and git(repo,'rev-list','--parents','-n','1',release) == release+' '+THIN_CLONE_FIX_PARENT
+            and git(repo,'rev-list','--parents','-n','1',THIN_CLONE_FIX_PARENT) == THIN_CLONE_FIX_PARENT+' '+THIN_RELEASE_PARENT
             and git(repo,'rev-list','--parents','-n','1',THIN_RELEASE_PARENT) == THIN_RELEASE_PARENT+' '+THIN_BUSINESS_SHA
             and git(repo,'rev-list','--parents','-n','1',THIN_BUSINESS_SHA) == THIN_BUSINESS_SHA+' '+THIN_LIVE_BASE,
             'THIN_RELEASE_IDENTITY_FAILED')
-    require(set(git(repo,'diff','--name-only',THIN_RELEASE_PARENT,release).splitlines()) == MOBILE_HOTFIX_RELEASE_FILES,
+    require(set(git(repo,'diff','--name-only',THIN_CLONE_FIX_PARENT,release).splitlines()) == MOBILE_HOTFIX_RELEASE_FILES,
             'THIN_RELEASE_SCOPE_FAILED')
     require(set(git(repo,'diff','--name-only',THIN_LIVE_BASE,release).splitlines()) ==
             MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | MOBILE_HOTFIX_RELEASE_FILES,
@@ -3949,6 +3951,21 @@ def bg_e_barrier(remote, art, receipt):
         thin_image_verify(remote.inspect(art['loadedDockerImageId'],image=True), art['baseImage'], art)
         thin_budget(remote,art,'THIN_BUILT',RESERVE)
     else:b2_barrier(remote,art,receipt,art['capacityLedger'])
+
+
+def thin_clone_source(g, art):
+    expected=copy.deepcopy(g)
+    if not art.get('thin'):return expected
+    require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and CAPACITY_WAIVER is None
+            and art['capacityProfile']==THIN_PROFILE and g['Image']==art['baseImageId']
+            and g['Config']['Labels'].get(REVISION)==THIN_LIVE_BASE
+            and re.fullmatch(r'[0-9a-f]{64}',art['manifest']['overlayIdentity']), 'THIN_CLONE_PROVENANCE_REQUIRED')
+    labels=dict(expected['Config']['Labels'])
+    require(set(labels)=={REVISION,'budu.production-role'} and labels['budu.production-role']=='candidate',
+            'THIN_CLONE_PROVENANCE_REQUIRED')
+    labels.update({'budu.thin-base':THIN_LIVE_BASE,'budu.thin-overlay-sha256':art['manifest']['overlayIdentity']})
+    expected['Config']['Labels']=labels
+    return expected
 
 
 def thin_image_verify(image, base, art):
