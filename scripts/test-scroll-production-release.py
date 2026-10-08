@@ -28,7 +28,7 @@ class ScrollReleaseTests(unittest.TestCase):
         if args == ('branch', '--show-current'): return r.SCROLL_UI_BRANCH
         if args[:3] == ('rev-list', '--parents', '-n'):
             sha = args[-1]
-            return sha+' '+({self.release:r.SCROLL_UI_RELEASE_PARENT,r.SCROLL_UI_BUSINESS_SHA:r.SCROLL_UI_BUSINESS_PARENT,r.SCROLL_UI_BUSINESS_PARENT:r.SCROLL_UI_LIVE_SHA}[sha])
+            return sha+' '+({self.release:r.SCROLL_UI_RELEASE_PARENT,r.SCROLL_UI_BUSINESS_SHA:r.SCROLL_UI_LIVE_SHA}[sha])
         if args[:2] == ('status', '--porcelain'): return ''
         if args[:2] == ('diff', '--name-only'):
             if '--' in args: return ''
@@ -89,9 +89,9 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.Remote(Path(key))
 
     def test_scope_and_business_ancestry_are_exact(self):
-        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/overlay/OverlayPrimitives.jsx','src/components/AccountMenu.jsx'})
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_BUSINESS_PARENT)
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_PARENT],text=True).strip(),r.SCROLL_UI_BUSINESS_PARENT+' '+r.SCROLL_UI_LIVE_SHA)
+        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/Sidebar.jsx'})
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/Sidebar.jsx')
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_LIVE_SHA)
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA,'--','prisma','server','shared','package.json','package-lock.json'],text=True).strip(),'')
 
     def test_exact_inherited_labels_and_unknown_labels_rejected(self):
@@ -127,7 +127,7 @@ class ScrollReleaseTests(unittest.TestCase):
         def nodes(source):
             return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         old,new=nodes(before),nodes(after)
-        permitted={'scroll_ui_identity','Remote'}
+        permitted={'scroll_ui_identity'}
         self.assertEqual({k for k in old if old[k]!=new[k]},permitted)
         self.assertEqual(set(new)-set(old),set())
         before_clone=next(n for n in ast.parse(before).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')

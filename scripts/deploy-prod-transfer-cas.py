@@ -284,23 +284,22 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = '4e77c5705475ccfc5643d24ac52aeeaa07865db6'
-SCROLL_UI_BUSINESS_SHA = '4ebc65598c96e731b1e4f262dca4aa3ad7f1d447'
-SCROLL_UI_BUSINESS_PARENT = '4c95580cbc1ac860ce3bcf5ed8f26e850f9bce22'
+SCROLL_UI_LIVE_SHA = '5f8a850f16d358a6105ea9d933d97d25e5d7b25a'
+SCROLL_UI_BUSINESS_SHA = '4a4fe5e9ac8aa3aee4fbbbbbe692eaf90ca0e393'
 SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
-SCROLL_UI_BRANCH = 'fix/mobile-tablet-scroll-prod-4e77-20261008'
+SCROLL_UI_BRANCH = 'codex/sidebar-ui-001-20261008'
 SCROLL_UI_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
 SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.FGFJS3rXX5/Listeners'
-SCROLL_UI_FILES = {'src/components/overlay/OverlayPrimitives.jsx', 'src/components/AccountMenu.jsx'}
+SCROLL_UI_FILES = {'src/components/Sidebar.jsx'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:bad7e2cba03ff3af392548a13c9944c67fd2d3f2bbe560d906098a698f0acd19',
+    'imageId': 'sha256:a4dbfa756a90a95775ce927d30eceb5d00bc2a61d38de8c6a94579ba9f298c41',
     'imageLabels': {
         'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
-        'budu.thin-base': 'b2d3bf7f32771756f5a79b132470b10d4e7ed215',
-        'budu.thin-overlay-sha256': '0176713c2bd0d77e1fb576f8d18744acb3ff658b75dd414d8114cf057a4ce172',
+        'budu.thin-base': '4e77c5705475ccfc5643d24ac52aeeaa07865db6',
+        'budu.thin-overlay-sha256': '45299b117649ddcd583cc0d968251614c3063e11e31ae0b5d3a69bb5598f829a',
     },
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
@@ -316,9 +315,7 @@ def scroll_ui_identity(repo, release):
             and re.fullmatch(r'[0-9a-f]{40}', release)
             and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_RELEASE_PARENT
             and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_SHA)
-                == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_BUSINESS_PARENT
-            and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_PARENT)
-                == SCROLL_UI_BUSINESS_PARENT + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
+                == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
     require(set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, SCROLL_UI_BUSINESS_SHA).splitlines()) == SCROLL_UI_FILES
             and set(git(repo, 'diff', '--name-only', SCROLL_UI_BUSINESS_SHA, release).splitlines()) == SCROLL_UI_RELEASE_FILES
             and set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release).splitlines())
@@ -328,8 +325,7 @@ def scroll_ui_identity(repo, release):
             'BUSINESS_FIX_REQUIRED')
     require(not git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release, '--', 'Dockerfile', 'package.json',
                     'package-lock.json', 'server', 'prisma', 'shared', 'brand/web', 'src/utils',
-                    'src/components/ProductCenterPage.jsx', 'src/components/PullToRefresh.jsx',
-                    'src/components/Sidebar.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
+                    'src/components/ProductCenterPage.jsx', 'src/components/PullToRefresh.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     require(all(digest((Path(repo)/path).read_bytes()) == expected for path, expected in BG_BOOTSTRAP_HASHES.items()),
             'BG_LIFECYCLE_IDENTITY_INVALID')
