@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" /><title>本地菜单滚动测试</title></head>
+<body><div id="root"></div><script type="module">
+  import React from 'react'
+  import { createRoot } from 'react-dom/client'
+  import Dashboard from '/src/components/Dashboard.jsx'
+  import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+  import '/src/index.css'
+
+  let products = Array.from({ length: 87 }, (_, i) => ({
+    productId: `p-${i}`, name: `测试商品${i}`, sku: `SKU-${i}`, productCategoryId: 'dessert',
+    productCategory: { id: 'dessert', name: '甜品' }, posCategory: '甜品', unit: '份',
+    salePriceCents: '7200', costPriceCents: '2350', isActive: true, purchaseEnabled: true,
+    transferEnabled: false, partnerReplenishmentEnabled: false, trackInventory: false,
+    image: '', hasImage: false, sortOrder: i, version: 1,
+  }))
+  const requests = []
+  window.__mobileScroll = { requests, get products() { return products }, patchDelay: 120, refreshDelay: 0 }
+  const reply = (body) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
+  window.fetch = async (url, options = {}) => {
+    const path = new URL(url, location.origin).pathname
+    const method = options.method || 'GET'
+    // Notification polling also reads /userdata; count only Dashboard refreshes.
+    const dashboardRefresh = path === '/api/userdata' && new Error().stack.includes('Dashboard.jsx')
+    requests.push({ path, method, dashboardRefresh })
+    if (dashboardRefresh && window.__mobileScroll.refreshDelay) await new Promise(resolve => setTimeout(resolve, window.__mobileScroll.refreshDelay))
+    if (path === '/api/v2/products') return reply({ rows: products })
+    if (path === '/api/v2/product-categories') return reply({ rows: [{ id: 'dessert', name: '甜品', isActive: true, sortOrder: 1, version: 1 }] })
+    const patch = path.match(/^\/api\/v2\/procurement\/items\/(p-\d+)\/purchase-purpose$/)
+    if (patch && method === 'PATCH') {
+      await new Promise(resolve => setTimeout(resolve, window.__mobileScroll.patchDelay))
+      const body = JSON.parse(options.body)
+      products = products.map(row => row.productId === patch[1] ? { ...row, purchaseEnabled: body.purchaseEnabled, version: row.version + 1 } : row)
+      const row = products.find(row => row.productId === patch[1])
+      return reply({ ok: true, item: { id: row.productId, purchaseEnabled: row.purchaseEnabled, procurementSupplierId: null, version: row.version } })
+    }
+    return reply({ rows: [], data: {}, count: 0 })
+  }
+  createRoot(document.getElementById('root')).render(React.createElement(React.Fragment, null,
+    React.createElement(OverlayStackManager),
+    React.createElement(Dashboard, { user: { id: 'local-test', username: '本地测试', role: 'developer' }, onLogout: () => {}, onUserChange: () => {} }),
+  ))
+</script></body></html>

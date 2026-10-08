@@ -39,7 +39,9 @@ export function OverlayStackManager() {
         htmlOverscrollBehavior: html.style.overscrollBehavior,
       }
       html.classList.add('budu-overlay-open')
-      html.style.overflow = 'hidden'
+      // Keep an existing classic scrollbar: removing it changes WebKit media queries.
+      // The fixed body holds the page; the root has no scrollable content while locked.
+      html.style.overflow = window.innerWidth > html.clientWidth ? 'hidden scroll' : 'hidden'
       html.style.overscrollBehavior = 'none'
       body.style.overflow = 'hidden'
       body.style.position = 'fixed'
@@ -77,8 +79,11 @@ export function OverlayStackManager() {
       attributes: true,
       attributeFilter: ['aria-modal', 'data-budu-overlay-root', 'hidden'],
     })
+    // Responsive drawers can become hidden by CSS without any DOM mutation.
+    window.addEventListener('resize', sync, { passive: true })
     sync()
     return () => {
+      window.removeEventListener('resize', sync)
       observer.disconnect()
       unlock()
     }
