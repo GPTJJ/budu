@@ -170,8 +170,6 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
             </button>
           )
         })}
-        {/* 移动端滚动提示：底部渐变淡出，暗示菜单可继续滑动（不影响点击） */}
-        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-7 rounded-b-2xl bg-gradient-to-t from-white via-white/70 to-transparent lg:hidden" />
       </nav>
 
       {/* 底部用户卡片 */}
