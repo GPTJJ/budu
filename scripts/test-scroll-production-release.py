@@ -3,8 +3,10 @@
 import ast
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
+import types
 import unittest
 from unittest.mock import patch
 
@@ -26,7 +28,7 @@ class ScrollReleaseTests(unittest.TestCase):
         if args == ('branch', '--show-current'): return r.SCROLL_UI_BRANCH
         if args[:3] == ('rev-list', '--parents', '-n'):
             sha = args[-1]
-            return sha+' '+({self.release:r.SCROLL_UI_RELEASE_PARENT,r.SCROLL_UI_RELEASE_PARENT:r.SCROLL_UI_BUSINESS_SHA,r.SCROLL_UI_BUSINESS_SHA:r.SCROLL_UI_LIVE_SHA}[sha])
+            return sha+' '+({self.release:r.SCROLL_UI_RELEASE_PARENT,r.SCROLL_UI_BUSINESS_SHA:r.SCROLL_UI_BUSINESS_PARENT,r.SCROLL_UI_BUSINESS_PARENT:r.SCROLL_UI_LIVE_SHA}[sha])
         if args[:2] == ('status', '--porcelain'): return ''
         if args[:2] == ('diff', '--name-only'):
             if '--' in args: return ''
@@ -64,8 +66,33 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.thin_identity(ROOT,self.release)
 
     def test_frontend_hash_drift_rejected(self):
-        with patch.object(r,'SCROLL_UI_SOURCE_HASHES',{'src/components/PullToRefresh.jsx':'0'*64}),patch.object(r,'git',side_effect=self.fake_git),self.assertRaisesRegex(r.GateError,'BUSINESS_FIX_REQUIRED'):
-            r.thin_identity(ROOT,self.release)
+        for path in ('src/components/PullToRefresh.jsx', *sorted(r.SCROLL_UI_FILES)):
+            with self.subTest(path=path),patch.object(r,'SCROLL_UI_SOURCE_HASHES',{path:'0'*64}),patch.object(r,'git',side_effect=self.fake_git),self.assertRaisesRegex(r.GateError,'BUSINESS_FIX_REQUIRED'):
+                r.thin_identity(ROOT,self.release)
+
+    def test_scroll_agent_requires_exact_identity_and_owner(self):
+        r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = True
+        socket=r.SCROLL_UI_AGENT_SOCKET
+        good=types.SimpleNamespace(st_mode=r.stat.S_IFSOCK|0o600,st_uid=os.getuid())
+        listing=b'256 SHA256:ObUo5aPhSWBAS2c8UXYpe8oF/RByquRERPF5oEaEhVQ synthetic (ED25519)\n'
+        with patch.dict(os.environ,{'SSH_AUTH_SOCK':socket}),patch.object(Path,'stat',return_value=good),patch.object(r,'command',return_value=listing):
+            remote=r.Remote(Path(r.SCROLL_UI_AGENT_KEY))
+            for flag in ('BatchMode=yes','StrictHostKeyChecking=yes','IdentitiesOnly=yes','IdentityAgent='+socket):self.assertIn(flag,remote.ssh)
+        for owner,mode,agent,keys,key in [
+                (os.getuid()+1,good.st_mode,socket,listing,r.SCROLL_UI_AGENT_KEY),
+                (os.getuid(),r.stat.S_IFREG,socket,listing,r.SCROLL_UI_AGENT_KEY),
+                (os.getuid(),good.st_mode,'/tmp/other',listing,r.SCROLL_UI_AGENT_KEY),
+                (os.getuid(),good.st_mode,socket,listing+listing,r.SCROLL_UI_AGENT_KEY),
+                (os.getuid(),good.st_mode,socket,listing.replace(b'ObUo5aPh',b'wrongAAA'),r.SCROLL_UI_AGENT_KEY),
+                (os.getuid(),good.st_mode,socket,listing,'/tmp/other-key')]:
+            with self.subTest(owner=owner,mode=mode,agent=agent,key=key),patch.dict(os.environ,{'SSH_AUTH_SOCK':agent}),patch.object(Path,'stat',return_value=types.SimpleNamespace(st_mode=mode,st_uid=owner)),patch.object(r,'command',return_value=keys),self.assertRaises(r.GateError):
+                r.Remote(Path(key))
+
+    def test_scope_and_business_ancestry_are_exact(self):
+        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/overlay/OverlayPrimitives.jsx','src/components/AccountMenu.jsx'})
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_BUSINESS_PARENT)
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_PARENT],text=True).strip(),r.SCROLL_UI_BUSINESS_PARENT+' '+r.SCROLL_UI_LIVE_SHA)
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA,'--','prisma','server','shared','package.json','package-lock.json'],text=True).strip(),'')
 
     def test_exact_inherited_labels_and_unknown_labels_rejected(self):
         r.THIN_IDENTITY = r.MOBILE_HOTFIX_IDENTITY = True
@@ -112,6 +139,7 @@ class ScrollReleaseTests(unittest.TestCase):
             return {n.name:ast.dump(n,include_attributes=False) for n in cls.body if isinstance(n,ast.FunctionDef) and n.name!='__init__'}
         self.assertEqual(remote_methods(before),remote_methods(after))
         self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*1024**3)
+        self.assertEqual(r.MAX_PROJECTED_USAGE,90)
         self.assertIsNone(r.CAPACITY_WAIVER)
 
 

@@ -284,21 +284,23 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = 'b2d3bf7f32771756f5a79b132470b10d4e7ed215'
-SCROLL_UI_BUSINESS_SHA = '44e8824ff3962a45c6f8f7389f111fd6ef8341ac'
+SCROLL_UI_LIVE_SHA = '4e77c5705475ccfc5643d24ac52aeeaa07865db6'
+SCROLL_UI_BUSINESS_SHA = '4ebc65598c96e731b1e4f262dca4aa3ad7f1d447'
+SCROLL_UI_BUSINESS_PARENT = '4c95580cbc1ac860ce3bcf5ed8f26e850f9bce22'
 SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
-SCROLL_UI_BRANCH = 'codex/overlay-resize-unlock-20261008'
-SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.CqqyutiNFS/Listeners'
-SCROLL_UI_FILES = {'src/components/overlay/OverlayPrimitives.jsx', 'scripts/test-overlay-resize-dashboard.mjs', 'tests/overlay-resize-dashboard-harness.html'}
+SCROLL_UI_BRANCH = 'fix/mobile-tablet-scroll-prod-4e77-20261008'
+SCROLL_UI_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
+SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.FGFJS3rXX5/Listeners'
+SCROLL_UI_FILES = {'src/components/overlay/OverlayPrimitives.jsx', 'src/components/AccountMenu.jsx'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c', 'src/components/overlay/OverlayPrimitives.jsx': '37392c9270e1183e91ffa69bc67181a49d84980067367d768e6c0e3a5a6da9e9', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:48cc831f111a6657558676b464bec3a9745a3f3b7c5d84e051c69985c5cc5a6a',
+    'imageId': 'sha256:bad7e2cba03ff3af392548a13c9944c67fd2d3f2bbe560d906098a698f0acd19',
     'imageLabels': {
         'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
-        'budu.thin-base': '20946065322330f7a98142726d3513469b66dd07',
-        'budu.thin-overlay-sha256': '09aca03bd07ccd8368133ef62494c6826fdb8f5e02bb9a5364f38048558ecb63',
+        'budu.thin-base': 'b2d3bf7f32771756f5a79b132470b10d4e7ed215',
+        'budu.thin-overlay-sha256': '0176713c2bd0d77e1fb576f8d18744acb3ff658b75dd414d8114cf057a4ce172',
     },
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
@@ -314,7 +316,9 @@ def scroll_ui_identity(repo, release):
             and re.fullmatch(r'[0-9a-f]{40}', release)
             and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_RELEASE_PARENT
             and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_SHA)
-                == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
+                == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_BUSINESS_PARENT
+            and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_PARENT)
+                == SCROLL_UI_BUSINESS_PARENT + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
     require(set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, SCROLL_UI_BUSINESS_SHA).splitlines()) == SCROLL_UI_FILES
             and set(git(repo, 'diff', '--name-only', SCROLL_UI_BUSINESS_SHA, release).splitlines()) == SCROLL_UI_RELEASE_FILES
             and set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release).splitlines())
@@ -1883,7 +1887,7 @@ class Remote:
             else:
                 socket = os.environ.get('BUDU_MOBILE_ISOLATED_AGENT_SOCKET', '')
                 require(socket.startswith('/private/tmp/budu-mobile-isolated-entry-'), 'MOBILE_ISOLATED_AGENT_REQUIRED')
-            require(str(key) == '/Users/apple/.ssh/budu_bj_migration'
+            require(str(key) == (SCROLL_UI_AGENT_KEY if scroll_ui_hotfix() else '/Users/apple/.ssh/budu_bj_migration')
                     and stat.S_ISSOCK(Path(socket).stat().st_mode) and Path(socket).stat().st_uid == os.getuid(),
                     'MOBILE_ISOLATED_AGENT_REQUIRED')
             require(os.environ.get('SSH_AUTH_SOCK') == socket, 'MOBILE_ISOLATED_AGENT_REQUIRED')
