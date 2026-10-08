@@ -247,7 +247,7 @@ export default function AccountMenu({ user, onUserChange, onLogout, onManageAcco
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={close} />
+          <div data-budu-overlay-ignore="true" className="fixed inset-0 z-40" onClick={close} />
           <div
             className={`absolute z-50 w-56 overflow-hidden rounded-2xl border border-slate-100 bg-white p-1.5 shadow-lg ${
               variant === 'sidebar' ? 'bottom-full left-0 mb-2' : 'right-0 top-full mt-2'
