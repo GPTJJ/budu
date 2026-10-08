@@ -284,20 +284,21 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = '20946065322330f7a98142726d3513469b66dd07'
-SCROLL_UI_BUSINESS_SHA = 'ff83f0718ea20e73c4dc90f5dacec7b965712e08'
-SCROLL_UI_RELEASE_PARENT = 'd9f2f2b8471eaf227eaadfb7f178e8b62f40785b'
-SCROLL_UI_BRANCH = 'codex/mobile-scroll-production-20261008'
-SCROLL_UI_FILES = MOBILE_HOTFIX_BUSINESS_FILES | MOBILE_HOTFIX_TEST_FILES | {'tests/pull-to-refresh-native.spec.mjs'}
+SCROLL_UI_LIVE_SHA = 'b2d3bf7f32771756f5a79b132470b10d4e7ed215'
+SCROLL_UI_BUSINESS_SHA = '44e8824ff3962a45c6f8f7389f111fd6ef8341ac'
+SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
+SCROLL_UI_BRANCH = 'codex/overlay-resize-unlock-20261008'
+SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.CqqyutiNFS/Listeners'
+SCROLL_UI_FILES = {'src/components/overlay/OverlayPrimitives.jsx', 'scripts/test-overlay-resize-dashboard.mjs', 'tests/overlay-resize-dashboard-harness.html'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '2bd4499283605f7907bc2a9d7dcb2501994983ece316d7ad6e7dd18bf203f59c', 'src/components/overlay/OverlayPrimitives.jsx': '37392c9270e1183e91ffa69bc67181a49d84980067367d768e6c0e3a5a6da9e9', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:9f6d721f5254ff29ebced9d404a7828127935d7e77e0a3848b891f1b34e652c6',
+    'imageId': 'sha256:48cc831f111a6657558676b464bec3a9745a3f3b7c5d84e051c69985c5cc5a6a',
     'imageLabels': {
         'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
-        'budu.thin-base': 'd9d992a91a072a683b5309117f5313678649aba5',
-        'budu.thin-overlay-sha256': '5ddf3085d271adc1e00f44867763de9afb6e15bac439631c2deefc62fca4b703',
+        'budu.thin-base': '20946065322330f7a98142726d3513469b66dd07',
+        'budu.thin-overlay-sha256': '09aca03bd07ccd8368133ef62494c6826fdb8f5e02bb9a5364f38048558ecb63',
     },
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
@@ -312,8 +313,6 @@ def scroll_ui_identity(repo, release):
             and git(repo, 'branch', '--show-current') == SCROLL_UI_BRANCH
             and re.fullmatch(r'[0-9a-f]{40}', release)
             and git(repo, 'rev-list', '--parents', '-n', '1', release) == release + ' ' + SCROLL_UI_RELEASE_PARENT
-            and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_RELEASE_PARENT)
-                == SCROLL_UI_RELEASE_PARENT + ' ' + SCROLL_UI_BUSINESS_SHA
             and git(repo, 'rev-list', '--parents', '-n', '1', SCROLL_UI_BUSINESS_SHA)
                 == SCROLL_UI_BUSINESS_SHA + ' ' + SCROLL_UI_LIVE_SHA, 'SCROLL_UI_RELEASE_IDENTITY_INVALID')
     require(set(git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, SCROLL_UI_BUSINESS_SHA).splitlines()) == SCROLL_UI_FILES
@@ -325,7 +324,8 @@ def scroll_ui_identity(repo, release):
             'BUSINESS_FIX_REQUIRED')
     require(not git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release, '--', 'Dockerfile', 'package.json',
                     'package-lock.json', 'server', 'prisma', 'shared', 'brand/web', 'src/utils',
-                    'src/components/ProductCenterPage.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
+                    'src/components/ProductCenterPage.jsx', 'src/components/PullToRefresh.jsx',
+                    'src/components/Sidebar.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     require(all(digest((Path(repo)/path).read_bytes()) == expected for path, expected in BG_BOOTSTRAP_HASHES.items()),
             'BG_LIFECYCLE_IDENTITY_INVALID')
@@ -1876,6 +1876,10 @@ class Remote:
                 require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and BG_ACTIVE,
                         'PURCHASE_UI_AGENT_SCOPE_INVALID')
                 socket = purchase_ui_binding()['agentSocket']
+            elif scroll_ui_hotfix():
+                require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and BG_ACTIVE,
+                        'SCROLL_UI_AGENT_SCOPE_INVALID')
+                socket = SCROLL_UI_AGENT_SOCKET
             else:
                 socket = os.environ.get('BUDU_MOBILE_ISOLATED_AGENT_SOCKET', '')
                 require(socket.startswith('/private/tmp/budu-mobile-isolated-entry-'), 'MOBILE_ISOLATED_AGENT_REQUIRED')

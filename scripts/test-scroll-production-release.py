@@ -100,13 +100,17 @@ class ScrollReleaseTests(unittest.TestCase):
         def nodes(source):
             return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         old,new=nodes(before),nodes(after)
-        permitted={'thin_live_sha','thin_business_sha','mobile_hotfix','bg_hotfix_base','bg_hotfix_files','bg_release_base','thin_identity','thin_clone_source','thin_preflight','thin_build','validate_clone_source'}
+        permitted={'scroll_ui_identity','Remote'}
         self.assertEqual({k for k in old if old[k]!=new[k]},permitted)
-        self.assertEqual(set(new)-set(old),{'scroll_ui_hotfix','scroll_ui_identity'})
+        self.assertEqual(set(new)-set(old),set())
         before_clone=next(n for n in ast.parse(before).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
         after_clone=next(n for n in ast.parse(after).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
         self.assertEqual([ast.dump(n) for n in before_clone.body[:2]+before_clone.body[3:]],
                          [ast.dump(n) for n in after_clone.body[:2]+after_clone.body[3:]])
+        def remote_methods(source):
+            cls=next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='Remote')
+            return {n.name:ast.dump(n,include_attributes=False) for n in cls.body if isinstance(n,ast.FunctionDef) and n.name!='__init__'}
+        self.assertEqual(remote_methods(before),remote_methods(after))
         self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*1024**3)
         self.assertIsNone(r.CAPACITY_WAIVER)
 
