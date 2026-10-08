@@ -7,9 +7,15 @@ const overlaySelector = '[data-budu-overlay-root], [role="dialog"][aria-modal="t
 
 function visibleOverlayCount() {
   return [...document.querySelectorAll(overlaySelector)].filter((element) => {
-    if (!element.isConnected || element.hidden) return false
-    const style = window.getComputedStyle(element)
-    return style.display !== 'none' && style.visibility !== 'hidden'
+    // A dialog inside a responsive/hidden parent may still report its own
+    // display as visible. Only rendered, accessible overlays can lock the page.
+    if (!element.isConnected || element.getClientRects().length === 0) return false
+    for (let node = element; node instanceof Element; node = node.parentElement) {
+      if (node.hidden || node.hasAttribute('inert') || node.getAttribute('aria-hidden') === 'true') return false
+      const style = window.getComputedStyle(node)
+      if (style.display === 'none' || style.visibility === 'hidden') return false
+    }
+    return true
   }).length
 }
 
@@ -77,7 +83,8 @@ export function OverlayStackManager() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['aria-modal', 'data-budu-overlay-root', 'hidden'],
+      // Include visibility changes on hidden parents, not every styling update.
+      attributeFilter: ['aria-modal', 'data-budu-overlay-root', 'hidden', 'aria-hidden', 'inert', 'class', 'style'],
     })
     // Responsive drawers can become hidden by CSS without any DOM mutation.
     window.addEventListener('resize', sync, { passive: true })
