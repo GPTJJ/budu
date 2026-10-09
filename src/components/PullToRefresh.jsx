@@ -38,6 +38,10 @@ export default function PullToRefresh({ onRefresh, children }) {
 
   useEffect(() => {
     if (!('ontouchstart' in window)) return undefined
+    // The document scrolls the main content, but the sidebar is a separate
+    // native scroll region. Keep refresh interception off that event path.
+    const content = document.querySelector('#root main')
+    if (!content) return undefined
 
     const cancelPull = () => {
       pulling.current = false
@@ -75,6 +79,9 @@ export default function PullToRefresh({ onRefresh, children }) {
         return
       }
       if (dy > 8) {
+        // Claim only an unambiguous downward pull, never an initial diagonal
+        // movement that the browser may already be using for native scrolling.
+        if (dy <= Math.abs(dx) * 1.2) return cancelPull()
         // Once native scrolling owns the sequence, never steal it back.
         if (!e.cancelable) return cancelPull()
         e.preventDefault()
@@ -107,8 +114,8 @@ export default function PullToRefresh({ onRefresh, children }) {
       }
     }
 
-    window.addEventListener('touchstart', onTouchStart, { passive: true })
-    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    content.addEventListener('touchstart', onTouchStart, { passive: true })
+    content.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('touchend', onTouchEnd, { passive: true })
     window.addEventListener('touchcancel', cancelPull, { passive: true })
     const overlayObserver = new MutationObserver(() => {
@@ -117,8 +124,8 @@ export default function PullToRefresh({ onRefresh, children }) {
     overlayObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
     return () => {
       overlayObserver.disconnect()
-      window.removeEventListener('touchstart', onTouchStart)
-      window.removeEventListener('touchmove', onTouchMove)
+      content.removeEventListener('touchstart', onTouchStart)
+      content.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', onTouchEnd)
       window.removeEventListener('touchcancel', cancelPull)
     }
