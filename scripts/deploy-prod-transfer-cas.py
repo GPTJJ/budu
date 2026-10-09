@@ -284,22 +284,22 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = '5f8a850f16d358a6105ea9d933d97d25e5d7b25a'
-SCROLL_UI_BUSINESS_SHA = '4a4fe5e9ac8aa3aee4fbbbbbe692eaf90ca0e393'
+SCROLL_UI_LIVE_SHA = 'b3fab5810d1af0ff0408d44d4f02d0a25d807481'
+SCROLL_UI_BUSINESS_SHA = 'a86cb50e656f89b320325304afecbd36f210975f'
 SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
-SCROLL_UI_BRANCH = 'codex/sidebar-ui-001-20261008'
+SCROLL_UI_BRANCH = 'codex/touch-scroll-return-20261009'
 SCROLL_UI_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
-SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.FGFJS3rXX5/Listeners'
-SCROLL_UI_FILES = {'src/components/Sidebar.jsx'}
+SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.drMd5QwUaI/Listeners'
+SCROLL_UI_FILES = {'src/components/PullToRefresh.jsx'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': '280cd7366da195bae80a9331dba874c57bbeef1c61e4767ac8790a640d286cc5', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': 'c8800af809910cbde01ad6db5c9991ed6ab665233f11ad76fdadf2d5dd80591d', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:a4dbfa756a90a95775ce927d30eceb5d00bc2a61d38de8c6a94579ba9f298c41',
+    'imageId': 'sha256:dae1d35c9c592395700442b58b92e9d6983dcd923a5f854b3c1297bcd40bb2d3',
     'imageLabels': {
         'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
-        'budu.thin-base': '4e77c5705475ccfc5643d24ac52aeeaa07865db6',
-        'budu.thin-overlay-sha256': '45299b117649ddcd583cc0d968251614c3063e11e31ae0b5d3a69bb5598f829a',
+        'budu.thin-base': '5f8a850f16d358a6105ea9d933d97d25e5d7b25a',
+        'budu.thin-overlay-sha256': '380872a7eea457894060328068fff9953884e13877ea85c0bf98fec20be80b2d',
     },
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
@@ -325,7 +325,7 @@ def scroll_ui_identity(repo, release):
             'BUSINESS_FIX_REQUIRED')
     require(not git(repo, 'diff', '--name-only', SCROLL_UI_LIVE_SHA, release, '--', 'Dockerfile', 'package.json',
                     'package-lock.json', 'server', 'prisma', 'shared', 'brand/web', 'src/utils',
-                    'src/components/ProductCenterPage.jsx', 'src/components/PullToRefresh.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
+                    'src/components/ProductCenterPage.jsx', 'src/components/Sidebar.jsx'), 'THIN_RUNTIME_EQUIVALENCE_FAILED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
     require(all(digest((Path(repo)/path).read_bytes()) == expected for path, expected in BG_BOOTSTRAP_HASHES.items()),
             'BG_LIFECYCLE_IDENTITY_INVALID')

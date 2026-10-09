@@ -66,7 +66,7 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.thin_identity(ROOT,self.release)
 
     def test_frontend_hash_drift_rejected(self):
-        for path in ('src/components/PullToRefresh.jsx', *sorted(r.SCROLL_UI_FILES)):
+        for path in ('src/components/Sidebar.jsx', *sorted(r.SCROLL_UI_FILES)):
             with self.subTest(path=path),patch.object(r,'SCROLL_UI_SOURCE_HASHES',{path:'0'*64}),patch.object(r,'git',side_effect=self.fake_git),self.assertRaisesRegex(r.GateError,'BUSINESS_FIX_REQUIRED'):
                 r.thin_identity(ROOT,self.release)
 
@@ -89,8 +89,8 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.Remote(Path(key))
 
     def test_scope_and_business_ancestry_are_exact(self):
-        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/Sidebar.jsx'})
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/Sidebar.jsx')
+        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/PullToRefresh.jsx'})
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/PullToRefresh.jsx')
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_LIVE_SHA)
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA,'--','prisma','server','shared','package.json','package-lock.json'],text=True).strip(),'')
 
