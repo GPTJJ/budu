@@ -284,23 +284,19 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = 'b3fab5810d1af0ff0408d44d4f02d0a25d807481'
-SCROLL_UI_BUSINESS_SHA = 'a86cb50e656f89b320325304afecbd36f210975f'
+SCROLL_UI_LIVE_SHA = 'f1b99d2ecb48ba65ddee607115668b3e1738b21a'
+SCROLL_UI_BUSINESS_SHA = 'd347f4c1fc1e52b27e1004984b7ed4eb8fc3d437'
 SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
-SCROLL_UI_BRANCH = 'codex/touch-scroll-return-20261009'
+SCROLL_UI_BRANCH = 'codex/purchase-scroll-lifecycle-20261010'
 SCROLL_UI_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
 SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.drMd5QwUaI/Listeners'
-SCROLL_UI_FILES = {'src/components/PullToRefresh.jsx'}
+SCROLL_UI_FILES = {'src/components/PurchaseReceiptPage.jsx'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': 'c8800af809910cbde01ad6db5c9991ed6ab665233f11ad76fdadf2d5dd80591d', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': 'c8800af809910cbde01ad6db5c9991ed6ab665233f11ad76fdadf2d5dd80591d', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0', 'src/components/PurchaseReceiptPage.jsx': '59732cceb588a7db6bf1d4fb28e4e6475e8d19dc10baff70f4ddb40320ce4274'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:dae1d35c9c592395700442b58b92e9d6983dcd923a5f854b3c1297bcd40bb2d3',
-    'imageLabels': {
-        'org.opencontainers.image.revision': SCROLL_UI_LIVE_SHA,
-        'budu.thin-base': '5f8a850f16d358a6105ea9d933d97d25e5d7b25a',
-        'budu.thin-overlay-sha256': '380872a7eea457894060328068fff9953884e13877ea85c0bf98fec20be80b2d',
-    },
+    'imageId': 'sha256:3ffd3a33a6b340cd3de6907a38779d5a437d475ce8666d9ebc3328f8c3c8f63e',
+    'imageLabels': {'budu.thin-base': 'b3fab5810d1af0ff0408d44d4f02d0a25d807481', 'budu.thin-overlay-sha256': '900abe06d810bc0f3f6f910b6f5fde47a96e44e331e347f7bb6dc8cd4c2384e7', 'org.opencontainers.image.revision': 'f1b99d2ecb48ba65ddee607115668b3e1738b21a'},
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
 

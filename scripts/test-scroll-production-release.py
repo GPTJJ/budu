@@ -89,8 +89,8 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.Remote(Path(key))
 
     def test_scope_and_business_ancestry_are_exact(self):
-        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/PullToRefresh.jsx'})
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/PullToRefresh.jsx')
+        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/PurchaseReceiptPage.jsx'})
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/PurchaseReceiptPage.jsx')
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_LIVE_SHA)
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA,'--','prisma','server','shared','package.json','package-lock.json'],text=True).strip(),'')
 
@@ -127,7 +127,7 @@ class ScrollReleaseTests(unittest.TestCase):
         def nodes(source):
             return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
         old,new=nodes(before),nodes(after)
-        permitted={'scroll_ui_identity'}
+        permitted=set()
         self.assertEqual({k for k in old if old[k]!=new[k]},permitted)
         self.assertEqual(set(new)-set(old),set())
         before_clone=next(n for n in ast.parse(before).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
