@@ -23,14 +23,8 @@ function Sheet({
   children,
   error
 }) {
-  useEffect(() => {
-    const before = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = before;
-    };
-  }, []);
-  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center" role="dialog" aria-label={title}><div className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-3xl"><div className="mb-4 flex justify-between gap-4"><h3 className="text-lg font-bold">{title}</h3><button className={btn} onClick={onClose}>关闭</button></div>{error && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-rose-700">{error}</p>}{children}</div></div>;
+  // OverlayStackManager owns the lock and restores the unlocked page state.
+  return <div data-budu-overlay-root className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center" role="dialog" aria-modal="true" aria-label={title}><div className="max-h-[90dvh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-3xl"><div className="mb-4 flex justify-between gap-4"><h3 className="text-lg font-bold">{title}</h3><button className={btn} onClick={onClose}>关闭</button></div>{error && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-rose-700">{error}</p>}{children}</div></div>;
 }
 export default function PurchaseReceiptPage({
   currentUser,
