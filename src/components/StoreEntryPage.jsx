@@ -12,6 +12,7 @@ import StoreEntryExportModal from './StoreEntryExportModal'
 import { DAILY_ENTRY_CAPABILITIES, hasDailyEntryCapability, canCorrectDailyPerformance } from '../../shared/accountPermissions'
 import DailyHistoricalCorrection from './DailyHistoricalCorrection'
 import { OverlayPanel, OverlayViewport } from './overlay/OverlayPrimitives'
+import ledgerStyles from './DailyFactLedger.module.css'
 
 function pad(n) {
   return String(n).padStart(2, '0')
@@ -832,27 +833,26 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
         )}
       </section>
 
-      <section className="card p-4 sm:p-5" data-testid="daily-fact-ledger">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
+      <section className={`card min-w-0 p-4 sm:p-5 ${ledgerStyles.container}`} data-testid="daily-fact-ledger">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h3 className="text-[15px] font-bold text-slate-800">每日事实账本</h3>
-            {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerStore, initialDate: `${ledgerMonth}-01`, supplement: true })} className="btn-secondary mt-2 min-h-11">历史补录</button>}
-            <p className="mt-1 text-xs leading-5 text-slate-400">仅展示已保存的营业与实际值班事实，不使用当前排班反推历史。</p>
+            {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerStore, initialDate: `${ledgerMonth}-01`, supplement: true })} className="btn-secondary ml-auto min-h-11 shrink-0 whitespace-nowrap px-4 py-2">历史补录</button>}
           </div>
-          <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[36rem]">
-            <label className="min-w-0 text-[11px] font-semibold text-slate-500">
+          <p className="mt-1 text-xs leading-5 text-slate-400">仅展示已保存的营业与实际值班事实，不使用当前排班反推历史。</p>
+          <div className={`mt-4 ${ledgerStyles.filters}`}>
+            <label className={`min-w-0 text-[11px] font-semibold text-slate-500 ${ledgerStyles.month}`}>
               月份
-              <input data-testid="ledger-month-filter" type="month" value={ledgerMonth} onChange={(event) => setLedgerMonth(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`} />
+              <input data-testid="ledger-month-filter" type="month" value={ledgerMonth} onChange={(event) => setLedgerMonth(event.target.value)} className={`${inputCls} mt-1 ${ledgerStyles.control}`} />
             </label>
             <label className="min-w-0 text-[11px] font-semibold text-slate-500">
               门店
-              <select data-testid="ledger-store-filter" value={ledgerStore} onChange={(event) => setLedgerStore(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`}>
+              <select data-testid="ledger-store-filter" value={ledgerStore} onChange={(event) => setLedgerStore(event.target.value)} className={`${inputCls} mt-1 ${ledgerStyles.control}`}>
                 {visibleStores.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.name}</option>)}
               </select>
             </label>
             <label className="min-w-0 text-[11px] font-semibold text-slate-500">
               状态
-              <select data-testid="ledger-status-filter" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className={`${inputCls} mt-1 h-10 min-w-0 text-sm`}>
+              <select data-testid="ledger-status-filter" value={ledgerStatus} onChange={(event) => setLedgerStatus(event.target.value)} className={`${inputCls} mt-1 ${ledgerStyles.control}`}>
                 <option value="all">全部</option>
                 <option value="draft">待确认</option>
                 <option value="confirmed">已确认 / 已修正</option>
@@ -860,7 +860,6 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
               </select>
             </label>
           </div>
-        </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
           <span>{ledgerMonthLabel(ledgerMonth)}</span>
