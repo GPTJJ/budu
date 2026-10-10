@@ -284,19 +284,19 @@ PURCHASE_UI_LIVE_BINDING = {
 
 
 # Exact production-reconciled scroll-only release; reuse the existing controller.
-SCROLL_UI_LIVE_SHA = 'f1b99d2ecb48ba65ddee607115668b3e1738b21a'
-SCROLL_UI_BUSINESS_SHA = 'd347f4c1fc1e52b27e1004984b7ed4eb8fc3d437'
+SCROLL_UI_LIVE_SHA = '38f547d05b41341b6c11e91a347cc182799e7e26'
+SCROLL_UI_BUSINESS_SHA = 'b8cbdeaf609e5d67b543ff11cf4e523818dfd4e6'
 SCROLL_UI_RELEASE_PARENT = SCROLL_UI_BUSINESS_SHA
-SCROLL_UI_BRANCH = 'codex/purchase-scroll-lifecycle-20261010'
+SCROLL_UI_BRANCH = 'codex/daily-ledger-ui-20261010'
 SCROLL_UI_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
 SCROLL_UI_AGENT_SOCKET = '/private/tmp/com.apple.launchd.drMd5QwUaI/Listeners'
-SCROLL_UI_FILES = {'src/components/PurchaseReceiptPage.jsx'}
+SCROLL_UI_FILES = {'src/components/DailyFactLedger.module.css', 'src/components/StoreEntryPage.jsx'}
 SCROLL_UI_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py', 'scripts/test-scroll-production-release.py'}
-SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': 'c8800af809910cbde01ad6db5c9991ed6ab665233f11ad76fdadf2d5dd80591d', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0', 'src/components/PurchaseReceiptPage.jsx': '59732cceb588a7db6bf1d4fb28e4e6475e8d19dc10baff70f4ddb40320ce4274'}
+SCROLL_UI_SOURCE_HASHES = {'src/components/PullToRefresh.jsx': 'c8800af809910cbde01ad6db5c9991ed6ab665233f11ad76fdadf2d5dd80591d', 'src/components/Sidebar.jsx': '3e1c79a72b71429046f6bfea99f1c58554ab62ddd51c89e685e011187489e10a', 'src/components/overlay/OverlayPrimitives.jsx': 'aa2f0d4e2da65081d439807b191e29c07a1e6551e1a085ec705cdf88b773f314', 'src/components/AccountMenu.jsx': '746213918744fe969f39147727540276f78555bbd43a2cca9e2dd05ac8cc9de5', 'src/components/ProductCenterPage.jsx': '4c1e0477ea09d71e813540cac216d4650f75f0588533b8d23fa13522f31325b0', 'src/components/PurchaseReceiptPage.jsx': '59732cceb588a7db6bf1d4fb28e4e6475e8d19dc10baff70f4ddb40320ce4274', 'src/components/StoreEntryPage.jsx': '16e410e58b375c3fd99a1e35f9f8794877572c981989c68b7ad01c3e08cbd5a3', 'src/components/DailyFactLedger.module.css': '59db5b29e9ed26cb6277474bc9b22169cdca9b8d71aaed24ec4db86f07680a68'}
 SCROLL_UI_LIVE_BINDING = {
     'liveSha': SCROLL_UI_LIVE_SHA,
-    'imageId': 'sha256:3ffd3a33a6b340cd3de6907a38779d5a437d475ce8666d9ebc3328f8c3c8f63e',
-    'imageLabels': {'budu.thin-base': 'b3fab5810d1af0ff0408d44d4f02d0a25d807481', 'budu.thin-overlay-sha256': '900abe06d810bc0f3f6f910b6f5fde47a96e44e331e347f7bb6dc8cd4c2384e7', 'org.opencontainers.image.revision': 'f1b99d2ecb48ba65ddee607115668b3e1738b21a'},
+    'imageId': 'sha256:669bcee12cd330b6afe4914f247264dd915d9aa6b9bb781c8693e11996092504',
+    'imageLabels': {'budu.thin-base': 'f1b99d2ecb48ba65ddee607115668b3e1738b21a', 'budu.thin-overlay-sha256': '464bae079943cc98dbdd536885de915235c3db8b32a07fe7f60477684e94269a', 'org.opencontainers.image.revision': '38f547d05b41341b6c11e91a347cc182799e7e26'},
 }
 SCROLL_UI_LIVE_BINDING['containerLabels'] = dict(SCROLL_UI_LIVE_BINDING['imageLabels'], **{'budu.production-role': 'candidate'})
 

@@ -89,8 +89,8 @@ class ScrollReleaseTests(unittest.TestCase):
                 r.Remote(Path(key))
 
     def test_scope_and_business_ancestry_are_exact(self):
-        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/PurchaseReceiptPage.jsx'})
-        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),'src/components/PurchaseReceiptPage.jsx')
+        self.assertEqual(r.SCROLL_UI_FILES,{'src/components/StoreEntryPage.jsx','src/components/DailyFactLedger.module.css'})
+        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA],text=True).splitlines(),['src/components/DailyFactLedger.module.css','src/components/StoreEntryPage.jsx'])
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-list','--parents','-n','1',r.SCROLL_UI_BUSINESS_SHA],text=True).strip(),r.SCROLL_UI_BUSINESS_SHA+' '+r.SCROLL_UI_LIVE_SHA)
         self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only',r.SCROLL_UI_LIVE_SHA,r.SCROLL_UI_BUSINESS_SHA,'--','prisma','server','shared','package.json','package-lock.json'],text=True).strip(),'')
 
