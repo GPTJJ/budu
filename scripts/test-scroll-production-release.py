@@ -124,20 +124,10 @@ class ScrollReleaseTests(unittest.TestCase):
     def test_core_switch_rollback_db_capacity_and_writer_code_unchanged(self):
         before=subprocess.check_output(['git','-C',str(ROOT),'show',r.SCROLL_UI_LIVE_SHA+':scripts/deploy-prod-transfer-cas.py'],text=True)
         after=(ROOT/'scripts/deploy-prod-transfer-cas.py').read_text()
-        def nodes(source):
-            return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-        old,new=nodes(before),nodes(after)
-        permitted=set()
-        self.assertEqual({k for k in old if old[k]!=new[k]},permitted)
-        self.assertEqual(set(new)-set(old),set())
-        before_clone=next(n for n in ast.parse(before).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
-        after_clone=next(n for n in ast.parse(after).body if isinstance(n,ast.FunctionDef) and n.name=='validate_clone_source')
-        self.assertEqual([ast.dump(n) for n in before_clone.body[:2]+before_clone.body[3:]],
-                         [ast.dump(n) for n in after_clone.body[:2]+after_clone.body[3:]])
-        def remote_methods(source):
-            cls=next(n for n in ast.parse(source).body if isinstance(n,ast.ClassDef) and n.name=='Remote')
-            return {n.name:ast.dump(n,include_attributes=False) for n in cls.body if isinstance(n,ast.FunctionDef) and n.name!='__init__'}
-        self.assertEqual(remote_methods(before),remote_methods(after))
+        spec=importlib.util.spec_from_file_location('pos_contract',ROOT/'scripts/test-pos-offer-production-release.py')
+        contract=importlib.util.module_from_spec(spec);spec.loader.exec_module(contract)
+        # Removing only guarded POS alternatives must recover EVERY legacy AST.
+        contract.assert_legacy_equivalence(before,after)
         self.assertEqual(r.MIN_PROJECTED_AVAILABLE,10*1024**3)
         self.assertEqual(r.MAX_PROJECTED_USAGE,90)
         self.assertIsNone(r.CAPACITY_WAIVER)

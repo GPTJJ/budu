@@ -158,6 +158,9 @@ def file_hash(stream):
 
 def runtime_payload(repo):
     paths = git(repo, 'ls-files', '--', 'server', 'shared', 'src/utils', 'prisma', 'scripts', 'brand/web', 'package.json', 'package-lock.json').splitlines()
+    if pos_offer_hotfix():
+        pos_offer_frontend_proof(repo)
+        paths = [p for p in paths if p != POS_OFFER_FRONTEND_ONLY]
     result = {'app/' + p:digest((Path(repo)/p).read_bytes()) for p in paths if not p.startswith('server/data/')}
     if MOBILE_HOTFIX_IDENTITY:
         result.update(mobile_frontend_manifest(repo))
@@ -283,6 +286,103 @@ PURCHASE_UI_LIVE_BINDING = {
 }
 
 
+
+# BUDU-POS-OFFER-001: finite frontend-only successor of the verified live G.
+# Keep all older task identities and all writer/DB/capacity/rollback guards.
+POS_OFFER_LIVE_SHA = '7ea7a91148f322f2b4e1a1ffa11ed270f3e931ba'
+POS_OFFER_BUSINESS_SHA = '6934243e9745c776451150c081ba562d30fc0b5a'
+POS_OFFER_BRANCH = 'codex/pos-offer-001-production-20261011'
+POS_OFFER_FRONTEND_ONLY = 'src/utils/posOffer.js'
+POS_OFFER_RELEASE_FILES = {'scripts/deploy-prod-transfer-cas.py',
+                           'scripts/test-pos-offer-production-release.py',
+                           'scripts/test-scroll-production-release.py'}
+POS_OFFER_SOURCE_HASHES = {'scripts/check-pos-offer.mjs': '5869e2a8e7b4a577886a6590cb07afdad069b6706bf6e04d92f1060bad6003f6', 'src/components/PosOfferPanel.jsx': '99c8242c02f8f221a10436c29e20a7cb2a220f6795625dee29f36026db9fd28f', 'src/components/PosOfferPanel.module.css': '86b194cd4226c442e14cfc61a0df33f5852e1a086e4d95c40a720e3388e4f436', 'src/components/PosPage.jsx': '53ff23fcc151456312eae17922e99b1240647ffa32e4e593011c69a75bb7f430', 'src/hooks/usePosOffer.js': '8b61d1da6a1bb85f66d23cf2d39e6fd9b8e85492e42a545b5bdbe89eac394be0', 'src/utils/posOffer.js': 'fec5ac2ecbded166866d47502efc8da35f424028c6308a039b80c85ed2cbbee7'}
+POS_OFFER_FILES = set(POS_OFFER_SOURCE_HASHES)
+POS_OFFER_DIST_TREE_SHA256 = '0bbfbd365c5988c57327c7a9288d7bc0df6616be5842420704d02f9e0ce42616'
+POS_OFFER_DIST_MARKERS = ('优惠试算', '计划散糖数量 N', '确认接管相关手工内容', 'it-a005da2f-5a59-4f28-9d71-8cf28df6a452', 'it-msjcvvfl-7azlu5', '最低付款方案', '最多赠糖方案', 'offer-contribution', 'it-3e30fa9f-c1e6-4d70-b24a-01942e21f8c0', 'it-b6f1c6e4-ec92-43b2-9e7f-6b2fc51e2366', 'it-7bcb83e8-87e7-44a6-9c50-7b96ba126e78', 'it-f21906bc-84f2-44da-a015-06ec7b356fa0', 'it-f7b115b9-88f1-42ae-adc4-d58b65eb6a4e', 'it-37ec32af-d6e9-43e7-9e85-2d36145d9f20', 'it-f2b30d9a-3a28-486e-849f-975ef5363cb0', 'it-a55835df-bdc8-4b88-97f4-2080e7de366e', 'it-9cb10762-1935-4c30-b587-7cb3015a2584', 'it-a5cae945-48dc-4e8d-b443-da60fe921272')
+POS_OFFER_LIVE_BINDING = {'imageId': 'sha256:43a4e55eea9852ec61abcacc67e995a98d902b29bc3e0158ce657c664464d116', 'containerId': 'dde1c3a864f3b8936476071fbb40a05b6fce1adf354d6357622f51b45b62bc6c', 'imageLabels': {'budu.thin-base': '38f547d05b41341b6c11e91a347cc182799e7e26', 'budu.thin-overlay-sha256': '33d301be9acaebedf22a7e1c15447c8f5de4e48e61dc13a9300249743a59b225', 'org.opencontainers.image.revision': '7ea7a91148f322f2b4e1a1ffa11ed270f3e931ba'}, 'containerLabels': {'budu.production-role': 'candidate', 'budu.thin-base': '38f547d05b41341b6c11e91a347cc182799e7e26', 'budu.thin-overlay-sha256': '33d301be9acaebedf22a7e1c15447c8f5de4e48e61dc13a9300249743a59b225', 'org.opencontainers.image.revision': '7ea7a91148f322f2b4e1a1ffa11ed270f3e931ba'}, 'templateHash': 'd58609d9fb9c206d90de7e154dc6ce8607b4cac07b4413f9c673cdc3c075a943', 'activeHash': 'd58609d9fb9c206d90de7e154dc6ce8607b4cac07b4413f9c673cdc3c075a943', 'liveSha': '7ea7a91148f322f2b4e1a1ffa11ed270f3e931ba', 'containerName': 'budu-prod-7ea7a91148f3-post-transfer'}
+POS_OFFER_AGENT_KEY = '/Users/buxieshi/.ssh/budu_bj_migration'
+POS_OFFER_AGENT_SOCKET = '/private/tmp/com.apple.launchd.drMd5QwUaI/Listeners'
+
+
+def pos_offer_hotfix():
+    return RELEASE_PROFILE == 'post-transfer' and RUNTIME_SHA == POS_OFFER_BUSINESS_SHA
+
+
+def pos_offer_identity(repo, release):
+    require(THIN_MODE and BG_ACTIVE and CAPACITY_WAIVER is None
+            and EXPECTED_OLD_SHA == POS_OFFER_LIVE_SHA
+            and git(repo, 'branch', '--show-current') == POS_OFFER_BRANCH
+            and re.fullmatch(r'[0-9a-f]{40}', release)
+            and git(repo, 'rev-list', '--parents', '-n', '1', release)
+                == release + ' ' + POS_OFFER_BUSINESS_SHA
+            and git(repo, 'rev-list', '--parents', '-n', '1', POS_OFFER_BUSINESS_SHA)
+                == POS_OFFER_BUSINESS_SHA + ' ' + POS_OFFER_LIVE_SHA,
+            'POS_OFFER_RELEASE_IDENTITY_INVALID')
+    require(set(git(repo, 'diff', '--name-only', POS_OFFER_LIVE_SHA, POS_OFFER_BUSINESS_SHA).splitlines())
+                == POS_OFFER_FILES
+            and set(git(repo, 'diff', '--name-only', POS_OFFER_BUSINESS_SHA, release).splitlines())
+                == POS_OFFER_RELEASE_FILES
+            and set(git(repo, 'diff', '--name-only', POS_OFFER_LIVE_SHA, release).splitlines())
+                == POS_OFFER_FILES | POS_OFFER_RELEASE_FILES, 'POS_OFFER_RELEASE_SCOPE_INVALID')
+    require(all(not (Path(repo)/path).is_symlink()
+                and digest((Path(repo)/path).read_bytes()) == expected
+                and command(['git', '-C', str(repo), 'show', POS_OFFER_BUSINESS_SHA+':'+path])
+                    == (Path(repo)/path).read_bytes()
+                for path, expected in POS_OFFER_SOURCE_HASHES.items()), 'POS_OFFER_SOURCE_DRIFT')
+    # An added frontend helper is the ONLY difference in the runtime directories.
+    require(set(git(repo, 'diff', '--name-only', POS_OFFER_LIVE_SHA, release, '--',
+                    'Dockerfile', 'server', 'shared', 'prisma', 'package.json',
+                    'package-lock.json', 'brand/web', 'src/utils').splitlines())
+                == {POS_OFFER_FRONTEND_ONLY}
+            and git(repo, 'diff', '--diff-filter=A', '--name-only',
+                    POS_OFFER_LIVE_SHA, POS_OFFER_BUSINESS_SHA, '--', POS_OFFER_FRONTEND_ONLY)
+                == POS_OFFER_FRONTEND_ONLY, 'POS_OFFER_RUNTIME_EQUIVALENCE_FAILED')
+    require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
+    require(all(digest((Path(repo)/path).read_bytes()) == expected
+                for path, expected in BG_BOOTSTRAP_HASHES.items()), 'BG_LIFECYCLE_IDENTITY_INVALID')
+
+
+def pos_offer_frontend_proof(repo):
+    require(pos_offer_hotfix() and THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY,
+            'POS_OFFER_FRONTEND_SCOPE_INVALID')
+    helper = Path(repo)/POS_OFFER_FRONTEND_ONLY
+    require(not helper.is_symlink() and digest(helper.read_bytes())
+                == POS_OFFER_SOURCE_HASHES[POS_OFFER_FRONTEND_ONLY], 'POS_OFFER_SOURCE_DRIFT')
+    # The frozen server/shared sources have no import or dynamic reference to it.
+    runtime = git(repo, 'ls-files', '--', 'server', 'shared').splitlines()
+    require(all(b'posOffer' not in (Path(repo)/path).read_bytes()
+                for path in runtime if Path(path).suffix in ('.js', '.mjs', '.cjs')),
+            'POS_OFFER_BACKEND_REFERENCE')
+    files = sorted(q for q in (Path(repo)/'dist').rglob('*') if q.is_file())
+    require(files and all(not q.is_symlink() for q in files), 'POS_OFFER_DIST_INVALID')
+    rows = sorted([q.relative_to(Path(repo)/'dist').as_posix(), digest(q.read_bytes())] for q in files)
+    tree = digest(json.dumps(rows, ensure_ascii=False, separators=(',', ':')).encode())
+    javascript = ''.join(q.read_text() for q in files if q.suffix == '.js')
+    require(tree == POS_OFFER_DIST_TREE_SHA256
+            and any(q.name.startswith('PosPage-') and q.suffix == '.js' for q in files)
+            and all(marker in javascript for marker in POS_OFFER_DIST_MARKERS),
+            'POS_OFFER_FRONTEND_BUILD_MISMATCH')
+    return {'project': 'BUDU-POS-OFFER-001', 'sourceHashes': dict(POS_OFFER_SOURCE_HASHES),
+            'frontendOnlySources': {POS_OFFER_FRONTEND_ONLY: POS_OFFER_SOURCE_HASHES[POS_OFFER_FRONTEND_ONLY]},
+            'distTreeSha256': tree}
+
+
+def pos_offer_live_binding(g, image, template=None, active=None):
+    binding = POS_OFFER_LIVE_BINDING
+    require(pos_offer_hotfix() and THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY
+            and CAPACITY_WAIVER is None and EXPECTED_OLD_SHA == binding['liveSha'] == POS_OFFER_LIVE_SHA
+            and g['Id'] == binding['containerId'] and g['Name'].lstrip('/') == binding['containerName']
+            and g['Image'] == image['Id'] == binding['imageId']
+            and env(g).get('GIT_SHA') == image['Config']['Labels'].get(REVISION) == POS_OFFER_LIVE_SHA
+            and g['Config']['Labels'] == binding['containerLabels']
+            and image['Config']['Labels'] == binding['imageLabels'], 'POS_OFFER_LIVE_IDENTITY_DRIFT')
+    if template is not None or active is not None:
+        require(isinstance(template, str) and isinstance(active, str)
+                and digest(template.encode()) == binding['templateHash']
+                and digest(active.encode()) == binding['activeHash'], 'POS_OFFER_LIVE_ROUTE_DRIFT')
+
+
 # Exact production-reconciled scroll-only release; reuse the existing controller.
 SCROLL_UI_LIVE_SHA = '38f547d05b41341b6c11e91a347cc182799e7e26'
 SCROLL_UI_BUSINESS_SHA = 'b8cbdeaf609e5d67b543ff11cf4e523818dfd4e6'
@@ -346,17 +446,19 @@ def purchase_ui_binding():
 
 
 def thin_live_sha():
+    if pos_offer_hotfix(): return POS_OFFER_LIVE_SHA
     if scroll_ui_hotfix(): return SCROLL_UI_LIVE_SHA
     return purchase_ui_binding()['liveSha'] if purchase_ui_hotfix() else THIN_LIVE_BASE
 
 
 def thin_business_sha():
+    if pos_offer_hotfix(): return POS_OFFER_BUSINESS_SHA
     if scroll_ui_hotfix(): return SCROLL_UI_BUSINESS_SHA
     return PURCHASE_UI_BUSINESS_SHA if purchase_ui_hotfix() else THIN_BUSINESS_SHA
 
 
 def mobile_hotfix():
-    return scroll_ui_hotfix() or purchase_ui_hotfix() or (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == MOBILE_HOTFIX_LIVE_BASE
+    return pos_offer_hotfix() or scroll_ui_hotfix() or purchase_ui_hotfix() or (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == MOBILE_HOTFIX_LIVE_BASE
             and RUNTIME_SHA == MOBILE_HOTFIX_BUSINESS_PARENT)
 
 
@@ -399,6 +501,8 @@ def mobile_frontend_manifest(repo):
         require(javascript.count('data-pull-to-refresh-ignore') >= 2
                 and 'closest(' in javascript and 'touchcancel' in javascript,
                 'MOBILE_FRONTEND_EXCLUSION_MISSING')
+    if pos_offer_hotfix():
+        pos_offer_frontend_proof(repo)
     return {'app/dist/' + p.relative_to(root).as_posix(): digest(p.read_bytes()) for p in files}
 
 
@@ -411,6 +515,11 @@ def mobile_frontend_probe(remote, name, art):
         require(any(k.startswith('app/dist/assets/ProductCenterPage-') and k.endswith('.js') for k in expected),
                 'PURCHASE_UI_FRONTEND_ASSET_REQUIRED')
         script = script.replace("||(js.match(/data-pull-to-refresh-ignore/g)||[]).length<2||!js.includes('closest(')||!js.includes('touchcancel')", '')
+    if pos_offer_hotfix():
+        require(any(k.startswith('app/dist/assets/PosPage-') and k.endswith('.js') for k in expected),
+                'POS_OFFER_FRONTEND_BUILD_MISMATCH')
+        check = "if(!"+json.dumps(list(POS_OFFER_DIST_MARKERS), ensure_ascii=False)+".every(s=>js.includes(s)))process.exit(1);"
+        script = script.replace("process.stdout.write(", check+"process.stdout.write(", 1)
     require(remote.run(['docker', 'exec', '-i', name, 'node', '-e', script],
                        json.dumps(expected).encode(), timeout=30)
             == b'MOBILE_FRONTEND_EXACT_ASSETS_PASS\n', 'MOBILE_FRONTEND_ASSET_MISMATCH')
@@ -471,6 +580,7 @@ def procurement_hotfix():
 
 
 def bg_hotfix_base():
+    if pos_offer_hotfix(): return POS_OFFER_LIVE_SHA
     if scroll_ui_hotfix(): return SCROLL_UI_LIVE_SHA
     if purchase_ui_hotfix(): return thin_live_sha()
     if mobile_hotfix(): return MOBILE_HOTFIX_LIVE_BASE
@@ -479,6 +589,7 @@ def bg_hotfix_base():
 
 
 def bg_hotfix_files():
+    if pos_offer_hotfix(): return POS_OFFER_RELEASE_FILES
     if scroll_ui_hotfix(): return SCROLL_UI_RELEASE_FILES
     if mobile_hotfix(): return MOBILE_HOTFIX_RELEASE_FILES
     if RUNTIME_SHA==BG_BUNDLE_BASE:return BG_BUNDLE_FILES
@@ -486,6 +597,7 @@ def bg_hotfix_files():
 
 
 def bg_release_base():
+    if pos_offer_hotfix(): return POS_OFFER_BUSINESS_SHA
     if THIN_MODE and scroll_ui_hotfix(): return SCROLL_UI_RELEASE_PARENT
     if THIN_MODE and purchase_ui_hotfix(): return PURCHASE_UI_BUSINESS_SHA
     if THIN_MODE: return THIN_CLONE_FIX_PARENT
@@ -1872,6 +1984,10 @@ class Remote:
                 require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and BG_ACTIVE,
                         'PURCHASE_UI_AGENT_SCOPE_INVALID')
                 socket = purchase_ui_binding()['agentSocket']
+            elif pos_offer_hotfix():
+                require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and BG_ACTIVE,
+                        'POS_OFFER_AGENT_SCOPE_INVALID')
+                socket = POS_OFFER_AGENT_SOCKET
             elif scroll_ui_hotfix():
                 require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and BG_ACTIVE,
                         'SCROLL_UI_AGENT_SCOPE_INVALID')
@@ -1879,7 +1995,7 @@ class Remote:
             else:
                 socket = os.environ.get('BUDU_MOBILE_ISOLATED_AGENT_SOCKET', '')
                 require(socket.startswith('/private/tmp/budu-mobile-isolated-entry-'), 'MOBILE_ISOLATED_AGENT_REQUIRED')
-            require(str(key) == (SCROLL_UI_AGENT_KEY if scroll_ui_hotfix() else '/Users/apple/.ssh/budu_bj_migration')
+            require(str(key) == (POS_OFFER_AGENT_KEY if pos_offer_hotfix() else SCROLL_UI_AGENT_KEY if scroll_ui_hotfix() else '/Users/apple/.ssh/budu_bj_migration')
                     and stat.S_ISSOCK(Path(socket).stat().st_mode) and Path(socket).stat().st_uid == os.getuid(),
                     'MOBILE_ISOLATED_AGENT_REQUIRED')
             require(os.environ.get('SSH_AUTH_SOCK') == socket, 'MOBILE_ISOLATED_AGENT_REQUIRED')
@@ -2336,11 +2452,18 @@ def validate_clone_source(old, image):
     c, h = old['Config'], old['HostConfig']
     for k in IDENTITY_KEYS:
         require(c.get(k) == image.get(k), 'IMAGE_RUNTIME_CONFIG_MISMATCH')
-    require((scroll_ui_hotfix() and THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY
-             and CAPACITY_WAIVER is None and old['Image'] == SCROLL_UI_LIVE_BINDING['imageId']
-             and c.get('Labels') == SCROLL_UI_LIVE_BINDING['containerLabels'])
-            or (not scroll_ui_hotfix() and set(c.get('Labels') or {}) == {REVISION, 'budu.production-role'}
-                and c['Labels']['budu.production-role'] == 'candidate'), 'SOURCE_LABELS_UNSUPPORTED')
+    if pos_offer_hotfix():
+        require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and CAPACITY_WAIVER is None
+                and old['Id'] == POS_OFFER_LIVE_BINDING['containerId']
+                and old['Image'] == POS_OFFER_LIVE_BINDING['imageId']
+                and c.get('Labels') == POS_OFFER_LIVE_BINDING['containerLabels'],
+                'SOURCE_LABELS_UNSUPPORTED')
+    else:
+        require((scroll_ui_hotfix() and THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY
+                 and CAPACITY_WAIVER is None and old['Image'] == SCROLL_UI_LIVE_BINDING['imageId']
+                 and c.get('Labels') == SCROLL_UI_LIVE_BINDING['containerLabels'])
+                or (not scroll_ui_hotfix() and set(c.get('Labels') or {}) == {REVISION, 'budu.production-role'}
+                    and c['Labels']['budu.production-role'] == 'candidate'), 'SOURCE_LABELS_UNSUPPORTED')
     require(h.get('RestartPolicy') == {'Name': 'unless-stopped', 'MaximumRetryCount': 0}, 'RESTART_POLICY_UNSUPPORTED')
     require(not h.get('PortBindings') and not h.get('PublishAllPorts'), 'PORT_BINDINGS_UNSUPPORTED')
     require(not any(h.get(k) for k in ['Privileged','ReadonlyRootfs','CapAdd','CapDrop','SecurityOpt','Init']), 'SECURITY_CONFIG_UNSUPPORTED')
@@ -3368,6 +3491,15 @@ def bg_bind(repo, release, art, live):
             and live['DB_FAILED']==0
             and re.fullmatch(r'[0-9a-f]{64}',live['LIVE_G_CONTAINER_ID'])
             and re.fullmatch(r'sha256:[0-9a-f]{64}',live['LIVE_G_IMAGE_ID']),'BG_SCOPE_INVALID')
+    if pos_offer_hotfix():
+        require(THIN_MODE and THIN_IDENTITY and art.get('thin') is True
+                and art['manifest'].get('project') == 'BUDU-POS-OFFER-001'
+                and art['manifest']['productionBaseSha'] == POS_OFFER_LIVE_SHA
+                and art['manifest']['businessSha'] == POS_OFFER_BUSINESS_SHA
+                and art['manifest']['sourceHashes'] == POS_OFFER_SOURCE_HASHES
+                and art['manifest']['distTreeSha256'] == POS_OFFER_DIST_TREE_SHA256
+                and live['LIVE_G_CONTAINER_ID'] == POS_OFFER_LIVE_BINDING['containerId']
+                and live['LIVE_G_IMAGE_ID'] == POS_OFFER_LIVE_BINDING['imageId'], 'POS_OFFER_BG_BIND_INVALID')
     if RUNTIME_SHA==BG_BUNDLE_BASE:
         require(live.get('TRANSFER_PG_AUTHORITY')==live.get('TRANSFER_API_AUTHORITY')=='PASS'
                 and isinstance(live.get('TRANSFER_RECORD_ID'),str) and bool(live['TRANSFER_RECORD_ID']),
@@ -3938,6 +4070,10 @@ THIN_MAX_PACKAGE = 64 * 1024**2
 def thin_identity(repo, release):
     global THIN_IDENTITY, MOBILE_HOTFIX_IDENTITY
     THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = False
+    if pos_offer_hotfix():
+        pos_offer_identity(repo, release)
+        THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = True
+        return
     if scroll_ui_hotfix():
         scroll_ui_identity(repo, release)
         THIN_IDENTITY = MOBILE_HOTFIX_IDENTITY = True
@@ -4002,6 +4138,12 @@ def thin_manifest(files, release):
         groups[prefix+'Bytes']=sum(len(b) for p,b in files.items() if p.startswith(prefix+'/'))
     core=dict(releaseSha=release,productionBaseSha=thin_live_sha(),businessSha=thin_business_sha(),
               createdFromCleanWorktree=True,fileCount=len(files),files={p:digest(b) for p,b in sorted(files.items())},**groups)
+    if pos_offer_hotfix():
+        require(groups['distTreeSha256'] == POS_OFFER_DIST_TREE_SHA256
+                and all(marker in ''.join(b.decode() for p,b in files.items() if p.startswith('dist/') and p.endswith('.js'))
+                        for marker in POS_OFFER_DIST_MARKERS), 'POS_OFFER_FRONTEND_BUILD_MISMATCH')
+        core.update(project='BUDU-POS-OFFER-001', sourceHashes=dict(POS_OFFER_SOURCE_HASHES),
+                    frontendOnlySources={POS_OFFER_FRONTEND_ONLY: POS_OFFER_SOURCE_HASHES[POS_OFFER_FRONTEND_ONLY]})
     core['overlayIdentity']=digest(json.dumps(core,sort_keys=True,separators=(',',':')).encode())
     return core
 
@@ -4108,8 +4250,8 @@ def thin_clone_source(g, art):
             and g['Config']['Labels'].get(REVISION)==thin_live_sha()
             and re.fullmatch(r'[0-9a-f]{64}',art['manifest']['overlayIdentity']), 'THIN_CLONE_PROVENANCE_REQUIRED')
     labels=dict(expected['Config']['Labels'])
-    if purchase_ui_hotfix() or scroll_ui_hotfix():
-        binding = SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
+    if purchase_ui_hotfix() or scroll_ui_hotfix() or pos_offer_hotfix():
+        binding = POS_OFFER_LIVE_BINDING if pos_offer_hotfix() else SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
         require(g['Image'] == binding['imageId'] and labels == binding['containerLabels'],
                 'THIN_CLONE_PROVENANCE_REQUIRED')
     else:
@@ -4145,7 +4287,7 @@ def thin_tree_verify(remote, art):
     # only this verifier's container, never a production or rollback container.
     expected=art['baseRuntime']
     out=json.loads(remote.run(['docker','run','--rm','--network','none','--read-only',
-                    '--entrypoint','node',art['loadedDockerImageId'],'--input-type=module','-e',THIN_TREE_PROBE,
+                    '--entrypoint','node',art['loadedDockerImageId'],'--input-type=module','-e',(THIN_TREE_PROBE.replace('const expected=', "if(fs.existsSync('/app/src/utils/posOffer.js'))throw Error();const expected=") if pos_offer_hotfix() else THIN_TREE_PROBE),
                     json.dumps(expected,separators=(',',':'))],timeout=60))
     require(all(out.get(k)==art['manifest'][k] for k in ('distTreeSha256','scriptsTreeSha256')),'THIN_RUNTIME_IDENTITY_FAILED')
     return dict(out,baseRuntime='PASS',network='none',productionCredentials=False)
@@ -4158,10 +4300,12 @@ def thin_preflight(remote, repo, release, ledger):
             'PRODUCTION_STATE_CHANGED')
     base=remote.inspect(g['Image'],image=True)
     require(base['Id']==g['Image'] and base['Config']['Labels'].get(REVISION)==live_sha,'PRODUCTION_STATE_CHANGED')
-    if purchase_ui_hotfix() or scroll_ui_hotfix():
-        binding = SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
+    if purchase_ui_hotfix() or scroll_ui_hotfix() or pos_offer_hotfix():
+        binding = POS_OFFER_LIVE_BINDING if pos_offer_hotfix() else SCROLL_UI_LIVE_BINDING if scroll_ui_hotfix() else purchase_ui_binding()
         require(base['Id'] == binding['imageId'] and base['Config']['Labels'] == binding['imageLabels']
                 and g['Config']['Labels'] == binding['containerLabels'], 'PRODUCTION_STATE_CHANGED')
+    if pos_offer_hotfix():
+        pos_offer_live_binding(g, base, template, active)
     live={'result':'LIVE_G_PROVEN','LIVE_G_SHA':live_sha,'LIVE_G_CONTAINER':name,'LIVE_G_CONTAINER_ID':g['Id'],
           'LIVE_G_IMAGE_ID':base['Id'],'DB_APPLIED':88,'DB_FAILED':0,'POINTER_SHA':live_sha}
     lock=json.loads(remote.py("import pathlib,json; p=pathlib.Path('/run/lock/budu-transfer-cas-release'); print(json.dumps({'present':p.exists(),'openReferences':[]}))"))
@@ -4197,7 +4341,7 @@ def thin_build(remote, art, stream, root):
         require(descriptor['manifest']==art['manifest'] and descriptor['thinPeak']==art['thinPeak'],'THIN_MANIFEST_MISMATCH')
         with tarfile.open(archive,'r:gz') as tar:
             for m in tar:
-                p=stage/m.name;p.parent.mkdir(parents=True,exist_ok=True,mode=0o755 if purchase_ui_hotfix() or scroll_ui_hotfix() else 0o700)
+                p=stage/m.name;p.parent.mkdir(parents=True,exist_ok=True,mode=0o755 if purchase_ui_hotfix() or scroll_ui_hotfix() or pos_offer_hotfix() else 0o700)
                 with p.open('xb') as dst:shutil.copyfileobj(tar.extractfile(m),dst)
                 p.chmod(m.mode & 0o755)
         thin_budget(remote,art,'THIN_CONTEXT_EXTRACTED',art['thinPeak'])
@@ -4206,7 +4350,7 @@ def thin_build(remote, art, stream, root):
                 and not remote.run(['docker','image','ls','-q',candidate]).strip(),'THIN_TAG_EXISTS')
         remote.run(['docker','tag',base['Id'],tag]);tagged=True
         require(remote.inspect(tag,image=True)['Id']==base['Id'],'THIN_BASE_CHANGED')
-        prefix = ['env', 'DOCKER_BUILDKIT=0'] if purchase_ui_hotfix() or scroll_ui_hotfix() else []
+        prefix = ['env', 'DOCKER_BUILDKIT=0'] if purchase_ui_hotfix() or scroll_ui_hotfix() or pos_offer_hotfix() else []
         remote.run(prefix + ['docker','build','--pull=false','--network=none','--no-cache','-f',str(stage/'Dockerfile.thin'),
                     '-t',candidate,str(stage)],timeout=300)
         image=remote.inspect(candidate,image=True);built=True;art['loadedDockerImageId']=image['Id']
