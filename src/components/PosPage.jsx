@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, ReceiptText, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import LazyImage from './LazyImage'
@@ -8,6 +8,8 @@ import CameraScanner from './CameraScanner'
 import { isValidAlipayAuthCode, isValidWechatAuthCode } from '../utils/cameraScanner'
 import OrderRecordsPage from './OrderRecordsPage'
 import useSwipeBack from '../hooks/useSwipeBack'
+import usePosOffer from '../hooks/usePosOffer'
+import PosOfferPanel from './PosOfferPanel'
 import { hasExternalOrderCreate, hasExternalSettlementConfirm } from '../../shared/accountPermissions'
 import { isExternalOrder, orderSourceLabel, platformOrderOptions } from '../utils/reportCenterPos'
 import {
@@ -60,7 +62,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     return stores.some((store) => store.key === saved) ? saved : stores[0]?.key || ''
   })
   const [products, setProducts] = useState([])
-  const [cart, setCart] = useState({})
+  const [cart, setCartState] = useState({})
+  const cartRef = useRef(cart)
+  // 同步草稿引用用于异步核价后的整车比对，保护尚未渲染的手工操作。
+  const setCart = (update) => {
+    const next = typeof update === 'function' ? update(cartRef.current) : update
+    cartRef.current = next
+    setCartState(next)
+  }
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('全部')
   const [stage, setStage] = useState('loading')
@@ -220,7 +229,10 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }, [storeId, user.id, initialOrder?.id, initialOrder?.storeId])
 
   useEffect(() => {
-    if (sessionLoaded && storeId) savePosCart(user.id, storeId, cart)
+    if (sessionLoaded && storeId) {
+      try { savePosCart(user.id, storeId, cartRef.current) }
+      catch { offer.cartStorageFailed() }
+    }
   }, [cart, sessionLoaded, storeId, user.id])
 
   const productMap = useMemo(() => new Map(products.map((product) => [product.productId, product])), [products])
@@ -293,9 +305,16 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     setCheckoutKeyState('')
     if (storeId) saveCheckoutKey(user.id, storeId, '')
   }
+  const offer = usePosOffer({ userId: user.id, storeId, cart, getCart: () => cartRef.current,
+    setCart, setProducts, stage, sessionLoaded, submitting, discountPercent, order, invalidateCheckout })
+  const closeCartPanel = () => {
+    if (offer.view) offer.close()
+    else setCartOpen(false)
+  }
   const changeQuantity = (lineKey, delta) => {
+    offer.cartEdited(lineKey)
     invalidateCheckout()
-    setCart(changeCartQuantity(cart, lineKey, delta))
+    setCart((current) => changeCartQuantity(current, lineKey, delta))
   }
   /** 商品点击加购：combo 商品（Balls 礼盒）打开搭配面板，其余直接 +1 */
   const addProduct = (product) => {
@@ -311,21 +330,25 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   /** combo 行加减：同口味组合合并数量 */
   const changeComboQuantity = (line, delta) => {
     const key = comboLineKey(line.product.productId, line.comboIds)
+    offer.cartEdited(key)
     invalidateCheckout()
-    setCart(changeCartQuantity(cart, key, delta))
+    setCart((current) => changeCartQuantity(current, key, delta))
   }
   /** combo 行 key：productId::n::bb,id1,id2,id3,id4 */
   const comboLineKey = (productId, ids) => `${productId}::n::bb,${(ids || []).join(',')}`
   const removeLine = (lineKey) => {
+    offer.cartEdited(lineKey)
     invalidateCheckout()
     setCart((current) => { const next = { ...current }; delete next[lineKey]; return next })
   }
   const clearCart = () => {
     if (cartCount && !window.confirm('确认清空当前订单中的全部商品吗？')) return
     invalidateCheckout()
+    offer.resetDraft()
     setCart({})
   }
   const toggleGift = (line) => {
+    offer.cartEdited(line.key)
     invalidateCheckout()
     setCart((current) => {
       const quantity = Number(current[line.key] || 0)
@@ -436,6 +459,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       setCheckoutKeyState(key)
       saveCheckoutKey(user.id, storeId, key)
     }
+    offer.prepareCheckout(key)
     try {
       const data = await api('/v2/pos/orders', {
         method: 'POST',
@@ -664,6 +688,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }, [stage, payment?.id, payment?.status])
 
   const startNext = () => {
+    offer.resetDraft()
     if (resumedSession !== null) {
       savePendingOrder(user.id, storeId, '')
       saveSuccessOrder(user.id, storeId, '')
@@ -754,6 +779,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       if (scannerChannel) setScannerChannel('')
       else if (cashConfirm) setCashConfirm(false)
       else if (platformCheckout) setPlatformCheckout(null)
+      else if (offer.view) offer.close()
       else if (cartOpen) setCartOpen(false)
       else if (showOrders) setShowOrders(false)
       else if (stage === 'payment') returnToOrdering()
@@ -803,6 +829,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
             <button onClick={returnToOrdering} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
             <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">{BigInt(order.sweetCardAmount || 0) > 0n ? '剩余应付' : '应付金额'}</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(remainingPayable)}</p>{BigInt(order.sweetCardAmount || 0) > 0n && <p className="mt-2 text-sm font-semibold text-emerald-600">甜意卡已抵扣 {formatCents(order.sweetCardAmount)}</p>}<p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
+            {offer.paymentNotice && <div role="status" className="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{offer.paymentNotice}</div>}
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
               <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">
@@ -888,7 +915,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className={`w-full py-2.5 pl-10 pr-4 text-sm outline-none ring-budu-200 focus:ring-2 ${isDesktop ? 'rounded-lg border border-white/10 bg-white/10 text-white placeholder:text-slate-400' : 'rounded-xl bg-slate-100 text-slate-800'}`} />
         </label>
         <label className="relative shrink-0">
-          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} className={`h-10 max-w-[170px] appearance-none pl-3 pr-8 text-sm font-semibold outline-none ${isDesktop ? 'rounded-lg border border-white/10 bg-slate-800 text-white' : 'rounded-xl border border-slate-200 bg-white text-slate-700'}`} disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+          <select value={storeId} onChange={(e) => { offer.resetDraft(); setStoreId(e.target.value) }} className={`h-10 max-w-[170px] appearance-none pl-3 pr-8 text-sm font-semibold outline-none ${isDesktop ? 'rounded-lg border border-white/10 bg-slate-800 text-white' : 'rounded-xl border border-slate-200 bg-white text-slate-700'}`} disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </label>
         <button onClick={() => setShowOrders(true)} className={`flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-semibold transition ${isDesktop ? 'rounded-lg bg-white/10 text-slate-100 hover:bg-white/20' : 'rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-budu-300 hover:text-budu-600'}`} aria-label="订单记录">
@@ -903,8 +930,11 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <ShoppingCart className="h-5 w-5 text-budu-600" />
             <h2 className="ml-2 text-base font-black text-slate-800">当前订单</h2>
             <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount} 件</span>
-            <button onClick={clearCart} disabled={!cartCount} className="ml-auto rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30">清空</button>
+            <button onClick={offer.view ? offer.close : offer.open} disabled={offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
+            <button onClick={clearCart} disabled={!cartCount} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30">清空</button>
           </div>
+          {offer.view ? <div className="min-h-0 flex-1 overflow-y-auto"><PosOfferPanel offer={offer} /></div> : <>
+          {offer.message && <p role="status" className="shrink-0 bg-amber-50 px-3 py-2 text-xs text-amber-800">{offer.message}</p>}
           <div className="grid h-8 shrink-0 grid-cols-[24px_minmax(0,1fr)_86px_120px] items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 text-[10px] font-semibold text-slate-400">
             <span className="text-center">#</span><span>商品</span><span className="text-center">数量</span><span className="text-right">金额 / 操作</span>
           </div>
@@ -922,6 +952,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-black text-violet-700 transition hover:bg-violet-100 active:scale-[0.99] disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400" title={canConfirmExternalSettlement ? '记录已在平台付款的订单' : '需要外部结算确认权限'}>平台订单</button>}
             </div>
           </div>
+          </>}
         </aside>}
 
         <main data-testid="pos-catalog-panel" className="flex min-h-0 min-w-0 flex-1 flex-col bg-slate-100">
@@ -1004,7 +1035,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
 
       {!isDesktop && <div className="shrink-0 border-t border-slate-200 bg-white px-3 py-2" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} aria-label="结算栏">
         <div className="flex items-center gap-3">
-          <button onClick={() => setCartOpen(true)} disabled={!cartCount} className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 disabled:opacity-40" aria-label="打开购物车">
+          <button onClick={() => setCartOpen(true)} className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600" aria-label="打开购物车">
             <ShoppingCart className="h-6 w-6" />
             {cartCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-budu-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{cartCount}</span>}
           </button>
@@ -1021,14 +1052,17 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
 
       {!isDesktop && cartOpen && (
         <div className="fixed inset-0 z-[90]" role="dialog" aria-modal="true" aria-label="购物车">
-          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setCartOpen(false)} />
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={closeCartPanel} />
           <div className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-3xl bg-white shadow-2xl" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
             <div className="flex shrink-0 items-center border-b border-slate-100 px-5 py-4">
               <ShoppingCart className="h-5 w-5 text-budu-600" />
               <h2 className="ml-2 font-bold">当前订单</h2>
               <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span>
-              <button onClick={() => setCartOpen(false)} className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="关闭"><X className="h-5 w-5" /></button>
+              <button onClick={offer.view ? offer.close : offer.open} disabled={offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
+              <button onClick={closeCartPanel} className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label={offer.view ? '返回当前订单' : '关闭'}><X className="h-5 w-5" /></button>
             </div>
+            {offer.view ? <div className="min-h-0 flex-1 overflow-y-auto"><PosOfferPanel offer={offer} /></div> : <>
+            {offer.message && <p role="status" className="shrink-0 bg-amber-50 px-4 py-2 text-xs text-amber-800">{offer.message}</p>}
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
               {cartLines.length === 0 ? <div className="grid h-full place-items-center text-center"><div><ShoppingCart className="mx-auto h-10 w-10 text-slate-200" /><p className="mt-3 text-sm font-semibold text-slate-400">点击商品加入购物车</p></div></div> : cartLines.map(renderCartLine)}
             </div>
@@ -1043,6 +1077,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                 {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-bold text-violet-700 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">平台订单</button>}
               </div>
             </div>
+            </>}
           </div>
         </div>
       )}

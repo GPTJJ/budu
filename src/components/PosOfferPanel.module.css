@@ -1,0 +1,24 @@
+.panel {
+  container-type: inline-size;
+  min-width: 0;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #334155;
+  font-size: 16px;
+  outline-color: #f18aaa;
+}
+.plans { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@container (min-width: 460px) {
+  .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
