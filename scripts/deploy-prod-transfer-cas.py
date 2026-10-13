@@ -162,6 +162,8 @@ def runtime_payload(repo):
         pos_offer_frontend_proof(repo)
         paths = [p for p in paths if p != POS_OFFER_FRONTEND_ONLY]
     result = {'app/' + p:digest((Path(repo)/p).read_bytes()) for p in paths if not p.startswith('server/data/')}
+    if p1_release():
+        result.update({'app/'+name:h for name,h in p1_contract()['frontendManifest'].items()})
     if MOBILE_HOTFIX_IDENTITY:
         result.update(mobile_frontend_manifest(repo))
     return result
@@ -195,6 +197,502 @@ def configure_profile(profile, old_sha=None, business_sha=None, old_v2_hash=None
     IMAGE_PREFIX = 'post-transfer-'
     CONTAINER_SUFFIX = '-post-transfer'
     ROLLBACK_PREFIX = 'post-transfer-'
+
+# BUDU-CODE-AUDIT-001-P1-RELEASE-CONTINUE: finite full-image L88 -> L89.
+# This placeholder is intentionally inadmissible until the reviewed PDF B is frozen.
+P1_BUSINESS_SHA = '70d365bd78c182f8a5c1cdd38095a1dd889719a5'
+P1_BASE_SHA = 'c2ff755c10ec4c5fd2514936def00cd7c4034a01'
+P1_OLD_SHA = 'eb9536731e42608004407d8a787b5927f7d42c9d'
+P1_BRANCH = 'codex/code-audit-001-p1-release-continue-r5'
+P1_MIGRATION = '20261013130000_approval_review_version_and_sequence'
+P1_SQL_HASH = 'c737fa6b28949964ed359f47fb0cdb996e06eb9b763cf53deacdf8f3f973d301'
+P1_ENGINEERING_FILES = {'scripts/deploy-prod-transfer-cas.py',
+    'scripts/release-prod-post-transfer-ci.sh', '.github/workflows/release-build-only.yml',
+    '.github/workflows/deploy-prod.yml', 'scripts/test-p1-release-contract.py',
+    'scripts/p1-release-contract.json'}
+P1_LICENSE_DIFF_EXCEPTIONS = {
+    'public/pdfjs/6.4.299/cmaps/LICENSE':'aa92ab5a472974865a96fd4a4e9c13bb41bf6fe1b309cb6b8da48bc9e19839a2',
+    'public/pdfjs/6.4.299/standard_fonts/LICENSE_LIBERATION':'d2c4d5b3e115a519cb58eb691aa64538397e2611f9ebe801392cf9667997e7dc',
+    'public/pdfjs/6.4.299/wasm/LICENSE_OPENJPEG':'a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6',
+    'public/pdfjs/6.4.299/wasm/LICENSE_QCMS':'36d847ae882f6574ebc72f56a4f354e4f104fde4a584373496482e97d52d31bc',
+}
+P1_CONTRACT = None
+P1_MIGRATOR_OPTIONS = ('-c application_name=budu_p1_migrator -c lock_timeout=2000 '
+    '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000')
+P1_SETTINGS_SQL = """DO $$ BEGIN
+ IF current_setting('application_name') <> 'budu_p1_migrator'
+ OR current_setting('lock_timeout') <> '2s'
+ OR current_setting('statement_timeout') <> '30s'
+ OR current_setting('idle_in_transaction_session_timeout') <> '30s'
+ THEN RAISE EXCEPTION 'P1_MIGRATOR_TIMEOUT_UNVERIFIED'; END IF; END $$;"""
+
+
+def p1_release():
+    return (RELEASE_PROFILE == 'post-transfer' and EXPECTED_OLD_SHA == P1_OLD_SHA
+            and RUNTIME_SHA == P1_BUSINESS_SHA and bool(re.fullmatch('[0-9a-f]{40}',P1_BUSINESS_SHA)))
+
+
+def p1_contract():
+    require(p1_release() and isinstance(P1_CONTRACT,dict)
+            and P1_CONTRACT.get('project') == 'BUDU-CODE-AUDIT-001-P1-RELEASE-CONTINUE'
+            and P1_CONTRACT.get('businessSha') == P1_BUSINESS_SHA
+            and P1_CONTRACT.get('oldSha') == P1_OLD_SHA
+            and P1_CONTRACT.get('branch') == P1_BRANCH, 'P1_CONTRACT_UNBOUND')
+    return P1_CONTRACT
+
+
+def p1_identity(repo, release):
+    global P1_CONTRACT
+    path=Path(repo)/'scripts/p1-release-contract.json'
+    require(path.is_file() and not path.is_symlink(),'P1_CONTRACT_UNBOUND')
+    P1_CONTRACT=json.loads(path.read_text());c=p1_contract()
+    require(not THIN_MODE and not BG_ACTIVE and CAPACITY_WAIVER is None
+            and git(repo,'branch','--show-current') == P1_BRANCH
+            and git(repo,'rev-list','--parents','-n','1',release) == release+' '+P1_BUSINESS_SHA
+            and git(repo,'rev-list','--parents','-n','1',P1_BUSINESS_SHA) == P1_BUSINESS_SHA+' '+P1_BASE_SHA
+            and git(repo,'rev-list','--parents','-n','1',P1_BASE_SHA) == P1_BASE_SHA+' '+P1_OLD_SHA,
+            'P1_RELEASE_IDENTITY_INVALID')
+    files=set(c.get('sourceHashes',{}))
+    require(files and set(git(repo,'diff','--name-only',P1_OLD_SHA,P1_BUSINESS_SHA).splitlines()) == files
+            and set(git(repo,'diff','--name-only',P1_BUSINESS_SHA,release).splitlines()) == P1_ENGINEERING_FILES,
+            'P1_RELEASE_SCOPE_INVALID')
+    for name,h in c['sourceHashes'].items():
+        actual=Path(repo)/name
+        require(not actual.is_symlink() and re.fullmatch('[0-9a-f]{64}',h)
+                and digest(actual.read_bytes()) == h
+                and command(['git','-C',str(repo),'show',P1_BUSINESS_SHA+':'+name]) == actual.read_bytes(),
+                'P1_BUSINESS_SOURCE_DRIFT')
+    require(set(git(repo,'diff','--name-only',P1_OLD_SHA,release,'--','prisma').splitlines())
+            == {'prisma/schema.prisma','prisma/migrations/'+P1_MIGRATION+'/migration.sql'}
+            and git(repo,'diff','--diff-filter=A','--name-only',P1_OLD_SHA,release,'--','prisma/migrations')
+            == 'prisma/migrations/'+P1_MIGRATION+'/migration.sql'
+            and digest((Path(repo)/'prisma/migrations'/P1_MIGRATION/'migration.sql').read_bytes()) == P1_SQL_HASH,
+            'P1_MIGRATION_SCOPE_INVALID')
+    manifest=c.get('frontendManifest',{})
+    require(manifest and 'dist/index.html' in manifest
+            and all(re.fullmatch(r'dist/[A-Za-z0-9_./-]+',name)
+                    and '..' not in name.split('/') and re.fullmatch('[0-9a-f]{64}',h)
+                    for name,h in manifest.items()),'P1_FRONTEND_CONTRACT_UNBOUND')
+    resources=c.get('pdfResources',{})
+    require(resources and all(manifest.get(value.get('path'))==value.get('hash')
+                for value in resources.values())
+            and {'LICENSE','cmaps/LICENSE','standard_fonts/LICENSE_FOXIT','standard_fonts/LICENSE_LIBERATION',
+                'wasm/jbig2.wasm','wasm/openjpeg.wasm','wasm/qcms_bg.wasm',
+                'wasm/jbig2_nowasm_fallback.js','wasm/openjpeg_nowasm_fallback.js',
+                'iccs/CGATS001Compat-v2-micro.icc','iccs/LICENSE','legacy/build/pdf.worker.min.mjs'} <= set(resources)
+            and any(name.startswith('cmaps/') for name in resources)
+            and any(name.startswith('standard_fonts/') for name in resources),'P1_PDF_RESOURCES_UNBOUND')
+    binding=c.get('live',{})
+    require(binding.get('containerId') == '4feed2f4baa39c1c8df8894f656a56c0e861460f1e3fe3213e65658d5c0d5274'
+            and binding.get('imageId') == 'sha256:4da4f8129cda20c8867a65f73878e4d33c469748936b5d9871a0310a17c9ed50'
+            and binding.get('containerName') == 'budu-prod-eb9536731e42-post-transfer'
+            and binding.get('templateHash') == binding.get('activeHash')
+                == 'a34608687fae663858f6c26d07670ac0a9bd52c28d6fd5302f5ee4d428ca6bfb'
+            and binding.get('imageLabels') and binding.get('containerLabels'), 'P1_LIVE_BINDING_UNBOUND')
+
+
+def p1_license_diff_check(repo,release):
+    # Four exact official upstream license blobs contain intentional whitespace.
+    # Never edit those bytes or disable whitespace checks for a directory/type.
+    c=p1_contract()
+    for name,expected in P1_LICENSE_DIFF_EXCEPTIONS.items():
+        key=name.removeprefix('public/pdfjs/6.4.299/');dist='dist/pdfjs/6.4.299/'+key
+        require(c.get('sourceHashes',{}).get(name)==expected
+                and c.get('pdfResources',{}).get(key)=={'hash':expected,'path':dist}
+                and c.get('frontendManifest',{}).get(dist)==expected,'P1_LICENSE_EXCEPTION_UNBOUND')
+        path=Path(repo)/name
+        require(path.is_file() and not path.is_symlink() and digest(path.read_bytes())==expected
+                and command(['git','-C',str(repo),'show',P1_BUSINESS_SHA+':'+name])==path.read_bytes()
+                and command(['git','-C',str(repo),'show',release+':'+name])==path.read_bytes(),
+                'P1_LICENSE_EXCEPTION_DRIFT')
+    command(['git','-C',str(repo),'diff','--check',EXPECTED_OLD_SHA,release,'--','.',
+             *(':(exclude)'+name for name in sorted(P1_LICENSE_DIFF_EXCEPTIONS))])
+
+
+def p1_database_details(remote, db):
+    if not p1_release(): return db
+    sql="""BEGIN READ ONLY; SELECT json_build_object(
+ 'column',(SELECT json_build_object('type',data_type,'nullable',is_nullable,'default',column_default)
+   FROM information_schema.columns WHERE table_schema='public' AND table_name='approval_requests' AND column_name='content_version'),
+ 'sequenceTable',to_regclass('public.approval_request_daily_sequences') IS NOT NULL,
+ 'checks',(SELECT coalesce(json_object_agg(conname,json_build_object('valid',convalidated,'definition',pg_get_constraintdef(oid))),'{}')
+   FROM pg_constraint WHERE conname IN ('approval_content_version_positive','approval_request_daily_sequences_value_check')),
+ 'triggers',(SELECT coalesce(json_agg(json_build_object('name',t.tgname,'enabled',t.tgenabled,'definition',pg_get_triggerdef(t.oid),'functionHash',md5(p.prosrc)) ORDER BY t.tgname),'[]')
+   FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND t.tgname IN ('approval_content_version_before_update','approval_attachment_content_version','approval_template_content_version')),
+ 'functions',(SELECT coalesce(json_object_agg(proname,md5(prosrc)),'{}') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND proname IN ('budu_advance_approval_content_version','budu_advance_attachment_approval_version','budu_advance_template_approval_version')));
+ COMMIT;"""
+    return {**db,'p1Schema':procurement_query(remote,sql)}
+
+
+def p1_validate_database(db, ledger):
+    c=p1_contract();phase=89 if P1_MIGRATION in ledger else 88
+    require(db['database']==EXPECTED_DB and len(ledger)==phase and db['applied']==phase
+            and db['failed']==0 and db.get('rolledBack')==0 and db['ledger']==ledger,
+            'P1_DATABASE_PHASE_UNKNOWN')
+    schema=db.get('p1Schema',{})
+    if phase==88:
+        require(schema == {'column':None,'sequenceTable':False,'checks':{},'triggers':[], 'functions':{}},
+                'P1_DATABASE_PHASE_UNKNOWN')
+    else:
+        require(ledger[P1_MIGRATION]==P1_SQL_HASH
+                and schema == c.get('schemaL89'), 'P1_DATABASE_PHASE_UNKNOWN')
+
+
+def p1_clone_source(g, art):
+    binding=p1_contract()['live']
+    require(g['Id']==binding['containerId'] and g['Image']==binding['imageId']
+            and g['Config'].get('Labels')==binding['containerLabels'],'P1_LIVE_IDENTITY_CHANGED')
+    require(art['config'].get('Labels')=={REVISION:art['release']},'P1_FULL_IMAGE_LABELS_INVALID')
+    desired=copy.deepcopy(g)
+    desired['Config']['Labels']={REVISION:art['release'],'budu.production-role':'candidate'}
+    e=env(desired);e['BUDU_RUNTIME_MODE']='standby'
+    desired['Config']['Env']=[k+'='+v for k,v in e.items()]
+    return desired
+
+
+def p1_capacity(remote, art, ledger, imported=False):
+    used,available=remote.disk();cap=art.setdefault('p1Capacity',{
+        'baselineUsed':used,'baselineAvailable':available,'peak':0,'phase':'P1_FULL_IMPORT'})
+    db=remote.db();limits=shipping_resources(db)
+    objects=[art,art['compatibility']]
+    future=RESERVE+sum(limits.values())
+    # Existing exact imports stay in actual df. No speculative layer reuse credit.
+    for item in objects:
+        if not item.get('loadedDockerImageId'):
+            future+=sum(item[k] for k in ('archive','blobs','expanded','largest'))
+    result=b1_capacity_gate(cap,used,available,future)
+    return {**result,'migrationResourceLimits':limits,'capacityModel':'P1_FULL_E_PLUS_FULL_R_PLUS_DB_NO_REUSE'}
+
+
+def p1_runtime_artifact_probe(remote, art):
+    expected=p1_contract()['frontendManifest']
+    script="const v=process.versions.node.split('.').map(Number);if(v[0]!==22||v[1]<13)process.exit(1);const fs=require('fs'),crypto=require('crypto');const e=JSON.parse(process.argv[1]);for(const [p,h] of Object.entries(e)){if(crypto.createHash('sha256').update(fs.readFileSync('/app/'+p)).digest('hex')!==h)process.exit(1)}const q=require('/app/node_modules/pdfjs-dist/package.json');if(q.version!=='6.4.299')process.exit(1);if(!fs.statSync('/usr/share/fonts/opentype/noto').isDirectory()||!fs.statSync('/usr/bin/chromium').isFile())process.exit(1);process.stdout.write('P1_ASSETS_OK\n')"
+    require(remote.run(['docker','run','--rm','--network','none','--read-only','--entrypoint','node',art['imageReference'],'-e',script,json.dumps(expected,separators=(',',':'))],timeout=60)==b'P1_ASSETS_OK\n', 'P1_ARTIFACT_ASSETS_INVALID')
+
+
+def p1_preflight(remote, art, ledger, imported=False):
+    c=p1_contract();binding=c['live'];template,active=remote.routes()
+    name=route_target(template,active);g=remote.inspect(name)
+    require(name==binding['containerName'] and digest(template.encode())==binding['templateHash']
+            and digest(active.encode())==binding['activeHash'] and g['Id']==binding['containerId']
+            and g['Image']==binding['imageId'] and g['Config'].get('Labels')==binding['containerLabels']
+            and remote.inspect(g['Image'],image=True)['Config'].get('Labels')==binding['imageLabels']
+            and env(g).get('GIT_SHA')==EXPECTED_OLD_SHA
+            and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==EXPECTED_OLD_SHA,'P1_LIVE_IDENTITY_CHANGED')
+    require(g['State']['Running'] and g['State'].get('Health',{}).get('Status')=='healthy','PRODUCTION_NOT_HEALTHY')
+    h=json.loads(remote.run(['docker','exec',name,'wget','-qO-','http://127.0.0.1:3000/api/health']))
+    require(h.get('runtimeMode')=='active' and h.get('appStartupTasksStarted')==1
+            and h.get('processBackgroundTasksStarted')==1,'P1_LIVE_WRITER_INACTIVE')
+    remote.health(name,EXPECTED_OLD_SHA,public=True);application_db_probe(remote,name,'CURRENT_APPLICATION_DB_PROBE_FAILED')
+    require(remote.run(['docker','exec',name,'sha256sum','/app/server/v2.js']).decode().split()[0]==OLD_V2_HASH,'OLD_RUNTIME_SOURCE_MISMATCH')
+    db=remote.db();validate_database(db,before_ledger(ledger));writer_check(remote.containers(),db,[name])
+    validate_clone_source(g,art['config'])
+    info=json.loads(remote.run(['docker','info','--format','{{json .}}']))
+    require(info['ServerVersion']=='29.1.3' and info['Driver']=='overlayfs'
+            and info['DockerRootDir']=='/var/lib/docker'
+            and ['driver-type','io.containerd.snapshotter.v1'] in info['DriverStatus'],'DOCKER_STORAGE_MODEL_CHANGED')
+    require(json.loads(remote.py("import os,json;print(json.dumps(all(os.stat(p).st_dev==os.stat('/').st_dev for p in ['/var/lib/docker','/var/lib/containerd'] if os.path.exists(p))))")) is True,'DOCKER_FILESYSTEM_MODEL_CHANGED')
+    budget=p1_capacity(remote,art,ledger,imported)
+    if imported:
+        for item in (art,art['compatibility']):
+            resolve_loaded_image(remote,item);p1_runtime_artifact_probe(remote,item)
+            require(remote.run(['docker','run','--rm','--network','none','--entrypoint','node',item['imageReference'],'-e',SHIPPING_CLI_PROBE])==b'PINNED_PRISMA_CLI_OK\n','SHIPPING_PRISMA_CLI_INVALID')
+    return dict(old=g,name=name,template=template,active=active,budget=budget,
+        diskUsed=budget['used'],diskAvailable=budget['available'],migrationResources=shipping_resources(db),
+        before_ledger=before_ledger(ledger),migration_phase='L88',
+        dfHuman=remote.run(['df','-h','/']).decode(),dockerSystemDf=remote.run(['docker','system','df']).decode())
+
+
+def p1_clone(remote, state, art, name, helper):
+    require(not remote.run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip(),'CANDIDATE_NAME_EXISTS')
+    needle='env["GIT_SHA"] = release_sha';require(helper.count(needle)==1,'BG_CLONE_HELPER_CHANGED')
+    helper=helper.replace(needle,needle+'\nenv["BUDU_RUNTIME_MODE"] = "standby"',1)
+    owned={'candidate':name,'art':art,'candidateAttempted':True}
+    state.setdefault('p1Owned',[]).append(owned)
+    remote.py("import json,sys,subprocess,tempfile,pathlib,os;v=json.load(sys.stdin);c=json.loads(subprocess.check_output(['docker','inspect',v['old']]))[0];e=dict(x.split('=',1) for x in c['Config']['Env']);f,p=tempfile.mkstemp(dir='/dev/shm');os.fchmod(f,0o600);os.write(f,json.dumps({'username':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME'],'userId':e['CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID']}).encode());os.close(f)\ntry:\n r=subprocess.run(['python3','-',v['old'],v['name'],v['image'],v['sha'],p,v['network'],'preserve','writer'],input=v['helper'].encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL);rc=r.returncode\nfinally:\n pathlib.Path(p).unlink()\nraise SystemExit(rc)",
+        {'old':state['old']['Id'],'name':name,'image':art['imageReference'],'sha':art['release'],
+         'network':state['old']['HostConfig']['NetworkMode'],'helper':helper},timeout=120)
+    remote.run(['docker','update','--restart','unless-stopped',name])
+    current=remote.inspect(name);validate_candidate_image(current,art)
+    owned.update(candidateId=current['Id'],lifecycleSince=current['State']['StartedAt'])
+    clone_parity(p1_clone_source(state['old'],art),current,art['release'])
+    remote.health(name,art['release']);bg_lifecycle(remote,{'art':art},owned,'standby')
+    application_db_probe(remote,name,'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+    runtime_checks(remote,name,art['runtimeHash'],state['authority_mounts'])
+    return owned
+
+
+def p1_standby_writer_check(remote,state,ledger,names):
+    rows=remote.containers()
+    for owned in state.get('p1Owned',[]):
+        if owned.get('candidateId') and any(x['Id']==owned['candidateId'] for x in rows):
+            bg_lifecycle(remote,{'art':owned['art']},owned,'standby')
+            rows=[x for x in rows if x['Id']!=owned['candidateId']]
+    db=remote.db();validate_database(db,ledger);writer_check(rows,db,names)
+
+
+def p1_owned_stop(remote, owned):
+    if remote.run(['docker','ps','-aq','--filter','name=^/'+owned['candidate']+'$']).strip():
+        current=remote.inspect(owned['candidate']);validate_candidate_image(current,owned['art'])
+        require(not owned.get('candidateId') or current['Id']==owned['candidateId'],'BG_CANDIDATE_CHANGED')
+        if current['State']['Running']:remote.run(['docker','stop','--time','30',current['Id']])
+        require(not remote.inspect(current['Id'])['State']['Running'],'BG_CANDIDATE_STOP_UNVERIFIED')
+
+
+def p1_migrator_terminate(remote,state):
+    require(state.get('migrator'),'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+    if state.get('settingsProbe') and remote.run(['docker','ps','-aq','--filter','name=^/'+state['settingsProbe']+'$']).strip():
+        probe=remote.inspect(state['settingsProbe'])
+        require(probe['Image']==state['art']['loadedDockerImageId']
+                and probe['Config'].get('Labels')=={'budu.production-role':'p1-settings',REVISION:state['art']['release']},'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+        if probe['State']['Running']:remote.run(['docker','stop','--time','10',probe['Id']])
+        require(not remote.inspect(probe['Id'])['State']['Running'],'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+        state['settingsTerminationVerified']=True
+    if not remote.run(['docker','ps','-aq','--filter','name=^/'+state['migrator']+'$']).strip():
+        # A name is reserved before network/create checks. Its proven absence
+        # permits preserving G only before any migration start attempt, on L88.
+        require(p1_release() and state.get('p1MigrationStarted',False) is False
+                and state.get('migration_phase')=='L88'
+                and state['migrator']==migration_attempt_container(state,'migrator',state['art']['release']),
+                'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+        previous=state.get('before_ledger')
+        require(isinstance(previous,dict) and len(previous)==88,'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+        db=remote.db();validate_database(db,previous);writer_check(remote.containers(),db,[])
+        count=procurement_query(remote,"BEGIN READ ONLY; SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='budu_p1_migrator'; COMMIT;")
+        require(count==0 and not remote.run(['docker','ps','-aq','--filter','name=^/'+state['migrator']+'$']).strip(),
+                'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+        state['migratorAbsentBeforeMigrationVerified']=True
+        state['migratorTerminationVerified']=True
+        return
+    current=remote.inspect(state['migrator'])
+    require(current['Image']==state['art']['loadedDockerImageId']
+            and current['Config'].get('Labels')=={'budu.production-role':'migrator',REVISION:state['art']['release']},'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+    if current['State']['Running']:remote.run(['docker','stop','--time','30',current['Id']])
+    require(not remote.inspect(current['Id'])['State']['Running'],'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+    # A stopped container is insufficient if a PostgreSQL session remains.
+    count=procurement_query(remote,"BEGIN READ ONLY; SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='budu_p1_migrator'; COMMIT;")
+    require(count==0,'P1_MIGRATOR_TERMINATION_UNVERIFIED')
+    state['migratorTerminationVerified']=True
+
+
+def p1_restore_pre_migration_g(remote,state,ledger):
+    # Only preserve the original L88 service before any migration start attempt.
+    # This is not the safe R89 fallback and cannot run after UNKNOWN/DDL/failed SQL.
+    require(state.get('p1MigrationStarted') is not True and state.get('migration_phase')=='L88',
+            'P1_DATABASE_PHASE_UNKNOWN')
+    require(not state.get('backup_attempted') or state.get('backup_termination_verified') is True,
+            'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
+    for owned in state.get('p1Owned',[]):p1_owned_stop(remote,owned)
+    if state.get('migrator'):p1_migrator_terminate(remote,state)
+    previous=before_ledger(ledger);validate_database(remote.db(),previous)
+    binding=p1_contract()['live'];g=remote.inspect(state['old']['Id'])
+    require(g['Id']==binding['containerId'] and g['Image']==binding['imageId']
+            and g['Config'].get('Labels')==binding['containerLabels']
+            and env(g)==env(state['old'])
+            and remote.routes()==(state['template'],state['active'])
+            and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==P1_OLD_SHA,
+            'P1_LIVE_IDENTITY_CHANGED')
+    if not g['State']['Running']:
+        settle_writers(remote,previous,[])
+        remote.run(['docker','start',g['Id']])
+        current=remote.inspect(g['Id'])
+        value={'art':{'release':P1_OLD_SHA,'loadedDockerImageId':g['Image'],
+            'imageReference':g['Config']['Image']}}
+        original={'candidate':state['name'],'candidateId':g['Id'],'lifecycleSince':current['State']['StartedAt']}
+        remote.health(state['name'],P1_OLD_SHA)
+        bg_lifecycle(remote,value,original,'standby');application_db_probe(remote,state['name'],'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
+        bg_promote(remote,value,original);bg_lifecycle(remote,value,original,'active')
+    h=json.loads(remote.run(['docker','exec',g['Id'],'wget','-qO-','http://127.0.0.1:3000/api/health']))
+    require(h.get('runtimeMode')=='active' and h.get('appStartupTasksStarted')==1
+            and h.get('processBackgroundTasksStarted')==1,'P1_LIVE_WRITER_INACTIVE')
+    application_db_probe(remote,state['name'],'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
+    runtime_checks(remote,state['name'],OLD_V2_HASH,state['authority_mounts'])
+    remote.health(state['name'],P1_OLD_SHA,public=True);settle_writers(remote,previous,[state['name']])
+    require(remote.routes()==(state['template'],state['active'])
+            and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==P1_OLD_SHA,'P1_LIVE_IDENTITY_CHANGED')
+    state['migration_phase']='L88';state['originalGRestoredBeforeMigration']=True
+
+
+def p1_safe_rollback(remote,state,ledger):
+    for owned in state.get('p1Owned',[]):p1_owned_stop(remote,owned)
+    if state.get('migrator'):p1_migrator_terminate(remote,state)
+    require(not state.get('backup_attempted') or state.get('backup_termination_verified') is True,'SHIPPING_BACKUP_TERMINATION_UNVERIFIED')
+    # Never infer atomicity from the migration SQL. Exact ledger AND schema must be L89.
+    validate_database(remote.db(),ledger);settle_writers(remote,ledger,[])
+    state['migration_phase']='L89'  # Exact ledger+schema above establish this phase.
+    preserved=p1_facts(remote)
+    recovery=state['p1R'];art=recovery['art']
+    remote.run(['docker','start',recovery['candidateId']])
+    recovery['lifecycleSince']=remote.inspect(recovery['candidateId'])['State']['StartedAt']
+    remote.health(recovery['candidate'],art['release']);bg_lifecycle(remote,{'art':art},recovery,'standby')
+    application_db_probe(remote,recovery['candidate'],'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
+    settle_standby=lambda:p1_standby_writer_check(remote,state,ledger,[])
+    settle_standby();bg_promote(remote,{'art':art},recovery);bg_lifecycle(remote,{'art':art},recovery,'active')
+    application_db_probe(remote,recovery['candidate'],'ROLLBACK_APPLICATION_DB_PROBE_FAILED')
+    settle_writers(remote,ledger,[recovery['candidate']]);require(p1_facts(remote)==preserved,'P1_RECOVERY_FACTS_CHANGED')
+    new=state['template'].replace('http://'+state['name']+':3000','http://'+recovery['candidate']+':3000')
+    require(new.count('http://'+recovery['candidate']+':3000')==3,'CUTOVER_ROUTE_COUNT_INVALID')
+    replace_routes(remote,new,new);write_authority(remote,CURRENT_SHA_FILE,art['release']+'\n')
+    require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==art['release'],'SHA_POINTER_WRITE_FAILED')
+    remote.health(recovery['candidate'],art['release'],public=True)
+    bg_lifecycle(remote,{'art':art},recovery,'active');settle_writers(remote,ledger,[recovery['candidate']])
+    runtime_checks(remote,recovery['candidate'],art['runtimeHash'],state['authority_mounts'])
+
+
+def p1_facts(remote):
+    # Aggregate counts and hashes only; no business row body leaves PostgreSQL.
+    tables=procurement_query(remote,"BEGIN READ ONLY; SELECT json_agg(tablename ORDER BY tablename) FROM pg_tables WHERE schemaname='public'; COMMIT;")
+    facts=[]
+    for name in tables:
+        quoted='"'+name.replace('"','""')+'"'
+        # Existing startup ensures only refresh these two template timestamps.
+        projection="(to_jsonb(t)-'updated_at')::text" if name in ('approval_templates','notification_templates') else 'row_to_json(t)::text'
+        row=procurement_query(remote,"BEGIN READ ONLY; SELECT json_build_object('count',count(*),'hash',md5(coalesce(string_agg(h,'' ORDER BY h COLLATE \"C\"),''))) FROM (SELECT md5("+projection+") h FROM "+quoted+" t) s; COMMIT;")
+        facts.append([name,row])
+    return digest(json.dumps(facts,sort_keys=True).encode())
+
+
+def p1_migrator_url(value):
+    from urllib.parse import parse_qsl, urlencode, urlunsplit
+    parsed=urlsplit(value);pairs=parse_qsl(parsed.query,keep_blank_values=True)
+    require(len({k for k,_ in pairs})==len(pairs),'P1_MIGRATOR_URL_INVALID')
+    pairs=[(k,v) for k,v in pairs if k not in ('options','application_name')]
+    pairs.append(('options',P1_MIGRATOR_OPTIONS))
+    return urlunsplit(parsed._replace(query=urlencode(pairs)))
+
+
+def p1_migrator_create_code():
+    code=SHIPPING_MIGRATOR_CREATE_CODE
+    needle="    os.write(fd,('DATABASE_URL='+e['DATABASE_URL']+'\\nPGOPTIONS=-c application_name=budu_shipping_migrator\\n').encode());os.close(fd)"
+    require(code.count(needle)==1,'P1_MIGRATOR_TEMPLATE_CHANGED')
+    replacement="    from urllib.parse import urlsplit,parse_qsl,urlencode,urlunsplit\n    u=urlsplit(e['DATABASE_URL']);pairs=parse_qsl(u.query,keep_blank_values=True)\n    assert len({k for k,_ in pairs})==len(pairs)\n    pairs=[(k,x) for k,x in pairs if k not in ('options','application_name')]+[('options',v['options'])]\n    bounded=urlunsplit(u._replace(query=urlencode(pairs)))\n    os.write(fd,('DATABASE_URL='+bounded+'\\nPGOPTIONS='+v['options']+'\\n').encode());os.close(fd)"
+    return code.replace(needle,replacement,1)
+
+
+def p1_migrator_settings_probe(remote,state,art):
+    # Uses the same pinned schema-engine and bounded connection as deploy. The
+    # exact owned probe is connected to every source network, then terminated.
+    state['settingsProbe']=state['migrator']+'-settings'
+    state['settingsAttempted']=True
+    code=r'''import json,sys,subprocess,tempfile,os,pathlib,signal
+v=json.load(sys.stdin);c=json.loads(subprocess.check_output(['docker','inspect',v['migrator']]))[0]
+e=dict(x.split('=',1) for x in c['Config']['Env']);fd,p=tempfile.mkstemp(dir='/dev/shm');os.fchmod(fd,0o600)
+owned=None;verified=False;terminated=False
+try:
+ os.write(fd,('DATABASE_URL='+e['DATABASE_URL']+'\nPGOPTIONS='+e['PGOPTIONS']+'\n').encode());os.close(fd)
+ assert not subprocess.check_output(['docker','ps','-aq','--filter','name=^/'+v['name']+'$']).strip()
+ create=['docker','create','-i','--name',v['name'],'--network',c['HostConfig']['NetworkMode'],'--read-only','--restart','no','--tmpfs','/tmp:rw,nosuid,size=128m','--env-file',p,'--label','budu.production-role=p1-settings','--label','org.opencontainers.image.revision='+v['release'],'--entrypoint','node',v['image'],'/app/node_modules/prisma/build/index.js','db','execute','--stdin','--schema','/app/prisma/schema.prisma']
+ owned=subprocess.check_output(create,stderr=subprocess.DEVNULL,timeout=30).decode().strip()
+ for network in sorted(c['NetworkSettings']['Networks']):
+  if network!=c['HostConfig']['NetworkMode']:subprocess.run(['docker','network','connect',network,owned],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=30)
+ r=subprocess.run(['docker','start','-ai',owned],input=v['sql'].encode(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=45)
+ verified=r.returncode==0
+finally:
+ pathlib.Path(p).unlink()
+ previous=signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGHUP,signal.SIGTERM,signal.SIGINT})
+ try:
+  if owned:
+   current=json.loads(subprocess.check_output(['docker','inspect',owned]))[0]
+   assert current['Image']==c['Image'] and current['Config']['Labels']=={'budu.production-role':'p1-settings','org.opencontainers.image.revision':v['release']}
+   if current['State']['Running']:subprocess.run(['docker','stop','--time','10',owned],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+   assert not json.loads(subprocess.check_output(['docker','inspect',owned]))[0]['State']['Running']
+   terminated=True
+ finally:signal.pthread_sigmask(signal.SIG_SETMASK,previous)
+print(json.dumps({'settingsVerified':verified,'terminationVerified':terminated}))
+'''
+    proof=json.loads(remote.py(code,{'migrator':state['migrator'],'name':state['settingsProbe'],
+        'image':art['imageReference'],'release':art['release'],'sql':P1_SETTINGS_SQL},timeout=180))
+    state['settingsTerminationVerified']=proof.get('terminationVerified') is True
+    state['migratorSettingsVerified']=proof.get('settingsVerified') is True
+    require(state['settingsTerminationVerified'] and state['migratorSettingsVerified'],'P1_MIGRATOR_TIMEOUT_UNVERIFIED')
+
+
+def p1_failure_evidence(remote,state,stage,retained):
+    evidence={'project':'BUDU-CODE-AUDIT-001-P1-RELEASE-CONTINUE','result':'BLOCKED',
+        'failureStage':stage,'releaseSha':state['art']['release'],'safeRollbackSha':P1_BUSINESS_SHA,
+        'migrationPhase':state.get('migration_phase','UNKNOWN'),'lockRetained':retained,
+        'migratorTerminationVerified':state.get('migratorTerminationVerified',False),
+        'migratorAbsentBeforeMigrationVerified':state.get('migratorAbsentBeforeMigrationVerified',False),
+        'settingsTerminationVerified':state.get('settingsTerminationVerified',False),
+        'backupTerminationVerified':state.get('backup_termination_verified',False),
+        'zeroWriterVerified':state.get('failureZeroWriterVerified',False),
+        'originalGRestoredBeforeMigration':state.get('originalGRestoredBeforeMigration',False),
+        'migrationStarted':state.get('p1MigrationStarted',False),'restartOldGForbiddenAfterMigration':True}
+    try:
+        db=remote.db();evidence.update(databaseApplied=db['applied'],databaseFailed=db['failed'],databaseRolledBack=db.get('rolledBack'))
+        template,active=remote.routes();evidence.update(templateHash=digest(template.encode()),activeHash=digest(active.encode()))
+        pointer=remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()
+        evidence['pointer']=pointer if pointer in (P1_OLD_SHA,P1_BUSINESS_SHA,state['art']['release']) else 'UNVERIFIED'
+        if state.get('rollback_root'):
+            result=json.loads(remote.py(BG_EVIDENCE_CODE,{'root':state['rollback_root'],'result':evidence}))
+            require(result.get('result')=='PASS','BG_EVIDENCE_UNKNOWN')
+    except BaseException:
+        # Evidence failure can never authorize a retry, SQL repair or old G.
+        pass
+
+
+def p1_execute_loaded(remote,art,ledger,helper,expected_id,expected_routes):
+    state=None;retain=False;stage='PREFLIGHT'
+    def interrupted(*_):raise GateError('INTERRUPTED')
+    for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
+    try:
+        state=p1_preflight(remote,art,ledger,True);state['art']=art
+        require(state['old']['Id']==expected_id and digest(state['template'].encode())==expected_routes,'AUTHORITY_CHANGED_DURING_IMPORT')
+        state['authority_mounts']=mount_readability(remote,state['name'])
+        root='/opt/budu/.rollback-assets/'+ROLLBACK_PREFIX+art['release'];state['rollback_root']=root
+        remote.py("import json,pathlib,sys,os;v=json.load(sys.stdin);p=pathlib.Path(v['root']);p.mkdir(mode=0o700);os.umask(0o077);(p/'template').write_text(v['template']);(p/'active').write_text(v['active']);(p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",{'root':root,'template':state['template'],'active':state['active'],'manifest':{'G':P1_OLD_SHA,'B':P1_BUSINESS_SHA,'E':art['release'],'R':art['compatibility']['release'],'migration':P1_MIGRATION,'sqlHash':P1_SQL_HASH,'before':88,'after':89,'rollback':'R89_ONLY_KEEP_ALL_FACTS_NEVER_RESTART_G'}})
+        stage='P1_STANDBY_READY'
+        state['p1R']=p1_clone(remote,state,art['compatibility'],'budu-prod-'+P1_BUSINESS_SHA[:12]+'-p1-safe-r-'+art['release'][:12],helper)
+        state['p1E']=p1_clone(remote,state,art,'budu-prod-'+art['release'][:12]+CONTAINER_SUFFIX,helper)
+        p1_standby_writer_check(remote,state,before_ledger(ledger),[state['name']])
+        require(remote.routes()==(state['template'],state['active']) and remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==P1_OLD_SHA,'P1_LIVE_IDENTITY_CHANGED')
+        # Stop both standbys before the original conservative zero-writer gates.
+        for owned in state['p1Owned']:p1_owned_stop(remote,owned)
+        stage='OLD_WRITER_DRAIN';state['old_stop_attempted']=True
+        remote.run(['docker','stop','--time','30',state['name']]);settle_writers(remote,before_ledger(ledger),[])
+        stage='SHIPPING_BACKUP_RESTORE';state['backupProof']=shipping_backup_restore(remote,state,root,art)
+        stage='SHIPPING_CHECK_MIGRATION';shipping_migrate(remote,state,art,ledger);p1_migrator_terminate(remote,state)
+        stage='P1_PROMOTION'
+        e=state['p1E'];remote.run(['docker','start',e['candidateId']]);e['lifecycleSince']=remote.inspect(e['candidateId'])['State']['StartedAt']
+        remote.health(e['candidate'],art['release']);bg_lifecycle(remote,{'art':art},e,'standby')
+        p1_standby_writer_check(remote,state,ledger,[]);application_db_probe(remote,e['candidate'],'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+        bg_promote(remote,{'art':art},e);bg_lifecycle(remote,{'art':art},e,'active');settle_writers(remote,ledger,[e['candidate']])
+        runtime_checks(remote,e['candidate'],art['runtimeHash'],state['authority_mounts']);application_db_probe(remote,e['candidate'],'CANDIDATE_APPLICATION_DB_PROBE_FAILED')
+        new=state['template'].replace('http://'+state['name']+':3000','http://'+e['candidate']+':3000');require(new.count('http://'+e['candidate']+':3000')==3,'CUTOVER_ROUTE_COUNT_INVALID')
+        stage='NGINX_CUTOVER';replace_routes(remote,new,new);stage='PUBLIC_HEALTH';remote.health(e['candidate'],art['release'],True)
+        bg_lifecycle(remote,{'art':art},e,'active');settle_writers(remote,ledger,[e['candidate']])
+        used,available=remote.disk();require(math.ceil(100*used/(used+available))<=MAX_PROJECTED_USAGE and available>=MIN_PROJECTED_AVAILABLE,'ARTIFACT_DISK_GATE_FAIL:POST_DEPLOY_HEADROOM')
+        stage='SHA_POINTER';write_authority(remote,CURRENT_SHA_FILE,art['release']+'\n');require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip()==art['release'],'SHA_POINTER_WRITE_FAILED')
+        print(json.dumps({'result':'DEPLOY_COMPLETE','releaseSha':art['release'],'runtimeSha':P1_BUSINESS_SHA,'rollbackSha':P1_BUSINESS_SHA,'migrationPhase':'L89','writer':1,'runtimeMode':'active','p1Capacity':art['p1Capacity'],'backupProof':state['backupProof'],'migratorTerminationVerified':True,'loadedDockerImageId':art['loadedDockerImageId']}))
+    except BaseException as error:
+        for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,signal.SIG_IGN)
+        retain=True
+        if state:
+            try:
+                for owned in state.get('p1Owned',[]):p1_owned_stop(remote,owned)
+                if state.get('migrator'):p1_migrator_terminate(remote,state)
+                if state.get('old_stop_attempted'):
+                    if state.get('p1MigrationStarted') is True:
+                        p1_safe_rollback(remote,state,ledger)
+                    else:
+                        p1_restore_pre_migration_g(remote,state,ledger)
+                    retain=False
+                else:
+                    settle_writers(remote,before_ledger(ledger),[state['name']]);retain=False
+            except BaseException:
+                try:
+                    for owned in state.get('p1Owned',[]):p1_owned_stop(remote,owned)
+                    if state.get('migrator'):p1_migrator_terminate(remote,state)
+                    writer_check(remote.containers(),remote.db(),[])
+                    state['failureZeroWriterVerified']=True
+                except BaseException:state['failureZeroWriterVerified']=False
+                p1_failure_evidence(remote,state,stage,True)
+                failure=GateError('P1_RECOVERY_UNVERIFIED_LOCK_RETAINED');failure.failure_stage=stage;failure.deployment_result='DEPLOY_BLOCKED';raise failure from None
+        if state:p1_failure_evidence(remote,state,stage,retain)
+        error.failure_stage=stage;error.deployment_result='DEPLOY_ROLLED_BACK' if state and state.get('old_stop_attempted') else 'DEPLOY_BLOCKED';raise
+    finally:
+        if not retain:remote.py('import os;os.rmdir(%r)'%LOCK)
+
 
 def shipping_migration():
     # This is one reviewed business pair, never a count/schema override.
@@ -607,7 +1105,7 @@ def bg_release_base():
 
 
 def migration_enabled():
-    return shipping_migration() or material_migration() or procurement_migration()
+    return p1_release() or shipping_migration() or material_migration() or procurement_migration()
 
 
 def validate_final_hotfix_bundle(repo, release):
@@ -736,7 +1234,7 @@ def procurement_facts(remote, tables=None):
 
 
 def compatibility_artifact(repo, archive):
-    c=procurement_contract()
+    c={'rollbackSha':P1_BUSINESS_SHA} if p1_release() else procurement_contract()
     with tempfile.TemporaryDirectory(prefix='procurement-compatible-source-') as directory:
         # Local Git object copy only; the exact R ref was fetched/pushed separately.
         command(['git','clone','--quiet','--no-hardlinks','--no-checkout',str(repo),directory])
@@ -894,31 +1392,37 @@ def material_migration():
 
 
 def migration_before_phase():
+    if p1_release(): return 'L88'
     if procurement_migration(): return 'L87'
     return 'L86' if material_migration() else 'L85'
 
 
 def migration_after_phase():
+    if p1_release(): return 'L89'
     if procurement_migration(): return 'L88'
     return 'L87' if material_migration() else 'L86'
 
 
 def migration_target():
+    if p1_release(): return P1_MIGRATION
     if procurement_migration(): return procurement_contract()['migration']
     return material_contract()['migration'] if material_migration() else SHIPPING_MIGRATION
 
 
 def migration_sql_hash():
+    if p1_release(): return P1_SQL_HASH
     if procurement_migration(): return procurement_contract()['sqlHash']
     return material_contract()['sqlHash'] if material_migration() else SHIPPING_SQL_HASH
 
 
 def migration_before_count():
+    if p1_release(): return 88
     if procurement_migration(): return 87
     return 86 if material_migration() else 85
 
 
 def migration_rollback_contract():
+    if p1_release(): return 'R89_ONLY_KEEP_VERSION_TRIGGERS_COUNTER_AND_ALL_FACTS_NEVER_RESTART_G'
     if procurement_migration(): return 'COMPATIBLE_R_KEEP_L88_PROCUREMENT_AND_AUDIT_NEVER_RESTART_LEGACY_WRITER'
     return ('APPLICATION_ONLY_KEEP_L87_NULLABLE_COLUMN_AND_ALL_FACTS' if material_migration()
             else 'APPLICATION_ONLY_KEEP_L86_AND_ACTUAL_FACTS')
@@ -971,6 +1475,10 @@ print(r.stdout.decode().strip())
 
 
 def before_ledger(ledger):
+    if p1_release():
+        require(len(ledger)==89 and ledger.get(P1_MIGRATION)==P1_SQL_HASH,
+                'P1_MIGRATION_SCOPE_INVALID')
+        return {name:h for name,h in ledger.items() if name!=P1_MIGRATION}
     if procurement_migration():
         c=procurement_contract()
         require(len(ledger)==88 and ledger.get(c['migration'])==c['sqlHash'], 'MIGRATION_LEDGER_INVALID')
@@ -1053,7 +1561,9 @@ def validate_post_transfer_identity(repo, release):
             and is_ancestor(repo, '8381959e9c1d527c1f14c234338b14d117ae46f5', EXPECTED_OLD_SHA)
             and (is_ancestor(repo, EXPECTED_OLD_SHA, RUNTIME_SHA) or (procurement_migration() and EXPECTED_OLD_SHA==procurement_contract()['rollbackSha']))
             and is_ancestor(repo, RUNTIME_SHA, release), 'POST_TRANSFER_ANCESTRY_INVALID')
-    if THIN_MODE:
+    if p1_release():
+        p1_identity(repo,release)
+    elif THIN_MODE:
         thin_identity(repo, release)
     elif mobile_hotfix() or git(repo, 'branch', '--show-current') == MOBILE_HOTFIX_BRANCH:
         validate_mobile_hotfix_identity(repo, release)
@@ -1070,9 +1580,10 @@ def validate_post_transfer_identity(repo, release):
     require(transfer_cas_section((Path(repo)/'server/v2.js').read_bytes())
             == transfer_cas_section(deployed_transfer), 'TRANSFER_CAS_RUNTIME_CHANGED')
     files = set(git(repo, 'diff', '--name-only', RUNTIME_SHA, release).splitlines())
-    require(files <= (bg_hotfix_files() if procurement_hotfix() or mobile_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
+    require(files <= (P1_ENGINEERING_FILES if p1_release() else bg_hotfix_files() if procurement_hotfix() or mobile_hotfix() else (procurement_contract()['engineeringFiles'] | (set(BG_BOOTSTRAP_HASHES) if BG_ACTIVE else set())) if procurement_migration() else material_contract()['engineeringFiles'] if material_migration() else POST_TRANSFER_ENGINEERING_FILES), 'POST_TRANSFER_RUNTIME_CHANGED')
     require(not git(repo, 'status', '--porcelain', '--untracked-files=all'), 'WORKTREE_NOT_CLEAN')
-    command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
+    if p1_release():p1_license_diff_check(repo,release)
+    else:command(['git', '-C', str(repo), 'diff', '--check', EXPECTED_OLD_SHA, release])
 
 def validate_identity(release, parent, ancestor, files, schema_files, clean):
     require(bool(re.fullmatch('[0-9a-f]{40}', release)) and release != RUNTIME_SHA, 'RELEASE_SHA_INVALID')
@@ -1087,7 +1598,7 @@ def identity(repo):
     if RELEASE_PROFILE == 'post-transfer':
         validate_post_transfer_identity(repo, release)
         migrations = {p.parent.name: digest(p.read_bytes()) for p in (Path(repo) / 'prisma/migrations').glob('*/migration.sql')}
-        require(len(migrations) == (88 if mobile_hotfix() or procurement_migration() or procurement_hotfix() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
+        require(len(migrations) == (89 if p1_release() else 88 if mobile_hotfix() or procurement_migration() or procurement_hotfix() else 87 if material_migration() else (86 if shipping_migration() else EXPECTED_MIGRATIONS)), 'LOCAL_MIGRATION_COUNT_INVALID')
         before_ledger(migrations)
         return release, migrations
     require(git(repo, 'branch', '--show-current') == 'codex/transfer-cas-existing-workflow', 'RELEASE_BRANCH_INVALID')
@@ -1370,7 +1881,7 @@ No archive member is extracted to the host filesystem.
                         require(member.isfile() and 0 < member.size < 4 * 1024 ** 2, 'SHIPPING_PRISMA_CLI_INVALID')
                         content = layer.extractfile(member).read()
                         prisma_files[name] = json.loads(content)['version'] if name.endswith('package.json') else digest(content)
-                    if (member.isfile() or merged_b2 and (member.issym() or member.islnk())) and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/') + (('app/dist/',) if MOBILE_HOTFIX_IDENTITY else ())):
+                    if (member.isfile() or merged_b2 and (member.issym() or member.islnk())) and name.startswith(('app/server/','app/shared/','app/src/utils/','app/prisma/','app/scripts/','app/brand/web/') + (('app/dist/',) if p1_release() or MOBILE_HOTFIX_IDENTITY else ())):
                         if merged_b2:runtime_files.add(name)
                         else:require(name in expected_payload, 'UNEXPECTED_RUNTIME_FILE')
                     if name in expected_payload:
@@ -2040,7 +2551,7 @@ r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c default_transaction_re
 if r.returncode: raise SystemExit(1)
 print(r.stdout.decode().strip())
 ''' % (PG, PG, EXPECTED_DB)
-        return procurement_database_details(self, material_database_details(self, json.loads(self.py(code))))
+        return p1_database_details(self, procurement_database_details(self, material_database_details(self, json.loads(self.py(code)))))
     def health(self, name, sha, public=False):
         args = ['curl', '--fail', '--silent', '--max-time', '10', 'https://buducandy.cn/api/health'] if public else ['docker', 'exec', name, 'wget', '-qO-', 'http://127.0.0.1:3000/api/health']
         for _ in range(20):
@@ -2075,6 +2586,7 @@ def writer_check(containers, database, expected_names):
     require(set(database['clients']) <= ips, 'UNKNOWN_DB_CLIENT_OR_OLD_WRITER')
 
 def validate_database(db, ledger):
+    if p1_release(): return p1_validate_database(db,ledger)
     if procurement_migration() or procurement_hotfix():
         if procurement_hotfix():require(len(ledger)==88 and db['applied']==88,'MIGRATION_LEDGER_INVALID')
         require(db['database']==EXPECTED_DB and len(ledger) in (87,88) and db['applied']==len(ledger)
@@ -2248,7 +2760,7 @@ def fingerprints(container,database,role=user):
 name=v['restore'];data=root/'restore-pg';created=False;restore_process=None;cleanup_complete=False
 try:
     before,tables=fingerprints(v['pg'],v['database'])
-    dump=root/'database-L85.dump'
+    dump=root/('database-'+v.get('baselinePhase','L85')+'.dump')
     total,backup_hash=bounded_backup_dump(['docker','exec','-e',options,v['pg'],'pg_dump','-U',user,'-d',v['database'],'-Fc','--no-owner','--no-acl','--lock-wait-timeout=8s'],dump,v['limits']['backupLimit'],deadline)
     data.mkdir(mode=0o700)
     def allocated():return sum(p.stat().st_blocks*512 for p in data.rglob('*') if p.is_file())
@@ -2328,7 +2840,8 @@ def shipping_backup_restore(remote, state, root, art):
     try:
         result = json.loads(remote.py(SHIPPING_BACKUP_RESTORE_CODE,
             {'root':root, 'pg':PG, 'database':EXPECTED_DB, 'limits':limits,
-             'release':art['release'], 'restore':migration_attempt_container(state,'restore',art['release'])}, timeout=600))
+             'release':art['release'], 'baselinePhase':migration_before_phase() if p1_release() else 'L85',
+             'restore':migration_attempt_container(state,'restore',art['release'])}, timeout=600))
     except BaseException as error:
         state['backup_termination_verified'] = getattr(error, 'backup_termination_verified', False)
         raise
@@ -2383,15 +2896,20 @@ def shipping_migrate(remote, state, art, ledger):
             and {network['Name']:network['Id'] for network in network_objects} == source_network_ids,
             'SHIPPING_MIGRATOR_IDENTITY_INVALID')
     require(not remote.run(['docker','ps','-aq','--filter','name=^/'+name+'$']).strip(), 'SHIPPING_MIGRATOR_IDENTITY_INVALID')
-    remote.py(SHIPPING_MIGRATOR_CREATE_CODE, {'old':state['name'],'name':name,
-        'release':art['release'],'image':art['imageReference']})
+    create_code=SHIPPING_MIGRATOR_CREATE_CODE
+    options='-c application_name=budu_shipping_migrator'
+    if p1_release():
+        options=P1_MIGRATOR_OPTIONS
+        create_code=p1_migrator_create_code()
+    remote.py(create_code, {'old':state['name'],'name':name,
+        'release':art['release'],'image':art['imageReference'],'options':options})
     container = remote.inspect(name)
     require(not container['State']['Running'] and container['Image'] == art['loadedDockerImageId']
             and container['Config'].get('Image') == art['imageReference']
             and container['Config'].get('Labels') == {'budu.production-role':'migrator',REVISION:art['release']}
             and env(container) == {**dict(x.split('=',1) for x in art['config'].get('Env', []) if '=' in x),
-                'DATABASE_URL':env(state['old'])['DATABASE_URL'],
-                'PGOPTIONS':'-c application_name=budu_shipping_migrator'}
+                'DATABASE_URL':p1_migrator_url(env(state['old'])['DATABASE_URL']) if p1_release() else env(state['old'])['DATABASE_URL'],
+                'PGOPTIONS':options}
             and container['Config']['Entrypoint'] == ['node']
             and container['Config']['Cmd'] == ['/app/node_modules/prisma/build/index.js','migrate','deploy','--schema','/app/prisma/schema.prisma']
             and container['HostConfig']['ReadonlyRootfs'] is True
@@ -2408,9 +2926,11 @@ def shipping_migrate(remote, state, art, ledger):
             and all(m['Type'] == 'tmpfs' and m['Destination'] == '/tmp' for m in container['Mounts']),
             'SHIPPING_MIGRATOR_IDENTITY_INVALID')
     settle_writers(remote, state.get('before_ledger',before_ledger(ledger)), [])
+    if p1_release(): p1_migrator_settings_probe(remote,state,art)
     # From this point through verified L86+new CHECK+zero writers, the state is
     # deliberately UNKNOWN. A signal, SQL/ledger gap or any failure retains lock
     # and never starts the old application or restores production data.
+    if p1_release():state['p1MigrationStarted']=True
     state['migration_phase'] = 'UNKNOWN'
     remote.run(['docker','start',name])
     deadline = time.monotonic()+180
@@ -2452,7 +2972,15 @@ def validate_clone_source(old, image):
     c, h = old['Config'], old['HostConfig']
     for k in IDENTITY_KEYS:
         require(c.get(k) == image.get(k), 'IMAGE_RUNTIME_CONFIG_MISMATCH')
-    if pos_offer_hotfix():
+    if p1_release():
+        binding=p1_contract()['live']
+        require(old['Id']==binding['containerId'] and old['Image']==binding['imageId']
+                and c.get('Labels')==binding['containerLabels']
+                and set(image.get('Labels') or {})=={REVISION}
+                and re.fullmatch('[0-9a-f]{40}',image['Labels'][REVISION])
+                and image['Labels'][REVISION]!=P1_OLD_SHA,
+                'SOURCE_LABELS_UNSUPPORTED')
+    elif pos_offer_hotfix():
         require(THIN_MODE and THIN_IDENTITY and MOBILE_HOTFIX_IDENTITY and CAPACITY_WAIVER is None
                 and old['Id'] == POS_OFFER_LIVE_BINDING['containerId']
                 and old['Image'] == POS_OFFER_LIVE_BINDING['imageId']
@@ -2479,6 +3007,7 @@ def validate_clone_source(old, image):
             and e.get('CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID') == 'dh', 'EXISTING_BINDING_MISMATCH')
 
 def preflight(remote, art, ledger, imported=False):
+    if p1_release(): return p1_preflight(remote,art,ledger,imported)
     if art.get('capacityProfile') == 'B2':
         return b2_preflight(remote, art, ledger, imported)
     # B1 dispatch; the established legacy authority path below remains intact.
@@ -2656,6 +3185,7 @@ def application_db_probe(remote, name, failure_code):
 
 
 def rollback(remote, state, ledger):
+    if p1_release(): return p1_safe_rollback(remote,state,ledger)
     if procurement_migration() and state.get('old_stop_attempted'):
         return procurement_rollback(remote,state,ledger)
     if migration_enabled():
@@ -2727,6 +3257,7 @@ class LocalRemote(Remote):
 
 
 def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
+    if p1_release(): return p1_execute_loaded(remote,art,ledger,helper,expected_id,expected_routes)
     require(not MEASURE_ONLY, 'MEASURE_ONLY_DEPLOY_FORBIDDEN')
     state = None
     retain_lock = False
@@ -2835,7 +3366,7 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
         stage = 'SHA_POINTER'
         write_authority(remote,CURRENT_SHA_FILE,release+'\n')
         require(remote.run(['cat',CURRENT_SHA_FILE]).decode().strip() == release, 'SHA_POINTER_WRITE_FAILED')
-        print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':procurement_contract()['rollbackSha'] if procurement_migration() else EXPECTED_OLD_SHA,'writer':1,
+        print(json.dumps({'result':'DEPLOY_COMPLETE','runtimeSha':RUNTIME_SHA,'releaseSha':release,'rollbackSha':P1_BUSINESS_SHA if p1_release() else procurement_contract()['rollbackSha'] if procurement_migration() else EXPECTED_OLD_SHA,'writer':1,
                           'imageReference':art['imageReference'],'archiveConfigDigest':art['archiveConfigDigest'],
                           'loadedDockerImageId':art['loadedDockerImageId'],'rootfsIdentityMatch':True,
                           'mountReadabilityParity':'PASS','authorityMountReadability':authority_mounts,
@@ -2879,6 +3410,18 @@ def execute_loaded(remote, art, ledger, helper, expected_id, expected_routes):
 
 
 SAFE_CONTROLLER_CODES = frozenset({
+    'P1_CONTRACT_UNBOUND','P1_RELEASE_IDENTITY_INVALID','P1_RELEASE_SCOPE_INVALID',
+    'P1_BUSINESS_SOURCE_DRIFT','P1_MIGRATION_SCOPE_INVALID','P1_FRONTEND_CONTRACT_UNBOUND',
+    'P1_LIVE_BINDING_UNBOUND','P1_DATABASE_PHASE_UNKNOWN','P1_LIVE_IDENTITY_CHANGED',
+    'P1_FULL_IMAGE_LABELS_INVALID','P1_LIVE_WRITER_INACTIVE','P1_ARTIFACT_ASSETS_INVALID','P1_PDF_RESOURCES_UNBOUND',
+    'P1_MIGRATOR_TIMEOUT_UNVERIFIED','P1_MIGRATOR_URL_INVALID','P1_MIGRATOR_TEMPLATE_CHANGED',
+    'P1_MIGRATOR_TERMINATION_UNVERIFIED','P1_RECOVERY_FACTS_CHANGED',
+    'P1_RECOVERY_UNVERIFIED_LOCK_RETAINED','CURRENT_APPLICATION_DB_PROBE_FAILED',
+    'P1_TRANSFER_PROBE_SCOPE_INVALID','P1_TRANSFER_PROBE_UNVERIFIED','P1_TRANSFER_PROBE_BLOCKED',
+    'P1_LICENSE_EXCEPTION_UNBOUND','P1_LICENSE_EXCEPTION_DRIFT',
+    'BG_CLONE_HELPER_CHANGED','BG_CANDIDATE_CHANGED','BG_CANDIDATE_STOP_UNVERIFIED',
+    'BG_LIFECYCLE_FAILED','BG_PROMOTION_MARKER_INVALID','BG_E_ALREADY_PROMOTED',
+    'BG_STANDBY_MUTATION_GUARD_FAILED','BG_PROMOTION_FAILED','BG_PROMOTION_TIMEOUT',
     'B2_CAPACITY_WAIVER_SCOPE_INVALID',
     'B2_IDENTITY_INVALID','B2_SCOPE_INVALID','B2_BUSINESS_CHANGED','B2_R_ABSENCE_UNKNOWN',
     'B2_R_NOT_ABSENT','B2_STORAGE_UNKNOWN','B2_IMPORT_UNKNOWN','B2_PHASE_INVALID','B2_SHARED_UNKNOWN',
@@ -2910,6 +3453,7 @@ SAFE_CONTROLLER_CODES = frozenset({
     'PROCUREMENT_RESUME_IDENTITY_INVALID',
 })
 SAFE_CONTROLLER_STAGES = frozenset({
+    'P1_STANDBY_READY','P1_PROMOTION',
     'PREFLIGHT','AUTHORITY_MOUNT_SNAPSHOT','OLD_WRITER_DRAIN','CANDIDATE_CREATE',
     'CANDIDATE_CLONE_PARITY','CANDIDATE_INTERNAL_HEALTH','CANDIDATE_RUNTIME_CHECKS',
     'CANDIDATE_APPLICATION_DB_PROBE',
@@ -3029,29 +3573,117 @@ def staging_action(remote, art, action):
     return result
 
 
+P1_TRANSFER_PROBE_TIMEOUT = 60
+P1_TRANSFER_MAX_FULL_SECONDS = 1200
+P1_TRANSFER_PROBE_CODE = r'''import hashlib,json,sys
+limit=int(sys.argv[1]);expected=sys.argv[2]
+assert 0<limit<=80530637 and len(expected)==64
+h=hashlib.sha256();total=0
+while True:
+ chunk=sys.stdin.buffer.read(1024*1024)
+ if not chunk:break
+ total+=len(chunk);assert total<=limit;h.update(chunk)
+assert total==limit and h.hexdigest()==expected
+print(json.dumps({'sampleBytes':total,'sampleSha256':h.hexdigest(),'verified':True}))
+'''
+
+
+def p1_complete_staging(remote,art):
+    # Read-only reuse of the existing exact private staging identity. A file from
+    # another uploader is accepted only after all existing ownership/hash gates.
+    code=r'''import hashlib,json,pathlib,pwd,stat,sys
+v=json.load(sys.stdin);root=pathlib.Path(v['root']);account=pwd.getpwnam('ubuntu')
+if not root.exists():print(json.dumps({'complete':False}));raise SystemExit(0)
+s=root.lstat();assert stat.S_ISDIR(s.st_mode) and not root.is_symlink() and root.resolve()==root and s.st_uid==account.pw_uid and stat.S_IMODE(s.st_mode)==0o700
+p=root/(v['release']+'.tar');meta=root/(v['release']+'.json');part=root/(v['release']+'.tar.part')
+if not p.exists() and not p.is_symlink():print(json.dumps({'complete':False}));raise SystemExit(0)
+assert not part.exists() and not part.is_symlink()
+def exact(path):
+ s=path.lstat();assert stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==account.pw_uid and stat.S_IMODE(s.st_mode)==0o600;return s
+s=exact(p);exact(meta);assert json.loads(meta.read_text())=={k:v[k] for k in ('release','sha256','bytes')};assert s.st_size==v['bytes']
+h=hashlib.sha256()
+with p.open('rb') as source:
+ for chunk in iter(lambda:source.read(1024*1024),b''):h.update(chunk)
+q=exact(p);assert (s.st_ino,s.st_dev,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(q.st_ino,q.st_dev,q.st_size,q.st_mtime_ns,q.st_ctime_ns)
+assert h.hexdigest()==v['sha256']
+print(json.dumps({'complete':True,'bytes':s.st_size,'verified':True}))
+'''
+    result=json.loads(remote.py(code,{'root':STAGING_ROOT,'release':art['release'],
+        'sha256':art['archiveHash'],'bytes':art['archive']},timeout=180))
+    require(result=={'complete':False} or result=={'complete':True,'bytes':art['archive'],'verified':True},
+        'STAGING_VERIFICATION_INVALID')
+    return result
+
+
+def p1_transfer_probe(remote,path,art):
+    require(p1_release() and CAPACITY_WAIVER is None,'P1_TRANSFER_PROBE_SCOPE_INVALID')
+    require(0<art['archive']<=MAX_ARCHIVE and re.fullmatch('[0-9a-f]{40}',art['release'])
+            and re.fullmatch('[0-9a-f]{64}',art['archiveHash']),'P1_TRANSFER_PROBE_SCOPE_INVALID')
+    count=(art['archive']+9)//10
+    with open(path,'rb') as source:sample=source.read(count)
+    require(len(sample)==count,'ARTIFACT_CHANGED')
+    sha=digest(sample);started=time.monotonic()
+    try:
+        # Same runner and exact SSH argv as rsync. Remote only hashes stdin;
+        # there is no file, Docker, SQL, or application action in this probe.
+        receipt=json.loads(remote.run(['python3','-c',P1_TRANSFER_PROBE_CODE,str(count),sha],
+            data=sample,timeout=P1_TRANSFER_PROBE_TIMEOUT))
+        elapsed=max(time.monotonic()-started,0.001)
+        require(receipt=={'sampleBytes':count,'sampleSha256':sha,'verified':True},'P1_TRANSFER_PROBE_UNVERIFIED')
+        require(elapsed<=P1_TRANSFER_PROBE_TIMEOUT,'P1_TRANSFER_PROBE_BLOCKED')
+    except BaseException as error:
+        print(json.dumps({'stage':'P1_TRANSFER_PROBE_BLOCKED','releaseSha':art['release'],
+            'archiveHash':art['archiveHash'],'requestedSampleBytes':count,'elapsedSeconds':time.monotonic()-started,
+            'bytesPerSecond':None,'rateStatus':'UNVERIFIED','timeoutSeconds':P1_TRANSFER_PROBE_TIMEOUT,'fullUploadStarted':False,'automaticRetry':False}),flush=True)
+        if isinstance(error,(KeyboardInterrupt,SystemExit)):raise
+        failure=GateError('P1_TRANSFER_PROBE_BLOCKED');failure.staging_untouched=True
+        raise failure from None
+    rate=count/elapsed;estimate=art['archive']/rate
+    proof={'releaseSha':art['release'],'archiveHash':art['archiveHash'],'sampleBytes':count,
+        'sampleSha256':sha,'elapsedSeconds':elapsed,'bytesPerSecond':rate,
+        'estimatedFullSeconds':estimate,'timeoutSeconds':P1_TRANSFER_PROBE_TIMEOUT,
+        'sshPathSha256':digest(json.dumps(remote.ssh,separators=(',',':')).encode()),
+        'remoteFilesWritten':0,'productionDatabaseAccess':False}
+    art['p1TransferProbe']=proof
+    print(json.dumps({'stage':'P1_TRANSFER_PROBE_PASS',**proof}),flush=True)
+    return proof
+
+
 def stage_artifact(remote, path, art):
     require(shutil.which('rsync') is not None, 'RUNNER_RSYNC_MISSING')
     remote.run(['rsync','--version'])
     with open(path,'rb') as stream:
         require(file_hash(stream)==art['archiveHash'], 'ARTIFACT_CHANGED')
-    prepared = staging_action(remote, art, 'prepare')
+    p1_upload_timeout=None
+    if p1_release():
+        prepared=p1_complete_staging(remote,art)
+        if not prepared['complete']:
+            probe=p1_transfer_probe(remote,path,art)
+            p1_upload_timeout=min(P1_TRANSFER_MAX_FULL_SECONDS,max(120,math.ceil(2*probe['estimatedFullSeconds'])))
+            prepared=staging_action(remote,art,'prepare')
+    else:
+        prepared=staging_action(remote,art,'prepare')
     started = time.monotonic()
-    print(json.dumps({'stage':'ARTIFACT_UPLOAD_STARTED','releaseSha':art['release'],
+    print(json.dumps({'stage':'P1_STAGED_ARTIFACT_REUSED' if p1_release() and prepared['complete'] else 'ARTIFACT_UPLOAD_STARTED','releaseSha':art['release'],
                       'archiveBytes':art['archive'],'resumeBytes':prepared['bytes']}), flush=True)
     if not prepared['complete']:
         target = STAGING_ROOT+'/'+art['release']+'.tar.part'
         args = ['rsync','--partial','--append-verify','--chmod=F600','--timeout=300',
                 '-e',shlex.join(remote.ssh[:-1]),str(path),remote.ssh[-1]+':'+target]
-        for attempt in range(1,4):
-            remaining = UPLOAD_TIMEOUT-(time.monotonic()-started)
+        for attempt in range(1,2 if p1_release() else 4):
+            remaining = (p1_upload_timeout if p1_release() else UPLOAD_TIMEOUT)-(time.monotonic()-started)
             require(remaining>0, 'ARTIFACT_UPLOAD_TIMEOUT')
             try:
                 result = subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=remaining)
             except subprocess.TimeoutExpired:
                 raise GateError('ARTIFACT_UPLOAD_TIMEOUT') from None
             if result.returncode==0: break
-            print(json.dumps({'stage':'ARTIFACT_UPLOAD_RETRY','attempt':attempt,
-                              'partialRetained':True,'rsyncExit':result.returncode}), flush=True)
+            if p1_release():
+                print(json.dumps({'stage':'P1_ARTIFACT_UPLOAD_FAILED','partialRetained':True,
+                    'rsyncExit':result.returncode,'automaticRetry':False}),flush=True)
+            else:
+                print(json.dumps({'stage':'ARTIFACT_UPLOAD_RETRY','attempt':attempt,
+                                  'partialRetained':True,'rsyncExit':result.returncode}), flush=True)
         require(result.returncode==0, 'ARTIFACT_UPLOAD_FAILED_PARTIAL_RETAINED')
     verified = staging_action(remote, art, 'verify')
     require(verified.get('verified') is True and verified.get('bytes')==art['archive']
@@ -3096,7 +3728,7 @@ def deploy(remote, repo, path, art, ledger, authorize):
         if reuse_loaded_image:
             art['loadedDockerImageId']=resolve_loaded_image(remote,art)['Id']
             procurement_stopped_candidate(remote,state,art)
-        if procurement_migration():
+        if p1_release() or procurement_migration():
             compatible=art['compatibility']
             disk_budget(*remote.disk(),compatible['archive'],compatible['blobs'],compatible['expanded'],compatible['largest'])
             existing=remote.run(['docker','images','-q',compatible['imageReference']]).strip()
@@ -3154,15 +3786,15 @@ def deploy(remote, repo, path, art, ledger, authorize):
         art.pop('compatibilityPath',None)
         payload = {'art':art,'ledger':ledger,'profile':RELEASE_PROFILE,
                    'expectedOldSha':EXPECTED_OLD_SHA,'businessSha':RUNTIME_SHA,
-                   'oldV2Hash':OLD_V2_HASH,
+                   'oldV2Hash':OLD_V2_HASH,'p1Contract':P1_CONTRACT,
                    'helper':(Path(repo)/'scripts/clone-production-container.py').read_text(),
                    'oldId':state['old']['Id'],'routeHash':digest(state['template'].encode())}
         # Entire cutover/rollback runs in one remote process, no source/env file is
         # copied to production. Only the allowlisted summary is returned.
         code = Path(__file__).read_text().rsplit("\nif __name__ == '__main__':", 1)[0]
-        code += "\nv=json.load(sys.stdin)\nif v['profile'] == 'post-transfer': configure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
+        code += "\nv=json.load(sys.stdin)\nP1_CONTRACT=v.get('p1Contract')\nif v['profile'] == 'post-transfer': configure_profile(v['profile'],v['expectedOldSha'],v['businessSha'],v['oldV2Hash'])\nrun_loaded_controller(v)\n"
         handed_off = True
-        result = remote.py(code, payload, timeout=480)
+        result = remote.py(code, payload, timeout=2400 if p1_release() else 480)
         check_controller_result(result)
         if not reuse_loaded_image:
             require(staging_action(remote,art,'cleanup').get('cleaned') is True, 'STAGING_CLEANUP_FAILED')
@@ -3170,6 +3802,12 @@ def deploy(remote, repo, path, art, ledger, authorize):
         else:
             print(json.dumps({'stage':'EXACT_PROCUREMENT_IMAGE_REUSE_COMPLETE','releaseSha':release,
                               'newStagingFiles':0,'existingStaging':'PRESERVED'}),flush=True)
+    except BaseException as error:
+        if p1_release() and getattr(error,'staging_untouched',False) is True and not import_started:
+            # The readonly sample failed before any archive/staging mutation.
+            # Release only this attempt's lock; G and retained images are intact.
+            staging_started=False
+        raise
     finally:
         # A transport failure after handoff is UNKNOWN, never start the old writer
         # from this process while the remote transaction might still be running.
@@ -4489,8 +5127,8 @@ def main():
         print(json.dumps(result))
         return
     require(args.archive is not None, 'ARCHIVE_REQUIRED')
-    require(procurement_migration() or args.compatibility_archive is None, 'PROCUREMENT_COMPATIBILITY_IDENTITY_INVALID')
-    if procurement_migration() and not BG_ACTIVE:
+    require(p1_release() or procurement_migration() or args.compatibility_archive is None, 'PROCUREMENT_COMPATIBILITY_IDENTITY_INVALID')
+    if (p1_release() or procurement_migration()) and not BG_ACTIVE:
         require(args.compatibility_archive is not None, 'PROCUREMENT_COMPATIBILITY_ARCHIVE_REQUIRED')
     if args.mode == 'deploy':
         require(args.authorize_release_sha == release, 'EXPLICIT_RELEASE_AUTHORIZATION_REQUIRED')
@@ -4509,7 +5147,7 @@ def main():
                     dst.write(block)
             frozen.chmod(0o400)
             art = artifact(frozen,release,args.repo)
-            if procurement_migration() and not BG_ACTIVE:
+            if (p1_release() or procurement_migration()) and not BG_ACTIVE:
                 compatible=Path(directory)/'compatible.tar'
                 with args.compatibility_archive.open('rb') as src, compatible.open('xb') as dst:
                     total=0
@@ -4527,7 +5165,7 @@ def main():
                 deploy(Remote(args.ssh_key),args.repo,frozen,art,ledger,args.authorize_release_sha)
         return
     art = artifact(args.archive, release, args.repo)
-    if procurement_migration(): art['compatibility']=compatibility_artifact(args.repo,args.compatibility_archive)
+    if p1_release() or procurement_migration(): art['compatibility']=compatibility_artifact(args.repo,args.compatibility_archive)
     print(json.dumps({'stage':'ARTIFACT_METRICS','metrics':artifact_metrics(art)},sort_keys=True),flush=True)
     if args.mode in ('measure-artifact','measure'):
         require(MEASURE_ONLY, 'MEASUREMENT_RELEASE_REQUIRED')
@@ -4539,14 +5177,14 @@ def main():
         result = measure_release(args.repo, args.archive, art, ledger, args.ssh_key)
         print('TRANSFER_CAS_MEASUREMENT_JSON='+json.dumps(result,sort_keys=True),flush=True)
         return
-    summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':procurement_contract()['rollbackSha'] if procurement_migration() else EXPECTED_OLD_SHA,
+    summary = {'releaseSha':release,'businessRuntimeSha':RUNTIME_SHA,'rollbackSha':P1_BUSINESS_SHA if p1_release() else procurement_contract()['rollbackSha'] if procurement_migration() else EXPECTED_OLD_SHA,
                'artifact':{k:art[k] for k in ['archive','blobs','expanded','largest','imageReference','archiveConfigDigest','rootfsDiffIds','archiveHash']},
                'migrationRequired':'YES' if migration_enabled() else MIGRATION_REQUIRED}
-    if procurement_migration(): summary['compatibleRollback']={k:art['compatibility'][k] for k in ('release','archive','archiveHash','imageReference','archiveConfigDigest')}
+    if p1_release() or procurement_migration(): summary['compatibleRollback']={k:art['compatibility'][k] for k in ('release','archive','archiveHash','imageReference','archiveConfigDigest')}
     if args.mode in ('inspect-artifact','inspect-artifact-diagnostic','inspect-artifact-backup-diagnostic'):
         # Offline validation still rejects artifacts over the absolute peak cap.
         summary['budget'] = disk_budget(0,100*GIB,art['archive'],art['blobs'],art['expanded'],art['largest'])
-        if procurement_migration():
+        if p1_release() or procurement_migration():
             compatible=art['compatibility']
             summary['compatibleRollback']['budget']=disk_budget(0,100*GIB,compatible['archive'],compatible['blobs'],compatible['expanded'],compatible['largest'])
     else:
@@ -4555,8 +5193,9 @@ def main():
         state = preflight(remote,art,ledger)
         # Preserve measured layers and fresh reuse evidence as diagnostics only.
         # Admission always uses full Model A, without reuse discounts.
-        measured = production_measurement(MeasurementRemote(args.ssh_key),art,ledger)
-        summary['models'] = disk_models(art,measured)
+        if not p1_release():
+            measured = production_measurement(MeasurementRemote(args.ssh_key),art,ledger)
+            summary['models'] = disk_models(art,measured)
         summary['budget'] = state['budget']
         summary['diskBefore'] = {'used':state['diskUsed'],'available':state['diskAvailable']}
         summary['dfHuman'] = state['dfHuman']
