@@ -25,8 +25,8 @@ on:
       - codex/data-authority-finalization
 
 env:
-  EXPECTED_PRODUCTION_SHA: ${{ (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) && 'edb31cd398e3a330565b5453f42051f3e24005c3' || github.ref == 'refs/heads/codex/material-center-integration-20261002' && '72c780c1dbb5ff8b4502b97984d44660532f181a' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
-  APPROVED_BUSINESS_SHA: ${{ (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) && '9049339f75d106ac02ebb0d109da2862e997a545' || github.ref == 'refs/heads/codex/material-center-integration-20261002' && 'a9e9c58510af4ef38b4bcaf378ec0a77895f61bc' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
+  EXPECTED_PRODUCTION_SHA: ${{ github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && 'eb9536731e42608004407d8a787b5927f7d42c9d' || (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) && 'edb31cd398e3a330565b5453f42051f3e24005c3' || github.ref == 'refs/heads/codex/material-center-integration-20261002' && '72c780c1dbb5ff8b4502b97984d44660532f181a' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '68cee84efe30409e7e18e4459e08982f6c20e254' || github.ref == 'refs/heads/codex/natural-month-report-revision' && 'ede3ee43526a39131618287d9b5447977e5c91d3' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && 'ba7b2bb8f83adc7fcd3d52535c15b0ecec17e531' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '08895d4978594ea4298c43bf72f8961cf082fca6' || github.ref == 'refs/heads/codex/data-authority-finalization' && '16faedb3afcb853a9a72434603debd4169b7ac02' || '2fa28a6399c8a9f4fd70188d8df077f0b411589e' }}
+  APPROVED_BUSINESS_SHA: ${{ github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && '70d365bd78c182f8a5c1cdd38095a1dd889719a5' || (github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) && '9049339f75d106ac02ebb0d109da2862e997a545' || github.ref == 'refs/heads/codex/material-center-integration-20261002' && 'a9e9c58510af4ef38b4bcaf378ec0a77895f61bc' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' && '7a7aed7f9f4bba9514c2fd001358e6b3adf64c0c' || github.ref == 'refs/heads/codex/natural-month-report-revision' && '870d1d01cc2b4fca9f216f9b3decb5e565173700' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' && '27f6280f731d258ddd078504ac4a27f33430728c' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' && '48358bd774cf7d2f5da1eccb54aa4e9ccf2862fe' || github.ref == 'refs/heads/codex/data-authority-finalization' && '3722849d8566e9f6db6f45abc4195612af2957a2' || '2188dd17f6b80e9be27e50a9773e7269c6eabb65' }}
 
 permissions:
   contents: read
@@ -181,10 +181,10 @@ jobs:
           retention-days: 3
   artifact:
     needs: b2-model
-    if: ${{ always() && ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision'))) && github.ref != 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && !inputs.b2_model_only && !inputs.b2_retained_only && needs.b2-model.result == 'success')) }}
+    if: ${{ always() && ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' || github.ref == 'refs/heads/codex/material-center-integration-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision'))) && github.ref != 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && !inputs.b2_model_only && !inputs.b2_retained_only && needs.b2-model.result == 'success')) }}
     name: Exact Docker artifact validation
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && 90 || 60 }}
     steps:
       - name: Checkout exact release source
         uses: actions/checkout@v4
@@ -204,6 +204,13 @@ jobs:
           test "$(uname -m)" = x86_64
           branch="${GITHUB_REF#refs/heads/}"
           case "$branch" in
+            codex/code-audit-001-p1-release-continue-r6)
+              test "$GITHUB_EVENT_NAME" = workflow_dispatch
+              test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
+              test "$EXPECTED_PRODUCTION_SHA" = eb9536731e42608004407d8a787b5927f7d42c9d
+              test "$APPROVED_BUSINESS_SHA" = "$(python3 -c 'import json;print(json.load(open("scripts/p1-release-contract.json"))["businessSha"])')"
+              test "$(git rev-list --parents -n 1 "$GITHUB_SHA")" = "$GITHUB_SHA $APPROVED_BUSINESS_SHA"
+              ;;
             codex/purchase-receipt-release-20261005-ci-ready|codex/purchase-receipt-b1-capacity-fasttrack|codex/purchase-receipt-b2-capacity-fasttrack)
               test "$GITHUB_EVENT_NAME" = workflow_dispatch
               test "${REQUESTED_RELEASE_SHA:-}" = "$GITHUB_SHA"
@@ -365,7 +372,9 @@ jobs:
             --expected-production-sha "$EXPECTED_PRODUCTION_SHA" \
             --business-base-sha "$APPROVED_BUSINESS_SHA"
           fi
-          if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
+          if [ "$GITHUB_REF" = refs/heads/codex/code-audit-001-p1-release-continue-r6 ]; then
+            python3 scripts/test-p1-release-contract.py
+          elif [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
             python3 scripts/test-purchase-receipt-release-contract.py
             if { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
               python3 scripts/test-release-path-post-transfer.py
@@ -415,10 +424,15 @@ jobs:
 
       - name: Build exact production-format artifact and inspect runner image
         shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: ${{ github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && '1' || '' }}
         run: |
           set -euo pipefail
           run_dir="$(mktemp -d "$RUNNER_TEMP/approval-build-only.XXXXXX")"
           printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$run_dir" >> "$GITHUB_ENV"
+          if [ "$GITHUB_REF" = refs/heads/codex/code-audit-001-p1-release-continue-r6 ]; then
+            printf 'P1_DIAGNOSTIC_PATH=%s/p1-diagnostic\nP1_BUILT_ARCHIVES_PATH=%s/*.tar\n' "$run_dir" "$run_dir" >> "$GITHUB_ENV"
+          fi
           builder="approval-build-only-$GITHUB_RUN_ID"
           docker buildx create --name "$builder" --driver docker-container
           docker buildx inspect "$builder" --bootstrap | tee "$run_dir/builder.txt"
@@ -439,6 +453,35 @@ jobs:
             "$run_dir/source"
           fi
           compatibility_args=()
+          if [ "$GITHUB_REF" = refs/heads/codex/code-audit-001-p1-release-continue-r6 ]; then
+            mkdir "$run_dir/compatible-source"
+            git archive "$APPROVED_BUSINESS_SHA" | tar -x -C "$run_dir/compatible-source"
+            timeout 35m docker buildx build --builder "$builder" --platform linux/amd64 \
+              --label "org.opencontainers.image.revision=$APPROVED_BUSINESS_SHA" \
+              --tag "budu-api:post-transfer-${APPROVED_BUSINESS_SHA:0:12}" --provenance=false --sbom=false \
+              --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$run_dir/compatible.tar" \
+              "$run_dir/compatible-source"
+            compatibility_args=(--compatibility-archive "$run_dir/compatible.tar")
+            docker load --input "$run_dir/compatible.tar"
+            printf 'RELEASE_ARTIFACT_PATH=%s/*.tar\n' "$run_dir" >> "$GITHUB_ENV"
+            # Export the actual cached builder stages from the same formal
+            # Dockerfile contexts; inspecting a separately pulled moving tag
+            # cannot prove the Node version that built these PDF assets.
+            timeout 5m docker buildx build --builder "$builder" --platform linux/amd64 --target builder \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --tag "budu-p1-builder:${GITHUB_SHA:0:12}" --provenance=false --sbom=false --load "$run_dir/source"
+            timeout 5m docker buildx build --builder "$builder" --platform linux/amd64 --target builder \
+              --label "org.opencontainers.image.revision=$APPROVED_BUSINESS_SHA" \
+              --tag "budu-p1-builder:${APPROVED_BUSINESS_SHA:0:12}" --provenance=false --sbom=false --load "$run_dir/compatible-source"
+            python3 scripts/test-p1-release-contract.py --capture-formal-artifacts \
+              "budu-p1-builder:${GITHUB_SHA:0:12}" "budu-p1-builder:${APPROVED_BUSINESS_SHA:0:12}" \
+              --archives "$run_dir/image.tar" "$run_dir/compatible.tar" \
+              --source-contexts "$run_dir/source" "$run_dir/compatible-source" \
+              --capture-dir "$run_dir/p1-diagnostic"
+            python3 scripts/test-p1-release-contract.py --builder-stage-proof \
+              "budu-p1-builder:${GITHUB_SHA:0:12}" "budu-p1-builder:${APPROVED_BUSINESS_SHA:0:12}" \
+              --source-contexts "$run_dir/source" "$run_dir/compatible-source"
+          fi
           if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
             if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; then
               cp "$RUNNER_TEMP/b2-fixed-r/compatible.tar" "$run_dir/compatible.tar"
@@ -456,6 +499,15 @@ jobs:
             docker load --input "$run_dir/compatible.tar"
             printf 'RELEASE_ARTIFACT_PATH=%s/*.tar\n' "$run_dir" >> "$GITHUB_ENV"
             printf 'PROCUREMENT_IMAGE_ARCHIVE=%s/image.tar\nPROCUREMENT_COMPATIBILITY_ARCHIVE=%s/compatible.tar\n' "$run_dir" "$run_dir" >> "$GITHUB_ENV"
+          fi
+          if [ "$GITHUB_REF" = refs/heads/codex/code-audit-001-p1-release-continue-r6 ]; then
+            docker load --input "$run_dir/image.tar"
+            tag="budu-api:post-transfer-${GITHUB_SHA:0:12}"
+            git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- server prisma src shared Dockerfile package.json package-lock.json
+            python3 scripts/test-p1-release-contract.py --prisma-timeout-proof "$tag" "budu-api:post-transfer-${APPROVED_BUSINESS_SHA:0:12}" --archives "$run_dir/image.tar" "$run_dir/compatible.tar" --builder-node-proof "$RUNNER_TEMP/p1-builder-node-proof.json"
+            cp "$RUNNER_TEMP/p1-prisma-timeout-proof.json" "$run_dir/p1-prisma-timeout-proof.json"
+            printf 'P1_PRISMA_PROOF_PATH=%s/p1-prisma-timeout-proof.json\n' "$run_dir" >> "$GITHUB_ENV"
+            cp "$run_dir/p1-prisma-timeout-proof.json" "$run_dir/p1-diagnostic/p1-prisma-timeout-proof.json"
           fi
           if [ "$GITHUB_REF" = refs/heads/codex/shipping-backup-diagnostic-20261002 ]; then
             bash scripts/deploy-prod-transfer-cas.sh inspect-artifact-backup-diagnostic --repo "$PWD" --archive "$run_dir/image.tar" \
@@ -487,7 +539,9 @@ jobs:
           docker run --rm --network none --entrypoint cat "$tag" /app/server/approvals.js > "$run_dir/image-approvals.js"
           docker run --rm --network none --entrypoint cat "$tag" /app/server/v2.js > "$run_dir/image-v2.js"
           docker run --rm --network none --entrypoint node "$tag" --version
-          if [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
+          if [ "$GITHUB_REF" = refs/heads/codex/code-audit-001-p1-release-continue-r6 ]; then
+            printf 'P1_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
+          elif [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-release-20261005-ci-ready ] || { [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b1-capacity-fasttrack ] || [ "$GITHUB_REF" = refs/heads/codex/purchase-receipt-b2-capacity-fasttrack ]; }; then
             git diff --exit-code "$APPROVED_BUSINESS_SHA" "$GITHUB_SHA" -- \
               server prisma cloudfunctions src shared Dockerfile package.json package-lock.json
             printf 'PROCUREMENT_BUSINESS_PAYLOAD_UNCHANGED=YES\n'
@@ -580,6 +634,7 @@ jobs:
             --tag budu-api:procurement-old-edb31cd398e3 --provenance=false --sbom=false --load "$old_dir"
 
       - name: Probe application Prisma against isolated PostgreSQL
+        if: github.ref != 'refs/heads/codex/code-audit-001-p1-release-continue-r6'
         shell: bash
         env:
           TEST_SHIPPING_CONTROLLER_CI: '1'
@@ -685,12 +740,33 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      - name: Retain P1 formal build diagnostics
+        if: always() && github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && env.P1_DIAGNOSTIC_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-formal-diagnostic-${{ github.sha }}
+          path: ${{ env.P1_DIAGNOSTIC_PATH }}
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Retain P1 built archives without release validation
+        if: always() && github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' && env.P1_BUILT_ARCHIVES_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-built-unvalidated-${{ github.sha }}
+          path: ${{ env.P1_BUILT_ARCHIVES_PATH }}
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 1
+
       - name: Retain exact artifact for read-only preflight
         if: success() || (always() && github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack' && env.RELEASE_ARTIFACT_PATH != '')
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ ((github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002') && format('release-staging-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
-          path: ${{ env.RELEASE_ARTIFACT_PATH }}
+          name: ${{ ((github.ref == 'refs/heads/codex/code-audit-001-p1-release-continue-r6' || github.ref == 'refs/heads/codex/purchase-receipt-release-20261005-ci-ready' || (github.ref == 'refs/heads/codex/purchase-receipt-b1-capacity-fasttrack' || github.ref == 'refs/heads/codex/purchase-receipt-b2-capacity-fasttrack')) || github.ref == 'refs/heads/codex/material-center-integration-20261002') && format('release-staging-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-controller-diagnostic-20261002' || github.ref == 'refs/heads/codex/shipping-backup-diagnostic-20261002') && format('shipping-diagnostic-image-{0}', github.sha) || (github.ref == 'refs/heads/codex/shipping-review-actual-quantity-20261002' || github.ref == 'refs/heads/codex/mailing-free-tier-shipped-sort-20261001' || github.ref == 'refs/heads/codex/pos-payroll-input-shipping-baseline-20261001' || github.ref == 'refs/heads/codex/natural-month-report-revision') && format('release-staging-{0}', github.sha) || format('release-preflight-{0}', github.sha) }}
+          path: |
+            ${{ env.RELEASE_ARTIFACT_PATH }}
+            ${{ env.P1_PRISMA_PROOF_PATH }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
