@@ -5,6 +5,7 @@ import { prisma, dbReady } from './pg.js'
 import { productListSelect, serializeProduct } from './products.js'
 import { assertOrderCancelable, assertOrderDeletable, buildOrderSnapshot, buildRecognizedRevenueWhere, canCancelOrder, hashCart, httpError, normalizeCartItems, normalizeOrderCancelReason } from './pos-core.js'
 import { paymentService } from './payments/index.js'
+import { settlementCoordinator } from './settlements/settlement-coordinator.js'
 import { paymentMode, serializePayment } from './payments/payment-service.js'
 import { wechatPayFrontendStatus } from './payments/wechat-config.js'
 import { WECHAT_AUTH_CODE_RE } from './payments/providers/wechat-pay.js'
@@ -615,38 +616,34 @@ posRouter.post('/pos/payments/:id/close', wrap(async (req, res) => {
 posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requirePosUser(req.user)
-  let current = await prisma.order.findUnique({ where: { id: req.params.id } })
-  if (!current) throw httpError('订单不存在', 404)
-  if (!canCancelOrder(req.user, current)) throw httpError('无权作废该订单', 403)
-  await requireSweetCardOrderAccess(req.user, current)
-  if (current.status === 'cancelled') {
-    const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
-    return res.json({ ok: true, order: serializeOrder(order) })
-  }
-  const cancelReason = normalizeOrderCancelReason(req.body?.reason)
-  assertOrderTransition(current.status, 'cancelled')
-  const active = await paymentService.activePayment(current.id)
-  if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
-  // E：存在未解决的外部支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
-  const unresolvedPayment = await paymentService.unresolvedPayment(current.id)
-  assertOrderCancelable(current, unresolvedPayment)
-  if (active) await paymentService.closePayment(active.id)
-  current = await prisma.order.findUnique({ where: { id: current.id } })
-  const changed = await prisma.$transaction(async (tx) => {
-    await reverseSweetCardRedemption(tx, current.id, { id: req.user.id, name: req.user.username })
-    return tx.order.updateMany({
-      where: { id: current.id, status: current.status },
-      data: {
-        status: 'cancelled',
-        cancelledAt: new Date(),
-        cancelledBy: req.user.username,
-        cancelReason,
-        version: { increment: 1 },
-      },
+  const before = await prisma.order.findUnique({ where: { id: req.params.id } })
+  if (!before) throw httpError('订单不存在', 404)
+  if (!canCancelOrder(req.user, before)) throw httpError('无权作废该订单', 403)
+  await requireSweetCardOrderAccess(req.user, before)
+  const cancelReason = before.status === 'cancelled' ? '' : normalizeOrderCancelReason(req.body?.reason)
+  await prisma.$transaction(async (tx) => {
+    await settlementCoordinator.lockOrder(tx, before.id)
+    const current = await tx.order.findUnique({ where: { id: before.id } })
+    if (!current) throw httpError('订单不存在', 404)
+    if (!canCancelOrder(req.user, current)) throw httpError('无权作废该订单', 403)
+    if (current.status === 'cancelled') return
+    assertOrderTransition(current.status, 'cancelled')
+    if (!['unpaid', 'failed', 'pending'].includes(current.paymentStatus)) throw httpError('订单已形成收款或退款事实，不能取消', 409)
+    const active = await tx.payment.findFirst({ where: { orderId: current.id, status: { in: ['created', 'pending', 'success'] } } })
+    if (active?.status === 'success') throw httpError('订单已支付成功，不能取消', 409)
+    const unresolved = await tx.payment.findFirst({
+      where: { orderId: current.id, OR: [{ status: 'created' }, { status: 'pending' }, { reconciliationRequired: true }] },
     })
+    assertOrderCancelable(current, unresolved)
+    // The shared order lock precedes card/account writes; provider network requests stay outside.
+    await reverseSweetCardRedemption(tx, current.id, { id: req.user.id, name: req.user.username })
+    const changed = await tx.order.updateMany({
+      where: { id: current.id, status: current.status, paymentStatus: current.paymentStatus, version: current.version },
+      data: { status: 'cancelled', cancelledAt: new Date(), cancelledBy: req.user.username, cancelReason, version: { increment: 1 } },
+    })
+    if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
   })
-  if (changed.count !== 1) throw httpError('订单状态已变化，请刷新后重试', 409)
-  const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
+  const order = await prisma.order.findUnique({ where: { id: before.id }, include: orderInclude() })
   res.json({ ok: true, order: serializeOrder(order) })
 }))
 

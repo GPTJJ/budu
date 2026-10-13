@@ -119,7 +119,7 @@ export default function ApprovalDetailView({ detail, user, onBack, onChanged, on
         }
         await api(`/v2/approvals/requests/${request.id}/decide`, {
           method: 'POST',
-          body: JSON.stringify({ action, comment: comment.trim() }),
+          body: JSON.stringify({ action, comment: comment.trim(), contentVersion: request.contentVersion }),
         })
       } else if (action === 'submit') {
         await api(`/v2/approvals/requests/${request.id}/submit`, { method: 'POST' })

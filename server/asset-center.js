@@ -1,3 +1,4 @@
+import { validateAttachmentUpload, decodeAttachmentDataUrl, safeAttachment, setAttachmentDownloadHeaders } from './attachment-safety.js'
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
@@ -127,7 +128,9 @@ function validThumbnail(value) {
   if (!dataUrl) return ''
   if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw httpError('缩略图格式不正确')
   if (dataUrl.length > 300000) throw httpError('缩略图过大')
-  return dataUrl
+  const safe = validateAttachmentUpload(dataUrl, '', 1024 * 1024)
+  if (safe.previewKind !== 'image') throw httpError('缩略图格式不正确')
+  return safe.dataUrl
 }
 
 function decodeSize(dataUrl) {
@@ -306,17 +309,12 @@ assetCenterRouter.get('/asset-center/files/:id/versions', wrap(async (req, res) 
     orderBy: { version: 'desc' },
   })
   if (versions.length === 0) throw httpError('文件不存在', 404)
-  const rows = await Promise.all(versions.map(async (v) => ({
-    id: v.id,
-    version: v.version,
-    name: v.name,
-    fileType: v.fileType,
-    fileSize: v.fileSize,
-    uploaderName: v.uploaderName,
-    note: v.note,
-    createdAt: v.createdAt,
-    dataUrl: await readAssetData(v.storageProvider, v.storageKey, v.dataUrl),
-  })))
+  const rows = await Promise.all(versions.map(async (v) => {
+    const safe = safeAttachment(decodeAttachmentDataUrl(await readAssetData(v.storageProvider, v.storageKey, v.dataUrl)).bytes)
+    return { id: v.id, version: v.version, name: v.name, fileType: safe.mimeType,
+      fileSize: safe.fileSize, uploaderName: v.uploaderName, note: v.note, createdAt: v.createdAt,
+      dataUrl: safe.dataUrl, previewKind: safe.previewKind }
+  }))
   res.json({
     rows,
   })
@@ -329,7 +327,8 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
   const category = text(body.category, 60, '类别', true)
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
   const name = text(body.name, 100, '文件名称', true)
-  const dataUrl = validDataUrl(body.dataUrl)
+  const validated = validateAttachmentUpload(validDataUrl(body.dataUrl), body.fileType)
+  const dataUrl = validated.dataUrl
   const thumbnail = validThumbnail(body.thumbnailDataUrl)
   const file = await prisma.$transaction(async (tx) => {
     const id = `af-${crypto.randomUUID()}`
@@ -343,7 +342,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         thumbnail,
         tags: normalizeTags(body.tags),
         description: text(body.description, 300, '描述'),
-        fileType: String(body.fileType || '').slice(0, 80),
+        fileType: validated.mimeType,
         fileSize: decodeSize(dataUrl),
         issuingAuthority: text(body.issuingAuthority, 60, '发证机关'),
         licenseNo: text(body.licenseNo, 60, '证照编号'),
@@ -361,7 +360,7 @@ assetCenterRouter.post('/asset-center/files', wrap(async (req, res) => {
         fileId: id,
         version: 1,
         name: String(body.fileName || name).slice(0, 120),
-        fileType: String(body.fileType || '').slice(0, 80),
+        fileType: validated.mimeType,
         fileSize: decodeSize(dataUrl),
         dataUrl: storage.dataUrl,
         storageProvider: storage.provider,
@@ -385,7 +384,8 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
   if (!existing || existing.deletedAt) throw httpError('文件不存在', 404)
   const category = text(body.category || existing.category, 60, '类别', true)
   if (!(await categoryKeys()).includes(category)) throw httpError('分类不存在')
-  const dataUrl = body.dataUrl ? validDataUrl(body.dataUrl) : null
+  const validated = body.dataUrl ? validateAttachmentUpload(validDataUrl(body.dataUrl), body.fileType) : null
+  const dataUrl = validated?.dataUrl || null
   const thumbnail = dataUrl ? validThumbnail(body.thumbnailDataUrl) : existing.thumbnail
   const updated = await prisma.$transaction(async (tx) => {
     let currentVersion = existing.currentVersion
@@ -394,7 +394,7 @@ assetCenterRouter.put('/asset-center/files/:id', wrap(async (req, res) => {
     let fileName = existing.name
     if (dataUrl) {
       currentVersion += 1
-      fileType = String(body.fileType || existing.fileType || '').slice(0, 80)
+      fileType = validated.mimeType
       fileSize = decodeSize(dataUrl)
       fileName = String(body.fileName || existing.name || '').slice(0, 120)
       const storage = await storeAssetData(dataUrl, assetObjectKey(existing.id, currentVersion))
@@ -496,16 +496,16 @@ assetCenterRouter.get('/asset-center/files/:id/download', wrap(async (req, res) 
   if (!file || file.deletedAt) throw httpError('文件不存在', 404)
   const version = file.versions.find((v) => v.version === file.currentVersion) || file.versions[0]
   if (!version) throw httpError('文件内容缺失', 404)
-  const dataUrl = await readAssetData(version.storageProvider, version.storageKey, version.dataUrl)
+  const originalDataUrl = await readAssetData(version.storageProvider, version.storageKey, version.dataUrl)
+  const safe = safeAttachment(decodeAttachmentDataUrl(originalDataUrl).bytes)
   await logAction(req.user, 'download', { fileId: file.id, fileName: file.name, storeKey: file.storeKey, detail: `V${version.version}` })
-  res.json({
-    ok: true,
-    name: version.name,
-    fileType: version.fileType,
-    fileSize: version.fileSize,
-    version: version.version,
-    dataUrl,
-  })
+  if (req.query.asFile === '1') {
+    setAttachmentDownloadHeaders(res, safe, version.name)
+    return res.send(safe.bytes)
+  }
+  res.json({ ok: true, name: version.name, fileType: safe.mimeType, fileSize: safe.fileSize,
+    previewKind: safe.previewKind, version: version.version, dataUrl: safe.dataUrl,
+    downloadUrl: `/api/v2/asset-center/files/${encodeURIComponent(file.id)}/download?asFile=1` })
 }))
 
 assetCenterRouter.get('/asset-center/reminders', wrap(async (req, res) => {

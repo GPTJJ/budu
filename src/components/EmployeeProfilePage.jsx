@@ -1,3 +1,4 @@
+import SafeAttachmentPreview from './SafeAttachmentPreview'
 // 员工档案（Employee Master Profile）：列表 + 详情
 //
 // 安全约定（与后端一致）：
@@ -1558,6 +1559,7 @@ function DocumentsTab({ employeeId, canEdit }) {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [preview, setPreview] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -1618,9 +1620,8 @@ function DocumentsTab({ employeeId, canEdit }) {
         throw new Error((d && d.error) || '读取失败')
       }
       const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      window.open(url, '_blank')
-      setTimeout(() => URL.revokeObjectURL(url), 60000)
+      const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob) })
+      setPreview({ dataUrl, name: doc.fileName, downloadUrl: `/api/v2/employees/${employeeId}/documents/${doc.id}/content` })
     } catch (e) {
       alert(e.message)
     }
@@ -1638,6 +1639,7 @@ function DocumentsTab({ employeeId, canEdit }) {
 
   return (
     <SectionCard title="附件档案">
+      {preview && <div data-budu-overlay-root role="dialog" aria-modal="true" aria-label="附件预览" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"><div className="max-h-[90dvh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-4"><div className="mb-3 flex items-center gap-3"><span className="min-w-0 flex-1 break-all font-semibold">{preview.name}</span><button className="btn-secondary shrink-0" onClick={() => setPreview(null)}>关闭</button></div><SafeAttachmentPreview dataUrl={preview.dataUrl} name={preview.name} /><a href={preview.downloadUrl} className="btn-primary mt-3 inline-block" download={preview.name}>下载文件</a></div></div>}
       {error && <p className="mb-3 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{error}</p>}
 
       {canEdit && (

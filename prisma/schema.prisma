@@ -1607,6 +1607,7 @@ model ApprovalTemplate {
  * 审批单：一张单据一条记录，表单数据存 form_data（金额以分存 Number）
  */
 model ApprovalRequest {
+  contentVersion    Int                    @default(1) @map("content_version")
   id                String                 @id
   requestNo         String                 @unique @map("request_no") // AP-YYYYMMDD-XXXX
   templateKey       String                 @map("template_key")
@@ -2826,4 +2827,12 @@ model ProcurementNotificationEvent {
   receipt            ProcurementReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
 
   @@unique([receiptId, submissionRevision, recipientUserId])
+}
+
+// Shared daily approval sequence; deletion never returns an allocated number.
+model ApprovalRequestDailySequence {
+  day   String @id
+  value BigInt
+
+  @@map("approval_request_daily_sequences")
 }

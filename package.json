@@ -92,7 +92,8 @@
     "recharts": "^2.15.0",
     "sharp": "^0.34.5",
     "tencentcloud-sdk-nodejs-ocr": "^4.1.287",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.14",

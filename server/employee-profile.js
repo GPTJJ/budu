@@ -1,3 +1,4 @@
+import { validateAttachmentUpload, safeAttachment, setAttachmentDownloadHeaders } from './attachment-safety.js'
 // 员工档案（Employee Master Profile）：唯一员工主档 + 敏感信息保护 + 历史履历
 //
 // 安全约定：
@@ -724,15 +725,16 @@ employeeProfileRouter.post('/employees/:id/documents', wrap(async (req, res) => 
   const b = req.body || {}
   const data = String(b.data || '')
   if (!data || data.length > 4 * 1024 * 1024) throw httpError('附件内容为空或超过 4MB')
+  const safe = validateAttachmentUpload(`data:${String(b.mimeType || 'application/octet-stream')};base64,${data}`, b.mimeType, 4 * 1024 * 1024)
   const doc = await prisma.employeeDocument.create({
     data: {
       id: `ed-${crypto.randomUUID()}`,
       employeeId: req.params.id,
       documentType: String(b.documentType || 'other').slice(0, 20),
       fileName: String(b.fileName || 'file').slice(0, 120),
-      mimeType: String(b.mimeType || 'application/octet-stream').slice(0, 60),
-      fileSize: Buffer.byteLength(data, 'base64'),
-      data,
+      mimeType: safe.mimeType,
+      fileSize: safe.fileSize,
+      data: safe.bytes.toString('base64'),
       isSensitive: b.isSensitive === true,
       note: String(b.note || '').slice(0, 200),
       uploadedBy: req.user.username,
@@ -751,9 +753,9 @@ employeeProfileRouter.get('/employees/:id/documents/:docId/content', wrap(async 
   if (!doc || doc.employeeId !== req.params.id) throw httpError('附件不存在', 404)
   if (doc.isSensitive && !canEdit(req.user)) throw httpError('无权限查看敏感附件', 403)
   await logAudit(req.user, req.params.id, 'document.read', { targetType: 'document', targetId: doc.id })
-  res.setHeader('Content-Type', doc.mimeType || 'application/octet-stream')
-  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(doc.fileName)}`)
-  res.send(Buffer.from(doc.data, 'base64'))
+  const safe = safeAttachment(Buffer.from(doc.data, 'base64'))
+  setAttachmentDownloadHeaders(res, safe, doc.fileName)
+  res.send(safe.bytes)
 }))
 
 /** 删除附件（逻辑删除：仅清除内容字节，保留记录） */

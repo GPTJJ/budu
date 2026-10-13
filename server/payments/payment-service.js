@@ -184,7 +184,7 @@ export class PaymentService {
       return { ...(await this.result(replay.id)), reused: true }
     }
 
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } })
+    let order = await this.prisma.order.findUnique({ where: { id: orderId } })
     if (!order) throw httpError('订单不存在', 404)
     if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算订单不能创建 Payment', 409)
     const providerName = this.resolveProvider(channel)
@@ -197,7 +197,7 @@ export class PaymentService {
     if (order.status !== 'pending_payment' || !['unpaid', 'failed', 'pending'].includes(order.paymentStatus)) {
       throw httpError('当前订单状态不可创建支付', 409)
     }
-    const paymentAmount = order.payableAmount - BigInt(order.sweetCardAmount || 0)
+    let paymentAmount = order.payableAmount - BigInt(order.sweetCardAmount || 0)
     if (paymentAmount <= 0n) throw httpError('订单已无外部待支付金额')
     // Provider 自己负责配置完整性和门店灰度；UI 永远不是安全边界。
     const provider = this.provider(providerName)
@@ -207,8 +207,37 @@ export class PaymentService {
 
     const no = paymentNo()
     let payment
+    let reusedInsideLock = false
     try {
       payment = await this.prisma.$transaction(async (tx) => {
+        // Same order protocol as cancellation and final settlement. No provider I/O under this lock.
+        await this.settlementCoordinator.lockOrder(tx, orderId)
+        order = await tx.order.findUnique({ where: { id: orderId } })
+        if (!order) throw httpError('订单不存在', 404)
+        if (order.settlementAuthority !== 'PAYMENT') throw httpError('外部结算订单不能创建 Payment', 409)
+        const replay = await tx.payment.findUnique({ where: { requestKey } })
+        if (replay) {
+          this.validateReplay(replay, { orderId, channel })
+          reusedInsideLock = true
+          return replay
+        }
+        const active = await tx.payment.findFirst({
+          where: { orderId, status: { in: ACTIVE_PAYMENT_STATUSES } }, orderBy: { createdAt: 'desc' },
+        })
+        if (active) {
+          if (active.status !== 'success' && active.channel !== channel) throw httpError('该订单已有其他渠道的支付处理中，请先查询或关闭原支付', 409)
+          reusedInsideLock = true
+          return active
+        }
+        const unresolved = await tx.payment.findFirst({
+          where: { orderId, OR: [{ status: 'created' }, { status: 'pending' }, { reconciliationRequired: true }] },
+        })
+        if (unresolved) throw httpError('该订单仍有未解决的支付，请先核对原支付', 409)
+        if (order.status !== 'pending_payment' || !['unpaid', 'failed', 'pending'].includes(order.paymentStatus)) {
+          throw httpError('当前订单状态不可创建支付', 409)
+        }
+        paymentAmount = order.payableAmount - BigInt(order.sweetCardAmount || 0)
+        if (paymentAmount <= 0n) throw httpError('订单已无外部待支付金额')
         const created = await tx.payment.create({
           data: {
             id: `pay-${crypto.randomUUID()}`,
@@ -248,6 +277,8 @@ export class PaymentService {
       if (existing.channel !== channel) throw httpError('该订单已有其他渠道的支付处理中', 409)
       return { ...(await this.result(existing.id)), reused: true }
     }
+
+    if (reusedInsideLock) return { ...(await this.result(payment.id)), reused: true }
 
     await this.logEvent(payment, order, 'payment.created', { status: 'created' })
 
@@ -635,6 +666,8 @@ export class PaymentService {
     if (payment.provider !== providerName) throw httpError('支付回调 Provider 不匹配', 409)
 
     await this.prisma.$transaction(async (tx) => {
+      // Order before Payment/account locks, matching create/cancel/redemption/refund settlement.
+      await this.settlementCoordinator.lockOrder(tx, payment.orderId)
       const current = await tx.payment.findUnique({ where: { id: payment.id }, include: { order: true } })
       if (!current) throw httpError('支付记录不存在', 404)
       if (verified.merchantTradeNo && String(verified.merchantTradeNo) !== current.merchantTradeNo) throw httpError('支付事件商户单号不匹配', 409)

@@ -1,3 +1,4 @@
+import SafeAttachmentPreview from './SafeAttachmentPreview'
 import { useEffect, useState } from 'react'
 import JSZip from 'jszip'
 import {
@@ -149,7 +150,7 @@ export default function AssetCenterPage({ user, onBack }) {
   const downloadFile = async (file) => {
     try {
       const data = await api(`/v2/asset-center/files/${file.id}/download`)
-      await downloadFileAsset({ dataUrl: data.dataUrl, name: data.name || file.name, mimeType: data.fileType })
+      await downloadFileAsset({ dataUrl: data.dataUrl, name: data.name || file.name, mimeType: data.fileType, downloadUrl: data.downloadUrl })
       showTip(`已下载 ${file.name}`)
     } catch (e) {
       setError(e.message)
@@ -504,27 +505,6 @@ function PreviewModal({ file, onClose }) {
     if (tooLarge) return
     api(`/v2/asset-center/files/${file.id}/download`).then(setData).catch((e) => setError(e.message))
   }, [file.id, tooLarge])
-  // PDF 预览：dataURL 在新版 Chrome 无法内嵌渲染（触发下载/空白），转 blob URL 解决
-  const [pdfUrl, setPdfUrl] = useState(null)
-  useEffect(() => {
-    if (!data || !isPdfType(data.fileType)) return
-    let revoked = false
-    fetch(data.dataUrl)
-      .then((r) => r.blob())
-      .then((blob) => {
-        if (revoked) return
-        const url = URL.createObjectURL(blob)
-        setPdfUrl(url)
-      })
-      .catch(() => {})
-    return () => {
-      revoked = true
-      setPdfUrl((cur) => {
-        if (cur) URL.revokeObjectURL(cur)
-        return null
-      })
-    }
-  }, [data])
   const download = async () => {
     setDownloading(true)
     setError('')
@@ -534,6 +514,7 @@ function PreviewModal({ file, onClose }) {
         dataUrl: d.dataUrl,
         name: d.name || file.name,
         mimeType: d.fileType,
+        downloadUrl: d.downloadUrl,
       })
     } catch (e) {
       setError(e.message)
@@ -541,7 +522,6 @@ function PreviewModal({ file, onClose }) {
       setDownloading(false)
     }
   }
-  const isImage = data && isImageType(data.fileType)
   return (
     <ModalShell title={`预览 · ${file.name}`} subtitle={tooLarge ? `文件较大 · ${fmtBytes(file.fileSize)}` : data ? `V${data.version} · ${data.name}` : '加载中…'} onClose={onClose} wide>
       <div className="mt-4 grid min-h-[320px] place-items-center rounded-xl bg-slate-50">
@@ -550,13 +530,8 @@ function PreviewModal({ file, onClose }) {
             <p className="text-sm text-slate-500">文件较大（{fmtBytes(file.fileSize)}），为避免卡顿已关闭内嵌预览</p>
             <button onClick={download} disabled={downloading} className="btn-primary mt-4 px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '下载查看'}</button>
           </div>
-        ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : isImage ? (
-          <img src={data.dataUrl} alt={file.name} className="max-h-[60vh] rounded-lg object-contain" />
-        ) : isPdfType(data.fileType) ? (
-          <iframe title={file.name} src={pdfUrl || ''} className="h-[60vh] w-full rounded-lg" />
-        ) : (
-          <button onClick={download} disabled={downloading} className="btn-primary px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '该格式不支持内嵌预览，点击下载查看'}</button>
-        )}
+        ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : <SafeAttachmentPreview dataUrl={data.dataUrl} name={file.name} />}
+        {data && !tooLarge && <button onClick={download} disabled={downloading} className="btn-primary mt-3 px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '下载文件'}</button>}
       </div>
     </ModalShell>
   )

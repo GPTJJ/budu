@@ -5,7 +5,7 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
-import { isSuperUser } from '../shared/accountPermissions.js'
+import { isSuperUser, hasModuleAccess, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { listUsers, getUserByUsername } from './user-store.js'
 import { notify } from './notification-center.js'
 import { httpError } from './pos-core.js'
@@ -165,6 +165,7 @@ function serialize(row) {
   return {
     id: row.id,
     requestNo: row.requestNo,
+    contentVersion: row.contentVersion,
     templateKey: row.templateKey,
     title: row.title,
     status: row.status,
@@ -366,22 +367,24 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
   const extraCc = await validateCcUsernames(body.ccUsernames)
   normalized._ccUsernames = extraCc
 
-  // 序号：当天单据数 + 1
-  const dayStart = new Date()
-  dayStart.setHours(0, 0, 0, 0)
-  const dayEnd = new Date(dayStart.getTime() + 86400000)
-  const todayCount = await prisma.approvalRequest.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } })
-
+  const numberingDate = new Date()
   const submit = body.submit === true
   const title = text(body.title || buildTitle(template, normalized), 60, '标题')
   const amountCents = amountFromForm(template.schema, normalized)
   const id = `ar-${crypto.randomUUID()}`
-  const requestNo = genRequestNo(new Date(), todayCount + 1)
   const ctx = await userCtx()
   const approvers = approverUsernames(template, ctx.roleUsers)
   if (submit && approvers.length === 0) throw httpError('审批人未配置，无法提交')
 
   const created = await prisma.$transaction(async (tx) => {
+    const day = genRequestNo(numberingDate, 1).slice(3, 11)
+    const [allocated] = await tx.$queryRawUnsafe(`
+      INSERT INTO approval_request_daily_sequences (day, value)
+      VALUES ($1, (SELECT COALESCE(MAX(substring(request_no FROM ('^AP-' || $1 || '-([0-9]+)$'))::bigint), 0) + 1
+                   FROM approval_requests WHERE request_no LIKE ('AP-' || $1 || '-%')))
+      ON CONFLICT (day) DO UPDATE SET value = approval_request_daily_sequences.value + 1
+      RETURNING value`, day)
+    const requestNo = genRequestNo(numberingDate, allocated.value)
     const request = await tx.approvalRequest.create({
       data: {
         id,
@@ -448,36 +451,36 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
         })
       }
     }
-    return request
+    return tx.approvalRequest.findUnique({ where: { id } })
   })
   res.json({ ok: true, request: serialize(created) })
 }))
 
 /** 详情聚合 */
-async function detailOf(requestId) {
-  const request = await prisma.approvalRequest.findUnique({ where: { id: requestId } })
+async function detailOf(requestId, client = prisma) {
+  const request = await client.approvalRequest.findUnique({ where: { id: requestId } })
   if (!request) throw httpError('审批单不存在', 404)
   const [template, nodes, ccs, attachments, comments, logs] = await Promise.all([
-    prisma.approvalTemplate.findUnique({ where: { key: request.templateKey } }),
-    prisma.approvalNode.findMany({ where: { requestId }, orderBy: { nodeIndex: 'asc' } }),
-    prisma.approvalCc.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
-    prisma.approvalAttachment.findMany({ where: { requestId } }),
-    prisma.approvalComment.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
-    prisma.approvalLog.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
+    client.approvalTemplate.findUnique({ where: { key: request.templateKey } }),
+    client.approvalNode.findMany({ where: { requestId }, orderBy: { nodeIndex: 'asc' } }),
+    client.approvalCc.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
+    client.approvalAttachment.findMany({ where: { requestId } }),
+    client.approvalComment.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
+    client.approvalLog.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
   ])
   return {
     request: serialize(request),
     template: { key: template.key, name: template.name, description: template.description, schema: template.schema, approverRule: template.approverRule },
     nodes: nodes.map((n) => ({ id: n.id, nodeIndex: n.nodeIndex, approverUsername: n.approverUsername, status: n.status, comment: n.comment, actedAt: n.actedAt })),
     ccs: ccs.map((c) => ({ id: c.id, ccUsername: c.ccUsername, ccName: c.ccName, readAt: c.readAt })),
-    attachments: await Promise.all(attachments.map(async (a) => ({
+    attachments: attachments.map((a) => ({
       id: a.id,
       name: a.name,
       fileType: a.fileType,
       fileSize: a.fileSize,
-      dataUrl: await readAssetData(a.storageProvider, a.storageKey, a.dataUrl),
+      dataUrl: a.dataUrl, storageProvider: a.storageProvider, storageKey: a.storageKey,
       createdAt: a.createdAt,
-    }))),
+    })),
     comments: comments.map((c) => ({ id: c.id, username: c.username, userRole: c.userRole, content: c.content, createdAt: c.createdAt })),
     logs: logs.map((l) => ({ id: l.id, action: l.action, username: l.username, detail: l.detail, createdAt: l.createdAt })),
   }
@@ -546,10 +549,14 @@ approvalRouter.get('/approvals/requests', wrap(async (req, res) => {
 
 approvalRouter.get('/approvals/requests/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  const detail = await detailOf(req.params.id)
+  const detail = await prisma.$transaction((tx) => detailOf(req.params.id, tx), { isolationLevel: 'RepeatableRead' })
   if (!canViewRequest(req.user, detail.request, { template: detail.template, ccList: detail.ccs })) {
     throw httpError('无权查看该审批单', 403)
   }
+  // Hydrate immutable snapshot descriptors only after the DB transaction has ended.
+  detail.attachments = await Promise.all(detail.attachments.map(async ({ storageProvider, storageKey, ...attachment }) => ({
+    ...attachment, dataUrl: await readAssetData(storageProvider, storageKey, attachment.dataUrl),
+  })))
   res.json({ ok: true, ...detail })
 }))
 
@@ -680,17 +687,25 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
   const template = await prisma.approvalTemplate.findUnique({ where: { key: request.templateKey } })
   if (!canDecide(req.user, request, template)) throw httpError('无权审批该单据', 403)
   const body = req.body || {}
+  if (!Number.isSafeInteger(body.contentVersion) || body.contentVersion < 1) throw httpError('审批版本凭据缺失或不正确，请重新打开单据', 409)
   const action = String(body.action || '')
   if (!['approve', 'reject'].includes(action)) throw httpError('审批操作不正确')
   const comment = text(body.comment, 300, '审批意见')
   if (action === 'reject' && comment.length < 2) throw httpError('驳回时必须填写审批意见')
   const ctx = await userCtx()
   await prisma.$transaction(async (tx) => {
+    // Hold current authority while deciding; a concurrent revoke/template change cannot race the claim.
+    await tx.$queryRawUnsafe('SELECT id FROM "User" WHERE id = $1 FOR SHARE', req.user.id)
+    await tx.$queryRawUnsafe('SELECT key FROM approval_templates WHERE key = $1 FOR SHARE', request.templateKey)
+    const actor = await tx.user.findUnique({ where: { id: req.user.id } })
+    const currentRequest = await tx.approvalRequest.findUnique({ where: { id: request.id } })
+    const currentTemplate = await tx.approvalTemplate.findUnique({ where: { key: request.templateKey } })
+    if (!actor || actor.status !== 'active' || !hasModuleAccess(actor, MODULE_KEYS.APPROVAL) || !canDecide(actor, currentRequest, currentTemplate)) throw httpError('当前账号或单据已无审批权限，请刷新后重试', 403)
     const updated = await tx.approvalRequest.updateMany({
-      where: { id: request.id, status: 'pending' }, // 防并发重复审批
+      where: { id: request.id, status: 'pending', contentVersion: body.contentVersion }, // Bind the version actually reviewed.
       data: { status: action === 'approve' ? 'approved' : 'rejected', approvedAt: action === 'approve' ? new Date() : null },
     })
-    if (updated.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
+    if (updated.count !== 1) throw httpError('单据内容或审批轮次已变化，请重新打开单据后审批', 409)
     // 更新节点
     const node = await tx.approvalNode.findFirst({
       where: { requestId: request.id, status: 'pending' },
