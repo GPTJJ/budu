@@ -29,6 +29,14 @@ test -f "$HOME/.ssh/id_ed25519"
 
 # This one procurement release needs the reviewed compatibility object as well.
 PROCUREMENT_RELEASE=false
+P1_RELEASE=false
+if [ "${GITHUB_REF:-}" = refs/heads/codex/code-audit-001-p1-release-continue-r3 ]; then
+  P1_RELEASE=true
+  test -n "${RETAINED_RELEASE_ARTIFACT:-}"
+  test -f "$(dirname "$RETAINED_RELEASE_ARTIFACT")/p1-prisma-timeout-proof.json"
+  test "${EXPECTED_PRODUCTION_SHA:-}" = eb9536731e42608004407d8a787b5927f7d42c9d
+  test "${APPROVED_BUSINESS_SHA:-}" = "$(python3 -c 'import json;print(json.load(open("scripts/p1-release-contract.json"))["businessSha"])')"
+fi
 COMPATIBILITY_ARGS=()
 if [ "${APPROVED_BUSINESS_SHA:-}" = 9049339f75d106ac02ebb0d109da2862e997a545 ]; then
   PROCUREMENT_RELEASE=true
@@ -40,7 +48,9 @@ PROFILE=(--release-profile post-transfer
   --expected-production-sha "${EXPECTED_PRODUCTION_SHA:-}"
   --business-base-sha "${APPROVED_BUSINESS_SHA:-}")
 bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" "${PROFILE[@]}"
-if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+if [ "$P1_RELEASE" = true ]; then
+  python3 scripts/test-p1-release-contract.py
+elif [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
   python3 scripts/test-material-release-contract.py --legacy-q-regressions
   python3 scripts/test-material-release-contract.py
 elif [ "$PROCUREMENT_RELEASE" = true ]; then
@@ -101,25 +111,34 @@ timeout 35m docker buildx build --builder "$BUILDER_NAME" --platform linux/amd64
   "$RUN_DIR/source"
 fi
 
-if [ "$PROCUREMENT_RELEASE" = true ]; then
+if [ "$PROCUREMENT_RELEASE" = true ] || [ "$P1_RELEASE" = true ]; then
+  ROLLBACK_SHA=e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e
+  if [ "$P1_RELEASE" = true ]; then ROLLBACK_SHA="$APPROVED_BUSINESS_SHA"; fi
   if [ -n "${RETAINED_RELEASE_ARTIFACT:-}" ]; then
     test -f "$(dirname "$RETAINED_RELEASE_ARTIFACT")/compatible.tar"
     cp "$(dirname "$RETAINED_RELEASE_ARTIFACT")/compatible.tar" "$RUN_DIR/compatible.tar"
   else
     mkdir "$RUN_DIR/compatible-source"
-    git archive e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e | tar -x -C "$RUN_DIR/compatible-source"
+    git archive "$ROLLBACK_SHA" | tar -x -C "$RUN_DIR/compatible-source"
     timeout 35m docker buildx build --builder "$BUILDER_NAME" --platform linux/amd64 \
-      --label org.opencontainers.image.revision=e3ecebcb94c4b058f10ad05e69a078bbc45b0d8e \
-      --tag budu-api:post-transfer-e3ecebcb94c4 --provenance=false --sbom=false \
+      --label "org.opencontainers.image.revision=$ROLLBACK_SHA" \
+      --tag "budu-api:post-transfer-${ROLLBACK_SHA:0:12}" --provenance=false --sbom=false \
       --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUN_DIR/compatible.tar" \
       "$RUN_DIR/compatible-source"
   fi
   COMPATIBILITY_ARGS=(--compatibility-archive "$RUN_DIR/compatible.tar")
 fi
 
+if [ "$P1_RELEASE" = true ]; then
+  cp "$(dirname "$RETAINED_RELEASE_ARTIFACT")/p1-prisma-timeout-proof.json" "$RUN_DIR/p1-prisma-timeout-proof.json"
+  printf 'P1_PRISMA_PROOF_PATH=%s/p1-prisma-timeout-proof.json\n' "$RUN_DIR" >> "$GITHUB_ENV"
+  python3 scripts/test-p1-release-contract.py --verify-retained-proof \
+    "$(dirname "$RETAINED_RELEASE_ARTIFACT")/p1-prisma-timeout-proof.json" "$RUN_DIR/image.tar" "$RUN_DIR/compatible.tar"
+fi
+
 bash scripts/deploy-prod-transfer-cas.sh inspect-artifact --repo "$PWD" --archive "$RUN_DIR/image.tar" \
   "${PROFILE[@]}" "${COMPATIBILITY_ARGS[@]}" | tee "$RUN_DIR/artifact.json"
-if [ "$PROCUREMENT_RELEASE" = true ]; then
+if [ "$PROCUREMENT_RELEASE" = true ] || [ "$P1_RELEASE" = true ]; then
   printf 'RELEASE_ARTIFACT_PATH=%s/*.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
 else
   printf 'RELEASE_ARTIFACT_PATH=%s/image.tar\n' "$RUN_DIR" >> "$GITHUB_ENV"
