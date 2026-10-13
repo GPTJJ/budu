@@ -1639,7 +1639,7 @@ function DocumentsTab({ employeeId, canEdit }) {
 
   return (
     <SectionCard title="附件档案">
-      {preview && <div data-budu-overlay-root role="dialog" aria-modal="true" aria-label="附件预览" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"><div className="max-h-[90dvh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-4"><div className="mb-3 flex items-center gap-3"><span className="min-w-0 flex-1 break-all font-semibold">{preview.name}</span><button className="btn-secondary shrink-0" onClick={() => setPreview(null)}>关闭</button></div><SafeAttachmentPreview dataUrl={preview.dataUrl} name={preview.name} /><a href={preview.downloadUrl} className="btn-primary mt-3 inline-block" download={preview.name}>下载文件</a></div></div>}
+      {preview && <div data-budu-overlay-root role="dialog" aria-modal="true" aria-label="附件预览" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"><div className="max-h-[90dvh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-4"><div className="mb-3 flex items-center gap-3"><span className="min-w-0 flex-1 break-all font-semibold">{preview.name}</span><button className="btn-secondary shrink-0" onClick={() => setPreview(null)}>关闭</button></div><SafeAttachmentPreview dataUrl={preview.dataUrl} name={preview.name} downloadUrl={preview.downloadUrl} /><a href={preview.downloadUrl} className="btn-primary mt-3 inline-block" download={preview.name}>下载文件</a></div></div>}
       {error && <p className="mb-3 rounded-xl bg-rose-50 px-4 py-2.5 text-sm text-rose-600">{error}</p>}
 
       {canEdit && (

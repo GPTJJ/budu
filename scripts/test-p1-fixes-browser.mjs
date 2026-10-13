@@ -39,7 +39,7 @@ try{
  const image=await fromPage(uploadPage,'/v2/asset-center/files',{name:'Normal Synthetic PNG',category:'p1-category',fileName:'normal.png',fileType:'image/png',dataUrl:'data:image/png;base64,'+pngBytes.toString('base64')});assert.equal(image.status,201)
  await viewPage.reload();await viewPage.getByTestId('asset-card-'+pdf.body.file.id).waitFor()
  await viewPage.getByRole('button',{name:'预览 Normal Synthetic PDF',exact:true}).click()
- await viewPage.locator('canvas[data-rendered="true"]').waitFor({timeout:15000})
+ await viewPage.locator('.pdfViewer .page[data-loaded="true"] canvas').first().waitFor({timeout:15000})
  const pixels=await viewPage.locator('canvas').evaluate(c=>{const data=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let nonwhite=0;for(let i=0;i<data.length;i+=4)if(data[i+3]&&data[i]<200)nonwhite++;return {width:c.width,height:c.height,nonwhite}});assert.ok(pixels.nonwhite>20)
  checks.push({id:'AUTH-PDF-preview',result:'PASS',...pixels})
  await viewPage.screenshot({path:path.join(h.root,'work/pdf-preview.png')})
@@ -54,8 +54,8 @@ try{
  checks.push({id:'AUTH-history-version-GET-and-unauthorized',result:'PASS'})
  // PDF actions are present in the bytes but the renderer never installs an action execution layer.
  const actionPdf=await fromPage(uploadPage,'/v2/asset-center/files',{name:'PDF with synthetic action',category:'p1-category',fileName:'action.pdf',fileType:'application/pdf',dataUrl:'data:application/pdf;base64,'+syntheticPdf({pages:2,script:html}).toString('base64')});assert.equal(actionPdf.status,201)
- await viewPage.reload();await viewPage.getByRole('button',{name:'预览 PDF with synthetic action',exact:true}).click();await viewPage.locator('canvas[data-rendered="true"]').waitFor()
- await viewPage.getByRole('button',{name:'下一页',exact:true}).click();await viewPage.getByText('2 / 2',{exact:true}).waitFor();await viewPage.locator('canvas[data-rendered="true"]').waitFor()
+ await viewPage.reload();await viewPage.getByRole('button',{name:'预览 PDF with synthetic action',exact:true}).click();await viewPage.locator('.pdfViewer .page[data-loaded="true"] canvas').first().waitFor()
+ await viewPage.getByRole('button',{name:'下一页',exact:true}).click();await viewPage.waitForFunction(()=>document.querySelector('input[aria-label="PDF页码"]')?.value==='2');await viewPage.locator('.pdfViewer .page[data-loaded="true"] canvas').first().waitFor()
  assert.equal(await viewPage.evaluate(()=>!!window.__p1UntrustedExecuted),false);assert.equal(protectedCalls,0);checks.push({id:'AUTH-PDF-action-and-pagination',result:'PASS',pages:2,renderedPage:2,untrustedActionsExecuted:false})
  const widths=[]
  for(const width of [320,340,375,390,430,768,1024]){await viewPage.setViewportSize({width,height:900});const rect=await viewPage.locator('canvas').boundingBox();assert.ok(rect.x>=0&&rect.x+rect.width<=width+1);widths.push(width)}
@@ -69,7 +69,7 @@ try{
  const employeePdf=await h.api(employeeRoute,{method:'POST',body:{fileName:'employee.pdf',mimeType:'application/pdf',data:syntheticPdf().toString('base64')}});assert.equal(employeePdf.status,200)
  await h.db.employeeDocument.create({data:{id:'p1-browser-employee-historical',employeeId,documentType:'other',fileName:'historical-active.pdf',mimeType:'application/pdf',fileSize:Buffer.from(html).length,data:Buffer.from(html).toString('base64'),isSensitive:true,uploadedBy:'Synthetic'}})
  const employeePage=await viewer.newPage();await employeePage.goto(origin+'/tests/p1-fix-harness.html?mode=employee&id='+employeeId);await employeePage.getByRole('button',{name:'附件',exact:true}).click()
- for(const [name,kind] of [['employee.pdf','pdf'],['historical-active.pdf','download']]){await employeePage.locator('p').filter({hasText:name}).locator('xpath=../..').getByRole('button',{name:'查看',exact:true}).click();await employeePage.locator('[data-preview-kind="'+kind+'"]').waitFor();if(kind==='pdf')await employeePage.locator('canvas[data-rendered="true"]').waitFor();assert.equal(await employeePage.locator('iframe').count(),0);assert.equal(await employeePage.evaluate(()=>!!window.__p1UntrustedExecuted),false);await employeePage.getByRole('button',{name:'关闭',exact:true}).click()}
+ for(const [name,kind] of [['employee.pdf','pdf'],['historical-active.pdf','download']]){await employeePage.locator('p').filter({hasText:name}).locator('xpath=../..').getByRole('button',{name:'查看',exact:true}).click();await employeePage.locator('[data-preview-kind="'+kind+'"]').waitFor();if(kind==='pdf')await employeePage.locator('.pdfViewer .page[data-loaded="true"] canvas').first().waitFor();assert.equal(await employeePage.locator('iframe').count(),0);assert.equal(await employeePage.evaluate(()=>!!window.__p1UntrustedExecuted),false);await employeePage.getByRole('button',{name:'关闭',exact:true}).click()}
  checks.push({id:'AUTH-employee-frontend',result:'PASS',normalPdf:true,historicalActiveDownloadOnly:true});await employeePage.close()
  // Complete sequential stale view: A renders100, B rejects/edits9000/resubmits and finishes, then A acts.
  const approverA=await context('approver'),approverB=await context('approver');contexts.push(approverA,approverB)

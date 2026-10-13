@@ -19,8 +19,8 @@ export function isIOS() {
   )
 }
 
-function dataUrlToBlob(dataUrl) {
-  return fetch(dataUrl).then((r) => r.blob())
+function dataUrlToBlob(dataUrl, signal) {
+  return fetch(dataUrl, { signal }).then((r) => r.blob())
 }
 
 function triggerAnchorDownload(href, name) {
@@ -40,11 +40,13 @@ function triggerAnchorDownload(href, name) {
  * @param {string} p.name 文件名（含扩展名）
  * @param {string} [p.mimeType] 兼容既有调用方；实际 MIME 按字节判定
  * @param {string} [p.downloadUrl] 同源且强制 attachment 的文件内容地址
+ * @param {AbortSignal} [p.signal] 附件关闭或切换时取消尚未开始的下载
  * @returns {Promise<{method: 'anchor'|'share'|'open'|'share-cancelled'}>}
  */
-export async function downloadFile({ dataUrl, name, mimeType, downloadUrl }) {
-  const input = await dataUrlToBlob(dataUrl)
+export async function downloadFile({ dataUrl, name, mimeType, downloadUrl, signal }) {
+  const input = await dataUrlToBlob(dataUrl, signal)
   const bytes = new Uint8Array(await input.arrayBuffer())
+  if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
   const safe = inspectAttachmentBytes(bytes)
   const blob = new Blob([bytes], { type: safe.mimeType })
   const safeUrl = downloadUrl && new URL(downloadUrl, location.origin)
@@ -76,6 +78,7 @@ export async function downloadFile({ dataUrl, name, mimeType, downloadUrl }) {
   }
 
   // Only the server's attachment response may be opened. Never navigate to untrusted Blob content.
+  if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
   if (safeUrl) {
     window.open(safeUrl.href, '_blank', 'noopener,noreferrer')
     return { method: 'open' }

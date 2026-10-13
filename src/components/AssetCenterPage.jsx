@@ -530,7 +530,7 @@ function PreviewModal({ file, onClose }) {
             <p className="text-sm text-slate-500">文件较大（{fmtBytes(file.fileSize)}），为避免卡顿已关闭内嵌预览</p>
             <button onClick={download} disabled={downloading} className="btn-primary mt-4 px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '下载查看'}</button>
           </div>
-        ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : <SafeAttachmentPreview dataUrl={data.dataUrl} name={file.name} />}
+        ) : error ? <p className="text-sm text-rose-500">{error}</p> : !data ? <p className="text-sm text-slate-400">加载中…</p> : <SafeAttachmentPreview dataUrl={data.dataUrl} name={file.name} downloadUrl={data.downloadUrl} />}
         {data && !tooLarge && <button onClick={download} disabled={downloading} className="btn-primary mt-3 px-5 py-2"><Download className="h-4 w-4" />{downloading ? '加载中…' : '下载文件'}</button>}
       </div>
     </ModalShell>

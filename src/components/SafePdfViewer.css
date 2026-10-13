@@ -1,0 +1,42 @@
+.budu-safe-pdf { width: 100%; min-width: 0; color: #334155; font-size: 13px; }
+.budu-safe-pdf-toolbar, .budu-safe-pdf-search { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px; background: #fff8fb; border: 1px solid #fce7f3; }
+.budu-safe-pdf-toolbar { border-radius: 12px 12px 0 0; }
+.budu-safe-pdf button { flex-shrink: 0; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 8px; background: white; color: #334155; font: inherit; cursor: pointer; }
+.budu-safe-pdf button:disabled { opacity: .45; cursor: default; }
+.budu-safe-pdf button[aria-pressed="true"] { color: white; background: #e84c8b; border-color: #e84c8b; }
+.budu-safe-pdf input { min-width: 0; padding: 5px; border: 1px solid #e2e8f0; border-radius: 6px; color: #334155; font: inherit; background: white; }
+.budu-safe-pdf-page { display: flex; align-items: center; gap: 4px; }
+.budu-safe-pdf-page input { width: 54px; }
+.budu-safe-pdf-search input { flex: 1 1 100px; width: 100px; }
+.budu-safe-pdf-search span { min-width: 40px; }
+.budu-safe-pdf-stage { position: relative; height: clamp(280px, 60vh, 760px); min-width: 0; }
+.budu-safe-pdf-container { position: absolute; inset: 0; overflow: auto; background: #f1f5f9; overscroll-behavior: contain; }
+.budu-safe-pdf-container .pdfViewer { --scale-factor: 1; --user-unit: 1; --total-scale-factor: 1; }
+.budu-safe-pdf-message { padding: 12px; text-align: center; font-size: 12px; color: #64748b; }
+.budu-safe-pdf-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.budu-safe-pdf-brush { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 8px; background: #fff8fb; border: 1px solid #fce7f3; }
+.budu-safe-pdf-brush label { display: flex; align-items: center; gap: 6px; }
+.budu-safe-pdf-brush input[type="color"] { width: 38px; height: 30px; padding: 2px; }
+.budu-safe-pdf-brush input[type="range"] { width: 100px; }
+.budu-safe-pdf-brush span { font-size: 11px; color: #64748b; }
+.budu-safe-pdf-sidebar { position: absolute; inset: 0 auto 0 0; width: 104px; padding: 4px; overflow: auto; background: #e2e8f0; }
+.budu-safe-pdf-sidebar button { display: flex; align-items: center; flex-direction: column; width: 100%; margin-bottom: 8px; padding: 4px; }
+.budu-safe-pdf-sidebar button[aria-current="page"] { border-color: #e84c8b; background: #fff1f6; }
+.budu-safe-pdf-sidebar canvas { max-width: 100%; }
+.budu-safe-pdf-properties { padding: 8px 12px; max-height: 240px; overflow: auto; background: #f8fafc; border: 1px solid #e2e8f0; }
+.budu-safe-pdf-properties dl { margin: 0 0 8px; }
+.budu-safe-pdf-properties dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
+.budu-safe-pdf-properties dd { margin: 0; overflow-wrap: anywhere; }
+.budu-safe-pdf[data-show-annotations="false"] .annotationLayer > :not(.textWidgetAnnotation):not(.buttonWidgetAnnotation):not(.choiceWidgetAnnotation),
+.budu-safe-pdf[data-show-annotations="false"] .drawLayer,
+.budu-safe-pdf[data-show-annotations="false"] .annotationEditorLayer { visibility: hidden; }
+.budu-safe-pdf:fullscreen { display: flex; flex-direction: column; box-sizing: border-box; padding: 12px; height: 100%; background: white; }
+.budu-safe-pdf:fullscreen .budu-safe-pdf-stage { flex: 1; height: 0; min-height: 0; }
+.budu-pdf-print-output { display: none; }
+@media print {
+  body.budu-pdf-printing > :not(.budu-pdf-print-output) { display: none !important; }
+  body.budu-pdf-printing { margin: 0 !important; background: white !important; }
+  body.budu-pdf-printing .budu-pdf-print-output { display: block !important; }
+  .budu-pdf-print-output img { display: block; max-width: 100%; object-fit: contain; break-after: page; page-break-after: always; }
+  .budu-pdf-print-output img:last-child { break-after: auto; page-break-after: auto; }
+}
