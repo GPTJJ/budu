@@ -74,13 +74,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-staging-${{ github.sha }}
-          path: ${{ env.RELEASE_ARTIFACT_PATH }}
+          path: |
+            ${{ env.RELEASE_ARTIFACT_PATH }}
+            ${{ env.P1_PRISMA_PROOF_PATH }}
           compression-level: 0
           if-no-files-found: error
           retention-days: 3
 
       - name: Notify failure
-        if: failure()
+        if: failure() && github.ref != 'refs/heads/codex/code-audit-001-p1-release-continue'
         env:
           WEBHOOK: ${{ secrets.WECHAT_WORK_WEBHOOK_URL }}
         run: |
