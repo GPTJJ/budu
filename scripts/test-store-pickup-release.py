@@ -103,6 +103,34 @@ class Contract(unittest.TestCase):
   good={'result':'DEPLOY_COMPLETE','releaseSha':V['release'],'dbApplied':89,'dbFailed':0,'writer':1,'runtimeMode':'active','internalHealth':'PASS','publicHealth':'PASS','applicationDbProbe':'PASS','oldStopped':True,'releaseLockReleased':True}
   out=(json.dumps({'stage':'observation'})+'\n'+json.dumps(good)).encode();self.assertEqual(p.parse_execution(out,0,V['release']),good)
   with self.assertRaises(p.m.GateError):p.parse_execution(out+b'\n'+json.dumps(good).encode(),0,V['release'])
+ def test_17_upload_drains_both_pipes(self):
+  import sys
+  code="import sys;sys.stdout.buffer.write(b'o'*200000);sys.stdout.flush();sys.stderr.buffer.write(b'e'*200000);sys.stderr.flush();x=sys.stdin.buffer.read();print(len(x))"
+  out,err,rc,error=p.transport([sys.executable,'-c',code],[b'x'*1000000],timeout=5)
+  self.assertIsNone(error);self.assertEqual(rc,0);self.assertEqual(err,b'e'*200000);self.assertEqual(out,b'o'*200000+b'1000000\n')
+ def test_18_deadline_includes_blocked_upload(self):
+  import sys,time
+  start=time.monotonic()
+  out,err,rc,error=p.transport([sys.executable,'-c',"import sys,time;print('before',flush=True);print('detail',file=sys.stderr,flush=True);time.sleep(10)"],[b'x'*1000000],timeout=.25)
+  self.assertEqual(error,'PICKUP_TRANSPORT_TIMEOUT_UNKNOWN');self.assertLess(time.monotonic()-start,2)
+  self.assertIn(b'before',out);self.assertIn(b'detail',err);self.assertNotEqual(rc,0)
+ def test_19_deadline_not_reset_after_upload(self):
+  import sys,time
+  start=time.monotonic()
+  code="import sys,time;time.sleep(.25);sys.stdin.buffer.read();print('received',flush=True);time.sleep(10)"
+  out,err,rc,error=p.transport([sys.executable,'-c',code],[b'x'*1000000],timeout=.5)
+  self.assertEqual(error,'PICKUP_TRANSPORT_TIMEOUT_UNKNOWN');self.assertIn(b'received',out);self.assertLess(time.monotonic()-start,.9)
+ def test_20_local_child_only_and_no_retry(self):
+  import sys
+  unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(10)'])
+  try:
+   p.transport([sys.executable,'-c','import time;time.sleep(10)'],[b'x'*1000000],timeout=.15)
+   self.assertIsNone(unrelated.poll())
+  finally:unrelated.terminate();unrelated.wait()
+ def test_21_early_close_preserves_failure(self):
+  import sys
+  out,err,rc,error=p.transport([sys.executable,'-c',"import sys;print('DEPLOY_BLOCKED',flush=True);sys.exit(2)"],[b'x'*1000000],timeout=2)
+  self.assertEqual(rc,2);self.assertIn(b'DEPLOY_BLOCKED',out);self.assertEqual(error,'PICKUP_TRANSPORT_WRITE_UNKNOWN')
  def test_10_atomic_sql_disposable_postgres(self):
   script=r'''
 import {PGlite} from '@electric-sql/pglite';import assert from 'node:assert/strict';

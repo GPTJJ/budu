@@ -249,31 +249,78 @@ def parse_execution(out,returncode,release):
     completed(terminal[0],release);return terminal[0]
 
 
+
+def transport(command,chunks,timeout=1800):
+    """One deadline for sending and waiting; never signal a remote process.
+
+    Drain both output pipes during upload to avoid SSH backpressure deadlocks.
+    Partial output survives timeout/early close; only the local SSH child is
+    killed. The caller must treat every such outcome as remote state UNKNOWN.
+    """
+    import selectors,time
+    deadline=time.monotonic()+timeout
+    p=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    output={'stdout':bytearray(),'stderr':bytearray()};error=None;pending=memoryview(b'')
+    iterator=iter(chunks)
+    with selectors.DefaultSelector() as sel:
+        for pipe,event,name in [(p.stdin,selectors.EVENT_WRITE,'stdin'),(p.stdout,selectors.EVENT_READ,'stdout'),(p.stderr,selectors.EVENT_READ,'stderr')]:
+            os.set_blocking(pipe.fileno(),False);sel.register(pipe,event,name)
+        try:
+            while sel.get_map():
+                left=deadline-time.monotonic()
+                if left<=0:
+                    error='PICKUP_TRANSPORT_TIMEOUT_UNKNOWN';break
+                for key,events in sel.select(min(left,0.2)):
+                    pipe=key.fileobj
+                    if key.data=='stdin':
+                        try:
+                            if not pending:pending=memoryview(next(iterator))
+                            if pending:pending=pending[os.write(pipe.fileno(),pending[:65536]):]
+                        except StopIteration:
+                            sel.unregister(pipe);pipe.close()
+                        except BlockingIOError:pass
+                        except OSError:
+                            error='PICKUP_TRANSPORT_WRITE_UNKNOWN';sel.unregister(pipe);pipe.close()
+                    else:
+                        try:chunk=os.read(pipe.fileno(),65536)
+                        except BlockingIOError:continue
+                        if chunk:output[key.data].extend(chunk)
+                        else:sel.unregister(pipe);pipe.close()
+            if error!='PICKUP_TRANSPORT_TIMEOUT_UNKNOWN':
+                try:p.wait(timeout=max(0,deadline-time.monotonic()))
+                except subprocess.TimeoutExpired:error='PICKUP_TRANSPORT_TIMEOUT_UNKNOWN'
+        finally:
+            # This is strictly the child Popen PID, never killpg/SSH a kill.
+            if p.poll() is None:p.kill()
+            p.wait(timeout=5)
+            # Preserve already buffered bytes without waiting for remote EOF.
+            drain_deadline=time.monotonic()+0.5
+            for key in list(sel.get_map().values()):
+                if key.data!='stdin':
+                    while time.monotonic()<drain_deadline:
+                        try:chunk=os.read(key.fileobj.fileno(),65536)
+                        except BlockingIOError:break
+                        if not chunk:break
+                        output[key.data].extend(chunk)
+                key.fileobj.close()
+    return bytes(output['stdout']),bytes(output['stderr']),p.returncode,error
+
+
 def deploy(remote,v,archive,authorized):
     require(authorized==v['release'],'EXACT_RELEASE_AUTHORIZATION_REQUIRED')
     # One on-host controller owns mutations and failure recovery, as in existing BG flow.
     code=bootstrap_source()
     loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-pickup>','exec'))"
     import shlex
-    p=subprocess.Popen(remote.ssh+[shlex.join(['sudo','-n','python3','-u','-c',loader])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    feed_error=False
-    try:
-        p.stdin.write(json.dumps(code).encode()+b'\n');p.stdin.write(json.dumps(v).encode()+b'\n')
+    def chunks():
+        yield json.dumps(code).encode()+b'\n'
+        yield json.dumps(v).encode()+b'\n'
         with open(archive,'rb') as src:
-            for b in iter(lambda:src.read(1024**2),b''):p.stdin.write(b)
-    except OSError:feed_error=True
-    finally:
-        try:p.stdin.close()
-        except OSError:feed_error=True
-        p.stdin=None
-    try:out,err=p.communicate(timeout=1800)
-    except subprocess.TimeoutExpired:
-        # Stop only this local transport; remote ownership/recovery remains authoritative.
-        p.kill();out,err=p.communicate();sys.stdout.buffer.write(out);sys.stdout.buffer.flush();sys.stderr.buffer.write(err);sys.stderr.buffer.flush()
-        raise m.GateError('PICKUP_TRANSPORT_TIMEOUT_UNKNOWN') from None
+            yield from iter(lambda:src.read(65536),b'')
+    out,err,rc,error=transport(remote.ssh+[shlex.join(['sudo','-n','python3','-u','-c',loader])],chunks())
     sys.stdout.buffer.write(out);sys.stdout.buffer.flush();sys.stderr.buffer.write(err);sys.stderr.buffer.flush()
-    require(not feed_error,'PICKUP_TRANSPORT_WRITE_UNKNOWN')
-    parse_execution(out,p.returncode,v['release'])
+    require(error is None,error or 'PICKUP_TRANSPORT_UNKNOWN')
+    parse_execution(out,rc,v['release'])
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['identity','inspect-artifact','preflight','deploy']);p.add_argument('--repo',type=Path,required=True);p.add_argument('--release-sha',required=True);p.add_argument('--archive',type=Path);p.add_argument('--ssh-key');p.add_argument('--authorize-release-sha');a=p.parse_args()
