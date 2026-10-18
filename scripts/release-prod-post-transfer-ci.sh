@@ -39,8 +39,17 @@ fi
 PROFILE=(--release-profile post-transfer
   --expected-production-sha "${EXPECTED_PRODUCTION_SHA:-}"
   --business-base-sha "${APPROVED_BUSINESS_SHA:-}")
+STORE_RELEASE=false
+if [ "$(git branch --show-current)" = codex/store-management-001-release ] || [ "${APPROVED_BUSINESS_SHA:-}" = a234ac76c6ea08d576928ccfeaf3f7ab5a05ed4f ]; then
+  STORE_RELEASE=true
+  test "${EXPECTED_PRODUCTION_SHA:-}" = eb9536731e42608004407d8a787b5927f7d42c9d
+  test "${APPROVED_BUSINESS_SHA:-}" = a234ac76c6ea08d576928ccfeaf3f7ab5a05ed4f
+  PROFILE+=(--blue-green-live-proof "$PWD/docs/checkpoints/2026-10-18-store-management-live.json")
+fi
 bash scripts/deploy-prod-transfer-cas.sh identity --repo "$PWD" "${PROFILE[@]}"
-if [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
+if [ "$STORE_RELEASE" = true ]; then
+  python3 scripts/test-store-management-release-contract.py
+elif [ "$GITHUB_REF" = refs/heads/codex/material-center-integration-20261002 ]; then
   python3 scripts/test-material-release-contract.py --legacy-q-regressions
   python3 scripts/test-material-release-contract.py
 elif [ "$PROCUREMENT_RELEASE" = true ]; then
