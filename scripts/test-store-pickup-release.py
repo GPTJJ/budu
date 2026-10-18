@@ -87,6 +87,16 @@ class Contract(unittest.TestCase):
   answers={('rev-parse','HEAD'):sha,('branch','--show-current'):'codex/store-pickup-001-release',('status','--porcelain','--untracked-files=all'):'',('rev-parse',p.BUSINESS+'^'):p.BASE}
   with patch.object(p.m,'git',side_effect=lambda repo,*a:answers[a]),patch.object(p.m,'is_ancestor',return_value=False):
    with self.assertRaises(p.m.GateError):p.identity(ROOT,sha)
+ def test_15_mount_order_and_identity(self):
+  host={'Binds':None,'Mounts':[{'Type':'bind','Source':'/synthetic/secret','Target':'/run/secret','ReadOnly':True},{'Type':'volume','Source':'synthetic_data','Target':'/app/data'}]}
+  mounts=[{'Type':'bind','Source':'/synthetic/secret','Destination':'/run/secret','Mode':'','RW':False,'Propagation':'rprivate'},{'Type':'volume','Name':'synthetic_data','Source':'/var/lib/docker/volumes/synthetic_data/_data','Destination':'/app/data','Driver':'local','Mode':'z','RW':True,'Propagation':''}]
+  c={'HostConfig':host,'Mounts':mounts};proof={'resourcesHash':p.m.digest(json.dumps(host,sort_keys=True).encode())}
+  first=p.mount_contract(c,proof);c['Mounts']=list(reversed(mounts));self.assertEqual(p.mount_contract(c,proof),first)
+  for key,value in [('Source','/other'),('RW',True),('Propagation','shared'),('Destination','/other')]:
+   bad=copy.deepcopy(c);bad['Mounts'][1][key]=value
+   with self.assertRaises(p.m.GateError):p.mount_contract(bad,proof)
+  bad=copy.deepcopy(c);bad['HostConfig']['Memory']=1
+  with self.assertRaises(p.m.GateError):p.mount_contract(bad,proof)
  def test_10_atomic_sql_disposable_postgres(self):
   script=r'''
 import {PGlite} from '@electric-sql/pglite';import assert from 'node:assert/strict';

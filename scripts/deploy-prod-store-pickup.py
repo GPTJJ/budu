@@ -61,6 +61,24 @@ def writer(remote,v,state,names,standby=False):
         c=m.bg_lifecycle(remote,v,state,'standby');require(sum(x['Id']==c['Id'] for x in rows)==1,'BG_CANDIDATE_CHANGED');rows=[x for x in rows if x['Id']!=c['Id']]
     db=database(remote,v,state['phase']);m.writer_check(rows,db,names);return db
 
+def mount_contract(c,proof):
+    # Docker enumerates resolved Mounts in map order. Anchor the complete
+    # unchanged HostConfig, then compare every resolved field without ordering.
+    require(m.digest(json.dumps(c['HostConfig'],sort_keys=True).encode())==proof['resourcesHash'],'PICKUP_RESOURCES_CHANGED')
+    host=c['HostConfig'];require(host.get('Binds') is None and isinstance(host.get('Mounts'),list),'PICKUP_MOUNT_CONTRACT')
+    expected=[]
+    for x in host['Mounts']:
+        require(set(x)<= {'Type','Source','Target','ReadOnly'} and all(k in x for k in ['Type','Source','Target']),'PICKUP_MOUNT_OPTIONS_CHANGED')
+        if x['Type']=='bind':
+            expected.append({'Type':'bind','Source':x['Source'],'Destination':x['Target'],'Mode':'','RW':not x.get('ReadOnly',False),'Propagation':'rprivate'})
+        elif x['Type']=='volume':
+            require(re.fullmatch('[a-zA-Z0-9_.-]+',x['Source']) is not None,'PICKUP_VOLUME_IDENTITY')
+            expected.append({'Type':'volume','Name':x['Source'],'Source':'/var/lib/docker/volumes/'+x['Source']+'/_data','Destination':x['Target'],'Driver':'local','Mode':'z','RW':not x.get('ReadOnly',False),'Propagation':''})
+        else:raise m.GateError('PICKUP_MOUNT_TYPE_CHANGED')
+    require(len({x['Destination'] for x in expected})==len(expected),'PICKUP_MOUNT_DUPLICATE')
+    require(sorted(c['Mounts'],key=lambda x:x['Destination'])==sorted(expected,key=lambda x:x['Destination']),'PICKUP_MOUNTS_CHANGED')
+    return {'count':len(expected),'unorderedIdentitySha256':m.digest(json.dumps(sorted(expected,key=lambda x:x['Destination']),sort_keys=True).encode()),'originalHostConfigHashMatched':True}
+
 def old_guard(remote,v,phase=88):
     p=v['proof'];c=remote.inspect(p['container'])
     require(c['Id']==p['id'] and c['Image']==p['image'] and c['Config']['Labels']==p['labels']
@@ -73,8 +91,7 @@ def old_guard(remote,v,phase=88):
     require(h.get('runtimeMode')=='active' and h.get('appStartupTasksStarted')==h.get('processBackgroundTasksStarted')==1,'PICKUP_OLD_NOT_ACTIVE')
     m.application_db_probe(remote,c['Id'],'PICKUP_OLD_DB_PROBE')
     require(remote.run(['docker','exec',c['Id'],'sha256sum','/app/server/v2.js']).decode().split()[0]==p['runtimeHash'],'PICKUP_RUNTIME_CHANGED')
-    require(m.digest(json.dumps(c['Mounts'],sort_keys=True).encode())==p['mountsHash']
-            and m.digest(json.dumps(c['HostConfig'],sort_keys=True).encode())==p['resourcesHash'],'PICKUP_MOUNT_RESOURCE_CHANGED')
+    mount_contract(c,p)
     db=writer(remote,v,{'phase':phase},[p['container']]);return c,db
 
 def capacity(remote,v,phase,future):
