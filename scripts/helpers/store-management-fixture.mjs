@@ -30,7 +30,7 @@ export function createStoreManagementFixture() {
   Object.defineProperty(db, 'state', { get: () => state })
   db.reset = () => {
     state = {
-      stores: FIXED_STORES.map(store => ({ ...store, active: store.key !== 'chaowai', createdAt: new Date('2026-10-15T00:00:00Z'), operationType: 'DIRECT', salesDataSource: 'manual' })),
+      stores: FIXED_STORES.map(store => ({ ...store, active: store.key !== 'chaowai', pickupEnabled: true, createdAt: new Date('2026-10-15T00:00:00Z'), operationType: 'DIRECT', salesDataSource: 'manual' })),
       users: [clone(syntheticDeveloper)], audits: [], employees: [], invoices: [],
       facts: [{ id: 'synthetic-history', storeKey: 'chaowai', amountCents: 12345n, stock: 'unchanged' }],
     }
@@ -67,7 +67,7 @@ export function createStoreManagementFixture() {
       async findUnique(input) { note('findUnique'); return project(state[collection].find(row => matches(row, input?.where)), input?.select) },
       async create(input) {
         note('create')
-        const row = { ...(name === 'store' ? { operationType: 'UNKNOWN', salesDataSource: 'manual', active: true, district: '' } : {}), createdAt: new Date(), ...clone(input.data) }
+        const row = { ...(name === 'store' ? { operationType: 'UNKNOWN', salesDataSource: 'manual', active: true, pickupEnabled: true, district: '' } : {}), createdAt: new Date(), ...clone(input.data) }
         unique(name, row)
         state[collection].push(row)
         return project(row, input?.select)

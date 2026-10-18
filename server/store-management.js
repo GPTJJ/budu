@@ -53,14 +53,19 @@ async function appendAudit(tx, actor, { id = `store-event-${crypto.randomUUID()}
 }
 
 /** Same actor + requestKey always resolves to the same durable Store identity. */
-export async function createManagedStore(db, { actor, name, district = '', active = true, requestKey, now = new Date() }) {
+export async function createManagedStore(db, { actor, name, district = '', active = true, pickupEnabled = true, requestKey, now = new Date() }) {
   developer(actor)
-  const profile = { name: textField(name, '门店名称', 30), district: textField(district, '所在位置', 50, { empty: true }), active }
+  const profile = { name: textField(name, '门店名称', 30), district: textField(district, '所在位置', 50, { empty: true }), active, pickupEnabled }
   if (typeof active !== 'boolean') throw httpError('启用状态必须为布尔值', 400)
+  if (typeof pickupEnabled !== 'boolean') throw httpError('顾客自提设置必须为布尔值', 400)
   if (typeof requestKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,99}$/.test(requestKey)) throw httpError('新增请求标识不正确，请刷新后重试', 400)
   const operation = crypto.createHash('sha256').update(`${actor.id}\0${requestKey}`).digest('hex')
   const auditId = `store-create-${operation}`
-  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(profile)).digest('hex')
+  // A pre-upgrade create retry must retain its original durable identity. The
+  // historical omitted setting has exactly the same meaning as explicit true.
+  const requestProfile = { name: profile.name, district: profile.district, active }
+  if (!pickupEnabled) requestProfile.pickupEnabled = false
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(requestProfile)).digest('hex')
   return db.$transaction(async tx => {
     const currentActor = await lockDeveloper(tx, actor)
     await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS locked', auditId)
@@ -85,21 +90,26 @@ export async function createManagedStore(db, { actor, name, district = '', activ
   }, TX_OPTIONS)
 }
 
-export async function updateManagedStore(db, { actor, key: inputKey, name, district, now = new Date() }) {
+export async function updateManagedStore(db, { actor, key: inputKey, name, district, pickupEnabled, now = new Date() }) {
   developer(actor)
   const key = storeKey(inputKey), data = {}
   if (name !== undefined) data.name = textField(name, '门店名称', 30)
   if (district !== undefined) data.district = textField(district, '所在位置', 50, { empty: true })
+  if (pickupEnabled !== undefined) {
+    if (typeof pickupEnabled !== 'boolean') throw httpError('顾客自提设置必须为布尔值', 400)
+    data.pickupEnabled = pickupEnabled
+  }
   if (!Object.keys(data).length) throw httpError('请填写需要修改的门店资料', 400)
   return db.$transaction(async tx => {
     const currentActor = await lockDeveloper(tx, actor)
     const before = await lockStore(tx, key)
-    if (Object.entries(data).every(([field, value]) => (before[field] || '') === value)) {
+    if (Object.entries(data).every(([field, value]) => before[field] === value)) {
       return { ok: true, changed: false, store: storeDirectoryRow(before) }
     }
     const store = await tx.store.update({ where: { key }, data })
     await appendAudit(tx, currentActor, { action: 'UPDATE_STORE', key,
-      before: { name: before.name, district: before.district || '' }, after: { name: store.name, district: store.district || '' },
+      before: { name: before.name, district: before.district || '', pickupEnabled: before.pickupEnabled },
+      after: { name: store.name, district: store.district || '', pickupEnabled: store.pickupEnabled },
       executedAt: new Date(now).toISOString() })
     return { ok: true, changed: true, store: storeDirectoryRow(store) }
   }, TX_OPTIONS)
@@ -154,10 +164,11 @@ function wrap(handler) {
 
 export const storeManagementRouter = Router()
 storeManagementRouter.post('/stores', wrap(req => createManagedStore(prisma, {
-  actor: req.user, name: req.body?.name, district: req.body?.district, active: req.body?.active, requestKey: req.body?.requestKey,
+  actor: req.user, name: req.body?.name, district: req.body?.district, active: req.body?.active,
+  pickupEnabled: req.body?.pickupEnabled, requestKey: req.body?.requestKey,
 })))
 storeManagementRouter.patch('/stores/:key', wrap(req => updateManagedStore(prisma, {
-  actor: req.user, key: req.params.key, name: req.body?.name, district: req.body?.district,
+  actor: req.user, key: req.params.key, name: req.body?.name, district: req.body?.district, pickupEnabled: req.body?.pickupEnabled,
 })))
 storeManagementRouter.put('/stores/:key/status', wrap(req => setManagedStoreStatus(prisma, {
   actor: req.user, key: req.params.key, active: req.body?.active,
@@ -168,7 +179,12 @@ publicStoreDirectoryRouter.get('/store-directory', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   try {
     if (!dbReady()) throw Error('STORE_DIRECTORY_UNAVAILABLE')
-    const stores = await readStoreDirectory(prisma)
+    // This public v1 contract is consumed by already deployed strict parsers.
+    // Keep its four fields: active here means available for CUSTOMER PICKUP.
+    // Internal directories retain the real active flag and separate setting.
+    const stores = (await readStoreDirectory(prisma)).map(({ key, name, district, active, pickupEnabled }) => ({
+      key, name, district, active: active && pickupEnabled,
+    }))
     if (stores.length > 5000 || stores.some(row => typeof row.name !== 'string' || !row.name.trim()
       || row.name.length > 30 || CONTROL_CHARACTERS.test(row.name)
       || typeof row.district !== 'string' || row.district.length > 50 || CONTROL_CHARACTERS.test(row.district))) throw Error('STORE_DIRECTORY_INVALID')

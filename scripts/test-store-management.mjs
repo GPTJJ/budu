@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import crypto from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -42,6 +43,7 @@ const rejectsStatus = status => error => error.status === status
 const operations = [
   passedActor => create({ actor: passedActor }),
   passedActor => updateManagedStore(db, { actor: passedActor, key: 'guanshe', name: '合成改名' }),
+  passedActor => updateManagedStore(db, { actor: passedActor, key: 'guanshe', pickupEnabled: false }),
   passedActor => setManagedStoreStatus(db, { actor: passedActor, key: 'guanshe', active: false }),
 ]
 
@@ -51,7 +53,7 @@ test('新增第五家普通门店：系统生成稳定 key，单事务审计，�
   assert.equal(result.changed, true)
   assert.match(result.store.key, /^store-[a-f0-9]{20}$/)
   assert.equal(isStoreKey(result.store.key), true)
-  assert.deepEqual(result.store, { key: result.store.key, name: '合成新门店', district: '合成位置', active: true })
+  assert.deepEqual(result.store, { key: result.store.key, name: '合成新门店', district: '合成位置', active: true, pickupEnabled: true })
   assert.equal(db.state.stores.length, 5)
   assert.equal(db.state.stores.at(-1).operationType, 'UNKNOWN')
   assert.equal(db.state.audits.length, 1)
@@ -78,6 +80,54 @@ test('新增请求丢失响应后重试及并发重放复用持久身份；相�
   await assert.rejects(create({ name: '不同资料' }), rejectsStatus(409))
   assert.equal(db.state.stores.length, 5)
   assert.equal(db.state.audits.filter(row => row.action === 'CREATE_STORE').length, 1)
+})
+
+test('自提选项独立保存、默认支持；只改资料或总启停不覆盖，不改历史营业事件', async () => {
+  db.reset()
+  const result = await create({ pickupEnabled: false }), key = result.store.key
+  assert.equal(result.store.active, true)
+  assert.equal(result.store.pickupEnabled, false)
+  assert.equal((await assertOperatingStore(db, key, { lock: true })).key, key)
+  const before = structuredClone(db.state.facts)
+  const audits = db.state.audits.length
+  assert.equal((await updateManagedStore(db, { actor, key, pickupEnabled: false })).changed, false)
+  assert.equal(db.state.audits.length, audits)
+  await updateManagedStore(db, { actor, key, name: '合成仓库改名' })
+  assert.equal(db.state.stores.at(-1).pickupEnabled, false)
+  await setManagedStoreStatus(db, { actor, key, active: false })
+  await setManagedStoreStatus(db, { actor, key, active: true })
+  assert.equal(db.state.stores.at(-1).pickupEnabled, false)
+  const history = (await readStoreDirectory(db, { includeHistory: true })).find(row => row.key === key).statusHistory
+  await updateManagedStore(db, { actor, key, pickupEnabled: true })
+  assert.equal(db.state.stores.at(-1).pickupEnabled, true)
+  assert.deepEqual((await readStoreDirectory(db, { includeHistory: true })).find(row => row.key === key).statusHistory, history)
+  assert.deepEqual(db.state.facts, before)
+  const audit = db.state.audits.at(-1)
+  assert.equal(audit.action, 'UPDATE_STORE')
+  assert.equal(JSON.parse(audit.reason).before.pickupEnabled, false)
+  assert.equal(JSON.parse(audit.reason).after.pickupEnabled, true)
+})
+
+test('旧三字段新增指纹兼容；原请求重试不覆盖后来关闭的自提设置', async () => {
+  db.reset()
+  const result = await create(), key = result.store.key
+  const oldFingerprint = crypto.createHash('sha256').update(JSON.stringify({ name: '合成新增门店', district: '合成位置', active: true })).digest('hex')
+  assert.equal(JSON.parse(db.state.audits[0].reason).requestFingerprint, oldFingerprint)
+  await updateManagedStore(db, { actor, key, pickupEnabled: false })
+  for (const request of [{}, { pickupEnabled: true }]) {
+    const replay = await create(request)
+    assert.equal(replay.store.key, key)
+    assert.equal(replay.reused, true)
+    assert.equal(replay.store.pickupEnabled, false)
+  }
+  await assert.rejects(create({ pickupEnabled: false }), rejectsStatus(409))
+  db.reset()
+  await create({ pickupEnabled: false })
+  await assert.rejects(create({ pickupEnabled: true }), rejectsStatus(409))
+  for (const value of ['false', null, 0, {}]) {
+    await assert.rejects(create({ pickupEnabled: value }), rejectsStatus(400))
+    await assert.rejects(updateManagedStore(db, { actor, key: 'guanshe', pickupEnabled: value }), rejectsStatus(400))
+  }
 })
 
 test('审计失败回滚新店、编辑与启停；同名唯一冲突不产生第二家门店', async () => {
@@ -229,6 +279,24 @@ test('公共目录仅基础字段、包含 inactive、无需业务开关、不�
   assert.deepEqual(db.calls, ['store.findMany'])
 })
 
+test('四种状态：公共目录仅投影自提资格，内部启用/历史身份保留且兼容旧四字段', async () => {
+  db.reset()
+  const combinations = [[true, true], [true, false], [false, true], [false, false]]
+  db.state.stores.forEach((row, index) => { [row.active, row.pickupEnabled] = combinations[index] })
+  const internal = await readStoreDirectory(db)
+  const response = await directoryResponse()
+  assert.equal(response.statusCode, 200)
+  for (const row of db.state.stores) {
+    const privateRow = internal.find(store => store.key === row.key)
+    assert.equal(privateRow.active, row.active)
+    assert.equal(privateRow.pickupEnabled, row.pickupEnabled)
+    const publicRow = response.body.stores.find(store => store.key === row.key)
+    assert.deepEqual(Object.keys(publicRow).sort(), ['active', 'district', 'key', 'name'])
+    assert.equal(publicRow.active, row.active && row.pickupEnabled)
+    if (row.active) assert.equal((await assertOperatingStore(db, row.key)).key, row.key)
+  }
+})
+
 test('公共目录不可用、非法资料、超 5000 家或 1 MiB 时 503，不以缓存伪造成功', async () => {
   for (const scenario of ['database', 'invalid', 'rows', 'bytes']) {
     db.reset()
@@ -266,6 +334,12 @@ test('实际应用 HTTP：公开目录、developer 管理、PG 绑定新收银�
     const privateRows = await request('/api/v2/stores')
     assert.equal(privateRows.body.rows.length, 5)
     assert.equal(privateRows.body.rows.find(row => row.key === key).statusHistory[0].action, 'CREATE_STORE')
+    assert.equal(privateRows.body.rows.find(row => row.key === key).pickupEnabled, true)
+    const warehouse = await request(`/api/v2/stores/${key}`, { method: 'PATCH', body: { pickupEnabled: false } })
+    assert.equal(warehouse.status, 200)
+    assert.equal(warehouse.body.store.active, true)
+    assert.equal(warehouse.body.store.pickupEnabled, false)
+    assert.equal((await request('/api/customer/store-directory', { user: null })).body.stores.find(row => row.key === key).active, false)
     const cashier = await request('/api/admin/users', { method: 'POST', body: { username: 'synthetic-cashier', password: 'synthetic-only-password', role: 'cashier', storeKeys: [key] } })
     assert.equal(cashier.status, 200, JSON.stringify(cashier.body))
     const cashierUser = db.state.users.find(user => user.username === 'synthetic-cashier')
@@ -287,6 +361,7 @@ test('实际应用 HTTP：公开目录、developer 管理、PG 绑定新收银�
     assert.equal(invalidEmployees.status, 404)
     assert.deepEqual(db.state.employees, savedEmployees)
     assert.equal((await request(`/api/v2/stores/${key}`, { method: 'PATCH', body: { name: '合成改名 HTTP' } })).status, 200)
+    assert.equal(db.state.stores.find(store => store.key === key).pickupEnabled, false)
     const closed = await request(`/api/v2/stores/${key}/status`, { method: 'PUT', body: { active: false } })
     assert.equal(closed.body.store.active, false)
     const publicRows = await request('/api/customer/store-directory', { user: null })

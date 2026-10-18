@@ -21,6 +21,9 @@ export default function StoreManagementPage({ user, onBack }) {
   const mutationBusy = useRef(false)
   const mounted = useRef(true)
   const canManage = user?.role === 'developer'
+  const editingStore = editor?.key ? stores.find((store) => store.key === editor.key) : null
+  const pickupVerified = !editor?.key || (!loading && verified && typeof editingStore?.pickupEnabled === 'boolean')
+  const editorPickupEnabled = editor?.pickupEnabled ?? (pickupVerified ? editingStore?.pickupEnabled : undefined)
 
   useEffect(() => {
     mounted.current = true
@@ -58,8 +61,9 @@ export default function StoreManagementPage({ user, onBack }) {
     setError('')
     setNotice('')
     setEditor(store
-      ? { key: store.key, name: store.name, district: store.district || '' }
-      : { name: '', district: '', active: true, requestKey: newStoreRequestKey() })
+      // An untouched pickup option follows the verified directory, never a cached default.
+      ? { key: store.key, name: store.name, district: store.district || '', pickupEnabled: null }
+      : { name: '', district: '', active: true, pickupEnabled: true, requestKey: newStoreRequestKey() })
   }
 
   const refreshAfterWrite = async () => {
@@ -73,14 +77,19 @@ export default function StoreManagementPage({ user, onBack }) {
     event.preventDefault()
     if (!canManage || mutationBusy.current || !editor) return
     if (!editor.name.trim()) return setError('请填写门店名称')
+    const creating = !editor.key
+    if (!creating && (loading || getUserData().storesAuthority !== 'postgresql'
+      || typeof getStores().find((store) => store.key === editor.key)?.pickupEnabled !== 'boolean')) {
+      return setError('自提设置尚未核实，请刷新门店列表后保存。')
+    }
     mutationBusy.current = true
     setBusy('editor')
     setError('')
     setNotice('')
-    const creating = !editor.key
     const payload = creating
-      ? submittedCreate.current || { name: editor.name.trim(), district: editor.district.trim(), active: editor.active, requestKey: editor.requestKey }
-      : { name: editor.name.trim(), district: editor.district.trim() }
+      ? submittedCreate.current || { name: editor.name.trim(), district: editor.district.trim(), active: editor.active, pickupEnabled: editor.pickupEnabled, requestKey: editor.requestKey }
+      : { name: editor.name.trim(), district: editor.district.trim(),
+        ...(typeof editor.pickupEnabled === 'boolean' ? { pickupEnabled: editor.pickupEnabled } : {}) }
     if (creating) submittedCreate.current = payload
     try {
       const result = await api(creating ? '/v2/stores' : `/v2/stores/${encodeURIComponent(editor.key)}`, {
@@ -156,15 +165,20 @@ export default function StoreManagementPage({ user, onBack }) {
         <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-slate-800">{editor.key ? '编辑门店资料' : '新增门店'}</h3><button type="button" aria-label="取消编辑门店" disabled={Boolean(busy)} onClick={() => setEditor(null)} className="grid h-11 w-11 place-items-center rounded-full text-slate-500 hover:bg-white disabled:opacity-40"><X className="h-4 w-4" /></button></div>
         <label className="block text-xs font-semibold text-slate-500">门店名称<input aria-label="门店名称" required maxLength={30} disabled={Boolean(busy) || createUncertain} value={editor.name} onChange={(event) => setEditor((current) => ({ ...current, name: event.target.value }))} className="input mt-1.5 min-h-11 w-full" placeholder="例如：北京官舍店" /></label>
         <label className="block text-xs font-semibold text-slate-500">位置说明（选填）<input aria-label="位置说明（选填）" maxLength={50} disabled={Boolean(busy) || createUncertain} value={editor.district} onChange={(event) => setEditor((current) => ({ ...current, district: event.target.value }))} className="input mt-1.5 min-h-11 w-full" placeholder="例如：朝阳区 · 亮马桥" /></label>
+        <div>
+          <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-slate-700"><input type="checkbox" aria-describedby="store-pickup-description" checked={editorPickupEnabled === true} disabled={Boolean(busy) || createUncertain || !pickupVerified} onChange={(event) => setEditor((current) => ({ ...current, pickupEnabled: event.target.checked }))} className="h-5 w-5 shrink-0 accent-budu-600" />支持顾客自提</label>
+          <p id="store-pickup-description" className="ml-8 text-xs leading-5 text-slate-500">关闭后不可选择此处自提，收货和调拨照常使用。</p>
+          {!pickupVerified && <p role="status" className="mt-2 text-xs leading-5 text-amber-700">自提设置尚未核实，请刷新门店列表后编辑。</p>}
+        </div>
         {!editor.key && <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-slate-700"><input type="checkbox" checked={editor.active} disabled={Boolean(busy) || createUncertain} onChange={(event) => setEditor((current) => ({ ...current, active: event.target.checked }))} className="h-5 w-5 accent-budu-600" />创建后启用</label>}
-        <div className="flex flex-wrap gap-2"><button type="submit" disabled={Boolean(busy)} className={`${actionClass} flex-1 bg-budu-600 text-white sm:flex-none sm:px-5`}>{busy === 'editor' ? <><LoaderCircle className="h-4 w-4 animate-spin" />保存中…</> : createUncertain ? '重试保存' : '保存门店'}</button><button type="button" disabled={Boolean(busy)} onClick={() => setEditor(null)} className={`${actionClass} bg-white text-slate-500 ring-1 ring-slate-200`}>取消</button></div>
+        <div className="flex flex-wrap gap-2"><button type="submit" disabled={Boolean(busy) || !pickupVerified} className={`${actionClass} flex-1 bg-budu-600 text-white sm:flex-none sm:px-5`}>{busy === 'editor' ? <><LoaderCircle className="h-4 w-4 animate-spin" />保存中…</> : createUncertain ? '重试保存' : '保存门店'}</button><button type="button" disabled={Boolean(busy)} onClick={() => setEditor(null)} className={`${actionClass} bg-white text-slate-500 ring-1 ring-slate-200`}>取消</button></div>
       </form>}
       <div className="space-y-3" aria-label="门店列表">
         {stores.map((store) => {
           const retry = statusRetries[store.key]
           const changing = busy === store.key
           return <article key={store.key} data-testid={`managed-store-${store.key}`} className="min-w-0 rounded-[18px] border border-slate-200/75 bg-white p-4">
-            <div className="flex min-w-0 items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600"><Store className="h-5 w-5" /></span><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-bold leading-6 text-slate-800">{store.name}</h3>{store.district && <p className="mt-0.5 break-words text-xs leading-5 text-slate-400">{store.district}</p>}</div></div>
+            <div className="flex min-w-0 items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-budu-50 text-budu-600"><Store className="h-5 w-5" /></span><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-bold leading-6 text-slate-800">{store.name}</h3>{store.district && <p className="mt-0.5 break-words text-xs leading-5 text-slate-400">{store.district}</p>}<p className="mt-1 text-xs leading-5 text-slate-500">{verified && typeof store.pickupEnabled === 'boolean' ? store.pickupEnabled ? '支持顾客自提' : '不支持顾客自提' : '自提设置待核实'}</p></div></div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
               <div className="flex items-center gap-2"><SettingsStatus tone={!verified ? 'warning' : store.active ? 'success' : 'neutral'}>{!verified ? '待核实' : store.active ? '已启用' : '已停用'}</SettingsStatus><button type="button" role="switch" aria-label={`${store.name}营业状态`} aria-checked={store.active === true} aria-busy={changing} disabled={!verified || Boolean(busy) || retry !== undefined} onClick={() => void setStatus(store, !store.active)} className={`relative inline-flex h-11 w-14 shrink-0 items-center rounded-full p-1.5 transition disabled:opacity-50 ${store.active ? 'bg-budu-600' : 'bg-slate-200'}`}><span className={`grid h-8 w-8 place-items-center rounded-full bg-white shadow-sm transition-transform ${store.active ? 'translate-x-3' : ''}`}>{changing && <LoaderCircle className="h-4 w-4 animate-spin text-budu-600" />}</span></button></div>
               <button type="button" aria-label={`编辑${store.name}`} disabled={Boolean(busy)} onClick={() => beginEditor(store)} className={`${actionClass} text-slate-500 hover:bg-slate-50`}><Pencil className="h-3.5 w-3.5" />编辑</button>

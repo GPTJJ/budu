@@ -49,7 +49,7 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
   }
   router.post('/capabilities',handle(async(body,customer)=>{
     if(!onlinePaymentAllowed(customer.userId,env))return {enabled:false,stores:[],cards:[]}
-    const stores=await db.store.findMany({where:{active:true},select:{key:true,name:true},orderBy:{key:'asc'}})
+    const stores=await db.store.findMany({where:{active:true,pickupEnabled:true},select:{key:true,name:true},orderBy:{key:'asc'}})
     const claims=await db.sweetCardClaim.findMany({where:{userId:customer.userId},include:{account:{include:{binding:true,onlinePolicy:true}}}})
     const now=new Date(),cards=[]
     for(const claim of claims){

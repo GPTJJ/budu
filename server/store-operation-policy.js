@@ -2,7 +2,8 @@ import { httpError } from './pos-core.js'
 import { isStoreKey } from '../shared/storeDirectory.js'
 
 export function storeDirectoryRow(store) {
-  return { key: store.key, name: store.name, district: store.district || '', active: store.active === true }
+  return { key: store.key, name: store.name, district: store.district || '', active: store.active === true,
+    pickupEnabled: store.pickupEnabled === true }
 }
 
 const STATUS_ACTIONS = ['CREATE_STORE', 'ENABLE_STORE', 'DISABLE_STORE']
@@ -47,7 +48,7 @@ export async function readStoreDirectory(db, { includeHistory = false } = {}) {
 
 async function readStoreDirectorySnapshot(db, includeHistory) {
   const rows = (await db.store.findMany({
-    select: { key: true, name: true, district: true, active: true, ...(includeHistory ? { createdAt: true } : {}) },
+    select: { key: true, name: true, district: true, active: true, pickupEnabled: true, ...(includeHistory ? { createdAt: true } : {}) },
     orderBy: { key: 'asc' },
   })).filter(row => isStoreKey(row.key))
   if (!includeHistory) return rows.map(storeDirectoryRow)

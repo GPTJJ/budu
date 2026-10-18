@@ -43,7 +43,7 @@ function signed(body, statusCode = 200) {
 class OnlineMemory {
   constructor() {
     this.users = new Map([['customer', { id: 'customer', role: 'customer', status: 'active' }], ['other', { id: 'other', role: 'customer', status: 'active' }]])
-    this.stores = new Map(['chaowai', 'tongying', 'guanshe', 'xidan', newStoreKey].map(key => [key, { key, name: key === 'chaowai' ? '朝外店' : key, active: true }]))
+    this.stores = new Map(['chaowai', 'tongying', 'guanshe', 'xidan', newStoreKey].map(key => [key, { key, name: key === 'chaowai' ? '朝外店' : key, active: true, pickupEnabled: true }]))
     this.quotes = new Map(); this.settlements = new Map(); this.tenders = new Map(); this.sessions = new Map()
     this.writes = []; this.locks = []; this.storeReads = 0; this.beforeStoreRead = null; this.beforeStoreLock = null
     const model = (map, kind) => ({
@@ -58,6 +58,7 @@ class OnlineMemory {
     this.store = {
       findUnique: async ({ where }) => { this.storeReads++; this.beforeStoreRead?.(this.storeReads); return this.stores.get(where.key) || null },
       findMany: async ({ where = {}, select } = {}) => [...this.stores.values()].filter(s => (where.active === undefined || where.active === s.active)
+        && (where.pickupEnabled === undefined || where.pickupEnabled === s.pickupEnabled)
         && (!where.key?.in || where.key.in.includes(s.key))).map(s => select ? Object.fromEntries(Object.keys(select).filter(k => select[k]).map(k => [k, s[k]])) : s),
     }
     this.onlineCheckoutQuote = model(this.quotes, 'quote')
@@ -111,6 +112,51 @@ function onlineFixture() {
 }
 async function pending(f, extras) { const q = await f.quote(extras), requestKey = uuid(), s = await f.service.submit('customer', { quoteId: q.id, requestKey }); return { q, s, requestKey } }
 function payment(f, request) { return createOnlinePaymentService(f.db, paymentConfig, { env: f.env, request }) }
+
+test('自提关闭但门店启用：禁止新报价/新提交，配送照常，重新支持后恢复', async () => {
+  const f = onlineFixture(), input = f.input(), q = await f.service.quote('customer', input)
+  f.db.stores.get('chaowai').pickupEnabled = false
+  const before = f.db.facts()
+  for (const attempt of [() => f.quote(), () => f.service.quote('customer', input),
+    () => f.service.plan('customer', { quoteId: q.id, requestKey: uuid() }),
+    () => f.service.submit('customer', { quoteId: q.id, requestKey: uuid() })]) {
+    await assert.rejects(attempt, error => closed(error) && /暂不支持顾客自提/.test(error.message))
+  }
+  assert.deepEqual(f.db.facts(), before)
+  for (const store of f.db.stores.values()) store.pickupEnabled = false
+  const delivery = await pending(f, { fulfillment: 'DELIVERY', storeRef: 'chaowai', addressRef: 'synthetic-address' })
+  assert.equal(delivery.s.status, 'PENDING')
+  f.db.stores.get('chaowai').pickupEnabled = true
+  assert.equal((await f.quote()).snapshot.fulfillment, 'PICKUP')
+})
+
+test('关闭自提保留原PENDING/PAID恢复；新prepay禁止但原签名付款结果继续一次确认', async () => {
+  const f = onlineFixture(), { q, s, requestKey } = await pending(f)
+  f.db.stores.get('chaowai').pickupEnabled = false
+  const before = f.db.facts()
+  assert.equal((await f.service.plan('customer', { quoteId: q.id, requestKey })).settlementId, s.id)
+  assert.equal((await f.service.submit('customer', { quoteId: q.id, requestKey })).id, s.id)
+  const calls = [], p = payment(f, async method => { calls.push(method); return signed({ code: 'ORDER_NOT_EXIST' }, 404) })
+  await assert.rejects(p.prepare(s.id, 'customer'), closed)
+  assert.deepEqual(await p.recover(s.id), { settlementId: s.id, status: 'PENDING' })
+  assert.deepEqual(calls, ['GET', 'GET'])
+  assert.deepEqual(f.db.facts(), before)
+  const observed = [], paid = payment(f, async method => { observed.push(method); return signed(successResult(f, s)) })
+  assert.deepEqual(await paid.prepare(s.id, 'customer'), { settlementId: s.id, status: 'PAID' })
+  assert.equal((await f.service.submit('customer', { quoteId: q.id, requestKey })).status, 'PAID')
+  await paid.prepare(s.id, 'customer')
+  assert.deepEqual(observed, ['GET'])
+  assert.equal(f.db.settlements.size, 1)
+  assert.equal(f.db.tenders.size, 1)
+})
+
+test('自提资格在Store共享锁后复核；关闭与报价并发不留下新报价', async () => {
+  const f = onlineFixture()
+  f.db.beforeStoreLock = () => { f.db.stores.get('chaowai').pickupEnabled = false }
+  await assert.rejects(f.quote(), closed)
+  assert.equal(f.db.quotes.size, 0)
+  assert.deepEqual(f.db.locks, ['chaowai'])
+})
 
 test('新在线自提报价：闭店409，未查目录、未写报价；身份拒绝先于门店信息', async () => {
   const f = onlineFixture(); f.db.stores.get('chaowai').active = false
@@ -347,6 +393,10 @@ test('实际online签名会话路由：quote/plan/submit/prepare闭店统一409�
   }
   assert.equal(f.db.storeReads, reads)
   const cap = await send('capabilities'); assert.equal(cap.status, 200); const c = await cap.json(); assert.deepEqual(c.result.stores.map(s => s.key), ['tongying', 'guanshe', 'xidan', newStoreKey]); assert.ok(c.result.stores.every(s => typeof s.name === 'string'))
+  f.db.stores.get(newStoreKey).pickupEnabled = false
+  assert.equal((await (await send('capabilities')).json()).result.stores.some(row => row.key === newStoreKey), false)
+  for (const store of f.db.stores.values()) store.pickupEnabled = false
+  assert.deepEqual((await (await send('capabilities')).json()).result.stores, [])
   const state = await send('status'); assert.equal(state.status, 200); assert.equal((await state.json()).result.status, 'PENDING')
 })
 

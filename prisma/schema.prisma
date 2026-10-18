@@ -128,6 +128,7 @@ model Store {
   name                         String                   @unique
   district                     String                   @default("")
   active                       Boolean                  @default(true)
+  pickupEnabled                Boolean                  @default(true) @map("pickup_enabled")
   salesDataSource              String                   @default("manual") @map("sales_data_source")
   salesDataSourceEffectiveDate DateTime?                @map("sales_data_source_effective_date")
   createdAt                    DateTime                 @default(now())
